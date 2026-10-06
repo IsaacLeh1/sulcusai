@@ -4,7 +4,7 @@ A private AI workspace that runs on your own PC. It shows only the AI models
 your computer can actually run, installs them with one click, and keeps
 everything local unless you choose otherwise.
 
-> **Status: early development. Phase 1 (Foundation) is complete.** See [DESIGN.md](DESIGN.md)
+> **Status: early development. Phases 1 (Foundation) and 2 (Agent core) are complete.** See [DESIGN.md](DESIGN.md)
 > for the full plan and [HANDOFF.md](HANDOFF.md) for where work stands.
 
 ## What works today
@@ -33,6 +33,21 @@ everything local unless you choose otherwise.
   that goes over the internet. It never includes what you say in chats.
 - **First-run setup.** A short guided setup: your PC, a suggested first model,
   your profile and the optional lock.
+- **Agent mode.** The assistant can work in folders you share: read, search,
+  create, edit, move and delete files (deletes go to the Recycle Bin), and run
+  commands to build and test code.
+  - **Plan / Auto / Bypass** run modes. Auto asks before every change and shows
+    a diff first.
+  - **Undo** for the file changes from any reply.
+- **Memory** across chats. It's encrypted, and you can view, edit and delete it.
+  Incognito chats neither use nor save memories.
+- **Projects** with their own instructions, folders and memories.
+- **Helpers and handoff.** The assistant can send a helper agent to research
+  something in a fresh context. Long chats continue automatically in a new
+  chat from a summary.
+- **Scheduled tasks** that run on their own and save results as chats.
+- **Connectors and plugins.** Local MCP servers with Allow / Ask / Off per
+  tool, and plugins that add skills and connectors.
 
 ## Privacy and security design
 

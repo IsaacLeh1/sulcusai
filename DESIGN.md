@@ -1,6 +1,6 @@
 # SulcusAI — Design Document
 
-*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phase 1 complete; Phase 2 next (see HANDOFF.md).*
+*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phases 1 and 2 complete; Phase 3 next (see HANDOFF.md).*
 
 ## 1. Vision
 
