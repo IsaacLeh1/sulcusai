@@ -6,6 +6,7 @@ mod agent;
 mod catalog;
 mod chat;
 mod checkpoint;
+mod connectors;
 mod crypto;
 mod db;
 mod download;
@@ -15,6 +16,7 @@ mod engine;
 mod handoff;
 mod hardware;
 mod hello;
+mod mcp;
 mod memory;
 mod net;
 mod paths;
@@ -59,6 +61,7 @@ pub struct AppState {
     generations: Mutex<HashMap<String, Arc<AtomicBool>>>,
     contexts: Mutex<HashMap<String, ContextInfo>>,
     approvals: agent::Approvals,
+    mcp: tokio::sync::Mutex<HashMap<String, mcp::Client>>,
     #[cfg(windows)]
     job: Option<winjob::Job>,
 }
@@ -681,6 +684,7 @@ pub fn run() {
                 generations: Mutex::new(HashMap::new()),
                 contexts: Mutex::new(HashMap::new()),
                 approvals: agent::Approvals::default(),
+                mcp: tokio::sync::Mutex::new(HashMap::new()),
                 #[cfg(windows)]
                 job: winjob::Job::kill_on_close().ok(),
                 paths,
@@ -758,6 +762,16 @@ pub fn run() {
             schedule::save_schedule,
             schedule::delete_schedule,
             schedule::run_schedule_now,
+            connectors::list_connectors,
+            connectors::save_connector,
+            connectors::delete_connector,
+            connectors::set_connector_enabled,
+            connectors::set_tool_mode,
+            connectors::list_plugins,
+            connectors::inspect_plugin,
+            connectors::install_plugin,
+            connectors::set_plugin_enabled,
+            connectors::remove_plugin,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

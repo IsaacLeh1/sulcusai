@@ -179,6 +179,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         generations: Mutex::new(HashMap::new()),
         contexts: Mutex::new(HashMap::new()),
         approvals: crate::agent::Approvals::default(),
+        mcp: tokio::sync::Mutex::new(HashMap::new()),
         job: None,
     });
 
@@ -295,6 +296,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         generations: Mutex::new(HashMap::new()),
         contexts: Mutex::new(HashMap::new()),
         approvals: crate::agent::Approvals::default(),
+        mcp: tokio::sync::Mutex::new(HashMap::new()),
         job: None,
     });
     let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
@@ -395,5 +397,66 @@ async fn e2e_helper_and_handoff() {
     let follow = say(&state, &ep, &cipher, &new.id, "Which file was it again? Just the path.").await;
     println!("follow-up in new chat: {follow}");
     assert!(follow.contains("checkout"), "the new chat knows from the summary");
+    state.engine.lock().await.stop().await;
+}
+
+/// A local connector and a plugin skill, used by the real model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_connector_and_skill() {
+    let (state, ep, cipher) = agent_harness().await;
+    let conn = crate::connectors::Connector {
+        id: "echo".into(),
+        name: "echo".into(),
+        spec: crate::mcp::tests::echo_spec(),
+        enabled: true,
+        plugin: None,
+        tools: vec![],
+        tool_modes: Default::default(),
+    };
+    crate::connectors::store(&state.db.lock().unwrap(), &cipher, "connectors", "echo", &conn).unwrap();
+    let skill = crate::connectors::Plugin {
+        id: "haiku".into(),
+        name: "Haiku".into(),
+        version: "1".into(),
+        description: String::new(),
+        enabled: true,
+        dir: String::new(),
+        skills: vec![crate::connectors::Skill {
+            name: "haiku-writer".into(),
+            description: "Write any answer as a haiku".into(),
+            body: "Answer as a single haiku (three lines: 5, 7 and 5 syllables). Put the word SKILL-OK on a fourth line.".into(),
+        }],
+        connectors: vec![],
+    };
+    crate::connectors::store(&state.db.lock().unwrap(), &cipher, "plugins", "haiku", &skill).unwrap();
+
+    // The shout tool isn't read-only, so Auto mode asks; approve it.
+    let approver_state = state.clone();
+    let approver = tokio::spawn(async move {
+        for _ in 0..600 {
+            for chat in crate::db::list_chats(&approver_state.db.lock().unwrap(), &approver_state.cipher().unwrap()) {
+                for p in approver_state.approvals.pending(&chat.id) {
+                    println!("approval: {} — {}", p.tool, p.preview.title);
+                    approver_state.approvals.answer(&p.call_id, crate::agent::Decision::Allow);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &chat.id, "Use the echo connector's shout tool on the text: hello world. Tell me exactly what it returned.").await;
+    println!("connector reply: {reply}");
+    let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    let used = msgs.iter().any(|m| m.role == "tool" && m.content.contains("HELLO WORLD"));
+    assert!(used, "the shout tool ran through the connector");
+
+    let chat2 = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &chat2.id, "Use your haiku-writer skill to tell me about the ocean.").await;
+    println!("skill reply: {reply}");
+    let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat2.id);
+    let followed = reply.contains("SKILL-OK") || msgs.iter().any(|m| m.tool_calls.iter().flatten().any(|c| c.name == "load_skill"));
+    assert!(followed, "the model followed the skill instructions");
+    approver.abort();
     state.engine.lock().await.stop().await;
 }

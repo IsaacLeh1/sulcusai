@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS connectors (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plugins (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS schedules (
   id         TEXT PRIMARY KEY,
   data       TEXT NOT NULL,

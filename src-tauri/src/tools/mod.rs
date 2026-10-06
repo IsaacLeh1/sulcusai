@@ -30,6 +30,8 @@ pub enum Risk {
     Execute,
     /// Saves to the assistant's own memory, which the user can review and edit.
     Memory,
+    /// A tool from a connector (MCP server); what it does is up to that program.
+    Connector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +80,7 @@ pub struct ToolDef {
 fn group(name: &str) -> &'static str {
     match name {
         "remember" | "search_memory" => "memory",
+        "load_skill" => "skills",
         _ => "files",
     }
 }
@@ -107,9 +110,15 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
         description: "Search what you remember from earlier chats." },
+    ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
+        description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
         description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
+
+fn load_skill_params() -> Value {
+    json!({ "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } })
+}
 
 fn delegate_params() -> Value {
     json!({ "type": "object", "required": ["task"], "properties": {
@@ -137,6 +146,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| permission(mode, t.risk, false) != Permission::Refuse)
         .filter(|t| match group(t.name) {
             "memory" => memory,
+            "skills" => false, // added by the agent when a plugin provides skills
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -267,7 +277,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len());
+        // Everything except load_skill, which the agent adds only when a plugin has skills.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 1);
     }
 
     #[test]

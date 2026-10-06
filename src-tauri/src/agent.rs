@@ -18,6 +18,7 @@ use crate::db::{self, Message, ToolCall};
 use crate::engine::Endpoint;
 use crate::sandbox::Sandbox;
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
+use crate::connectors::{self, OfferedTool, Skill, ToolMode};
 use crate::{memory, projects, AppState};
 
 /// Most model replies in one turn before the agent stops and checks in.
@@ -169,7 +170,21 @@ impl Turn {
         let sandbox = Sandbox::new(&folders);
         let files = self.use_tools && !sandbox.is_empty();
         let memory_tools = self.use_tools && memory_on;
-        let tools = Some(tools::definitions(self.mode, files, memory_tools)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+        let mut defs = tools::definitions(self.mode, files, memory_tools).as_array().cloned().unwrap_or_default();
+        let mut extras = Extras::default();
+        if self.use_tools {
+            let (mcp_defs, mcp_map, problems) = connectors::offer(&self.state, &self.cipher).await;
+            defs.extend(mcp_defs);
+            extras.mcp = mcp_map;
+            extras.problems = problems;
+            extras.skills = connectors::active_skills(&self.state.db.lock().unwrap(), &self.cipher);
+            if !connectors::split_skills(&extras.skills).1.is_empty() {
+                if let Some(d) = tools::find("load_skill") {
+                    defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
+                }
+            }
+        }
+        let tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();
         if let Some(p) = &project {
@@ -180,6 +195,13 @@ impl Turn {
         }
         if self.use_tools {
             about.push_str(&tool_instructions(&sandbox, self.mode));
+            about.push_str(&connectors::skills_prompt(&extras.skills));
+            if !extras.problems.is_empty() {
+                about.push_str(&format!(
+                    "\n\nThese connectors couldn't start, so their tools aren't available; tell the user if they ask for them: {}",
+                    extras.problems.join("; ")
+                ));
+            }
         }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let system = if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
@@ -247,7 +269,7 @@ impl Turn {
                 let outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
                 } else {
-                    self.execute(call, &sandbox, &recorder, project_id.as_deref()).await
+                    self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await
                 };
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -287,7 +309,18 @@ impl Turn {
         })
     }
 
-    async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>, project_id: Option<&str>) -> Outcome {
+    async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>, project_id: Option<&str>, extras: &Extras) -> Outcome {
+        if let Some(t) = extras.mcp.get(&call.name) {
+            return self.execute_connector(call, t).await;
+        }
+        if call.name == "load_skill" {
+            let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+            let wanted = args.get("name").and_then(Value::as_str).unwrap_or("");
+            return match extras.skills.iter().find(|s| s.name.eq_ignore_ascii_case(wanted)) {
+                Some(s) => Outcome::ok(s.body.clone(), format!("Loaded the {} skill", s.name), "text", None),
+                None => Outcome::error("Couldn't load a skill", format!("There's no skill called {wanted}.")),
+            };
+        }
         let Some(def) = tools::find(&call.name) else {
             return Outcome::error(call.name.clone(), format!("There is no tool called {}.", call.name));
         };
@@ -406,6 +439,45 @@ impl Turn {
         )
     }
 
+    /// A connector tool: the user's per-tool setting plus the run mode decide.
+    async fn execute_connector(&self, call: &ToolCall, t: &OfferedTool) -> Outcome {
+        let title = format!("{} ({})", t.tool, t.connector_name);
+        let args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
+            Ok(v) => v,
+            Err(e) => return Outcome::error(format!("Couldn't use {title}"), format!("The arguments weren't valid JSON ({e}).")),
+        };
+        let permission = match (self.mode, t.mode) {
+            (_, ToolMode::Off) => Permission::Refuse,
+            (Mode::Plan, _) if !t.read_only => Permission::Refuse,
+            (Mode::Plan, _) | (Mode::Bypass, _) | (Mode::Auto, ToolMode::Allow) => Permission::Run,
+            (Mode::Auto, _) if self.state.approvals.allowed(&self.chat_id, Risk::Connector) => Permission::Run,
+            (Mode::Auto, ToolMode::Ask) => Permission::Ask,
+        };
+        match permission {
+            Permission::Refuse => return Outcome::error(format!("Couldn't use {title}"), "This connector tool isn't allowed in this mode."),
+            Permission::Ask => {
+                let preview = Preview {
+                    title: format!("Use {} from the {} connector", t.tool, t.connector_name),
+                    kind: "text",
+                    detail: Some(serde_json::to_string_pretty(&args).unwrap_or_default()),
+                    note: Some("Connectors are programs on this PC; what this does is up to the connector.".into()),
+                };
+                if self.ask(call, Risk::Connector, preview).await == Decision::Deny {
+                    self.log(&format!("Declined: {title}"));
+                    return Outcome::denied(format!("Use {title}"));
+                }
+            }
+            Permission::Run => {}
+        }
+        self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
+        self.log(&format!("Used {title}"));
+        match connectors::call(&self.state, &t.connector_id, &t.tool, args).await {
+            Ok((false, text)) => Outcome::ok(text.clone(), format!("Used {title}"), "text", Some(text)),
+            Ok((true, text)) => Outcome::error(format!("{title} reported a problem"), text),
+            Err(e) => Outcome::error(format!("Couldn't use {title}"), e),
+        }
+    }
+
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {
         let (tx, mut rx) = oneshot::channel();
         let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview };
@@ -430,6 +502,14 @@ impl Turn {
     fn log(&self, summary: &str) {
         db::log_action_enc(&self.state.db.lock().unwrap(), &self.cipher, "agent", summary);
     }
+}
+
+/// Tools that come from outside the built-in set, for one turn.
+#[derive(Default)]
+struct Extras {
+    mcp: std::collections::HashMap<String, OfferedTool>,
+    skills: Vec<Skill>,
+    problems: Vec<String>,
 }
 
 impl Outcome {
