@@ -12,8 +12,8 @@ export function ContextMeter({ info, fallbackCtx }: { info: ContextInfo | null; 
       </div>
     );
   }
-  const instructions = info.system_tokens + info.profile_tokens;
-  const used = instructions + info.history_tokens;
+  // After a reply, the engine's own count (prompt + reply) is the accurate one.
+  const used = info.last_total ?? info.system_tokens + info.profile_tokens + info.history_tokens;
   const parts = [
     { key: "sys", label: "Instructions", value: info.system_tokens },
     { key: "profile", label: "Your profile", value: info.profile_tokens },

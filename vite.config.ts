@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1430, strictPort: true, host: "127.0.0.1" },
+  // The Rust side rebuilds itself; watching its build folder only causes noise.
+  server: { port: 1430, strictPort: true, host: "127.0.0.1", watch: { ignored: ["**/src-tauri/**"] } },
   build: { target: "es2022", outDir: "dist" },
 });

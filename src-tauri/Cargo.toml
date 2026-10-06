@@ -39,6 +39,10 @@ windows = { version = "0.58", features = [
   "Win32_Security",
 ] }
 
+# Hash checks of multi-GB files are painfully slow unoptimized.
+[profile.dev.package.sha2]
+opt-level = 3
+
 [profile.release]
 codegen-units = 1
 lto = true

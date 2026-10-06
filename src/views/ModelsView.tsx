@@ -157,12 +157,13 @@ function AvailableCard({ m, progress, otherBusy, toast }: { m: ModelCard; progre
         <InstallBar m={m} p={progress} />
       ) : (
         <div className="install-row">
-          <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={`Quality for ${m.name}`}>
+          <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={`Quality for ${m.name}`} title="Quality and download size. ★ is the best fit for this PC.">
+
             {options.map((v) => {
               const spec = m.variants.find((x) => x.quant === v.quant)!;
               return (
                 <option key={v.quant} value={v.quant}>
-                  {spec.quality} quality · {bytes(spec.size)}{v.quant === m.fit.recommended ? " (best fit)" : ""}
+                  {spec.quality} · {bytes(spec.size)}{v.quant === m.fit.recommended ? " ★" : ""}
                 </option>
               );
             })}
@@ -182,8 +183,12 @@ function AvailableCard({ m, progress, otherBusy, toast }: { m: ModelCard; progre
 }
 
 function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
-  const label =
-    p.phase === "engine" ? "Setting up the engine" : p.phase === "download" ? "Downloading" : "Testing speed on this PC";
+  const label = {
+    engine: "Setting up the engine",
+    verify: "Checking the downloaded file",
+    download: "Downloading",
+    benchmark: "Testing speed on this PC",
+  }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">

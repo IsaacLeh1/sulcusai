@@ -1,6 +1,6 @@
-# Local AI Workspace — Design Document
+# SynapseAI — Design Document
 
-*Working name, to be decided. Status: design only, nothing built. Drafted 2026-10-06.*
+*Working name: "SynapseAI" is already a registered US trademark (Intel/Habana Labs, Reg. 5741769, Class 9), so a different name must be chosen before release. Status: Phase 1 in progress (see HANDOFF.md). Drafted 2026-10-06.*
 
 ## 1. Vision
 

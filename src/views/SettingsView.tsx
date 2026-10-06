@@ -46,7 +46,8 @@ export function SettingsView({ connectivity, onConnectivity, toast }: { connecti
   };
 
   return (
-    <div className="page narrow">
+    <div className="page">
+      <div className="narrow">
       <header className="page-head">
         <h1>Settings</h1>
       </header>
@@ -127,6 +128,7 @@ export function SettingsView({ connectivity, onConnectivity, toast }: { connecti
           }}
         />
       )}
+      </div>
     </div>
   );
 }

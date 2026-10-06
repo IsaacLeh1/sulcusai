@@ -198,6 +198,9 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
             .await?;
 
             let dest = state.paths.models.join(&spec.id).join(&variant.file);
+            if dest.exists() {
+                emit("verify", 0, 0); // reusing an earlier download after a hash check
+            }
             let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
             download::fetch_verified(&client, &variant.url, &dest, variant.size, &variant.sha256, &cancel, |r, t| {
                 emit("download", r, t)

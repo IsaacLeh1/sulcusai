@@ -178,7 +178,7 @@ export const api = {
 
 export interface InstallProgress {
   model_id: string;
-  phase: "engine" | "download" | "benchmark";
+  phase: "engine" | "verify" | "download" | "benchmark";
   received: number;
   total: number;
 }
