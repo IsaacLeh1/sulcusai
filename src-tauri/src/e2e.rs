@@ -180,6 +180,8 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         contexts: Mutex::new(HashMap::new()),
         approvals: crate::agent::Approvals::default(),
         mcp: tokio::sync::Mutex::new(HashMap::new()),
+        speech: crate::speech::Speech::default(),
+        player: crate::audio::Player::new(),
         job: None,
     });
 
@@ -297,6 +299,8 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         contexts: Mutex::new(HashMap::new()),
         approvals: crate::agent::Approvals::default(),
         mcp: tokio::sync::Mutex::new(HashMap::new()),
+        speech: crate::speech::Speech::default(),
+        player: crate::audio::Player::new(),
         job: None,
     });
     let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
@@ -459,4 +463,141 @@ async fn e2e_connector_and_skill() {
     assert!(followed, "the model followed the skill instructions");
     approver.abort();
     state.engine.lock().await.stop().await;
+}
+
+/// App state over the real data folder's engines and models, with a
+/// throwaway database.
+fn speech_state() -> std::sync::Arc<crate::AppState> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
+    let real = Paths::new(app_data_dir()).unwrap();
+    let tmp = std::env::temp_dir().join(format!("sulcusai-speech-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let conn = crate::db::open(&tmp.join("t.db")).unwrap();
+    let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
+    Arc::new(crate::AppState {
+        hardware: RwLock::new(hardware::detect(&real.models)),
+        paths: real,
+        db: Mutex::new(conn),
+        vault: Mutex::new(vault),
+        catalog: Catalog::bundled(),
+        engine: tokio::sync::Mutex::new(engine::Engine::default()),
+        installs: Mutex::new(HashMap::new()),
+        generations: Mutex::new(HashMap::new()),
+        contexts: Mutex::new(HashMap::new()),
+        approvals: crate::agent::Approvals::default(),
+        mcp: tokio::sync::Mutex::new(HashMap::new()),
+        speech: crate::speech::Speech::default(),
+        player: crate::audio::Player::new(),
+        job: None,
+    })
+}
+
+/// Speech recognition end to end, without speakers or a microphone: a
+/// Windows voice speaks a sentence and whisper.cpp writes it down.
+/// SULCUSAI_SPEECH_MODEL picks the model (default: the one this PC is offered first).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_speech_round_trip() {
+    use crate::speech;
+    let state = speech_state();
+    let voices = crate::tts::voices().unwrap();
+    println!("voices: {:?}", voices.iter().map(|v| format!("{} ({})", v.name, v.language)).collect::<Vec<_>>());
+    assert!(!voices.is_empty(), "no Windows voices");
+
+    let hw = state.hardware.read().unwrap().clone();
+    let b = Budget::from_hardware(&hw);
+    let id = std::env::var("SULCUSAI_SPEECH_MODEL")
+        .unwrap_or_else(|_| speech::recommended(&state.catalog.speech.models, &hw, &b).unwrap().id.clone());
+    let spec = state.catalog.speech.models.iter().find(|m| m.id == id).unwrap().clone();
+    println!("model {} — estimated {}x real time on {} threads", spec.name, speech::fit(&spec, &hw, &b).speed, speech::threads(&hw));
+
+    let cancel = AtomicBool::new(false);
+    let started = std::time::Instant::now();
+    let speed = speech::install_for_test(&state, &spec, &cancel).await.unwrap();
+    println!("installed and self-tested in {:.1}s; measured {speed:?}x real time", started.elapsed().as_secs_f64());
+    assert!(speed.is_some_and(|s| s > 0.2));
+
+    let ep = speech::endpoint(&state, speech::Use::Accurate).await.unwrap();
+    // Without the secret prefix the server has nothing to offer.
+    let port = ep.port_for_test();
+    let bare = net::local_client().get(format!("http://127.0.0.1:{port}/health")).send().await.unwrap();
+    assert_eq!(bare.status().as_u16(), 404, "speech server answered without its path prefix");
+    let page = net::local_client().get(format!("http://127.0.0.1:{port}/")).send().await.unwrap();
+    assert_eq!(page.status().as_u16(), 404, "speech server served a page without its path prefix");
+
+    let say = "Please remind me to call the dentist on Wednesday at three thirty.";
+    let s = tokio::task::spawn_blocking(move || crate::tts::synthesize(say, None, 1.0)).await.unwrap().unwrap();
+    let floats: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
+    let samples = crate::audio::resample(&floats, s.rate, crate::audio::RATE);
+    let started = std::time::Instant::now();
+    let t = speech::transcribe(&ep, &samples, &speech::Options::default()).await.unwrap();
+    println!(
+        "heard {:.1}s of speech in {:.2}s ({:?}): {:?}",
+        samples.len() as f64 / 16000.0,
+        started.elapsed().as_secs_f64(),
+        t.language,
+        t.text
+    );
+    let lower = t.text.to_lowercase();
+    assert!(lower.contains("dentist") && lower.contains("wednesday"), "{}", t.text);
+    assert!(t.segments.iter().all(|s| s.end >= s.start));
+
+    // Silence gives nothing back, not a made-up sentence.
+    let quiet = vec![0.0f32; crate::audio::RATE as usize * 3];
+    let t = speech::transcribe(&ep, &quiet, &speech::Options::default()).await.unwrap();
+    println!("silence heard as: {:?}", t.text);
+    assert!(t.text.trim().is_empty(), "{}", t.text);
+
+    speech::stop(&state).await;
+}
+
+/// Dictation as the app runs it, with synthesized speech streamed in small
+/// chunks the way a microphone delivers them (no real microphone used).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_dictation_streams_phrases() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
+    let state = speech_state();
+    // Registers the quick model (downloads it the first time).
+    let spec = state.catalog.speech.models.iter().find(|m| m.id == "whisper-small").unwrap().clone();
+    crate::speech::install_for_test(&state, &spec, &AtomicBool::new(false)).await.unwrap();
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Live).await.unwrap();
+    let speak = |text: &'static str| {
+        let s = crate::tts::synthesize(text, None, 1.0).unwrap();
+        let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
+        crate::audio::resample(&f, s.rate, crate::audio::RATE)
+    };
+    let mut stream = vec![0.0005f32; 16_000];
+    stream.extend(speak("First, buy oat milk and coffee filters."));
+    stream.extend(vec![0.0005f32; 24_000]);
+    stream.extend(speak("Second, book a table for four on Saturday."));
+    stream.extend(vec![0.0005f32; 8_000]);
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let feeder = tokio::spawn(async move {
+        for chunk in stream.chunks(320) {
+            tx.send(chunk.to_vec()).unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        }
+    });
+    let stop = AtomicBool::new(false);
+    let texts: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let emit = |kind: &str, v: serde_json::Value| {
+        if kind == "text" {
+            texts.lock().unwrap().push(v["text"].as_str().unwrap().to_string());
+        }
+    };
+    let run = crate::voice::dictate(&ep, rx, &stop, &|| 0.0, &emit);
+    let started = std::time::Instant::now();
+    let (r, _) = tokio::join!(run, feeder);
+    r.unwrap();
+    println!("dictation finished {:.1}s after the audio started", started.elapsed().as_secs_f64());
+    let texts = texts.into_inner().unwrap();
+    println!("phrases: {texts:?}");
+    assert!(texts.len() >= 2, "expected the two sentences as separate phrases");
+    let all = texts.join(" ").to_lowercase();
+    assert!(all.contains("oat milk") && all.contains("saturday"), "{all}");
+    crate::speech::stop(&state).await;
 }

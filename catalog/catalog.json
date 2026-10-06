@@ -544,5 +544,86 @@
         }
       ]
     }
-  ]
+  ],
+  "speech": {
+    "engine": {
+      "name": "whisper.cpp",
+      "license": "MIT",
+      "build": "v1.9.2",
+      "assets": {
+        "cpu-x64": {
+          "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip",
+          "size": 8194445,
+          "sha256": "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a"
+        }
+      }
+    },
+    "vad": {
+      "file": "ggml-silero-v5.1.2.bin",
+      "url": "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+      "size": 885098,
+      "sha256": "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      }
+    },
+    "models": [
+      {
+        "id": "whisper-base",
+        "name": "Whisper Base",
+        "publisher": "OpenAI",
+        "source": "https://huggingface.co/ggerganov/whisper.cpp",
+        "description": "Quick and light. Fine for dictation in a quiet room.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "languages": 99,
+        "secs_per_30s": 0.6,
+        "file": "ggml-base-q5_1.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin",
+        "size": 59707625,
+        "sha256": "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898"
+      },
+      {
+        "id": "whisper-small",
+        "name": "Whisper Small",
+        "publisher": "OpenAI",
+        "source": "https://huggingface.co/ggerganov/whisper.cpp",
+        "description": "Noticeably more accurate and still fast. A good everyday choice.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "languages": 99,
+        "secs_per_30s": 2.2,
+        "file": "ggml-small-q5_1.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+        "size": 190085487,
+        "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
+      },
+      {
+        "id": "whisper-large-v3-turbo",
+        "name": "Whisper Large v3 Turbo",
+        "publisher": "OpenAI",
+        "source": "https://huggingface.co/ggerganov/whisper.cpp",
+        "description": "The most accurate, including accents, noisy calls and other languages. Best for meetings.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "languages": 99,
+        "secs_per_30s": 11.0,
+        "file": "ggml-large-v3-turbo-q5_0.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        "size": 574041195,
+        "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+      }
+    ]
+  }
 }

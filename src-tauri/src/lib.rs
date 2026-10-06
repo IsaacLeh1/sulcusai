@@ -3,6 +3,7 @@
 //! SulcusAI core: commands the window calls, and the state behind them.
 
 mod agent;
+mod audio;
 mod catalog;
 mod chat;
 mod checkpoint;
@@ -24,7 +25,11 @@ mod projects;
 mod sandbox;
 mod schedule;
 mod security;
+mod speech;
 mod tools;
+mod tts;
+mod vad;
+mod voice;
 mod workspace;
 #[cfg(windows)]
 mod winjob;
@@ -62,6 +67,8 @@ pub struct AppState {
     contexts: Mutex<HashMap<String, ContextInfo>>,
     approvals: agent::Approvals,
     mcp: tokio::sync::Mutex<HashMap<String, mcp::Client>>,
+    speech: speech::Speech,
+    player: audio::Player,
     #[cfg(windows)]
     job: Option<winjob::Job>,
 }
@@ -130,11 +137,11 @@ pub(crate) fn claim<'a>(map: &'a Mutex<HashMap<String, Arc<AtomicBool>>>, key: &
     Some((flag, FlagGuard { map, key: key.to_string() }))
 }
 
-fn host_of(url: &str) -> String {
+pub(crate) fn host_of(url: &str) -> String {
     reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| "the internet".into())
 }
 
-fn size_label(bytes: u64) -> String {
+pub(crate) fn size_label(bytes: u64) -> String {
     format!("{:.1} GB", bytes as f64 / catalog::GIB as f64)
 }
 
@@ -518,6 +525,20 @@ fn stop_generation(state: AppStateRef, chat_id: String) {
 
 #[tauri::command]
 async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String) -> Result<Option<Message>, String> {
+    run_turn(&app, state.inner(), chat_id, text, None).await
+}
+
+/// Also receives every event of a turn (voice mode speaks the reply from it).
+pub(crate) type Tee = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+
+/// Saves the user's message and runs one agent turn in the chat.
+pub(crate) async fn run_turn(
+    app: &AppHandle,
+    state: &Arc<AppState>,
+    chat_id: String,
+    text: String,
+    tee: Option<Tee>,
+) -> Result<Option<Message>, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Type a message first.".into());
@@ -612,9 +633,12 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
     let emitter = app.clone();
     let turn = agent::Turn {
         emit: Arc::new(move |event: &str, payload: serde_json::Value| {
+            if let Some(t) = &tee {
+                t(event, &payload);
+            }
             emitter.emit(event, payload).ok();
         }),
-        state: state.inner().clone(),
+        state: state.clone(),
         chat_id: chat_id.clone(),
         turn_id,
         cipher,
@@ -685,6 +709,8 @@ pub fn run() {
                 contexts: Mutex::new(HashMap::new()),
                 approvals: agent::Approvals::default(),
                 mcp: tokio::sync::Mutex::new(HashMap::new()),
+                speech: speech::Speech::default(),
+                player: audio::Player::new(),
                 #[cfg(windows)]
                 job: winjob::Job::kill_on_close().ok(),
                 paths,
@@ -694,7 +720,9 @@ pub fn run() {
             }
             checkpoint::prune(&state.db.lock().unwrap());
             let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
-            app.manage(Arc::new(state));
+            let state = Arc::new(state);
+            speech::start_idle_unloader(state.clone());
+            app.manage(state);
             schedule::start(app.handle().clone());
             Ok(())
         })
@@ -772,6 +800,20 @@ pub fn run() {
             connectors::install_plugin,
             connectors::set_plugin_enabled,
             connectors::remove_plugin,
+            speech::speech_view,
+            speech::install_speech_model,
+            speech::remove_speech_model,
+            speech::get_voice_settings,
+            speech::set_voice_settings,
+            speech::audio_devices,
+            voice::start_dictation,
+            voice::stop_dictation,
+            voice::list_voices,
+            voice::speak,
+            voice::stop_speaking,
+            voice::start_voice,
+            voice::stop_voice,
+            voice::interrupt_voice,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");
@@ -779,7 +821,10 @@ pub fn run() {
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {
             let state = handle.state::<Arc<AppState>>().inner().clone();
-            tauri::async_runtime::block_on(async move { state.engine.lock().await.stop().await });
+            tauri::async_runtime::block_on(async move {
+                state.engine.lock().await.stop().await;
+                speech::stop(&state).await;
+            });
         }
     });
 }

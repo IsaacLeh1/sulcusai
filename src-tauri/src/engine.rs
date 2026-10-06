@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tokio::process::{Child, Command};
 
-use crate::catalog::{Budget, EngineSpec};
+use crate::catalog::{Asset, Budget, EngineSpec};
 use crate::download;
 use crate::net::{self, Connectivity, Purpose};
 use crate::paths::Paths;
@@ -28,15 +28,16 @@ pub fn backend_for(budget: &Budget) -> Result<&'static str, String> {
     Ok(if budget.vram > 0 { "vulkan-x64" } else { "cpu-x64" })
 }
 
-fn find_server(dir: &Path) -> Option<PathBuf> {
+/// Finds a program by file name anywhere under `dir`.
+pub fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            if let Some(found) = find_server(&path) {
+            if let Some(found) = find_exe(&path, name) {
                 return Some(found);
             }
-        } else if path.file_name().is_some_and(|n| n == SERVER_EXE) {
+        } else if path.file_name().is_some_and(|n| n == name) {
             return Some(path);
         }
     }
@@ -44,7 +45,7 @@ fn find_server(dir: &Path) -> Option<PathBuf> {
 }
 
 pub fn installed_server(paths: &Paths, spec: &EngineSpec, backend: &str) -> Option<PathBuf> {
-    find_server(&paths.engines.join(format!("{}-{backend}", spec.build)))
+    find_exe(&paths.engines.join(format!("{}-{backend}", spec.build)), SERVER_EXE)
 }
 
 /// Downloads, verifies and unpacks the engine if it isn't installed yet.
@@ -55,20 +56,34 @@ pub async fn ensure_installed(
     cancel: &AtomicBool,
     progress: impl FnMut(u64, u64),
 ) -> Result<PathBuf, String> {
-    if let Some(exe) = installed_server(paths, spec, backend) {
-        return Ok(exe);
-    }
     let asset = spec
         .assets
         .get(backend)
         .ok_or_else(|| format!("No engine build for {backend}"))?;
-    let dir = paths.engines.join(format!("{}-{backend}", spec.build));
-    let zip_path = paths.engines.join(format!("llama-{}-{backend}.zip", spec.build));
+    let dir = format!("{}-{backend}", spec.build);
+    ensure_unpacked(paths, &dir, asset, SERVER_EXE, cancel, progress).await
+}
+
+/// Makes sure `engines/<dir>` holds the unpacked release zip and returns the
+/// path of `exe` inside it.
+pub async fn ensure_unpacked(
+    paths: &Paths,
+    dir_name: &str,
+    asset: &Asset,
+    exe: &str,
+    cancel: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+) -> Result<PathBuf, String> {
+    let dir = paths.engines.join(dir_name);
+    if let Some(found) = find_exe(&dir, exe) {
+        return Ok(found);
+    }
+    let zip_path = paths.engines.join(format!("{dir_name}.zip"));
     // Engine downloads are user-started installs, allowed at every level.
     let client = net::external_client(Connectivity::Offline, Purpose::ModelDownload, false)?;
     download::fetch_verified(&client, &asset.url, &zip_path, asset.size, &asset.sha256, cancel, progress).await?;
 
-    let staging = paths.engines.join(format!(".staging-{}-{backend}", spec.build));
+    let staging = paths.engines.join(format!(".staging-{dir_name}"));
     let (zip_c, staging_c) = (zip_path.clone(), staging.clone());
     tokio::task::spawn_blocking(move || unzip(&zip_c, &staging_c))
         .await
@@ -78,7 +93,7 @@ pub async fn ensure_installed(
     }
     std::fs::rename(&staging, &dir).map_err(|e| e.to_string())?;
     std::fs::remove_file(&zip_path).ok();
-    find_server(&dir).ok_or_else(|| "The engine download didn't contain llama-server.".to_string())
+    find_exe(&dir, exe).ok_or_else(|| format!("The engine download didn't contain {exe}."))
 }
 
 fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
@@ -268,12 +283,12 @@ pub type JobRef = crate::winjob::Job;
 #[cfg(not(windows))]
 pub type JobRef = ();
 
-fn free_port() -> Result<u16, String> {
+pub fn free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     Ok(listener.local_addr().map_err(|e| e.to_string())?.port())
 }
 
-fn log_tail(path: &Path, lines: usize) -> String {
+pub fn log_tail(path: &Path, lines: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let all: Vec<&str> = text.lines().collect();
     all[all.len().saturating_sub(lines)..].join("\n")

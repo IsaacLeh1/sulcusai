@@ -135,8 +135,63 @@ ENGINE = {
 }
 
 
+MIT = {"name": "MIT", "url": "https://opensource.org/license/mit", "commercial": True}
+WHISPER_REPO = "ggerganov/whisper.cpp"
+
+# Speech recognition runs on the processor (whisper.cpp publishes CPU builds
+# for Windows; its GPU builds are CUDA-only and very large).
+SPEECH_ENGINE = {
+    "name": "whisper.cpp",
+    "license": "MIT",
+    "build": "v1.9.2",
+    "assets": {
+        "cpu-x64": {
+            "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.2/whisper-bin-x64.zip",
+            "size": 8194445,
+            "sha256": "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a",
+        },
+    },
+}
+
+# Silero voice detection (MIT), used by whisper.cpp to skip silence.
+SPEECH_VAD = {
+    "file": "ggml-silero-v5.1.2.bin",
+    "url": HF.format(repo="ggml-org/whisper-vad", file="ggml-silero-v5.1.2.bin"),
+    "size": 885098,
+    "sha256": "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf",
+    "license": MIT,
+}
+
+# id, name, file, size, sha256, seconds to encode one 30 s window on 8
+# modern cores (measured on an Intel Core Ultra 9 275HX with whisper.cpp
+# v1.9.2; a rough guide, replaced by a measurement after install),
+# description
+SPEECH_MODELS = [
+    ("whisper-base", "Whisper Base", "ggml-base-q5_1.bin", 59707625,
+     "422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898", 0.6,
+     "Quick and light. Fine for dictation in a quiet room."),
+    ("whisper-small", "Whisper Small", "ggml-small-q5_1.bin", 190085487,
+     "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb", 2.2,
+     "Noticeably more accurate and still fast. A good everyday choice."),
+    ("whisper-large-v3-turbo", "Whisper Large v3 Turbo", "ggml-large-v3-turbo-q5_0.bin", 574041195,
+     "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2", 11.0,
+     "The most accurate, including accents, noisy calls and other languages. Best for meetings."),
+]
+
+
+def speech():
+    models = []
+    for mid, name, f, size, sha, secs, desc in SPEECH_MODELS:
+        models.append({
+            "id": mid, "name": name, "publisher": "OpenAI", "source": f"https://huggingface.co/{WHISPER_REPO}",
+            "description": desc, "license": MIT, "languages": 99, "secs_per_30s": secs,
+            "file": f, "url": HF.format(repo=WHISPER_REPO, file=f), "size": size, "sha256": sha,
+        })
+    return {"engine": SPEECH_ENGINE, "vad": SPEECH_VAD, "models": models}
+
+
 def main():
-    out = {"schema": 1, "updated": "2026-10-06", "engine": ENGINE, "models": []}
+    out = {"schema": 1, "updated": "2026-10-06", "engine": ENGINE, "models": [], "speech": speech()}
     for mid, name, pub, repo, lic, tags, params, (nl, kv, hd, mx), act, desc in MODELS:
         variants = [
             {"quant": q, "quality": QUALITY[q], "file": f, "url": HF.format(repo=repo, file=f), "size": s, "sha256": h}
@@ -149,8 +204,8 @@ def main():
             "default_ctx": 8192, "tools": mid in TOOL_CAPABLE, "variants": variants,
         })
     path = pathlib.Path(__file__).with_name("catalog.json")
-    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {len(out['models'])} models to {path}")
+    path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(f"wrote {len(out['models'])} models and {len(out['speech']['models'])} speech models to {path}")
 
 
 if __name__ == "__main__":

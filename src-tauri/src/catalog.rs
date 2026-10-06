@@ -28,6 +28,7 @@ pub struct Catalog {
     pub updated: String,
     pub engine: EngineSpec,
     pub models: Vec<ModelSpec>,
+    pub speech: crate::speech::SpeechCatalog,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
