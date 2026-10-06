@@ -93,6 +93,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "mode", "TEXT NOT NULL DEFAULT 'auto'"),
     ("chats", "project_id", "TEXT"),
     ("chats", "incognito", "INTEGER NOT NULL DEFAULT 0"),
+    ("chats", "parent_id", "TEXT"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
@@ -286,9 +287,11 @@ pub struct Chat {
     pub project_id: Option<String>,
     /// Doesn't use or create memories, and is deleted when you leave it.
     pub incognito: bool,
+    /// The chat this one continues (auto-handoff).
+    pub parent_id: Option<String>,
 }
 
-const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito";
+const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito, parent_id";
 
 fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat> + '_ {
     move |r| {
@@ -302,6 +305,7 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
             mode: r.get(6)?,
             project_id: r.get(7)?,
             incognito: r.get::<_, i64>(8)? != 0,
+            parent_id: r.get(9)?,
         })
     }
 }
@@ -309,6 +313,11 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
 /// Incognito chats don't outlive the session.
 pub fn delete_incognito_chats(conn: &Connection, except: Option<&str>) -> Result<usize, String> {
     conn.execute("DELETE FROM chats WHERE incognito = 1 AND id != ?1", [except.unwrap_or("")]).map_err(err)
+}
+
+pub fn set_chat_parent(conn: &Connection, id: &str, parent: &str) -> Result<(), String> {
+    conn.execute("UPDATE chats SET parent_id = ?2 WHERE id = ?1", params![id, parent]).map_err(err)?;
+    Ok(())
 }
 
 pub fn set_chat_mode(conn: &Connection, id: &str, mode: &str) -> Result<(), String> {
@@ -348,6 +357,7 @@ pub fn create_chat_in(conn: &Connection, c: &Cipher, model_id: Option<String>, p
         mode: "auto".into(),
         project_id,
         incognito,
+        parent_id: None,
     };
     conn.execute(
         "INSERT INTO chats (id, title, model_id, web, created_at, updated_at, project_id, incognito) VALUES (?1, ?2, ?3, 0, ?4, ?4, ?5, ?6)",

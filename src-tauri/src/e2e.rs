@@ -362,3 +362,38 @@ async fn e2e_memory_carries_across_chats() {
     assert!(!after.iter().any(|m| m.content.to_lowercase().contains("cello")), "incognito saves nothing");
     state.engine.lock().await.stop().await;
 }
+
+/// A helper agent answers a lookup task, and a handoff summary carries the
+/// conversation into a new chat.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_helper_and_handoff() {
+    let (state, ep, cipher) = agent_harness().await;
+    let work = state.paths.data.join("work").join("shop");
+    std::fs::create_dir_all(work.join("src")).unwrap();
+    std::fs::write(work.join("src").join("cart.py"), "def add_item(cart, item):\n    cart.append(item)\n").unwrap();
+    std::fs::write(work.join("src").join("checkout.py"), "def apply_discount(total, code):\n    return total * 0.9 if code == 'SAVE10' else total\n").unwrap();
+    std::fs::write(work.join("README.md"), "# Shop\nA tiny shop.\n").unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&work).unwrap().display().to_string()).unwrap();
+
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &chat.id, "Use the delegate tool to send a helper to find which file in shop/ defines apply_discount, then tell me the file path.").await;
+    println!("reply: {reply}");
+    let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    let helper = msgs.iter().find(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|x| x["tool"] == "delegate"));
+    let helper = helper.expect("the model used a helper");
+    println!("helper report: {}", helper.content);
+    println!("helper steps: {}", helper.meta.as_ref().unwrap()["detail"]);
+    assert!(helper.content.contains("checkout"), "the helper found the file");
+
+    let old = crate::db::chat(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
+    let summary = crate::handoff::summarize(&ep, &chat::system_prompt(&Profile::default(), "today").0, &msgs).await.unwrap();
+    println!("summary:\n{summary}");
+    let new = crate::handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &old, &summary).unwrap();
+    let first = &crate::db::messages(&state.db.lock().unwrap(), &cipher, &new.id)[0];
+    assert!(first.content.contains("Continued from"));
+    let follow = say(&state, &ep, &cipher, &new.id, "Which file was it again? Just the path.").await;
+    println!("follow-up in new chat: {follow}");
+    assert!(follow.contains("checkout"), "the new chat knows from the summary");
+    state.engine.lock().await.stop().await;
+}

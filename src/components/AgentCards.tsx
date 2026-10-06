@@ -17,6 +17,7 @@ const TOOL_ICONS: Record<string, string> = {
   run_command: "⌨️",
   remember: "🧠",
   search_memory: "🧠",
+  delegate: "🤖",
 };
 
 /** A unified diff with added/removed lines colored. */
@@ -42,7 +43,7 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
 }
 
 /** One tool call and (once it has run) its result. */
-export function ToolCard({ call, meta, output, running }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean }) {
+export function ToolCard({ call, meta, output, running, liveSteps }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[] }) {
   const [open, setOpen] = useState(false);
   const icon = TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
@@ -59,7 +60,15 @@ export function ToolCard({ call, meta, output, running }: { call: ToolCall; meta
         </span>
         {expandable && <span className="chev" aria-hidden>{open ? "▾" : "▸"}</span>}
       </button>
-      {open && (detail ? <Detail kind={meta?.kind ?? "text"} detail={detail} /> : output ? <pre className="tool-output">{output}</pre> : null)}
+      {running && liveSteps && liveSteps.length > 0 && (
+        <ul className="helper-steps">
+          {liveSteps.map((st, i) => (
+            <li key={i}>{st}</li>
+          ))}
+        </ul>
+      )}
+      {open && call.name === "delegate" && output && <pre className="tool-output">{output}</pre>}
+      {open && (detail ? <Detail kind={meta?.kind ?? "text"} detail={detail} /> : output && call.name !== "delegate" ? <pre className="tool-output">{output}</pre> : null)}
     </div>
   );
 }

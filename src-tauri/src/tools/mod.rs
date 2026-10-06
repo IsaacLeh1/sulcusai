@@ -107,7 +107,23 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
         description: "Search what you remember from earlier chats." },
+    ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
+        description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
+
+fn delegate_params() -> Value {
+    json!({ "type": "object", "required": ["task"], "properties": {
+        "task": { "type": "string", "description": "What the helper should find out, with any details it needs. It can't see this conversation." } } })
+}
+
+/// Tools a helper agent may use: read-only, and no further helpers.
+pub fn helper_definitions(files: bool) -> Value {
+    let mut defs = definitions(Mode::Plan, files, false);
+    if let Some(list) = defs.as_array_mut() {
+        list.retain(|d| d["function"]["name"] != "delegate");
+    }
+    defs
+}
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
@@ -213,6 +229,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "read_file" => "read",
         "find_files" | "search_files" => "search for",
         "remember" => return "Couldn't save a memory".into(),
+        "delegate" => return "A helper couldn't finish".into(),
         "search_memory" => return "Couldn't search memory".into(),
         "write_file" => "write",
         "edit_file" => "edit",
@@ -260,6 +277,16 @@ mod tests {
         assert_eq!(only_memory, vec!["remember", "search_memory"]);
         assert!(!names(definitions(Mode::Auto, true, false)).iter().any(|n| n == "remember"));
         assert!(definitions(Mode::Auto, false, false).as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn helpers_get_read_tools_but_no_helpers_of_their_own() {
+        let defs = helper_definitions(true);
+        let names: Vec<&str> = defs.as_array().unwrap().iter().map(|d| d["function"]["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"read_file") && names.contains(&"search_files"));
+        assert!(!names.contains(&"delegate") && !names.contains(&"write_file") && !names.contains(&"remember"));
+        let main: Vec<String> = definitions(Mode::Auto, true, true).as_array().unwrap().iter().map(|d| d["function"]["name"].as_str().unwrap().to_string()).collect();
+        assert!(main.iter().any(|n| n == "delegate"));
     }
 
     #[test]

@@ -270,6 +270,7 @@ mod tests {
             mode: "auto".into(),
             project_id: None,
             incognito: false,
+            parent_id: None,
         };
         assert_eq!(chat_folders(&conn, &chat), vec!["C:\\shared"]);
         chat.project_id = Some("p".into());

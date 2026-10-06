@@ -125,6 +125,7 @@ export interface Chat {
   mode: RunMode;
   project_id: string | null;
   incognito: boolean;
+  parent_id: string | null;
 }
 
 export interface Project {
@@ -156,6 +157,10 @@ export interface ToolMeta {
   kind: "diff" | "command" | "text";
   detail?: string | null;
   tool?: string;
+  /** On the note in a chat that continued elsewhere. */
+  handoff_to?: string;
+  /** On the first message of a continued chat. */
+  handoff_from?: string;
 }
 
 export interface Preview {
@@ -310,7 +315,7 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" };
+  "chat:status": { chat_id: string; status: "loading" | "handoff" };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };
@@ -319,6 +324,8 @@ export interface ChatEvents {
   "agent:tool_start": { chat_id: string; call_id: string; tool: string };
   "agent:approval": PendingApproval;
   "agent:approval_done": { chat_id: string; call_id: string };
+  "agent:helper": { chat_id: string; call_id: string; step: string };
+  "chat:handoff": { from: string; to: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
   "security:locked": null;

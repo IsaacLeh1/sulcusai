@@ -94,6 +94,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [catalog, setCatalog] = useState<CatalogView | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
+  const [running, setRunning] = useState<string[]>([]);
+  const activeChatRef = useRef(activeChat);
+  activeChatRef.current = activeChat;
 
   const refreshChats = useCallback(async () => setChats(await api.chats()), []);
   const refreshCatalog = useCallback(async () => setCatalog(await api.catalog()), []);
@@ -119,9 +122,17 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         if (f.ok) toast(`${name} is installed and ready.`, "success");
         else if (!f.cancelled) toast(`${name} didn't install: ${f.error}`, "error");
       }),
-      on("chat:done", () => {
+      on("chat:done", (p) => {
+        setRunning((r) => r.filter((id) => id !== p.chat_id));
         refreshChats();
         refreshEngine();
+      }),
+      on("chat:start", (p) => setRunning((r) => (r.includes(p.chat_id) ? r : [...r, p.chat_id]))),
+      // A long chat continued in a new one: follow it.
+      on("chat:handoff", async (p) => {
+        await refreshChats();
+        setRunning((r) => [...r.filter((id) => id !== p.from), p.to]);
+        if (activeChatRef.current === p.from) setActiveChat(p.to);
       }),
       // The model is loaded by the time context is measured.
       on("chat:context", () => refreshEngine()),
@@ -273,6 +284,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               <span className="ellipsis">{c.title}</span>
               {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
               {c.web && <span className="globe-mini" title="Web on for this chat">🌐</span>}
+              {running.includes(c.id) && <span className="dot" title="Working" aria-label="Working" />}
             </button>
           ))}
         </div>
@@ -283,6 +295,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <ChatView
             chat={current}
             projectName={projects.find((p) => p.id === current?.project_id)?.name ?? null}
+            onOpenChat={openChat}
             installed={installed}
             defaultModel={settings.default_model}
             connectivity={settings.connectivity}

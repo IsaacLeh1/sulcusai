@@ -22,6 +22,8 @@ use crate::{memory, projects, AppState};
 
 /// Most model replies in one turn before the agent stops and checks in.
 const MAX_STEPS: usize = 30;
+/// Most replies a helper agent gets for its task.
+const HELPER_STEPS: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -323,11 +325,85 @@ impl Turn {
             memory: tools::MemoryCtx { db: &self.state.db, cipher: &self.cipher, chat_id: &self.chat_id, project_id },
         };
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
-        let outcome = tools::run(&call.name, &args, &ctx).await;
+        let outcome = if call.name == "delegate" {
+            match tools::arg_str(&args, "task") {
+                Ok(task) => self.run_helper(&call.id, task, &ctx).await,
+                Err(e) => Outcome::error(tools::failed_title(&call.name, &args), e),
+            }
+        } else {
+            tools::run(&call.name, &args, &ctx).await
+        };
         if let Some(title) = outcome.meta.get("title").and_then(Value::as_str) {
             self.log(title);
         }
         outcome
+    }
+
+    /// A helper agent: fresh context, read-only tools, one task, a short
+    /// report back. Its steps show inside the delegate card, not the chat.
+    async fn run_helper(&self, call_id: &str, task: &str, ctx: &tools::Ctx<'_>) -> Outcome {
+        let short: String = task.chars().take(60).collect();
+        let title = format!("Helper: {short}");
+        let defs = tools::helper_definitions(!ctx.sandbox.is_empty());
+        let folders: Vec<String> = ctx.sandbox.roots().iter().map(|r| format!("{}/", ctx.sandbox.display(r))).collect();
+        let system = format!(
+            "{}\n\nYou are a helper agent working for the main assistant. Do only the task below, using the read-only tools \
+             on these folders: {}. Write paths starting with the folder name. Then reply with a concise, factual report of \
+             what you found, citing file paths and line numbers. You can't change anything.",
+            self.base,
+            if folders.is_empty() { "(none shared)".to_string() } else { folders.join(", ") }
+        );
+        let msg = |role: &str, content: String| Message {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: role.into(),
+            content,
+            ..Default::default()
+        };
+        let mut history = vec![msg("user", task.to_string())];
+        let mut steps: Vec<String> = Vec::new();
+        for _ in 0..HELPER_STEPS {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Outcome::error(title, "Stopped by the user.");
+            }
+            let kept = match chat::fit_history(&self.ep, &system, "", Some(&defs), &history).await {
+                Ok((kept, _)) => kept,
+                Err(e) => return Outcome::error(title, e),
+            };
+            let finished = match chat::stream(&self.ep, chat::api_messages(&system, &kept), Some(&defs), &self.cancel, |_| {}).await {
+                Ok(f) => f,
+                Err(e) => return Outcome::error(title, e),
+            };
+            let calls = finished.tool_calls.clone();
+            let mut assistant = msg("assistant", finished.content.clone());
+            assistant.tool_calls = (!calls.is_empty()).then(|| calls.clone());
+            history.push(assistant);
+            if calls.is_empty() {
+                let detail = if steps.is_empty() { None } else { Some(steps.iter().map(|s| format!("• {s}")).collect::<Vec<_>>().join("\n")) };
+                let report = if finished.content.trim().is_empty() { "The helper finished without a report.".to_string() } else { finished.content };
+                return Outcome::ok(report, title, "text", detail);
+            }
+            for c in &calls {
+                let args: Value = serde_json::from_str(if c.arguments.trim().is_empty() { "{}" } else { &c.arguments }).unwrap_or_default();
+                let read_only = tools::find(&c.name).is_some_and(|d| d.risk == Risk::Read) && c.name != "delegate";
+                let out = if read_only {
+                    tools::run(&c.name, &args, ctx).await
+                } else {
+                    Outcome::error(tools::failed_title(&c.name, &args), "Helpers can only look, not change anything.")
+                };
+                let step = out.meta.get("title").and_then(Value::as_str).unwrap_or(&c.name).to_string();
+                self.emit("agent:helper", json!({ "chat_id": self.chat_id, "call_id": call_id, "step": step }));
+                steps.push(step);
+                let mut result = msg("tool", out.text);
+                result.tool_call_id = Some(c.id.clone());
+                history.push(result);
+            }
+        }
+        Outcome::ok(
+            format!("The helper ran out of steps. What it looked at:\n{}", steps.join("\n")),
+            title,
+            "text",
+            Some(steps.join("\n")),
+        )
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {

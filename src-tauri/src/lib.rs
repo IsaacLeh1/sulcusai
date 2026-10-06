@@ -12,6 +12,7 @@ mod download;
 #[cfg(all(test, windows))]
 mod e2e;
 mod engine;
+mod handoff;
 mod hardware;
 mod hello;
 mod memory;
@@ -523,7 +524,7 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
     };
 
     let turn_id = uuid::Uuid::new_v4().to_string();
-    let (installed, profile, mode) = {
+    let (chat, installed, profile) = {
         let conn = state.db.lock().unwrap();
         let chat = db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
         let model_id = chat
@@ -535,20 +536,9 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
         if chat.model_id.is_none() {
             db::set_chat_model(&conn, &chat_id, &model_id)?;
         }
-        let first = db::message_count(&conn, &chat_id) == 0;
-        db::add_message(&conn, &cipher, &Message {
-            id: turn_id.clone(),
-            chat_id: chat_id.clone(),
-            role: "user".into(),
-            content: text.clone(),
-            created_at: db::now_ms(),
-            ..Default::default()
-        })?;
-        if first {
-            db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
-        }
-        (installed, db::profile(&conn, &cipher), tools::Mode::parse(&chat.mode))
+        (chat, installed, db::profile(&conn, &cipher))
     };
+    let mode = tools::Mode::parse(&chat.mode);
 
     let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
     let budget = state.budget();
@@ -585,6 +575,36 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
+
+    // Nearly full: summarize and continue in a fresh chat.
+    let last_context = state.contexts.lock().unwrap().get(&chat_id).cloned();
+    let mut chat_id = chat_id;
+    if !chat.incognito && handoff::needed(last_context.as_ref()) {
+        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "handoff" })).ok();
+        let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
+        let summary = handoff::summarize(&ep, &base, &history).await?;
+        let new = handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &chat, &summary)?;
+        state.log("chat", "A long chat continued in a new chat with a summary");
+        app.emit("chat:handoff", json!({ "from": chat_id, "to": new.id })).ok();
+        chat_id = new.id;
+    }
+
+    {
+        let conn = state.db.lock().unwrap();
+        let first = db::message_count(&conn, &chat_id) == 0;
+        db::add_message(&conn, &cipher, &Message {
+            id: turn_id.clone(),
+            chat_id: chat_id.clone(),
+            role: "user".into(),
+            content: text.clone(),
+            created_at: db::now_ms(),
+            ..Default::default()
+        })?;
+        if first {
+            db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
+        }
+    }
+
     let emitter = app.clone();
     let turn = agent::Turn {
         emit: Arc::new(move |event: &str, payload: serde_json::Value| {

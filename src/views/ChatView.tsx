@@ -22,6 +22,7 @@ import type { PushToast } from "../components/Toasts";
 interface Props {
   chat: Chat | null;
   projectName: string | null;
+  onOpenChat: (id: string) => void;
   installed: ModelCard[];
   defaultModel: string | null;
   connectivity: Connectivity;
@@ -77,10 +78,12 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
+  const [handingOff, setHandingOff] = useState(false);
   const [context, setContext] = useState<ContextInfo | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +117,11 @@ function Conversation({ chat, projectName, installed, defaultModel, connectivity
   useEffect(() => {
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
     const subs = [
-      on("chat:status", mine(() => setStatus("loading"))),
+      on("chat:status", mine((p) => {
+        if (p.status === "handoff") setHandingOff(true);
+        else setStatus("loading");
+      })),
+      on("agent:helper", mine((p) => setHelperSteps((all) => ({ ...all, [p.call_id]: [...(all[p.call_id] ?? []), p.step] })))),
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:start", mine((p) => {
         setStatus("thinking");
@@ -222,9 +229,9 @@ function Conversation({ chat, projectName, installed, defaultModel, connectivity
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall],
+    [messages, undoable, busy, runningCall, helperSteps],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -255,9 +262,14 @@ function Conversation({ chat, projectName, installed, defaultModel, connectivity
         </div>
       </header>
 
-      {(chat.incognito || projectName) && (
+      {(chat.incognito || projectName || chat.parent_id) && (
         <div className={`chat-banner ${chat.incognito ? "incognito" : ""}`}>
-          {chat.incognito ? "🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it." : `📚 In project ${projectName}`}
+          {chat.incognito ? "🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it." : projectName ? `📚 In project ${projectName}` : null}
+          {chat.parent_id && (
+            <button className="link" onClick={() => onOpenChat(chat.parent_id!)}>
+              ↩ Continues an earlier chat
+            </button>
+          )}
         </div>
       )}
       <div className="messages" ref={scroller}>
@@ -279,6 +291,7 @@ function Conversation({ chat, projectName, installed, defaultModel, connectivity
         {pending.map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
+        {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
         {status === "loading" && !streaming && <p className="muted small pad">Loading {model?.name ?? "the model"} into memory…</p>}
         {status === "working" && !streaming && pending.length === 0 && <p className="muted small pad">Working…</p>}
         {showRunPlan && (
@@ -405,7 +418,15 @@ function Conversation({ chat, projectName, installed, defaultModel, connectivity
 
 /** Messages as the reader sees them: tool results tucked into their calls,
  *  and an Undo button at the end of each turn that changed files. */
-function renderItems(messages: Message[], undoable: Set<string>, busy: boolean, runningCall: string | null, undo: (turnId: string) => void): ReactNode[] {
+function renderItems(
+  messages: Message[],
+  undoable: Set<string>,
+  busy: boolean,
+  runningCall: string | null,
+  undo: (turnId: string) => void,
+  helperSteps: Record<string, string[]>,
+  openChat: (id: string) => void,
+): ReactNode[] {
   const results = new Map<string, Message>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
 
@@ -430,9 +451,14 @@ function renderItems(messages: Message[], undoable: Set<string>, busy: boolean, 
       out.push(
         <Fragment key={m.id}>
           {(m.content || m.thinking) && <MessageView m={m} />}
+          {m.meta?.handoff_to && (
+            <div className="undo-row">
+              <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>Open the continued chat →</button>
+            </div>
+          )}
           {m.tool_calls?.map((c) => {
             const r = results.get(c.id);
-            return <ToolCard key={c.id} call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} />;
+            return <ToolCard key={c.id} call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} />;
           })}
         </Fragment>,
       );
