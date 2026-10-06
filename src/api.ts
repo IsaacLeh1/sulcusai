@@ -413,6 +413,18 @@ export interface MeetingHit {
   lines: string[];
 }
 
+export interface VoicePack {
+  id: string;
+  name: string;
+  publisher: string;
+  description: string;
+  license: License;
+  languages: string[];
+  styles: { id: string; name: string; gender: string }[];
+  size: number;
+  installed: boolean;
+}
+
 export interface Language {
   code: string;
   name: string;
@@ -528,6 +540,9 @@ export const api = {
   translate: (text: string, to: string, detect: boolean) => invoke<{ text: string; detected: string | null }>("translate", { text, to, detect }),
   languages: () => invoke<Language[]>("translation_languages"),
   translateFile: (path: string, to: string) => invoke<string>("translate_file", { path, to }),
+  voicePacks: () => invoke<VoicePack[]>("voice_packs"),
+  installVoicePack: (packId: string) => invoke<void>("install_voice_pack", { packId }),
+  removeVoicePack: (packId: string) => invoke<void>("remove_voice_pack", { packId }),
 };
 
 export type DictationEvent =

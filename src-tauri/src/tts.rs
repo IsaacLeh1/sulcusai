@@ -15,7 +15,14 @@ pub struct Voice {
     pub language: String,
     pub gender: String,
     pub engine: &'static str,
+    /// Languages a multilingual voice speaks (empty: just `language`).
+    #[serde(default)]
+    pub languages: Vec<String>,
 }
+
+/// Asks for a Windows voice even when natural voices are installed (the
+/// speech self-test uses a fixed, known voice).
+pub const WINDOWS_DEFAULT: &str = "system:";
 
 /// Mono 16-bit audio at `rate`.
 #[derive(Debug, Clone)]
@@ -24,22 +31,51 @@ pub struct Speech {
     pub samples: Vec<i16>,
 }
 
-/// Every voice available on this PC.
+/// Every voice available on this PC: natural voices first, if installed.
 pub fn voices() -> Result<Vec<Voice>, String> {
-    std::thread::spawn(imp::voices).join().map_err(|_| "Listing voices failed.".to_string())?
+    let mut out: Vec<Voice> = crate::natural::installed()
+        .map(|i| {
+            i.pack
+                .styles
+                .iter()
+                .map(|s| Voice {
+                    id: format!("supertonic:{}", s.id),
+                    name: format!("Natural · {}", s.name),
+                    language: "multi".into(),
+                    gender: s.gender.clone(),
+                    engine: "natural",
+                    languages: i.pack.languages.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.extend(std::thread::spawn(imp::voices).join().map_err(|_| "Listing voices failed.".to_string())??);
+    Ok(out)
 }
 
 /// Speaks `text` (plain text; see `speakable`). Blocks, so call it from a
-/// blocking thread. `rate` is 1.0 for normal speed.
-pub fn synthesize(text: &str, voice: Option<&str>, rate: f64) -> Result<Speech, String> {
-    let system_id = voice.and_then(|v| v.strip_prefix("system:"));
+/// blocking thread. `rate` is 1.0 for normal speed; `language` is a code
+/// such as "en" (natural voices need it to read correctly).
+pub fn synthesize(text: &str, voice: Option<&str>, language: Option<&str>, rate: f64) -> Result<Speech, String> {
+    if let Some(style) = voice.and_then(|v| v.strip_prefix("supertonic:")) {
+        return crate::natural::synthesize(text, style, language, rate.clamp(0.5, 2.0));
+    }
+    let system_id = voice.and_then(|v| v.strip_prefix("system:")).filter(|id| !id.is_empty());
     imp::synthesize(text, system_id, rate.clamp(0.5, 3.0))
 }
 
-/// Picks the configured voice, else a Windows voice for `language`, else the
-/// first one.
+fn speaks(v: &Voice, lang: &str) -> bool {
+    v.languages.iter().any(|l| l == lang) || v.language.to_ascii_lowercase().starts_with(lang)
+}
+
+/// Picks the configured voice, else a natural voice that speaks the
+/// language, else a Windows voice for it, else the first one.
 pub fn pick_voice<'a>(voices: &'a [Voice], configured: Option<&str>, language: Option<&str>) -> Option<&'a Voice> {
     if let Some(v) = configured.and_then(|id| voices.iter().find(|v| v.id == id)) {
+        return Some(v);
+    }
+    let lang = language.filter(|l| !l.is_empty()).map(str::to_ascii_lowercase);
+    if let Some(v) = voices.iter().find(|v| v.engine == "natural" && speaks(v, lang.as_deref().unwrap_or("en"))) {
         return Some(v);
     }
     if let Some(lang) = language.filter(|l| !l.is_empty()) {
@@ -48,7 +84,8 @@ pub fn pick_voice<'a>(voices: &'a [Voice], configured: Option<&str>, language: O
             return Some(v);
         }
     }
-    voices.first()
+    // Nobody speaks it: a Windows voice copes better than a natural one.
+    voices.iter().find(|v| v.engine != "natural").or(voices.first())
 }
 
 /// Strips Markdown and other things that sound wrong read aloud.
@@ -217,6 +254,7 @@ mod imp {
                 language: v.Language().map_err(e)?.to_string(),
                 gender: if v.Gender().map_err(e)? == VoiceGender::Female { "female" } else { "male" }.into(),
                 engine: "system",
+                languages: Vec::new(),
             });
         }
         Ok(out)
@@ -307,10 +345,15 @@ mod tests {
 
     #[test]
     fn voice_choice_prefers_setting_then_language() {
-        let v = |id: &str, lang: &str| Voice { id: id.into(), name: id.into(), language: lang.into(), gender: "female".into(), engine: "system" };
-        let voices = vec![v("a", "en-US"), v("b", "de-DE")];
+        let v = |id: &str, lang: &str| Voice { id: id.into(), name: id.into(), language: lang.into(), gender: "female".into(), engine: "system", languages: Vec::new() };
+        let mut voices = vec![v("a", "en-US"), v("b", "de-DE")];
         assert_eq!(pick_voice(&voices, Some("b"), None).unwrap().id, "b");
         assert_eq!(pick_voice(&voices, Some("gone"), Some("de")).unwrap().id, "b");
         assert_eq!(pick_voice(&voices, None, Some("fr")).unwrap().id, "a");
+        // A natural voice wins when it speaks the language.
+        voices.insert(0, Voice { engine: "natural", languages: vec!["en".into(), "de".into()], ..v("n", "multi") });
+        assert_eq!(pick_voice(&voices, None, Some("de")).unwrap().id, "n");
+        assert_eq!(pick_voice(&voices, None, None).unwrap().id, "n");
+        assert_eq!(pick_voice(&voices, None, Some("zh")).unwrap().id, "a", "no Chinese voice: falls back to the first Windows one");
     }
 }

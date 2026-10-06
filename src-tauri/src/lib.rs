@@ -20,6 +20,7 @@ mod hello;
 mod mcp;
 mod meeting;
 mod memory;
+mod natural;
 mod net;
 mod paths;
 mod projects;
@@ -719,10 +720,12 @@ pub fn run() {
             let conn = db::open(&paths.db)?;
             let vault = open_vault(&paths)?;
             let hardware = hardware::detect(&paths.models);
+            let catalog = Catalog::bundled();
+            natural::refresh(&paths, &catalog.voices);
             let state = AppState {
                 db: Mutex::new(conn),
                 vault: Mutex::new(vault),
-                catalog: Catalog::bundled(),
+                catalog,
                 hardware: RwLock::new(hardware),
                 engine: tokio::sync::Mutex::new(Engine::default()),
                 installs: Mutex::new(HashMap::new()),
@@ -852,6 +855,9 @@ pub fn run() {
             translate::translate,
             translate::translation_languages,
             translate::translate_file,
+            natural::voice_packs,
+            natural::install_voice_pack,
+            natural::remove_voice_pack,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

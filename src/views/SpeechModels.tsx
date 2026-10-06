@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Models › Speech: speech-recognition models for dictation, voice chats and meetings.
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type InstallProgress, type SpeechCard, type SpeechView } from "../api";
+import { api, errorText, on, type InstallProgress, type SpeechCard, type SpeechView, type VoicePack } from "../api";
 import { bytes, percent } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -12,7 +12,11 @@ function speedText(speed: number): string {
 
 export function SpeechModels({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {
   const [view, setView] = useState<SpeechView | null>(null);
-  const refresh = useCallback(() => api.speechView().then(setView).catch((e) => toast(errorText(e), "error")), [toast]);
+  const [packs, setPacks] = useState<VoicePack[]>([]);
+  const refresh = useCallback(() => {
+    api.speechView().then(setView).catch((e) => toast(errorText(e), "error"));
+    api.voicePacks().then(setPacks).catch(() => {});
+  }, [toast]);
   useEffect(() => {
     refresh();
     const sub = on("install:finished", () => refresh());
@@ -53,6 +57,16 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
       <div className="model-grid">
         {available.map((m) => (
           <AvailableSpeech key={m.id} m={m} live={m.id === view.recommended_live} p={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
+        ))}
+      </div>
+      <h2>Voices</h2>
+      <p className="muted small">
+        Voices read replies aloud and talk in voice chats. Windows' built-in voices work already; natural voices sound far
+        more human.
+      </p>
+      <div className="model-grid">
+        {packs.map((p) => (
+          <VoicePackCard key={p.id} p={p} progress={progress[p.id]} otherBusy={busy && !progress[p.id]} onChanged={refresh} toast={toast} />
         ))}
       </div>
       {view.hidden > 0 && (
@@ -120,7 +134,7 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
 }
 
 function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
-  const label = { engine: "Setting up speech recognition", verify: "Checking the file", download: "Downloading", benchmark: "Testing it with a spoken sentence" }[p.phase];
+  const label = { engine: "Setting up the speech engine", verify: "Checking the file", download: "Downloading", benchmark: "Testing it" }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">
@@ -167,6 +181,74 @@ function InstalledSpeech({ m, view, onChanged, toast }: { m: SpeechCard; view: S
               onClick={async () => {
                 try {
                   await api.removeSpeech(m.id);
+                  setConfirm(false);
+                  onChanged();
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        </Modal>
+      )}
+    </article>
+  );
+}
+
+function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoicePack; progress?: InstallProgress; otherBusy: boolean; onChanged: () => void; toast: PushToast }) {
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <article className={`card model ${p.installed ? "installed" : ""}`}>
+      <div className="model-head">
+        <div>
+          <h3>{p.name}</h3>
+          <span className="muted small">{p.publisher} · {p.styles.length} voices · {p.languages.length} languages</span>
+        </div>
+        {p.installed && <span className="badge">Installed</span>}
+      </div>
+      <p className="desc">{p.description}</p>
+      <div className="tags">
+        <span className="tag license" title={`${p.license.note ?? p.license.name}\n${p.license.url}`}>{p.license.name}</span>
+      </div>
+      {progress ? (
+        <SpeechProgress id={p.id} p={progress} />
+      ) : p.installed ? (
+        <div className="install-row">
+          <span className="muted small">Choose a voice in Settings › Voice and meetings.</span>
+          <span className="spacer" />
+          <button className="btn ghost danger" onClick={() => setConfirm(true)}>Remove</button>
+        </div>
+      ) : (
+        <div className="install-row">
+          <span className="muted small">{bytes(p.size)} download</span>
+          <span className="spacer" />
+          <button
+            className="btn primary"
+            disabled={otherBusy}
+            onClick={async () => {
+              try {
+                await api.installVoicePack(p.id);
+              } catch (e) {
+                toast(errorText(e), "error");
+              }
+            }}
+          >
+            Install
+          </button>
+        </div>
+      )}
+      {confirm && (
+        <Modal title={`Remove ${p.name}?`} onClose={() => setConfirm(false)}>
+          <p>This deletes the voices ({bytes(p.size)}) from this PC. Replies will be read by Windows' voices.</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
+            <button
+              className="btn danger-fill"
+              onClick={async () => {
+                try {
+                  await api.removeVoicePack(p.id);
                   setConfirm(false);
                   onChanged();
                 } catch (e) {

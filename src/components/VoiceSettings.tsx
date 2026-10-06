@@ -87,7 +87,7 @@ export function VoiceSection({ toast }: { toast: PushToast }) {
           <label>
             Voice for spoken replies
             <select value={s.voice ?? ""} onChange={(e) => save({ ...s, voice: e.target.value || null })}>
-              <option value="">Match the language</option>
+              <option value="">Automatic (natural if installed, matching the language)</option>
               {voices.map((v) => (
                 <option key={v.id} value={v.id}>{v.name} ({v.language})</option>
               ))}
@@ -102,7 +102,7 @@ export function VoiceSection({ toast }: { toast: PushToast }) {
           <button className="btn small" onClick={() => api.speak("Hi! This is how I'll sound when I read replies aloud.").catch((e) => toast(errorText(e), "error"))}>
             🔊 Test voice
           </button>
-          <span className="muted small">More voices: Windows Settings › Time &amp; language › Speech › Add voices.</span>
+          <span className="muted small">For natural voices, install them from Models › Speech.</span>
         </div>
         <label className="check">
           <input type="checkbox" checked={s.keep_meeting_audio} onChange={(e) => save({ ...s, keep_meeting_audio: e.target.checked })} />

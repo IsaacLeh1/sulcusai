@@ -192,13 +192,17 @@ impl Speaker {
         let settings = speech::voice_settings(&state.db.lock().unwrap());
         tauri::async_runtime::spawn(async move {
             let voices = tokio::task::spawn_blocking(tts::voices).await.ok().and_then(Result::ok).unwrap_or_default();
-            let code = language.as_deref().and_then(language_code);
+            let code = language.as_deref().and_then(language_code).or_else(|| language_code(&settings.language));
             let voice = tts::pick_voice(&voices, settings.voice.as_deref(), code).map(|v| v.id.clone());
+            if voice.as_deref().is_some_and(|v| v.starts_with("supertonic:")) {
+                let _ = tokio::task::spawn_blocking(crate::natural::warm).await;
+            }
             while let Some(text) = rx.recv().await {
                 let my_gen = gen.load(Ordering::SeqCst);
                 let v = voice.clone();
                 let rate = settings.rate;
-                let Ok(Ok(s)) = tokio::task::spawn_blocking(move || tts::synthesize(&text, v.as_deref(), rate)).await else {
+                let lang = code.map(str::to_string);
+                let Ok(Ok(s)) = tokio::task::spawn_blocking(move || tts::synthesize(&text, v.as_deref(), lang.as_deref(), rate)).await else {
                     continue;
                 };
                 if gen.load(Ordering::SeqCst) == my_gen {
@@ -230,7 +234,8 @@ pub async fn speak(state: AppStateRef<'_>, text: String, language: Option<String
     state.player.stop();
     let settings = speech::voice_settings(&state.db.lock().unwrap());
     let voices = tokio::task::spawn_blocking(tts::voices).await.map_err(|e| e.to_string())??;
-    let voice = tts::pick_voice(&voices, settings.voice.as_deref(), language.as_deref().and_then(language_code))
+    let code = language.as_deref().and_then(language_code).or_else(|| language_code(&settings.language));
+    let voice = tts::pick_voice(&voices, settings.voice.as_deref(), code)
         .map(|v| v.id.clone())
         .ok_or("No voices are installed in Windows.")?;
     let mut sentences = tts::Sentences::default();
@@ -239,7 +244,8 @@ pub async fn speak(state: AppStateRef<'_>, text: String, language: Option<String
     for part in parts {
         let v = voice.clone();
         let rate = settings.rate;
-        let s = tokio::task::spawn_blocking(move || tts::synthesize(&part, Some(&v), rate)).await.map_err(|e| e.to_string())??;
+        let lang = code.map(str::to_string);
+        let s = tokio::task::spawn_blocking(move || tts::synthesize(&part, Some(&v), lang.as_deref(), rate)).await.map_err(|e| e.to_string())??;
         state.player.play(s.rate, s.samples);
     }
     Ok(())

@@ -527,7 +527,7 @@ async fn e2e_speech_round_trip() {
     assert_eq!(page.status().as_u16(), 404, "speech server served a page without its path prefix");
 
     let say = "Please remind me to call the dentist on Wednesday at three thirty.";
-    let s = tokio::task::spawn_blocking(move || crate::tts::synthesize(say, None, 1.0)).await.unwrap().unwrap();
+    let s = tokio::task::spawn_blocking(move || crate::tts::synthesize(say, Some(crate::tts::WINDOWS_DEFAULT), Some("en"), 1.0)).await.unwrap().unwrap();
     let floats: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
     let samples = crate::audio::resample(&floats, s.rate, crate::audio::RATE);
     let started = std::time::Instant::now();
@@ -565,7 +565,7 @@ async fn e2e_dictation_streams_phrases() {
     crate::speech::install_for_test(&state, &spec, &AtomicBool::new(false)).await.unwrap();
     let ep = crate::speech::endpoint(&state, crate::speech::Use::Live).await.unwrap();
     let speak = |text: &'static str| {
-        let s = crate::tts::synthesize(text, None, 1.0).unwrap();
+        let s = crate::tts::synthesize(text, Some(crate::tts::WINDOWS_DEFAULT), Some("en"), 1.0).unwrap();
         let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
         crate::audio::resample(&f, s.rate, crate::audio::RATE)
     };
@@ -629,7 +629,7 @@ async fn e2e_meeting_records_transcribes_and_writes_notes() {
 
     let speak = |text: &str, voice: usize| {
         let voices = crate::tts::voices().unwrap();
-        let s = crate::tts::synthesize(text, Some(&voices[voice % voices.len()].id), 1.0).unwrap();
+        let s = crate::tts::synthesize(text, Some(&voices[voice % voices.len()].id), Some("en"), 1.0).unwrap();
         let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
         crate::audio::resample(&f, s.rate, crate::audio::RATE)
     };
@@ -710,4 +710,49 @@ async fn e2e_meeting_records_transcribes_and_writes_notes() {
     crate::speech::stop(&state).await;
     state.engine.lock().await.stop().await;
     let _ = std::fs::remove_dir_all(meeting::audio_dir(&state, &m.id));
+}
+
+/// Lists audio devices without opening any (no recording, no sound).
+#[test]
+#[ignore]
+fn e2e_audio_devices_are_listed() {
+    let inputs = crate::audio::devices(crate::audio::Flow::Input).unwrap();
+    let outputs = crate::audio::devices(crate::audio::Flow::Output).unwrap();
+    println!("inputs: {inputs:#?}\noutputs: {outputs:#?}");
+    assert!(outputs.iter().any(|d| d.default), "a default output device");
+}
+
+/// Natural voices end to end: install (runtime + Supertonic 3), speak in two
+/// languages, and check speech recognition understands what was said.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_natural_voice_is_understood() {
+    let state = speech_state();
+    let started = std::time::Instant::now();
+    crate::natural::install_for_test(&state).await.unwrap();
+    println!("installed natural voices in {:.1}s", started.elapsed().as_secs_f64());
+    let voices = crate::tts::voices().unwrap();
+    assert!(voices.iter().any(|v| v.id == "supertonic:F1"));
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &std::sync::atomic::AtomicBool::new(false)).await.unwrap();
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    for (lang, voice, text, words) in [
+        ("en", "supertonic:F2", "The quarterly report is due on Friday, so please send your numbers by Wednesday.", ["quarterly", "friday", "wednesday"]),
+        ("de", "supertonic:M1", "Das Treffen beginnt morgen um neun Uhr im großen Konferenzraum.", ["treffen", "morgen", "konferenzraum"]),
+    ] {
+        let t0 = std::time::Instant::now();
+        let s = tokio::task::spawn_blocking(move || crate::tts::synthesize(text, Some(voice), Some(lang), 1.0)).await.unwrap().unwrap();
+        let secs = s.samples.len() as f64 / s.rate as f64;
+        println!("{lang}: {secs:.1}s of speech made in {:.2}s ({} Hz)", t0.elapsed().as_secs_f64(), s.rate);
+        assert!(secs > 2.0 && secs < 15.0);
+        let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
+        let samples = crate::audio::resample(&f, s.rate, crate::audio::RATE);
+        let heard = crate::speech::transcribe(&ep, &samples, &crate::speech::Options { language: Some(lang.into()), ..Default::default() }).await.unwrap();
+        println!("  heard: {}", heard.text);
+        let lower = heard.text.to_lowercase();
+        for w in words {
+            assert!(lower.contains(w), "{lang}: expected “{w}” in “{}”", heard.text);
+        }
+    }
+    crate::speech::stop(&state).await;
 }

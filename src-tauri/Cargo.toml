@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Private, on-device AI workspace"
 license = "AGPL-3.0-only"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 
 [lib]
 name = "sulcusai_lib"
@@ -39,6 +39,10 @@ ignore = "0.4"
 regex = "1"
 dunce = "1"
 tauri-plugin-dialog = "2"
+# Neural voices and speaker labels: ONNX Runtime, loaded at run time from a
+# downloaded, hash-checked copy (nothing is bundled or fetched at build time).
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17"] }
+unicode-normalization = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

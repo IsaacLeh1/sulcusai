@@ -13,6 +13,7 @@ const THIRD_PARTY = [
   { name: "llama.cpp", license: "MIT", url: "https://github.com/ggml-org/llama.cpp" },
   { name: "whisper.cpp (downloaded with a speech model)", license: "MIT", url: "https://github.com/ggml-org/whisper.cpp" },
   { name: "Silero VAD (voice detection model)", license: "MIT", url: "https://github.com/snakers4/silero-vad" },
+  { name: "ONNX Runtime (downloaded with natural voices)", license: "MIT", url: "https://github.com/microsoft/onnxruntime" },
   { name: "SQLite", license: "Public domain", url: "https://sqlite.org/copyright.html" },
   { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },

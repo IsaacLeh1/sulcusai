@@ -447,6 +447,7 @@ pub fn start_idle_unloader(state: Arc<AppState>) {
             if idle && state.speech.users.load(Ordering::SeqCst) == 0 {
                 stop(&state).await;
             }
+            crate::natural::unload_if_idle();
         }
     });
 }
@@ -555,7 +556,7 @@ pub async fn transcribe(ep: &SpeechEndpoint, samples: &[f32], opts: &Options) ->
 async fn self_test(state: &AppState, model: &InstalledSpeech) -> Result<(f64, String), String> {
     const SENTENCE: &str = "Meeting notes: we agreed to move the product launch to Thursday, \
                             and Jordan will send the updated budget by Friday afternoon.";
-    let speech = tokio::task::spawn_blocking(|| crate::tts::synthesize(SENTENCE, None, 1.0))
+    let speech = tokio::task::spawn_blocking(|| crate::tts::synthesize(SENTENCE, Some(crate::tts::WINDOWS_DEFAULT), Some("en"), 1.0))
         .await
         .map_err(|e| e.to_string())??;
     let floats: Vec<f32> = speech.samples.iter().map(|s| *s as f32 / 32768.0).collect();
