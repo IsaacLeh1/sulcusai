@@ -545,7 +545,8 @@ mod tests {
     fn short_skills_are_inlined_and_long_ones_loaded_on_demand() {
         let short = Skill { name: "short".into(), description: "d".into(), body: "Do X.".into() };
         let long = Skill { name: "long".into(), description: "d".into(), body: "y".repeat(INLINE_SKILL_CHARS + 1) };
-        let (inline, later) = split_skills(&[short.clone(), long.clone()]);
+        let both = [short.clone(), long.clone()];
+        let (inline, later) = split_skills(&both);
         assert_eq!(inline.len(), 1);
         assert_eq!(later[0].name, "long");
         let p = skills_prompt(&[short, long]);
