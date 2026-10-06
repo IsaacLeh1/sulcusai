@@ -22,7 +22,7 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 
 ## How things work
 
-- **Data folder:** `%LOCALAPPDATA%\app.synapseai.desktop\`, containing `synapseai.db`, `models\<id>\`, `engines\<build>-<backend>\` and `logs\engine.log`.
+- **Data folder:** `%LOCALAPPDATA%\app.sulcusai.desktop\`, containing `sulcusai.db`, `models\<id>\`, `engines\<build>-<backend>\` and `logs\engine.log`.
 - **Engine:** llama.cpp build pinned in `catalog/catalog.json` (`engine.build`).
   - Vulkan build for any discrete GPU, CPU build otherwise. A CUDA build for NVIDIA is a possible later speed-up (it needs the ~400 MB cudart bundle).
   - Launched hidden with `--host 127.0.0.1 --port <random> --api-key <random> -np 1 --jinja --no-webui`.

@@ -1,5 +1,5 @@
 [package]
-name = "synapseai"
+name = "sulcusai"
 version = "0.1.0"
 description = "Private, on-device AI workspace"
 license = "AGPL-3.0-only"
@@ -7,7 +7,7 @@ edition = "2021"
 rust-version = "1.80"
 
 [lib]
-name = "synapseai_lib"
+name = "sulcusai_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -3381,7 +3381,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "synapseai"
+name = "sulcusai"
 version = "0.1.0"
 dependencies = [
  "chrono",

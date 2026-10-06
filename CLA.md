@@ -1,8 +1,8 @@
-# SynapseAI Individual Contributor License Agreement
+# SulcusAI Individual Contributor License Agreement
 
 > **Draft. Have a lawyer review this before accepting outside contributions.**
 
-Thank you for contributing to SynapseAI (the "Project"), maintained by
+Thank you for contributing to SulcusAI (the "Project"), maintained by
 Isaac Lehman (the "Maintainer"). This agreement makes clear what rights you grant
 when you contribute. Please read it before signing. You sign by commenting on
 your first pull request as the CLA bot instructs.

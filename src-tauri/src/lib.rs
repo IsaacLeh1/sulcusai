@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Isaac Lehman
-//! SynapseAI core: commands the window calls, and the state behind them.
+//! SulcusAI core: commands the window calls, and the state behind them.
 
 mod catalog;
 mod chat;
@@ -98,7 +98,7 @@ struct AppInfo {
 #[tauri::command]
 fn app_info(state: AppStateRef) -> AppInfo {
     AppInfo {
-        name: "SynapseAI",
+        name: "SulcusAI",
         version: env!("CARGO_PKG_VERSION"),
         data_dir: state.paths.data.display().to_string(),
     }
@@ -586,7 +586,7 @@ pub fn run() {
             unload_model,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building SynapseAI");
+        .expect("error while building SulcusAI");
 
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {

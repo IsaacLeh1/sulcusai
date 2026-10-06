@@ -1,6 +1,4 @@
-# SynapseAI
-
-*Working name. A different name will be chosen before release; see [Renaming](#renaming).*
+# SulcusAI
 
 A private AI workspace that runs on your own PC. It shows only the AI models
 your computer can actually run, installs them with one click, and keeps

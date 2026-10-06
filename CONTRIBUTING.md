@@ -1,10 +1,10 @@
-# Contributing to SynapseAI
+# Contributing to SulcusAI
 
 Thanks for helping. Please read this first. It's short.
 
 ## The license plan (please read)
 
-- SynapseAI is open source under the **GNU AGPL v3.0** ([LICENSE](LICENSE)).
+- SulcusAI is open source under the **GNU AGPL v3.0** ([LICENSE](LICENSE)).
 - **Future versions may be released under different terms, including closed
   source.** Versions already released under the AGPL will always stay
   available under the AGPL.

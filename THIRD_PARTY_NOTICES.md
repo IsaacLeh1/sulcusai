@@ -1,6 +1,6 @@
 # Third-party notices
 
-SynapseAI uses the open-source components below. Each one is under the license
+SulcusAI uses the open-source components below. Each one is under the license
 shown. The complete dependency list, with every license, comes from:
 
 ```
@@ -27,7 +27,7 @@ pnpm licenses list --prod
 
 ## AI models
 
-Models aren't distributed with SynapseAI. The app downloads them from their
+Models aren't distributed with SulcusAI. The app downloads them from their
 publishers' hosting at the user's request. Each model card shows the model's
 license, for example Apache-2.0, the Llama 3.2 Community License or the Gemma
 Terms of Use.

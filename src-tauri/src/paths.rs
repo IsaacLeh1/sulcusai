@@ -18,7 +18,7 @@ impl Paths {
             models: data.join("models"),
             engines: data.join("engines"),
             logs: data.join("logs"),
-            db: data.join("synapseai.db"),
+            db: data.join("sulcusai.db"),
             data,
         };
         for dir in [&paths.data, &paths.models, &paths.engines, &paths.logs] {

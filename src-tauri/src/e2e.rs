@@ -13,7 +13,7 @@ use crate::{chat, download, engine, hardware, net, paths::Paths};
 fn app_data_dir() -> std::path::PathBuf {
     // Same folder as Tauri's app_local_data_dir().
     let base = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).expect("LOCALAPPDATA");
-    base.join("app.synapseai.desktop")
+    base.join("app.sulcusai.desktop")
 }
 
 #[tokio::test]

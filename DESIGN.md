@@ -1,6 +1,6 @@
-# SynapseAI — Design Document
+# SulcusAI — Design Document
 
-*Working name: "SynapseAI" is already a registered US trademark (Intel/Habana Labs, Reg. 5741769, Class 9), so a different name must be chosen before release. Status: Phase 1 in progress (see HANDOFF.md). Drafted 2026-10-06.*
+*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phase 1 in progress (see HANDOFF.md).*
 
 ## 1. Vision
 
@@ -386,7 +386,7 @@ Each phase ends with a usable, installable build.
 
 ## 10. Open decisions
 
-1. **Name and branding.** An original name, since it is the owner's own product (see §8).
+1. ~~**Name and branding.**~~ **Decided:** SulcusAI. Still to do: a professional clearance search, a US trademark filing (Classes 9 and 42), and registering sulcusai.app / sulcusai.ai (unregistered as of 2026-10-06; sulcusai.com is parked for sale).
 2. ~~**Fresh build or fork.**~~ **Decided:** built from the ground up.
 3. **License.** Decided: open source first, closed later. Still open:
    - ~~the starting license~~ **decided: AGPL-3.0-only + CLA** (see §8)

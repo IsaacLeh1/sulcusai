@@ -18,7 +18,7 @@ const PER_MESSAGE_OVERHEAD: u32 = 6;
 
 pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
-        "You are SynapseAI, a helpful assistant that runs privately on the user's own computer. \
+        "You are SulcusAI, a helpful assistant that runs privately on the user's own computer. \
          Nothing in this conversation leaves their PC. Be clear, accurate and friendly. \
          Use Markdown when it helps. If you don't know something, say so.\n\nToday's date is {today}."
     );

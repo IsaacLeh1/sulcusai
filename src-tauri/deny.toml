@@ -27,7 +27,7 @@ allow = [
 private = { ignore = true }
 
 [[licenses.exceptions]]
-crate = "synapseai"
+crate = "sulcusai"
 allow = ["AGPL-3.0-only"]
 
 [bans]
