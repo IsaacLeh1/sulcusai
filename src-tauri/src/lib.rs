@@ -274,6 +274,19 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
     Ok(())
 }
 
+/// The stored path, or the same file in today's models folder if the data
+/// folder has moved since install.
+fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBuf {
+    let stored = std::path::PathBuf::from(&m.path);
+    if stored.exists() {
+        return stored;
+    }
+    match stored.file_name() {
+        Some(name) => paths.models.join(&m.model_id).join(name),
+        None => stored,
+    }
+}
+
 fn vfit_layers(spec: &ModelSpec, quant: &str, budget: &Budget) -> u32 {
     let fit = catalog::fit_model(spec, budget);
     fit.variant(quant).map_or(0, |v| v.gpu_layers)
@@ -459,7 +472,7 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
             None => {
                 app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
                 let log = state.paths.engine_log();
-                let model_path = std::path::PathBuf::from(&installed.path);
+                let model_path = model_file(&state.paths, &installed);
                 engine
                     .ensure(
                         LaunchSpec {
