@@ -21,7 +21,8 @@ pnpm licenses list --prod
 |---|---|
 | Tauri | MIT or Apache-2.0 |
 | SQLite (via rusqlite, bundled) | Public domain |
-| serde, tokio, reqwest, rustls, sysinfo, sha2, zip, uuid, chrono, windows-rs and other Rust crates | MIT and/or Apache-2.0 (checked by `cargo deny`) |
+| RustCrypto: aes-gcm, argon2, sha2, zeroize | MIT or Apache-2.0 |
+| serde, tokio, reqwest, rustls, sysinfo, zip, uuid, chrono, base64, windows-rs and other Rust crates | MIT and/or Apache-2.0 (checked by `cargo deny`) |
 | React, react-dom | MIT |
 | react-markdown, remark-gfm and the unified ecosystem | MIT |
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type AppInfo, type Connectivity, type Profile } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type Profile, type SecurityStatus } from "../api";
 import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
+import { SecuritySection } from "../components/Security";
 import type { PushToast } from "../components/Toasts";
 
 const THIRD_PARTY = [
@@ -11,10 +12,19 @@ const THIRD_PARTY = [
   { name: "SQLite", license: "Public domain", url: "https://sqlite.org/copyright.html" },
   { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
-  { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, sha2, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
+  { name: "RustCrypto (aes-gcm, argon2, sha2)", license: "MIT / Apache-2.0", url: "https://github.com/RustCrypto" },
+  { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
 ];
 
-export function SettingsView({ connectivity, onConnectivity, toast }: { connectivity: Connectivity; onConnectivity: (l: Connectivity) => void; toast: PushToast }) {
+interface Props {
+  connectivity: Connectivity;
+  onConnectivity: (l: Connectivity) => void;
+  security: SecurityStatus;
+  onSecurityChanged: () => void;
+  toast: PushToast;
+}
+
+export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, toast }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<Profile | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -54,7 +64,7 @@ export function SettingsView({ connectivity, onConnectivity, toast }: { connecti
 
       <section className="card">
         <h2>About you</h2>
-        <p className="muted small">Every chat includes this, so you don't have to repeat yourself. It stays on this PC.</p>
+        <p className="muted small">Every chat includes this, so you don't have to repeat yourself. It's encrypted on this PC.</p>
         {profile && (
           <div className="form">
             <label>
@@ -77,6 +87,8 @@ export function SettingsView({ connectivity, onConnectivity, toast }: { connecti
           </div>
         )}
       </section>
+
+      <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
 
       <section className="card">
         <h2>Connectivity</h2>

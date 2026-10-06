@@ -101,6 +101,8 @@ export interface CatalogView {
 export interface Settings {
   connectivity: Connectivity;
   default_model: string | null;
+  onboarded: boolean;
+  auto_lock_minutes: number;
 }
 
 export interface Profile {
@@ -150,6 +152,24 @@ export interface AppInfo {
   data_dir: string;
 }
 
+export interface SecurityStatus {
+  locked: boolean;
+  lock_enabled: boolean;
+  hello_enabled: boolean;
+  hello_available: boolean;
+  auto_lock_minutes: number;
+}
+
+export interface Action {
+  id: number;
+  at: number;
+  category: "model" | "network" | "privacy" | "security" | "chat" | string;
+  summary: string;
+}
+
+/** The core's error text while app lock is engaged. */
+export const LOCKED = "locked";
+
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
@@ -174,6 +194,19 @@ export const api = {
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
   unload: () => invoke<void>("unload_model"),
+  finishOnboarding: () => invoke<Settings>("finish_onboarding"),
+  security: () => invoke<SecurityStatus>("security_status"),
+  enableLock: (pin: string) => invoke<string>("enable_lock", { pin }),
+  changePin: (oldPin: string, newPin: string) => invoke<void>("change_pin", { oldPin, newPin }),
+  resetPin: (newPin: string) => invoke<string>("reset_pin", { newPin }),
+  disableLock: (pin: string) => invoke<void>("disable_lock", { pin }),
+  unlock: (method: "pin" | "recovery", secret: string) => invoke<void>("unlock", { method, secret }),
+  unlockWithHello: () => invoke<void>("unlock_with_hello"),
+  lockNow: () => invoke<void>("lock_now"),
+  setHello: (enabled: boolean) => invoke<void>("set_hello", { enabled }),
+  setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
+  actions: (limit?: number) => invoke<Action[]>("list_actions", { limit }),
+  clearActions: () => invoke<void>("clear_actions"),
 };
 
 export interface InstallProgress {
@@ -198,6 +231,7 @@ export interface ChatEvents {
   "chat:done": { chat_id: string; message: Message; tps: number | null; context: ContextInfo; cancelled: boolean };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
+  "security:locked": null;
 }
 
 export function on<K extends keyof ChatEvents>(name: K, handler: (payload: ChatEvents[K]) => void): Promise<UnlistenFn> {

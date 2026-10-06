@@ -4,14 +4,17 @@
 
 mod catalog;
 mod chat;
+mod crypto;
 mod db;
 mod download;
 #[cfg(all(test, windows))]
 mod e2e;
 mod engine;
 mod hardware;
+mod hello;
 mod net;
 mod paths;
+mod security;
 #[cfg(windows)]
 mod winjob;
 
@@ -26,15 +29,20 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use catalog::{Budget, Catalog, Hints, ModelFit, ModelSpec};
 use chat::{ContextInfo, Delta};
+use crypto::{Cipher, Vault};
 use db::{Chat, InstalledModel, Message, Profile, Settings};
 use engine::{Engine, EngineStatus, JobRef, LaunchSpec};
 use hardware::Hardware;
 use net::Connectivity;
 use paths::Paths;
 
+/// Error text the window recognizes to show the lock screen.
+pub const LOCKED: &str = "locked";
+
 pub struct AppState {
     paths: Paths,
     db: Mutex<Connection>,
+    vault: Mutex<Vault>,
     catalog: Catalog,
     hardware: RwLock<Hardware>,
     engine: tokio::sync::Mutex<Engine>,
@@ -62,6 +70,29 @@ impl AppState {
     fn settings(&self) -> Settings {
         db::settings(&self.db.lock().unwrap())
     }
+
+    /// The data key, or `LOCKED` while app lock is engaged.
+    fn cipher(&self) -> Result<Cipher, String> {
+        self.vault.lock().unwrap().cipher().ok_or_else(|| LOCKED.to_string())
+    }
+
+    fn log(&self, category: &str, summary: &str) {
+        db::log_action(&self.db.lock().unwrap(), category, summary);
+    }
+
+    /// Encrypts anything stored before encryption existed, then compacts the
+    /// file so the old plaintext is gone.
+    fn migrate_plaintext(&self, cipher: &Cipher) {
+        let mut conn = self.db.lock().unwrap();
+        match db::encrypt_legacy(&mut conn, cipher) {
+            Ok(0) => {}
+            Ok(n) => {
+                let _ = db::compact(&conn);
+                db::log_action(&conn, "privacy", &format!("Encrypted {n} previously saved items on this PC"));
+            }
+            Err(e) => eprintln!("encrypting saved data failed: {e}"),
+        }
+    }
 }
 
 /// Removes a cancel flag when the work it guards ends, however it ends.
@@ -84,6 +115,14 @@ fn claim<'a>(map: &'a Mutex<HashMap<String, Arc<AtomicBool>>>, key: &str) -> Opt
     let flag = Arc::new(AtomicBool::new(false));
     m.insert(key.to_string(), flag.clone());
     Some((flag, FlagGuard { map, key: key.to_string() }))
+}
+
+fn host_of(url: &str) -> String {
+    reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_else(|| "the internet".into())
+}
+
+fn size_label(bytes: u64) -> String {
+    format!("{:.1} GB", bytes as f64 / catalog::GIB as f64)
 }
 
 // ---------- app & hardware ----------
@@ -190,8 +229,13 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
         let emit = |phase: &str, received: u64, total: u64| {
             app.emit("install:progress", InstallProgress { model_id: &model_id, phase, received, total }).ok();
         };
+        state.log("model", &format!("Started installing {} ({} quality)", spec.name, variant.quality));
         let result: Result<(), String> = async {
             emit("engine", 0, 0);
+            if engine::installed_server(&state.paths, &state.catalog.engine, &backend).is_none() {
+                let asset = state.catalog.engine.assets.get(&backend).map(|a| a.url.clone()).unwrap_or_default();
+                state.log("network", &format!("Downloading the llama.cpp engine ({backend}) from {}", host_of(&asset)));
+            }
             let exe = engine::ensure_installed(&state.paths, &state.catalog.engine, &backend, &cancel, |r, t| {
                 emit("engine", r, t)
             })
@@ -200,6 +244,11 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
             let dest = state.paths.models.join(&spec.id).join(&variant.file);
             if dest.exists() {
                 emit("verify", 0, 0); // reusing an earlier download after a hash check
+            } else {
+                state.log(
+                    "network",
+                    &format!("Downloading {} ({}) from {}", spec.name, size_label(variant.size), host_of(&variant.url)),
+                );
             }
             let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
             download::fetch_verified(&client, &variant.url, &dest, variant.size, &variant.sha256, &cancel, |r, t| {
@@ -218,10 +267,8 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                     installed_at: db::now_ms(),
                     tps: None,
                 })?;
-                let mut settings = db::settings(&conn);
-                if settings.default_model.is_none() {
-                    settings.default_model = Some(spec.id.clone());
-                    db::set(&conn, "settings", &settings)?;
+                if db::settings(&conn).default_model.is_none() {
+                    db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone()))?;
                 }
             }
             // Replacing another version of the same model: drop the old file.
@@ -265,9 +312,18 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
         .await;
 
         let payload = match &result {
-            Ok(()) => json!({ "model_id": model_id, "ok": true }),
-            Err(e) if e == download::CANCELLED => json!({ "model_id": model_id, "ok": false, "cancelled": true }),
-            Err(e) => json!({ "model_id": model_id, "ok": false, "error": e }),
+            Ok(()) => {
+                state.log("model", &format!("Installed {} ({} quality)", spec.name, variant.quality));
+                json!({ "model_id": model_id, "ok": true })
+            }
+            Err(e) if e == download::CANCELLED => {
+                state.log("model", &format!("Cancelled installing {}", spec.name));
+                json!({ "model_id": model_id, "ok": false, "cancelled": true })
+            }
+            Err(e) => {
+                state.log("model", &format!("Installing {} failed: {e}", spec.name));
+                json!({ "model_id": model_id, "ok": false, "error": e })
+            }
         };
         app.emit("install:finished", payload).ok();
     });
@@ -301,6 +357,7 @@ fn cancel_install(state: AppStateRef, model_id: String) {
 
 #[tauri::command]
 async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), String> {
+    state.cipher()?;
     {
         let mut engine = state.engine.lock().await;
         if engine.status().model_id.as_deref() == Some(&model_id) {
@@ -313,11 +370,12 @@ async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), St
     }
     let conn = state.db.lock().unwrap();
     db::remove_installed(&conn, &model_id)?;
-    let mut settings = db::settings(&conn);
-    if settings.default_model.as_deref() == Some(&model_id) {
-        settings.default_model = db::installed_models(&conn).first().map(|m| m.model_id.clone());
-        db::set(&conn, "settings", &settings)?;
+    if db::settings(&conn).default_model.as_deref() == Some(&model_id) {
+        let next = db::installed_models(&conn).first().map(|m| m.model_id.clone());
+        db::update_settings(&conn, |s| s.default_model = next)?;
     }
+    let name = state.catalog.model(&model_id).map_or(model_id.as_str(), |m| m.name.as_str());
+    db::log_action(&conn, "model", &format!("Removed {name} and deleted its files"));
     Ok(())
 }
 
@@ -330,82 +388,109 @@ fn get_settings(state: AppStateRef) -> Settings {
 
 #[tauri::command]
 fn set_connectivity(state: AppStateRef, level: Connectivity) -> Result<Settings, String> {
+    state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let mut s = db::settings(&conn);
-    s.connectivity = level;
-    db::set(&conn, "settings", &s)?;
+    let before = db::settings(&conn).connectivity;
+    let s = db::update_settings(&conn, |s| s.connectivity = level)?;
+    if before != level {
+        let label = match level {
+            Connectivity::Offline => "Offline",
+            Connectivity::Web => "Local AI + Web",
+            Connectivity::Cloud => "Cloud",
+        };
+        db::log_action(&conn, "privacy", &format!("Connectivity set to {label}"));
+    }
     Ok(s)
 }
 
 #[tauri::command]
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
+    state.cipher()?;
     let conn = state.db.lock().unwrap();
     if db::installed_model(&conn, &model_id).is_none() {
         return Err("That model isn't installed.".into());
     }
-    let mut s = db::settings(&conn);
-    s.default_model = Some(model_id);
-    db::set(&conn, "settings", &s)?;
-    Ok(s)
+    db::update_settings(&conn, |s| s.default_model = Some(model_id))
 }
 
 #[tauri::command]
-fn get_profile(state: AppStateRef) -> Profile {
-    db::profile(&state.db.lock().unwrap())
+fn finish_onboarding(state: AppStateRef) -> Result<Settings, String> {
+    let conn = state.db.lock().unwrap();
+    db::update_settings(&conn, |s| s.onboarded = true)
+}
+
+#[tauri::command]
+fn get_profile(state: AppStateRef) -> Result<Profile, String> {
+    let c = state.cipher()?;
+    Ok(db::profile(&state.db.lock().unwrap(), &c))
 }
 
 #[tauri::command]
 fn set_profile(state: AppStateRef, profile: Profile) -> Result<(), String> {
-    db::set(&state.db.lock().unwrap(), "profile", &profile)
+    let c = state.cipher()?;
+    db::set_profile(&state.db.lock().unwrap(), &c, &profile)
 }
 
 // ---------- chats ----------
 
 #[tauri::command]
-fn list_chats(state: AppStateRef) -> Vec<Chat> {
-    db::list_chats(&state.db.lock().unwrap())
+fn list_chats(state: AppStateRef) -> Result<Vec<Chat>, String> {
+    let c = state.cipher()?;
+    Ok(db::list_chats(&state.db.lock().unwrap(), &c))
 }
 
 #[tauri::command]
 fn create_chat(state: AppStateRef) -> Result<Chat, String> {
+    let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
     let model = db::settings(&conn).default_model;
-    db::create_chat(&conn, model)
+    db::create_chat(&conn, &c, model)
 }
 
 #[tauri::command]
 fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
+    state.cipher()?;
     state.contexts.lock().unwrap().remove(&chat_id);
-    db::delete_chat(&state.db.lock().unwrap(), &chat_id)
+    let conn = state.db.lock().unwrap();
+    db::delete_chat(&conn, &chat_id)?;
+    db::log_action(&conn, "chat", "Deleted a chat and its messages");
+    Ok(())
 }
 
 #[tauri::command]
 fn rename_chat(state: AppStateRef, chat_id: String, title: String) -> Result<(), String> {
+    let c = state.cipher()?;
     let title = title.trim();
     if title.is_empty() {
         return Err("A chat needs a name.".into());
     }
-    db::update_chat(&state.db.lock().unwrap(), &chat_id, Some(title), None, None)
+    db::set_chat_title(&state.db.lock().unwrap(), &c, &chat_id, title)
 }
 
 #[tauri::command]
 fn set_chat_web(state: AppStateRef, chat_id: String, web: bool) -> Result<(), String> {
-    db::update_chat(&state.db.lock().unwrap(), &chat_id, None, None, Some(web))
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    db::set_chat_web(&conn, &chat_id, web)?;
+    db::log_action(&conn, "privacy", if web { "Turned on web access for one chat" } else { "Turned off web access for one chat" });
+    Ok(())
 }
 
 #[tauri::command]
 fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Result<(), String> {
+    state.cipher()?;
     let conn = state.db.lock().unwrap();
     if db::installed_model(&conn, &model_id).is_none() {
         return Err("That model isn't installed.".into());
     }
     state.contexts.lock().unwrap().remove(&chat_id);
-    db::update_chat(&conn, &chat_id, None, Some(&model_id), None)
+    db::set_chat_model(&conn, &chat_id, &model_id)
 }
 
 #[tauri::command]
-fn get_messages(state: AppStateRef, chat_id: String) -> Vec<Message> {
-    db::messages(&state.db.lock().unwrap(), &chat_id)
+fn get_messages(state: AppStateRef, chat_id: String) -> Result<Vec<Message>, String> {
+    let c = state.cipher()?;
+    Ok(db::messages(&state.db.lock().unwrap(), &c, &chat_id))
 }
 
 #[tauri::command]
@@ -426,13 +511,14 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
     if text.is_empty() {
         return Err("Type a message first.".into());
     }
+    let cipher = state.cipher()?;
     let Some((cancel, _guard)) = claim(&state.generations, &chat_id) else {
         return Err("Still answering the last message.".into());
     };
 
-    let (chat, installed, profile) = {
+    let (installed, profile) = {
         let conn = state.db.lock().unwrap();
-        let chat = db::chat(&conn, &chat_id).ok_or("That chat no longer exists.")?;
+        let chat = db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
         let model_id = chat
             .model_id
             .clone()
@@ -440,10 +526,10 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
             .ok_or("Install a model first: open Models and pick one.")?;
         let installed = db::installed_model(&conn, &model_id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
         if chat.model_id.is_none() {
-            db::update_chat(&conn, &chat_id, None, Some(&model_id), None)?;
+            db::set_chat_model(&conn, &chat_id, &model_id)?;
         }
-        let first = db::messages(&conn, &chat_id).is_empty();
-        db::add_message(&conn, &Message {
+        let first = db::message_count(&conn, &chat_id) == 0;
+        db::add_message(&conn, &cipher, &Message {
             id: uuid::Uuid::new_v4().to_string(),
             chat_id: chat_id.clone(),
             role: "user".into(),
@@ -452,11 +538,10 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
             created_at: db::now_ms(),
         })?;
         if first {
-            db::update_chat(&conn, &chat_id, Some(&chat::title_from(&text)), None, None)?;
+            db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
         }
-        (chat, installed, db::profile(&conn))
+        (installed, db::profile(&conn, &cipher))
     };
-    let _ = chat;
 
     let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
     let budget = state.budget();
@@ -493,7 +578,7 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
-    let history = db::messages(&state.db.lock().unwrap(), &chat_id);
+    let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
     let (kept, mut info) = chat::fit_history(&ep, &base, &about, &history).await?;
     state.contexts.lock().unwrap().insert(chat_id.clone(), info.clone());
     app.emit("chat:context", json!({ "chat_id": chat_id, "context": info })).ok();
@@ -523,7 +608,7 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
         created_at: db::now_ms(),
     };
     if !message.content.is_empty() || message.thinking.is_some() {
-        db::add_message(&state.db.lock().unwrap(), &message)?;
+        db::add_message(&state.db.lock().unwrap(), &cipher, &message)?;
     }
     if let (Some(p), Some(c)) = (finished.prompt_tokens, finished.completion_tokens) {
         info.last_total = Some(p + c);
@@ -550,16 +635,30 @@ async fn unload_model(state: AppStateRef<'_>) -> Result<(), String> {
     Ok(())
 }
 
+fn open_vault(paths: &Paths) -> Result<Vault, String> {
+    #[cfg(windows)]
+    let protector: Box<dyn crypto::Protector> = Box::new(crypto::dpapi::Dpapi);
+    #[cfg(not(windows))]
+    let protector: Box<dyn crypto::Protector> = return Err("Encryption at rest needs Windows for now.".into());
+    Vault::open(&paths.data.join("keys.json"), protector)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
-            let data = app.path().app_local_data_dir()?;
+            // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
+            let data = match std::env::var_os("SULCUSAI_DATA_DIR") {
+                Some(dir) => std::path::PathBuf::from(dir),
+                None => app.path().app_local_data_dir()?,
+            };
             let paths = Paths::new(data)?;
             let conn = db::open(&paths.db)?;
+            let vault = open_vault(&paths)?;
             let hardware = hardware::detect(&paths.models);
             let state = AppState {
                 db: Mutex::new(conn),
+                vault: Mutex::new(vault),
                 catalog: Catalog::bundled(),
                 hardware: RwLock::new(hardware),
                 engine: tokio::sync::Mutex::new(Engine::default()),
@@ -570,6 +669,9 @@ pub fn run() {
                 job: winjob::Job::kill_on_close().ok(),
                 paths,
             };
+            if let Ok(c) = state.cipher() {
+                state.migrate_plaintext(&c);
+            }
             app.manage(Arc::new(state));
             Ok(())
         })
@@ -583,6 +685,7 @@ pub fn run() {
             get_settings,
             set_connectivity,
             set_default_model,
+            finish_onboarding,
             get_profile,
             set_profile,
             list_chats,
@@ -597,6 +700,18 @@ pub fn run() {
             send_message,
             engine_status,
             unload_model,
+            security::security_status,
+            security::enable_lock,
+            security::change_pin,
+            security::reset_pin,
+            security::disable_lock,
+            security::unlock,
+            security::unlock_with_hello,
+            security::lock_now,
+            security::set_hello,
+            security::set_auto_lock,
+            security::list_actions,
+            security::clear_actions,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

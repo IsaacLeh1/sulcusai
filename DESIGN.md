@@ -1,6 +1,6 @@
 # SulcusAI — Design Document
 
-*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phase 1 in progress (see HANDOFF.md).*
+*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phase 1 complete; Phase 2 next (see HANDOFF.md).*
 
 ## 1. Vision
 
@@ -249,7 +249,7 @@ Settings → Advanced → "Enable advanced mode". A warning explains that these 
 
 ## 6. Safety, privacy and trust
 
-- App lock (PIN or Windows Hello). All local data is encrypted.
+- App lock (PIN or passphrase, recovery code, Windows Hello, auto-lock). Chats and the profile are encrypted at rest (AES-256-GCM, with the key sealed by Windows DPAPI and the PIN).
 - **Action log:** every agent action is recorded and searchable.
 - Undo and checkpoints. Emergency stop (button and hotkey).
 - Actions that always need confirmation, in every run mode:
@@ -276,7 +276,7 @@ Settings → Advanced → "Enable advanced mode". A warning explains that these 
 | Speech output | Kokoro-class voices (Apache-2.0) | Small, natural, local. Avoid the newer Piper fork (GPL-3.0); the original Piper (MIT) is OK if needed |
 | Images / video | **stable-diffusion.cpp** (MIT) | Covers generation, editing, and video models. **Not ComfyUI**: it is GPL-3.0, so bundling it would force the app open-source |
 | Music / audio | Local music and sound-effect models (chosen per catalog) | Filtered by specs |
-| Storage | SQLite (encrypted) + sqlite-vec for embeddings | One local file, no server |
+| Storage | SQLite with field-level AES-256-GCM encryption (key sealed by DPAPI + PIN), plus sqlite-vec for embeddings later | One local file, no server; avoids compiling OpenSSL for SQLCipher on Windows |
 | Meeting audio | Windows WASAPI loopback + mic capture | Hears both sides with no call bot |
 | Browser | Embedded Chromium/WebView2 with an authenticated automation channel | Isolated, controllable, with no exposed debug port |
 | Documents | Local docx/xlsx/pptx/pdf libraries | No Office needed |

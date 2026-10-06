@@ -254,3 +254,53 @@ select, .input {
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- security, lock screen ---------- */
+.lock, .onboarding { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.lock-card { width: min(400px, 100%); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); padding: 28px; display: flex; flex-direction: column; gap: 14px; text-align: left; }
+.lock-card img { border-radius: 14px; align-self: center; }
+.lock-card h1 { text-align: center; }
+.lock-links { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; }
+.input.pin { letter-spacing: 0.2em; font-size: 16px; }
+.input.code { font-family: "Cascadia Code", Consolas, monospace; text-transform: uppercase; }
+.error-text { color: var(--danger); margin: 0; font-size: 13px; }
+.recovery-code {
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 20px; letter-spacing: 0.08em; text-align: center;
+  padding: 14px; border-radius: 10px; background: var(--code-bg); border: 1px dashed var(--border); user-select: all;
+}
+.row { display: flex; align-items: center; gap: 10px; }
+.check { display: flex !important; flex-direction: row !important; align-items: center; gap: 8px; font-weight: 500 !important; }
+.setting-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; border-top: 1px solid var(--border); }
+.setting-row > div:first-child { min-width: 0; }
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--border); transition: background 0.15s; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:disabled + span { opacity: 0.5; }
+.switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lock-btn { margin-left: auto; font-size: 15px; opacity: 0.75; }
+.lock-btn:hover { opacity: 1; }
+
+/* ---------- activity ---------- */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.chip { border: 1px solid var(--border); background: var(--panel); border-radius: 99px; padding: 4px 12px; cursor: pointer; font-size: 12.5px; }
+.chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.input.search { width: auto; flex: 1; min-width: 160px; padding: 5px 10px; }
+.activity-list { list-style: none; margin: 0; padding: 0; }
+.activity-list li { display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.activity-list li:last-child { border-bottom: 0; }
+.activity-summary { overflow-wrap: anywhere; }
+
+/* ---------- onboarding ---------- */
+.onboarding-card { width: min(640px, 100%); background: var(--panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); padding: 28px 32px; display: flex; flex-direction: column; gap: 14px; }
+.onboarding-logo { border-radius: 14px; }
+.steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 6px; flex-wrap: wrap; }
+.steps li { font-size: 11.5px; color: var(--muted); padding: 2px 10px; border-radius: 99px; background: var(--code-bg); }
+.steps li.active { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+.steps li.done { color: var(--accent); }
+.bullets { padding-left: 20px; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.callout { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; margin: 0; }
+.onboarding-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.model.starter { margin: 0; }

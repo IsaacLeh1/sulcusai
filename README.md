@@ -4,7 +4,7 @@ A private AI workspace that runs on your own PC. It shows only the AI models
 your computer can actually run, installs them with one click, and keeps
 everything local unless you choose otherwise.
 
-> **Status: early development (Phase 1, Foundation).** See [DESIGN.md](DESIGN.md)
+> **Status: early development. Phase 1 (Foundation) is complete.** See [DESIGN.md](DESIGN.md)
 > for the full plan and [HANDOFF.md](HANDOFF.md) for where work stands.
 
 ## What works today
@@ -25,6 +25,14 @@ everything local unless you choose otherwise.
   included in every chat.
 - **Connectivity levels:** Offline (the default), Local AI + Web, and Cloud. A
   one-click 🌐 toggle (or Ctrl+Shift+W) turns on web for a single chat.
+- **Encrypted chats.** Chat titles, messages and your profile are encrypted on
+  disk. The key is sealed to your Windows account.
+- **App lock.** An optional PIN or passphrase, with a one-time recovery code,
+  Windows Hello unlock and auto-lock when idle.
+- **Activity log.** A record of everything the app does, including anything
+  that goes over the internet. It never includes what you say in chats.
+- **First-run setup.** A short guided setup: your PC, a suggested first model,
+  your profile and the optional lock.
 
 ## Privacy and security design
 
@@ -34,7 +42,10 @@ everything local unless you choose otherwise.
 - Model output is shown as Markdown without raw HTML, and remote images are
   never loaded.
 - Every request that leaves the PC goes through one connectivity check
-  (`src-tauri/src/net.rs`).
+  (`src-tauri/src/net.rs`) and is recorded in the activity log.
+- Encryption uses AES-256-GCM. The data key is sealed by Windows DPAPI, plus an
+  Argon2id key from your PIN when app lock is on. Deleted rows are overwritten
+  (`secure_delete`). Details and limits are in [HANDOFF.md](HANDOFF.md).
 
 ## License
 
