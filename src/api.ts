@@ -393,11 +393,13 @@ export interface Meeting {
   translate_to: string | null;
   has_audio: boolean;
   error: string | null;
+  speaker_names: Record<string, string>;
 }
 
 export interface Segment {
   id: number;
   speaker: Speaker;
+  voice: number | null;
   start: number;
   end: number;
   text: string;
@@ -423,6 +425,17 @@ export interface VoicePack {
   styles: { id: string; name: string; gender: string }[];
   size: number;
   installed: boolean;
+}
+
+export interface SpeakerModel {
+  id: string;
+  name: string;
+  publisher: string;
+  description: string;
+  license: License;
+  size: number;
+  installed: boolean;
+  download: number;
 }
 
 export interface Language {
@@ -543,6 +556,10 @@ export const api = {
   voicePacks: () => invoke<VoicePack[]>("voice_packs"),
   installVoicePack: (packId: string) => invoke<void>("install_voice_pack", { packId }),
   removeVoicePack: (packId: string) => invoke<void>("remove_voice_pack", { packId }),
+  speakerModel: () => invoke<SpeakerModel>("speaker_model"),
+  installSpeakerModel: () => invoke<void>("install_speaker_model"),
+  removeSpeakerModel: () => invoke<void>("remove_speaker_model"),
+  renameSpeaker: (id: string, voice: number, name: string) => invoke<void>("rename_speaker", { id, voice, name }),
 };
 
 export type DictationEvent =
@@ -564,6 +581,7 @@ export type MeetingEvent =
   | { meeting_id: string; kind: "removed"; segment_id: number }
   | { meeting_id: string; kind: "translation"; segment_id: number; text: string }
   | { meeting_id: string; kind: "warning"; message: string }
+  | { meeting_id: string; kind: "relabeled" }
   | { meeting_id: string; kind: "done" }
   | { meeting_id: string; kind: "error"; error: string };
 

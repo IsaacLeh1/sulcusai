@@ -441,3 +441,20 @@ select, .input {
 .translate-pane textarea { flex: 1; min-height: 220px; resize: vertical; border: 0; padding: 0; background: none; outline: none; }
 .translate-out { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; overflow-y: auto; }
 @media (max-width: 900px) { .translate-grid, .two-col { grid-template-columns: 1fr; } }
+
+.seg-speaker.link { font: inherit; font-size: 12px; font-weight: 600; text-align: left; padding: 0; }
+.voice-0 { color: #0f766e !important; }
+.voice-1 { color: #b45309 !important; }
+.voice-2 { color: #be185d !important; }
+.voice-3 { color: #1d4ed8 !important; }
+.voice-4 { color: #7c3aed !important; }
+.voice-5 { color: #15803d !important; }
+@media (prefers-color-scheme: dark) {
+  .voice-0 { color: #5eead4 !important; }
+  .voice-1 { color: #fbbf24 !important; }
+  .voice-2 { color: #f9a8d4 !important; }
+  .voice-3 { color: #93c5fd !important; }
+  .voice-4 { color: #c4b5fd !important; }
+  .voice-5 { color: #86efac !important; }
+}
+.segment { grid-template-columns: 58px 76px 1fr; }

@@ -91,9 +91,25 @@ fn runtime_dir(c: &VoiceCatalog) -> String {
     format!("onnxruntime-{}-cpu-x64", c.runtime.build)
 }
 
+/// The downloaded ONNX Runtime DLL, if present.
+pub fn runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
+    engine::find_exe(&paths.engines.join(runtime_dir(c)), &c.runtime_dll)
+}
+
+/// Downloads and unpacks ONNX Runtime if it isn't there yet.
+pub async fn ensure_runtime(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<PathBuf, String> {
+    let c = &state.catalog.voices;
+    let asset = c.runtime.assets.get("cpu-x64").ok_or("No ONNX Runtime build for this PC")?;
+    let rdir = runtime_dir(c);
+    if runtime_dll(&state.paths, c).is_none() {
+        state.log("network", &format!("Downloading ONNX Runtime from {}", crate::host_of(&asset.url)));
+    }
+    engine::ensure_unpacked(&state.paths, &rdir, asset, &c.runtime_dll, cancel, |r, t| emit("engine", r, t)).await
+}
+
 /// Finds an installed pack (every file present) and its runtime.
 pub fn detect(paths: &Paths, c: &VoiceCatalog) -> Option<Installed> {
-    let dll = engine::find_exe(&paths.engines.join(runtime_dir(c)), &c.runtime_dll)?;
+    let dll = runtime_dll(paths, c)?;
     let pack = c.models.first()?;
     let dir = paths.models.join(&pack.id);
     pack.files.iter().all(|f| dir.join(&f.path).metadata().is_ok_and(|m| m.len() == f.size)).then(|| Installed {
@@ -201,7 +217,7 @@ fn engine_slot() -> &'static Mutex<Option<Engine>> {
     S.get_or_init(Default::default)
 }
 
-fn runtime_ready(dll: &Path) -> Result<(), String> {
+pub fn runtime_ready(dll: &Path) -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
         let builder = ort::init_from(dll).map_err(|e| format!("Couldn't load ONNX Runtime: {e}"))?;
@@ -410,13 +426,8 @@ pub fn unload_if_idle() {
 async fn install(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<(), String> {
     let c = &state.catalog.voices;
     let pack = c.models.first().ok_or("No voice pack in the catalog")?;
-    let asset = c.runtime.assets.get("cpu-x64").ok_or("No ONNX Runtime build for this PC")?;
-    let rdir = runtime_dir(c);
     emit("engine", 0, 0);
-    if engine::find_exe(&state.paths.engines.join(&rdir), &c.runtime_dll).is_none() {
-        state.log("network", &format!("Downloading ONNX Runtime from {}", crate::host_of(&asset.url)));
-    }
-    engine::ensure_unpacked(&state.paths, &rdir, asset, &c.runtime_dll, cancel, |r, t| emit("engine", r, t)).await?;
+    ensure_runtime(state, cancel, emit).await?;
 
     let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
     let dir = state.paths.models.join(&pack.id);

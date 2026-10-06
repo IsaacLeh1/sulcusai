@@ -687,7 +687,7 @@ async fn e2e_meeting_records_transcribes_and_writes_notes() {
         println!("  {}", &l[..l.len().min(220)]);
     }
     let segs = meeting::segments(&state.db.lock().unwrap(), &cipher, &m.id);
-    let text = meeting::transcript_text(&segs);
+    let text = meeting::transcript_text(&segs, &Default::default());
     println!("transcript:\n{text}");
     let yours: Vec<_> = segs.iter().filter(|s| s.speaker == Speaker::You).collect();
     assert!(yours.iter().all(|s| !s.text.to_lowercase().contains("budget")), "the echoed line should be dropped from You");
@@ -754,5 +754,73 @@ async fn e2e_natural_voice_is_understood() {
             assert!(lower.contains(w), "{lang}: expected “{w}” in “{}”", heard.text);
         }
     }
+    crate::speech::stop(&state).await;
+}
+
+/// Speaker labels: two different voices take turns on the call channel; the
+/// transcript should label them as two consistent, different speakers.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_meeting_tells_speakers_apart() {
+    use crate::meeting::{self, Input, MeetingData, Speaker};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let state = speech_state();
+    crate::natural::refresh(&state.paths, &state.catalog.voices);
+    crate::diarize::install_for_test(&state).await.unwrap();
+    assert!(crate::diarize::available(&state));
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let cipher = state.cipher().unwrap();
+    let m = meeting::create(&state.db.lock().unwrap(), &cipher, &MeetingData { title: "Two voices".into(), ..Default::default() }).unwrap();
+
+    let windows_male = crate::tts::voices().unwrap().into_iter().find(|v| v.engine == "system" && v.gender == "male").unwrap().id;
+    let say = |text: &str, voice: &str| {
+        let s = crate::tts::synthesize(text, Some(voice), Some("en"), 1.0).unwrap();
+        let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
+        crate::audio::resample(&f, s.rate, crate::audio::RATE)
+    };
+    let lines = [
+        ("supertonic:F2", "Good morning, I wanted to start with the marketing budget for next quarter."),
+        (windows_male.as_str(), "Sure. I think we should move some money from print ads to online campaigns."),
+        ("supertonic:F2", "That makes sense, but the regional teams still rely on printed brochures."),
+        (windows_male.as_str(), "Then let's keep a small print budget and review the numbers again in March."),
+    ];
+    let mut others = vec![0.0003f32; 16_000];
+    for (voice, text) in lines {
+        others.extend(say(text, voice));
+        others.extend(vec![0.0003f32; 40_000]);
+    }
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let feeder = {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            for c in others.chunks(1600) {
+                tx.send(c.to_vec()).unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(3)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            stop.store(true, Ordering::SeqCst);
+        })
+    };
+    let emit: meeting::Emit = Arc::new(|kind: &str, v: serde_json::Value| {
+        if kind == "relabeled" || kind == "warning" {
+            println!("{kind}: {v}");
+        }
+    });
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    meeting::record(&state, &cipher, &m.id, ep, vec![Input { speaker: Speaker::Others, rx }], false, None, &stop, &|| serde_json::json!({}), emit).await.unwrap();
+    feeder.await.unwrap();
+    let segs = meeting::segments(&state.db.lock().unwrap(), &cipher, &m.id);
+    println!("{}", meeting::transcript_text(&segs, &Default::default()));
+    let label_of = |needle: &str| segs.iter().find(|s| s.text.to_lowercase().contains(needle)).and_then(|s| s.voice);
+    let (a1, b1, a2, b2) = (label_of("marketing"), label_of("online"), label_of("brochures"), label_of("march"));
+    println!("labels: {a1:?} {b1:?} {a2:?} {b2:?}");
+    assert!(a1.is_some() && b1.is_some());
+    assert_eq!(a1, a2, "the first voice keeps its label");
+    assert_eq!(b1, b2, "the second voice keeps its label");
+    assert_ne!(a1, b1, "two voices, two labels");
+    assert_eq!(a1, Some(1), "numbered by who spoke first");
     crate::speech::stop(&state).await;
 }

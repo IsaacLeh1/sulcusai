@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Models › Speech: speech-recognition models for dictation, voice chats and meetings.
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type InstallProgress, type SpeechCard, type SpeechView, type VoicePack } from "../api";
+import { api, errorText, on, type InstallProgress, type SpeakerModel, type SpeechCard, type SpeechView, type VoicePack } from "../api";
 import { bytes, percent } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -13,9 +13,11 @@ function speedText(speed: number): string {
 export function SpeechModels({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {
   const [view, setView] = useState<SpeechView | null>(null);
   const [packs, setPacks] = useState<VoicePack[]>([]);
+  const [speakers, setSpeakers] = useState<SpeakerModel | null>(null);
   const refresh = useCallback(() => {
     api.speechView().then(setView).catch((e) => toast(errorText(e), "error"));
     api.voicePacks().then(setPacks).catch(() => {});
+    api.speakerModel().then(setSpeakers).catch(() => {});
   }, [toast]);
   useEffect(() => {
     refresh();
@@ -68,6 +70,10 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
         {packs.map((p) => (
           <VoicePackCard key={p.id} p={p} progress={progress[p.id]} otherBusy={busy && !progress[p.id]} onChanged={refresh} toast={toast} />
         ))}
+      </div>
+      <h2>Meetings</h2>
+      <div className="model-grid">
+        {speakers && <SpeakerCard m={speakers} progress={progress[speakers.id]} otherBusy={busy && !progress[speakers.id]} onChanged={refresh} toast={toast} />}
       </div>
       {view.hidden > 0 && (
         <section className="card hint">
@@ -260,6 +266,46 @@ function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoiceP
             </button>
           </div>
         </Modal>
+      )}
+    </article>
+  );
+}
+
+function SpeakerCard({ m, progress, otherBusy, onChanged, toast }: { m: SpeakerModel; progress?: InstallProgress; otherBusy: boolean; onChanged: () => void; toast: PushToast }) {
+  return (
+    <article className={`card model ${m.installed ? "installed" : ""}`}>
+      <div className="model-head">
+        <div>
+          <h3>{m.name}</h3>
+          <span className="muted small">{m.publisher}</span>
+        </div>
+        {m.installed && <span className="badge">Installed</span>}
+      </div>
+      <p className="desc">{m.description}</p>
+      <div className="tags">
+        <span className="tag license" title={`${m.license.note ?? m.license.name}\n${m.license.url}`}>{m.license.name}</span>
+      </div>
+      {progress ? (
+        <SpeechProgress id={m.id} p={progress} />
+      ) : m.installed ? (
+        <div className="install-row">
+          <span className="muted small">New meetings label each person on the call.</span>
+          <span className="spacer" />
+          <button
+            className="btn ghost danger"
+            onClick={() => api.removeSpeakerModel().then(onChanged).catch((e) => toast(errorText(e), "error"))}
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <div className="install-row">
+          <span className="muted small">{bytes(m.download)} download</span>
+          <span className="spacer" />
+          <button className="btn primary" disabled={otherBusy} onClick={() => api.installSpeakerModel().catch((e) => toast(errorText(e), "error"))}>
+            Install
+          </button>
+        </div>
       )}
     </article>
   );

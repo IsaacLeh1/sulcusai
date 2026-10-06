@@ -252,8 +252,22 @@ def voices():
     }
 
 
+# Speaker labels in meetings: a WeSpeaker voice-print model on ONNX Runtime.
+DIARIZATION = {
+    "id": "wespeaker-resnet34", "name": "Speaker labels (WeSpeaker ResNet34)", "publisher": "WeNet",
+    "source": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM",
+    "description": "Tells the other people in a call apart, so the transcript says Speaker 1, Speaker 2 and so on. You can name them.",
+    "license": {"name": "CC-BY-4.0", "url": "https://creativecommons.org/licenses/by/4.0/", "commercial": True,
+                "note": "Commercial use allowed with attribution to the WeSpeaker project."},
+    "file": "voxceleb_resnet34_LM.onnx",
+    "url": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/f0c48c298fd835726c27956a5d617bad7115627e/voxceleb_resnet34_LM.onnx",
+    "size": 26530309,
+    "sha256": "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068",
+}
+
+
 def main():
-    out = {"schema": 1, "updated": "2026-10-06", "engine": ENGINE, "models": [], "speech": speech(), "voices": voices()}
+    out = {"schema": 1, "updated": "2026-10-06", "engine": ENGINE, "models": [], "speech": speech(), "voices": voices(), "diarization": DIARIZATION}
     for mid, name, pub, repo, lic, tags, params, (nl, kv, hd, mx), act, desc in MODELS:
         variants = [
             {"quant": q, "quality": QUALITY[q], "file": f, "url": HF.format(repo=repo, file=f), "size": s, "sha256": h}

@@ -10,6 +10,7 @@ mod checkpoint;
 mod connectors;
 mod crypto;
 mod db;
+mod diarize;
 mod download;
 #[cfg(all(test, windows))]
 mod e2e;
@@ -858,6 +859,10 @@ pub fn run() {
             natural::voice_packs,
             natural::install_voice_pack,
             natural::remove_voice_pack,
+            diarize::speaker_model,
+            diarize::install_speaker_model,
+            diarize::remove_speaker_model,
+            meeting::rename_speaker,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

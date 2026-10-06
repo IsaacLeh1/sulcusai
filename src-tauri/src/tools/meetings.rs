@@ -61,7 +61,7 @@ pub fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
             let title = format!("Read “{}”", m.data.title);
             if args.get("part").and_then(Value::as_str) == Some("transcript") {
                 let segs = meeting::segments(&conn, ctx.cipher, &m.id);
-                let full = meeting::transcript_text(&segs);
+                let full = meeting::transcript_text(&segs, &m.data.speaker_names);
                 let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
                 let start = full.char_indices().map(|(i, _)| i).find(|i| *i >= offset).unwrap_or(full.len());
                 let end = full[start..].char_indices().map(|(i, _)| start + i).find(|i| *i >= start + PAGE).unwrap_or(full.len());

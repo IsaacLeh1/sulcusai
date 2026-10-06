@@ -24,6 +24,13 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Didn't finish",
 };
 
+/** "You", a name you gave, "Speaker 2", or "Others". */
+export function who(s: Segment, names: Record<string, string>): string {
+  if (s.speaker === "you") return "You";
+  if (s.voice !== null) return names[String(s.voice)] ?? `Speaker ${s.voice}`;
+  return "Others";
+}
+
 function when(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
@@ -170,8 +177,10 @@ function StartDialog({ onClose, onStarted, toast }: { onClose: () => void; onSta
   const [translate, setTranslate] = useState("");
   const [languages, setLanguages] = useState<Language[]>([]);
   const [busy, setBusy] = useState(false);
+  const [labels, setLabels] = useState<boolean | null>(null);
   useEffect(() => {
     api.languages().then(setLanguages).catch(() => {});
+    api.speakerModel().then((m) => setLabels(m.installed)).catch(() => {});
   }, []);
 
   const start = async () => {
@@ -199,6 +208,9 @@ function StartDialog({ onClose, onStarted, toast }: { onClose: () => void; onSta
           <input type="checkbox" checked={system} onChange={(e) => setSystem(e.target.checked)} />
           <span>My computer's sound <span className="muted small">(the other people in a call)</span></span>
         </label>
+        {system && labels === false && (
+          <p className="muted small">Tip: install Speaker labels in Models › Speech to tell the other people apart.</p>
+        )}
         <label>
           Live translated captions
           <select value={translate} onChange={(e) => setTranslate(e.target.value)}>
@@ -243,7 +255,7 @@ function Meter({ label, level }: { label: string; level: number | null }) {
   );
 }
 
-function SegmentLine({ s, onPlay }: { s: Segment; onPlay?: (s: Segment) => void }) {
+function SegmentLine({ s, names, onPlay, onName }: { s: Segment; names: Record<string, string>; onPlay?: (s: Segment) => void; onName?: (voice: number) => void }) {
   return (
     <div className={`segment ${s.speaker}`}>
       {onPlay ? (
@@ -251,7 +263,13 @@ function SegmentLine({ s, onPlay }: { s: Segment; onPlay?: (s: Segment) => void 
       ) : (
         <span className="seg-time muted">{clock(s.start)}</span>
       )}
-      <span className="seg-speaker">{s.speaker === "you" ? "You" : "Others"}</span>
+      {onName && s.voice !== null ? (
+        <button className={`seg-speaker link voice-${(s.voice - 1) % 6}`} onClick={() => onName(s.voice!)} title="Name this person">
+          {who(s, names)}
+        </button>
+      ) : (
+        <span className={`seg-speaker ${s.voice !== null ? `voice-${(s.voice - 1) % 6}` : ""}`}>{who(s, names)}</span>
+      )}
       <span className="seg-text">
         {s.text}
         {s.translation && <span className="seg-translation">{s.translation}</span>}
@@ -298,6 +316,9 @@ function LiveMeeting({ id, onEnded, toast }: { id: string; onEnded: (id: string)
           break;
         case "translation":
           setSegments((all) => all.map((s) => (s.id === e.segment_id ? { ...s, translation: e.text } : s)));
+          break;
+        case "relabeled":
+          api.meeting(id).then((m) => setSegments(m.segments));
           break;
         case "warning":
           toastRef.current(e.message, "error");
@@ -360,7 +381,7 @@ function LiveMeeting({ id, onEnded, toast }: { id: string; onEnded: (id: string)
           </p>
         )}
         {segments.map((s) => (
-          <SegmentLine key={s.id} s={s} />
+          <SegmentLine key={s.id} s={s} names={meeting?.speaker_names ?? {}} />
         ))}
       </div>
       <p className="muted small">Lines appear in batches at pauses in the conversation; long speeches take a little longer.</p>
@@ -383,6 +404,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState("");
   const [confirm, setConfirm] = useState<"meeting" | "audio" | null>(null);
+  const [naming, setNaming] = useState<{ voice: number; name: string } | null>(null);
   const audio = useRef<HTMLAudioElement>(null);
   const url = useRef<string | null>(null);
 
@@ -523,16 +545,51 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
 
       <section className="card">
         <h2>Transcript</h2>
-        {m.has_audio && <p className="muted small">Click a time to hear that part.</p>}
+        {(m.has_audio || m.segments.some((s) => s.voice !== null)) && (
+          <p className="muted small">
+            {m.has_audio && "Click a time to hear that part. "}
+            {m.segments.some((s) => s.voice !== null) && "Click a speaker to give them a name."}
+          </p>
+        )}
         <audio ref={audio} hidden />
         <div className="transcript">
           {m.segments.length === 0 && <p className="muted small">Nothing was transcribed.</p>}
           {m.segments.map((s) => (
-            <SegmentLine key={s.id} s={s} onPlay={m.has_audio ? play : undefined} />
+            <SegmentLine
+              key={s.id}
+              s={s}
+              names={m.speaker_names}
+              onPlay={m.has_audio ? play : undefined}
+              onName={(voice) => setNaming({ voice, name: m.speaker_names[String(voice)] ?? "" })}
+            />
           ))}
         </div>
       </section>
 
+      {naming && (
+        <Modal title={`Who is Speaker ${naming.voice}?`} onClose={() => setNaming(null)}>
+          <form
+            className="form"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                await api.renameSpeaker(m.id, naming.voice, naming.name);
+                setNaming(null);
+                load();
+              } catch (err) {
+                toast(errorText(err), "error");
+              }
+            }}
+          >
+            <input className="input" value={naming.name} onChange={(e) => setNaming({ ...naming, name: e.target.value })} placeholder="Their name" autoFocus maxLength={60} aria-label="Speaker name" />
+            <p className="muted small">Every line by this speaker shows the name. Use “Write notes again” so the notes use it too.</p>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setNaming(null)}>Cancel</button>
+              <button type="submit" className="btn primary">Save</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {confirm && (
         <Modal title={confirm === "meeting" ? "Delete this meeting?" : "Delete the recording?"} onClose={() => setConfirm(null)}>
           <p>

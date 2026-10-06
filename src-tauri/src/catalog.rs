@@ -30,6 +30,7 @@ pub struct Catalog {
     pub models: Vec<ModelSpec>,
     pub speech: crate::speech::SpeechCatalog,
     pub voices: crate::natural::VoiceCatalog,
+    pub diarization: crate::diarize::SpeakerModel,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

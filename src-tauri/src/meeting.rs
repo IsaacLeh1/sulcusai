@@ -4,7 +4,7 @@
 //! writes notes at the end. Works with any call app or in person, with no
 //! bot joining the call. Transcripts, notes and audio are stored encrypted.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -49,13 +49,6 @@ impl Speaker {
     fn parse(s: &str) -> Speaker {
         if s == "you" { Speaker::You } else { Speaker::Others }
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Speaker::You => "You",
-            Speaker::Others => "Others",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -92,6 +85,8 @@ pub struct MeetingData {
     pub translate_to: Option<String>,
     pub has_audio: bool,
     pub error: Option<String>,
+    /// Names the user gave to "Speaker 1", "Speaker 2"…
+    pub speaker_names: BTreeMap<u32, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +104,8 @@ pub struct Meeting {
 pub struct Segment {
     pub id: i64,
     pub speaker: Speaker,
+    /// Which of the other people (1, 2…), when speaker labels are on.
+    pub voice: Option<u32>,
     /// Seconds from the start of the meeting.
     pub start: f64,
     pub end: f64,
@@ -118,6 +115,17 @@ pub struct Segment {
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
+}
+
+impl Segment {
+    /// "You", a name the user gave, "Speaker 2", or "Others".
+    pub fn who(&self, names: &BTreeMap<u32, String>) -> String {
+        match (self.speaker, self.voice) {
+            (Speaker::You, _) => "You".into(),
+            (Speaker::Others, Some(v)) => names.get(&v).cloned().unwrap_or_else(|| format!("Speaker {v}")),
+            (Speaker::Others, None) => "Others".into(),
+        }
+    }
 }
 
 // ---------- storage ----------
@@ -169,18 +177,27 @@ pub(crate) fn create(conn: &Connection, c: &Cipher, data: &MeetingData) -> Resul
 
 pub fn segments(conn: &Connection, c: &Cipher, meeting_id: &str) -> Vec<Segment> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, speaker, start, end, text, translation FROM meeting_segments WHERE meeting_id = ?1 ORDER BY start, id",
+        "SELECT id, speaker, start, end, text, translation, voice FROM meeting_segments WHERE meeting_id = ?1 ORDER BY start, id",
     ) else {
         return Vec::new();
     };
     stmt.query_map([meeting_id], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get(2)?, r.get(3)?, r.get::<_, String>(4)?, r.get::<_, Option<String>>(5)?))
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, String>(1)?,
+            r.get(2)?,
+            r.get(3)?,
+            r.get::<_, String>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<u32>>(6)?,
+        ))
     })
     .map(|rows| {
         rows.filter_map(Result::ok)
-            .map(|(id, sp, start, end, text, tr)| Segment {
+            .map(|(id, sp, start, end, text, tr, voice)| Segment {
                 id,
                 speaker: Speaker::parse(&sp),
+                voice,
                 start,
                 end,
                 text: c.decrypt_or(&text, ""),
@@ -191,10 +208,11 @@ pub fn segments(conn: &Connection, c: &Cipher, meeting_id: &str) -> Vec<Segment>
     .unwrap_or_default()
 }
 
-fn add_segment(conn: &Connection, c: &Cipher, meeting_id: &str, sp: Speaker, start: f64, end: f64, text: &str) -> Result<i64, String> {
+#[allow(clippy::too_many_arguments)]
+fn add_segment(conn: &Connection, c: &Cipher, meeting_id: &str, sp: Speaker, voice: Option<u32>, start: f64, end: f64, text: &str) -> Result<i64, String> {
     conn.execute(
-        "INSERT INTO meeting_segments (meeting_id, speaker, start, end, text) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![meeting_id, sp.as_str(), start, end, c.encrypt(text)],
+        "INSERT INTO meeting_segments (meeting_id, speaker, voice, start, end, text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![meeting_id, sp.as_str(), voice, start, end, c.encrypt(text)],
     )
     .map_err(err)?;
     Ok(conn.last_insert_rowid())
@@ -391,6 +409,11 @@ async fn transcriber(
 ) {
     let mut recent: VecDeque<Recent> = VecDeque::new();
     let mut context: std::collections::HashMap<Speaker, String> = Default::default();
+    // Speaker labels for the other people, when the model is installed.
+    let labels_on = crate::diarize::available(&state);
+    let mut live = crate::diarize::Live::default();
+    let mut prints: Vec<(i64, u32, Vec<f32>)> = Vec::new();
+    let mut last_voice: Option<u32> = None;
     while let Some(job) = rx.recv().await {
         let prompt = context.get(&job.speaker).cloned();
         let t = match speech::transcribe(&ep, &job.samples, &speech::Options { prompt, ..Default::default() }).await {
@@ -400,20 +423,21 @@ async fn transcriber(
                 continue;
             }
         };
-        // One line per segment whisper found, on the meeting's clock.
+        // One line per sentence whisper found (times within the batch).
+        let total = job.samples.len() as f64 / audio::RATE as f64;
         let lines: Vec<(f64, f64, String)> = if t.segments.is_empty() {
-            let total = job.samples.len() as f64 / audio::RATE as f64;
-            vec![(job.real_time(0.0), job.real_time(total), t.text.clone())]
+            vec![(0.0, total, t.text.clone())]
         } else {
-            t.segments.iter().map(|s| (job.real_time(s.start), job.real_time(s.end), s.text.clone())).collect()
+            t.segments.iter().map(|s| (s.start, s.end.min(total), s.text.clone())).collect()
         };
         let lines = whole_sentences(lines);
-        for (start, end, text) in lines {
+        for (bstart, bend, text) in lines {
             let text = text.trim().to_string();
             if text.is_empty() {
                 continue;
             }
-            let end = end.max(start);
+            // On the meeting's clock.
+            let (start, end) = (job.real_time(bstart), job.real_time(bend).max(job.real_time(bstart)));
             if job.speaker == Speaker::You
                 && recent.iter().any(|r| r.speaker == Speaker::Others && overlaps((start, end), (r.start, r.end)) && is_echo(&text, &r.text))
             {
@@ -431,13 +455,31 @@ async fn transcriber(
                     emit("removed", json!({ "segment_id": id }));
                 }
             }
-            let id = match add_segment(&state.db.lock().unwrap(), &cipher, &meeting_id, job.speaker, start, end, &text) {
+            let mut print = None;
+            let voice = if labels_on && job.speaker == Speaker::Others {
+                if bend - bstart >= crate::diarize::MIN_SECS {
+                    let r = audio::RATE as f64;
+                    let slice = job.samples[(bstart * r) as usize..((bend * r) as usize).min(job.samples.len())].to_vec();
+                    let st = state.clone();
+                    if let Ok(Ok(p)) = tokio::task::spawn_blocking(move || crate::diarize::embed(&st, &slice)).await {
+                        last_voice = Some(live.assign(&p));
+                        print = Some(p);
+                    }
+                }
+                last_voice
+            } else {
+                None
+            };
+            let id = match add_segment(&state.db.lock().unwrap(), &cipher, &meeting_id, job.speaker, voice, start, end, &text) {
                 Ok(id) => id,
                 Err(e) => {
                     emit("warning", json!({ "message": e }));
                     continue;
                 }
             };
+            if let (Some(p), Some(v)) = (print, voice) {
+                prints.push((id, v, p));
+            }
             let ctx = context.entry(job.speaker).or_default();
             ctx.push(' ');
             ctx.push_str(&text);
@@ -450,7 +492,7 @@ async fn transcriber(
             }
             emit(
                 "segment",
-                json!({ "segment": Segment { id, speaker: job.speaker, start, end, text: text.clone(), translation: None } }),
+                json!({ "segment": Segment { id, speaker: job.speaker, voice, start, end, text: text.clone(), translation: None } }),
             );
             if let Some(lang) = translate_to.clone() {
                 let (state, cipher, emit) = (state.clone(), cipher.clone(), emit.clone());
@@ -468,6 +510,38 @@ async fn transcriber(
             }
         }
     }
+    if prints.len() >= 2 {
+        relabel(&state, &meeting_id, &prints);
+        emit("relabeled", json!({}));
+    }
+}
+
+/// Regroups the whole meeting's voice prints and renumbers its lines, which
+/// fixes early guesses the live grouping got wrong.
+fn relabel(state: &AppState, meeting_id: &str, prints: &[(i64, u32, Vec<f32>)]) {
+    let all: Vec<Vec<f32>> = prints.iter().map(|p| p.2.clone()).collect();
+    let fresh = crate::diarize::regroup(&all);
+    // Lines too short for a print had a live label; map each live label to
+    // the regrouped label most of its prints got.
+    let mut votes: BTreeMap<u32, BTreeMap<u32, usize>> = BTreeMap::new();
+    for (p, label) in prints.iter().zip(&fresh) {
+        *votes.entry(p.1).or_default().entry(*label).or_default() += 1;
+    }
+    let map: BTreeMap<u32, u32> =
+        votes.iter().filter_map(|(old, v)| v.iter().max_by_key(|(_, n)| **n).map(|(new, _)| (*old, *new))).collect();
+    let mut conn = state.db.lock().unwrap();
+    let Ok(tx) = conn.transaction() else { return };
+    for (old, new) in &map {
+        let _ = tx.execute(
+            "UPDATE meeting_segments SET voice = -?3 WHERE meeting_id = ?1 AND voice = ?2",
+            params![meeting_id, old, new],
+        );
+    }
+    for (p, label) in prints.iter().zip(&fresh) {
+        let _ = tx.execute("UPDATE meeting_segments SET voice = -?2 WHERE id = ?1", params![p.0, label]);
+    }
+    let _ = tx.execute("UPDATE meeting_segments SET voice = -voice WHERE meeting_id = ?1 AND voice < 0", [meeting_id]);
+    let _ = tx.commit();
 }
 
 /// Whisper breaks lines wherever its timestamps fall, often mid-sentence;
@@ -615,11 +689,11 @@ pub async fn record(
 // ---------- notes ----------
 
 /// "[12:03] You: …" lines.
-pub fn transcript_text(segs: &[Segment]) -> String {
+pub fn transcript_text(segs: &[Segment], names: &BTreeMap<u32, String>) -> String {
     segs.iter()
         .map(|s| {
             let t = s.start as u64;
-            format!("[{:02}:{:02}] {}: {}", t / 60, t % 60, s.speaker.label(), s.text)
+            format!("[{:02}:{:02}] {}: {}", t / 60, t % 60, s.who(names), s.text)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -646,8 +720,8 @@ fn notes_schema() -> Value {
     })
 }
 
-const NOTES_ASK: &str = "Write meeting notes from this transcript. \"You\" is the person who recorded it; \"Others\" are the \
-other people on the call (they may be several people). Answer in JSON with:\n\
+const NOTES_ASK: &str = "Write meeting notes from this transcript. \"You\" is the person who recorded it; the other people \
+are labeled with their names, \"Speaker 1\", \"Speaker 2\"…, or \"Others\" (which may be several people). Answer in JSON with:\n\
 - title: a short name for the meeting (3-7 words)\n\
 - summary: 2-4 sentences\n\
 - topics: the general topics discussed\n\
@@ -687,8 +761,8 @@ async fn notes_from(ep: &Endpoint, text: &str) -> Result<Notes, String> {
 
 /// Notes for a whole meeting. Long transcripts are summarized in parts
 /// first, then combined, so any meeting length fits the model.
-pub async fn write_notes(ep: &Endpoint, segs: &[Segment]) -> Result<Notes, String> {
-    let text = transcript_text(segs);
+pub async fn write_notes(ep: &Endpoint, segs: &[Segment], names: &BTreeMap<u32, String>) -> Result<Notes, String> {
+    let text = transcript_text(segs, names);
     if text.trim().is_empty() {
         return Err("Nothing was said, so there's nothing to write up.".into());
     }
@@ -764,7 +838,7 @@ pub fn notes_markdown(m: &Meeting, segs: Option<&[Segment]>) -> String {
         out.push_str("## Transcript\n\n");
         for s in segs {
             let t = s.start as u64;
-            out.push_str(&format!("**[{:02}:{:02}] {}:** {}\n\n", t / 60, t % 60, s.speaker.label(), s.text));
+            out.push_str(&format!("**[{:02}:{:02}] {}:** {}\n\n", t / 60, t % 60, s.who(&m.data.speaker_names), s.text));
         }
     }
     out
@@ -774,10 +848,13 @@ pub fn notes_markdown(m: &Meeting, segs: Option<&[Segment]>) -> String {
 pub async fn finish(state: &Arc<AppState>, cipher: &Cipher, id: &str, emit: &Emit) -> Result<(), String> {
     set_status(&state.db.lock().unwrap(), id, "summarizing")?;
     emit("state", json!({ "status": "summarizing" }));
-    let segs = segments(&state.db.lock().unwrap(), cipher, id);
+    let (segs, names) = {
+        let conn = state.db.lock().unwrap();
+        (segments(&conn, cipher, id), load(&conn, cipher, id).map(|m| m.data.speaker_names).unwrap_or_default())
+    };
     let result = async {
         let (ep, _) = crate::background_endpoint(state).await?;
-        write_notes(&ep, &segs).await
+        write_notes(&ep, &segs, &names).await
     }
     .await;
     let conn = state.db.lock().unwrap();
@@ -973,6 +1050,22 @@ pub fn rename_meeting(state: AppStateRef, id: String, title: String) -> Result<(
     save_data(&conn, &c, &id, &m.data)
 }
 
+/// Names one of the other people ("Speaker 2" → "Jordan"); an empty name
+/// goes back to the number.
+#[tauri::command]
+pub fn rename_speaker(state: AppStateRef, id: String, voice: u32, name: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut m = load(&conn, &c, &id).ok_or("That meeting no longer exists.")?;
+    let name = name.trim();
+    if name.is_empty() {
+        m.data.speaker_names.remove(&voice);
+    } else {
+        m.data.speaker_names.insert(voice, name.chars().take(60).collect());
+    }
+    save_data(&conn, &c, &id, &m.data)
+}
+
 #[tauri::command]
 pub fn set_action_done(state: AppStateRef, id: String, index: usize, done: bool) -> Result<(), String> {
     let c = state.cipher()?;
@@ -1092,7 +1185,7 @@ pub fn search(conn: &Connection, c: &Cipher, query: &str, limit: usize) -> Vec<(
                 score += n;
                 if lines.len() < 3 {
                     let t = s.start as u64;
-                    lines.push(format!("[{:02}:{:02}] {}: {}", t / 60, t % 60, s.speaker.label(), s.text));
+                    lines.push(format!("[{:02}:{:02}] {}: {}", t / 60, t % 60, s.who(&m.data.speaker_names), s.text));
                 }
             }
         }
@@ -1186,15 +1279,21 @@ mod tests {
     fn meetings_and_segments_are_stored_encrypted() {
         let (_d, conn, c) = setup();
         let m = create(&conn, &c, &MeetingData { title: "Budget sync".into(), ..Default::default() }).unwrap();
-        add_segment(&conn, &c, &m.id, Speaker::Others, 1.0, 3.0, "The budget is approved.").unwrap();
-        add_segment(&conn, &c, &m.id, Speaker::You, 0.2, 0.9, "Hi all.").unwrap();
+        add_segment(&conn, &c, &m.id, Speaker::Others, None, 1.0, 3.0, "The budget is approved.").unwrap();
+        add_segment(&conn, &c, &m.id, Speaker::You, None, 0.2, 0.9, "Hi all.").unwrap();
         let raw: String = conn.query_row("SELECT text FROM meeting_segments LIMIT 1", [], |r| r.get(0)).unwrap();
         assert!(raw.starts_with("enc1:"));
         let raw: String = conn.query_row("SELECT data FROM meetings", [], |r| r.get(0)).unwrap();
         assert!(!raw.contains("Budget"));
         let segs = segments(&conn, &c, &m.id);
         assert_eq!(segs[0].text, "Hi all.", "ordered by time");
-        assert_eq!(transcript_text(&segs), "[00:00] You: Hi all.\n[00:01] Others: The budget is approved.");
+        assert_eq!(transcript_text(&segs, &BTreeMap::new()), "[00:00] You: Hi all.\n[00:01] Others: The budget is approved.");
+        // Speaker labels and names.
+        add_segment(&conn, &c, &m.id, Speaker::Others, Some(2), 5.0, 6.0, "Agreed.").unwrap();
+        let segs = segments(&conn, &c, &m.id);
+        let names = BTreeMap::from([(2u32, "Jordan".to_string())]);
+        assert!(transcript_text(&segs, &BTreeMap::new()).ends_with("Speaker 2: Agreed."));
+        assert!(transcript_text(&segs, &names).ends_with("Jordan: Agreed."));
         let hits = search(&conn, &c, "budget approved", 10);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].1.len(), 1);
@@ -1251,7 +1350,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let segs = vec![Segment { id: 1, speaker: Speaker::Others, start: 65.0, end: 70.0, text: "Thursday works.".into(), translation: None }];
+        let segs = vec![Segment { id: 1, speaker: Speaker::Others, voice: None, start: 65.0, end: 70.0, text: "Thursday works.".into(), translation: None }];
         let md = notes_markdown(&m, Some(&segs));
         assert!(md.starts_with("# Launch"));
         assert!(md.contains("- [x] Send budget — Jordan (due Friday)"));

@@ -127,6 +127,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "project_id", "TEXT"),
     ("chats", "incognito", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "parent_id", "TEXT"),
+    ("meeting_segments", "voice", "INTEGER"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
