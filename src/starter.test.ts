@@ -14,6 +14,7 @@ function card(id: string, params_b: number, tps: number, tags: string[] = [], in
     tags,
     params_b,
     default_ctx: 8192,
+    tools: true,
     variants: [],
     fit: { ctx: 8192, recommended: "Q4", variants: [{ quant: "Q4", placement: "gpu", needed_bytes: 0, est_tps: tps, gpu_layers: 0, disk_ok: true }] },
     installed: installed ? { model_id: id, quant: "Q4", path: "", size: 0, installed_at: 0, tps: null } : null,

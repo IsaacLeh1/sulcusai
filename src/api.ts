@@ -77,6 +77,7 @@ export interface ModelCard {
   tags: string[];
   params_b: number;
   default_ctx: number;
+  tools: boolean;
   variants: Variant[];
   fit: { ctx: number; variants: VariantFit[]; recommended: string | null };
   installed: InstalledModel | null;
@@ -111,6 +112,8 @@ export interface Profile {
   preferences: string;
 }
 
+export type RunMode = "plan" | "auto" | "bypass";
+
 export interface Chat {
   id: string;
   title: string;
@@ -118,21 +121,61 @@ export interface Chat {
   web: boolean;
   created_at: number;
   updated_at: number;
+  mode: RunMode;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface ToolMeta {
+  title: string;
+  status: "ok" | "error" | "denied";
+  kind: "diff" | "command" | "text";
+  detail?: string | null;
+  tool?: string;
+}
+
+export interface Preview {
+  title: string;
+  kind: "diff" | "command" | "text";
+  detail: string | null;
+  note: string | null;
+}
+
+export interface PendingApproval {
+  chat_id: string;
+  call_id: string;
+  tool: string;
+  risk: "read" | "write" | "execute";
+  preview: Preview;
+}
+
+export interface Folder {
+  path: string;
+  name: string;
+  exists: boolean;
 }
 
 export interface Message {
   id: string;
   chat_id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "tool";
   content: string;
   thinking: string | null;
   created_at: number;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  meta?: ToolMeta;
 }
 
 export interface ContextInfo {
   ctx: number;
   system_tokens: number;
   profile_tokens: number;
+  tools_tokens: number;
   history_tokens: number;
   reply_reserve: number;
   dropped_messages: number;
@@ -190,7 +233,7 @@ export const api = {
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
-  send: (chatId: string, text: string) => invoke<Message>("send_message", { chatId, text }),
+  send: (chatId: string, text: string) => invoke<Message | null>("send_message", { chatId, text }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
   unload: () => invoke<void>("unload_model"),
@@ -207,6 +250,14 @@ export const api = {
   setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
   actions: (limit?: number) => invoke<Action[]>("list_actions", { limit }),
   clearActions: () => invoke<void>("clear_actions"),
+  folders: () => invoke<Folder[]>("list_folders"),
+  addFolder: (path: string) => invoke<void>("add_folder", { path }),
+  removeFolder: (path: string) => invoke<void>("remove_folder", { path }),
+  setChatMode: (chatId: string, mode: RunMode) => invoke<void>("set_chat_mode", { chatId, mode }),
+  answerApproval: (callId: string, decision: "allow" | "always" | "deny") => invoke<void>("answer_approval", { callId, decision }),
+  pendingApprovals: (chatId: string) => invoke<PendingApproval[]>("pending_approvals", { chatId }),
+  undoableTurns: (chatId: string) => invoke<string[]>("undoable_turns", { chatId }),
+  undoTurn: (chatId: string, turnId: string) => invoke<string[]>("undo_turn", { chatId, turnId }),
 };
 
 export interface InstallProgress {
@@ -228,7 +279,11 @@ export interface ChatEvents {
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };
-  "chat:done": { chat_id: string; message: Message; tps: number | null; context: ContextInfo; cancelled: boolean };
+  "chat:done": { chat_id: string; message?: Message | null; tps?: number | null; context?: ContextInfo; cancelled?: boolean; error?: string };
+  "agent:step": { chat_id: string };
+  "agent:tool_start": { chat_id: string; call_id: string; tool: string };
+  "agent:approval": PendingApproval;
+  "agent:approval_done": { chat_id: string; call_id: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
   "security:locked": null;

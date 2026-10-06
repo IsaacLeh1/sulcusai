@@ -71,7 +71,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
         description: "List a folder's contents. With no path, lists the shared folders." },
     ToolDef { name: "read_file", risk: Risk::Read, params: fs::read_file_params,
-        description: "Read a text file. Lines are numbered. Use start_line/end_line for long files." },
+        description: "Read a text file. Each line starts with its number and a tab; the numbers are not part of the file, so never copy them into edits. Use start_line/end_line for long files." },
     ToolDef { name: "find_files", risk: Risk::Read, params: fs::find_files_params,
         description: "Find files by name with a glob such as **/*.rs or *report*. Respects .gitignore." },
     ToolDef { name: "search_files", risk: Risk::Read, params: fs::search_files_params,
@@ -166,6 +166,28 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             tokio::task::block_in_place(|| fs::run(&name, &args, ctx))
         }
     }
+}
+
+/// A readable title for a step that failed before or while running.
+pub fn failed_title(name: &str, args: &Value) -> String {
+    let target = ["path", "from", "pattern", "command"]
+        .iter()
+        .find_map(|k| args.get(*k).and_then(Value::as_str))
+        .map(|t| t.chars().take(60).collect::<String>())
+        .unwrap_or_default();
+    let verb = match name {
+        "list_dir" => "list",
+        "read_file" => "read",
+        "find_files" | "search_files" => "search for",
+        "write_file" => "write",
+        "edit_file" => "edit",
+        "move_path" => "move",
+        "make_folder" => "create folder",
+        "delete_path" => "delete",
+        "run_command" => "run",
+        _ => return format!("Couldn't use {name}"),
+    };
+    format!("Couldn't {verb} {target}").trim_end().to_string()
 }
 
 pub fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {

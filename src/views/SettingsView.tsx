@@ -4,6 +4,7 @@ import { api, errorText, type AppInfo, type Connectivity, type Profile, type Sec
 import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
+import { FoldersSection } from "../components/AgentCards";
 import type { PushToast } from "../components/Toasts";
 
 const THIRD_PARTY = [
@@ -89,6 +90,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       </section>
 
       <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
+
+      <FoldersSection toast={toast} />
 
       <section className="card">
         <h2>Connectivity</h2>

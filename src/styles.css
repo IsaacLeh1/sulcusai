@@ -304,3 +304,38 @@ select, .input {
 .callout { background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; margin: 0; }
 .onboarding-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
 .model.starter { margin: 0; }
+
+/* ---------- agent ---------- */
+.mode-switch { display: inline-flex; border: 1px solid var(--border); border-radius: 99px; padding: 2px; gap: 2px; }
+.mode { border: 0; background: none; border-radius: 99px; padding: 3px 12px; cursor: pointer; font-size: 12.5px; font-weight: 550; color: var(--muted); }
+.mode.active { background: var(--accent-soft); color: var(--accent); }
+.mode.bypass.active { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.mode:disabled { cursor: default; }
+.tool-card { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.tool-card.error { border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+.tool-card.denied { opacity: 0.75; }
+.tool-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 10px; border: 0; background: none; cursor: pointer; text-align: left; font-size: 13px; }
+.tool-head:disabled { cursor: default; color: inherit; }
+.tool-title { flex: 1; }
+.tool-status { font-size: 11.5px; color: var(--muted); }
+.tool-status.error { color: var(--danger); }
+.tool-status.running { color: var(--accent); animation: pulse 1.2s infinite; }
+.chev { color: var(--muted); }
+.diff, .tool-output { margin: 0; padding: 10px 12px; max-height: 360px; overflow: auto; font: 12.5px/1.45 "Cascadia Code", Consolas, monospace; background: var(--code-bg); border-top: 1px solid var(--border); white-space: pre; }
+.diff .add { color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); display: inline-block; min-width: 100%; }
+.diff .del { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); display: inline-block; min-width: 100%; }
+.diff .hunk { color: var(--accent); }
+.diff .meta { color: var(--muted); }
+.approval { border: 2px solid var(--accent); border-radius: 12px; background: var(--panel); padding: 12px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow); }
+.approval .diff, .approval .tool-output { border: 1px solid var(--border); border-radius: 8px; }
+.approval-head { display: flex; gap: 8px; align-items: center; }
+.approval-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.undo-row { display: flex; justify-content: flex-start; margin-top: -8px; }
+.plan-actions { display: flex; align-items: center; gap: 12px; }
+.folder-menu { position: relative; }
+.folder-pop { position: absolute; bottom: calc(100% + 8px); left: 0; width: 320px; z-index: 20; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.folder-pop p { margin: 0; }
+.folder-pop ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.folder-pop li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+/* Long chats overflow; never squash cards to fit. */
+.messages > * { flex-shrink: 0; }

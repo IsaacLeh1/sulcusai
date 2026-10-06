@@ -110,6 +110,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshChats();
         refreshEngine();
       }),
+      // The model is loaded by the time context is measured.
+      on("chat:context", () => refreshEngine()),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);

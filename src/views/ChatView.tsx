@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { api, errorText, on, type Chat, type Connectivity, type ContextInfo, type Message, type ModelCard } from "../api";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  api,
+  errorText,
+  on,
+  type Chat,
+  type Connectivity,
+  type ContextInfo,
+  type Message,
+  type ModelCard,
+  type PendingApproval,
+  type RunMode,
+} from "../api";
 import { APP_NAME } from "../brand";
+import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
@@ -25,6 +37,14 @@ interface Streaming {
   content: string;
   thinking: string;
 }
+
+type Status = "idle" | "loading" | "thinking" | "writing" | "working";
+
+const MODES: { id: RunMode; label: string; help: string }[] = [
+  { id: "plan", label: "Plan", help: "Looks around and proposes a plan. Changes nothing until you approve." },
+  { id: "auto", label: "Auto", help: "Reads freely; asks before changing files or running commands." },
+  { id: "bypass", label: "Bypass", help: "Changes files and runs commands without asking. Undo still works for file changes." },
+];
 
 export function ChatView(props: Props) {
   const { chat, installed } = props;
@@ -59,13 +79,17 @@ export function ChatView(props: Props) {
 function Conversation({ chat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
-  const [status, setStatus] = useState<"idle" | "loading" | "thinking" | "writing">("idle");
+  const [status, setStatus] = useState<Status>("idle");
   const [context, setContext] = useState<ContextInfo | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tps, setTps] = useState<number | null>(null);
+  const [pending, setPending] = useState<PendingApproval[]>([]);
+  const [runningCall, setRunningCall] = useState<string | null>(null);
+  const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmBypass, setConfirmBypass] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -74,11 +98,17 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
   const webOn = connectivity !== "offline" || chat.web;
   const busy = status !== "idle";
 
-  useEffect(() => {
+  const reload = useCallback(() => {
     api.messages(chat.id).then(setMessages);
-    api.context(chat.id).then(setContext);
-    inputRef.current?.focus();
+    api.undoableTurns(chat.id).then((t) => setUndoable(new Set(t))).catch(() => {});
   }, [chat.id]);
+
+  useEffect(() => {
+    reload();
+    api.context(chat.id).then(setContext);
+    api.pendingApprovals(chat.id).then(setPending).catch(() => {});
+    inputRef.current?.focus();
+  }, [chat.id, reload]);
 
   useEffect(() => {
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
@@ -92,48 +122,60 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
       on("chat:delta", mine((p) => {
         if (p.content) setStatus("writing");
         setStreaming((s) =>
-          s && s.id === p.message_id
-            ? { ...s, content: s.content + (p.content ?? ""), thinking: s.thinking + (p.thinking ?? "") }
-            : s,
+          s && s.id === p.message_id ? { ...s, content: s.content + (p.content ?? ""), thinking: s.thinking + (p.thinking ?? "") } : s,
         );
       })),
+      on("agent:step", mine(() => {
+        setStreaming(null);
+        setStatus("working");
+        setRunningCall(null);
+        api.messages(chat.id).then(setMessages);
+      })),
+      on("agent:tool_start", mine((p) => setRunningCall(p.call_id))),
+      on("agent:approval", mine((p) => setPending((all) => [...all.filter((a) => a.call_id !== p.call_id), p]))),
+      on("agent:approval_done", mine((p) => setPending((all) => all.filter((a) => a.call_id !== p.call_id)))),
       on("chat:done", mine((p) => {
-        setContext(p.context);
-        setTps(p.tps);
+        if (p.context) setContext(p.context);
+        if (p.tps !== undefined) setTps(p.tps ?? null);
+        if (p.error) setError(p.error);
         setStreaming(null);
         setStatus("idle");
-        api.messages(chat.id).then(setMessages);
+        setRunningCall(null);
+        setPending([]);
+        reload();
       })),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
-  }, [chat.id]);
+  }, [chat.id, reload]);
 
   // Keep the newest text in view while it streams.
   useEffect(() => {
     const el = scroller.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight;
-  }, [messages, streaming]);
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
+  }, [messages, streaming, pending]);
 
-  const send = async () => {
-    const text = input.trim();
+  const sendText = async (text: string) => {
     if (!text || busy) return;
     setError(null);
-    setInput("");
     setStatus("loading");
-    setMessages((m) => [
-      ...m,
-      { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now() },
-    ]);
+    setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now() }]);
     try {
       await api.send(chat.id, text);
     } catch (e) {
       setError(errorText(e));
       setStreaming(null);
       setStatus("idle");
-      api.messages(chat.id).then(setMessages);
+      reload();
     } finally {
       onChanged();
     }
+  };
+
+  const send = () => {
+    const text = input.trim();
+    if (!text || busy) return;
+    setInput("");
+    sendText(text);
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -153,10 +195,58 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
     }
   };
 
+  const setMode = async (mode: RunMode) => {
+    if (mode === "bypass" && chat.mode !== "bypass") {
+      setConfirmBypass(true);
+      return;
+    }
+    await api.setChatMode(chat.id, mode);
+    onChanged();
+  };
+
+  const runPlan = async () => {
+    await api.setChatMode(chat.id, "auto");
+    onChanged();
+    sendText("Go ahead and carry out the plan.");
+  };
+
+  const undo = async (turnId: string) => {
+    try {
+      const notes = await api.undoTurn(chat.id, turnId);
+      toast(notes.length ? `Undone, with notes: ${notes.join(" ")}` : "Changes from that reply were undone.", notes.length ? "error" : "success");
+      reload();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
+  const items = useMemo(
+    () => renderItems(messages, undoable, busy, runningCall, undo),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [messages, undoable, busy, runningCall],
+  );
+  const last = messages[messages.length - 1];
+  const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
+
   return (
     <div className="conversation">
       <header className="chat-header">
         <h1 className="ellipsis" title={chat.title}>{chat.title}</h1>
+        <div className="mode-switch" role="radiogroup" aria-label="Run mode">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              role="radio"
+              aria-checked={chat.mode === m.id}
+              className={`mode ${m.id} ${chat.mode === m.id ? "active" : ""}`}
+              title={m.help}
+              onClick={() => setMode(m.id)}
+              disabled={busy}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} />
         <div className="chat-actions">
           <button className="btn ghost small" onClick={() => setRenaming(true)}>Rename</button>
@@ -170,18 +260,27 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
             <p className="muted">
               You're chatting with <strong>{model?.name ?? "a local model"}</strong>, running on this PC.
             </p>
+            {model?.tools && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
           </div>
         )}
-        {messages.map((m) => (
-          <MessageView key={m.id} m={m} />
-        ))}
+        {items}
         {streaming && (
           <MessageView
             m={{ id: streaming.id, chat_id: chat.id, role: "assistant", content: streaming.content, thinking: streaming.thinking || null, created_at: 0 }}
             live={status}
           />
         )}
+        {pending.map((p) => (
+          <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
+        ))}
         {status === "loading" && !streaming && <p className="muted small pad">Loading {model?.name ?? "the model"} into memory…</p>}
+        {status === "working" && !streaming && pending.length === 0 && <p className="muted small pad">Working…</p>}
+        {showRunPlan && (
+          <div className="plan-actions">
+            <button className="btn primary" onClick={runPlan}>Run this plan</button>
+            <span className="muted small">Switches to Auto, so you'll still approve each change.</span>
+          </div>
+        )}
         {error && <div className="error-box">{error}</div>}
       </div>
 
@@ -192,11 +291,12 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
-            placeholder={`Message ${model?.name ?? APP_NAME}…`}
+            placeholder={chat.mode === "plan" ? "Describe what you want; it will propose a plan first…" : `Message ${model?.name ?? APP_NAME}…`}
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label="Message"
           />
           <div className="composer-bar">
+            {model?.tools && <FolderMenu toast={toast} />}
             <button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -232,13 +332,34 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
             )}
           </div>
         </div>
-        {webOn && (
-          <p className="muted small center">
-            Web access is allowed for this chat. Web search and browsing tools arrive in a later update.
-          </p>
+        {model && !model.tools && (
+          <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
         )}
+        {webOn && <p className="muted small center">Web access is allowed for this chat. Web search and browsing tools arrive in a later update.</p>}
       </div>
 
+      {confirmBypass && (
+        <Modal title="Switch to Bypass mode?" onClose={() => setConfirmBypass(false)}>
+          <p>In Bypass mode the assistant changes files and runs commands in your shared folders <strong>without asking</strong>.</p>
+          <ul>
+            <li>File changes can still be undone after each reply.</li>
+            <li>Commands can't be undone, so their effects stay.</li>
+          </ul>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setConfirmBypass(false)}>Stay in Auto</button>
+            <button
+              className="btn danger-fill"
+              onClick={async () => {
+                setConfirmBypass(false);
+                await api.setChatMode(chat.id, "bypass");
+                onChanged();
+              }}
+            >
+              Use Bypass
+            </button>
+          </div>
+        </Modal>
+      )}
       {renaming && (
         <RenameDialog
           title={chat.title}
@@ -276,7 +397,46 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
   );
 }
 
-function MessageView({ m, live }: { m: Message; live?: "idle" | "loading" | "thinking" | "writing" }) {
+/** Messages as the reader sees them: tool results tucked into their calls,
+ *  and an Undo button at the end of each turn that changed files. */
+function renderItems(messages: Message[], undoable: Set<string>, busy: boolean, runningCall: string | null, undo: (turnId: string) => void): ReactNode[] {
+  const results = new Map<string, Message>();
+  for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
+
+  const out: ReactNode[] = [];
+  let turnId: string | null = null;
+  const closeTurn = (key: string, isLastTurn: boolean) => {
+    if (turnId && undoable.has(turnId) && !(busy && isLastTurn)) {
+      const id = turnId;
+      out.push(
+        <div key={`undo-${key}`} className="undo-row">
+          <button className="btn ghost small" onClick={() => undo(id)}>↶ Undo file changes from this reply</button>
+        </div>,
+      );
+    }
+  };
+  messages.forEach((m, i) => {
+    if (m.role === "user") {
+      closeTurn(m.id, false);
+      turnId = m.id;
+      out.push(<MessageView key={m.id} m={m} />);
+    } else if (m.role === "assistant") {
+      out.push(
+        <Fragment key={m.id}>
+          {(m.content || m.thinking) && <MessageView m={m} />}
+          {m.tool_calls?.map((c) => {
+            const r = results.get(c.id);
+            return <ToolCard key={c.id} call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} />;
+          })}
+        </Fragment>,
+      );
+    }
+    if (i === messages.length - 1) closeTurn("end", true);
+  });
+  return out;
+}
+
+function MessageView({ m, live }: { m: Message; live?: Status }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
     <div className={`msg ${m.role}`}>
@@ -286,7 +446,7 @@ function MessageView({ m, live }: { m: Message; live?: "idle" | "loading" | "thi
           <div className="thinking-text">{m.thinking}</div>
         </details>
       )}
-      {m.role === "user" ? <div className="bubble">{m.content}</div> : <Markdown text={m.content} />}
+      {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
       {live && !m.content && !m.thinking && <span className="typing" aria-label="Writing" />}
     </div>
   );

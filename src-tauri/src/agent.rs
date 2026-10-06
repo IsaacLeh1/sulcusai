@@ -265,18 +265,18 @@ impl Turn {
         };
         let args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
             Ok(v) => v,
-            Err(e) => return Outcome::error(call.name.clone(), format!("The arguments weren't valid JSON ({e}). Try again.")),
+            Err(e) => return Outcome::error(format!("Couldn't use {}", call.name), format!("The arguments weren't valid JSON ({e}). Try again.")),
         };
         let allowed = self.state.approvals.allowed(&self.chat_id, def.risk);
         match tools::permission(self.mode, def.risk, allowed) {
             Permission::Refuse => {
-                return Outcome::error(call.name.clone(), "Plan mode can't change anything. Put this step in your plan instead.");
+                return Outcome::error(tools::failed_title(&call.name, &args), "Plan mode can't change anything. Put this step in your plan instead.");
             }
             Permission::Ask => {
                 // A preview that fails (say, edit text not found) goes straight back to the model.
                 let preview = match tools::preview(&call.name, &args, sandbox) {
                     Ok(p) => p,
-                    Err(e) => return Outcome::error(call.name.clone(), e),
+                    Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
                 };
                 let title = preview.title.clone();
                 match self.ask(call, def.risk, preview).await {

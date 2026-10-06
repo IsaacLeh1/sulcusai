@@ -77,7 +77,9 @@ fn read_text(path: &Path) -> Result<String, String> {
 
 /// A unified diff for previews, trimmed for display.
 pub fn diff(label: &str, old: &str, new: &str) -> String {
-    let text = TextDiff::from_lines(old, new).unified_diff().context_radius(3).header(label, label).to_string();
+    // Compare without carriage returns so Windows files display line by line.
+    let (old, new) = (old.replace("\r\n", "\n"), new.replace("\r\n", "\n"));
+    let text = TextDiff::from_lines(&old, &new).unified_diff().context_radius(3).header(label, label).to_string();
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() > MAX_DIFF_LINES {
         format!("{}\n… {} more lines", lines[..MAX_DIFF_LINES].join("\n"), lines.len() - MAX_DIFF_LINES)
@@ -90,10 +92,46 @@ fn line_count(s: &str) -> usize {
     if s.is_empty() { 0 } else { s.lines().count() }
 }
 
+/// Models sometimes copy read_file's line numbers into what they write.
+/// If every line carries consecutive numbers in read_file's format (or a
+/// common look-alike), returns the text without them.
+pub fn strip_line_numbers(s: &str) -> Option<String> {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() < 2 {
+        return None;
+    }
+    let mut expected: Option<u64> = None;
+    let mut out = Vec::with_capacity(lines.len());
+    for line in &lines {
+        let trimmed = line.trim_start();
+        let digits: String = trimmed.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let n: u64 = digits.parse().ok()?;
+        if expected.is_some_and(|e| e != n) {
+            return None;
+        }
+        expected = Some(n + 1);
+        let rest = &trimmed[digits.len()..];
+        let body = ["\t", ": ", ":", "│ ", "| ", "→"].iter().find_map(|sep| rest.strip_prefix(sep))?;
+        out.push(body);
+    }
+    let mut text = out.join("\n");
+    if s.ends_with('\n') {
+        text.push('\n');
+    }
+    Some(text)
+}
+
 /// Applies an edit_file request to text, or explains why it can't.
 pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result<(String, usize), String> {
     if old.is_empty() {
         return Err("old_text is empty. To create or replace a whole file, use write_file.".into());
+    }
+    if !text.contains(old) {
+        // Retry without copied line numbers before giving up.
+        if let Some(stripped_old) = strip_line_numbers(old).filter(|o| text.contains(o.as_str()) || text.contains(&o.replace('\n', "\r\n"))) {
+            let stripped_new = strip_line_numbers(new).unwrap_or_else(|| new.to_string());
+            return apply_edit(text, &stripped_old, &stripped_new, replace_all);
+        }
     }
     let count = text.matches(old).count();
     match count {
@@ -118,7 +156,9 @@ pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String
         "write_file" => {
             let path = p("path")?;
             let label = sb.display(&path);
-            let new = arg_str(args, "content")?;
+            let raw = arg_str(args, "content")?;
+            let stripped = strip_line_numbers(raw);
+            let new = stripped.as_deref().unwrap_or(raw);
             let old = if path.exists() { read_text(&path)? } else { String::new() };
             Preview {
                 title: if path.exists() { format!("Replace {label}") } else { format!("Create {label}") },
@@ -155,7 +195,6 @@ pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String
 
 pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let sb = ctx.sandbox;
-    let label_of = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("?").to_string();
     let result: Result<Outcome, String> = (|| {
         match name {
             "list_dir" => list_dir(sb, args.get("path").and_then(Value::as_str)),
@@ -167,7 +206,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let end = args.get("end_line").and_then(Value::as_u64).map_or(start + DEFAULT_LINES - 1, |n| n as usize).min(lines.len());
                 let mut out = String::new();
                 for (i, line) in lines.iter().enumerate().take(end).skip(start - 1) {
-                    let _ = writeln!(out, "{:>5}: {line}", i + 1);
+                    let _ = writeln!(out, "{:>5}\t{line}", i + 1);
                     if out.len() > MAX_READ_CHARS {
                         let _ = writeln!(out, "… stopped at line {} (output limit). Use start_line to read further.", i + 1);
                         break;
@@ -186,7 +225,9 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "search_files" => search_files(sb, args),
             "write_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
-                let content = arg_str(args, "content")?;
+                let raw = arg_str(args, "content")?;
+                let stripped = strip_line_numbers(raw);
+                let content = stripped.as_deref().unwrap_or(raw);
                 let label = sb.display(&path);
                 let old = if path.exists() { read_text(&path)? } else { String::new() };
                 let existed = path.exists();
@@ -260,7 +301,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             other => Err(format!("Unknown tool {other}.")),
         }
     })();
-    result.unwrap_or_else(|e| Outcome::error(format!("{name} {}", label_of("path")), e))
+    result.unwrap_or_else(|e| Outcome::error(super::failed_title(name, args), e))
 }
 
 fn list_dir(sb: &Sandbox, path: Option<&str>) -> Result<Outcome, String> {
@@ -325,7 +366,15 @@ fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit: usize) ->
             ov.add(skip).map_err(|e| e.to_string())?;
         }
         if let Some(g) = glob {
-            let g = if g.contains('/') { g.trim_start_matches("./").to_string() } else { format!("**/{g}") };
+            let g = g.replace('\\', "/");
+            let g = g.trim_start_matches("./").trim_start_matches('/');
+            // "proj/src/*.rs" names the shared folder itself, like other paths do.
+            let name = root.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let g = match g.split_once('/') {
+                Some((head, rest)) if head.to_lowercase() == name => rest.to_string(),
+                _ => g.to_string(),
+            };
+            let g = if g.contains('/') { g } else { format!("**/{g}") };
             ov.add(&g).map_err(|e| format!("That glob isn't valid: {e}"))?;
         }
         let walk = ignore::WalkBuilder::new(root)
@@ -408,6 +457,38 @@ mod tests {
         let (new, n) = apply_edit(text, "fn main() {\n    old();", "fn main() {\n    new();", false).unwrap();
         assert_eq!(n, 1);
         assert_eq!(new, "fn main() {\r\n    new();\r\n}\r\n");
+    }
+
+    #[test]
+    fn copied_line_numbers_are_removed() {
+        assert_eq!(strip_line_numbers("1: # Title\n2: Body\n3: End").unwrap(), "# Title\nBody\nEnd");
+        assert_eq!(strip_line_numbers("    1\tfn main() {\n    2\t}\n").unwrap(), "fn main() {\n}\n");
+        assert!(strip_line_numbers("1: one\n3: three").is_none(), "not consecutive");
+        assert!(strip_line_numbers("10 apples\n11 pears").is_none(), "no separator: real content");
+        assert!(strip_line_numbers("single line").is_none());
+        let (out, _) = apply_edit("a\nb\nc\n", "2: b\n3: c", "2: B\n3: c", false).unwrap();
+        assert_eq!(out, "a\nB\nc\n");
+    }
+
+    #[test]
+    fn globs_may_start_with_the_shared_folder_name() {
+        let d = std::env::temp_dir().join(format!("sulcusai-glob-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(d.join("proj").join("src")).unwrap();
+        std::fs::write(d.join("proj").join("src").join("a.rs"), "fn a() {}").unwrap();
+        std::fs::write(d.join("proj").join("notes.md"), "x").unwrap();
+        let sb = Sandbox::new(&[d.join("proj").display().to_string()]);
+        for pattern in ["proj/src/*.rs", "src/*.rs", "*.rs", "proj/**/*.rs"] {
+            let out = find_files(&sb, pattern, None).unwrap();
+            assert!(out.text.contains("proj/src/a.rs"), "{pattern}: {}", out.text);
+            assert!(!out.text.contains("notes.md"), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn crlf_files_diff_line_by_line() {
+        let d = diff("f", "one\r\ntwo\r\n", "one\r\nthree\r\n");
+        assert!(!d.contains('\r'));
+        assert!(d.contains("-two\n") && d.contains("+three"));
     }
 
     #[test]
