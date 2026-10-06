@@ -14,8 +14,10 @@ mod e2e;
 mod engine;
 mod hardware;
 mod hello;
+mod memory;
 mod net;
 mod paths;
+mod projects;
 mod sandbox;
 mod security;
 mod tools;
@@ -666,6 +668,7 @@ pub fn run() {
                 state.migrate_plaintext(&c);
             }
             checkpoint::prune(&state.db.lock().unwrap());
+            let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
             app.manage(Arc::new(state));
             Ok(())
         })
@@ -714,6 +717,21 @@ pub fn run() {
             workspace::pending_approvals,
             workspace::undoable_turns,
             workspace::undo_turn,
+            projects::list_projects,
+            projects::create_project,
+            projects::update_project,
+            projects::delete_project,
+            projects::add_project_folder,
+            projects::remove_project_folder,
+            projects::create_chat_in,
+            projects::leave_incognito,
+            projects::set_chat_project,
+            projects::list_memories,
+            projects::add_memory,
+            projects::update_memory,
+            projects::delete_memory,
+            projects::clear_memories,
+            projects::set_memory_enabled,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

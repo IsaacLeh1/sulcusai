@@ -269,3 +269,96 @@ async fn e2e_agent_edits_files_and_undo_restores() {
     drop(conn);
     state.engine.lock().await.stop().await;
 }
+
+/// A real engine plus app state in a temporary data folder.
+async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, crate::crypto::Cipher) {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
+    let real = Paths::new(app_data_dir()).unwrap();
+    let tmp = std::env::temp_dir().join(format!("sulcusai-e2e-{}", uuid::Uuid::new_v4()));
+    let paths = Paths::new(tmp.clone()).unwrap();
+    let conn = crate::db::open(&paths.db).unwrap();
+    let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
+    let cipher = vault.cipher().unwrap();
+    let hw = hardware::detect(&real.models);
+    let budget = Budget::from_hardware(&hw);
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3-1.7b").unwrap().clone();
+    let state = Arc::new(crate::AppState {
+        paths,
+        db: Mutex::new(conn),
+        vault: Mutex::new(vault),
+        catalog: cat.clone(),
+        hardware: RwLock::new(hw),
+        engine: tokio::sync::Mutex::new(engine::Engine::default()),
+        installs: Mutex::new(HashMap::new()),
+        generations: Mutex::new(HashMap::new()),
+        contexts: Mutex::new(HashMap::new()),
+        approvals: crate::agent::Approvals::default(),
+        job: None,
+    });
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let model = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
+    let ep = state
+        .engine
+        .lock()
+        .await
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, log: &real.engine_log() }, None)
+        .await
+        .unwrap();
+    (state, ep, cipher)
+}
+
+async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cipher: &crate::crypto::Cipher, chat_id: &str, text: &str) -> String {
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    crate::db::add_message(&state.db.lock().unwrap(), cipher, &Message {
+        id: turn_id.clone(),
+        chat_id: chat_id.into(),
+        role: "user".into(),
+        content: text.into(),
+        created_at: crate::db::now_ms(),
+        ..Default::default()
+    })
+    .unwrap();
+    let turn = crate::agent::Turn {
+        emit: std::sync::Arc::new(|_: &str, _| {}),
+        state: state.clone(),
+        chat_id: chat_id.into(),
+        turn_id,
+        cipher: cipher.clone(),
+        ep: ep.clone(),
+        mode: crate::tools::Mode::Auto,
+        use_tools: true,
+        base: chat::system_prompt(&Profile::default(), "Tuesday, October 6, 2026").0,
+        about: String::new(),
+        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+    };
+    turn.run().await.unwrap().last.map(|m| m.content).unwrap_or_default()
+}
+
+/// Memory with the real model: a fact told in one chat is recalled in a
+/// new chat, and an incognito chat saves nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_memory_carries_across_chats() {
+    let (state, ep, cipher) = agent_harness().await;
+    let first = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &first.id, "Please remember this for later: my favorite color is teal.").await;
+    println!("chat 1: {reply}");
+    let saved: Vec<String> = crate::memory::list(&state.db.lock().unwrap(), &cipher, None).into_iter().map(|m| m.content).collect();
+    println!("memories: {saved:?}");
+    assert!(saved.iter().any(|m| m.to_lowercase().contains("teal")), "the model saved the fact");
+
+    let second = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &second.id, "What is my favorite color? Answer in one word.").await;
+    println!("chat 2: {reply}");
+    assert!(reply.to_lowercase().contains("teal"), "recalled in a new chat");
+
+    let incognito = crate::db::create_chat_in(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into()), None, true).unwrap();
+    let reply = say(&state, &ep, &cipher, &incognito.id, "Please remember that I play the cello.").await;
+    println!("incognito: {reply}");
+    let after = crate::memory::list(&state.db.lock().unwrap(), &cipher, None);
+    assert!(!after.iter().any(|m| m.content.to_lowercase().contains("cello")), "incognito saves nothing");
+    state.engine.lock().await.stop().await;
+}

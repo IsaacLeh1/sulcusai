@@ -63,6 +63,26 @@ CREATE TABLE IF NOT EXISTS checkpoints (
   undone     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS checkpoints_by_turn ON checkpoints(turn_id);
+CREATE TABLE IF NOT EXISTS memories (
+  id          TEXT PRIMARY KEY,
+  content     TEXT NOT NULL,
+  project_id  TEXT,
+  source_chat TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_folders (
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  path       TEXT NOT NULL,
+  PRIMARY KEY (project_id, path)
+);
 ";
 
 /// Columns added after the first release, created on older databases.
@@ -71,6 +91,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("messages", "tool_call_id", "TEXT"),
     ("messages", "meta", "TEXT"),
     ("chats", "mode", "TEXT NOT NULL DEFAULT 'auto'"),
+    ("chats", "project_id", "TEXT"),
+    ("chats", "incognito", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
@@ -146,11 +168,24 @@ pub struct Settings {
     /// Minutes of inactivity before app lock engages (0 = never).
     #[serde(default = "default_auto_lock")]
     pub auto_lock_minutes: u32,
+    /// Remember things across chats.
+    #[serde(default = "default_true")]
+    pub memory_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { connectivity: Connectivity::Offline, default_model: None, onboarded: false, auto_lock_minutes: default_auto_lock() }
+        Settings {
+            connectivity: Connectivity::Offline,
+            default_model: None,
+            onboarded: false,
+            auto_lock_minutes: default_auto_lock(),
+            memory_enabled: true,
+        }
     }
 }
 
@@ -248,9 +283,12 @@ pub struct Chat {
     pub updated_at: i64,
     /// Run mode: "plan", "auto" or "bypass".
     pub mode: String,
+    pub project_id: Option<String>,
+    /// Doesn't use or create memories, and is deleted when you leave it.
+    pub incognito: bool,
 }
 
-const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode";
+const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito";
 
 fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat> + '_ {
     move |r| {
@@ -262,8 +300,15 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
             created_at: r.get(4)?,
             updated_at: r.get(5)?,
             mode: r.get(6)?,
+            project_id: r.get(7)?,
+            incognito: r.get::<_, i64>(8)? != 0,
         })
     }
+}
+
+/// Incognito chats don't outlive the session.
+pub fn delete_incognito_chats(conn: &Connection, except: Option<&str>) -> Result<usize, String> {
+    conn.execute("DELETE FROM chats WHERE incognito = 1 AND id != ?1", [except.unwrap_or("")]).map_err(err)
 }
 
 pub fn set_chat_mode(conn: &Connection, id: &str, mode: &str) -> Result<(), String> {
@@ -288,19 +333,25 @@ pub fn chat(conn: &Connection, c: &Cipher, id: &str) -> Option<Chat> {
 }
 
 pub fn create_chat(conn: &Connection, c: &Cipher, model_id: Option<String>) -> Result<Chat, String> {
+    create_chat_in(conn, c, model_id, None, false)
+}
+
+pub fn create_chat_in(conn: &Connection, c: &Cipher, model_id: Option<String>, project_id: Option<String>, incognito: bool) -> Result<Chat, String> {
     let now = now_ms();
     let chat = Chat {
         id: uuid::Uuid::new_v4().to_string(),
-        title: "New chat".into(),
+        title: if incognito { "Incognito chat".into() } else { "New chat".into() },
         model_id,
         web: false,
         created_at: now,
         updated_at: now,
         mode: "auto".into(),
+        project_id,
+        incognito,
     };
     conn.execute(
-        "INSERT INTO chats (id, title, model_id, web, created_at, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?4)",
-        params![chat.id, c.encrypt(&chat.title), chat.model_id, now],
+        "INSERT INTO chats (id, title, model_id, web, created_at, updated_at, project_id, incognito) VALUES (?1, ?2, ?3, 0, ?4, ?4, ?5, ?6)",
+        params![chat.id, c.encrypt(&chat.title), chat.model_id, now, chat.project_id, incognito as i64],
     )
     .map_err(err)?;
     Ok(chat)

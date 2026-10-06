@@ -18,7 +18,7 @@ use crate::db::{self, Message, ToolCall};
 use crate::engine::Endpoint;
 use crate::sandbox::Sandbox;
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
-use crate::AppState;
+use crate::{memory, projects, AppState};
 
 /// Most model replies in one turn before the agent stops and checks in.
 const MAX_STEPS: usize = 30;
@@ -151,9 +151,35 @@ impl Turn {
     }
 
     pub async fn run(self) -> Result<TurnResult, String> {
-        let sandbox = Sandbox::new(&db::folders(&self.state.db.lock().unwrap()));
-        let tools = (self.use_tools && !sandbox.is_empty()).then(|| tools::definitions(self.mode));
-        let about = if self.use_tools { format!("{}{}", self.about, tool_instructions(&sandbox, self.mode)) } else { self.about.clone() };
+        let (folders, project, memories, memory_on, request) = {
+            let conn = self.state.db.lock().unwrap();
+            let chat = db::chat(&conn, &self.cipher, &self.chat_id).ok_or("That chat no longer exists.")?;
+            let project = chat.project_id.as_deref().and_then(|p| projects::get(&conn, &self.cipher, p));
+            let memory_on = db::settings(&conn).memory_enabled && !chat.incognito;
+            let memories = if memory_on { memory::list(&conn, &self.cipher, chat.project_id.as_deref()) } else { Vec::new() };
+            let request = db::messages(&conn, &self.cipher, &self.chat_id)
+                .into_iter()
+                .find(|m| m.id == self.turn_id)
+                .map(|m| m.content)
+                .unwrap_or_default();
+            (projects::chat_folders(&conn, &chat), project, memories, memory_on, request)
+        };
+        let sandbox = Sandbox::new(&folders);
+        let files = self.use_tools && !sandbox.is_empty();
+        let memory_tools = self.use_tools && memory_on;
+        let tools = Some(tools::definitions(self.mode, files, memory_tools)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+
+        let mut about = self.about.clone();
+        if let Some(p) = &project {
+            about.push_str(&projects::prompt_section(p));
+        }
+        if memory_tools {
+            about.push_str(&memory::prompt_section(&memory::relevant(&memories, &request)));
+        }
+        if self.use_tools {
+            about.push_str(&tool_instructions(&sandbox, self.mode));
+        }
+        let project_id = project.as_ref().map(|p| p.id.clone());
         let system = if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
         let checkpoint_dir = self.state.paths.data.join("checkpoints");
 
@@ -219,7 +245,7 @@ impl Turn {
                 let outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
                 } else {
-                    self.execute(call, &sandbox, &recorder).await
+                    self.execute(call, &sandbox, &recorder, project_id.as_deref()).await
                 };
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -259,7 +285,7 @@ impl Turn {
         })
     }
 
-    async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>) -> Outcome {
+    async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>, project_id: Option<&str>) -> Outcome {
         let Some(def) = tools::find(&call.name) else {
             return Outcome::error(call.name.clone(), format!("There is no tool called {}.", call.name));
         };
@@ -289,7 +315,13 @@ impl Turn {
             }
             Permission::Run => {}
         }
-        let ctx = tools::Ctx { sandbox, recorder, cancel: &self.cancel, job: self.state.job() };
+        let ctx = tools::Ctx {
+            sandbox,
+            recorder,
+            cancel: &self.cancel,
+            job: self.state.job(),
+            memory: tools::MemoryCtx { db: &self.state.db, cipher: &self.cipher, chat_id: &self.chat_id, project_id },
+        };
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
         let outcome = tools::run(&call.name, &args, &ctx).await;
         if let Some(title) = outcome.meta.get("title").and_then(Value::as_str) {

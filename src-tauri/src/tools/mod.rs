@@ -2,14 +2,19 @@
 //! Tools the model can call, what each one risks, and how they run.
 
 mod fs;
+mod memory;
 mod shell;
 
 use std::sync::atomic::AtomicBool;
+use std::sync::Mutex;
+
+use rusqlite::Connection;
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::checkpoint::Recorder;
+use crate::crypto::Cipher;
 use crate::engine::JobRef;
 use crate::sandbox::Sandbox;
 
@@ -23,6 +28,8 @@ pub enum Risk {
     Write,
     /// Runs a program; effects can't be undone automatically.
     Execute,
+    /// Saves to the assistant's own memory, which the user can review and edit.
+    Memory,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +59,7 @@ pub enum Permission {
 /// The run-mode rules. `allowed` holds risks the user already approved for this chat.
 pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission {
     match (mode, risk) {
-        (_, Risk::Read) => Permission::Run,
+        (_, Risk::Read | Risk::Memory) => Permission::Run,
         (Mode::Plan, _) => Permission::Refuse,
         (Mode::Bypass, _) => Permission::Run,
         (Mode::Auto, _) if allowed_for_chat => Permission::Run,
@@ -65,6 +72,14 @@ pub struct ToolDef {
     pub description: &'static str,
     pub risk: Risk,
     pub params: fn() -> Value,
+}
+
+/// Which group a tool belongs to; groups are offered only when available.
+fn group(name: &str) -> &'static str {
+    match name {
+        "remember" | "search_memory" => "memory",
+        _ => "files",
+    }
 }
 
 pub const TOOLS: &[ToolDef] = &[
@@ -88,17 +103,26 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Move a file or folder to the Recycle Bin." },
     ToolDef { name: "run_command", risk: Risk::Execute, params: shell::run_command_params,
         description: "Run a PowerShell command in a shared folder and return its output, for example to build, test, use git or run scripts. Runs hidden; no interactive input." },
+    ToolDef { name: "remember", risk: Risk::Memory, params: memory::remember_params,
+        description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
+    ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
+        description: "Search what you remember from earlier chats." },
 ];
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
     TOOLS.iter().find(|t| t.name == name)
 }
 
-/// OpenAI-style definitions for the tools this mode may use.
-pub fn definitions(mode: Mode) -> Value {
+/// OpenAI-style definitions for the tools this mode may use. File tools
+/// need a shared folder; memory tools need memory turned on.
+pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
     let list: Vec<Value> = TOOLS
         .iter()
         .filter(|t| permission(mode, t.risk, false) != Permission::Refuse)
+        .filter(|t| match group(t.name) {
+            "memory" => memory,
+            _ => files,
+        })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
         .collect();
     Value::Array(list)
@@ -147,6 +171,14 @@ pub struct Ctx<'a> {
     pub recorder: &'a Recorder<'a>,
     pub cancel: &'a AtomicBool,
     pub job: Option<&'a JobRef>,
+    pub memory: MemoryCtx<'a>,
+}
+
+pub struct MemoryCtx<'a> {
+    pub db: &'a Mutex<Connection>,
+    pub cipher: &'a Cipher,
+    pub chat_id: &'a str,
+    pub project_id: Option<&'a str>,
 }
 
 pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, String> {
@@ -159,6 +191,7 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     match name {
         "run_command" => shell::run(args, ctx).await,
+        "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
         _ => {
             // File work is quick but blocking; keep it off the async threads.
             let name = name.to_string();
@@ -179,6 +212,8 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "list_dir" => "list",
         "read_file" => "read",
         "find_files" | "search_files" => "search for",
+        "remember" => return "Couldn't save a memory".into(),
+        "search_memory" => return "Couldn't search memory".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -210,11 +245,21 @@ mod tests {
 
     #[test]
     fn plan_mode_only_offers_read_tools() {
-        let defs = definitions(Mode::Plan);
+        let defs = definitions(Mode::Plan, true, true);
         let names: Vec<&str> = defs.as_array().unwrap().iter().map(|d| d["function"]["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
-        assert_eq!(definitions(Mode::Auto).as_array().unwrap().len(), TOOLS.len());
+        assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len());
+    }
+
+    #[test]
+    fn tool_groups_depend_on_folders_and_memory() {
+        let names = |d: Value| -> Vec<String> { d.as_array().unwrap().iter().map(|x| x["function"]["name"].as_str().unwrap().to_string()).collect() };
+        let only_memory = names(definitions(Mode::Auto, false, true));
+        assert_eq!(only_memory, vec!["remember", "search_memory"]);
+        assert!(!names(definitions(Mode::Auto, true, false)).iter().any(|n| n == "remember"));
+        assert!(definitions(Mode::Auto, false, false).as_array().unwrap().is_empty());
     }
 
     #[test]
