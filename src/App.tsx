@@ -20,6 +20,7 @@ import { SettingsView } from "./views/SettingsView";
 import { ActivityView } from "./views/ActivityView";
 import { MemoryView } from "./views/MemoryView";
 import { ProjectView } from "./views/ProjectView";
+import { ScheduledView } from "./views/ScheduledView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { Modal } from "./components/Modal";
@@ -27,7 +28,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "memory" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "memory" | "scheduled" | "project" | "activity" | "settings";
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
 export default function App() {
@@ -128,6 +129,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshEngine();
       }),
       on("chat:start", (p) => setRunning((r) => (r.includes(p.chat_id) ? r : [...r, p.chat_id]))),
+      on("schedule:ran", (p) => {
+        refreshChats();
+        if (p.error) toast(`Scheduled task “${p.name}” didn't run: ${p.error}`, "error");
+        else toast(`Scheduled task “${p.name}” finished. Its result is in the sidebar.`, "success");
+      }),
       // A long chat continued in a new one: follow it.
       on("chat:handoff", async (p) => {
         await refreshChats();
@@ -244,6 +250,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
             Memory
           </button>
+          <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
+            Scheduled
+          </button>
           <button className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>
             Activity
           </button>
@@ -321,6 +330,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         )}
         {view === "activity" && <ActivityView toast={toast} />}
+        {view === "scheduled" && <ScheduledView installed={installed} onOpenChat={openChat} toast={toast} />}
         {view === "memory" && <MemoryView settings={settings} onSettings={setSettings} toast={toast} />}
         {view === "project" && activeProject && (
           <ProjectView

@@ -20,6 +20,7 @@ mod net;
 mod paths;
 mod projects;
 mod sandbox;
+mod schedule;
 mod security;
 mod tools;
 mod workspace;
@@ -116,7 +117,7 @@ impl Drop for FlagGuard<'_> {
     }
 }
 
-fn claim<'a>(map: &'a Mutex<HashMap<String, Arc<AtomicBool>>>, key: &str) -> Option<(Arc<AtomicBool>, FlagGuard<'a>)> {
+pub(crate) fn claim<'a>(map: &'a Mutex<HashMap<String, Arc<AtomicBool>>>, key: &str) -> Option<(Arc<AtomicBool>, FlagGuard<'a>)> {
     let mut m = map.lock().unwrap();
     if m.contains_key(key) {
         return None;
@@ -343,7 +344,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
 
 /// The stored path, or the same file in today's models folder if the data
 /// folder has moved since install.
-fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBuf {
+pub(crate) fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBuf {
     let stored = std::path::PathBuf::from(&m.path);
     if stored.exists() {
         return stored;
@@ -690,6 +691,7 @@ pub fn run() {
             checkpoint::prune(&state.db.lock().unwrap());
             let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
             app.manage(Arc::new(state));
+            schedule::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -752,6 +754,10 @@ pub fn run() {
             projects::delete_memory,
             projects::clear_memories,
             projects::set_memory_enabled,
+            schedule::list_schedules,
+            schedule::save_schedule,
+            schedule::delete_schedule,
+            schedule::run_schedule_now,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

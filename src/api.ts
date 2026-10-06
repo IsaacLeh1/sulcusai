@@ -137,6 +137,31 @@ export interface Project {
   updated_at: number;
 }
 
+export type Cadence =
+  | { kind: "once"; at: number }
+  | { kind: "hourly"; minute: number }
+  | { kind: "daily"; time: string }
+  | { kind: "weekdays"; time: string }
+  | { kind: "weekly"; weekday: number; time: string };
+
+export interface Schedule {
+  id: string;
+  name: string;
+  prompt: string;
+  cadence: Cadence;
+  model_id: string | null;
+  project_id: string | null;
+  allow_changes: boolean;
+  enabled: boolean;
+  last_run: number | null;
+  next_run: number | null;
+  last_chat: string | null;
+}
+
+export interface ScheduleView extends Schedule {
+  when: string;
+}
+
 export interface Memory {
   id: string;
   content: string;
@@ -298,6 +323,10 @@ export const api = {
   deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
   clearMemories: () => invoke<void>("clear_memories"),
   setMemoryEnabled: (enabled: boolean) => invoke<Settings>("set_memory_enabled", { enabled }),
+  schedules: () => invoke<ScheduleView[]>("list_schedules"),
+  saveSchedule: (schedule: Schedule) => invoke<ScheduleView>("save_schedule", { schedule }),
+  deleteSchedule: (id: string) => invoke<void>("delete_schedule", { id }),
+  runScheduleNow: (id: string) => invoke<string>("run_schedule_now", { id }),
 };
 
 export interface InstallProgress {
@@ -326,6 +355,7 @@ export interface ChatEvents {
   "agent:approval_done": { chat_id: string; call_id: string };
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
+  "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
   "security:locked": null;

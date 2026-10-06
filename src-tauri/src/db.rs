@@ -78,6 +78,12 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS schedules (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  next_run   INTEGER,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS project_folders (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,
