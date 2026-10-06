@@ -39,7 +39,83 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 | Plugins: skills + connectors from a folder, preview before install | ✅ `connectors.rs` |
 | Remote (HTTP/OAuth) connectors | ⏭ Phase 4 (they go online) |
 
-**Next: Phase 3 (Voice and meetings).** Dictation, voice mode, meeting mode (capture, transcript, summary, library), translation.
+## Phase 3 (Voice and meetings): complete
+
+| Item | Status |
+|---|---|
+| Audio: mic and system-audio (loopback) capture at 16 kHz, playback that can be cut off | ✅ `audio.rs` (WASAPI) |
+| Voice detection and phrase cutting | ✅ `vad.rs` |
+| Speech recognition: whisper.cpp server, spec-filtered models, self-test on install | ✅ `speech.rs` |
+| Dictation (🎤, Ctrl+Shift+Space) | ✅ `voice.rs`, `components/Voice.tsx` |
+| Voice mode with barge-in, spoken replies as they stream | ✅ `voice.rs` |
+| Speech output: Windows voices; natural voices (Supertonic 3) | ✅ `tts.rs`, `natural.rs` |
+| Meeting mode: capture, live transcript, echo removal, encrypted audio, notes, library, search, export, ask | ✅ `meeting.rs`, `views/MeetingsView.tsx` |
+| Speaker labels (diarization) with names | ✅ `diarize.rs` |
+| Recording-consent reminder with a copyable announcement | ✅ |
+| Translation: text, text documents, subtitles, live meeting captions | ✅ `translate.rs`, `views/TranslateView.tsx` |
+| Meeting tools for chats (`search_meetings`, `read_meeting`) | ✅ `tools/meetings.rs` |
+| Action items → tasks and calendar; start meetings from calendar events | ⏭ Phase 4 (needs notes/tasks and calendar) |
+| Translating Word/PDF files and text in images | ⏭ Phase 4/5 (documents, vision) |
+| Typing dictation into other apps (global hotkey) | ⏭ Phase 4 (desktop assistant) |
+
+**Next: Phase 4 (Web and productivity).**
+
+### How voice and meetings work
+
+- **Speech recognition:** `whisper-server` runs hidden on 127.0.0.1, on a random port, with `--request-path /<random>`.
+  - It has no API-key option, so the secret path prefix is the key. `/load` and every other route sit behind it, and it serves files from an empty folder.
+  - It runs on the processor with about two thirds of the cores (up to 16).
+  - **Two jobs, two models:** `speech::choose` picks the most accurate installed model for meetings, and the most accurate one that encodes a 30 s window in ≤2.5 s for dictation and voice chats. The user can override either. At most two speech servers stay loaded, and they unload after 10 idle minutes.
+  - Whisper always encodes a full 30 s window. On this PC (Core Ultra 9 275HX, 16 threads) that's ~7 s for Large v3 Turbo and ~1.3 s for Small, so phrases are batched for meetings.
+  - **Don't shrink `audio_ctx`:** it made Turbo output garbage ("occurs and the") and a server request hang.
+  - Server-side Silero VAD (`--vad`) and `-sns` keep silence from turning into made-up sentences.
+- **Meetings:** each channel ("You" = mic, "Others" = loopback) goes through its own `Phraser`.
+  - Phrases are batched per channel (up to 18 s, or sent after 2 s of quiet) into one whisper request.
+  - Line times are mapped back to the meeting clock (`Job::real_time`), and lines are rejoined into whole sentences.
+  - A "You" line that repeats an overlapping "Others" line is speaker echo and is dropped, in whichever order they arrive.
+  - Audio is stored as encrypted 30 s chunks per channel (`meetings/<id>/you-00000.enc`), and clips are mixed on demand.
+  - Notes use `chat::complete` with a JSON schema, falling back to plain JSON. Long meetings are summarized part by part first.
+- **Speaker labels:** a Kaldi-style 80-band filterbank (`diarize::fbank`, its own FFT) feeds WeSpeaker ResNet34 on ONNX Runtime.
+  - Live grouping uses cosine similarity ≥ 0.5. At the end, average-linkage regrouping renumbers speakers by who spoke first.
+  - Lines too short for a voice print (< 1.2 s) take the label of the speaker before them.
+- **Voices:** voice ids carry their engine: `system:<WinRT id>` or `supertonic:F1`…
+  - Natural voices are preferred when installed and they speak the language. Otherwise a Windows voice for that language is used.
+  - Supertonic gets plain text with `<lang>` tags (no phonemizer, so no GPL espeak), then runs 5 flow-matching steps at 44.1 kHz.
+- **Voice mode:** the Rust loop owns the mic and the player, so barge-in is immediate.
+  - While it talks, voice detection needs 3× louder speech.
+  - A transcript that repeats its own last reply is ignored, which catches speaker echo when no headphones are used.
+  - The reply is spoken by teeing `chat:delta` events from `run_turn` into a sentence splitter.
+- **ONNX Runtime:** the official Microsoft zip, hash-checked, is loaded at run time with `ort` `load-dynamic`. Nothing is bundled or fetched at build time, and natural voices and speaker labels share it.
+
+### Phase 3 verification (2026-10-06)
+
+- **No real microphone, speakers or screen were used.** Every test feeds synthesized speech through the same code paths.
+- **`e2e_speech_round_trip`:**
+  - A Windows voice's sentence came back word-perfect.
+  - Silence gave nothing.
+  - The server answered 404 without its path prefix.
+- **`e2e_dictation_streams_phrases`:** two sentences streamed in 20 ms chunks came out as two exact phrases. Small ran at about 8× real time.
+- **`e2e_meeting_records_transcribes_and_writes_notes`:**
+  - Two channels, with the call echoing into the mic.
+  - Three clean sentences resulted, and the echo was removed.
+  - A replay clip had the right length.
+  - Notes with action items came back from Qwen3 1.7B. The small model sometimes credits tasks to the wrong person; larger models do better.
+- **`e2e_meeting_tells_speakers_apart`:** two voices taking turns were labeled Speaker 1/2/1/2.
+- **`e2e_natural_voice_is_understood`:** English and German Supertonic speech was transcribed back word for word, at about 3× real time.
+- **`e2e_audio_devices_are_listed`:** found the Intel mic array and Realtek speakers by name.
+- **Full regression after Phase 3** (all 12 e2e tests, one at a time): 11 passed on the first run.
+  - `e2e_helper_and_handoff` failed once and passed on the re-run. Qwen3 1.7B's helper sometimes stops before it finds the file. That's model variance; that code path is unchanged in Phase 3.
+- **Not covered yet (needs a person at the PC):**
+  - live capture from the real microphone and loopback, and playback through the speakers
+  - voice mode end to end with a human
+  - Windows' echo cancellation in communications mode
+
+| Component | Measured on this PC |
+|---|---|
+| Large v3 Turbo (q5_0), 16 threads | ~7 s per 30 s window; ~1.7× real time on an 8 s phrase |
+| Small (q5_1) | ~1.3 s per window; ~8× real time on a phrase |
+| Supertonic 3, 5 steps | 5.3 s of speech in 1.9 s (first call includes loading) |
+
 
 ### How the agent works
 
@@ -119,8 +195,8 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 
 ## Tests
 
-- `cd src-tauri && cargo test` (29 tests): catalog, fit rule, connectivity gate, database, prompt building, encryption, app lock paths, the DPAPI round-trip and plaintext migration.
-- `cd src-tauri && cargo test e2e -- --ignored --nocapture`: real engine plus the Qwen3 1.7B model. It downloads about 1.1 GB the first time and reuses the app's data folder.
+- `cd src-tauri && cargo test` (127 tests): catalog, fit rule, connectivity gate, database, prompt building, encryption, app lock, the agent, plus audio formats, voice detection, speech-model choice, speech cleanup, meetings (storage, echo, batching, notes, export), translation, filterbank/FFT and speaker grouping.
+- `cd src-tauri && cargo test e2e -- --ignored --nocapture --test-threads 1`: the real engines and models (Qwen3 1.7B, Whisper Small and Large v3 Turbo, Supertonic 3, WeSpeaker). It downloads about 2.5 GB the first time and reuses the app's data folder. Run them one at a time; they share the engines.
 - `pnpm test`: UI helpers, including starter-model choice.
 - `pnpm check:licenses`, and `cargo deny check licenses` in CI: license policy.
 - **Manual check done 2026-10-06** in a scratch `SULCUSAI_DATA_DIR`:
@@ -134,4 +210,6 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - The CSP blocks the window from making any network request. All HTTP goes through Rust and `net.rs`.
 - Model links are shown but not clickable, and remote images aren't loaded. Opening links externally waits for the Web level and an opener.
 - Every command that reads chats or the profile calls `state.cipher()?`, which returns `"locked"` while the app is locked. New commands that touch encrypted data must do the same.
+- Sandboxed shells (such as the Claude desktop app's) can see `%LOCALAPPDATA%` redirected to `...\Packages\<app>\LocalCache\Local`. A dev build started from such a shell uses that copy, not the real data folder.
+- A capture or playback test opens the real microphone or speakers. Ask the user before running one.
 - Losing `keys.json` loses every encrypted chat. Back it up together with `sulcusai.db` (a future backup feature must include both).

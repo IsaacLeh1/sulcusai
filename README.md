@@ -4,7 +4,7 @@ A private AI workspace that runs on your own PC. It shows only the AI models
 your computer can actually run, installs them with one click, and keeps
 everything local unless you choose otherwise.
 
-> **Status: early development. Phases 1 (Foundation) and 2 (Agent core) are complete.** See [DESIGN.md](DESIGN.md)
+> **Status: early development. Phases 1 (Foundation), 2 (Agent core) and 3 (Voice and meetings) are complete.** See [DESIGN.md](DESIGN.md)
 > for the full plan and [HANDOFF.md](HANDOFF.md) for where work stands.
 
 ## What works today
@@ -48,6 +48,27 @@ everything local unless you choose otherwise.
 - **Scheduled tasks** that run on their own and save results as chats.
 - **Connectors and plugins.** Local MCP servers with Allow / Ask / Off per
   tool, and plugins that add skills and connectors.
+- **Speech models** (Models › Speech), filtered to what this PC's processor
+  can keep up with: a quick one for dictation and voice chats, the most
+  accurate one for meetings.
+- **Dictation.** The 🎤 button (or Ctrl+Shift+Space) types what you say.
+- **Voice chats.** Talk, and hear the answer as it's written; talk over it to
+  interrupt. Replies can also be read aloud.
+- **Natural voices** (optional, 31 languages), with Windows' built-in voices
+  as the fallback.
+- **Meeting mode.** Records your microphone and your computer's sound, so it
+  hears everyone on Teams, Meet, Zoom or in the room with no bot joining.
+  - Live transcript, with speaker echo removed and optional translated
+    captions.
+  - Notes when it ends: summary, most important points, action items,
+    decisions, key points and topics.
+  - Optional speaker labels you can name, and an encrypted recording you can
+    replay line by line.
+  - A searchable library, Markdown export, "Ask about this meeting" chats,
+    and meeting tools any chat can use.
+  - A reminder to tell people you're recording.
+- **Translation** of text and text documents (subtitles keep their timing),
+  with language detection and read-aloud.
 
 ## Privacy and security design
 
@@ -56,6 +77,8 @@ everything local unless you choose otherwise.
 - A Windows job object ends the engine if the app closes or crashes.
 - Model output is shown as Markdown without raw HTML, and remote images are
   never loaded.
+- Speech recognition runs as a second hidden local process. It has no API key
+  option, so every route sits behind a random path prefix only the app knows.
 - Every request that leaves the PC goes through one connectivity check
   (`src-tauri/src/net.rs`) and is recorded in the activity log.
 - Encryption uses AES-256-GCM. The data key is sealed by Windows DPAPI, plus an

@@ -1,6 +1,6 @@
 # SulcusAI — Design Document
 
-*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phases 1 and 2 complete; Phase 3 next (see HANDOFF.md).*
+*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phases 1–3 complete; Phase 4 next (see HANDOFF.md).*
 
 ## 1. Vision
 
@@ -272,8 +272,9 @@ Settings → Advanced → "Enable advanced mode". A warning explains that these 
 |---|---|---|
 | App shell | **Tauri 2** (Rust) + TypeScript UI (Solid or React) | Small, fast. A familiar stack, but the code is written fresh. Nothing is copied from the Cowork/OpenWork codebases (see §8) |
 | Text models | **llama.cpp** (`llama-server`) managed by the app | Widest hardware support, GGUF format, tool calling |
-| Speech recognition | whisper.cpp + Silero voice detection | Local, fast, many languages |
-| Speech output | Kokoro-class voices (Apache-2.0) | Small, natural, local. Avoid the newer Piper fork (GPL-3.0); the original Piper (MIT) is OK if needed |
+| Speech recognition | whisper.cpp + Silero voice detection | Local, many languages. Runs on the processor (whisper.cpp only publishes CUDA GPU builds for Windows); a quick model for dictation and voice chats, the most accurate one for meetings |
+| Speaker labels | WeSpeaker ResNet34 voice prints on ONNX Runtime (CC-BY-4.0) | Tells the people on a call apart; regrouped over the whole meeting at the end |
+| Speech output | **Supertonic 3** on ONNX Runtime (OpenRAIL-M), with Windows' built-in voices as the always-there fallback | Reads plain text, so no phonemizer. Kokoro and Piper need espeak-ng (GPL-3.0) to turn text into sounds, which rule 2 in §8 bans; Supertonic sidesteps it and covers 31 languages |
 | Images / video | **stable-diffusion.cpp** (MIT) | Covers generation, editing, and video models. **Not ComfyUI**: it is GPL-3.0, so bundling it would force the app open-source |
 | Music / audio | Local music and sound-effect models (chosen per catalog) | Filtered by specs |
 | Storage | SQLite with field-level AES-256-GCM encryption (key sealed by DPAPI + PIN), plus sqlite-vec for embeddings later | One local file, no server; avoids compiling OpenSSL for SQLCipher on Windows |
