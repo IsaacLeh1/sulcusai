@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   errorText,
@@ -9,6 +9,7 @@ import {
   type Connectivity,
   type EngineStatus,
   type InstallProgress,
+  type Project,
   type SecurityStatus,
   type Settings,
 } from "./api";
@@ -17,13 +18,16 @@ import { ChatView } from "./views/ChatView";
 import { ModelsView } from "./views/ModelsView";
 import { SettingsView } from "./views/SettingsView";
 import { ActivityView } from "./views/ActivityView";
+import { MemoryView } from "./views/MemoryView";
+import { ProjectView } from "./views/ProjectView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
+import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "activity" | "settings";
+export type View = "chat" | "models" | "memory" | "project" | "activity" | "settings";
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
 export default function App() {
@@ -31,6 +35,7 @@ export default function App() {
   // Kept out here so unlocking returns to the same page and chat.
   const [view, setView] = useState<View>("chat");
   const [activeChat, setActiveChat] = useState<string | null>(null);
+  const [activeProject, setActiveProject] = useState<string | null>(null);
   const toasts = useToasts();
 
   const refreshSecurity = useCallback(async () => setSecurity(await api.security()), []);
@@ -55,7 +60,7 @@ export default function App() {
         security={security}
         onSecurityChanged={refreshSecurity}
         toast={toasts.push}
-        nav={{ view, setView, activeChat, setActiveChat }}
+        nav={{ view, setView, activeChat, setActiveChat, activeProject, setActiveProject }}
       />
     );
 
@@ -72,11 +77,19 @@ interface Nav {
   setView: (v: View) => void;
   activeChat: string | null;
   setActiveChat: (id: string | null) => void;
+  activeProject: string | null;
+  setActiveProject: (id: string | null) => void;
 }
 
 function Workspace({ security, onSecurityChanged, toast, nav }: { security: SecurityStatus; onSecurityChanged: () => void; toast: PushToast; nav: Nav }) {
-  const { view, setView, activeChat, setActiveChat } = nav;
+  const { view, setView, activeChat, setActiveChat, activeProject, setActiveProject } = nav;
   const [chats, setChats] = useState<Chat[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [newProject, setNewProject] = useState(false);
+  const refreshProjects = useCallback(async () => setProjects(await api.projects()), []);
+  useEffect(() => {
+    refreshProjects();
+  }, [refreshProjects]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [catalog, setCatalog] = useState<CatalogView | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
@@ -119,15 +132,30 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const installed = useMemo(() => (catalog?.models ?? []).filter((m) => m.installed), [catalog]);
   const current = chats.find((c) => c.id === activeChat) ?? null;
 
-  const newChat = async () => {
+  const newChat = async (projectId: string | null = null, incognito = false) => {
     try {
-      const chat = await api.createChat();
+      const chat = await api.createChatIn(projectId, incognito);
       await refreshChats();
       setActiveChat(chat.id);
       setView("chat");
     } catch (e) {
       toast(errorText(e), "error");
     }
+  };
+
+  // Leaving an incognito chat deletes it.
+  const lastChat = useRef<Chat | null>(null);
+  useEffect(() => {
+    const prev = lastChat.current;
+    if (prev?.incognito && (prev.id !== activeChat || view !== "chat")) {
+      api.leaveIncognito(view === "chat" ? activeChat : null).then(refreshChats);
+    }
+    lastChat.current = view === "chat" ? chats.find((c) => c.id === activeChat) ?? null : null;
+  }, [activeChat, view, chats, refreshChats]);
+
+  const openChat = (id: string) => {
+    setActiveChat(id);
+    setView("chat");
   };
 
   const changeConnectivity = async (level: Connectivity) => {
@@ -183,13 +211,27 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           )}
         </div>
-        <button className="btn primary block" onClick={newChat} disabled={installed.length === 0}>
-          + New chat
-        </button>
+        <div className="new-chat-row">
+          <button className="btn primary block" onClick={() => newChat()} disabled={installed.length === 0}>
+            + New chat
+          </button>
+          <button
+            className="btn incognito-btn"
+            onClick={() => newChat(null, true)}
+            disabled={installed.length === 0}
+            title="Incognito chat: not saved, no memory"
+            aria-label="New incognito chat"
+          >
+            🕶
+          </button>
+        </div>
         <nav className="nav">
           <button className={view === "models" ? "active" : ""} onClick={() => setView("models")}>
             Models
             {Object.keys(progress).length > 0 && <span className="dot" aria-label="Installing" />}
+          </button>
+          <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
+            Memory
           </button>
           <button className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>
             Activity
@@ -198,6 +240,25 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             Settings
           </button>
         </nav>
+        <div className="side-section">
+          <div className="side-head">
+            <span>Projects</span>
+            <button className="icon-btn" title="New project" aria-label="New project" onClick={() => setNewProject(true)}>+</button>
+          </div>
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              className={`chat-item ${view === "project" && activeProject === p.id ? "active" : ""}`}
+              onClick={() => {
+                setActiveProject(p.id);
+                setView("project");
+              }}
+            >
+              <span aria-hidden>📚</span>
+              <span className="ellipsis">{p.name}</span>
+            </button>
+          ))}
+        </div>
         <div className="chat-list" role="list">
           {chats.length === 0 && <p className="muted small pad">Your chats will appear here.</p>}
           {chats.map((c) => (
@@ -205,13 +266,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               key={c.id}
               role="listitem"
               className={`chat-item ${view === "chat" && c.id === activeChat ? "active" : ""}`}
-              onClick={() => {
-                setActiveChat(c.id);
-                setView("chat");
-              }}
+              onClick={() => openChat(c.id)}
               title={c.title}
             >
+              {c.incognito && <span aria-label="Incognito">🕶</span>}
               <span className="ellipsis">{c.title}</span>
+              {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
               {c.web && <span className="globe-mini" title="Web on for this chat">🌐</span>}
             </button>
           ))}
@@ -222,10 +282,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "chat" && (
           <ChatView
             chat={current}
+            projectName={projects.find((p) => p.id === current?.project_id)?.name ?? null}
             installed={installed}
             defaultModel={settings.default_model}
             connectivity={settings.connectivity}
-            onNewChat={newChat}
+            onNewChat={() => newChat()}
             onGoModels={() => setView("models")}
             onChanged={refreshChats}
             onDeleted={async () => {
@@ -247,6 +308,24 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         )}
         {view === "activity" && <ActivityView toast={toast} />}
+        {view === "memory" && <MemoryView settings={settings} onSettings={setSettings} toast={toast} />}
+        {view === "project" && activeProject && (
+          <ProjectView
+            key={activeProject}
+            projectId={activeProject}
+            chats={chats}
+            onOpenChat={openChat}
+            onNewChat={() => newChat(activeProject)}
+            onChanged={refreshProjects}
+            onDeleted={async () => {
+              setActiveProject(null);
+              setView("chat");
+              await refreshProjects();
+              await refreshChats();
+            }}
+            toast={toast}
+          />
+        )}
         {view === "settings" && (
           <SettingsView
             connectivity={settings.connectivity}
@@ -280,6 +359,44 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           {settings.connectivity === "cloud" ? "AI runs on this PC unless you pick a cloud model" : "AI runs only on this PC"}
         </span>
       </footer>
+      {newProject && (
+        <NewProjectDialog
+          onClose={() => setNewProject(false)}
+          onCreate={async (name) => {
+            try {
+              const p = await api.createProject(name);
+              setNewProject(false);
+              await refreshProjects();
+              setActiveProject(p.id);
+              setView("project");
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
+  const [name, setName] = useState("");
+  return (
+    <Modal title="New project" onClose={onClose}>
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) onCreate(name.trim());
+        }}
+      >
+        <p className="muted small">A project keeps its own instructions, folders and memories for a set of related chats.</p>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name, e.g. Thesis" autoFocus maxLength={80} />
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={!name.trim()}>Create</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

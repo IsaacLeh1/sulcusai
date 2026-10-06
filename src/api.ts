@@ -104,6 +104,7 @@ export interface Settings {
   default_model: string | null;
   onboarded: boolean;
   auto_lock_minutes: number;
+  memory_enabled: boolean;
 }
 
 export interface Profile {
@@ -122,6 +123,25 @@ export interface Chat {
   created_at: number;
   updated_at: number;
   mode: RunMode;
+  project_id: string | null;
+  incognito: boolean;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  instructions: string;
+  folders: string[];
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Memory {
+  id: string;
+  content: string;
+  project_id: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface ToolCall {
@@ -258,6 +278,21 @@ export const api = {
   pendingApprovals: (chatId: string) => invoke<PendingApproval[]>("pending_approvals", { chatId }),
   undoableTurns: (chatId: string) => invoke<string[]>("undoable_turns", { chatId }),
   undoTurn: (chatId: string, turnId: string) => invoke<string[]>("undo_turn", { chatId, turnId }),
+  projects: () => invoke<Project[]>("list_projects"),
+  createProject: (name: string) => invoke<Project>("create_project", { name }),
+  updateProject: (id: string, name: string, instructions: string) => invoke<void>("update_project", { id, name, instructions }),
+  deleteProject: (id: string) => invoke<void>("delete_project", { id }),
+  addProjectFolder: (id: string, path: string) => invoke<void>("add_project_folder", { id, path }),
+  removeProjectFolder: (id: string, path: string) => invoke<void>("remove_project_folder", { id, path }),
+  createChatIn: (projectId: string | null, incognito: boolean) => invoke<Chat>("create_chat_in", { projectId, incognito }),
+  leaveIncognito: (keep: string | null) => invoke<void>("leave_incognito", { keep }),
+  setChatProject: (chatId: string, projectId: string | null) => invoke<void>("set_chat_project", { chatId, projectId }),
+  memories: () => invoke<Memory[]>("list_memories"),
+  addMemory: (content: string, projectId: string | null) => invoke<Memory>("add_memory", { content, projectId }),
+  updateMemory: (id: string, content: string) => invoke<void>("update_memory", { id, content }),
+  deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
+  clearMemories: () => invoke<void>("clear_memories"),
+  setMemoryEnabled: (enabled: boolean) => invoke<Settings>("set_memory_enabled", { enabled }),
 };
 
 export interface InstallProgress {

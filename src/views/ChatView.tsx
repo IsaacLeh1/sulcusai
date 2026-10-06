@@ -21,6 +21,7 @@ import type { PushToast } from "../components/Toasts";
 
 interface Props {
   chat: Chat | null;
+  projectName: string | null;
   installed: ModelCard[];
   defaultModel: string | null;
   connectivity: Connectivity;
@@ -76,7 +77,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -254,6 +255,11 @@ function Conversation({ chat, installed, defaultModel, connectivity, onChanged, 
         </div>
       </header>
 
+      {(chat.incognito || projectName) && (
+        <div className={`chat-banner ${chat.incognito ? "incognito" : ""}`}>
+          {chat.incognito ? "🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it." : `📚 In project ${projectName}`}
+        </div>
+      )}
       <div className="messages" ref={scroller}>
         {messages.length === 0 && !streaming && (
           <div className="hello">

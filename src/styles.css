@@ -339,3 +339,22 @@ select, .input {
 .folder-pop li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
 /* Long chats overflow; never squash cards to fit. */
 .messages > * { flex-shrink: 0; }
+
+/* ---------- memory, projects, incognito ---------- */
+.new-chat-row { display: flex; gap: 6px; }
+.new-chat-row .btn.block { flex: 1; }
+.incognito-btn { padding: 7px 10px; }
+.side-section { display: flex; flex-direction: column; gap: 1px; }
+.side-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
+.chat-project { font-size: 11px; margin-left: auto; opacity: 0.7; }
+.chat-banner { padding: 6px 20px; font-size: 12.5px; background: var(--accent-soft); color: var(--accent); border-bottom: 1px solid var(--border); }
+.chat-banner.incognito { background: color-mix(in srgb, var(--muted) 15%, transparent); color: var(--text); }
+.memory-add { display: flex; gap: 8px; margin-bottom: 12px; }
+.memory-list { list-style: none; margin: 0; padding: 0; }
+.memory-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.memory-list li:last-child { border-bottom: 0; }
+.memory-list.compact li { padding: 4px 0; }
+.memory-text { flex: 1; overflow-wrap: anywhere; }
+.memory-edit { display: flex; gap: 6px; flex: 1; }
+.setting-row.first { border-top: 0; padding-top: 0; }
+.link.danger { color: var(--danger); }

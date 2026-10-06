@@ -15,6 +15,8 @@ const TOOL_ICONS: Record<string, string> = {
   make_folder: "📁",
   delete_path: "🗑️",
   run_command: "⌨️",
+  remember: "🧠",
+  search_memory: "🧠",
 };
 
 /** A unified diff with added/removed lines colored. */
