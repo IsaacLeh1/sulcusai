@@ -2,8 +2,10 @@
 // Copyright (C) 2026 Isaac Lehman
 //! SulcusAI core: commands the window calls, and the state behind them.
 
+mod agent;
 mod catalog;
 mod chat;
+mod checkpoint;
 mod crypto;
 mod db;
 mod download;
@@ -14,7 +16,10 @@ mod hardware;
 mod hello;
 mod net;
 mod paths;
+mod sandbox;
 mod security;
+mod tools;
+mod workspace;
 #[cfg(windows)]
 mod winjob;
 
@@ -28,7 +33,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use catalog::{Budget, Catalog, Hints, ModelFit, ModelSpec};
-use chat::{ContextInfo, Delta};
+use chat::ContextInfo;
 use crypto::{Cipher, Vault};
 use db::{Chat, InstalledModel, Message, Profile, Settings};
 use engine::{Engine, EngineStatus, JobRef, LaunchSpec};
@@ -49,6 +54,7 @@ pub struct AppState {
     installs: Mutex<HashMap<String, Arc<AtomicBool>>>,
     generations: Mutex<HashMap<String, Arc<AtomicBool>>>,
     contexts: Mutex<HashMap<String, ContextInfo>>,
+    approvals: agent::Approvals,
     #[cfg(windows)]
     job: Option<winjob::Job>,
 }
@@ -282,6 +288,8 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
 
             emit("benchmark", 0, 0);
             let log = state.paths.engine_log();
+            // Same settings a chat will use, so the first chat doesn't reload the model.
+            let (ctx, gpu_layers) = catalog::launch_settings(&spec, &variant.quant, &state.budget());
             let mut engine = state.engine.lock().await;
             let measured = async {
                 let ep = engine
@@ -291,8 +299,8 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                             model_path: &dest,
                             model_id: &spec.id,
                             quant: &variant.quant,
-                            ctx: fit.ctx,
-                            gpu_layers: vfit_layers(&spec, &variant.quant, &state.budget()),
+                            ctx,
+                            gpu_layers,
                             log: &log,
                         },
                         state.job(),
@@ -341,11 +349,6 @@ fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBuf {
         Some(name) => paths.models.join(&m.model_id).join(name),
         None => stored,
     }
-}
-
-fn vfit_layers(spec: &ModelSpec, quant: &str, budget: &Budget) -> u32 {
-    let fit = catalog::fit_model(spec, budget);
-    fit.variant(quant).map_or(0, |v| v.gpu_layers)
 }
 
 #[tauri::command]
@@ -451,6 +454,7 @@ fn create_chat(state: AppStateRef) -> Result<Chat, String> {
 fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
     state.cipher()?;
     state.contexts.lock().unwrap().remove(&chat_id);
+    state.approvals.forget_chat(&chat_id);
     let conn = state.db.lock().unwrap();
     db::delete_chat(&conn, &chat_id)?;
     db::log_action(&conn, "chat", "Deleted a chat and its messages");
@@ -506,7 +510,7 @@ fn stop_generation(state: AppStateRef, chat_id: String) {
 }
 
 #[tauri::command]
-async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String) -> Result<Message, String> {
+async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String) -> Result<Option<Message>, String> {
     let text = text.trim().to_string();
     if text.is_empty() {
         return Err("Type a message first.".into());
@@ -516,7 +520,8 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
         return Err("Still answering the last message.".into());
     };
 
-    let (installed, profile) = {
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    let (installed, profile, mode) = {
         let conn = state.db.lock().unwrap();
         let chat = db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
         let model_id = chat
@@ -530,22 +535,22 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
         }
         let first = db::message_count(&conn, &chat_id) == 0;
         db::add_message(&conn, &cipher, &Message {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: turn_id.clone(),
             chat_id: chat_id.clone(),
             role: "user".into(),
             content: text.clone(),
-            thinking: None,
             created_at: db::now_ms(),
+            ..Default::default()
         })?;
         if first {
             db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
         }
-        (installed, db::profile(&conn, &cipher))
+        (installed, db::profile(&conn, &cipher), tools::Mode::parse(&chat.mode))
     };
 
     let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
     let budget = state.budget();
-    let ctx = catalog::fit_model(&spec, &budget).ctx;
+    let (ctx, gpu_layers) = catalog::launch_settings(&spec, &installed.quant, &budget);
     let backend = engine::backend_for(&budget)?;
     let exe = engine::installed_server(&state.paths, &state.catalog.engine, backend)
         .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
@@ -566,7 +571,7 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
                             model_id: &installed.model_id,
                             quant: &installed.quant,
                             ctx,
-                            gpu_layers: vfit_layers(&spec, &installed.quant, &budget),
+                            gpu_layers,
                             log: &log,
                         },
                         state.job(),
@@ -578,48 +583,34 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
-    let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
-    let (kept, mut info) = chat::fit_history(&ep, &base, &about, &history).await?;
-    state.contexts.lock().unwrap().insert(chat_id.clone(), info.clone());
-    app.emit("chat:context", json!({ "chat_id": chat_id, "context": info })).ok();
-
-    let message_id = uuid::Uuid::new_v4().to_string();
-    app.emit("chat:start", json!({ "chat_id": chat_id, "message_id": message_id })).ok();
-    let system = if about.is_empty() { base } else { format!("{base}\n\n{about}") };
-    let finished = chat::stream_reply(&ep, &system, &kept, &cancel, |d| {
-        let (content, thinking) = match d {
-            Delta::Content(t) => (Some(t), None),
-            Delta::Thinking(t) => (None, Some(t)),
-        };
-        app.emit(
-            "chat:delta",
-            json!({ "chat_id": chat_id, "message_id": message_id, "content": content, "thinking": thinking }),
-        )
-        .ok();
-    })
-    .await?;
-
-    let message = Message {
-        id: message_id,
+    let emitter = app.clone();
+    let turn = agent::Turn {
+        emit: Arc::new(move |event: &str, payload: serde_json::Value| {
+            emitter.emit(event, payload).ok();
+        }),
+        state: state.inner().clone(),
         chat_id: chat_id.clone(),
-        role: "assistant".into(),
-        content: finished.content,
-        thinking: (!finished.thinking.is_empty()).then_some(finished.thinking),
-        created_at: db::now_ms(),
+        turn_id,
+        cipher,
+        ep,
+        mode,
+        use_tools: spec.tools,
+        base,
+        about,
+        cancel,
     };
-    if !message.content.is_empty() || message.thinking.is_some() {
-        db::add_message(&state.db.lock().unwrap(), &cipher, &message)?;
-    }
-    if let (Some(p), Some(c)) = (finished.prompt_tokens, finished.completion_tokens) {
-        info.last_total = Some(p + c);
-    }
-    state.contexts.lock().unwrap().insert(chat_id.clone(), info.clone());
-    app.emit(
-        "chat:done",
-        json!({ "chat_id": chat_id, "message": message, "tps": finished.tps, "context": info, "cancelled": finished.cancelled }),
-    )
-    .ok();
-    Ok(message)
+    let result = turn.run().await;
+    let (last, context, tps, cancelled) = match result {
+        Ok(r) => (r.last, r.context, r.tps, r.cancelled),
+        Err(e) => {
+            app.emit("chat:done", json!({ "chat_id": chat_id, "error": e })).ok();
+            return Err(e);
+        }
+    };
+    state.contexts.lock().unwrap().insert(chat_id.clone(), context.clone());
+    app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
+        .ok();
+    Ok(last)
 }
 
 // ---------- engine ----------
@@ -645,6 +636,7 @@ fn open_vault(paths: &Paths) -> Result<Vault, String> {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
@@ -665,6 +657,7 @@ pub fn run() {
                 installs: Mutex::new(HashMap::new()),
                 generations: Mutex::new(HashMap::new()),
                 contexts: Mutex::new(HashMap::new()),
+                approvals: agent::Approvals::default(),
                 #[cfg(windows)]
                 job: winjob::Job::kill_on_close().ok(),
                 paths,
@@ -672,6 +665,7 @@ pub fn run() {
             if let Ok(c) = state.cipher() {
                 state.migrate_plaintext(&c);
             }
+            checkpoint::prune(&state.db.lock().unwrap());
             app.manage(Arc::new(state));
             Ok(())
         })
@@ -712,6 +706,14 @@ pub fn run() {
             security::set_auto_lock,
             security::list_actions,
             security::clear_actions,
+            workspace::list_folders,
+            workspace::add_folder,
+            workspace::remove_folder,
+            workspace::set_chat_mode,
+            workspace::answer_approval,
+            workspace::pending_approvals,
+            workspace::undoable_turns,
+            workspace::undo_turn,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

@@ -44,6 +44,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -104,6 +105,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -164,6 +166,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -225,6 +228,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": false,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -285,6 +289,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -343,6 +348,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -404,6 +410,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": false,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -464,6 +471,7 @@
         "active_fraction": 1.0
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",
@@ -524,6 +532,7 @@
         "active_fraction": 0.25
       },
       "default_ctx": 8192,
+      "tools": true,
       "variants": [
         {
           "quant": "Q4_K_M",

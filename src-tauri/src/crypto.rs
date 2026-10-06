@@ -60,6 +60,15 @@ impl Cipher {
     pub fn is_encrypted(stored: &str) -> bool {
         stored.starts_with(PREFIX)
     }
+
+    /// For whole files, such as checkpoint backups.
+    pub fn seal_bytes(&self, plain: &[u8]) -> Vec<u8> {
+        seal(&self.0, plain)
+    }
+
+    pub fn open_bytes(&self, blob: &[u8]) -> Result<Vec<u8>, String> {
+        open(&self.0, blob).ok_or_else(|| "A backup couldn't be decrypted.".to_string())
+    }
 }
 
 fn seal(key: &[u8; 32], plain: &[u8]) -> Vec<u8> {

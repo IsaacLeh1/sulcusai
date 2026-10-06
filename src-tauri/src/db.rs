@@ -47,13 +47,53 @@ CREATE TABLE IF NOT EXISTS action_log (
   category TEXT NOT NULL,
   summary  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS folders (
+  path     TEXT PRIMARY KEY,
+  added_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id    TEXT NOT NULL,
+  turn_id    TEXT NOT NULL,
+  action     TEXT NOT NULL,
+  path       TEXT NOT NULL,
+  other      TEXT,
+  backup     TEXT,
+  created_at INTEGER NOT NULL,
+  undone     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS checkpoints_by_turn ON checkpoints(turn_id);
 ";
+
+/// Columns added after the first release, created on older databases.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("messages", "tool_calls", "TEXT"),
+    ("messages", "tool_call_id", "TEXT"),
+    ("messages", "meta", "TEXT"),
+    ("chats", "mode", "TEXT NOT NULL DEFAULT 'auto'"),
+];
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    let Ok(mut stmt) = conn.prepare(&format!("PRAGMA table_info({table})")) else { return false };
+    let names = stmt.query_map([], |r| r.get::<_, String>(1));
+    names.map(|rows| rows.filter_map(Result::ok).any(|n| n == column)).unwrap_or(false)
+}
+
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    for (table, column, def) in ADDED_COLUMNS {
+        if !has_column(conn, table, column) {
+            conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {def}"))?;
+        }
+    }
+    Ok(())
+}
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     // secure_delete overwrites deleted rows, so removed chats don't linger on disk.
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
 }
 
@@ -206,9 +246,11 @@ pub struct Chat {
     pub web: bool,
     pub created_at: i64,
     pub updated_at: i64,
+    /// Run mode: "plan", "auto" or "bypass".
+    pub mode: String,
 }
 
-const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at";
+const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode";
 
 fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat> + '_ {
     move |r| {
@@ -219,8 +261,17 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
             web: r.get::<_, i64>(3)? != 0,
             created_at: r.get(4)?,
             updated_at: r.get(5)?,
+            mode: r.get(6)?,
         })
     }
+}
+
+pub fn set_chat_mode(conn: &Connection, id: &str, mode: &str) -> Result<(), String> {
+    if !matches!(mode, "plan" | "auto" | "bypass") {
+        return Err("Unknown mode.".into());
+    }
+    conn.execute("UPDATE chats SET mode = ?2 WHERE id = ?1", params![id, mode]).map_err(err)?;
+    Ok(())
 }
 
 pub fn list_chats(conn: &Connection, c: &Cipher) -> Vec<Chat> {
@@ -238,7 +289,15 @@ pub fn chat(conn: &Connection, c: &Cipher, id: &str) -> Option<Chat> {
 
 pub fn create_chat(conn: &Connection, c: &Cipher, model_id: Option<String>) -> Result<Chat, String> {
     let now = now_ms();
-    let chat = Chat { id: uuid::Uuid::new_v4().to_string(), title: "New chat".into(), model_id, web: false, created_at: now, updated_at: now };
+    let chat = Chat {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: "New chat".into(),
+        model_id,
+        web: false,
+        created_at: now,
+        updated_at: now,
+        mode: "auto".into(),
+    };
     conn.execute(
         "INSERT INTO chats (id, title, model_id, web, created_at, updated_at) VALUES (?1, ?2, ?3, 0, ?4, ?4)",
         params![chat.id, c.encrypt(&chat.title), chat.model_id, now],
@@ -268,22 +327,43 @@ pub fn delete_chat(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// A tool call the model made, as sent back to it in later turns.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// JSON text, exactly as the model produced it.
+    pub arguments: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct Message {
     pub id: String,
     pub chat_id: String,
+    /// "user", "assistant" or "tool".
     pub role: String,
     pub content: String,
     pub thinking: Option<String>,
     pub created_at: i64,
+    /// Assistant messages: tools it asked to run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// Tool messages: which call this answers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    /// Tool messages: what the window shows (title, status, diff, output).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
 }
 
 pub fn messages(conn: &Connection, c: &Cipher, chat_id: &str) -> Vec<Message> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT id, chat_id, role, content, thinking, created_at FROM messages WHERE chat_id = ?1 ORDER BY created_at, rowid",
+        "SELECT id, chat_id, role, content, thinking, created_at, tool_calls, tool_call_id, meta
+         FROM messages WHERE chat_id = ?1 ORDER BY created_at, rowid",
     ) else {
         return Vec::new();
     };
+    let decrypt_json = |raw: Option<String>| -> Option<String> { raw.and_then(|t| c.decrypt(&t).ok()) };
     stmt.query_map([chat_id], |r| {
         Ok(Message {
             id: r.get(0)?,
@@ -292,6 +372,9 @@ pub fn messages(conn: &Connection, c: &Cipher, chat_id: &str) -> Vec<Message> {
             content: c.decrypt_or(&r.get::<_, String>(3)?, "(This message couldn't be decrypted.)"),
             thinking: r.get::<_, Option<String>>(4)?.map(|t| c.decrypt_or(&t, "")),
             created_at: r.get(5)?,
+            tool_calls: decrypt_json(r.get(6)?).and_then(|j| serde_json::from_str(&j).ok()),
+            tool_call_id: r.get(7)?,
+            meta: decrypt_json(r.get(8)?).and_then(|j| serde_json::from_str(&j).ok()),
         })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())
@@ -305,9 +388,23 @@ pub fn message_count(conn: &Connection, chat_id: &str) -> usize {
 }
 
 pub fn add_message(conn: &Connection, c: &Cipher, m: &Message) -> Result<(), String> {
+    let enc_json = |v: Option<String>| v.map(|j| c.encrypt(&j));
+    let tool_calls = enc_json(m.tool_calls.as_ref().and_then(|t| serde_json::to_string(t).ok()));
+    let meta = enc_json(m.meta.as_ref().map(|v| v.to_string()));
     conn.execute(
-        "INSERT INTO messages (id, chat_id, role, content, thinking, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![m.id, m.chat_id, m.role, c.encrypt(&m.content), m.thinking.as_deref().map(|t| c.encrypt(t)), m.created_at],
+        "INSERT INTO messages (id, chat_id, role, content, thinking, created_at, tool_calls, tool_call_id, meta)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            m.id,
+            m.chat_id,
+            m.role,
+            c.encrypt(&m.content),
+            m.thinking.as_deref().map(|t| c.encrypt(t)),
+            m.created_at,
+            tool_calls,
+            m.tool_call_id,
+            meta
+        ],
     )
     .map_err(err)?;
     conn.execute("UPDATE chats SET updated_at = ?2 WHERE id = ?1", params![m.chat_id, m.created_at]).map_err(err)?;
@@ -363,6 +460,99 @@ pub fn compact(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;").map_err(err)
 }
 
+// ---------- shared folders ----------
+
+pub fn folders(conn: &Connection) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT path FROM folders ORDER BY added_at") else { return Vec::new() };
+    stmt.query_map([], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
+pub fn add_folder(conn: &Connection, path: &str) -> Result<(), String> {
+    conn.execute("INSERT OR IGNORE INTO folders (path, added_at) VALUES (?1, ?2)", params![path, now_ms()]).map_err(err)?;
+    Ok(())
+}
+
+pub fn remove_folder(conn: &Connection, path: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM folders WHERE path = ?1", [path]).map_err(err)?;
+    Ok(())
+}
+
+// ---------- checkpoints (undo for agent file changes) ----------
+
+#[derive(Debug, Clone)]
+pub struct Checkpoint {
+    pub id: i64,
+    pub action: String,
+    pub path: String,
+    pub other: Option<String>,
+    pub backup: Option<String>,
+}
+
+pub fn add_checkpoint(
+    conn: &Connection,
+    c: &Cipher,
+    chat_id: &str,
+    turn_id: &str,
+    action: &str,
+    path: &str,
+    other: Option<&str>,
+    backup: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO checkpoints (chat_id, turn_id, action, path, other, backup, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![chat_id, turn_id, action, c.encrypt(path), other.map(|o| c.encrypt(o)), backup, now_ms()],
+    )
+    .map_err(err)?;
+    Ok(())
+}
+
+/// Not-yet-undone changes from one turn, newest first (the order to undo them in).
+pub fn turn_checkpoints(conn: &Connection, c: &Cipher, turn_id: &str) -> Vec<Checkpoint> {
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT id, action, path, other, backup FROM checkpoints WHERE turn_id = ?1 AND undone = 0 ORDER BY id DESC",
+    ) else {
+        return Vec::new();
+    };
+    stmt.query_map([turn_id], |r| {
+        Ok(Checkpoint {
+            id: r.get(0)?,
+            action: r.get(1)?,
+            path: c.decrypt_or(&r.get::<_, String>(2)?, ""),
+            other: r.get::<_, Option<String>>(3)?.map(|o| c.decrypt_or(&o, "")),
+            backup: r.get(4)?,
+        })
+    })
+    .map(|rows| rows.filter_map(Result::ok).collect())
+    .unwrap_or_default()
+}
+
+/// Turn ids in this chat that still have changes to undo.
+pub fn undoable_turns(conn: &Connection, chat_id: &str) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT DISTINCT turn_id FROM checkpoints WHERE chat_id = ?1 AND undone = 0") else {
+        return Vec::new();
+    };
+    stmt.query_map([chat_id], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
+pub fn mark_undone(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute("UPDATE checkpoints SET undone = 1 WHERE id = ?1", [id]).map_err(err)?;
+    Ok(())
+}
+
+/// Backups older than `days`, for cleanup. Returns (id, backup path) pairs.
+pub fn old_checkpoints(conn: &Connection, days: i64) -> Vec<(i64, Option<String>)> {
+    let cutoff = now_ms() - days * 86_400_000;
+    let Ok(mut stmt) = conn.prepare("SELECT id, backup FROM checkpoints WHERE created_at < ?1") else { return Vec::new() };
+    stmt.query_map([cutoff], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
+pub fn delete_checkpoint(conn: &Connection, id: i64) -> Result<(), String> {
+    conn.execute("DELETE FROM checkpoints WHERE id = ?1", [id]).map_err(err)?;
+    Ok(())
+}
+
 // ---------- action log ----------
 
 #[derive(Debug, Clone, Serialize)]
@@ -381,13 +571,20 @@ pub fn log_action(conn: &Connection, category: &str, summary: &str) {
     );
 }
 
-pub fn actions(conn: &Connection, limit: u32) -> Vec<Action> {
+/// For entries that name the user's files (agent actions).
+pub fn log_action_enc(conn: &Connection, c: &Cipher, category: &str, summary: &str) {
+    log_action(conn, category, &c.encrypt(summary));
+}
+
+pub fn actions(conn: &Connection, c: &Cipher, limit: u32) -> Vec<Action> {
     let Ok(mut stmt) = conn.prepare("SELECT id, at, category, summary FROM action_log ORDER BY id DESC LIMIT ?1") else {
         return Vec::new();
     };
-    stmt.query_map([limit], |r| Ok(Action { id: r.get(0)?, at: r.get(1)?, category: r.get(2)?, summary: r.get(3)? }))
-        .map(|rows| rows.filter_map(Result::ok).collect())
-        .unwrap_or_default()
+    stmt.query_map([limit], |r| {
+        Ok(Action { id: r.get(0)?, at: r.get(1)?, category: r.get(2)?, summary: c.decrypt_or(&r.get::<_, String>(3)?, "(unreadable)") })
+    })
+    .map(|rows| rows.filter_map(Result::ok).collect())
+    .unwrap_or_default()
 }
 
 pub fn clear_actions(conn: &Connection) -> Result<(), String> {
@@ -420,6 +617,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
         conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
         conn
     }
 
@@ -431,7 +629,75 @@ mod tests {
             content: content.into(),
             thinking: Some("hmm".into()),
             created_at: now_ms(),
+            ..Default::default()
         }
+    }
+
+    #[test]
+    fn old_databases_gain_the_new_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE chats (id TEXT PRIMARY KEY, title TEXT NOT NULL, model_id TEXT, web INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             CREATE TABLE messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, thinking TEXT, created_at INTEGER NOT NULL);
+             INSERT INTO chats VALUES ('c', 't', NULL, 0, 1, 1);",
+        )
+        .unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap(); // idempotent
+        let mode: String = conn.query_row("SELECT mode FROM chats", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "auto");
+        assert!(has_column(&conn, "messages", "tool_calls"));
+    }
+
+    #[test]
+    fn tool_calls_and_results_round_trip_encrypted() {
+        let conn = mem();
+        let c = cipher();
+        let chat = create_chat(&conn, &c, None).unwrap();
+        let call = ToolCall { id: "call_1".into(), name: "read_file".into(), arguments: r#"{"path":"secret-plan.txt"}"#.into() };
+        add_message(&conn, &c, &Message {
+            id: "a1".into(),
+            chat_id: chat.id.clone(),
+            role: "assistant".into(),
+            tool_calls: Some(vec![call.clone()]),
+            created_at: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        add_message(&conn, &c, &Message {
+            id: "t1".into(),
+            chat_id: chat.id.clone(),
+            role: "tool".into(),
+            content: "file text".into(),
+            tool_call_id: Some("call_1".into()),
+            meta: Some(serde_json::json!({ "title": "Read secret-plan.txt" })),
+            created_at: 2,
+            ..Default::default()
+        })
+        .unwrap();
+        let raw: String = conn.query_row("SELECT tool_calls FROM messages WHERE id = 'a1'", [], |r| r.get(0)).unwrap();
+        assert!(!raw.contains("secret-plan"));
+        let msgs = messages(&conn, &c, &chat.id);
+        assert_eq!(msgs[0].tool_calls.as_ref().unwrap()[0], call);
+        assert_eq!(msgs[1].tool_call_id.as_deref(), Some("call_1"));
+        assert_eq!(msgs[1].meta.as_ref().unwrap()["title"], "Read secret-plan.txt");
+    }
+
+    #[test]
+    fn checkpoints_list_newest_first_and_can_be_marked_undone() {
+        let conn = mem();
+        let c = cipher();
+        add_checkpoint(&conn, &c, "chat", "turn", "create", "a.txt", None, None).unwrap();
+        add_checkpoint(&conn, &c, "chat", "turn", "modify", "b.txt", None, Some("bk")).unwrap();
+        let cps = turn_checkpoints(&conn, &c, "turn");
+        assert_eq!(cps.len(), 2);
+        assert_eq!(cps[0].path, "b.txt");
+        assert_eq!(undoable_turns(&conn, "chat"), vec!["turn".to_string()]);
+        for cp in &cps {
+            mark_undone(&conn, cp.id).unwrap();
+        }
+        assert!(undoable_turns(&conn, "chat").is_empty());
     }
 
     #[test]
@@ -472,8 +738,12 @@ mod tests {
     fn legacy_plaintext_is_encrypted_in_place() {
         let mut conn = mem();
         let c = cipher();
-        conn.execute("INSERT INTO chats VALUES ('c1', 'Old title', NULL, 0, 1, 1)", []).unwrap();
-        conn.execute("INSERT INTO messages VALUES ('m1', 'c1', 'user', 'old text', 'old thought', 1)", []).unwrap();
+        conn.execute("INSERT INTO chats (id, title, model_id, web, created_at, updated_at) VALUES ('c1', 'Old title', NULL, 0, 1, 1)", []).unwrap();
+        conn.execute(
+            "INSERT INTO messages (id, chat_id, role, content, thinking, created_at) VALUES ('m1', 'c1', 'user', 'old text', 'old thought', 1)",
+            [],
+        )
+        .unwrap();
         set_raw(&conn, "profile", r#"{"name":"Old","about":"","preferences":""}"#).unwrap();
 
         assert_eq!(encrypt_legacy(&mut conn, &c).unwrap(), 3);
@@ -501,10 +771,15 @@ mod tests {
         let conn = mem();
         log_action(&conn, "model", "first");
         log_action(&conn, "network", "second");
-        let a = actions(&conn, 10);
-        assert_eq!(a.len(), 2);
-        assert_eq!(a[0].summary, "second");
+        let c = cipher();
+        log_action_enc(&conn, &c, "agent", "Edited secret.txt");
+        let a = actions(&conn, &c, 10);
+        assert_eq!(a.len(), 3);
+        assert_eq!(a[0].summary, "Edited secret.txt", "decrypted for display");
+        assert_eq!(a[1].summary, "second");
+        let raw: String = conn.query_row("SELECT summary FROM action_log ORDER BY id DESC LIMIT 1", [], |r| r.get(0)).unwrap();
+        assert!(!raw.contains("secret"), "file names are encrypted at rest");
         clear_actions(&conn).unwrap();
-        assert!(actions(&conn, 10).is_empty());
+        assert!(actions(&conn, &c, 10).is_empty());
     }
 }

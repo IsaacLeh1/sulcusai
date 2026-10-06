@@ -170,8 +170,8 @@ pub fn set_auto_lock(state: AppStateRef, minutes: u32) -> Result<(), String> {
 
 #[tauri::command]
 pub fn list_actions(state: AppStateRef, limit: Option<u32>) -> Result<Vec<Action>, String> {
-    state.cipher()?;
-    Ok(db::actions(&state.db.lock().unwrap(), limit.unwrap_or(500).min(5000)))
+    let c = state.cipher()?;
+    Ok(db::actions(&state.db.lock().unwrap(), &c, limit.unwrap_or(500).min(5000)))
 }
 
 #[tauri::command]

@@ -79,6 +79,9 @@ LLAMA = {
     "note": "Commercial use allowed below 700M monthly users; requires 'Built with Llama' attribution.",
 }
 
+# Models whose chat template supports tool calling (files, commands, agents).
+TOOL_CAPABLE = {"qwen3-1.7b", "llama-3.2-3b", "qwen3-4b-2507", "qwen3-8b", "qwen2.5-coder-7b", "qwen3-14b", "gpt-oss-20b"}
+
 # id, name, publisher, repo, license, tags, params (billions),
 # (layers, kv heads, head dim, max context), active fraction (MoE), description
 MODELS = [
@@ -143,7 +146,7 @@ def main():
             "id": mid, "name": name, "publisher": pub, "source": f"https://huggingface.co/{repo}",
             "description": desc, "license": lic, "tags": tags, "params_b": params,
             "arch": {"n_layer": nl, "n_kv_heads": kv, "head_dim": hd, "max_ctx": mx, "active_fraction": act},
-            "default_ctx": 8192, "variants": variants,
+            "default_ctx": 8192, "tools": mid in TOOL_CAPABLE, "variants": variants,
         })
     path = pathlib.Path(__file__).with_name("catalog.json")
     path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8")

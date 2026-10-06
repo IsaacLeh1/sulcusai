@@ -86,6 +86,9 @@ pub struct ModelSpec {
     pub params_b: f64,
     pub arch: Arch,
     pub default_ctx: u32,
+    /// The model's chat template supports tool calling.
+    #[serde(default)]
+    pub tools: bool,
     pub variants: Vec<Variant>,
 }
 
@@ -244,6 +247,25 @@ pub fn fit_model(model: &ModelSpec, b: &Budget) -> ModelFit {
     let variants: Vec<VariantFit> = model.variants.iter().map(|v| fit_variant(model, v, ctx, b)).collect();
     let recommended = recommend(&variants).map(|v| v.quant.clone());
     ModelFit { ctx, variants, recommended }
+}
+
+/// Context size and GPU layers to launch with. The catalog filter uses the
+/// default context; at launch, a larger window is used if the model still
+/// fits the same way (agent work needs room for tool output).
+pub fn launch_settings(model: &ModelSpec, quant: &str, b: &Budget) -> (u32, u32) {
+    let base = fit_model(model, b);
+    let Some(variant) = model.variant(quant) else { return (base.ctx, 0) };
+    let base_fit = fit_variant(model, variant, base.ctx, b);
+    for ctx in [32_768u32, 16_384] {
+        if ctx > model.arch.max_ctx || ctx <= base.ctx {
+            continue;
+        }
+        let f = fit_variant(model, variant, ctx, b);
+        if f.placement.is_some() && f.placement == base_fit.placement && f.gpu_layers >= base_fit.gpu_layers {
+            return (ctx, f.gpu_layers);
+        }
+    }
+    (base.ctx, base_fit.gpu_layers)
 }
 
 /// Catalog variants are ordered from smallest to largest (lowest to highest
@@ -420,6 +442,27 @@ mod tests {
         // Fits in 32 GB RAM, but ~3 tokens/sec on CPU is below MIN_TPS.
         let fit = fit_model(m, &budget(0, 32));
         assert!(fit.variant("Q8_0").unwrap().placement.is_none());
+    }
+
+    #[test]
+    fn launch_uses_a_bigger_window_only_when_it_still_fits_the_same_way() {
+        let c = catalog();
+        let small = c.model("qwen3-4b-2507").unwrap();
+        assert_eq!(launch_settings(small, "Q4_K_M", &budget(11, 24)).0, 32_768);
+        // Already split between GPU and RAM: don't push more off the GPU.
+        let big = c.model("qwen3-14b").unwrap();
+        let (ctx, _) = launch_settings(big, "Q4_K_M", &budget(8, 24));
+        assert_eq!(ctx, 8192);
+        // Never beyond what the model supports.
+        let coder = c.model("qwen2.5-coder-7b").unwrap();
+        assert!(launch_settings(coder, "Q4_K_M", &budget(20, 64)).0 <= coder.arch.max_ctx);
+    }
+
+    #[test]
+    fn tool_capable_models_are_marked() {
+        let c = catalog();
+        assert!(c.model("qwen3-8b").unwrap().tools);
+        assert!(!c.model("gemma-3-4b").unwrap().tools);
     }
 
     #[test]

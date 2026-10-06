@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Builds the prompt (profile + history within the context window) and
-//! streams the model's reply to the window as events.
+//! streams the model's reply, including any tool calls it makes.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::db::{Message, Profile};
+use crate::db::{Message, Profile, ToolCall};
 use crate::engine::Endpoint;
 use crate::net;
 
 /// Tokens each message adds for its role markers in the chat template.
 const PER_MESSAGE_OVERHEAD: u32 = 6;
+const TRIMMED_TOOL_OUTPUT: &str = "[Earlier tool output removed to make room. Run the tool again if you need it.]";
 
 pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
@@ -41,11 +44,26 @@ pub struct ContextInfo {
     pub ctx: u32,
     pub system_tokens: u32,
     pub profile_tokens: u32,
+    pub tools_tokens: u32,
     pub history_tokens: u32,
     pub reply_reserve: u32,
     pub dropped_messages: usize,
-    /// Prompt + reply tokens of the last finished turn, as the engine counted them.
+    /// Prompt + reply tokens of the last finished step, as the engine counted them.
     pub last_total: Option<u32>,
+}
+
+impl ContextInfo {
+    /// Share of the window in use, 0.0–1.0.
+    pub fn used_fraction(&self) -> f64 {
+        let used = self.last_total.unwrap_or(self.system_tokens + self.profile_tokens + self.tools_tokens + self.history_tokens);
+        used as f64 / self.ctx.max(1) as f64
+    }
+}
+
+/// Token counts are cached per engine run (the port changes when the model does).
+fn cache() -> &'static Mutex<HashMap<String, u32>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub async fn count_tokens(ep: &Endpoint, text: &str) -> Result<u32, String> {
@@ -66,39 +84,128 @@ pub async fn count_tokens(ep: &Endpoint, text: &str) -> Result<u32, String> {
     Ok(resp["tokens"].as_array().map_or(0, |t| t.len() as u32))
 }
 
-/// Keeps the newest messages that fit; returns them and the context breakdown.
+async fn message_tokens(ep: &Endpoint, m: &Message) -> Result<u32, String> {
+    let key = format!("{}:{}", ep.port, m.id);
+    if let Some(n) = cache().lock().unwrap().get(&key) {
+        return Ok(*n);
+    }
+    let mut text = m.content.clone();
+    for c in m.tool_calls.iter().flatten() {
+        text.push_str(&c.name);
+        text.push_str(&c.arguments);
+    }
+    let n = count_tokens(ep, &text).await? + PER_MESSAGE_OVERHEAD;
+    let mut c = cache().lock().unwrap();
+    if c.len() > 20_000 {
+        c.clear();
+    }
+    c.insert(key, n);
+    Ok(n)
+}
+
+/// Splits history into turns, each starting at a user message, so a tool
+/// call is never kept without its result (or the other way round).
+fn turns(history: &[Message]) -> Vec<&[Message]> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for (i, m) in history.iter().enumerate() {
+        if m.role == "user" && i > start {
+            out.push(&history[start..i]);
+            start = i;
+        }
+    }
+    if start < history.len() {
+        out.push(&history[start..]);
+    }
+    out
+}
+
+/// Keeps the newest turns that fit. If even the current turn is too big,
+/// older tool outputs inside it are replaced with a short note.
 pub async fn fit_history(
     ep: &Endpoint,
     base: &str,
     about: &str,
+    tools: Option<&Value>,
     history: &[Message],
 ) -> Result<(Vec<Message>, ContextInfo), String> {
     let system_tokens = count_tokens(ep, base).await? + PER_MESSAGE_OVERHEAD;
     let profile_tokens = count_tokens(ep, about).await?;
-    let reply_reserve = (ep.ctx / 4).clamp(256, 2048);
-    let budget = ep.ctx.saturating_sub(system_tokens + profile_tokens + reply_reserve);
+    let tools_tokens = match tools {
+        Some(t) => count_tokens(ep, &t.to_string()).await?,
+        None => 0,
+    };
+    let reply_reserve = (ep.ctx / 4).clamp(256, 4096);
+    let budget = ep.ctx.saturating_sub(system_tokens + profile_tokens + tools_tokens + reply_reserve);
 
-    let mut kept: Vec<Message> = Vec::new();
+    let groups = turns(history);
+    let mut kept: Vec<Vec<Message>> = Vec::new();
     let mut used = 0u32;
-    for m in history.iter().rev() {
-        let t = count_tokens(ep, &m.content).await? + PER_MESSAGE_OVERHEAD;
-        if used + t > budget && !kept.is_empty() {
-            break;
+    for (gi, group) in groups.iter().enumerate().rev() {
+        let mut sizes = Vec::with_capacity(group.len());
+        for m in group.iter() {
+            sizes.push(message_tokens(ep, m).await?);
         }
-        used += t;
-        kept.push(m.clone());
+        let total: u32 = sizes.iter().sum();
+        let newest = gi == groups.len() - 1;
+        if used + total <= budget {
+            used += total;
+            kept.push(group.to_vec());
+            continue;
+        }
+        if newest {
+            // Shrink the current turn's oldest tool outputs until it fits.
+            let mut group = group.to_vec();
+            let mut total = total;
+            let stub = count_tokens(ep, TRIMMED_TOOL_OUTPUT).await? + PER_MESSAGE_OVERHEAD;
+            for (m, size) in group.iter_mut().zip(sizes.iter()) {
+                if total <= budget {
+                    break;
+                }
+                if m.role == "tool" && *size > stub {
+                    m.content = TRIMMED_TOOL_OUTPUT.into();
+                    total = total - size + stub;
+                }
+            }
+            used += total;
+            kept.push(group);
+        }
+        break;
     }
     kept.reverse();
+    let kept: Vec<Message> = kept.into_iter().flatten().collect();
     let info = ContextInfo {
         ctx: ep.ctx,
         system_tokens,
         profile_tokens,
+        tools_tokens,
         history_tokens: used,
         reply_reserve,
-        dropped_messages: history.len() - kept.len(),
+        dropped_messages: history.len().saturating_sub(kept.len()),
         last_total: None,
     };
     Ok((kept, info))
+}
+
+/// History in the OpenAI chat format the engine expects.
+pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
+    let mut out = vec![json!({ "role": "system", "content": system })];
+    for m in history {
+        match m.role.as_str() {
+            "tool" => out.push(json!({ "role": "tool", "tool_call_id": m.tool_call_id, "content": m.content })),
+            "assistant" if m.tool_calls.as_ref().is_some_and(|t| !t.is_empty()) => {
+                let calls: Vec<Value> = m
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .map(|c| json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.arguments } }))
+                    .collect();
+                out.push(json!({ "role": "assistant", "content": m.content, "tool_calls": calls }));
+            }
+            role => out.push(json!({ "role": role, "content": m.content })),
+        }
+    }
+    out
 }
 
 pub enum Delta {
@@ -109,28 +216,30 @@ pub enum Delta {
 pub struct Finished {
     pub content: String,
     pub thinking: String,
+    pub tool_calls: Vec<ToolCall>,
     pub prompt_tokens: Option<u32>,
     pub completion_tokens: Option<u32>,
     pub tps: Option<f64>,
     pub cancelled: bool,
 }
 
-/// Streams a reply. `on_delta` gets text as it arrives.
-pub async fn stream_reply(
+/// Streams one model reply. `on_delta` gets text as it arrives.
+pub async fn stream(
     ep: &Endpoint,
-    system: &str,
-    history: &[Message],
+    messages: Vec<Value>,
+    tools: Option<&Value>,
     cancel: &AtomicBool,
     mut on_delta: impl FnMut(Delta),
 ) -> Result<Finished, String> {
-    let mut messages = vec![json!({ "role": "system", "content": system })];
-    messages.extend(history.iter().map(|m| json!({ "role": m.role, "content": m.content })));
-    let body = json!({
+    let mut body = json!({
         "messages": messages,
         "stream": true,
         "stream_options": { "include_usage": true },
-        "temperature": 0.7,
+        "temperature": 0.6,
     });
+    if let Some(t) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
+        body["tools"] = t.clone();
+    }
 
     let resp = net::local_client()
         .post(ep.url("/v1/chat/completions"))
@@ -146,12 +255,16 @@ pub async fn stream_reply(
             .ok()
             .and_then(|v| v.pointer("/error/message").and_then(|m| m.as_str()).map(str::to_string))
             .unwrap_or(text);
+        if detail.contains("exceed") && detail.contains("context") {
+            return Err("This conversation no longer fits in the model's memory. Start a new chat to continue.".into());
+        }
         return Err(format!("The engine returned {status}: {detail}"));
     }
 
     let mut out = Finished {
         content: String::new(),
         thinking: String::new(),
+        tool_calls: Vec::new(),
         prompt_tokens: None,
         completion_tokens: None,
         tps: None,
@@ -184,6 +297,9 @@ pub async fn stream_reply(
                     out.content.push_str(t);
                     on_delta(Delta::Content(t.to_string()));
                 }
+                for tc in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                    merge_tool_delta(&mut out.tool_calls, tc);
+                }
             }
             if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
                 out.prompt_tokens = u["prompt_tokens"].as_u64().map(|n| n as u32);
@@ -194,7 +310,34 @@ pub async fn stream_reply(
             }
         }
     }
+    for (i, c) in out.tool_calls.iter_mut().enumerate() {
+        if c.id.is_empty() {
+            c.id = format!("call_{}_{i}", uuid::Uuid::new_v4().simple());
+        }
+    }
+    out.tool_calls.retain(|c| !c.name.is_empty());
     Ok(out)
+}
+
+/// Tool calls arrive in pieces: the first piece names the tool, later
+/// pieces append to its arguments. `index` says which call a piece is for.
+fn merge_tool_delta(calls: &mut Vec<ToolCall>, tc: &Value) {
+    let index = tc.get("index").and_then(Value::as_u64).unwrap_or(calls.len().saturating_sub(1) as u64) as usize;
+    while calls.len() <= index {
+        calls.push(ToolCall { id: String::new(), name: String::new(), arguments: String::new() });
+    }
+    let call = &mut calls[index];
+    if let Some(id) = tc.get("id").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+        call.id = id.to_string();
+    }
+    if let Some(f) = tc.get("function") {
+        if let Some(n) = f.get("name").and_then(Value::as_str) {
+            call.name.push_str(n);
+        }
+        if let Some(a) = f.get("arguments").and_then(Value::as_str) {
+            call.arguments.push_str(a);
+        }
+    }
 }
 
 /// A short sidebar title from the first message.
@@ -210,6 +353,10 @@ pub fn title_from(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn m(role: &str, id: &str) -> Message {
+        Message { id: id.into(), role: role.into(), content: id.into(), ..Default::default() }
+    }
 
     #[test]
     fn title_uses_first_nonempty_line_and_truncates() {
@@ -232,5 +379,38 @@ mod tests {
         let p = Profile { name: "Sam".into(), about: "I teach biology.".into(), preferences: "Be brief.".into() };
         let (_, about) = system_prompt(&p, "2026-10-06");
         assert!(about.contains("Sam") && about.contains("biology") && about.contains("Be brief."));
+    }
+
+    #[test]
+    fn turns_start_at_user_messages_and_keep_tool_pairs_together() {
+        let h = vec![m("user", "u1"), m("assistant", "a1"), m("tool", "t1"), m("assistant", "a2"), m("user", "u2"), m("assistant", "a3")];
+        let t = turns(&h);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t[0].len(), 4);
+        assert_eq!(t[1][0].id, "u2");
+    }
+
+    #[test]
+    fn tool_call_pieces_are_merged_by_index() {
+        let mut calls = Vec::new();
+        merge_tool_delta(&mut calls, &json!({ "index": 0, "id": "c1", "function": { "name": "read_file", "arguments": "" } }));
+        merge_tool_delta(&mut calls, &json!({ "index": 0, "function": { "arguments": "{\"path\":" } }));
+        merge_tool_delta(&mut calls, &json!({ "index": 1, "id": "c2", "function": { "name": "list_dir", "arguments": "{}" } }));
+        merge_tool_delta(&mut calls, &json!({ "index": 0, "function": { "arguments": "\"a.txt\"}" } }));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].arguments, r#"{"path":"a.txt"}"#);
+        assert_eq!(calls[1].name, "list_dir");
+    }
+
+    #[test]
+    fn api_messages_use_openai_tool_shapes() {
+        let mut a = m("assistant", "a1");
+        a.tool_calls = Some(vec![ToolCall { id: "c1".into(), name: "list_dir".into(), arguments: "{}".into() }]);
+        let mut t = m("tool", "t1");
+        t.tool_call_id = Some("c1".into());
+        let msgs = api_messages("sys", &[m("user", "u1"), a, t]);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "list_dir");
+        assert_eq!(msgs[3]["tool_call_id"], "c1");
     }
 }
