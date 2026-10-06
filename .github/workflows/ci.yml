@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: UI type check, tests and build
+        run: |
+          pnpm build
+          pnpm test
+      - name: npm license policy
+        run: pnpm check:licenses
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+      - name: Rust license policy
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          command: check licenses

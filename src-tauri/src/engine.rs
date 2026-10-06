@@ -1,0 +1,308 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Installs llama.cpp and runs `llama-server` as a private, local process.
+//!
+//! The server listens only on 127.0.0.1, on a random port, and requires a
+//! random API key, so other programs on the PC can't use it uninvited.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::atomic::AtomicBool;
+use std::time::{Duration, Instant};
+
+use serde::Serialize;
+use tokio::process::{Child, Command};
+
+use crate::catalog::{Budget, EngineSpec};
+use crate::download;
+use crate::net::{self, Connectivity, Purpose};
+use crate::paths::Paths;
+
+const SERVER_EXE: &str = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
+
+/// Picks the engine build for this PC. Vulkan runs on NVIDIA, AMD and Intel
+/// graphics cards alike; a CUDA build for NVIDIA is a later speed-up.
+pub fn backend_for(budget: &Budget) -> Result<&'static str, String> {
+    if !cfg!(all(windows, target_arch = "x86_64")) {
+        return Err("Running models is only supported on 64-bit Windows so far.".into());
+    }
+    Ok(if budget.vram > 0 { "vulkan-x64" } else { "cpu-x64" })
+}
+
+fn find_server(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_server(&path) {
+                return Some(found);
+            }
+        } else if path.file_name().is_some_and(|n| n == SERVER_EXE) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+pub fn installed_server(paths: &Paths, spec: &EngineSpec, backend: &str) -> Option<PathBuf> {
+    find_server(&paths.engines.join(format!("{}-{backend}", spec.build)))
+}
+
+/// Downloads, verifies and unpacks the engine if it isn't installed yet.
+pub async fn ensure_installed(
+    paths: &Paths,
+    spec: &EngineSpec,
+    backend: &str,
+    cancel: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+) -> Result<PathBuf, String> {
+    if let Some(exe) = installed_server(paths, spec, backend) {
+        return Ok(exe);
+    }
+    let asset = spec
+        .assets
+        .get(backend)
+        .ok_or_else(|| format!("No engine build for {backend}"))?;
+    let dir = paths.engines.join(format!("{}-{backend}", spec.build));
+    let zip_path = paths.engines.join(format!("llama-{}-{backend}.zip", spec.build));
+    // Engine downloads are user-started installs, allowed at every level.
+    let client = net::external_client(Connectivity::Offline, Purpose::ModelDownload, false)?;
+    download::fetch_verified(&client, &asset.url, &zip_path, asset.size, &asset.sha256, cancel, progress).await?;
+
+    let staging = paths.engines.join(format!(".staging-{}-{backend}", spec.build));
+    let (zip_c, staging_c) = (zip_path.clone(), staging.clone());
+    tokio::task::spawn_blocking(move || unzip(&zip_c, &staging_c))
+        .await
+        .map_err(|e| e.to_string())??;
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&staging, &dir).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&zip_path).ok();
+    find_server(&dir).ok_or_else(|| "The engine download didn't contain llama-server.".to_string())
+}
+
+fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
+    if into.exists() {
+        std::fs::remove_dir_all(into).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(into).map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        // enclosed_name rejects absolute paths and `..` escapes.
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let out = into.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let mut dest = std::fs::File::create(&out).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut dest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+pub struct LaunchSpec<'a> {
+    pub exe: &'a Path,
+    pub model_path: &'a Path,
+    pub model_id: &'a str,
+    pub quant: &'a str,
+    pub ctx: u32,
+    pub gpu_layers: u32,
+    pub log: &'a Path,
+}
+
+struct Running {
+    child: Child,
+    port: u16,
+    key: String,
+    model_id: String,
+    quant: String,
+    ctx: u32,
+    gpu_layers: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineStatus {
+    pub model_id: Option<String>,
+    pub quant: Option<String>,
+    pub ctx: Option<u32>,
+    pub gpu_layers: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    pub port: u16,
+    pub key: String,
+    pub ctx: u32,
+}
+
+impl Endpoint {
+    pub fn url(&self, path: &str) -> String {
+        format!("http://127.0.0.1:{}{path}", self.port)
+    }
+}
+
+#[derive(Default)]
+pub struct Engine {
+    running: Option<Running>,
+}
+
+impl Engine {
+    fn alive(&mut self) -> bool {
+        match self.running.as_mut() {
+            Some(r) => matches!(r.child.try_wait(), Ok(None)),
+            None => false,
+        }
+    }
+
+    pub fn status(&mut self) -> EngineStatus {
+        if !self.alive() {
+            self.running = None;
+        }
+        let r = self.running.as_ref();
+        EngineStatus {
+            model_id: r.map(|r| r.model_id.clone()),
+            quant: r.map(|r| r.quant.clone()),
+            ctx: r.map(|r| r.ctx),
+            gpu_layers: r.map(|r| r.gpu_layers),
+        }
+    }
+
+    /// The running endpoint, if it is already serving this model.
+    pub fn endpoint_for(&mut self, model_id: &str) -> Option<Endpoint> {
+        if !self.alive() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx })
+    }
+
+    /// Starts the server for this model, replacing any other running model.
+    pub async fn ensure(&mut self, spec: LaunchSpec<'_>, job: Option<&JobRef>) -> Result<Endpoint, String> {
+        if self.alive() {
+            let r = self.running.as_ref().unwrap();
+            if r.model_id == spec.model_id && r.quant == spec.quant && r.ctx == spec.ctx {
+                return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx });
+            }
+        }
+        self.stop().await;
+
+        let port = free_port()?;
+        let key = uuid::Uuid::new_v4().simple().to_string();
+        let log = std::fs::File::create(spec.log).map_err(|e| e.to_string())?;
+        let log_err = log.try_clone().map_err(|e| e.to_string())?;
+
+        let mut cmd = Command::new(spec.exe);
+        cmd.arg("-m").arg(spec.model_path)
+            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
+            .args(["-c", &spec.ctx.to_string(), "-ngl", &spec.gpu_layers.to_string()])
+            // One conversation at a time gets the whole context window.
+            .args(["-np", "1", "--jinja", "--no-webui"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log))
+            .stderr(Stdio::from(log_err))
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        {
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        let child = cmd.spawn().map_err(|e| format!("Couldn't start the engine: {e}"))?;
+        #[cfg(windows)]
+        if let (Some(job), Some(pid)) = (job, child.id()) {
+            job.assign(pid).ok();
+        }
+        #[cfg(not(windows))]
+        let _ = job;
+
+        self.running = Some(Running {
+            child,
+            port,
+            key: key.clone(),
+            model_id: spec.model_id.to_string(),
+            quant: spec.quant.to_string(),
+            ctx: spec.ctx,
+            gpu_layers: spec.gpu_layers,
+        });
+
+        let endpoint = Endpoint { port, key, ctx: spec.ctx };
+        if let Err(e) = self.wait_ready(&endpoint, spec.log).await {
+            self.stop().await;
+            return Err(e);
+        }
+        Ok(endpoint)
+    }
+
+    async fn wait_ready(&mut self, ep: &Endpoint, log: &Path) -> Result<(), String> {
+        let client = net::local_client();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(300) {
+            if !self.alive() {
+                return Err(format!("The engine stopped while loading the model.\n{}", log_tail(log, 12)));
+            }
+            if let Ok(resp) = client.get(ep.url("/health")).timeout(Duration::from_secs(2)).send().await {
+                if resp.status().is_success() {
+                    return Ok(());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+        Err("The model took too long to load.".into())
+    }
+
+    pub async fn stop(&mut self) {
+        if let Some(mut r) = self.running.take() {
+            r.child.start_kill().ok();
+            let _ = tokio::time::timeout(Duration::from_secs(5), r.child.wait()).await;
+        }
+    }
+}
+
+#[cfg(windows)]
+pub type JobRef = crate::winjob::Job;
+#[cfg(not(windows))]
+pub type JobRef = ();
+
+fn free_port() -> Result<u16, String> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    Ok(listener.local_addr().map_err(|e| e.to_string())?.port())
+}
+
+fn log_tail(path: &Path, lines: usize) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let all: Vec<&str> = text.lines().collect();
+    all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// Measures generation speed (tokens/second) on this PC.
+pub async fn benchmark(ep: &Endpoint) -> Result<f64, String> {
+    let body = serde_json::json!({
+        "messages": [{ "role": "user", "content": "Write three short sentences about the ocean." }],
+        "max_tokens": 128,
+        "temperature": 0.7,
+    });
+    let started = Instant::now();
+    let resp: serde_json::Value = net::local_client()
+        .post(ep.url("/v1/chat/completions"))
+        .bearer_auth(&ep.key)
+        .json(&body)
+        .timeout(Duration::from_secs(180))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(tps) = resp.pointer("/timings/predicted_per_second").and_then(|v| v.as_f64()) {
+        return Ok((tps * 10.0).round() / 10.0);
+    }
+    let tokens = resp.pointer("/usage/completion_tokens").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    Ok((tokens / started.elapsed().as_secs_f64() * 10.0).round() / 10.0)
+}

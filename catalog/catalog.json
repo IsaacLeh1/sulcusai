@@ -1,0 +1,539 @@
+{
+  "schema": 1,
+  "updated": "2026-10-06",
+  "engine": {
+    "name": "llama.cpp",
+    "license": "MIT",
+    "build": "b11450",
+    "assets": {
+      "vulkan-x64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-win-vulkan-x64.zip",
+        "size": 33355526,
+        "sha256": "8ce71f060c08cc8b89115eab0d63209d80537936706544d95c3b936fd0f63095"
+      },
+      "cpu-x64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-win-cpu-x64.zip",
+        "size": 19414679,
+        "sha256": "5f21f3e6d86b18f4a3177d4fb24de452f84d093f62afbe231e0d13194ca7132c"
+      }
+    }
+  },
+  "models": [
+    {
+      "id": "qwen3-1.7b",
+      "name": "Qwen3 1.7B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF",
+      "description": "A tiny, quick model with an optional thinking mode. Runs on almost any PC.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "fast",
+        "thinking"
+      ],
+      "params_b": 1.7,
+      "arch": {
+        "n_layer": 28,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 40960,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-1.7B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf",
+          "size": 1107409472,
+          "sha256": "b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-1.7B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q5_K_M.gguf",
+          "size": 1257880128,
+          "sha256": "b0949de5b2e06cbed6aa96517f9bd8afb334584b6f95ee83479292ff4bdd8ed3"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-1.7B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q6_K.gguf",
+          "size": 1417755200,
+          "sha256": "6a9cadec4883df6f3efcf337103479dcc6a3efa9f5f8cc64a904dba57808207a"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-1.7B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q8_0.gguf",
+          "size": 1834426944,
+          "sha256": "0becaa825564295d82e9af4d008bca5f8b7f5f73bf1c6a0b58f7c53ef26b47fd"
+        }
+      ]
+    },
+    {
+      "id": "llama-3.2-3b",
+      "name": "Llama 3.2 3B Instruct",
+      "publisher": "Meta",
+      "source": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF",
+      "description": "Small general-purpose assistant with a long context window.",
+      "license": {
+        "name": "Llama 3.2 Community License",
+        "url": "https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/blob/main/LICENSE.txt",
+        "commercial": true,
+        "note": "Commercial use allowed below 700M monthly users; requires 'Built with Llama' attribution."
+      },
+      "tags": [
+        "chat",
+        "fast"
+      ],
+      "params_b": 3.2,
+      "arch": {
+        "n_layer": 28,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 131072,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+          "size": 2019377696,
+          "sha256": "6c1a2b41161032677be168d354123594c0e6e67d2b9227c84f296ad037c728ff"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Llama-3.2-3B-Instruct-Q5_K_M.gguf",
+          "url": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q5_K_M.gguf",
+          "size": 2322154016,
+          "sha256": "0b94ccd04d908304cec5246a3d942b64417a423bc5c6d47c73bc557e590b5194"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Llama-3.2-3B-Instruct-Q6_K.gguf",
+          "url": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q6_K.gguf",
+          "size": 2643853856,
+          "sha256": "1771887c15fc3d327cfee6fd593553b2126e88834bf48eae50e709d3f70dd998"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q8_0.gguf",
+          "size": 3421899296,
+          "sha256": "b5607b5090a8280063fff2d706bb3408ca6542341b06aab39c3eca0a28575921"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-4b-2507",
+      "name": "Qwen3 4B Instruct",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF",
+      "description": "Strong all-rounder for its size, good at following instructions and using tools.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "tool-calling",
+        "recommended"
+      ],
+      "params_b": 4.0,
+      "arch": {
+        "n_layer": 36,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+          "size": 2497281120,
+          "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q5_K_M.gguf",
+          "size": 2889514080,
+          "sha256": "5bde5e9d883622acb02bf77fe7dcbc56a8b9a9ad4be78a72ca23a532658b4ecb"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-4B-Instruct-2507-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q6_K.gguf",
+          "size": 3306261600,
+          "sha256": "cd7b21b38b3e71400587c184b6a9b04d3beb4d13fdae6464d4075dee4f1bc5ad"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-4B-Instruct-2507-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q8_0.gguf",
+          "size": 4280405600,
+          "sha256": "391c1e410fd9f4cf2de2b510273b56a84c19ce18f4fa3bfb3774031dac4ef068"
+        }
+      ]
+    },
+    {
+      "id": "gemma-3-4b",
+      "name": "Gemma 3 4B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF",
+      "description": "Friendly writer with wide language coverage.",
+      "license": {
+        "name": "Gemma Terms of Use",
+        "url": "https://ai.google.dev/gemma/terms",
+        "commercial": true,
+        "note": "Commercial use allowed, subject to Google's Gemma Prohibited Use Policy."
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual"
+      ],
+      "params_b": 4.3,
+      "arch": {
+        "n_layer": 34,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-3-4b-it-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf",
+          "size": 2489894016,
+          "sha256": "04a43a22e8d2003deda5acc262f68ec1005fa76c735a9962a8c77042a74a7d19"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-3-4b-it-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q5_K_M.gguf",
+          "size": 2829698176,
+          "sha256": "974e5c2f13c321fc3258b6fbf2ce326a09d8ace511aa6846df1db62baf7df7d4"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-3-4b-it-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q6_K.gguf",
+          "size": 3190740096,
+          "sha256": "df3fb9a1449296d26258c0771d5280ceb71559ad98e2db658799a05218ed9fa1"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-3-4b-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q8_0.gguf",
+          "size": 4130402176,
+          "sha256": "81bf0583ab5bad155a5a3b15d155a880a1a1e4f7de2de5c06f10f64ac49f8336"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-8B-GGUF",
+      "description": "Capable general model with a step-by-step thinking mode.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 8.2,
+      "arch": {
+        "n_layer": 36,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 40960,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-8B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+          "size": 5027784512,
+          "sha256": "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-8B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q5_K_M.gguf",
+          "size": 5851113280,
+          "sha256": "159c694b93271e4edc1dc2a305b10cf981032c8f3035a7da00973312f0331504"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-8B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q6_K.gguf",
+          "size": 6725900096,
+          "sha256": "0eaec718fdeab0f429dfa0ec481c090388811f5e63785ddb582292f4ef3c3827"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-8B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q8_0.gguf",
+          "size": 8709519168,
+          "sha256": "0cfbf745760f07a76ddeb358dd025a27f2e11d1ca9c9a4169a373d52990fe86e"
+        }
+      ]
+    },
+    {
+      "id": "qwen2.5-coder-7b",
+      "name": "Qwen2.5 Coder 7B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "description": "Tuned for writing, explaining and fixing code.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "coding"
+      ],
+      "params_b": 7.6,
+      "arch": {
+        "n_layer": 28,
+        "n_kv_heads": 4,
+        "head_dim": 128,
+        "max_ctx": 32768,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+          "size": 4683073504,
+          "sha256": "9a961bb225cb2b9fd84b2297df0d53089895c049d7d9dc5f5f8aebbcd3247872"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q5_K_M.gguf",
+          "size": 5444831200,
+          "sha256": "8a025f8bae85617ac95209d9211cbfb2a7142b129a201fa2c2c140ed34661113"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen2.5-Coder-7B-Instruct-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q6_K.gguf",
+          "size": 6254198752,
+          "sha256": "724b2b241230aad689f5b43fe8f22d452755bf98677fbcfaa36d2a1b6a89c140"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q8_0.gguf",
+          "size": 8098525152,
+          "sha256": "3b879bf3c429aeb01ae5edec57eb2e787b24eb317991dfe491d69357c7f02735"
+        }
+      ]
+    },
+    {
+      "id": "gemma-3-12b",
+      "name": "Gemma 3 12B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF",
+      "description": "Larger Gemma with noticeably better reasoning and writing.",
+      "license": {
+        "name": "Gemma Terms of Use",
+        "url": "https://ai.google.dev/gemma/terms",
+        "commercial": true,
+        "note": "Commercial use allowed, subject to Google's Gemma Prohibited Use Policy."
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual"
+      ],
+      "params_b": 12.0,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 8,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-3-12b-it-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf",
+          "size": 7300778336,
+          "sha256": "15b8fd9d8672cd4240c178c217ca781409291f34e353d2e913b29c7602ceb3ff"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-3-12b-it-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q5_K_M.gguf",
+          "size": 8445036896,
+          "sha256": "ea6d227c4983534b4661a0ada08328c21afa07c1e3c316fb55c172776cc808b3"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-3-12b-it-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q6_K.gguf",
+          "size": 9660811616,
+          "sha256": "5a99903816f50b6b7d63fe96e1ed51d6e03c795051e99146719f3e066a863069"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-3-12b-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q8_0.gguf",
+          "size": 12510212576,
+          "sha256": "a774cd9c6f289a6159f4a3f92a7ebca887e15073f92016d53c3593cb440a5982"
+        }
+      ]
+    },
+    {
+      "id": "qwen3-14b",
+      "name": "Qwen3 14B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-14B-GGUF",
+      "description": "High-quality reasoning for PCs with a strong graphics card.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 14.8,
+      "arch": {
+        "n_layer": 40,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 40960,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-14B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q4_K_M.gguf",
+          "size": 9001753984,
+          "sha256": "5eaa0870bd81ed3b58a630a271234cfa604e43ffb3a19cd68e54a80dd9d52a66"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-14B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q5_K_M.gguf",
+          "size": 10514570624,
+          "sha256": "305309039ea44df963c01f66d65e949f8eebca238554916df437f02295a3a413"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-14B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q6_K.gguf",
+          "size": 12121938304,
+          "sha256": "c34d749069d5f19b998498ce84884975c551529548fa6a56b883345d166289c2"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-14B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-14B-GGUF/resolve/main/Qwen3-14B-Q8_0.gguf",
+          "size": 15698534784,
+          "sha256": "90224247d4a8076c0a689e833910f4291bce05dec81f472ebcba321607168ea1"
+        }
+      ]
+    },
+    {
+      "id": "gpt-oss-20b",
+      "name": "gpt-oss 20B",
+      "publisher": "OpenAI",
+      "source": "https://huggingface.co/unsloth/gpt-oss-20b-GGUF",
+      "description": "Mixture-of-experts reasoning model. Only part of it runs for each word, so it is faster than its size suggests.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 21.0,
+      "arch": {
+        "n_layer": 24,
+        "n_kv_heads": 8,
+        "head_dim": 64,
+        "max_ctx": 131072,
+        "active_fraction": 0.25
+      },
+      "default_ctx": 8192,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gpt-oss-20b-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gpt-oss-20b-GGUF/resolve/main/gpt-oss-20b-Q4_K_M.gguf",
+          "size": 11624759488,
+          "sha256": "c27536640e410032865dc68781d80a08b98f8db5e93575919af8ccc0568aeb4f"
+        }
+      ]
+    }
+  ]
+}
