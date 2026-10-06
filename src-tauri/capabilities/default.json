@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core events, window controls and the folder picker. All other access goes through the app's own commands.",
+  "description": "Main window: core events, window controls, and the open and save file pickers. All other access goes through the app's own commands.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": ["core:default", "dialog:allow-open", "dialog:allow-save"]
 }

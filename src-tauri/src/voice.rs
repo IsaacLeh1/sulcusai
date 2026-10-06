@@ -303,6 +303,8 @@ async fn voice_loop(
     let mut queue: Vec<vad::Utterance> = Vec::new();
     let mut speaker: Option<Arc<Speaker>> = None;
     let mut last_level = Instant::now();
+    // What it said lately, to recognize its own voice coming back.
+    let spoken = Arc::new(Mutex::new(String::new()));
     emit("listening", json!({}));
 
     while !stop.load(Ordering::SeqCst) {
@@ -347,10 +349,12 @@ async fn voice_loop(
         emit("thinking", json!({}));
         let heard = speech::transcribe(&ep, &samples, &speech::Options::default()).await?;
         let text = heard.text.trim().to_string();
-        if text.is_empty() {
+        let echo = crate::meeting::is_echo(&text, &spoken.lock().unwrap());
+        if text.is_empty() || echo {
             emit("listening", json!({}));
             continue;
         }
+        spoken.lock().unwrap().clear();
         emit("heard", json!({ "text": text }));
         let s = Arc::new(Speaker::start(state, heard.language.clone()));
         speaker = Some(s.clone());
@@ -358,10 +362,11 @@ async fn voice_loop(
         let sentences = Arc::new(Mutex::new(tts::Sentences::default()));
         let chat = chat_id.to_string();
         let tee: crate::Tee = {
-            let (s, sentences, chat) = (s.clone(), sentences.clone(), chat.clone());
+            let (s, sentences, chat, spoken) = (s.clone(), sentences.clone(), chat.clone(), spoken.clone());
             Arc::new(move |event: &str, payload: &Value| {
                 if event == "chat:delta" && payload["chat_id"] == chat.as_str() {
                     if let Some(t) = payload["content"].as_str() {
+                        spoken.lock().unwrap().push_str(t);
                         for sentence in sentences.lock().unwrap().push(t) {
                             s.say(sentence);
                         }

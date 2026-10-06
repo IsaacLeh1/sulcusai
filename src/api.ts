@@ -298,6 +298,126 @@ export interface Action {
   summary: string;
 }
 
+export interface SpeechFit {
+  speed: number;
+  needed_bytes: number;
+  runnable: boolean;
+  disk_ok: boolean;
+}
+
+export interface InstalledSpeech {
+  model_id: string;
+  path: string;
+  size: number;
+  installed_at: number;
+  speed: number | null;
+}
+
+export interface SpeechCard {
+  id: string;
+  name: string;
+  publisher: string;
+  description: string;
+  license: License;
+  languages: number;
+  size: number;
+  fit: SpeechFit;
+  installed: InstalledSpeech | null;
+  recommended: boolean;
+}
+
+export interface SpeechView {
+  models: SpeechCard[];
+  hidden: number;
+  active: string | null;
+  live: string | null;
+  recommended_live: string | null;
+  threads: number;
+  installing: string[];
+}
+
+export interface VoiceSettings {
+  speech_model: string | null;
+  live_model: string | null;
+  mic: string | null;
+  voice_processing: boolean;
+  language: string;
+  voice: string | null;
+  rate: number;
+  keep_meeting_audio: boolean;
+}
+
+export interface AudioDevice {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export interface Voice {
+  id: string;
+  name: string;
+  language: string;
+  gender: string;
+  engine: string;
+}
+
+export type Speaker = "you" | "others";
+
+export interface ActionItem {
+  task: string;
+  owner: string;
+  due: string;
+  done: boolean;
+}
+
+export interface Notes {
+  title: string;
+  summary: string;
+  topics: string[];
+  key_points: string[];
+  most_important: string[];
+  decisions: string[];
+  action_items: ActionItem[];
+}
+
+export type MeetingStatus = "recording" | "transcribing" | "summarizing" | "done" | "failed";
+
+export interface Meeting {
+  id: string;
+  started_at: number;
+  ended_at: number | null;
+  status: MeetingStatus;
+  title: string;
+  titled_by_user: boolean;
+  notes: Notes | null;
+  translate_to: string | null;
+  has_audio: boolean;
+  error: string | null;
+}
+
+export interface Segment {
+  id: number;
+  speaker: Speaker;
+  start: number;
+  end: number;
+  text: string;
+  translation: string | null;
+}
+
+export interface MeetingDetail extends Meeting {
+  segments: Segment[];
+}
+
+export interface MeetingHit {
+  meeting: Meeting;
+  lines: string[];
+}
+
+export interface Language {
+  code: string;
+  name: string;
+}
+
 /** The core's error text while app lock is engaged. */
 export const LOCKED = "locked";
 
@@ -376,7 +496,61 @@ export const api = {
   installPlugin: (path: string) => invoke<Plugin>("install_plugin", { path }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
   removePlugin: (id: string) => invoke<void>("remove_plugin", { id }),
+  speechView: () => invoke<SpeechView>("speech_view"),
+  installSpeech: (modelId: string) => invoke<void>("install_speech_model", { modelId }),
+  removeSpeech: (modelId: string) => invoke<void>("remove_speech_model", { modelId }),
+  voiceSettings: () => invoke<VoiceSettings>("get_voice_settings"),
+  setVoiceSettings: (settings: VoiceSettings) => invoke<VoiceSettings>("set_voice_settings", { settings }),
+  audioDevices: () => invoke<{ inputs: AudioDevice[]; outputs: AudioDevice[] }>("audio_devices"),
+  voices: () => invoke<Voice[]>("list_voices"),
+  speak: (text: string, language?: string | null) => invoke<void>("speak", { text, language: language ?? null }),
+  stopSpeaking: () => invoke<void>("stop_speaking"),
+  startDictation: () => invoke<string>("start_dictation"),
+  stopDictation: (id: string) => invoke<void>("stop_dictation", { id }),
+  startVoice: (chatId: string) => invoke<void>("start_voice", { chatId }),
+  stopVoice: (chatId: string) => invoke<void>("stop_voice", { chatId }),
+  interruptVoice: (chatId: string) => invoke<void>("interrupt_voice", { chatId }),
+  startMeeting: (options: { title: string | null; mic: boolean; system: boolean; translate_to: string | null }) =>
+    invoke<Meeting>("start_meeting", { options }),
+  stopMeeting: () => invoke<void>("stop_meeting"),
+  liveMeeting: () => invoke<string | null>("live_meeting"),
+  meetings: () => invoke<Meeting[]>("list_meetings"),
+  meeting: (id: string) => invoke<MeetingDetail>("get_meeting", { id }),
+  renameMeeting: (id: string, title: string) => invoke<void>("rename_meeting", { id, title }),
+  setActionDone: (id: string, index: number, done: boolean) => invoke<void>("set_action_done", { id, index, done }),
+  deleteMeeting: (id: string) => invoke<void>("delete_meeting", { id }),
+  deleteMeetingAudio: (id: string) => invoke<void>("delete_meeting_audio", { id }),
+  rewriteNotes: (id: string) => invoke<void>("rewrite_notes", { id }),
+  meetingClip: (id: string, start: number, end: number) => invoke<ArrayBuffer>("meeting_clip", { id, start, end }),
+  exportMeeting: (id: string, path: string, transcript: boolean) => invoke<void>("export_meeting", { id, path, transcript }),
+  askAboutMeeting: (id: string) => invoke<string>("ask_about_meeting", { id }),
+  searchMeetings: (query: string) => invoke<MeetingHit[]>("search_meetings", { query }),
+  translate: (text: string, to: string, detect: boolean) => invoke<{ text: string; detected: string | null }>("translate", { text, to, detect }),
+  languages: () => invoke<Language[]>("translation_languages"),
+  translateFile: (path: string, to: string) => invoke<string>("translate_file", { path, to }),
 };
+
+export type DictationEvent =
+  | { id: string; state: "loading" | "listening" | "hearing" | "done" }
+  | { id: string; state: "level"; level: number }
+  | { id: string; state: "text"; text: string }
+  | { id: string; state: "error"; error: string };
+
+export type VoiceEvent =
+  | { chat_id: string; state: "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended" }
+  | { chat_id: string; state: "level"; level: number; speaking: boolean }
+  | { chat_id: string; state: "heard"; text: string }
+  | { chat_id: string; state: "error"; error: string };
+
+export type MeetingEvent =
+  | { meeting_id: string; kind: "state"; status: MeetingStatus | "loading" }
+  | { meeting_id: string; kind: "level"; you: number | null; others: number | null }
+  | { meeting_id: string; kind: "segment"; segment: Segment }
+  | { meeting_id: string; kind: "removed"; segment_id: number }
+  | { meeting_id: string; kind: "translation"; segment_id: number; text: string }
+  | { meeting_id: string; kind: "warning"; message: string }
+  | { meeting_id: string; kind: "done" }
+  | { meeting_id: string; kind: "error"; error: string };
 
 export interface InstallProgress {
   model_id: string;
@@ -387,6 +561,8 @@ export interface InstallProgress {
 
 export interface InstallFinished {
   model_id: string;
+  /** Set for speech models, which aren't in the chat catalog. */
+  name?: string;
   ok: boolean;
   cancelled?: boolean;
   error?: string;
@@ -408,6 +584,9 @@ export interface ChatEvents {
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
   "security:locked": null;
+  dictation: DictationEvent;
+  voice: VoiceEvent;
+  meeting: MeetingEvent;
 }
 
 export function on<K extends keyof ChatEvents>(name: K, handler: (payload: ChatEvents[K]) => void): Promise<UnlistenFn> {

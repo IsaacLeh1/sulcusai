@@ -5,11 +5,14 @@ import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
 import { FoldersSection } from "../components/AgentCards";
+import { VoiceSection } from "../components/VoiceSettings";
 import type { PushToast } from "../components/Toasts";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
   { name: "llama.cpp", license: "MIT", url: "https://github.com/ggml-org/llama.cpp" },
+  { name: "whisper.cpp (downloaded with a speech model)", license: "MIT", url: "https://github.com/ggml-org/whisper.cpp" },
+  { name: "Silero VAD (voice detection model)", license: "MIT", url: "https://github.com/snakers4/silero-vad" },
   { name: "SQLite", license: "Public domain", url: "https://sqlite.org/copyright.html" },
   { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
@@ -92,6 +95,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
 
       <FoldersSection toast={toast} />
+
+      <VoiceSection toast={toast} />
 
       <section className="card">
         <h2>Connectivity</h2>

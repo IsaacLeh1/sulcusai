@@ -4,6 +4,7 @@ import { api, errorText, type CatalogView, type InstallProgress, type ModelCard,
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { SpeechModels } from "./SpeechModels";
 
 interface Props {
   catalog: CatalogView | null;
@@ -16,6 +17,7 @@ interface Props {
 
 export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSettings, toast }: Props) {
   const [checking, setChecking] = useState(false);
+  const [tab, setTab] = useState<"chat" | "speech">("chat");
   if (!catalog) return <div className="page"><p className="muted">Checking this PC…</p></div>;
 
   const { hardware: hw, hints } = catalog;
@@ -41,6 +43,10 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <h1>Models</h1>
           <p className="muted">Only models this PC can run are shown. Click Install and they're ready in a few minutes.</p>
         </div>
+        <div className="mode-switch" role="tablist" aria-label="Kind of model">
+          <button role="tab" aria-selected={tab === "chat"} className={`mode ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Chat</button>
+          <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>Speech</button>
+        </div>
       </header>
 
       <section className="card hw">
@@ -61,7 +67,9 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </div>
       </section>
 
-      {installed.length > 0 && (
+      {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
+
+      {tab === "chat" && installed.length > 0 && (
         <>
           <h2>Installed</h2>
           <div className="model-grid">
@@ -72,15 +80,19 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </>
       )}
 
-      <h2>Available for this PC</h2>
-      {available.length === 0 && <p className="muted">Every model that fits this PC is installed.</p>}
-      <div className="model-grid">
-        {available.map((m) => (
-          <AvailableCard key={m.id} m={m} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
-        ))}
-      </div>
+      {tab === "chat" && (
+        <>
+          <h2>Available for this PC</h2>
+          {available.length === 0 && <p className="muted">Every model that fits this PC is installed.</p>}
+          <div className="model-grid">
+            {available.map((m) => (
+              <AvailableCard key={m.id} m={m} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
+            ))}
+          </div>
+        </>
+      )}
 
-      {(hints.hidden > 0) && (
+      {tab === "chat" && hints.hidden > 0 && (
         <section className="card hint">
           <strong>
             {hints.hidden} {hints.hidden === 1 ? "model is" : "models are"} hidden because this PC can't run {hints.hidden === 1 ? "it" : "them"}.

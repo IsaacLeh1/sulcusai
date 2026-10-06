@@ -22,6 +22,8 @@ import { MemoryView } from "./views/MemoryView";
 import { ProjectView } from "./views/ProjectView";
 import { ScheduledView } from "./views/ScheduledView";
 import { ConnectorsView } from "./views/ConnectorsView";
+import { MeetingsView } from "./views/MeetingsView";
+import { TranslateView } from "./views/TranslateView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { Modal } from "./components/Modal";
@@ -29,7 +31,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "meetings" | "translate" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
 export default function App() {
@@ -97,6 +99,17 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
   const [running, setRunning] = useState<string[]>([]);
+  // The meeting being recorded, tracked here so it survives page changes.
+  const [liveMeeting, setLiveMeeting] = useState<string | null>(null);
+  useEffect(() => {
+    api.liveMeeting().then(setLiveMeeting).catch(() => {});
+    const sub = on("meeting", (e) => {
+      if (e.kind === "done" || e.kind === "error") setLiveMeeting((id) => (id === e.meeting_id ? null : id));
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
   const activeChatRef = useRef(activeChat);
   activeChatRef.current = activeChat;
 
@@ -120,7 +133,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshCatalog();
         refreshEngine();
         api.settings().then(setSettings);
-        const name = catalog?.models.find((m) => m.id === f.model_id)?.name ?? "The model";
+        const name = f.name ?? catalog?.models.find((m) => m.id === f.model_id)?.name ?? "The model";
         if (f.ok) toast(`${name} is installed and ready.`, "success");
         else if (!f.cancelled) toast(`${name} didn't install: ${f.error}`, "error");
       }),
@@ -248,6 +261,13 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             Models
             {Object.keys(progress).length > 0 && <span className="dot" aria-label="Installing" />}
           </button>
+          <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
+            Meetings
+            {liveMeeting && <span className="dot rec" aria-label="Recording" />}
+          </button>
+          <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
+            Translate
+          </button>
           <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
             Memory
           </button>
@@ -333,6 +353,19 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             toast={toast}
           />
         )}
+        {view === "meetings" && (
+          <MeetingsView
+            live={liveMeeting}
+            onLiveChanged={setLiveMeeting}
+            onOpenChat={async (id) => {
+              await refreshChats();
+              openChat(id);
+            }}
+            onGoModels={() => setView("models")}
+            toast={toast}
+          />
+        )}
+        {view === "translate" && <TranslateView hasModel={installed.length > 0} onGoModels={() => setView("models")} toast={toast} />}
         {view === "activity" && <ActivityView toast={toast} />}
         {view === "connectors" && <ConnectorsView toast={toast} />}
         {view === "scheduled" && <ScheduledView installed={installed} onOpenChat={openChat} toast={toast} />}
@@ -381,6 +414,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </>
           )}
         </span>
+        {liveMeeting && (
+          <button className="status-item rec-pill" onClick={() => setView("meetings")} title="A meeting is being recorded">
+            <span className="rec-dot on" /> Recording meeting
+          </button>
+        )}
         <span className="spacer" />
         <span className="status-item muted">
           🔐 Encrypted ·{" "}

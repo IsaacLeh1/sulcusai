@@ -664,15 +664,15 @@ pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String
         let payload = match &result {
             Ok(speed) => {
                 state.log("model", &format!("Installed {}", spec.name));
-                json!({ "model_id": model_id, "ok": true, "speed": speed })
+                json!({ "model_id": model_id, "name": spec.name, "ok": true, "speed": speed })
             }
             Err(e) if e == download::CANCELLED => {
                 state.log("model", &format!("Cancelled installing {}", spec.name));
-                json!({ "model_id": model_id, "ok": false, "cancelled": true })
+                json!({ "model_id": model_id, "name": spec.name, "ok": false, "cancelled": true })
             }
             Err(e) => {
                 state.log("model", &format!("Installing {} failed: {e}", spec.name));
-                json!({ "model_id": model_id, "ok": false, "error": e })
+                json!({ "model_id": model_id, "name": spec.name, "ok": false, "error": e })
             }
         };
         app.emit("install:finished", payload).ok();

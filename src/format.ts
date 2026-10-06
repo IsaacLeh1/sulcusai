@@ -39,3 +39,28 @@ export function speedLabel(tps: number): string {
   if (tps >= 8) return "Comfortable";
   return "Slow";
 }
+
+/** "4:05" or "1:02:09" for a number of seconds. */
+export function clock(secs: number): string {
+  const s = Math.max(0, Math.floor(secs));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** Puts dictated text at the cursor, with a space where words would touch. */
+export function insertDictation(value: string, start: number, end: number, text: string): { value: string; cursor: number } {
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const lead = before.length > 0 && !/\s$/.test(before) ? " " : "";
+  const trail = after.length > 0 && !/^\s/.test(after) ? " " : "";
+  const piece = lead + text.trim() + trail;
+  return { value: before + piece + after, cursor: before.length + piece.length - trail.length };
+}
+
+/** How long a meeting ran, in words: "45 min", "1 h 5 min". */
+export function duration(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60000));
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ` ${min % 60} min` : ""}`;
+}

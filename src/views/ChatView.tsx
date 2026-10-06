@@ -18,6 +18,8 @@ import { ContextMeter } from "../components/ContextMeter";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
+import { insertDictation } from "../format";
 
 interface Props {
   chat: Chat | null;
@@ -94,6 +96,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [renaming, setRenaming] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
+  const [voice, setVoice] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -179,6 +182,28 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     }
   };
 
+  // Dictated phrases land at the cursor.
+  const dictate = useCallback((text: string) => {
+    const el = inputRef.current;
+    setInput((value) => {
+      const start = el?.selectionStart ?? value.length;
+      const end = el?.selectionEnd ?? value.length;
+      const r = insertDictation(value, start, end, text);
+      requestAnimationFrame(() => {
+        el?.focus();
+        el?.setSelectionRange(r.cursor, r.cursor);
+      });
+      return r.value;
+    });
+  }, []);
+
+  // Voice mode sends what it heard itself; show it like a typed message.
+  const heard = useCallback((text: string) => {
+    setError(null);
+    setStatus("loading");
+    setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now() }]);
+  }, [chat.id]);
+
   const send = () => {
     const text = input.trim();
     if (!text || busy) return;
@@ -229,7 +254,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, toast),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, undoable, busy, runningCall, helperSteps],
   );
@@ -304,6 +329,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       </div>
 
       <div className="composer-wrap">
+        {voice && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
         <div className="composer">
           <textarea
             ref={inputRef}
@@ -340,6 +366,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </select>
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{tps} tokens/sec</span>}
+            <MicButton onText={dictate} toast={toast} disabled={voice} />
+            <button
+              type="button"
+              className={`voice-btn ${voice ? "on" : ""}`}
+              onClick={() => setVoice((v) => !v)}
+              aria-pressed={voice}
+              title={voice ? "End voice chat" : "Voice chat: talk, and hear the answers"}
+              aria-label={voice ? "End voice chat" : "Start voice chat"}
+            >
+              🗣
+            </button>
             {busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 Stop
@@ -426,6 +463,7 @@ function renderItems(
   undo: (turnId: string) => void,
   helperSteps: Record<string, string[]>,
   openChat: (id: string) => void,
+  toast: PushToast,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
@@ -450,7 +488,7 @@ function renderItems(
     } else if (m.role === "assistant") {
       out.push(
         <Fragment key={m.id}>
-          {(m.content || m.thinking) && <MessageView m={m} />}
+          {(m.content || m.thinking) && <MessageView m={m} toast={toast} />}
           {m.meta?.handoff_to && (
             <div className="undo-row">
               <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>Open the continued chat →</button>
@@ -468,7 +506,7 @@ function renderItems(
   return out;
 }
 
-function MessageView({ m, live }: { m: Message; live?: Status }) {
+function MessageView({ m, live, toast }: { m: Message; live?: Status; toast?: PushToast }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
     <div className={`msg ${m.role}`}>
@@ -480,6 +518,11 @@ function MessageView({ m, live }: { m: Message; live?: Status }) {
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
       {live && !m.content && !m.thinking && <span className="typing" aria-label="Writing" />}
+      {toast && m.role === "assistant" && m.content && (
+        <div className="msg-tools">
+          <SpeakButton text={m.content} toast={toast} />
+        </div>
+      )}
     </div>
   );
 }
