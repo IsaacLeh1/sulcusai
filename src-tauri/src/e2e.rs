@@ -601,3 +601,113 @@ async fn e2e_dictation_streams_phrases() {
     assert!(all.contains("oat milk") && all.contains("saturday"), "{all}");
     crate::speech::stop(&state).await;
 }
+
+/// Meeting mode end to end, without devices: two synthetic channels (the
+/// call, and the user with some of the call echoing into their mic), live
+/// transcription, echo removal, and notes from the real chat model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_meeting_records_transcribes_and_writes_notes() {
+    use crate::meeting::{self, Input, MeetingData, Speaker};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let state = speech_state();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    {
+        let spec = state.catalog.model("qwen3-1.7b").unwrap();
+        let v = spec.variant("Q4_K_M").unwrap();
+        let path = state.paths.models.join(&spec.id).join(&v.file);
+        let conn = state.db.lock().unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel {
+            model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None,
+        }).unwrap();
+        crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
+    }
+    let cipher = state.cipher().unwrap();
+    let m = meeting::create(&state.db.lock().unwrap(), &cipher, &MeetingData { title: "Test".into(), ..Default::default() }).unwrap();
+
+    let speak = |text: &str, voice: usize| {
+        let voices = crate::tts::voices().unwrap();
+        let s = crate::tts::synthesize(text, Some(&voices[voice % voices.len()].id), 1.0).unwrap();
+        let f: Vec<f32> = s.samples.iter().map(|x| *x as f32 / 32768.0).collect();
+        crate::audio::resample(&f, s.rate, crate::audio::RATE)
+    };
+    let quiet = |secs: f32| vec![0.0003f32; (secs * 16_000.0) as usize];
+    let line1 = speak("Thanks for joining everyone. We decided to move the product launch to Thursday the twelfth.", 1);
+    let line2 = speak("Jordan, please send the updated budget to the whole team by Friday.", 1);
+    let mine = speak("Sounds good. I will book the venue for the launch party next week.", 0);
+    // The call: line 1, a pause, line 2, then silence while the user talks.
+    let mut others = quiet(1.0);
+    others.extend(&line1);
+    others.extend(quiet(1.5));
+    let echo_at = others.len();
+    others.extend(&line2);
+    others.extend(quiet(1.5));
+    let reply_at = others.len();
+    others.extend(quiet(mine.len() as f32 / 16_000.0 + 2.0));
+    // The mic: quiet, then line 2 coming back from the speakers, then the user.
+    let mut you = quiet(echo_at as f32 / 16_000.0);
+    you.extend(line2.iter().map(|s| s * 0.35));
+    you.resize(reply_at, 0.0003);
+    you.extend(&mine);
+    you.resize(others.len(), 0.0003);
+
+    let (tx_o, rx_o) = tokio::sync::mpsc::unbounded_channel();
+    let (tx_y, rx_y) = tokio::sync::mpsc::unbounded_channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let feeder = {
+        let stop = stop.clone();
+        tokio::spawn(async move {
+            for (a, b) in others.chunks(1600).zip(you.chunks(1600)) {
+                tx_o.send(a.to_vec()).unwrap();
+                tx_y.send(b.to_vec()).unwrap();
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            stop.store(true, Ordering::SeqCst);
+        })
+    };
+    let log: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let emit: meeting::Emit = {
+        let log = log.clone();
+        Arc::new(move |kind: &str, v: serde_json::Value| {
+            if kind != "level" {
+                log.lock().unwrap().push(format!("{kind}: {v}"));
+            }
+        })
+    };
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    let inputs = vec![Input { speaker: Speaker::Others, rx: rx_o }, Input { speaker: Speaker::You, rx: rx_y }];
+    let started = std::time::Instant::now();
+    meeting::record(&state, &cipher, &m.id, ep, inputs, true, None, &stop, &|| serde_json::json!({}), emit.clone()).await.unwrap();
+    feeder.await.unwrap();
+    println!("recorded and transcribed in {:.1}s", started.elapsed().as_secs_f64());
+    for l in log.lock().unwrap().iter() {
+        println!("  {}", &l[..l.len().min(220)]);
+    }
+    let segs = meeting::segments(&state.db.lock().unwrap(), &cipher, &m.id);
+    let text = meeting::transcript_text(&segs);
+    println!("transcript:\n{text}");
+    let yours: Vec<_> = segs.iter().filter(|s| s.speaker == Speaker::You).collect();
+    assert!(yours.iter().all(|s| !s.text.to_lowercase().contains("budget")), "the echoed line should be dropped from You");
+    assert!(yours.iter().any(|s| s.text.to_lowercase().contains("venue")));
+    assert!(segs.iter().any(|s| s.speaker == Speaker::Others && s.text.to_lowercase().contains("budget")));
+
+    // A clip of the stored (encrypted) audio plays back the right length.
+    let wav = meeting::clip(&meeting::audio_dir(&state, &m.id), &cipher, 1.0, 4.0);
+    assert_eq!(crate::audio::wav_decode(&wav).unwrap().samples.len(), 3 * 16_000);
+
+    let started = std::time::Instant::now();
+    meeting::finish(&state, &cipher, &m.id, &emit).await.unwrap();
+    let detail = meeting::list(&state.db.lock().unwrap(), &cipher).into_iter().find(|x| x.id == m.id).unwrap();
+    println!("notes in {:.1}s: {:#?}", started.elapsed().as_secs_f64(), detail.data);
+    let notes = detail.data.notes.expect("notes");
+    assert!(!notes.summary.is_empty());
+    let actions = serde_json::to_string(&notes.action_items).unwrap().to_lowercase();
+    assert!(actions.contains("budget"), "{actions}");
+    assert_eq!(detail.status, "done");
+    crate::speech::stop(&state).await;
+    state.engine.lock().await.stop().await;
+    let _ = std::fs::remove_dir_all(meeting::audio_dir(&state, &m.id));
+}

@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use crate::crypto::Cipher;
 use crate::db::{self, now_ms, Message};
-use crate::{agent, catalog, chat, engine, tools, AppState, AppStateRef};
+use crate::{agent, chat, tools, AppState, AppStateRef};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -150,32 +150,12 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
 /// Runs one schedule now and saves the result as a chat. Returns the chat id.
 pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result<String, String> {
     let cipher = state.cipher()?;
-    let (installed, profile, title) = {
+    let (profile, title) = {
         let conn = state.db.lock().unwrap();
-        let model_id = s.model_id.clone().or_else(|| db::settings(&conn).default_model).ok_or("No model is installed.")?;
-        let installed = db::installed_model(&conn, &model_id).ok_or("This task's model isn't installed anymore.")?;
         let title = format!("⏰ {} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
-        (installed, db::profile(&conn, &cipher), title)
+        (db::profile(&conn, &cipher), title)
     };
-    let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
-    let budget = state.budget();
-    let (ctx, gpu_layers) = catalog::launch_settings(&spec, &installed.quant, &budget);
-    let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&budget)?)
-        .ok_or("The engine isn't installed.")?;
-    let ep = {
-        let mut eng = state.engine.lock().await;
-        match eng.endpoint_for(&installed.model_id) {
-            Some(ep) => ep,
-            None => {
-                let model_path = crate::model_file(&state.paths, &installed);
-                eng.ensure(
-                    engine::LaunchSpec { exe: &exe, model_path: &model_path, model_id: &installed.model_id, quant: &installed.quant, ctx, gpu_layers, log: &state.paths.engine_log() },
-                    state.job(),
-                )
-                .await?
-            }
-        }
-    };
+    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), || {}).await?;
 
     let (chat_id, turn_id) = {
         let conn = state.db.lock().unwrap();

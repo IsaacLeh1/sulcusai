@@ -184,6 +184,13 @@ impl Turn {
                 }
             }
         }
+        if self.use_tools && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
+            for name in ["search_meetings", "read_meeting"] {
+                if let Some(d) = tools::find(name) {
+                    defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
+                }
+            }
+        }
         let tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();

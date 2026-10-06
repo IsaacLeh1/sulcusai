@@ -18,6 +18,7 @@ mod handoff;
 mod hardware;
 mod hello;
 mod mcp;
+mod meeting;
 mod memory;
 mod net;
 mod paths;
@@ -27,6 +28,7 @@ mod schedule;
 mod security;
 mod speech;
 mod tools;
+mod translate;
 mod tts;
 mod vad;
 mod voice;
@@ -549,54 +551,21 @@ pub(crate) async fn run_turn(
     };
 
     let turn_id = uuid::Uuid::new_v4().to_string();
-    let (chat, installed, profile) = {
+    let (chat, profile) = {
         let conn = state.db.lock().unwrap();
         let chat = db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
-        let model_id = chat
-            .model_id
-            .clone()
-            .or_else(|| db::settings(&conn).default_model)
-            .ok_or("Install a model first: open Models and pick one.")?;
-        let installed = db::installed_model(&conn, &model_id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
         if chat.model_id.is_none() {
-            db::set_chat_model(&conn, &chat_id, &model_id)?;
-        }
-        (chat, installed, db::profile(&conn, &cipher))
-    };
-    let mode = tools::Mode::parse(&chat.mode);
-
-    let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
-    let budget = state.budget();
-    let (ctx, gpu_layers) = catalog::launch_settings(&spec, &installed.quant, &budget);
-    let backend = engine::backend_for(&budget)?;
-    let exe = engine::installed_server(&state.paths, &state.catalog.engine, backend)
-        .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
-
-    let ep = {
-        let mut engine = state.engine.lock().await;
-        match engine.endpoint_for(&installed.model_id) {
-            Some(ep) => ep,
-            None => {
-                app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
-                let log = state.paths.engine_log();
-                let model_path = model_file(&state.paths, &installed);
-                engine
-                    .ensure(
-                        LaunchSpec {
-                            exe: &exe,
-                            model_path: &model_path,
-                            model_id: &installed.model_id,
-                            quant: &installed.quant,
-                            ctx,
-                            gpu_layers,
-                            log: &log,
-                        },
-                        state.job(),
-                    )
-                    .await?
+            if let Some(m) = db::settings(&conn).default_model {
+                db::set_chat_model(&conn, &chat_id, &m)?;
             }
         }
+        (chat, db::profile(&conn, &cipher))
     };
+    let mode = tools::Mode::parse(&chat.mode);
+    let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), || {
+        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
+    })
+    .await?;
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
@@ -661,6 +630,58 @@ pub(crate) async fn run_turn(
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
     Ok(last)
+}
+
+/// Starts (or reuses) the engine for a model: the given one, else the
+/// default. Returns the endpoint and the model.
+pub(crate) async fn llm_endpoint(
+    state: &Arc<AppState>,
+    model_id: Option<String>,
+    on_loading: impl FnOnce(),
+) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
+    let installed = {
+        let conn = state.db.lock().unwrap();
+        let id = model_id
+            .or_else(|| db::settings(&conn).default_model)
+            .ok_or("Install a model first: open Models and pick one.")?;
+        db::installed_model(&conn, &id).ok_or("This chat's model isn't installed anymore. Pick another one.")?
+    };
+    let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
+    let budget = state.budget();
+    let (ctx, gpu_layers) = catalog::launch_settings(&spec, &installed.quant, &budget);
+    let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&budget)?)
+        .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
+    let mut engine = state.engine.lock().await;
+    let ep = match engine.endpoint_for(&installed.model_id) {
+        Some(ep) => ep,
+        None => {
+            on_loading();
+            let model_path = model_file(&state.paths, &installed);
+            engine
+                .ensure(
+                    LaunchSpec {
+                        exe: &exe,
+                        model_path: &model_path,
+                        model_id: &installed.model_id,
+                        quant: &installed.quant,
+                        ctx,
+                        gpu_layers,
+                        log: &state.paths.engine_log(),
+                    },
+                    state.job(),
+                )
+                .await?
+        }
+    };
+    Ok((ep, spec, installed))
+}
+
+/// For background work (meeting notes, translation): the model already
+/// loaded if there is one, so a chat's model isn't swapped out mid-reply.
+pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine::Endpoint, ModelSpec), String> {
+    let loaded = state.engine.lock().await.status().model_id;
+    let (ep, spec, _) = llm_endpoint(state, loaded, || {}).await?;
+    Ok((ep, spec))
 }
 
 // ---------- engine ----------
@@ -814,6 +835,23 @@ pub fn run() {
             voice::start_voice,
             voice::stop_voice,
             voice::interrupt_voice,
+            meeting::start_meeting,
+            meeting::stop_meeting,
+            meeting::live_meeting,
+            meeting::list_meetings,
+            meeting::get_meeting,
+            meeting::rename_meeting,
+            meeting::set_action_done,
+            meeting::delete_meeting,
+            meeting::delete_meeting_audio,
+            meeting::rewrite_notes,
+            meeting::meeting_clip,
+            meeting::export_meeting,
+            meeting::ask_about_meeting,
+            meeting::search_meetings,
+            translate::translate,
+            translate::translation_languages,
+            translate::translate_file,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

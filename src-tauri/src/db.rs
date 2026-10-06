@@ -94,6 +94,23 @@ CREATE TABLE IF NOT EXISTS schedules (
   next_run   INTEGER,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meetings (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  ended_at   INTEGER,
+  status     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meeting_segments (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  meeting_id  TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+  speaker     TEXT NOT NULL,
+  start       REAL NOT NULL,
+  end         REAL NOT NULL,
+  text        TEXT NOT NULL,
+  translation TEXT
+);
+CREATE INDEX IF NOT EXISTS segments_by_meeting ON meeting_segments(meeting_id, start);
 CREATE TABLE IF NOT EXISTS project_folders (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,

@@ -319,6 +319,48 @@ pub async fn stream(
     Ok(out)
 }
 
+/// One reply, not streamed, for background work such as meeting notes and
+/// translation. `extra` is merged into the request (e.g. response_format).
+pub async fn complete(ep: &Endpoint, messages: Vec<Value>, extra: Value, max_tokens: u32) -> Result<String, String> {
+    let mut body = json!({
+        "messages": messages,
+        "temperature": 0.3,
+        "max_tokens": max_tokens,
+        // Background work doesn't need step-by-step thinking (models
+        // without this switch ignore it).
+        "chat_template_kwargs": { "enable_thinking": false },
+    });
+    if let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) {
+        for (k, v) in e {
+            b.insert(k.clone(), v.clone());
+        }
+    }
+    let resp = net::local_client()
+        .post(ep.url("/v1/chat/completions"))
+        .bearer_auth(&ep.key)
+        .json(&body)
+        .timeout(Duration::from_secs(900))
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach the engine: {e}"))?;
+    let status = resp.status();
+    let v: Value = resp.json().await.map_err(|e| format!("The engine sent an unreadable answer: {e}"))?;
+    if !status.is_success() {
+        let detail = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("unknown error");
+        return Err(format!("The engine returned {status}: {detail}"));
+    }
+    let content = v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or_default();
+    Ok(strip_thinking(content).trim().to_string())
+}
+
+/// Removes a <think>…</think> block some models write before the answer.
+pub fn strip_thinking(s: &str) -> &str {
+    match s.find("</think>") {
+        Some(i) if s.trim_start().starts_with("<think>") => &s[i + "</think>".len()..],
+        _ => s,
+    }
+}
+
 /// Tool calls arrive in pieces: the first piece names the tool, later
 /// pieces append to its arguments. `index` says which call a piece is for.
 fn merge_tool_delta(calls: &mut Vec<ToolCall>, tc: &Value) {

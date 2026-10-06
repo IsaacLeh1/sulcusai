@@ -307,19 +307,6 @@ impl Player {
         self.pending.load(Ordering::SeqCst) > 0
     }
 
-    pub fn watch(&self) -> tokio::sync::watch::Receiver<bool> {
-        self.busy.subscribe()
-    }
-
-    /// Waits until everything queued has played (or was stopped).
-    pub async fn wait_idle(&self) {
-        let mut rx = self.watch();
-        while *rx.borrow_and_update() {
-            if rx.changed().await.is_err() {
-                return;
-            }
-        }
-    }
 }
 
 fn finish_clip(pending: &AtomicUsize, busy: &tokio::sync::watch::Sender<bool>) {

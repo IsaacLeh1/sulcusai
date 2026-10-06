@@ -62,6 +62,7 @@ impl Vad {
             speech_run: 0, silence_run: 0, active: false, pending: Vec::new(), boost: 1.0 }
     }
 
+    #[cfg(test)]
     pub fn active(&self) -> bool {
         self.active
     }
@@ -234,12 +235,6 @@ impl Phraser {
         self.current.take().filter(|u| u.samples.len() > FRAME * 10)
     }
 
-    /// Forgets speech in progress (e.g. it was the PC's own voice).
-    pub fn discard(&mut self) {
-        self.current = None;
-        self.pre.clear();
-        self.vad.reset();
-    }
 }
 
 #[cfg(test)]

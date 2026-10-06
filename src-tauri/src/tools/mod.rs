@@ -2,6 +2,7 @@
 //! Tools the model can call, what each one risks, and how they run.
 
 mod fs;
+mod meetings;
 mod memory;
 mod shell;
 
@@ -81,6 +82,7 @@ fn group(name: &str) -> &'static str {
     match name {
         "remember" | "search_memory" => "memory",
         "load_skill" => "skills",
+        "search_meetings" | "read_meeting" => "meetings",
         _ => "files",
     }
 }
@@ -110,6 +112,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
         description: "Search what you remember from earlier chats." },
+    ToolDef { name: "search_meetings", risk: Risk::Read, params: meetings::search_meetings_params,
+        description: "Search the user's recorded meetings (titles, notes and transcripts) by words. Returns matching meetings with ids." },
+    ToolDef { name: "read_meeting", risk: Risk::Read, params: meetings::read_meeting_params,
+        description: "Read a recorded meeting's notes (summary, decisions, action items) or its full transcript, by id." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -146,7 +152,8 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| permission(mode, t.risk, false) != Permission::Refuse)
         .filter(|t| match group(t.name) {
             "memory" => memory,
-            "skills" => false, // added by the agent when a plugin provides skills
+            // Added by the agent when a plugin provides skills, or when there are meetings.
+            "skills" | "meetings" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -218,6 +225,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     match name {
         "run_command" => shell::run(args, ctx).await,
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
+        "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),
         _ => {
             // File work is quick but blocking; keep it off the async threads.
             let name = name.to_string();
@@ -241,6 +249,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "remember" => return "Couldn't save a memory".into(),
         "delegate" => return "A helper couldn't finish".into(),
         "search_memory" => return "Couldn't search memory".into(),
+        "search_meetings" | "read_meeting" => return "Couldn't look up a meeting".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -277,8 +286,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill, which the agent adds only when a plugin has skills.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 1);
+        // Everything except load_skill and the meeting tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 3);
     }
 
     #[test]

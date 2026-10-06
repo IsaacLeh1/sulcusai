@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 
-use crate::audio::{self, Capture, Source};
+use crate::audio::{Capture, Source};
 use crate::speech::{self, SpeechEndpoint};
 use crate::tts;
 use crate::vad::{self, Phrase, Phraser};
@@ -65,8 +65,8 @@ pub async fn dictate(
     let mut so_far = String::new();
     let started = Instant::now();
     let mut last_level = Instant::now();
-    let mut handle = |u: vad::Utterance, so_far: &mut String| {
-        let opts = speech::Options { prompt: Some(so_far.clone()), ..Default::default() };
+    let handle = |u: vad::Utterance, so_far: &str| {
+        let opts = speech::Options { prompt: Some(so_far.to_string()), ..Default::default() };
         let samples = u.samples;
         async move { speech::transcribe(ep, &samples, &opts).await }
     };
@@ -87,7 +87,7 @@ pub async fn dictate(
             match p {
                 Phrase::Started => emit("hearing", json!({})),
                 Phrase::Done(u) => {
-                    let t = handle(u, &mut so_far).await?;
+                    let t = handle(u, &so_far).await?;
                     if !t.text.is_empty() {
                         so_far.push(' ');
                         so_far.push_str(&t.text);
@@ -102,7 +102,7 @@ pub async fn dictate(
     while let Ok(c) = rx.try_recv() {
         for p in phraser.push(&c) {
             if let Phrase::Done(u) = p {
-                let t = handle(u, &mut so_far).await?;
+                let t = handle(u, &so_far).await?;
                 if !t.text.is_empty() {
                     so_far.push(' ');
                     so_far.push_str(&t.text);
@@ -112,7 +112,7 @@ pub async fn dictate(
         }
     }
     if let Some(u) = phraser.flush() {
-        let t = handle(u, &mut so_far).await?;
+        let t = handle(u, &so_far).await?;
         if !t.text.is_empty() {
             emit("text", json!({ "text": t.text }));
         }
@@ -406,10 +406,6 @@ pub fn interrupt_voice(state: AppStateRef, chat_id: String) {
     if let Some(flag) = state.generations.lock().unwrap().get(&chat_id) {
         flag.store(true, Ordering::Relaxed);
     }
-}
-
-pub fn level_of(samples: &[f32]) -> f32 {
-    audio::rms(samples)
 }
 
 #[cfg(test)]
