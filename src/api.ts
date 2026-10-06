@@ -162,6 +162,44 @@ export interface ScheduleView extends Schedule {
   when: string;
 }
 
+export type ToolMode = "allow" | "ask" | "off";
+
+export interface McpTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  read_only: boolean;
+}
+
+export interface Connector {
+  id: string;
+  name: string;
+  spec: { command: string; args: string[]; env: Record<string, string>; cwd: string | null };
+  enabled: boolean;
+  plugin: string | null;
+  tools: McpTool[];
+  tool_modes: Record<string, ToolMode>;
+}
+
+export interface Plugin {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  dir: string;
+  skills: { name: string; description: string }[];
+  connectors: string[];
+}
+
+export interface PluginPreview {
+  name: string;
+  version: string;
+  description: string;
+  skills: string[];
+  programs: string[];
+}
+
 export interface Memory {
   id: string;
   content: string;
@@ -199,7 +237,7 @@ export interface PendingApproval {
   chat_id: string;
   call_id: string;
   tool: string;
-  risk: "read" | "write" | "execute";
+  risk: "read" | "write" | "execute" | "connector";
   preview: Preview;
 }
 
@@ -327,6 +365,17 @@ export const api = {
   saveSchedule: (schedule: Schedule) => invoke<ScheduleView>("save_schedule", { schedule }),
   deleteSchedule: (id: string) => invoke<void>("delete_schedule", { id }),
   runScheduleNow: (id: string) => invoke<string>("run_schedule_now", { id }),
+  connectors: () => invoke<Connector[]>("list_connectors"),
+  saveConnector: (input: { id: string; name: string; command: string; args: string[]; env: Record<string, string> }) =>
+    invoke<Connector>("save_connector", { input }),
+  deleteConnector: (id: string) => invoke<void>("delete_connector", { id }),
+  setConnectorEnabled: (id: string, enabled: boolean) => invoke<void>("set_connector_enabled", { id, enabled }),
+  setToolMode: (id: string, tool: string, mode: ToolMode) => invoke<void>("set_tool_mode", { id, tool, mode }),
+  plugins: () => invoke<Plugin[]>("list_plugins"),
+  inspectPlugin: (path: string) => invoke<PluginPreview>("inspect_plugin", { path }),
+  installPlugin: (path: string) => invoke<Plugin>("install_plugin", { path }),
+  setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
+  removePlugin: (id: string) => invoke<void>("remove_plugin", { id }),
 };
 
 export interface InstallProgress {

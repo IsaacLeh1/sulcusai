@@ -45,7 +45,7 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
 /** One tool call and (once it has run) its result. */
 export function ToolCard({ call, meta, output, running, liveSteps }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[] }) {
   const [open, setOpen] = useState(false);
-  const icon = TOOL_ICONS[call.name] ?? "🔧";
+  const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
   const title = meta?.title ?? describe(call);
   const detail = meta?.detail ?? (meta?.kind === "text" ? output : null);
@@ -94,11 +94,11 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
       onAnswered();
     }
   };
-  const kindLabel = p.risk === "execute" ? "commands" : "file changes";
+  const kindLabel = p.risk === "execute" ? "commands" : p.risk === "connector" ? "connector actions" : "file changes";
   return (
     <div className="approval" role="alert">
       <div className="approval-head">
-        <span aria-hidden>{TOOL_ICONS[p.tool] ?? "🔧"}</span>
+        <span aria-hidden>{p.risk === "connector" ? "🔌" : TOOL_ICONS[p.tool] ?? "🔧"}</span>
         <strong>{p.preview.title}</strong>
       </div>
       {p.preview.detail && <Detail kind={p.preview.kind} detail={p.preview.detail} />}

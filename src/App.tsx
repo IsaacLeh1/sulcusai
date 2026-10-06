@@ -21,6 +21,7 @@ import { ActivityView } from "./views/ActivityView";
 import { MemoryView } from "./views/MemoryView";
 import { ProjectView } from "./views/ProjectView";
 import { ScheduledView } from "./views/ScheduledView";
+import { ConnectorsView } from "./views/ConnectorsView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { Modal } from "./components/Modal";
@@ -28,7 +29,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "memory" | "scheduled" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
 export default function App() {
@@ -253,6 +254,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
             Scheduled
           </button>
+          <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}>
+            Connectors
+          </button>
           <button className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>
             Activity
           </button>
@@ -330,6 +334,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         )}
         {view === "activity" && <ActivityView toast={toast} />}
+        {view === "connectors" && <ConnectorsView toast={toast} />}
         {view === "scheduled" && <ScheduledView installed={installed} onOpenChat={openChat} toast={toast} />}
         {view === "memory" && <MemoryView settings={settings} onSettings={setSettings} toast={toast} />}
         {view === "project" && activeProject && (
