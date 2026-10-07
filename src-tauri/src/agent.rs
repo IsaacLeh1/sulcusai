@@ -214,6 +214,9 @@ impl Turn {
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["search_meetings", "read_meeting"]);
         }
+        if self.use_tools && features.contains(&Feature::Browser) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
+            extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
+        }
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
@@ -380,14 +383,30 @@ impl Turn {
             Ok(v) => v,
             Err(e) => return Outcome::error(format!("Couldn't use {}", call.name), format!("The arguments weren't valid JSON ({e}). Try again.")),
         };
-        let allowed = self.state.approvals.allowed(&self.chat_id, def.risk);
-        match tools::permission(self.mode, def.risk, allowed) {
+        // Clicking or typing in the browser: refuse private fields, and ask
+        // first when it submits, buys, sends or deletes.
+        let mut risk = def.risk;
+        let mut browser_preview = None;
+        if matches!(call.name.as_str(), "browser_click" | "browser_type") {
+            match tools::browser::assess(self.state.app.get(), &call.name, &args).await {
+                Ok(None) => {}
+                Ok(Some(p)) => {
+                    risk = Risk::Submit;
+                    browser_preview = Some(p);
+                }
+                Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
+            }
+        }
+        let allowed = self.state.approvals.allowed(&self.chat_id, risk);
+        match tools::permission(self.mode, risk, allowed) {
             Permission::Refuse => {
                 return Outcome::error(tools::failed_title(&call.name, &args), "Plan mode can't change anything. Put this step in your plan instead.");
             }
             Permission::Ask => {
                 // A preview that fails (say, edit text not found) goes straight back to the model.
-                let preview = match if call.name == "update_note" {
+                let preview = match if let Some(p) = browser_preview.take() {
+                    Ok(p)
+                } else if call.name == "update_note" {
                     tools::notes_preview(&call.name, &args, &self.state.db, &self.cipher)
                 } else {
                     tools::preview(&call.name, &args, sandbox)
@@ -396,7 +415,7 @@ impl Turn {
                     Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
                 };
                 let title = preview.title.clone();
-                match self.ask(call, def.risk, preview).await {
+                match self.ask(call, risk, preview).await {
                     Decision::Deny => {
                         self.log(&format!("Declined: {title}"));
                         return Outcome::denied(title);
@@ -412,6 +431,7 @@ impl Turn {
             cancel: &self.cancel,
             job: self.state.job(),
             memory: tools::MemoryCtx { db: &self.state.db, cipher: &self.cipher, chat_id: &self.chat_id, project_id },
+            app: self.state.app.get(),
         };
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
         let outcome = if call.name == "delegate" {

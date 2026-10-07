@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Tools the model can call, what each one risks, and how they run.
 
+pub mod browser;
 mod fs;
 mod meetings;
 mod memory;
@@ -35,6 +36,9 @@ pub enum Risk {
     Memory,
     /// A tool from a connector (MCP server); what it does is up to that program.
     Connector,
+    /// Submits a form, buys, sends, posts or deletes on a website. Always
+    /// asks, in every mode, and is never allowed for a whole chat.
+    Submit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +70,7 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
     match (mode, risk) {
         (_, Risk::Read | Risk::Memory) => Permission::Run,
         (Mode::Plan, _) => Permission::Refuse,
+        (_, Risk::Submit) => Permission::Ask,
         (Mode::Bypass, _) => Permission::Run,
         (Mode::Auto, _) if allowed_for_chat => Permission::Run,
         (Mode::Auto, _) => Permission::Ask,
@@ -88,6 +93,7 @@ fn group(name: &str) -> &'static str {
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
         "web_search" | "fetch_page" | "request_web" => "web",
+        n if n.starts_with("browser_") => "browser",
         _ => "files",
     }
 }
@@ -141,6 +147,16 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
         description: "Web access is off in this chat. If answering needs current information from the internet, call this to ask the user to turn it on, then stop." },
+    ToolDef { name: "browser_open", risk: Risk::Read, params: browser::browser_open_params,
+        description: "Open a website in the built-in browser, which the user can watch. Use it to use a site (fill in a search, click through pages); for just reading, web_search and fetch_page are quicker. Returns the page's text and its links, buttons and fields, numbered." },
+    ToolDef { name: "browser_read", risk: Risk::Read, params: browser::browser_read_params,
+        description: "Read the browser's current page again: its text and its numbered links, buttons and fields." },
+    ToolDef { name: "browser_click", risk: Risk::Read, params: browser::browser_click_params,
+        description: "Click a link or button in the browser, by its number from the page. Anything that submits a form, buys, sends, posts or deletes asks the user first." },
+    ToolDef { name: "browser_type", risk: Risk::Read, params: browser::browser_type_params,
+        description: "Type into a field in the browser by its number (replacing what's there), or pick a dropdown choice. Never for passwords or payment details: ask the user to type those in the browser window." },
+    ToolDef { name: "browser_back", risk: Risk::Read, params: browser::browser_back_params,
+        description: "Go back to the previous page in the browser." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -178,7 +194,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -230,6 +246,8 @@ pub struct Ctx<'a> {
     pub cancel: &'a AtomicBool,
     pub job: Option<&'a JobRef>,
     pub memory: MemoryCtx<'a>,
+    /// For the browser tools.
+    pub app: Option<&'a tauri::AppHandle>,
 }
 
 pub struct MemoryCtx<'a> {
@@ -267,6 +285,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" => web::run(name, args, &ctx.memory).await,
+        n if n.starts_with("browser_") => {
+            let db = ctx.memory.db;
+            browser::run(name, args, ctx.app, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
+        }
         _ => {
             // File work is quick but blocking; keep it off the async threads.
             let name = name.to_string();
@@ -295,6 +317,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "create_task" | "list_tasks" | "complete_task" => return "Couldn't use the task list".into(),
         "web_search" => return "Couldn't search the web".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
+        n if n.starts_with("browser_") => return "Couldn't use the browser".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -331,8 +354,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task and web tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 13);
+        // Everything except load_skill and the meeting, note, task, web and browser tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 18);
     }
 
     #[test]

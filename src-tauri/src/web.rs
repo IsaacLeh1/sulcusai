@@ -57,7 +57,7 @@ pub struct Hit {
 
 // ---------- address checks ----------
 
-fn is_public(ip: IpAddr) -> bool {
+pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v) => {
             let o = v.octets();

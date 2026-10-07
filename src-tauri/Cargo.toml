@@ -48,6 +48,8 @@ unicode-normalization = "0.1"
 html2text = "0.17"
 
 [target.'cfg(windows)'.dependencies]
+# The built-in browser's in-process DevTools channel (same version as wry's).
+webview2-com = "0.39"
 windows = { version = "0.58", features = [
   "Foundation",
   "Foundation_Collections",

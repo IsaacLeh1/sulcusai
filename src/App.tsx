@@ -299,6 +299,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {liveMeeting && <span className="dot rec" aria-label="Recording" />}
             </button>
           )}
+          {has("browser") && (
+            <button onClick={() => api.openBrowser().catch((e) => toast(errorText(e), "error"))} title="Open the built-in browser">
+              Browser
+            </button>
+          )}
           {has("notes") && (
             <button className={view === "notes" ? "active" : ""} onClick={() => setView("notes")}>
               Notes

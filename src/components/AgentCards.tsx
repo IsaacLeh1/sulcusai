@@ -18,6 +18,11 @@ const TOOL_ICONS: Record<string, string> = {
   remember: "🧠",
   search_memory: "🧠",
   delegate: "🤖",
+  browser_open: "🧭",
+  browser_read: "🧭",
+  browser_click: "👆",
+  browser_type: "⌨️",
+  browser_back: "↩️",
 };
 
 /** A unified diff with added/removed lines colored. */
@@ -107,9 +112,11 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
         <button className="btn primary" disabled={busy} onClick={() => answer("allow")} autoFocus>
           Allow
         </button>
-        <button className="btn" disabled={busy} onClick={() => answer("always")} title={`Don't ask again for ${kindLabel} in this chat`}>
-          Allow {kindLabel} for this chat
-        </button>
+        {p.risk !== "submit" && (
+          <button className="btn" disabled={busy} onClick={() => answer("always")} title={`Don't ask again for ${kindLabel} in this chat`}>
+            Allow {kindLabel} for this chat
+          </button>
+        )}
         <span className="spacer" />
         <button className="btn ghost danger" disabled={busy} onClick={() => answer("deny")}>
           Deny

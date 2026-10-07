@@ -250,7 +250,7 @@ export interface PendingApproval {
   chat_id: string;
   call_id: string;
   tool: string;
-  risk: "read" | "write" | "execute" | "connector";
+  risk: "read" | "write" | "execute" | "connector" | "memory" | "submit";
   preview: Preview;
 }
 
@@ -460,6 +460,7 @@ export type FeatureId =
   | "notes"
   | "tasks"
   | "web_search"
+  | "browser"
   | "files"
   | "memory"
   | "projects"
@@ -692,6 +693,7 @@ export const api = {
   parseDue: (text: string) => invoke<{ due: number; has_time: boolean } | null>("parse_due_text", { text }),
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
   webSettings: () => invoke<WebSettings>("get_web_settings"),
+  openBrowser: () => invoke<void>("open_browser"),
   perfView: () => invoke<PerfView>("perf_view"),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),

@@ -24,6 +24,11 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Web search",
     detail: "Search the web and read pages in every chat, even while Offline. Only the searches and the pages it opens go online; your messages and the AI stay on this PC. The browser, email and cloud still follow the connectivity level.",
   },
+  browser: {
+    icon: "🧭",
+    name: "Browser",
+    detail: "A built-in browser with its own sign-ins that the assistant can use while you watch. It asks before submitting forms or buying anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat).",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -35,7 +40,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes and tasks", ids: ["notes", "tasks"] },
-  { title: "Assistant", ids: ["web_search", "files", "memory", "projects", "scheduled", "connectors"] },
+  { title: "Assistant", ids: ["web_search", "browser", "files", "memory", "projects", "scheduled", "connectors"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {

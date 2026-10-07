@@ -186,6 +186,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     });
@@ -308,6 +309,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     });
@@ -498,6 +500,7 @@ fn speech_state() -> std::sync::Arc<crate::AppState> {
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     })

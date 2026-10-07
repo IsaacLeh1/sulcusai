@@ -4,6 +4,7 @@
 
 mod agent;
 mod audio;
+mod browser;
 mod catalog;
 mod chat;
 mod checkpoint;
@@ -79,6 +80,8 @@ pub struct AppState {
     speech: speech::Speech,
     player: audio::Player,
     heat: perf::Heat,
+    /// For work that needs a window (the browser); set once the app starts.
+    app: std::sync::OnceLock<tauri::AppHandle>,
     /// When the chat model last started a piece of work (for the idle unload).
     engine_used: Mutex<std::time::Instant>,
     #[cfg(windows)]
@@ -435,7 +438,11 @@ fn get_settings(state: AppStateRef) -> Settings {
 }
 
 #[tauri::command]
-fn set_connectivity(state: AppStateRef, level: Connectivity) -> Result<Settings, String> {
+fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> Result<Settings, String> {
+    if level == Connectivity::Offline {
+        // Offline closes the browser; nothing in it should keep going online.
+        browser::close(&app);
+    }
     state.cipher()?;
     let conn = state.db.lock().unwrap();
     let before = db::settings(&conn).connectivity;
@@ -777,6 +784,7 @@ pub fn run() {
                 speech: speech::Speech::default(),
                 player: audio::Player::new(),
                 heat: perf::Heat::default(),
+                app: std::sync::OnceLock::new(),
                 engine_used: Mutex::new(std::time::Instant::now()),
                 #[cfg(windows)]
                 job: winjob::Job::kill_on_close().ok(),
@@ -788,6 +796,7 @@ pub fn run() {
             checkpoint::prune(&state.db.lock().unwrap());
             let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
             let state = Arc::new(state);
+            let _ = state.app.set(app.handle().clone());
             speech::start_idle_unloader(state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
@@ -797,6 +806,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
+            browser::open_browser,
             perf::set_perf,
             app_info,
             refresh_hardware,
