@@ -249,6 +249,7 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 
 **Queued request (2026-10-07, not started):** browser choice and placement.
 - Let users pick their main browser: Chrome, Edge, Safari (Mac only) or DuckDuckGo, alongside the built-in one. Driving Chrome or Edge safely needs an extension or native messaging, never a remote-debugging port (DESIGN.md rule). DuckDuckGo's browser has no automation API, so it could only be opened, not controlled.
+- He decided: **browser control is its own switch on the Features page, and that feature includes the extension.** Turning it on installs or sets up a SulcusAI extension for Chrome or Edge that talks to the app over native messaging (no debug port). The assistant then works in his real browser. With it off, the assistant can't touch his browsers. The built-in browser remains the option that needs no extension.
 - Move the Browser button out of the left sidebar to a web (🌐/🧭) icon at the top of the page.
 
 **Phase 4 still to do:** email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
