@@ -512,7 +512,23 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
           <List title="Most important" items={n.most_important} />
           {n.action_items.length > 0 && (
             <section>
-              <h3>Action items</h3>
+              <div className="row">
+                <h3>Action items</h3>
+                <span className="spacer" />
+                <button
+                  className="btn ghost small"
+                  onClick={async () => {
+                    try {
+                      const added = await api.tasksFromMeeting(m.id, n.action_items.map((_, i) => i));
+                      toast(added ? `Added ${added} to Tasks.` : "They're already in Tasks.", "success");
+                    } catch (e) {
+                      toast(errorText(e), "error");
+                    }
+                  }}
+                >
+                  + Add to Tasks
+                </button>
+              </div>
               <ul className="actions">
                 {n.action_items.map((a, i) => (
                   <li key={i}>

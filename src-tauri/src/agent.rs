@@ -187,8 +187,21 @@ impl Turn {
                 }
             }
         }
+        let mut extra: Vec<&str> = Vec::new();
+        if self.use_tools && features.contains(&Feature::Notes) {
+            extra.extend(["create_note", "search_notes", "read_note"]);
+            if self.mode != tools::Mode::Plan {
+                extra.push("update_note");
+            }
+        }
+        if self.use_tools && features.contains(&Feature::Tasks) {
+            extra.extend(["create_task", "list_tasks", "complete_task"]);
+        }
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
-            for name in ["search_meetings", "read_meeting"] {
+            extra.extend(["search_meetings", "read_meeting"]);
+        }
+        {
+            for name in extra {
                 if let Some(d) = tools::find(name) {
                     defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
                 }
@@ -345,7 +358,11 @@ impl Turn {
             }
             Permission::Ask => {
                 // A preview that fails (say, edit text not found) goes straight back to the model.
-                let preview = match tools::preview(&call.name, &args, sandbox) {
+                let preview = match if call.name == "update_note" {
+                    tools::notes_preview(&call.name, &args, &self.state.db, &self.cipher)
+                } else {
+                    tools::preview(&call.name, &args, sandbox)
+                } {
                     Ok(p) => p,
                     Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
                 };

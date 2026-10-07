@@ -444,6 +444,8 @@ export type FeatureId =
   | "read_aloud"
   | "meetings"
   | "translate"
+  | "notes"
+  | "tasks"
   | "files"
   | "memory"
   | "projects"
@@ -454,6 +456,34 @@ export interface FeatureView {
   id: FeatureId;
   enabled: boolean;
   need: { model_id: string; model_name: string; size: number; met: boolean } | null;
+}
+
+export interface NoteBody {
+  title: string;
+  body: string;
+  folder: string;
+  tags: string[];
+}
+
+export interface Note extends NoteBody {
+  id: string;
+  pinned: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  notes: string;
+  subtasks: { title: string; done: boolean }[];
+  source: { kind: string; id: string; label: string } | null;
+  due: number | null;
+  due_has_time: boolean;
+  priority: number;
+  remind_at: number | null;
+  done_at: number | null;
+  created_at: number;
 }
 
 export interface Language {
@@ -581,6 +611,15 @@ export const api = {
   features: () => invoke<FeatureView[]>("features_view"),
   setFeature: (feature: FeatureId, on: boolean) => invoke<FeatureId[]>("set_feature", { feature, on }),
   installFeature: (feature: FeatureId) => invoke<void>("install_feature", { feature }),
+  notes: () => invoke<Note[]>("notes"),
+  saveNote: (id: string | null, note: NoteBody) => invoke<Note>("save_note_cmd", { id, note }),
+  pinNote: (id: string, pinned: boolean) => invoke<void>("pin_note", { id, pinned }),
+  deleteNote: (id: string) => invoke<void>("delete_note", { id }),
+  tasks: () => invoke<Task[]>("tasks"),
+  saveTask: (task: Task) => invoke<Task>("save_task_cmd", { task }),
+  deleteTask: (id: string) => invoke<void>("delete_task", { id }),
+  parseDue: (text: string) => invoke<{ due: number; has_time: boolean } | null>("parse_due_text", { text }),
+  tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
 };
 
 export type DictationEvent =
@@ -639,6 +678,7 @@ export interface ChatEvents {
   "install:finished": InstallFinished;
   "security:locked": null;
   "features:changed": Record<string, never>;
+  "task:reminder": { id: string; title: string };
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

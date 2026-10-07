@@ -27,6 +27,8 @@ pub enum Feature {
     ReadAloud,
     Meetings,
     Translate,
+    Notes,
+    Tasks,
     Files,
     Memory,
     Projects,
@@ -40,6 +42,8 @@ pub const ALL: &[Feature] = &[
     Feature::ReadAloud,
     Feature::Meetings,
     Feature::Translate,
+    Feature::Notes,
+    Feature::Tasks,
     Feature::Files,
     Feature::Memory,
     Feature::Projects,
@@ -55,6 +59,8 @@ impl Feature {
             Feature::ReadAloud => "Read aloud",
             Feature::Meetings => "Meeting notes",
             Feature::Translate => "Translation",
+            Feature::Notes => "Notes",
+            Feature::Tasks => "Tasks",
             Feature::Files => "Files and coding",
             Feature::Memory => "Memory",
             Feature::Projects => "Projects",
@@ -104,6 +110,12 @@ fn starting_set(conn: &Connection) -> BTreeSet<Feature> {
     }
     if used("meetings") {
         on.insert(Feature::Meetings);
+    }
+    if used("notes") {
+        on.insert(Feature::Notes);
+    }
+    if used("tasks") {
+        on.insert(Feature::Tasks);
     }
     if !speech::installed(conn).is_empty() {
         on.insert(Feature::Dictation);

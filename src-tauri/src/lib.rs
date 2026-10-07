@@ -24,6 +24,8 @@ mod meeting;
 mod memory;
 mod natural;
 mod net;
+mod notes;
+mod notify;
 mod paths;
 mod projects;
 mod sandbox;
@@ -711,6 +713,7 @@ fn open_vault(paths: &Paths) -> Result<Vault, String> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
@@ -750,6 +753,7 @@ pub fn run() {
             speech::start_idle_unloader(state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
+            notes::start_reminders(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -867,6 +871,15 @@ pub fn run() {
             features::features_view,
             features::set_feature,
             features::install_feature,
+            notes::notes,
+            notes::save_note_cmd,
+            notes::pin_note,
+            notes::delete_note,
+            notes::tasks,
+            notes::save_task_cmd,
+            notes::delete_task,
+            notes::parse_due_text,
+            notes::tasks_from_meeting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

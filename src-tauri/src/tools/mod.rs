@@ -4,6 +4,7 @@
 mod fs;
 mod meetings;
 mod memory;
+mod notes;
 mod shell;
 
 use std::sync::atomic::AtomicBool;
@@ -83,6 +84,8 @@ fn group(name: &str) -> &'static str {
         "remember" | "search_memory" => "memory",
         "load_skill" => "skills",
         "search_meetings" | "read_meeting" => "meetings",
+        "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
+        "create_task" | "list_tasks" | "complete_task" => "tasks",
         _ => "files",
     }
 }
@@ -116,6 +119,20 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Search the user's recorded meetings (titles, notes and transcripts) by words. Returns matching meetings with ids." },
     ToolDef { name: "read_meeting", risk: Risk::Read, params: meetings::read_meeting_params,
         description: "Read a recorded meeting's notes (summary, decisions, action items) or its full transcript, by id." },
+    ToolDef { name: "create_note", risk: Risk::Memory, params: notes::create_note_params,
+        description: "Save a note in the user's Notes (Markdown). Use when they ask you to note, jot down or save something." },
+    ToolDef { name: "search_notes", risk: Risk::Read, params: notes::search_notes_params,
+        description: "Find the user's notes by words. Returns titles, ids and a preview." },
+    ToolDef { name: "read_note", risk: Risk::Read, params: notes::read_note_params,
+        description: "Read one of the user's notes in full, by id." },
+    ToolDef { name: "update_note", risk: Risk::Write, params: notes::update_note_params,
+        description: "Replace a note's text (read it first, then send the whole new text)." },
+    ToolDef { name: "create_task", risk: Risk::Memory, params: notes::create_task_params,
+        description: "Add a task to the user's to-do list, with an optional due date, priority and reminder." },
+    ToolDef { name: "list_tasks", risk: Risk::Read, params: notes::list_tasks_params,
+        description: "List the user's tasks with their ids and due dates." },
+    ToolDef { name: "complete_task", risk: Risk::Memory, params: notes::complete_task_params,
+        description: "Mark one of the user's tasks done, by id." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -153,7 +170,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" => false,
+            "skills" | "meetings" | "notes" | "tasks" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -214,6 +231,18 @@ pub struct MemoryCtx<'a> {
     pub project_id: Option<&'a str>,
 }
 
+/// A unified diff of two texts, as approval cards show it.
+pub fn text_diff(old: &str, new: &str) -> String {
+    fs::diff("note", old, new)
+}
+
+/// The approval preview for rewriting a note (it needs the stored note).
+pub fn notes_preview(name: &str, args: &Value, db: &Mutex<Connection>, cipher: &Cipher) -> Result<Preview, String> {
+    let id = args.get("note_id").and_then(Value::as_str).unwrap_or("");
+    let note = crate::notes::get_note(&db.lock().unwrap(), cipher, id);
+    notes::preview(name, args, note)
+}
+
 pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, String> {
     match name {
         "run_command" => shell::preview(args, sandbox),
@@ -226,6 +255,9 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "run_command" => shell::run(args, ctx).await,
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
         "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),
+        "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
+            notes::run(name, args, &ctx.memory)
+        }
         _ => {
             // File work is quick but blocking; keep it off the async threads.
             let name = name.to_string();
@@ -250,6 +282,8 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "delegate" => return "A helper couldn't finish".into(),
         "search_memory" => return "Couldn't search memory".into(),
         "search_meetings" | "read_meeting" => return "Couldn't look up a meeting".into(),
+        "create_note" | "search_notes" | "read_note" | "update_note" => return "Couldn't use the notes".into(),
+        "create_task" | "list_tasks" | "complete_task" => return "Couldn't use the task list".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -286,8 +320,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 3);
+        // Everything except load_skill and the meeting, note and task tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 10);
     }
 
     #[test]

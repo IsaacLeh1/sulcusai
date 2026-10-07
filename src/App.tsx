@@ -26,6 +26,8 @@ import { ConnectorsView } from "./views/ConnectorsView";
 import { MeetingsView } from "./views/MeetingsView";
 import { TranslateView } from "./views/TranslateView";
 import { FeaturesView } from "./views/FeaturesView";
+import { NotesView } from "./views/NotesView";
+import { TasksView } from "./views/TasksView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { Modal } from "./components/Modal";
@@ -33,12 +35,14 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "features" | "meetings" | "translate" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "meetings" | "translate" | "notes" | "tasks" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   meetings: "meetings",
   translate: "translate",
+  notes: "notes",
+  tasks: "tasks",
   memory: "memory",
   scheduled: "scheduled",
   connectors: "connectors",
@@ -171,6 +175,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshEngine();
       }),
       on("chat:start", (p) => setRunning((r) => (r.includes(p.chat_id) ? r : [...r, p.chat_id]))),
+      on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
       on("schedule:ran", (p) => {
         refreshChats();
         if (p.error) toast(`Scheduled task “${p.name}” didn't run: ${p.error}`, "error");
@@ -295,6 +300,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {liveMeeting && <span className="dot rec" aria-label="Recording" />}
             </button>
           )}
+          {has("notes") && (
+            <button className={view === "notes" ? "active" : ""} onClick={() => setView("notes")}>
+              Notes
+            </button>
+          )}
+          {has("tasks") && (
+            <button className={view === "tasks" ? "active" : ""} onClick={() => setView("tasks")}>
+              Tasks
+            </button>
+          )}
           {has("translate") && (
             <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
               Translate
@@ -387,6 +402,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         )}
         {view === "features" && <FeaturesView progress={progress} toast={toast} />}
+        {view === "notes" && <NotesView toast={toast} />}
+        {view === "tasks" && <TasksView toast={toast} />}
         {view === "models" && (
           <ModelsView
             catalog={catalog}

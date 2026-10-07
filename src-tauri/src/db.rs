@@ -111,6 +111,24 @@ CREATE TABLE IF NOT EXISTS meeting_segments (
   translation TEXT
 );
 CREATE INDEX IF NOT EXISTS segments_by_meeting ON meeting_segments(meeting_id, start);
+CREATE TABLE IF NOT EXISTS notes (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  pinned     INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+  id           TEXT PRIMARY KEY,
+  data         TEXT NOT NULL,
+  due          INTEGER,
+  due_has_time INTEGER NOT NULL DEFAULT 0,
+  priority     INTEGER NOT NULL DEFAULT 0,
+  remind_at    INTEGER,
+  reminded     INTEGER NOT NULL DEFAULT 0,
+  done_at      INTEGER,
+  created_at   INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS project_folders (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,

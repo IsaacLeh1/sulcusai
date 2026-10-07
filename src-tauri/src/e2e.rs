@@ -826,3 +826,29 @@ async fn e2e_meeting_tells_speakers_apart() {
     assert_eq!(a1, Some(1), "numbered by who spoke first");
     crate::speech::stop(&state).await;
 }
+
+/// Notes and tasks with the real model: it adds a task with a due date
+/// and saves a note, and finds the note again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_notes_and_tasks() {
+    let (state, ep, cipher) = agent_harness().await;
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &chat.id, "Add a high-priority task to call the dentist on Friday. /no_think").await;
+    println!("task reply: {reply}");
+    let tasks = crate::notes::list_tasks(&state.db.lock().unwrap(), &cipher);
+    println!("tasks: {:?}", tasks.iter().map(|t| (&t.data.title, t.due, t.priority)).collect::<Vec<_>>());
+    let t = tasks.iter().find(|t| t.data.title.to_lowercase().contains("dentist")).expect("a dentist task");
+    assert!(t.due.is_some(), "Friday became a due date");
+
+    let reply = say(&state, &ep, &cipher, &chat.id, "Save a note titled Gift ideas with: a cookbook for Mom and a scarf for Dad. /no_think").await;
+    println!("note reply: {reply}");
+    let notes = crate::notes::list_notes(&state.db.lock().unwrap(), &cipher);
+    assert!(notes.iter().any(|n| n.data.body.to_lowercase().contains("scarf")), "{notes:?}");
+
+    let other = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let reply = say(&state, &ep, &cipher, &other.id, "Look in my notes: what gift idea did I have for Dad? /no_think").await;
+    println!("recall: {reply}");
+    assert!(reply.to_lowercase().contains("scarf"));
+    state.engine.lock().await.stop().await;
+}

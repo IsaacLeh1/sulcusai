@@ -17,6 +17,8 @@ export const FEATURES: Record<FeatureId, Info> = {
   read_aloud: { icon: "🔊", name: "Read aloud", detail: "A 🔊 button on every reply, read by Windows' voices or natural voices." },
   meetings: { icon: "●", name: "Meeting notes", detail: "Records your mic and your computer's sound during calls, then writes a transcript, notes and action items." },
   translate: { icon: "🌍", name: "Translation", detail: "Translate text and documents with your chat model." },
+  notes: { icon: "📝", name: "Notes", detail: "Markdown notes with folders and tags. The assistant can save and find notes for you." },
+  tasks: { icon: "✅", name: "Tasks", detail: "A to-do list with due dates, reminders and subtasks. Meeting action items can become tasks." },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -27,6 +29,7 @@ export const FEATURES: Record<FeatureId, Info> = {
 const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
+  { title: "Notes and tasks", ids: ["notes", "tasks"] },
   { title: "Assistant", ids: ["files", "memory", "projects", "scheduled", "connectors"] },
 ];
 
