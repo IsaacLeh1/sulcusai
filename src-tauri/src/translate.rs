@@ -158,6 +158,7 @@ pub struct Translation {
 #[tauri::command]
 pub async fn translate(state: AppStateRef<'_>, text: String, to: String, detect: bool) -> Result<Translation, String> {
     state.cipher()?;
+    crate::features::require(&state, crate::features::Feature::Translate)?;
     let (ep, _) = crate::background_endpoint(state.inner()).await?;
     let detected = if detect { detect_language(&ep, &text).await.ok() } else { None };
     let out = translate_text(&ep, &text, &to).await?;
@@ -175,6 +176,7 @@ pub fn translation_languages() -> Vec<Value> {
 #[tauri::command]
 pub async fn translate_file(state: AppStateRef<'_>, path: String, to: String) -> Result<String, String> {
     state.cipher()?;
+    crate::features::require(&state, crate::features::Feature::Translate)?;
     let input = PathBuf::from(&path);
     let ext = input.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     if !FILE_TYPES.contains(&ext.as_str()) {

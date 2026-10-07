@@ -893,6 +893,7 @@ pub struct StartOptions {
 #[tauri::command]
 pub async fn start_meeting(app: AppHandle, state: AppStateRef<'_>, options: StartOptions) -> Result<Meeting, String> {
     let cipher = state.cipher()?;
+    crate::features::require(&state, crate::features::Feature::Meetings)?;
     if !options.mic && !options.system {
         return Err("Choose at least one thing to record.".into());
     }

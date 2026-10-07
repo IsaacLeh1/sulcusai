@@ -236,6 +236,7 @@ function Finished({ onFinish, installing }: { onFinish: () => void; installing: 
         <li>Start a chat with <strong>+ New chat</strong>.</li>
         <li>The <strong>🔒 Offline</strong> switch at the bottom controls what may go online. 🌐 in a chat turns on web for that chat only.</li>
         <li>Settings has your profile, app lock and connectivity. Activity shows what the app has done.</li>
+        <li>It starts simple. Add dictation, voice chat, meeting notes, files and more from <strong>✨ Features</strong> whenever you want them.</li>
         {installing && <li>Your model is still downloading. Its progress shows on the Models page.</li>}
       </ul>
       <div className="onboarding-nav">

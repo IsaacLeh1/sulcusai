@@ -115,6 +115,14 @@ pub fn recommended<'a>(models: &'a [SpeechModel], hw: &Hardware, b: &Budget) -> 
         .map(|(m, _)| *m)
 }
 
+/// The most accurate model quick enough for dictation and voice chats.
+pub fn recommended_live<'a>(models: &'a [SpeechModel], hw: &Hardware, b: &Budget) -> Option<&'a SpeechModel> {
+    models.iter().rev().find(|m| {
+        let f = fit(m, hw, b);
+        f.runnable && f.disk_ok && 30.0 / f.speed.max(0.01) <= LIVE_WINDOW_SECS
+    })
+}
+
 // ---------- installed models & settings ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,15 +631,7 @@ pub fn speech_view(state: AppStateRef) -> SpeechView {
         .collect();
     let active = choose(&list, &settings, models, &hw, Use::Accurate).map(|m| m.model_id);
     let live = choose(&list, &settings, models, &hw, Use::Live).map(|m| m.model_id);
-    let recommended_live = models
-        .iter()
-        .rev()
-        .find(|m| {
-            let f = fit(m, &hw, &b);
-            f.runnable && f.disk_ok && window_secs(m, &hw) <= LIVE_WINDOW_SECS
-        })
-        .map(|m| m.id.clone())
-        .filter(|id| Some(id) != rec.as_ref());
+    let recommended_live = recommended_live(models, &hw, &b).map(|m| m.id.clone()).filter(|id| Some(id) != rec.as_ref());
     SpeechView {
         models: cards,
         hidden,
@@ -684,7 +684,7 @@ pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String
     Ok(())
 }
 
-async fn install(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<Option<f64>, String> {
+pub(crate) async fn install(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<Option<f64>, String> {
     let cat = &state.catalog.speech;
     let asset = cat.engine.assets.get("cpu-x64").ok_or("No speech engine for this PC")?;
     let dir = engine_dir(&cat.engine);

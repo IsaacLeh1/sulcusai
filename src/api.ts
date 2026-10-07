@@ -438,6 +438,24 @@ export interface SpeakerModel {
   download: number;
 }
 
+export type FeatureId =
+  | "dictation"
+  | "voice_chat"
+  | "read_aloud"
+  | "meetings"
+  | "translate"
+  | "files"
+  | "memory"
+  | "projects"
+  | "scheduled"
+  | "connectors";
+
+export interface FeatureView {
+  id: FeatureId;
+  enabled: boolean;
+  need: { model_id: string; model_name: string; size: number; met: boolean } | null;
+}
+
 export interface Language {
   code: string;
   name: string;
@@ -560,6 +578,9 @@ export const api = {
   installSpeakerModel: () => invoke<void>("install_speaker_model"),
   removeSpeakerModel: () => invoke<void>("remove_speaker_model"),
   renameSpeaker: (id: string, voice: number, name: string) => invoke<void>("rename_speaker", { id, voice, name }),
+  features: () => invoke<FeatureView[]>("features_view"),
+  setFeature: (feature: FeatureId, on: boolean) => invoke<FeatureId[]>("set_feature", { feature, on }),
+  installFeature: (feature: FeatureId) => invoke<void>("install_feature", { feature }),
 };
 
 export type DictationEvent =
@@ -617,6 +638,7 @@ export interface ChatEvents {
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
   "security:locked": null;
+  "features:changed": Record<string, never>;
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

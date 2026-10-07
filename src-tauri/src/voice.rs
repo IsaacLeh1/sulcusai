@@ -122,6 +122,7 @@ pub async fn dictate(
 
 #[tauri::command]
 pub async fn start_dictation(app: AppHandle, state: AppStateRef<'_>) -> Result<String, String> {
+    crate::features::require(&state, crate::features::Feature::Dictation)?;
     let id = uuid::Uuid::new_v4().to_string();
     let key = format!("dictation:{id}");
     let stop = begin(&key)?;
@@ -269,6 +270,7 @@ enum Turn {
 #[tauri::command]
 pub async fn start_voice(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -> Result<(), String> {
     state.cipher()?;
+    crate::features::require(&state, crate::features::Feature::VoiceChat)?;
     let key = format!("voice:{chat_id}");
     let stop = begin(&key)?;
     let state = state.inner().clone();

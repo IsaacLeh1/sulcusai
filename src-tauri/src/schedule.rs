@@ -206,6 +206,9 @@ pub fn start(app: AppHandle) {
             tokio::time::sleep(Duration::from_secs(30)).await;
             let state = app.state::<Arc<AppState>>().inner().clone();
             let Ok(cipher) = state.cipher() else { continue };
+            if !crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Scheduled) {
+                continue;
+            }
             // Don't interrupt someone mid-chat; try again next tick.
             if !state.generations.lock().unwrap().is_empty() || busy.load(std::sync::atomic::Ordering::Relaxed) {
                 continue;

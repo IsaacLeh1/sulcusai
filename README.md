@@ -9,6 +9,11 @@ everything local unless you choose otherwise.
 
 ## What works today
 
+The app starts bare-bones: chat and models. Everything else below is added
+from **✨ Features**, which installs what a feature needs (for example the
+speech model for dictation) and turns it on. Turning a feature off hides it
+and stops it, and keeps your data.
+
 - **Hardware check.** Detects your graphics card and its memory, system memory,
   processor and free disk space.
 - **Model catalog with a spec filter.** Models your PC can't run are hidden,

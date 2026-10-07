@@ -16,6 +16,7 @@ use crate::checkpoint::Recorder;
 use crate::crypto::Cipher;
 use crate::db::{self, Message, ToolCall};
 use crate::engine::Endpoint;
+use crate::features::Feature;
 use crate::sandbox::Sandbox;
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
 use crate::connectors::{self, OfferedTool, Skill, ToolMode};
@@ -154,25 +155,27 @@ impl Turn {
     }
 
     pub async fn run(self) -> Result<TurnResult, String> {
-        let (folders, project, memories, memory_on, request) = {
+        let (folders, project, memories, memory_on, request, features) = {
             let conn = self.state.db.lock().unwrap();
             let chat = db::chat(&conn, &self.cipher, &self.chat_id).ok_or("That chat no longer exists.")?;
             let project = chat.project_id.as_deref().and_then(|p| projects::get(&conn, &self.cipher, p));
-            let memory_on = db::settings(&conn).memory_enabled && !chat.incognito;
+            let on = crate::features::enabled(&conn);
+            let memory_on = on.contains(&Feature::Memory) && db::settings(&conn).memory_enabled && !chat.incognito;
             let memories = if memory_on { memory::list(&conn, &self.cipher, chat.project_id.as_deref()) } else { Vec::new() };
             let request = db::messages(&conn, &self.cipher, &self.chat_id)
                 .into_iter()
                 .find(|m| m.id == self.turn_id)
                 .map(|m| m.content)
                 .unwrap_or_default();
-            (projects::chat_folders(&conn, &chat), project, memories, memory_on, request)
+            let folders = if on.contains(&Feature::Files) { projects::chat_folders(&conn, &chat) } else { Vec::new() };
+            (folders, project, memories, memory_on, request, on)
         };
         let sandbox = Sandbox::new(&folders);
         let files = self.use_tools && !sandbox.is_empty();
         let memory_tools = self.use_tools && memory_on;
         let mut defs = tools::definitions(self.mode, files, memory_tools).as_array().cloned().unwrap_or_default();
         let mut extras = Extras::default();
-        if self.use_tools {
+        if self.use_tools && features.contains(&Feature::Connectors) {
             let (mcp_defs, mcp_map, problems) = connectors::offer(&self.state, &self.cipher).await;
             defs.extend(mcp_defs);
             extras.mcp = mcp_map;
@@ -184,7 +187,7 @@ impl Turn {
                 }
             }
         }
-        if self.use_tools && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
+        if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             for name in ["search_meetings", "read_meeting"] {
                 if let Some(d) = tools::find(name) {
                     defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));

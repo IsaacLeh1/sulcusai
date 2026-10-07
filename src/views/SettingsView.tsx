@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type AppInfo, type Connectivity, type Profile, type SecurityStatus } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SecurityStatus } from "../api";
 import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
@@ -26,10 +26,11 @@ interface Props {
   onConnectivity: (l: Connectivity) => void;
   security: SecurityStatus;
   onSecurityChanged: () => void;
+  features: Set<FeatureId>;
   toast: PushToast;
 }
 
-export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, toast }: Props) {
+export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast }: Props) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<Profile | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -95,9 +96,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
 
-      <FoldersSection toast={toast} />
+      {features.has("files") && <FoldersSection toast={toast} />}
 
-      <VoiceSection toast={toast} />
+      {(["dictation", "voice_chat", "read_aloud", "meetings"] as FeatureId[]).some((f) => features.has(f)) && <VoiceSection toast={toast} />}
 
       <section className="card">
         <h2>Connectivity</h2>

@@ -15,6 +15,7 @@ mod download;
 #[cfg(all(test, windows))]
 mod e2e;
 mod engine;
+mod features;
 mod handoff;
 mod hardware;
 mod hello;
@@ -863,6 +864,9 @@ pub fn run() {
             diarize::install_speaker_model,
             diarize::remove_speaker_model,
             meeting::rename_speaker,
+            features::features_view,
+            features::set_feature,
+            features::install_feature,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

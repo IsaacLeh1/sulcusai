@@ -6,6 +6,7 @@ import {
   on,
   type Chat,
   type Connectivity,
+  type FeatureId,
   type ContextInfo,
   type Message,
   type ModelCard,
@@ -33,6 +34,8 @@ interface Props {
   onChanged: () => void;
   onDeleted: () => void;
   onToggleWeb: () => void;
+  features: Set<FeatureId>;
+  onGoFeatures: () => void;
   toast: PushToast;
 }
 
@@ -80,7 +83,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -254,9 +257,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, toast),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall, helperSteps],
+    [messages, undoable, busy, runningCall, helperSteps, features],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -303,7 +306,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <p className="muted">
               You're chatting with <strong>{model?.name ?? "a local model"}</strong>, running on this PC.
             </p>
-            {model?.tools && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
+            {model?.tools && features.has("files") && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
+            {!features.has("files") && features.size === 0 && (
+              <p className="muted small">
+                Want dictation, voice chat, files or meetings? <button className="link" onClick={onGoFeatures}>Add features</button>
+              </p>
+            )}
           </div>
         )}
         {items}
@@ -329,7 +337,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       </div>
 
       <div className="composer-wrap">
-        {voice && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
+        {voice && features.has("voice_chat") && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
         <div className="composer">
           <textarea
             ref={inputRef}
@@ -341,7 +349,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             aria-label="Message"
           />
           <div className="composer-bar">
-            {model?.tools && <FolderMenu toast={toast} />}
+            {model?.tools && features.has("files") && <FolderMenu toast={toast} />}
             <button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -366,17 +374,19 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </select>
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{tps} tokens/sec</span>}
-            <MicButton onText={dictate} toast={toast} disabled={voice} />
-            <button
-              type="button"
-              className={`voice-btn ${voice ? "on" : ""}`}
-              onClick={() => setVoice((v) => !v)}
-              aria-pressed={voice}
-              title={voice ? "End voice chat" : "Voice chat: talk, and hear the answers"}
-              aria-label={voice ? "End voice chat" : "Start voice chat"}
-            >
-              🗣
-            </button>
+            {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
+            {features.has("voice_chat") && (
+              <button
+                type="button"
+                className={`voice-btn ${voice ? "on" : ""}`}
+                onClick={() => setVoice((v) => !v)}
+                aria-pressed={voice}
+                title={voice ? "End voice chat" : "Voice chat: talk, and hear the answers"}
+                aria-label={voice ? "End voice chat" : "Start voice chat"}
+              >
+                🗣
+              </button>
+            )}
             {busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 Stop
@@ -463,7 +473,7 @@ function renderItems(
   undo: (turnId: string) => void,
   helperSteps: Record<string, string[]>,
   openChat: (id: string) => void,
-  toast: PushToast,
+  toast?: PushToast,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);

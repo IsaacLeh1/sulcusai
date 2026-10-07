@@ -7,6 +7,7 @@ import {
   type CatalogView,
   type Chat,
   type Connectivity,
+  type FeatureId,
   type EngineStatus,
   type InstallProgress,
   type Project,
@@ -24,6 +25,7 @@ import { ScheduledView } from "./views/ScheduledView";
 import { ConnectorsView } from "./views/ConnectorsView";
 import { MeetingsView } from "./views/MeetingsView";
 import { TranslateView } from "./views/TranslateView";
+import { FeaturesView } from "./views/FeaturesView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { Modal } from "./components/Modal";
@@ -31,7 +33,17 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "meetings" | "translate" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "meetings" | "translate" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+
+/** Pages that belong to a feature, hidden while it's off. */
+const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
+  meetings: "meetings",
+  translate: "translate",
+  memory: "memory",
+  scheduled: "scheduled",
+  connectors: "connectors",
+  project: "projects",
+};
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
 export default function App() {
@@ -99,6 +111,22 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
   const [running, setRunning] = useState<string[]>([]);
+  const [features, setFeatures] = useState<Set<FeatureId> | null>(null);
+  const refreshFeatures = useCallback(async () => {
+    const list = await api.features();
+    setFeatures(new Set(list.filter((f) => f.enabled).map((f) => f.id)));
+  }, []);
+  useEffect(() => {
+    refreshFeatures();
+    const subs = [on("features:changed", () => refreshFeatures()), on("install:finished", () => refreshFeatures())];
+    return () => subs.forEach((s) => s.then((un) => un()));
+  }, [refreshFeatures]);
+  const has = (f: FeatureId) => features?.has(f) ?? false;
+  // Leave a page whose feature was just turned off.
+  useEffect(() => {
+    const f = VIEW_FEATURE[view];
+    if (features && f && !features.has(f)) setView("chat");
+  }, [features, view, setView]);
   // The meeting being recorded, tracked here so it survives page changes.
   const [liveMeeting, setLiveMeeting] = useState<string | null>(null);
   useEffect(() => {
@@ -261,21 +289,34 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             Models
             {Object.keys(progress).length > 0 && <span className="dot" aria-label="Installing" />}
           </button>
-          <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
-            Meetings
-            {liveMeeting && <span className="dot rec" aria-label="Recording" />}
-          </button>
-          <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
-            Translate
-          </button>
-          <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
-            Memory
-          </button>
-          <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
-            Scheduled
-          </button>
-          <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}>
-            Connectors
+          {(has("meetings") || liveMeeting) && (
+            <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
+              Meetings
+              {liveMeeting && <span className="dot rec" aria-label="Recording" />}
+            </button>
+          )}
+          {has("translate") && (
+            <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
+              Translate
+            </button>
+          )}
+          {has("memory") && (
+            <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
+              Memory
+            </button>
+          )}
+          {has("scheduled") && (
+            <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
+              Scheduled
+            </button>
+          )}
+          {has("connectors") && (
+            <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}>
+              Connectors
+            </button>
+          )}
+          <button className={view === "features" ? "active" : ""} onClick={() => setView("features")}>
+            ✨ Features
           </button>
           <button className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>
             Activity
@@ -284,7 +325,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             Settings
           </button>
         </nav>
-        <div className="side-section">
+        {has("projects") && <div className="side-section">
           <div className="side-head">
             <span>Projects</span>
             <button className="icon-btn" title="New project" aria-label="New project" onClick={() => setNewProject(true)}>+</button>
@@ -302,7 +343,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               <span className="ellipsis">{p.name}</span>
             </button>
           ))}
-        </div>
+        </div>}
         <div className="chat-list" role="list">
           {chats.length === 0 && <p className="muted small pad">Your chats will appear here.</p>}
           {chats.map((c) => (
@@ -340,9 +381,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               await refreshChats();
             }}
             onToggleWeb={toggleChatWeb}
+            features={features ?? new Set()}
+            onGoFeatures={() => setView("features")}
             toast={toast}
           />
         )}
+        {view === "features" && <FeaturesView progress={progress} toast={toast} />}
         {view === "models" && (
           <ModelsView
             catalog={catalog}
@@ -393,6 +437,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             onConnectivity={changeConnectivity}
             security={security}
             onSecurityChanged={onSecurityChanged}
+            features={features ?? new Set()}
             toast={toast}
           />
         )}

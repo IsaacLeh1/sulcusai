@@ -159,6 +159,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
     std::fs::write(work.join("greeting.txt"), "hello\n").unwrap();
 
     let conn = crate::db::open(&paths.db).unwrap();
+    crate::features::enable_all(&conn);
     let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
     let cipher = vault.cipher().unwrap();
     crate::db::add_folder(&conn, &dunce::canonicalize(&work).unwrap().display().to_string()).unwrap();
@@ -281,6 +282,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
     let tmp = std::env::temp_dir().join(format!("sulcusai-e2e-{}", uuid::Uuid::new_v4()));
     let paths = Paths::new(tmp.clone()).unwrap();
     let conn = crate::db::open(&paths.db).unwrap();
+    crate::features::enable_all(&conn);
     let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
     let cipher = vault.cipher().unwrap();
     let hw = hardware::detect(&real.models);

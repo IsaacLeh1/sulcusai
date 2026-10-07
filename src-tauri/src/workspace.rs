@@ -33,6 +33,7 @@ pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
 
 #[tauri::command]
 pub fn add_folder(state: AppStateRef, path: String) -> Result<(), String> {
+    crate::features::require(&state, crate::features::Feature::Files)?;
     state.cipher()?;
     if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data) {
         return Err(reason.into());

@@ -58,6 +58,15 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 | Translating Word/PDF files and text in images | ⏭ Phase 4/5 (documents, vision) |
 | Typing dictation into other apps (global hotkey) | ⏭ Phase 4 (desktop assistant) |
 
+### Features menu (2026-10-07)
+
+- **Starting state:** a new install starts with chat and models only. `features.rs` keeps the set of features that are on (`dictation`, `voice_chat`, `read_aloud`, `meetings`, `translate`, `files`, `memory`, `projects`, `scheduled`, `connectors`).
+- **Installs from before this change:** the first time this version runs, every feature that has data stays on (shared folders, memories, projects, schedules, connectors, meetings, an installed speech model).
+- **Installing:** Install on Dictation or Voice chat downloads the quick speech model, and on Meeting notes the accurate one, then turns the feature on (`install_feature`). Natural voices and speaker labels are add-ons on those cards.
+- **Off means off:** the agent gets no file tools (shared folders are ignored), memory, connector or meeting tools. The scheduler skips its tasks. `start_dictation`, `start_voice`, `start_meeting`, `translate`, `translate_file` and `add_folder` refuse.
+  - The Memory feature also drives the `memory_enabled` setting.
+- **Tests:** e2e harnesses call `features::enable_all`.
+
 **Next: Phase 4 (Web and productivity).**
 
 ### How voice and meetings work
