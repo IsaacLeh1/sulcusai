@@ -78,7 +78,15 @@
           "size": 1834426944,
           "sha256": "0becaa825564295d82e9af4d008bca5f8b7f5f73bf1c6a0b58f7c53ef26b47fd"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 22,
+        "coding": 3,
+        "writing": 3,
+        "research": 3,
+        "agents": 3,
+        "languages": 4
+      }
     },
     {
       "id": "llama-3.2-3b",
@@ -139,7 +147,15 @@
           "size": 3421899296,
           "sha256": "b5607b5090a8280063fff2d706bb3408ca6542341b06aab39c3eca0a28575921"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 28,
+        "coding": 3,
+        "writing": 4,
+        "research": 4,
+        "agents": 3,
+        "languages": 4
+      }
     },
     {
       "id": "qwen3-4b-2507",
@@ -200,7 +216,15 @@
           "size": 4280405600,
           "sha256": "391c1e410fd9f4cf2de2b510273b56a84c19ce18f4fa3bfb3774031dac4ef068"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 45,
+        "coding": 5,
+        "writing": 5,
+        "research": 5,
+        "agents": 6,
+        "languages": 5
+      }
     },
     {
       "id": "gemma-3-4b",
@@ -262,7 +286,15 @@
           "size": 4130402176,
           "sha256": "81bf0583ab5bad155a5a3b15d155a880a1a1e4f7de2de5c06f10f64ac49f8336"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 36,
+        "coding": 3,
+        "writing": 6,
+        "research": 4,
+        "agents": 0,
+        "languages": 7
+      }
     },
     {
       "id": "qwen3-8b",
@@ -323,7 +355,15 @@
           "size": 8709519168,
           "sha256": "0cfbf745760f07a76ddeb358dd025a27f2e11d1ca9c9a4169a373d52990fe86e"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 55,
+        "coding": 6,
+        "writing": 6,
+        "research": 6,
+        "agents": 7,
+        "languages": 6
+      }
     },
     {
       "id": "qwen2.5-coder-7b",
@@ -382,7 +422,15 @@
           "size": 8098525152,
           "sha256": "3b879bf3c429aeb01ae5edec57eb2e787b24eb317991dfe491d69357c7f02735"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 42,
+        "coding": 7,
+        "writing": 3,
+        "research": 3,
+        "agents": 4,
+        "languages": 3
+      }
     },
     {
       "id": "gemma-3-12b",
@@ -444,7 +492,15 @@
           "size": 12510212576,
           "sha256": "a774cd9c6f289a6159f4a3f92a7ebca887e15073f92016d53c3593cb440a5982"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 58,
+        "coding": 5,
+        "writing": 8,
+        "research": 6,
+        "agents": 0,
+        "languages": 8
+      }
     },
     {
       "id": "qwen3-14b",
@@ -505,7 +561,15 @@
           "size": 15698534784,
           "sha256": "90224247d4a8076c0a689e833910f4291bce05dec81f472ebcba321607168ea1"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 68,
+        "coding": 8,
+        "writing": 7,
+        "research": 7,
+        "agents": 8,
+        "languages": 7
+      }
     },
     {
       "id": "gpt-oss-20b",
@@ -542,7 +606,15 @@
           "size": 11624759488,
           "sha256": "c27536640e410032865dc68781d80a08b98f8db5e93575919af8ccc0568aeb4f"
         }
-      ]
+      ],
+      "ratings": {
+        "overall": 74,
+        "coding": 8,
+        "writing": 6,
+        "research": 8,
+        "agents": 9,
+        "languages": 5
+      }
     }
   ],
   "speech": {

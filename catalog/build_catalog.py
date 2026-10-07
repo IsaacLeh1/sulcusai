@@ -114,6 +114,25 @@ MODELS = [
      "Mixture-of-experts reasoning model. Only part of it runs for each word, so it is faster than its size suggests."),
 ]
 
+# Rough capability guides for the Models page, from public benchmarks and
+# the publishers' own reports (MMLU-Pro, LiveCodeBench, IFEval, BFCL,
+# multilingual evals), rounded. overall is 0-100 and orders the ranking from
+# least to most capable; the areas are 0-10 and drive the tabs. agents is 0
+# for models whose template can't call tools here.
+#            overall coding writing research agents languages
+RATINGS = {
+    "qwen3-1.7b":       (22, 3, 3, 3, 3, 4),
+    "llama-3.2-3b":     (28, 3, 4, 4, 3, 4),
+    "gemma-3-4b":       (36, 3, 6, 4, 0, 7),
+    "qwen2.5-coder-7b": (42, 7, 3, 3, 4, 3),
+    "qwen3-4b-2507":    (45, 5, 5, 5, 6, 5),
+    "qwen3-8b":         (55, 6, 6, 6, 7, 6),
+    "gemma-3-12b":      (58, 5, 8, 6, 0, 8),
+    "qwen3-14b":        (68, 8, 7, 7, 8, 7),
+    "gpt-oss-20b":      (74, 8, 6, 8, 9, 5),
+}
+AREAS = ("coding", "writing", "research", "agents", "languages")
+
 QUALITY = {"Q4_K_M": "Good", "Q5_K_M": "Better", "Q6_K": "Great", "Q8_0": "Best"}
 
 ENGINE = {
@@ -278,6 +297,7 @@ def main():
             "description": desc, "license": lic, "tags": tags, "params_b": params,
             "arch": {"n_layer": nl, "n_kv_heads": kv, "head_dim": hd, "max_ctx": mx, "active_fraction": act},
             "default_ctx": 8192, "tools": mid in TOOL_CAPABLE, "variants": variants,
+            "ratings": {"overall": RATINGS[mid][0], **dict(zip(AREAS, RATINGS[mid][1:]))},
         })
     path = pathlib.Path(__file__).with_name("catalog.json")
     path.write_text(json.dumps(out, indent=2) + "\n", encoding="utf-8", newline="\n")

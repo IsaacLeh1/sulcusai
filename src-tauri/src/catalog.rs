@@ -93,6 +93,22 @@ pub struct ModelSpec {
     #[serde(default)]
     pub tools: bool,
     pub variants: Vec<Variant>,
+    #[serde(default)]
+    pub ratings: Ratings,
+}
+
+/// Rough capability guides for the Models page (from public benchmarks).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Ratings {
+    /// 0-100: the ranking from least to most capable.
+    pub overall: u8,
+    /// 0-10 by area.
+    pub coding: u8,
+    pub writing: u8,
+    pub research: u8,
+    /// 0 when the model can't use tools here.
+    pub agents: u8,
+    pub languages: u8,
 }
 
 impl Catalog {

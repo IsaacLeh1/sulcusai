@@ -518,3 +518,12 @@ select, .input {
 .perf-pill:hover { background: var(--accent-soft); }
 .perf-pill.hot { border-color: var(--warn); color: var(--warn); }
 .between { justify-content: space-between; }
+
+/* ---------- model ranking ---------- */
+.model-filters { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 10px; }
+.model-filters .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.model-filters .mode-switch { align-self: flex-start; }
+.capability { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.cap-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cap-bar { height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; }
+.cap-bar > span { display: block; height: 100%; border-radius: 99px; background: var(--accent); }

@@ -67,6 +67,16 @@ export interface InstalledModel {
   tps: number | null;
 }
 
+export interface Ratings {
+  /** 0-100, least to most capable. */
+  overall: number;
+  coding: number;
+  writing: number;
+  research: number;
+  agents: number;
+  languages: number;
+}
+
 export interface ModelCard {
   id: string;
   name: string;
@@ -79,6 +89,7 @@ export interface ModelCard {
   default_ctx: number;
   tools: boolean;
   variants: Variant[];
+  ratings: Ratings;
   fit: { ctx: number; variants: VariantFit[]; recommended: string | null };
   installed: InstalledModel | null;
 }
