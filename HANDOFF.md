@@ -239,6 +239,9 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - Models page: ratings in `build_catalog.py` (`RATINGS`; rough guides from public benchmarks), ranked least to most capable, with Coding / Writing / Research / Agents / Languages / Fastest tabs (`src/ranking.ts`).
 - Web search while Offline: the "Web search" feature; `Purpose::Search` (search and reading pages) is separate from `Purpose::Web` (browser, email).
 - Sidebar: Settings, Models, Features and Activity live in the ⚙ menu at the bottom (`SideMenu.tsx`).
-- Not yet looked at in a running window: the Performance section, the Models tabs and the sidebar menu (typechecked and unit-tested only).
+- Built-in browser (`browser.rs`, `tools/browser.rs`): window label `browser` (in no capability, so pages get no IPC), profile in `<data>/browser`, driven by `CallDevToolsProtocolMethod` (webview2-com 0.39, must match wry's). Tools browser_open/read/click/type/back with `data-sulcus-ref` numbers. `Risk::Submit` (forms other than GET/search, and buy/send/post/delete wording) always asks, every mode, with no "allow for this chat". Password and card fields are refused. Downloads off, pop-ups open in place, Offline closes it. Gated by the Browser feature plus `Purpose::Web` (level or the chat's globe; the Web search feature alone doesn't open it).
+  - **Not tried live yet.** Next: a run in the app (or an e2e with a hidden window via `Builder::any_thread()`) covering open, read, type with submit on a search form, a POST form asking first, and a password field being refused.
+  - `build.rs` now links `windows-app-manifest.xml` (Common Controls v6) into every binary, test exes included; without it the test exe dies with STATUS_ENTRYPOINT_NOT_FOUND (TaskDialogIndirect).
+- Not yet looked at in a running window: the Performance section, the Models tabs, the sidebar menu and the browser (typechecked and unit-tested only).
 
-**Phase 4 still to do after that:** built-in browser with agent control, email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
+**Phase 4 still to do:** email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
