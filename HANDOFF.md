@@ -245,4 +245,6 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - Chat list (user request): new chats stay out of the sidebar until the first message (`Chat.empty`; `delete_empty_chats` on a new chat and at launch). After the first reply, `chat::summary_title` has the model write a short title (`chat:titled`). Right-click a chat → Delete (with a confirmation). Titles checked with the real model (`e2e_chat_gets_a_summary_title`).
 - Not yet looked at in a running window: the Performance section, the Models tabs, the sidebar menu and the browser (typechecked and unit-tested only).
 
+**Queued request (2026-10-07, not started; he said not to work on it yet):** keep working while locked, as a switch. Locking the app should be able to leave work running in the background, such as replies, agent steps, scheduled tasks and meeting recording, instead of stopping it. Today, locking drops the data key, which any running work needs to save. A likely approach is to keep the key only for running jobs while the window stays locked, and to show nothing until it is unlocked.
+
 **Phase 4 still to do:** email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
