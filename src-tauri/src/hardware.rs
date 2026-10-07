@@ -142,8 +142,27 @@ fn vendor_name(id: u32) -> &'static str {
     }
 }
 
+/// Whether the PC has a battery at all (a laptop or tablet).
 #[cfg(windows)]
-fn on_battery() -> Option<bool> {
+pub fn has_battery() -> bool {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut s = SYSTEM_POWER_STATUS::default();
+    // SAFETY: writes into the struct we own.
+    if unsafe { GetSystemPowerStatus(&mut s) }.is_err() {
+        return false;
+    }
+    const NO_BATTERY: u8 = 128;
+    const UNKNOWN: u8 = 255;
+    s.BatteryFlag != NO_BATTERY && s.BatteryFlag != UNKNOWN
+}
+
+#[cfg(not(windows))]
+pub fn has_battery() -> bool {
+    false
+}
+
+#[cfg(windows)]
+pub fn on_battery() -> Option<bool> {
     use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
     let mut s = SYSTEM_POWER_STATUS::default();
     // SAFETY: writes into the struct we own.
@@ -160,6 +179,6 @@ fn on_battery() -> Option<bool> {
 }
 
 #[cfg(not(windows))]
-fn on_battery() -> Option<bool> {
+pub fn on_battery() -> Option<bool> {
     None
 }

@@ -9,6 +9,11 @@
 //!
 //! The heat guard pauses between steps while the PC is hot. A critical
 //! limit stays on in every mode.
+//!
+//! Adaptive cooling (a switch, on by default) watches the temperatures and
+//! steps the app down as the PC heats up: fewer processor threads when the
+//! processor is hot, fewer layers on the graphics card when it is, and short
+//! pauses between steps. It steps back up once the PC has cooled.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -46,11 +51,12 @@ pub struct PerfSettings {
     pub turbo: Option<Turbo>,
     pub cool_on_battery: bool,
     pub heat_guard: bool,
+    pub adaptive: bool,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true }
+        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true }
     }
 }
 
@@ -90,6 +96,8 @@ pub struct Limits {
     /// Pause between steps above these (°C).
     pub gpu_temp_limit: f32,
     pub cpu_temp_limit: f32,
+    /// How far adaptive cooling has stepped down (0-3).
+    pub heat_level: u8,
 }
 
 /// Always applied, whatever the settings.
@@ -116,6 +124,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             max_ctx: 8192,
             gpu_temp_limit: if s.heat_guard { 75.0 } else { CRITICAL_GPU },
             cpu_temp_limit: if s.heat_guard { 85.0 } else { CRITICAL_CPU },
+            heat_level: 0,
         },
         Mode::Balanced => Limits {
             mode,
@@ -128,6 +137,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             max_ctx: 32_768,
             gpu_temp_limit: gpu_t,
             cpu_temp_limit: cpu_t,
+            heat_level: 0,
         },
         Mode::Turbo => {
             let t = s.turbo.unwrap_or(Turbo { threads: c.threads, gpu_percent: c.gpu_percent, ram_gb: c.ram_gb });
@@ -142,6 +152,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
                 max_ctx: 32_768,
                 gpu_temp_limit: if s.heat_guard { 90.0 } else { CRITICAL_GPU },
                 cpu_temp_limit: if s.heat_guard { 97.0 } else { CRITICAL_CPU },
+                heat_level: 0,
             }
         }
     };
@@ -155,9 +166,102 @@ pub fn settings(conn: &rusqlite::Connection) -> PerfSettings {
     db::get(conn, "perf").unwrap_or_default()
 }
 
+// ---------- adaptive cooling ----------
+
+/// How far the app has stepped down for heat: 0 (not at all) to 3.
+#[derive(Debug, Clone, Copy, Serialize, Default, PartialEq)]
+pub struct HeatState {
+    pub gpu_level: u8,
+    pub cpu_level: u8,
+    pub temps: Temps,
+    #[serde(skip)]
+    changed: Option<Instant>,
+}
+
+impl HeatState {
+    pub fn level(&self) -> u8 {
+        self.gpu_level.max(self.cpu_level)
+    }
+}
+
+#[derive(Default)]
+pub struct Heat(Mutex<HeatState>);
+
+impl Heat {
+    pub fn get(&self) -> HeatState {
+        *self.0.lock().unwrap()
+    }
+
+    /// Takes a new reading into account. Returns the state when a level changed.
+    pub fn update(&self, t: Temps, l: &Limits) -> Option<HeatState> {
+        let mut h = self.0.lock().unwrap();
+        let may_ease = h.changed.map_or(true, |at| at.elapsed() >= EASE_AFTER);
+        let gpu = step_level(h.gpu_level, t.gpu.map(|g| l.gpu_temp_limit - g), may_ease);
+        let cpu = step_level(h.cpu_level, t.cpu.map(|c| l.cpu_temp_limit - c), may_ease);
+        h.temps = t;
+        if gpu == h.gpu_level && cpu == h.cpu_level {
+            return None;
+        }
+        h.gpu_level = gpu;
+        h.cpu_level = cpu;
+        h.changed = Some(Instant::now());
+        Some(*h)
+    }
+
+    pub fn reset(&self) -> bool {
+        let mut h = self.0.lock().unwrap();
+        let was = h.level() > 0;
+        *h = HeatState::default();
+        was
+    }
+}
+
+/// Degrees below the limit at which each level starts.
+const ENTER: [f32; 3] = [12.0, 7.0, 3.0];
+/// A level is left only this much cooler than where it started...
+const EASE_MARGIN: f32 = 4.0;
+/// ...and no sooner than this after the last change, so the model isn't
+/// reloaded over and over.
+const EASE_AFTER: Duration = Duration::from_secs(90);
+
+fn step_level(current: u8, headroom: Option<f32>, may_ease: bool) -> u8 {
+    // No reading: nothing to go on, so don't hold the PC back.
+    let Some(h) = headroom else { return 0 };
+    let target = ENTER.iter().filter(|e| h <= **e).count() as u8;
+    if target >= current {
+        return target;
+    }
+    // Easing back one level at a time, once clearly cooler.
+    if may_ease && h > ENTER[current as usize - 1] + EASE_MARGIN {
+        current - 1
+    } else {
+        current
+    }
+}
+
+const THREAD_SCALE: [f64; 4] = [1.0, 0.75, 0.5, 0.35];
+const GPU_SCALE: [f64; 4] = [1.0, 0.85, 0.7, 0.55];
+
+/// The limits stepped down for heat.
+pub fn scaled(mut l: Limits, h: &HeatState) -> Limits {
+    l.threads = ((l.threads as f64 * THREAD_SCALE[h.cpu_level.min(3) as usize]).round() as usize).max(1);
+    l.vram_bytes = (l.vram_bytes as f64 * GPU_SCALE[h.gpu_level.min(3) as usize]) as u64;
+    l.heat_level = h.level();
+    l
+}
+
+/// A short rest between agent steps while the PC runs hot.
+pub fn step_pause(h: &HeatState) -> Duration {
+    match h.level() {
+        0 | 1 => Duration::ZERO,
+        2 => Duration::from_secs(2),
+        _ => Duration::from_secs(5),
+    }
+}
+
 // ---------- temperatures ----------
 
-#[derive(Debug, Clone, Copy, Serialize, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Default, PartialEq)]
 pub struct Temps {
     pub gpu: Option<f32>,
     pub cpu: Option<f32>,
@@ -180,7 +284,14 @@ async fn gpu_temp() -> Option<f32> {
 #[cfg(windows)]
 fn cpu_temp() -> Option<f32> {
     // ACPI thermal zones, readable without admin rights (tenths of a kelvin).
-    std::thread::spawn(|| unsafe { wmi_thermal() }).join().ok().flatten()
+    std::thread::spawn(|| unsafe {
+        let t = wmi_thermal();
+        windows::Win32::System::Com::CoUninitialize();
+        t
+    })
+    .join()
+    .ok()
+    .flatten()
 }
 
 #[cfg(windows)]
@@ -191,10 +302,14 @@ unsafe fn wmi_thermal() -> Option<f32> {
     let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     let locator: IWbemLocator = CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).ok()?;
     let svc = locator.ConnectServer(&BSTR::from("ROOT\\CIMV2"), &BSTR::new(), &BSTR::new(), &BSTR::new(), 0, &BSTR::new(), None).ok()?;
+    // Performance classes return nothing at WMI's default "identify" level.
+    const RPC_C_AUTHN_WINNT: u32 = 10;
+    const RPC_C_AUTHZ_NONE: u32 = 0;
+    CoSetProxyBlanket(&svc, RPC_C_AUTHN_WINNT, RPC_C_AUTHZ_NONE, None, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE, None, EOAC_NONE).ok()?;
     let rows = svc
         .ExecQuery(
             &BSTR::from("WQL"),
-            &BSTR::from("SELECT HighPrecisionTemperature FROM Win32_PerfFormattedData_Counters_ThermalZoneInformation"),
+            &BSTR::from("SELECT HighPrecisionTemperature FROM Win32_PerfRawData_Counters_ThermalZoneInformation"),
             WBEM_FLAG_FORWARD_ONLY | WBEM_FLAG_RETURN_IMMEDIATELY,
             None,
         )
@@ -264,13 +379,66 @@ pub async fn cool_down(l: &Limits, waiting: impl FnOnce(&str)) {
     }
 }
 
+// ---------- watching ----------
+
+const WATCH_EVERY: Duration = Duration::from_secs(10);
+
+/// Every 10 seconds while a model is loaded: reads the temperatures, steps
+/// the limits up or down (adaptive cooling), and unloads an idle chat model.
+pub fn start_monitor(app: tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<std::sync::Arc<crate::AppState>>().inner().clone();
+        loop {
+            tokio::time::sleep(WATCH_EVERY).await;
+            let settings = settings(&state.db.lock().unwrap());
+            let base = {
+                let hw = state.hardware.read().unwrap();
+                limits(&settings, &hw, crate::hardware::on_battery() == Some(true))
+            };
+            // While loading, the engine lock is held: count that as loaded.
+            let loaded = match state.engine.try_lock() {
+                Ok(mut e) => e.status().model_id.is_some(),
+                Err(_) => true,
+            };
+            let listening = state.speech.in_use();
+            let busy = !state.generations.lock().unwrap().is_empty();
+
+            if settings.adaptive && (loaded || listening) {
+                if let Some(h) = state.heat.update(temps().await, &base) {
+                    let what = if h.level() == 0 { "back to full speed".to_string() } else { format!("stepped down to level {} of 3", h.level()) };
+                    db::log_action(&state.db.lock().unwrap(), "performance", &format!("Adaptive cooling: {what}"));
+                    app.emit("perf:heat", h).ok();
+                }
+            } else if !settings.adaptive && state.heat.reset() {
+                app.emit("perf:heat", HeatState::default()).ok();
+            }
+
+            let idle = state.engine_idle();
+            if loaded && !busy && base.idle_unload_mins > 0 && idle >= Duration::from_secs(base.idle_unload_mins * 60) {
+                if let Ok(mut e) = state.engine.try_lock() {
+                    if e.status().model_id.is_some() {
+                        e.stop().await;
+                        db::log_action(&state.db.lock().unwrap(), "performance", &format!("Unloaded the chat model after {} idle minutes", base.idle_unload_mins));
+                        app.emit("engine:unloaded", ()).ok();
+                    }
+                }
+            }
+        }
+    });
+}
+
 // ---------- commands ----------
 
 #[derive(Serialize)]
 pub struct PerfView {
     settings: PerfSettings,
     ceiling: Ceiling,
+    /// What the mode allows, before adaptive cooling.
+    base: Limits,
+    /// What the app may use right now.
     limits: Limits,
+    heat: HeatState,
     temps: Temps,
     has_battery: bool,
     cores: usize,
@@ -282,12 +450,14 @@ pub struct PerfView {
 pub async fn perf_view(state: AppStateRef<'_>) -> Result<PerfView, String> {
     let hw = state.hardware.read().unwrap().clone();
     let settings = settings(&state.db.lock().unwrap());
-    let limits = state.limits();
+    let base = limits(&settings, &hw, crate::hardware::on_battery() == Some(true));
     Ok(PerfView {
         ceiling: ceiling(&hw),
-        limits,
+        base,
+        limits: state.limits(),
+        heat: state.heat.get(),
         temps: temps().await,
-        has_battery: hw.on_battery.is_some() && crate::hardware::has_battery(),
+        has_battery: crate::hardware::has_battery(),
         cores: hw.cpu_cores.unwrap_or(hw.cpu_threads / 2),
         ram_total_gb: hw.ram_total as f64 / GIB as f64,
         vram_gb: hw.best_gpu().map_or(0.0, |g| g.vram_bytes as f64 / GIB as f64),
@@ -315,6 +485,9 @@ pub async fn set_perf(state: AppStateRef<'_>, settings: PerfSettings) -> Result<
             Mode::Turbo => "Turbo",
         };
         db::log_action(&conn, "performance", &format!("Performance set to {label}"));
+    }
+    if !s.adaptive && state.heat.reset() {
+        db::log_action(&state.db.lock().unwrap(), "performance", "Adaptive cooling turned off; back to full limits");
     }
     // The running model restarts with the new limits on its next use.
     Ok(state.limits())
@@ -363,6 +536,38 @@ mod tests {
         assert!(on_battery.low_priority && on_battery.max_ctx == 8192);
         let s = PerfSettings { cool_on_battery: false, ..Default::default() };
         assert_eq!(limits(&s, &hw, true).mode, Mode::Balanced);
+    }
+
+    #[test]
+    fn adaptive_steps_down_when_hot_and_back_up_slowly() {
+        let l = limits(&PerfSettings::default(), &laptop(), false); // GPU limit 87
+        assert_eq!(step_level(0, Some(20.0), true), 0);
+        assert_eq!(step_level(0, Some(10.0), true), 1, "77 C: within 12 of the limit");
+        assert_eq!(step_level(1, Some(2.0), false), 3, "steps down at once, even soon after a change");
+        assert_eq!(step_level(3, Some(6.0), true), 3, "not yet 4 C cooler than where level 3 starts");
+        assert_eq!(step_level(3, Some(8.0), true), 2, "eases one level at a time");
+        assert_eq!(step_level(2, Some(30.0), false), 2, "waits before easing");
+        assert_eq!(step_level(2, None, false), 0, "no reading: no limit");
+
+        let h = HeatState { gpu_level: 2, cpu_level: 0, ..Default::default() };
+        let s = scaled(l, &h);
+        assert_eq!(s.threads, l.threads, "a hot graphics card doesn't cut processor threads");
+        assert!(s.vram_bytes < l.vram_bytes && s.heat_level == 2);
+        assert_eq!(step_pause(&h), Duration::from_secs(2));
+
+        let heat = Heat::default();
+        assert!(heat.update(Temps { gpu: Some(82.0), cpu: Some(60.0) }, &l).is_some());
+        assert_eq!(heat.get().gpu_level, 2);
+        assert!(heat.update(Temps { gpu: Some(82.0), cpu: Some(60.0) }, &l).is_none(), "no change, no event");
+    }
+
+    /// Reads this PC's sensors: `cargo test --lib reads_temperatures -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn reads_temperatures() {
+        let t = temps().await;
+        println!("{t:?}");
+        assert!(t.gpu.is_some() || t.cpu.is_some(), "no sensor readable");
     }
 
     #[test]

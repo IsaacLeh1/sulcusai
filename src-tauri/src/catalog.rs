@@ -143,6 +143,27 @@ impl Budget {
     }
 }
 
+impl Budget {
+    /// The budget within the performance limits (mode, Turbo, heat).
+    pub fn with_limits(mut self, l: &crate::perf::Limits) -> Budget {
+        self.vram = self.vram.min(l.vram_bytes);
+        self.ram = self.ram.min(l.ram_bytes);
+        self
+    }
+}
+
+/// Context size and GPU layers within the performance limits. A RAM limit
+/// too tight for the model never pushes it wholly onto the processor (the
+/// hottest, slowest place for it); it keeps the layers the VRAM limit allows.
+pub fn launch_within(model: &ModelSpec, quant: &str, full: &Budget, l: &crate::perf::Limits) -> (u32, u32) {
+    let limited = full.with_limits(l);
+    let (mut ctx, mut layers) = launch_settings(model, quant, &limited);
+    if layers == 0 && limited.vram > 0 {
+        (ctx, layers) = launch_settings(model, quant, &Budget { ram: full.ram, ..limited });
+    }
+    (ctx.min(l.max_ctx), layers)
+}
+
 /// Rough memory bandwidth by VRAM tier, replaced by a measured benchmark
 /// after install.
 fn gpu_bandwidth_guess(vram: u64) -> f64 {

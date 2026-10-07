@@ -63,6 +63,8 @@ async fn e2e_install_load_and_chat() {
                 quant,
                 ctx: fit.ctx,
                 gpu_layers: vfit.gpu_layers,
+                threads: 0,
+                low_priority: false,
                 log: &log,
             },
             None,
@@ -128,7 +130,7 @@ async fn e2e_tool_call_probe() {
     let dest = paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, log: &paths.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log() }, None)
         .await
         .unwrap();
     let body = serde_json::json!({
@@ -183,6 +185,8 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         mcp: tokio::sync::Mutex::new(HashMap::new()),
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
+        heat: crate::perf::Heat::default(),
+        engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     });
 
@@ -194,7 +198,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, log: &real.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log() }, None)
         .await
         .unwrap();
 
@@ -303,6 +307,8 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         mcp: tokio::sync::Mutex::new(HashMap::new()),
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
+        heat: crate::perf::Heat::default(),
+        engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     });
     let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
@@ -312,7 +318,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, log: &real.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log() }, None)
         .await
         .unwrap();
     (state, ep, cipher)
@@ -491,6 +497,8 @@ fn speech_state() -> std::sync::Arc<crate::AppState> {
         mcp: tokio::sync::Mutex::new(HashMap::new()),
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
+        heat: crate::perf::Heat::default(),
+        engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     })
 }

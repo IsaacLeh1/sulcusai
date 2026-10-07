@@ -150,6 +150,20 @@ impl Turn {
         (self.emit)(event, payload);
     }
 
+    /// Before each step: wait out the heat guard while the PC is over its
+    /// limit, and rest briefly while adaptive cooling has stepped down.
+    async fn rest_if_hot(&self) {
+        let limits = self.state.limits();
+        crate::perf::cool_down(&limits, |what| {
+            self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "cooling", "detail": what }));
+        })
+        .await;
+        let pause = crate::perf::step_pause(&self.state.heat.get());
+        if !pause.is_zero() && !self.cancel.load(Ordering::Relaxed) {
+            tokio::time::sleep(pause).await;
+        }
+    }
+
     fn save(&self, m: &Message) -> Result<(), String> {
         db::add_message(&self.state.db.lock().unwrap(), &self.cipher, m)
     }
@@ -240,6 +254,7 @@ impl Turn {
 
         let mut result = TurnResult { last: None, context: ContextInfo::default(), tps: None, cancelled: false };
         for step in 0..MAX_STEPS {
+            self.rest_if_hot().await;
             let history = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
             let (kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());

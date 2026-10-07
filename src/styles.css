@@ -506,3 +506,15 @@ select, .input {
 .web-request > span[aria-hidden] { font-size: 20px; }
 .web-request > div { flex: 1; min-width: 0; }
 .web-search { margin-top: 14px; }
+
+/* ---------- performance ---------- */
+.turbo { margin: 6px 0 10px; }
+.turbo input[type="range"] { width: 100%; }
+.perf-switches { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.toggle-row { display: flex; align-items: center; gap: 14px; justify-content: space-between; }
+.perf-now { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--border); padding-top: 10px; }
+.warn-text { color: var(--warn); }
+.perf-pill { border: 1px solid transparent; background: none; border-radius: 99px; cursor: pointer; padding: 2px 8px; color: inherit; font: inherit; }
+.perf-pill:hover { background: var(--accent-soft); }
+.perf-pill.hot { border-color: var(--warn); color: var(--warn); }
+.between { justify-content: space-between; }

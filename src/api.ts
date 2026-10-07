@@ -488,6 +488,54 @@ export interface Task {
   created_at: number;
 }
 
+export type PerfMode = "cool" | "balanced" | "turbo";
+
+export interface PerfSettings {
+  mode: PerfMode;
+  turbo: { threads: number; gpu_percent: number; ram_gb: number } | null;
+  cool_on_battery: boolean;
+  heat_guard: boolean;
+  adaptive: boolean;
+}
+
+export interface PerfLimits {
+  mode: PerfMode;
+  on_battery: boolean;
+  threads: number;
+  vram_bytes: number;
+  ram_bytes: number;
+  low_priority: boolean;
+  idle_unload_mins: number;
+  max_ctx: number;
+  gpu_temp_limit: number;
+  cpu_temp_limit: number;
+  heat_level: number;
+}
+
+export interface Temps {
+  gpu: number | null;
+  cpu: number | null;
+}
+
+export interface HeatState {
+  gpu_level: number;
+  cpu_level: number;
+  temps: Temps;
+}
+
+export interface PerfView {
+  settings: PerfSettings;
+  ceiling: { threads: number; gpu_percent: number; ram_gb: number; has_gpu: boolean };
+  base: PerfLimits;
+  limits: PerfLimits;
+  heat: HeatState;
+  temps: Temps;
+  has_battery: boolean;
+  cores: number;
+  ram_total_gb: number;
+  vram_gb: number;
+}
+
 export type SearchProvider = "duckduckgo" | "brave" | "searxng";
 
 export interface WebSettings {
@@ -631,6 +679,8 @@ export const api = {
   parseDue: (text: string) => invoke<{ due: number; has_time: boolean } | null>("parse_due_text", { text }),
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
   webSettings: () => invoke<WebSettings>("get_web_settings"),
+  perfView: () => invoke<PerfView>("perf_view"),
+  setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
 
@@ -674,7 +724,7 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" | "handoff" };
+  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling"; detail?: string };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };
@@ -691,6 +741,8 @@ export interface ChatEvents {
   "security:locked": null;
   "features:changed": Record<string, never>;
   "task:reminder": { id: string; title: string };
+  "perf:heat": HeatState;
+  "engine:unloaded": null;
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

@@ -87,6 +87,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  /** What's too hot while the heat guard pauses between steps. */
+  const [cooling, setCooling] = useState<string | null>(null);
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
   const [handingOff, setHandingOff] = useState(false);
   const [context, setContext] = useState<ContextInfo | null>(null);
@@ -125,11 +127,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const subs = [
       on("chat:status", mine((p) => {
         if (p.status === "handoff") setHandingOff(true);
-        else setStatus("loading");
+        else if (p.status === "cooling") {
+          setCooling(p.detail ?? "the PC");
+          setStatus("working");
+        } else setStatus("loading");
       })),
       on("agent:helper", mine((p) => setHelperSteps((all) => ({ ...all, [p.call_id]: [...(all[p.call_id] ?? []), p.step] })))),
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:start", mine((p) => {
+        setCooling(null);
         setStatus("thinking");
         setStreaming({ id: p.message_id, content: "", thinking: "" });
       })),
@@ -334,7 +340,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         ))}
         {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
         {status === "loading" && !streaming && <p className="muted small pad">Loading {model?.name ?? "the model"} into memory…</p>}
-        {status === "working" && !streaming && pending.length === 0 && <p className="muted small pad">Working…</p>}
+        {status === "working" && !streaming && pending.length === 0 && (
+          <p className="muted small pad">{cooling ? `Letting the PC cool down before the next step (${cooling})…` : "Working…"}</p>
+        )}
         {showRunPlan && (
           <div className="plan-actions">
             <button className="btn primary" onClick={runPlan}>Run this plan</button>

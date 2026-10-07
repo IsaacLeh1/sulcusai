@@ -6,6 +6,7 @@ import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
 import { FoldersSection } from "../components/AgentCards";
 import { VoiceSection } from "../components/VoiceSettings";
+import { PerformanceSection } from "../components/Performance";
 import type { PushToast } from "../components/Toasts";
 
 const THIRD_PARTY = [
@@ -156,6 +157,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       {features.has("files") && <FoldersSection toast={toast} />}
 
       {(["dictation", "voice_chat", "read_aloud", "meetings"] as FeatureId[]).some((f) => features.has(f)) && <VoiceSection toast={toast} />}
+
+      <PerformanceSection toast={toast} />
 
       <section className="card">
         <h2>Connectivity</h2>

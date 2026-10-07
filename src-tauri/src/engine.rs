@@ -128,6 +128,10 @@ pub struct LaunchSpec<'a> {
     pub quant: &'a str,
     pub ctx: u32,
     pub gpu_layers: u32,
+    /// Processor threads (0 = the engine's own choice).
+    pub threads: usize,
+    /// Below-normal priority, so the rest of the PC stays responsive.
+    pub low_priority: bool,
     pub log: &'a Path,
 }
 
@@ -139,6 +143,8 @@ struct Running {
     quant: String,
     ctx: u32,
     gpu_layers: u32,
+    threads: usize,
+    low_priority: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -197,13 +203,25 @@ impl Engine {
         (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx })
     }
 
-    /// Starts the server for this model, replacing any other running model.
+    /// Whether the running server already matches this launch exactly.
+    pub fn matches(&mut self, spec: &LaunchSpec<'_>) -> bool {
+        self.alive()
+            && self.running.as_ref().is_some_and(|r| {
+                r.model_id == spec.model_id
+                    && r.quant == spec.quant
+                    && r.ctx == spec.ctx
+                    && r.gpu_layers == spec.gpu_layers
+                    && r.threads == spec.threads
+                    && r.low_priority == spec.low_priority
+            })
+    }
+
+    /// Starts the server for this model, replacing any other running model
+    /// (or the same one launched with other limits).
     pub async fn ensure(&mut self, spec: LaunchSpec<'_>, job: Option<&JobRef>) -> Result<Endpoint, String> {
-        if self.alive() {
+        if self.matches(&spec) {
             let r = self.running.as_ref().unwrap();
-            if r.model_id == spec.model_id && r.quant == spec.quant && r.ctx == spec.ctx {
-                return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx });
-            }
+            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx });
         }
         self.stop().await;
 
@@ -218,6 +236,7 @@ impl Engine {
             .args(["-c", &spec.ctx.to_string(), "-ngl", &spec.gpu_layers.to_string()])
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
+            .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err))
@@ -225,7 +244,8 @@ impl Engine {
         #[cfg(windows)]
         {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
+            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+            cmd.creation_flags(CREATE_NO_WINDOW | if spec.low_priority { BELOW_NORMAL_PRIORITY_CLASS } else { 0 });
         }
         let child = cmd.spawn().map_err(|e| format!("Couldn't start the engine: {e}"))?;
         #[cfg(windows)]
@@ -243,6 +263,8 @@ impl Engine {
             quant: spec.quant.to_string(),
             ctx: spec.ctx,
             gpu_layers: spec.gpu_layers,
+            threads: spec.threads,
+            low_priority: spec.low_priority,
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx };

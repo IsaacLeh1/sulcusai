@@ -316,6 +316,13 @@ pub struct Speech {
     last_used: Mutex<Instant>,
 }
 
+impl Speech {
+    /// A dictation, voice chat or meeting is listening.
+    pub fn in_use(&self) -> bool {
+        self.users.load(Ordering::SeqCst) > 0
+    }
+}
+
 impl Default for Speech {
     fn default() -> Self {
         Speech { servers: Default::default(), users: AtomicUsize::new(0), last_used: Mutex::new(Instant::now()) }
@@ -409,7 +416,8 @@ async fn endpoint_for(state: &AppState, chosen: &InstalledSpeech, language: Stri
         .ok_or("Speech recognition isn't fully installed. Reinstall the speech model from Models › Speech.")?;
     let vad = vad_path(&state.paths, &state.catalog.speech);
     let model = model_path(&state.paths, chosen);
-    let threads = threads(&state.hardware.read().unwrap());
+    // Within the performance limits (mode and heat), applied when it next starts.
+    let threads = threads(&state.hardware.read().unwrap()).min(state.limits().threads.max(2));
     *state.speech.last_used.lock().unwrap() = Instant::now();
     let mut servers = state.speech.servers.lock().await;
     // At most two models stay loaded; drop the others.

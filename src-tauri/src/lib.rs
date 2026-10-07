@@ -27,6 +27,7 @@ mod net;
 mod notes;
 mod notify;
 mod paths;
+mod perf;
 mod projects;
 mod sandbox;
 mod schedule;
@@ -77,6 +78,9 @@ pub struct AppState {
     mcp: tokio::sync::Mutex<HashMap<String, mcp::Client>>,
     speech: speech::Speech,
     player: audio::Player,
+    heat: perf::Heat,
+    /// When the chat model last started a piece of work (for the idle unload).
+    engine_used: Mutex<std::time::Instant>,
     #[cfg(windows)]
     job: Option<winjob::Job>,
 }
@@ -93,6 +97,22 @@ impl AppState {
 
     fn budget(&self) -> Budget {
         Budget::from_hardware(&self.hardware.read().unwrap())
+    }
+
+    /// What the app may use right now: the performance mode's limits,
+    /// stepped down by adaptive cooling when it's on.
+    fn limits(&self) -> perf::Limits {
+        let s = perf::settings(&self.db.lock().unwrap());
+        let base = perf::limits(&s, &self.hardware.read().unwrap(), hardware::on_battery() == Some(true));
+        if s.adaptive {
+            perf::scaled(base, &self.heat.get())
+        } else {
+            base
+        }
+    }
+
+    fn engine_idle(&self) -> std::time::Duration {
+        self.engine_used.lock().unwrap().elapsed()
     }
 
     fn settings(&self) -> Settings {
@@ -311,7 +331,8 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
             emit("benchmark", 0, 0);
             let log = state.paths.engine_log();
             // Same settings a chat will use, so the first chat doesn't reload the model.
-            let (ctx, gpu_layers) = catalog::launch_settings(&spec, &variant.quant, &state.budget());
+            let limits = state.limits();
+            let (ctx, gpu_layers) = catalog::launch_within(&spec, &variant.quant, &state.budget(), &limits);
             let mut engine = state.engine.lock().await;
             let measured = async {
                 let ep = engine
@@ -323,6 +344,8 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                             quant: &variant.quant,
                             ctx,
                             gpu_layers,
+                            threads: limits.threads,
+                            low_priority: limits.low_priority,
                             log: &log,
                         },
                         state.job(),
@@ -654,29 +677,31 @@ pub(crate) async fn llm_endpoint(
     };
     let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
     let budget = state.budget();
-    let (ctx, gpu_layers) = catalog::launch_settings(&spec, &installed.quant, &budget);
+    let limits = state.limits();
+    let (ctx, gpu_layers) = catalog::launch_within(&spec, &installed.quant, &budget, &limits);
     let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&budget)?)
         .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
+    *state.engine_used.lock().unwrap() = std::time::Instant::now();
+    let model_path = model_file(&state.paths, &installed);
+    let launch = LaunchSpec {
+        exe: &exe,
+        model_path: &model_path,
+        model_id: &installed.model_id,
+        quant: &installed.quant,
+        ctx,
+        gpu_layers,
+        threads: limits.threads,
+        low_priority: limits.low_priority,
+        log: &state.paths.engine_log(),
+    };
     let mut engine = state.engine.lock().await;
     let ep = match engine.endpoint_for(&installed.model_id) {
-        Some(ep) => ep,
-        None => {
+        // Same model: new limits (mode, heat) apply between replies, and only
+        // when no other chat is mid-reply on it.
+        Some(ep) if engine.matches(&launch) || state.generations.lock().unwrap().len() > 1 => ep,
+        _ => {
             on_loading();
-            let model_path = model_file(&state.paths, &installed);
-            engine
-                .ensure(
-                    LaunchSpec {
-                        exe: &exe,
-                        model_path: &model_path,
-                        model_id: &installed.model_id,
-                        quant: &installed.quant,
-                        ctx,
-                        gpu_layers,
-                        log: &state.paths.engine_log(),
-                    },
-                    state.job(),
-                )
-                .await?
+            engine.ensure(launch, state.job()).await?
         }
     };
     Ok((ep, spec, installed))
@@ -685,8 +710,18 @@ pub(crate) async fn llm_endpoint(
 /// For background work (meeting notes, translation): the model already
 /// loaded if there is one, so a chat's model isn't swapped out mid-reply.
 pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine::Endpoint, ModelSpec), String> {
-    let loaded = state.engine.lock().await.status().model_id;
-    let (ep, spec, _) = llm_endpoint(state, loaded, || {}).await?;
+    // Use the model as it is loaded: relaunching it with new limits here
+    // could cut off a chat that is mid-reply.
+    let loaded = {
+        let mut engine = state.engine.lock().await;
+        let id = engine.status().model_id;
+        id.and_then(|id| Some((engine.endpoint_for(&id)?, state.catalog.model(&id)?.clone())))
+    };
+    if let Some(found) = loaded {
+        *state.engine_used.lock().unwrap() = std::time::Instant::now();
+        return Ok(found);
+    }
+    let (ep, spec, _) = llm_endpoint(state, None, || {}).await?;
     Ok((ep, spec))
 }
 
@@ -741,6 +776,8 @@ pub fn run() {
                 mcp: tokio::sync::Mutex::new(HashMap::new()),
                 speech: speech::Speech::default(),
                 player: audio::Player::new(),
+                heat: perf::Heat::default(),
+                engine_used: Mutex::new(std::time::Instant::now()),
                 #[cfg(windows)]
                 job: winjob::Job::kill_on_close().ok(),
                 paths,
@@ -755,9 +792,12 @@ pub fn run() {
             app.manage(state);
             schedule::start(app.handle().clone());
             notes::start_reminders(app.handle().clone());
+            perf::start_monitor(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            perf::perf_view,
+            perf::set_perf,
             app_info,
             refresh_hardware,
             catalog_view,

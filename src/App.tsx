@@ -30,6 +30,7 @@ import { NotesView } from "./views/NotesView";
 import { TasksView } from "./views/TasksView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
+import { PerfPill } from "./components/Performance";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
@@ -189,6 +190,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       }),
       // The model is loaded by the time context is measured.
       on("chat:context", () => refreshEngine()),
+      on("engine:unloaded", () => refreshEngine()),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);
@@ -481,6 +483,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             <span className="rec-dot on" /> Recording meeting
           </button>
         )}
+        <PerfPill onOpen={() => setView("settings")} />
         <span className="spacer" />
         <span className="status-item muted">
           🔐 Encrypted ·{" "}
