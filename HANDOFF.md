@@ -222,3 +222,33 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - Sandboxed shells (such as the Claude desktop app's) can see `%LOCALAPPDATA%` redirected to `...\Packages\<app>\LocalCache\Local`. A dev build started from such a shell uses that copy, not the real data folder.
 - A capture or playback test opens the real microphone or speakers. Ask the user before running one.
 - Losing `keys.json` loses every encrypted chat. Back it up together with `sulcusai.db` (a future backup feature must include both).
+
+## Phase 4 in progress (branch `phase4`, worktree `C:\dev\sulcusai-phase4`)
+
+Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't restarted by edits. Merge into `main` when Phase 4 is done.
+
+**Done on the branch:**
+- Notes and tasks: `notes.rs`, `tools/notes.rs`, Notes and Tasks pages; meeting action items → Tasks.
+- Web search and page reading: `web.rs`, `tools/web.rs`. DuckDuckGo, Brave or SearXNG; `request_web` card.
+
+**Started, not wired in yet:**
+- `perf.rs`: Cool & quiet / Balanced / Turbo limits, the ceilings, and the heat guard.
+  - It isn't listed in `lib.rs`, so it doesn't compile yet.
+  - Temperatures are readable on this PC: `nvidia-smi` for the GPU, and WMI `Win32_PerfFormattedData_Counters_ThermalZoneInformation` for the thermal zone.
+  - Wiring it in needs:
+    - Cargo features `Win32_System_Wmi` and `Win32_System_Variant`.
+    - `hardware::on_battery`/`has_battery` made public.
+    - `AppState::limits()`, with `budget()` built from `Budget::with_limits` (add `max_ctx`).
+    - `LaunchSpec` gets `threads` and `low_priority` (`-t`, `SetPriorityClass`), and the engine restarts when they change.
+    - `cool_down` before each agent step (`chat:status` "cooling").
+    - An idle unload for the chat model.
+    - Speech threads capped at `limits.threads`.
+    - The `perf_view` and `set_perf` commands, a Settings › Performance section, and a status-bar mode pill.
+
+**Queued requests (from the user, 2026-10-07):**
+1. **Adaptive cooling toggle:** because temperatures are readable, actively scale resource use with temperature to keep the PC stable. Fewer threads and GPU layers as it heats up, restored when it cools. Make it a switch.
+2. **Models page:** rank models from least to most capable, and add tabs for the best ones at Coding, Writing, Research, Agents, Languages and Fastest. Capability and strength scores go in `catalog/build_catalog.py`.
+3. **Web search while Offline:** a "Web search" feature (Features page) that allows search and page reading in every chat while the level stays Offline. Add a `Purpose::Search` separate from `Purpose::Web`. The browser, email and cloud still need the higher levels.
+4. **Cleaner sidebar:** a ⚙ menu at the bottom of the sidebar holding Settings, Models, Features and Activity. The top keeps chats, projects and the pages of enabled features.
+
+**Phase 4 still to do after that:** built-in browser with agent control, email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
