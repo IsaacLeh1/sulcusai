@@ -31,6 +31,7 @@ import { TasksView } from "./views/TasksView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
+import { SideMenu } from "./components/SideMenu";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
@@ -292,10 +293,6 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         </div>
         <nav className="nav">
-          <button className={view === "models" ? "active" : ""} onClick={() => setView("models")}>
-            Models
-            {Object.keys(progress).length > 0 && <span className="dot" aria-label="Installing" />}
-          </button>
           {(has("meetings") || liveMeeting) && (
             <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
               Meetings
@@ -332,15 +329,6 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               Connectors
             </button>
           )}
-          <button className={view === "features" ? "active" : ""} onClick={() => setView("features")}>
-            ✨ Features
-          </button>
-          <button className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>
-            Activity
-          </button>
-          <button className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}>
-            Settings
-          </button>
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
@@ -379,6 +367,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           ))}
         </div>
+        <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
       </aside>
 
       <main className="main">

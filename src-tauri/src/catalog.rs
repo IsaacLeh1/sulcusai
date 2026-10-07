@@ -177,6 +177,11 @@ pub fn launch_within(model: &ModelSpec, quant: &str, full: &Budget, l: &crate::p
     if layers == 0 && limited.vram > 0 {
         (ctx, layers) = launch_settings(model, quant, &Budget { ram: full.ram, ..limited });
     }
+    // A hot graphics card: move some layers to the processor, even when
+    // the whole model would fit, so the card does less of the work.
+    if l.gpu_share < 1.0 {
+        layers = (layers as f64 * l.gpu_share).floor() as u32;
+    }
     (ctx.min(l.max_ctx), layers)
 }
 

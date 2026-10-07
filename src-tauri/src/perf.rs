@@ -98,6 +98,9 @@ pub struct Limits {
     pub cpu_temp_limit: f32,
     /// How far adaptive cooling has stepped down (0-3).
     pub heat_level: u8,
+    /// Share of the model's layers kept on the graphics card (1.0 = all
+    /// that fit). Lowered when the card runs hot.
+    pub gpu_share: f64,
 }
 
 /// Always applied, whatever the settings.
@@ -125,6 +128,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             gpu_temp_limit: if s.heat_guard { 75.0 } else { CRITICAL_GPU },
             cpu_temp_limit: if s.heat_guard { 85.0 } else { CRITICAL_CPU },
             heat_level: 0,
+            gpu_share: 1.0,
         },
         Mode::Balanced => Limits {
             mode,
@@ -138,6 +142,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             gpu_temp_limit: gpu_t,
             cpu_temp_limit: cpu_t,
             heat_level: 0,
+            gpu_share: 1.0,
         },
         Mode::Turbo => {
             let t = s.turbo.unwrap_or(Turbo { threads: c.threads, gpu_percent: c.gpu_percent, ram_gb: c.ram_gb });
@@ -153,6 +158,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
                 gpu_temp_limit: if s.heat_guard { 90.0 } else { CRITICAL_GPU },
                 cpu_temp_limit: if s.heat_guard { 97.0 } else { CRITICAL_CPU },
                 heat_level: 0,
+            gpu_share: 1.0,
             }
         }
     };
@@ -175,7 +181,7 @@ pub struct HeatState {
     pub cpu_level: u8,
     pub temps: Temps,
     #[serde(skip)]
-    changed: Option<Instant>,
+    pub changed: Option<Instant>,
 }
 
 impl HeatState {
@@ -245,7 +251,7 @@ const GPU_SCALE: [f64; 4] = [1.0, 0.85, 0.7, 0.55];
 /// The limits stepped down for heat.
 pub fn scaled(mut l: Limits, h: &HeatState) -> Limits {
     l.threads = ((l.threads as f64 * THREAD_SCALE[h.cpu_level.min(3) as usize]).round() as usize).max(1);
-    l.vram_bytes = (l.vram_bytes as f64 * GPU_SCALE[h.gpu_level.min(3) as usize]) as u64;
+    l.gpu_share = GPU_SCALE[h.gpu_level.min(3) as usize];
     l.heat_level = h.level();
     l
 }
@@ -552,7 +558,7 @@ mod tests {
         let h = HeatState { gpu_level: 2, cpu_level: 0, ..Default::default() };
         let s = scaled(l, &h);
         assert_eq!(s.threads, l.threads, "a hot graphics card doesn't cut processor threads");
-        assert!(s.vram_bytes < l.vram_bytes && s.heat_level == 2);
+        assert!(s.gpu_share < 1.0 && s.heat_level == 2);
         assert_eq!(step_pause(&h), Duration::from_secs(2));
 
         let heat = Heat::default();

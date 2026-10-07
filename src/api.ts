@@ -522,6 +522,7 @@ export interface PerfLimits {
   gpu_temp_limit: number;
   cpu_temp_limit: number;
   heat_level: number;
+  gpu_share: number;
 }
 
 export interface Temps {

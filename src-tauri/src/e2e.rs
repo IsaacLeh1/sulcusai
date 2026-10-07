@@ -898,3 +898,51 @@ async fn e2e_web_search_and_read() {
     assert!(reply.to_lowercase().contains("daniel") || reply.to_lowercase().contains("stenberg"), "{reply}");
     state.engine.lock().await.stop().await;
 }
+
+/// Performance limits reach the engine: Cool & quiet launches it with fewer
+/// threads at low priority, and adaptive cooling's top level relaunches it
+/// with fewer layers on the graphics card. Both still answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_perf_limits_reach_the_engine() {
+    use crate::perf::{self, HeatState, Mode, PerfSettings};
+    let real = Paths::new(app_data_dir()).unwrap();
+    let hw = hardware::detect(&real.models);
+    let full = Budget::from_hardware(&hw);
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3-1.7b").unwrap().clone();
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&full).unwrap()).unwrap();
+    let model = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let log = std::env::temp_dir().join("sulcusai-perf-e2e.log");
+    let mut eng = engine::Engine::default();
+
+    let cool = perf::limits(&PerfSettings { mode: Mode::Cool, ..Default::default() }, &hw, false);
+    let (ctx, layers) = catalog::launch_within(&spec, "Q4_K_M", &full, &cool);
+    println!("cool: {} threads, ctx {ctx}, {layers} layers, low priority {}", cool.threads, cool.low_priority);
+    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log };
+    let ep = eng.ensure(launch(ctx, layers, &cool), None).await.unwrap();
+    let text = std::fs::read_to_string(&log).unwrap();
+    let line = text.lines().find(|l| l.contains("n_threads")).unwrap_or("");
+    println!("engine: {line}");
+    assert!(line.contains(&format!("n_threads = {}", cool.threads)), "{line}");
+    let prio = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", "(Get-Process llama-server | Select-Object -First 1).PriorityClass"])
+        .output()
+        .unwrap();
+    let prio = String::from_utf8_lossy(&prio.stdout).trim().to_string();
+    println!("priority: {prio}");
+    assert_eq!(prio, "BelowNormal");
+    assert!(engine::benchmark(&ep).await.unwrap() > 0.0);
+
+    let hot = perf::scaled(cool, &HeatState { gpu_level: 3, cpu_level: 3, ..Default::default() });
+    let (hctx, hlayers) = catalog::launch_within(&spec, "Q4_K_M", &full, &hot);
+    println!("hot: {} threads, {hlayers} layers (was {layers})", hot.threads);
+    assert!(hot.threads < cool.threads && hlayers < layers);
+    let spec_hot = launch(hctx, hlayers, &hot);
+    assert!(!eng.matches(&spec_hot), "new limits mean a relaunch");
+    let ep = eng.ensure(spec_hot, None).await.unwrap();
+    let tps = engine::benchmark(&ep).await.unwrap();
+    println!("hot speed: {tps} tokens/sec");
+    assert!(tps > 0.0);
+    eng.stop().await;
+}
