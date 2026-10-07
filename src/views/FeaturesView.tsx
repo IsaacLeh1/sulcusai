@@ -19,6 +19,11 @@ export const FEATURES: Record<FeatureId, Info> = {
   translate: { icon: "🌍", name: "Translation", detail: "Translate text and documents with your chat model." },
   notes: { icon: "📝", name: "Notes", detail: "Markdown notes with folders and tags. The assistant can save and find notes for you." },
   tasks: { icon: "✅", name: "Tasks", detail: "A to-do list with due dates, reminders and subtasks. Meeting action items can become tasks." },
+  web_search: {
+    icon: "🔎",
+    name: "Web search",
+    detail: "Search the web and read pages in every chat, even while Offline. Only the searches and the pages it opens go online; your messages and the AI stay on this PC. The browser, email and cloud still follow the connectivity level.",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -30,7 +35,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes and tasks", ids: ["notes", "tasks"] },
-  { title: "Assistant", ids: ["files", "memory", "projects", "scheduled", "connectors"] },
+  { title: "Assistant", ids: ["web_search", "files", "memory", "projects", "scheduled", "connectors"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {

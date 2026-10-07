@@ -459,6 +459,7 @@ export type FeatureId =
   | "translate"
   | "notes"
   | "tasks"
+  | "web_search"
   | "files"
   | "memory"
   | "projects"

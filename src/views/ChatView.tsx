@@ -108,6 +108,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const modelId = chat.model_id ?? defaultModel;
   const model = installed.find((m) => m.id === modelId) ?? null;
   const webOn = connectivity !== "offline" || chat.web;
+  // The Web search feature: search and reading pages in every chat, even Offline.
+  const searchOn = webOn || features.has("web_search");
   const busy = status !== "idle";
 
   const reload = useCallback(() => {
@@ -271,9 +273,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, webOn ? null : enableWeb),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall, helperSteps, features],
+    [messages, undoable, busy, runningCall, helperSteps, features, searchOn],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -418,6 +420,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
         )}
         {webOn && <p className="muted small center">Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.</p>}
+        {!webOn && searchOn && <p className="muted small center">Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.</p>}
       </div>
 
       {confirmBypass && (

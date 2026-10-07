@@ -104,7 +104,7 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
 }
 
 fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String> {
-    net::external_client(level, Purpose::Web, chat_web)?;
+    net::external_client(level, Purpose::Search, chat_web)?;
     reqwest::Client::builder()
         // A browser-like agent; some sites refuse unknown ones.
         .user_agent(concat!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SulcusAI/", env!("CARGO_PKG_VERSION")))
@@ -316,15 +316,18 @@ pub async fn fetch(client: &reqwest::Client, raw: &str) -> Result<Page, String> 
 }
 
 /// The web settings a chat's tools use, and whether web is allowed for it.
+/// The level, and whether search is on for this chat anyway: its globe, or
+/// the "Web search" feature (search and reading pages in every chat, even
+/// while Offline).
 pub fn chat_access(conn: &Connection, chat_id: &str) -> (Connectivity, bool) {
     let level = db::settings(conn).connectivity;
     let chat_web: bool = conn.query_row("SELECT web FROM chats WHERE id = ?1", [chat_id], |r| r.get::<_, i64>(0)).map(|v| v != 0).unwrap_or(false);
-    (level, chat_web)
+    (level, chat_web || crate::features::is_on(conn, crate::features::Feature::WebSearch))
 }
 
 pub fn allowed_for_chat(conn: &Connection, chat_id: &str) -> bool {
-    let (level, chat_web) = chat_access(conn, chat_id);
-    net::allowed(level, Purpose::Web, chat_web)
+    let (level, search_on) = chat_access(conn, chat_id);
+    net::allowed(level, Purpose::Search, search_on)
 }
 
 /// For the tools: a client, the settings and the Brave key, if web is allowed.
@@ -386,6 +389,22 @@ mod tests {
             assert!(check_url(bad).await.is_err(), "{bad}");
         }
         assert!(check_url("https://93.184.215.14/").await.is_ok());
+    }
+
+    #[test]
+    fn the_web_search_feature_allows_search_while_offline() {
+        let d = std::env::temp_dir().join(format!("sulcusai-web-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        let conn = db::open(&d.join("t.db")).unwrap();
+        conn.execute("INSERT INTO chats (id, title, web, created_at, updated_at) VALUES ('c', 't', 0, 1, 1)", []).unwrap();
+        assert_eq!(db::settings(&conn).connectivity, Connectivity::Offline);
+        assert!(!allowed_for_chat(&conn, "c"));
+        crate::features::set(&conn, crate::features::Feature::WebSearch, true).unwrap();
+        assert!(allowed_for_chat(&conn, "c"));
+        assert_eq!(db::settings(&conn).connectivity, Connectivity::Offline, "the level stays Offline");
+        // The browser, email and cloud still follow the level.
+        let (level, _) = chat_access(&conn, "c");
+        assert!(!net::allowed(level, Purpose::Web, false) && !net::allowed(level, Purpose::Cloud, true));
     }
 
     #[test]

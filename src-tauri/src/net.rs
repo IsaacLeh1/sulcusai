@@ -24,7 +24,11 @@ pub enum Purpose {
     /// Engine or model download the user started. Allowed at every level:
     /// it only contacts the file host and carries no user data.
     ModelDownload,
-    /// Web search, page fetches, browser, email/calendar sync.
+    /// Web search and reading pages. Besides the levels and the chat's
+    /// globe, the "Web search" feature allows it in every chat while the
+    /// app stays Offline (callers pass that as `chat_web`).
+    Search,
+    /// The browser, email/calendar sync.
     Web,
     /// Cloud AI providers, cloud sync relay.
     Cloud,
@@ -35,7 +39,7 @@ pub enum Purpose {
 pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
     match purpose {
         Purpose::ModelDownload => true,
-        Purpose::Web => level != Connectivity::Offline || chat_web,
+        Purpose::Search | Purpose::Web => level != Connectivity::Offline || chat_web,
         Purpose::Cloud => level == Connectivity::Cloud,
     }
 }
@@ -43,6 +47,7 @@ pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
 pub fn blocked_message(purpose: Purpose) -> &'static str {
     match purpose {
         Purpose::ModelDownload => "",
+        Purpose::Search => "Web search is off. Turn on web for this chat, switch to Local AI + Web, or turn on Web search in Features.",
         Purpose::Web => "This needs web access, which is off. Turn on web for this chat or switch to Local AI + Web.",
         Purpose::Cloud => "This needs a cloud provider, which is off. Switch to the Cloud level in Settings to use it.",
     }
@@ -86,6 +91,15 @@ mod tests {
         assert!(allowed(Offline, Purpose::Web, true));
         assert!(!allowed(Offline, Purpose::Cloud, true));
         assert!(!allowed(Web, Purpose::Cloud, true));
+    }
+
+    #[test]
+    fn search_follows_web_and_never_unlocks_cloud() {
+        assert!(!allowed(Offline, Purpose::Search, false));
+        // The Web search feature or the globe: search while Offline.
+        assert!(allowed(Offline, Purpose::Search, true));
+        assert!(allowed(Web, Purpose::Search, false));
+        assert!(!allowed(Offline, Purpose::Cloud, true));
     }
 
     #[test]
