@@ -230,25 +230,15 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 **Done on the branch:**
 - Notes and tasks: `notes.rs`, `tools/notes.rs`, Notes and Tasks pages; meeting action items → Tasks.
 - Web search and page reading: `web.rs`, `tools/web.rs`. DuckDuckGo, Brave or SearXNG; `request_web` card.
-
-**Started, not wired in yet:**
-- `perf.rs`: Cool & quiet / Balanced / Turbo limits, the ceilings, and the heat guard.
-  - It isn't listed in `lib.rs`, so it doesn't compile yet.
-  - Temperatures are readable on this PC: `nvidia-smi` for the GPU, and WMI `Win32_PerfFormattedData_Counters_ThermalZoneInformation` for the thermal zone.
-  - Wiring it in needs:
-    - Cargo features `Win32_System_Wmi` and `Win32_System_Variant`.
-    - `hardware::on_battery`/`has_battery` made public.
-    - `AppState::limits()`, with `budget()` built from `Budget::with_limits` (add `max_ctx`).
-    - `LaunchSpec` gets `threads` and `low_priority` (`-t`, `SetPriorityClass`), and the engine restarts when they change.
-    - `cool_down` before each agent step (`chat:status` "cooling").
-    - An idle unload for the chat model.
-    - Speech threads capped at `limits.threads`.
-    - The `perf_view` and `set_perf` commands, a Settings › Performance section, and a status-bar mode pill.
-
-**Queued requests (from the user, 2026-10-07):**
-1. **Adaptive cooling toggle:** because temperatures are readable, actively scale resource use with temperature to keep the PC stable. Fewer threads and GPU layers as it heats up, restored when it cools. Make it a switch.
-2. **Models page:** rank models from least to most capable, and add tabs for the best ones at Coding, Writing, Research, Agents, Languages and Fastest. Capability and strength scores go in `catalog/build_catalog.py`.
-3. **Web search while Offline:** a "Web search" feature (Features page) that allows search and page reading in every chat while the level stays Offline. Add a `Purpose::Search` separate from `Purpose::Web`. The browser, email and cloud still need the higher levels.
-4. **Cleaner sidebar:** a ⚙ menu at the bottom of the sidebar holding Settings, Models, Features and Activity. The top keeps chats, projects and the pages of enabled features.
+- Performance (`perf.rs`): Cool & quiet / Balanced / Turbo set the chat engine's threads (`-t`), graphics memory, context and priority (`BELOW_NORMAL_PRIORITY_CLASS`). Turbo is clamped to `ceiling()`.
+  - Heat guard: `cool_down` before each agent step (`chat:status` "cooling").
+  - Adaptive cooling (switch, on by default): `start_monitor` reads temperatures every 10 s while a model or speech is loaded. `Heat::update` steps per component (levels 0-3, enter at 12/7/3 °C below the limit, ease 4 °C cooler and no sooner than 90 s). A hot CPU cuts threads; a hot GPU moves layers off the card (`gpu_share`); level 2+ adds pauses between steps. New limits apply between replies, never mid-reply (`llm_endpoint`; `background_endpoint` uses the loaded engine as is).
+  - The monitor also unloads an idle chat model (5 min Cool, 30 min Balanced, never Turbo).
+  - Temperatures: `nvidia-smi`, and WMI `Win32_PerfRawData_Counters_ThermalZoneInformation`. WMI needs `CoSetProxyBlanket` with impersonation, or the query returns nothing.
+  - Verified: `e2e_perf_limits_reach_the_engine` (6 threads at BelowNormal in Cool; top heat level relaunches with 2 threads and 15 of 29 layers, still answering).
+- Models page: ratings in `build_catalog.py` (`RATINGS`; rough guides from public benchmarks), ranked least to most capable, with Coding / Writing / Research / Agents / Languages / Fastest tabs (`src/ranking.ts`).
+- Web search while Offline: the "Web search" feature; `Purpose::Search` (search and reading pages) is separate from `Purpose::Web` (browser, email).
+- Sidebar: Settings, Models, Features and Activity live in the ⚙ menu at the bottom (`SideMenu.tsx`).
+- Not yet looked at in a running window: the Performance section, the Models tabs and the sidebar menu (typechecked and unit-tested only).
 
 **Phase 4 still to do after that:** built-in browser with agent control, email and calendar (IMAP/CalDAV plus Microsoft/Google OAuth, the user chose both), documents and spreadsheets, and the desktop quick-ask overlay.
