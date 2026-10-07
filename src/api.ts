@@ -137,6 +137,8 @@ export interface Chat {
   project_id: string | null;
   incognito: boolean;
   parent_id: string | null;
+  /** Nothing sent yet: kept out of the sidebar until the first message. */
+  empty?: boolean;
 }
 
 export interface Project {
@@ -750,6 +752,7 @@ export interface ChatEvents {
   "agent:approval_done": { chat_id: string; call_id: string };
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
+  "chat:titled": { chat_id: string; title: string };
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;

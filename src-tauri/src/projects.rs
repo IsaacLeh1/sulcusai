@@ -178,6 +178,8 @@ pub fn create_chat_in(state: AppStateRef, project_id: Option<String>, incognito:
     }
     // Only one incognito chat at a time; leaving one deletes it.
     db::delete_incognito_chats(&conn, None)?;
+    // A new chat that was never written in is replaced, not kept.
+    db::delete_empty_chats(&conn)?;
     let model = db::settings(&conn).default_model;
     db::create_chat_in(&conn, &c, model, project_id, incognito)
 }
@@ -271,6 +273,7 @@ mod tests {
             project_id: None,
             incognito: false,
             parent_id: None,
+            empty: false,
         };
         assert_eq!(chat_folders(&conn, &chat), vec!["C:\\shared"]);
         chat.project_id = Some("p".into());

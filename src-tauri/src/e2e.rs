@@ -949,3 +949,20 @@ async fn e2e_perf_limits_reach_the_engine() {
     assert!(tps > 0.0);
     eng.stop().await;
 }
+
+/// The model names a chat from its first request.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_chat_gets_a_summary_title() {
+    let (state, ep, _cipher) = agent_harness().await;
+    for request in [
+        "Can you help me plan a 5 day trip to Japan in April? I like food and temples, and my budget is about $3000.",
+        "my python script keeps throwing KeyError when I read the csv, here's the code: df['Name']",
+    ] {
+        let t = crate::chat::summary_title(&ep, request).await;
+        println!("{request:.40}… → {t:?}");
+        let t = t.expect("a title");
+        assert!((1..=8).contains(&t.split_whitespace().count()), "{t}");
+    }
+    state.engine.lock().await.stop().await;
+}

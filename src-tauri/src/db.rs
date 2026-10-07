@@ -341,6 +341,10 @@ pub struct Chat {
     pub incognito: bool,
     /// The chat this one continues (auto-handoff).
     pub parent_id: Option<String>,
+    /// No messages yet: a new chat stays out of the sidebar until the
+    /// first message is sent.
+    #[serde(default)]
+    pub empty: bool,
 }
 
 const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito, parent_id";
@@ -358,6 +362,7 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
             project_id: r.get(7)?,
             incognito: r.get::<_, i64>(8)? != 0,
             parent_id: r.get(9)?,
+            empty: false,
         })
     }
 }
@@ -383,9 +388,24 @@ pub fn set_chat_mode(conn: &Connection, id: &str, mode: &str) -> Result<(), Stri
 pub fn list_chats(conn: &Connection, c: &Cipher) -> Vec<Chat> {
     let sql = format!("SELECT {CHAT_COLS} FROM chats ORDER BY updated_at DESC");
     let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
-    stmt.query_map([], chat_from_row(c))
+    let mut chats: Vec<Chat> = stmt
+        .query_map([], chat_from_row(c))
         .map(|rows| rows.filter_map(Result::ok).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let used: std::collections::HashSet<String> = conn
+        .prepare("SELECT DISTINCT chat_id FROM messages")
+        .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0)).map(|rows| rows.filter_map(Result::ok).collect()))
+        .unwrap_or_default();
+    for chat in &mut chats {
+        chat.empty = !used.contains(&chat.id);
+    }
+    chats
+}
+
+/// Drops new chats nobody wrote in (they never showed in the sidebar).
+pub fn delete_empty_chats(conn: &Connection) -> Result<usize, String> {
+    conn.execute("DELETE FROM chats WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = chats.id)", [])
+        .map_err(|e| e.to_string())
 }
 
 pub fn chat(conn: &Connection, c: &Cipher, id: &str) -> Option<Chat> {
@@ -410,6 +430,7 @@ pub fn create_chat_in(conn: &Connection, c: &Cipher, model_id: Option<String>, p
         project_id,
         incognito,
         parent_id: None,
+        empty: true,
     };
     conn.execute(
         "INSERT INTO chats (id, title, model_id, web, created_at, updated_at, project_id, incognito) VALUES (?1, ?2, ?3, 0, ?4, ?4, ?5, ?6)",

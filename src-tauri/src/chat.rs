@@ -383,6 +383,26 @@ fn merge_tool_delta(calls: &mut Vec<ToolCall>, tc: &Value) {
 }
 
 /// A short sidebar title from the first message.
+/// A short title (2-6 words) summarizing a chat's first request, written by
+/// the model. None if it gives nothing usable (the first line stays).
+pub async fn summary_title(ep: &Endpoint, request: &str) -> Option<String> {
+    let request: String = request.chars().take(2000).collect();
+    let messages = vec![
+        json!({ "role": "system", "content": "You name chats. Reply with a short title of 2 to 6 words that sums up what the user wants. Title only: no quotes, no ending period, no emoji." }),
+        json!({ "role": "user", "content": request }),
+    ];
+    let raw = complete(ep, messages, json!({}), 24).await.ok()?;
+    clean_title(&raw)
+}
+
+fn clean_title(raw: &str) -> Option<String> {
+    let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let line = line.trim_start_matches(|c: char| c == '#' || c == '*' || c.is_whitespace());
+    let line = line.strip_prefix("Title:").unwrap_or(line).trim();
+    let t: String = line.trim_matches(|c: char| matches!(c, '"' | '\'' | '“' | '”' | '*' | '.' | '`')).trim().chars().take(60).collect();
+    (!t.is_empty() && t.split_whitespace().count() <= 10).then_some(t)
+}
+
 pub fn title_from(text: &str) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("New chat");
     let mut title: String = line.chars().take(48).collect();
@@ -403,6 +423,9 @@ mod tests {
     #[test]
     fn title_uses_first_nonempty_line_and_truncates() {
         assert_eq!(title_from("\n  hello there \nmore"), "hello there");
+        assert_eq!(clean_title("\"Trip to Tokyo.\"").as_deref(), Some("Trip to Tokyo"));
+        assert_eq!(clean_title("Title: Budget plan\nextra").as_deref(), Some("Budget plan"));
+        assert_eq!(clean_title("   "), None);
         let long = "a".repeat(60);
         let t = title_from(&long);
         assert!(t.ends_with('…'));

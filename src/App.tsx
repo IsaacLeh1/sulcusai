@@ -176,7 +176,13 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshChats();
         refreshEngine();
       }),
-      on("chat:start", (p) => setRunning((r) => (r.includes(p.chat_id) ? r : [...r, p.chat_id]))),
+      on("chat:start", (p) => {
+        setRunning((r) => (r.includes(p.chat_id) ? r : [...r, p.chat_id]));
+        refreshChats();
+      }),
+      // A new chat joins the sidebar as soon as its first message is sent.
+      on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
+      on("chat:titled", () => refreshChats()),
       on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
       on("schedule:ran", (p) => {
         refreshChats();
@@ -196,6 +202,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);
 
+  const [started, setStarted] = useState<Set<string>>(new Set());
+  const [chatMenu, setChatMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
+  // New chats stay out of the list until something is sent in them.
+  const listed = chats.filter((c) => !c.empty || started.has(c.id) || running.includes(c.id));
   const installed = useMemo(() => (catalog?.models ?? []).filter((m) => m.installed), [catalog]);
   const current = chats.find((c) => c.id === activeChat) ?? null;
 
@@ -355,13 +366,17 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           ))}
         </div>}
         <div className="chat-list" role="list">
-          {chats.length === 0 && <p className="muted small pad">Your chats will appear here.</p>}
-          {chats.map((c) => (
+          {listed.length === 0 && <p className="muted small pad">Your chats will appear here.</p>}
+          {listed.map((c) => (
             <button
               key={c.id}
               role="listitem"
               className={`chat-item ${view === "chat" && c.id === activeChat ? "active" : ""}`}
               onClick={() => openChat(c.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setChatMenu({ id: c.id, x: e.clientX, y: e.clientY });
+              }}
               title={c.title}
             >
               {c.incognito && <span aria-label="Incognito">🕶</span>}
@@ -374,6 +389,44 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         </div>
         <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
       </aside>
+      {chatMenu && (
+        <ChatMenu
+          x={chatMenu.x}
+          y={chatMenu.y}
+          onClose={() => setChatMenu(null)}
+          onDelete={() => {
+            setConfirmDelete(chats.find((c) => c.id === chatMenu.id) ?? null);
+            setChatMenu(null);
+          }}
+        />
+      )}
+      {confirmDelete && (
+        <Modal title="Delete this chat?" onClose={() => setConfirmDelete(null)}>
+          <p>
+            “{confirmDelete.title}” and its messages will be deleted from this PC. This can't be undone.
+          </p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
+            <button
+              className="btn danger-fill"
+              autoFocus
+              onClick={async () => {
+                const id = confirmDelete.id;
+                setConfirmDelete(null);
+                try {
+                  await api.deleteChat(id);
+                  if (activeChat === id) setActiveChat(null);
+                  await refreshChats();
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        </Modal>
+      )}
 
       <main className="main">
         {view === "chat" && (
@@ -523,5 +576,31 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Right-click menu on a chat in the sidebar. */
+function ChatMenu({ x, y, onClose, onDelete }: { x: number; y: number; onClose: () => void; onDelete: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", esc);
+    window.addEventListener("blur", onClose);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", esc);
+      window.removeEventListener("blur", onClose);
+    };
+  }, [onClose]);
+  return (
+    <div ref={ref} className="context-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 60) }}>
+      <button role="menuitem" className="danger" onClick={onDelete} autoFocus>
+        🗑 Delete chat
+      </button>
+    </div>
   );
 }

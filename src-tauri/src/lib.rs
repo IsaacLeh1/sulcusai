@@ -619,9 +619,11 @@ pub(crate) async fn run_turn(
         chat_id = new.id;
     }
 
+    let first_message;
     {
         let conn = state.db.lock().unwrap();
         let first = db::message_count(&conn, &chat_id) == 0;
+        first_message = first;
         db::add_message(&conn, &cipher, &Message {
             id: turn_id.clone(),
             chat_id: chat_id.clone(),
@@ -635,6 +637,8 @@ pub(crate) async fn run_turn(
         }
     }
 
+    // After the first reply, the model names the chat from the request.
+    let name_it = (first_message && !chat.incognito).then(|| (ep.clone(), text.clone()));
     let emitter = app.clone();
     let turn = agent::Turn {
         emit: Arc::new(move |event: &str, payload: serde_json::Value| {
@@ -663,6 +667,18 @@ pub(crate) async fn run_turn(
         }
     };
     state.contexts.lock().unwrap().insert(chat_id.clone(), context.clone());
+    if let Some((ep, request)) = name_it.filter(|_| !cancelled) {
+        let (state, app, chat_id) = (state.clone(), app.clone(), chat_id.clone());
+        tauri::async_runtime::spawn(async move {
+            if let Some(title) = chat::summary_title(&ep, &request).await {
+                if let Ok(c) = state.cipher() {
+                    if db::set_chat_title(&state.db.lock().unwrap(), &c, &chat_id, &title).is_ok() {
+                        app.emit("chat:titled", json!({ "chat_id": chat_id, "title": title })).ok();
+                    }
+                }
+            }
+        });
+    }
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
     Ok(last)
@@ -795,6 +811,7 @@ pub fn run() {
             }
             checkpoint::prune(&state.db.lock().unwrap());
             let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
+            let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
             speech::start_idle_unloader(state.clone());
