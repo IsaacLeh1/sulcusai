@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SecurityStatus } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings } from "../api";
 import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
@@ -20,6 +20,63 @@ const THIRD_PARTY = [
   { name: "RustCrypto (aes-gcm, argon2, sha2)", license: "MIT / Apache-2.0", url: "https://github.com/RustCrypto" },
   { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
 ];
+
+function WebSearchSettings({ toast }: { toast: PushToast }) {
+  const [s, setS] = useState<WebSettings | null>(null);
+  const [key, setKey] = useState("");
+  useEffect(() => {
+    api.webSettings().then(setS).catch(() => {});
+  }, []);
+  if (!s) return null;
+  const save = async (next: WebSettings, braveKey: string | null = null) => {
+    setS(next);
+    try {
+      await api.setWebSettings({ provider: next.provider, searxng_url: next.searxng_url }, braveKey);
+      if (braveKey !== null) {
+        setKey("");
+        setS({ ...next, has_brave_key: braveKey !== "" });
+      }
+      toast("Saved.", "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="form web-search">
+      <h3>Web search</h3>
+      <label>
+        Search with
+        <select value={s.provider} onChange={(e) => save({ ...s, provider: e.target.value as SearchProvider })}>
+          <option value="duckduckgo">DuckDuckGo (no account needed)</option>
+          <option value="brave">Brave Search (your API key)</option>
+          <option value="searxng">SearXNG (your own server)</option>
+        </select>
+      </label>
+      {s.provider === "duckduckgo" && <p className="muted small">Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.</p>}
+      {s.provider === "brave" && (
+        <label>
+          Brave Search API key {s.has_brave_key && <span className="muted small">(saved, encrypted)</span>}
+          <span className="row">
+            <input className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={s.has_brave_key ? "Enter a new key to replace it" : "Paste your key"} autoComplete="off" />
+            <button className="btn small" disabled={!key.trim()} onClick={() => save(s, key.trim())}>Save key</button>
+            {s.has_brave_key && <button className="btn ghost small danger" onClick={() => save(s, "")}>Remove</button>}
+          </span>
+          <span className="muted small">Free tier at brave.com/search/api.</span>
+        </label>
+      )}
+      {s.provider === "searxng" && (
+        <label>
+          SearXNG address
+          <span className="row">
+            <input className="input" value={s.searxng_url} onChange={(e) => setS({ ...s, searxng_url: e.target.value })} placeholder="https://search.example.com" />
+            <button className="btn small" onClick={() => save(s)}>Save</button>
+          </span>
+          <span className="muted small">The server must allow JSON output (search.formats: json).</span>
+        </label>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   connectivity: Connectivity;
@@ -116,6 +173,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
           ))}
         </div>
         <p className="muted small">Tip: while Offline, the 🌐 button in a chat (or Ctrl+Shift+W) turns web on for just that chat.</p>
+        <WebSearchSettings toast={toast} />
       </section>
 
       <section className="card">

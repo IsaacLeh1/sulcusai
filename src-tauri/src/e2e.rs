@@ -852,3 +852,41 @@ async fn e2e_notes_and_tasks() {
     assert!(reply.to_lowercase().contains("scarf"));
     state.engine.lock().await.stop().await;
 }
+
+/// Web search for real (DuckDuckGo, no key), reading a page, and the model
+/// using both in a chat with web turned on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_web_search_and_read() {
+    let (state, ep, cipher) = agent_harness().await;
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    // Offline and no 🌐: the model can only ask for web access.
+    let reply = say(&state, &ep, &cipher, &chat.id, "Search the web: who maintains the curl project? /no_think").await;
+    println!("offline reply: {reply}");
+    let asked = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)
+        .iter()
+        .any(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|x| x["web_request"] == true));
+    println!("asked for web: {asked}");
+
+    crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
+    let (client, settings, key) = crate::web::prepare(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
+    let hits = crate::web::search(&settings, key, &client, "curl project maintainer", 5).await.unwrap();
+    println!("hits: {:#?}", hits.iter().map(|h| (&h.title, &h.url)).collect::<Vec<_>>());
+    assert!(!hits.is_empty());
+    let page = crate::web::fetch(&client, "https://curl.se/").await.unwrap();
+    println!("page: {} ({} chars)", page.title, page.text.len());
+    assert!(page.text.to_lowercase().contains("curl"));
+    assert!(crate::web::fetch(&client, "http://127.0.0.1:1430/").await.is_err());
+
+    let reply = say(&state, &ep, &cipher, &chat.id, "Web is on now. Search the web and tell me who created curl, with a source link. /no_think").await;
+    println!("web reply: {reply}");
+    let used: Vec<String> = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)
+        .iter()
+        .filter(|m| m.role == "tool")
+        .filter_map(|m| m.meta.as_ref().and_then(|x| x["title"].as_str().map(str::to_string)))
+        .collect();
+    println!("tools: {used:?}");
+    assert!(used.iter().any(|t| t.starts_with("Searched the web")));
+    assert!(reply.to_lowercase().contains("daniel") || reply.to_lowercase().contains("stenberg"), "{reply}");
+    state.engine.lock().await.stop().await;
+}

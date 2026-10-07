@@ -44,6 +44,8 @@ tauri-plugin-notification = "2"
 # downloaded, hash-checked copy (nothing is bundled or fetched at build time).
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17"] }
 unicode-normalization = "0.1"
+# Readable text from web pages.
+html2text = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

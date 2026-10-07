@@ -37,6 +37,7 @@ mod translate;
 mod tts;
 mod vad;
 mod voice;
+mod web;
 mod workspace;
 #[cfg(windows)]
 mod winjob;
@@ -880,6 +881,8 @@ pub fn run() {
             notes::delete_task,
             notes::parse_due_text,
             notes::tasks_from_meeting,
+            web::get_web_settings,
+            web::set_web_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");

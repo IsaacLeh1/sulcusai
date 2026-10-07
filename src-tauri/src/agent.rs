@@ -200,6 +200,14 @@ impl Turn {
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["search_meetings", "read_meeting"]);
         }
+        // Web tools when this chat may go online; otherwise a way to ask.
+        if self.use_tools {
+            if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
+                extra.extend(["web_search", "fetch_page"]);
+            } else {
+                extra.push("request_web");
+            }
+        }
         {
             for name in extra {
                 if let Some(d) = tools::find(name) {
@@ -288,14 +296,20 @@ impl Turn {
                 chat_id: &self.chat_id,
                 turn_id: &self.turn_id,
             };
+            let mut wait_for_user = false;
             for call in &calls {
                 let outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
                 } else {
                     self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await
                 };
+                // Asking to turn on web ends the turn; the card waits for the user.
+                wait_for_user |= outcome.meta["web_request"] == true;
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+            }
+            if wait_for_user {
+                break;
             }
             if self.cancel.load(Ordering::Relaxed) {
                 result.cancelled = true;

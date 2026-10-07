@@ -6,6 +6,7 @@ mod meetings;
 mod memory;
 mod notes;
 mod shell;
+mod web;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
@@ -86,6 +87,7 @@ fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
+        "web_search" | "fetch_page" | "request_web" => "web",
         _ => "files",
     }
 }
@@ -133,6 +135,12 @@ pub const TOOLS: &[ToolDef] = &[
         description: "List the user's tasks with their ids and due dates." },
     ToolDef { name: "complete_task", risk: Risk::Memory, params: notes::complete_task_params,
         description: "Mark one of the user's tasks done, by id." },
+    ToolDef { name: "web_search", risk: Risk::Read, params: web::web_search_params,
+        description: "Search the web for current information. Returns titles, addresses and snippets to cite." },
+    ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
+        description: "Read a web page as text, by its address. Use it on search results to get the details." },
+    ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
+        description: "Web access is off in this chat. If answering needs current information from the internet, call this to ask the user to turn it on, then stop." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -170,7 +178,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -258,6 +266,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
             notes::run(name, args, &ctx.memory)
         }
+        "web_search" | "fetch_page" | "request_web" => web::run(name, args, &ctx.memory).await,
         _ => {
             // File work is quick but blocking; keep it off the async threads.
             let name = name.to_string();
@@ -284,6 +293,8 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "search_meetings" | "read_meeting" => return "Couldn't look up a meeting".into(),
         "create_note" | "search_notes" | "read_note" | "update_note" => return "Couldn't use the notes".into(),
         "create_task" | "list_tasks" | "complete_task" => return "Couldn't use the task list".into(),
+        "web_search" => return "Couldn't search the web".into(),
+        "fetch_page" => return "Couldn't open a web page".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -320,8 +331,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note and task tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 10);
+        // Everything except load_skill and the meeting, note, task and web tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 13);
     }
 
     #[test]

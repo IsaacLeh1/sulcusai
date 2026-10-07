@@ -200,6 +200,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     });
   }, []);
 
+  // The assistant asked for web access: turn it on for this chat and carry on.
+  const enableWeb = useCallback(async () => {
+    await api.setChatWeb(chat.id, true);
+    onChanged();
+    sendText("Web access is on now. Please go ahead.");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.id]);
+
   // Voice mode sends what it heard itself; show it like a typed message.
   const heard = useCallback((text: string) => {
     setError(null);
@@ -257,7 +265,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, webOn ? null : enableWeb),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, undoable, busy, runningCall, helperSteps, features],
   );
@@ -401,7 +409,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {model && !model.tools && (
           <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
         )}
-        {webOn && <p className="muted small center">Web access is allowed for this chat. Web search and browsing tools arrive in a later update.</p>}
+        {webOn && <p className="muted small center">Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.</p>}
       </div>
 
       {confirmBypass && (
@@ -474,6 +482,7 @@ function renderItems(
   helperSteps: Record<string, string[]>,
   openChat: (id: string) => void,
   toast?: PushToast,
+  onEnableWeb?: (() => void) | null,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
@@ -506,6 +515,9 @@ function renderItems(
           )}
           {m.tool_calls?.map((c) => {
             const r = results.get(c.id);
+            if (c.name === "request_web" && r?.meta?.web_request) {
+              return <WebRequestCard key={c.id} title={r.meta.title} onEnable={onEnableWeb ?? null} />;
+            }
             return <ToolCard key={c.id} call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} />;
           })}
         </Fragment>,
@@ -532,6 +544,24 @@ function MessageView({ m, live, toast }: { m: Message; live?: Status; toast?: Pu
         <div className="msg-tools">
           <SpeakButton text={m.content} toast={toast} />
         </div>
+      )}
+    </div>
+  );
+}
+
+function WebRequestCard({ title, onEnable }: { title: string; onEnable: (() => void) | null }) {
+  const reason = title.replace(/^Needs web access: /, "");
+  return (
+    <div className="web-request" role="note">
+      <span aria-hidden>🌐</span>
+      <div>
+        <strong>This needs web access</strong>
+        <span className="small muted block">To look up: {reason}. Only the search and the pages it opens go online; the AI stays on this PC.</span>
+      </div>
+      {onEnable ? (
+        <button className="btn primary small" onClick={onEnable}>Turn on web for this chat</button>
+      ) : (
+        <span className="small muted">Web is on</span>
       )}
     </div>
   );

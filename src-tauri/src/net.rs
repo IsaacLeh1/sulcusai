@@ -17,7 +17,7 @@ pub enum Connectivity {
     Cloud,
 }
 
-// Web and Cloud are used once web tools (phase 4) and cloud providers (phase 6) land.
+// Cloud is used once cloud providers (phase 6) land.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Purpose {

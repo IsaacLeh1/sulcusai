@@ -224,6 +224,8 @@ export interface ToolMeta {
   handoff_to?: string;
   /** On the first message of a continued chat. */
   handoff_from?: string;
+  /** The assistant asked the user to turn on web access. */
+  web_request?: boolean;
 }
 
 export interface Preview {
@@ -486,6 +488,14 @@ export interface Task {
   created_at: number;
 }
 
+export type SearchProvider = "duckduckgo" | "brave" | "searxng";
+
+export interface WebSettings {
+  provider: SearchProvider;
+  searxng_url: string;
+  has_brave_key?: boolean;
+}
+
 export interface Language {
   code: string;
   name: string;
@@ -620,6 +630,8 @@ export const api = {
   deleteTask: (id: string) => invoke<void>("delete_task", { id }),
   parseDue: (text: string) => invoke<{ due: number; has_time: boolean } | null>("parse_due_text", { text }),
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
+  webSettings: () => invoke<WebSettings>("get_web_settings"),
+  setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
 
 export type DictationEvent =

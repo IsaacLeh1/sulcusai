@@ -500,3 +500,9 @@ select, .input {
 .overdue { color: var(--danger); }
 .subtasks { list-style: none; padding: 0; margin: 4px 0; }
 .subtasks li { display: flex; justify-content: space-between; align-items: center; }
+
+/* ---------- web ---------- */
+.web-request { display: flex; align-items: center; gap: 12px; border: 1px solid var(--teal); background: color-mix(in srgb, var(--teal) 8%, transparent); border-radius: 12px; padding: 10px 14px; }
+.web-request > span[aria-hidden] { font-size: 20px; }
+.web-request > div { flex: 1; min-width: 0; }
+.web-search { margin-top: 14px; }
