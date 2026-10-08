@@ -283,6 +283,26 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
           </div>
           <div className="setting-row">
             <div>
+              <strong>Keep working while locked</strong>
+              <span className="small muted block">
+                Replies in progress, scheduled tasks, mail and calendar syncing and reminders carry on while SulcusAI is locked. Nothing shows on screen until you unlock; reminders don't say what's due. When this is off, locking stops work in progress.
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={!!status.keep_working}
+                onChange={async (e) => {
+                  await api.setKeepWorking(e.target.checked);
+                  onChanged();
+                }}
+                aria-label="Keep working while locked"
+              />
+              <span />
+            </label>
+          </div>
+          <div className="setting-row">
+            <div>
               <strong>Windows Hello</strong>
               <span className="small muted block">
                 {status.hello_available
