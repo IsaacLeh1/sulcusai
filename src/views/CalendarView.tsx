@@ -227,7 +227,7 @@ function NewEventDialog({ day, accounts, onClose, onCreated, toast }: { day: num
           {!allDay && <label>Starts<input className="input" type="time" value={start} onChange={(e) => setStart(e.target.value)} /></label>}
           {!allDay && <label>Ends<input className="input" type="time" value={end} onChange={(e) => setEnd(e.target.value)} /></label>}
         </div>
-        <label className="row"><input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} /> All day</label>
+        <label className="check"><input type="checkbox" checked={allDay} onChange={(e) => setAllDay(e.target.checked)} /> All day</label>
         <label>Place<input className="input" value={location} onChange={(e) => setLocation(e.target.value)} /></label>
         <label>Notes<textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
         {cals.length > 0 && (

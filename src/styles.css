@@ -128,7 +128,7 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0 4px; font-size: inherit; }
 .icon-btn { border: 0; background: none; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 4px; color: inherit; }
 select, .input {
-  border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0;
+  border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 10px; min-width: 0; font-weight: 400;
 }
 .input { width: 100%; resize: vertical; }
 .badge { background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
@@ -575,3 +575,4 @@ select, .input {
 .agenda-event.task { background: none; border: 1px dashed var(--border); }
 .agenda-time { width: 140px; flex: none; color: var(--muted); }
 .agenda-event .grow { flex: 1; min-width: 0; }
+.form label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
