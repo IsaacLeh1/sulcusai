@@ -588,3 +588,9 @@ html.quick-window, html.quick-window body { background: transparent; overflow: h
 .quick-clip .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .quick-answer { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 8px; }
 .quick-foot { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- top bar ---------- */
+.topbar { display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 6px 14px 0; flex: none; }
+.web-btn { font-size: 18px; border-radius: 8px; padding: 4px 6px; }
+.web-btn:hover { background: var(--accent-soft); }
+a.md-link { cursor: pointer; }

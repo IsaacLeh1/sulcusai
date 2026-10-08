@@ -13,6 +13,7 @@ import {
   type Project,
   type SecurityStatus,
   type Settings,
+  type BrowsersView,
 } from "./api";
 import { APP_NAME } from "./brand";
 import { ChatView } from "./views/ChatView";
@@ -320,11 +321,6 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {liveMeeting && <span className="dot rec" aria-label="Recording" />}
             </button>
           )}
-          {has("browser") && (
-            <button onClick={() => api.openBrowser().catch((e) => toast(errorText(e), "error"))} title="Open the built-in browser">
-              Browser
-            </button>
-          )}
           {has("notes") && (
             <button className={view === "notes" ? "active" : ""} onClick={() => setView("notes")}>
               Notes
@@ -449,6 +445,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       )}
 
       <main className="main">
+        <TopBar browserOn={has("browser")} toast={toast} />
         {view === "chat" && (
           <ChatView
             chat={current}
@@ -622,6 +619,29 @@ function ChatMenu({ x, y, onClose, onDelete }: { x: number; y: number; onClose: 
     <div ref={ref} className="context-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 60) }}>
       <button role="menuitem" className="danger" onClick={onDelete} autoFocus>
         🗑 Delete chat
+      </button>
+    </div>
+  );
+}
+
+/** Across the top of the page: the web button, which opens the main browser. */
+function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) {
+  const [view, setView] = useState<BrowsersView | null>(null);
+  useEffect(() => {
+    const load = () => api.browsersView().then(setView).catch(() => {});
+    load();
+    window.addEventListener("browser-changed", load);
+    return () => window.removeEventListener("browser-changed", load);
+  }, []);
+  if (!view) return null;
+  const builtin = view.current.kind === "builtin";
+  // The built-in browser is a feature; another browser can always be opened.
+  if (builtin && !browserOn) return null;
+  const name = view.current.kind === "app" ? view.current.name : view.current.kind === "system" ? "your default browser" : "the SulcusAI browser";
+  return (
+    <div className="topbar">
+      <button className="icon-btn web-btn" title={`Open ${name}`} aria-label={`Open ${name}`} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
+        🌐
       </button>
     </div>
   );

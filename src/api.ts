@@ -509,6 +509,13 @@ export interface Task {
   created_at: number;
 }
 
+export type MainBrowser = { kind: "builtin" } | { kind: "system" } | { kind: "app"; name: string };
+
+export interface BrowsersView {
+  current: MainBrowser;
+  installed: { name: string }[];
+}
+
 export type MailSecurity = "tls" | "starttls" | "plain";
 
 export interface MailConfig {
@@ -790,6 +797,10 @@ export const api = {
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
+  browsersView: () => invoke<BrowsersView>("browsers_view"),
+  setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),
+  /** Opens a web address (or just the browser) in the user's main browser. */
+  openWeb: (url: string | null) => invoke<void>("open_web", { url }),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),
   quickHide: () => invoke<void>("quick_hide"),

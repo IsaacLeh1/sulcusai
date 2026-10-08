@@ -5,6 +5,7 @@
 mod agent;
 mod audio;
 mod browser;
+mod browsers;
 mod calendar;
 mod catalog;
 mod chat;
@@ -833,6 +834,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
             browser::open_browser,
+            browsers::browsers_view,
+            browsers::set_main_browser,
+            browsers::open_web,
             docs::open_document,
             quick::quick_clipboard,
             quick::quick_hide,

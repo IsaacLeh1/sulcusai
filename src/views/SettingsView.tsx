@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser } from "../api";
 import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
@@ -78,6 +78,42 @@ function WebSearchSettings({ toast }: { toast: PushToast }) {
           <span className="muted small">The server must allow JSON output (search.formats: json).</span>
         </label>
       )}
+    </div>
+  );
+}
+
+function BrowserChoice({ toast }: { toast: PushToast }) {
+  const [v, setV] = useState<BrowsersView | null>(null);
+  useEffect(() => {
+    api.browsersView().then(setV).catch(() => {});
+  }, []);
+  if (!v) return null;
+  const value = v.current.kind === "app" ? `app:${v.current.name}` : v.current.kind;
+  const pick = async (val: string) => {
+    const choice: MainBrowser = val.startsWith("app:") ? { kind: "app", name: val.slice(4) } : val === "system" ? { kind: "system" } : { kind: "builtin" };
+    try {
+      await api.setMainBrowser(choice);
+      setV({ ...v, current: choice });
+      window.dispatchEvent(new Event("browser-changed"));
+      toast("Saved.", "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="form web-search">
+      <h3>Main browser</h3>
+      <label>
+        Links and the 🌐 button open in
+        <select value={value} onChange={(e) => pick(e.target.value)}>
+          <option value="builtin">SulcusAI's browser (the assistant can use it)</option>
+          <option value="system">Windows' default browser</option>
+          {v.installed.map((b) => (
+            <option key={b.name} value={`app:${b.name}`}>{b.name}</option>
+          ))}
+        </select>
+      </label>
+      <p className="muted small">The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.</p>
     </div>
   );
 }
@@ -180,6 +216,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         </div>
         <p className="muted small">Tip: while Offline, the 🌐 button in a chat (or Ctrl+Shift+W) turns web on for just that chat.</p>
         <WebSearchSettings toast={toast} />
+        <BrowserChoice toast={toast} />
       </section>
 
       <section className="card">
