@@ -237,6 +237,8 @@ export interface ToolMeta {
   handoff_to?: string;
   /** On the first message of a continued chat. */
   handoff_from?: string;
+  /** A document the assistant made (it can be opened). */
+  file?: string;
   /** The assistant asked the user to turn on web access. */
   web_request?: boolean;
 }
@@ -465,6 +467,7 @@ export type FeatureId =
   | "browser"
   | "email"
   | "calendar"
+  | "documents"
   | "files"
   | "memory"
   | "projects"
@@ -786,6 +789,7 @@ export const api = {
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
+  openDocument: (path: string) => invoke<void>("open_document", { path }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),

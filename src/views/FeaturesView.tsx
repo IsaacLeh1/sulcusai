@@ -39,6 +39,11 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Calendar",
     detail: "Events on this PC, plus iCloud, Fastmail or Nextcloud calendars. The assistant can check your schedule, find free time and add events; inviting people always asks you first.",
   },
+  documents: {
+    icon: "📄",
+    name: "Documents",
+    detail: "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -50,7 +55,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes, tasks, mail and calendar", ids: ["notes", "tasks", "email", "calendar"] },
-  { title: "Assistant", ids: ["web_search", "browser", "files", "memory", "projects", "scheduled", "connectors"] },
+  { title: "Assistant", ids: ["web_search", "browser", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {

@@ -1034,3 +1034,46 @@ async fn e2e_email_and_calendar() {
     assert!(!log.iter().any(|l| l.contains("invite")), "no made-up invitations");
     state.engine.lock().await.stop().await;
 }
+
+/// The real model makes a spreadsheet with a formula, a Word document and a
+/// deck in a shared folder, then reads one back. Approvals are answered Allow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_documents() {
+    let (state, ep, cipher) = agent_harness().await;
+    let work = std::env::temp_dir().join(format!("sulcusai-docs-e2e-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&work).unwrap();
+    let root = dunce::canonicalize(&work).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &root.display().to_string()).unwrap();
+    let st = state.clone();
+    let approver = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                println!("approval: {}", p.preview.title);
+                st.approvals.answer(&p.call_id, crate::agent::Decision::Allow);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+    let folder = root.file_name().unwrap().to_string_lossy().to_string();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let r = say(&state, &ep, &cipher, &chat.id, &format!("Make a spreadsheet {folder}/budget.xlsx with columns Item and Cost: Rent 1200, Food 400, Travel 150, and a Total row that adds them up with a formula. /no_think")).await;
+    println!("xlsx answer: {r}");
+    for m in crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id).iter().filter(|m| m.role == "tool" || m.tool_calls.is_some()).take(6) {
+        println!("  [{}] {}", m.role, if m.role == "tool" { m.content.chars().take(300).collect::<String>() } else { format!("{:?}", m.tool_calls).chars().take(600).collect() });
+    }
+    let r = say(&state, &ep, &cipher, &chat.id, &format!("Now write a short Word document {folder}/summary.docx with a heading and two bullet points about this budget. /no_think")).await;
+    println!("docx answer: {r}");
+    let r = say(&state, &ep, &cipher, &chat.id, &format!("And a 3-slide PowerPoint {folder}/budget.pptx: a title slide, a slide of costs, and a slide of next steps. /no_think")).await;
+    println!("pptx answer: {r}");
+    approver.abort();
+    for f in ["budget.xlsx", "summary.docx", "budget.pptx"] {
+        match crate::docs::read_text(&root.join(f)) {
+            Ok(text) => println!("---- {f}\n{}", text.chars().take(700).collect::<String>()),
+            Err(e) => println!("---- {f}: not made ({e})"),
+        }
+    }
+    let sheet = crate::docs::read_text(&root.join("budget.xlsx")).unwrap();
+    assert!(sheet.contains("| Rent | 1200 |") && sheet.contains("SUM(B"), "{sheet}");
+    state.engine.lock().await.stop().await;
+}

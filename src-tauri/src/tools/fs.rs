@@ -60,6 +60,15 @@ pub fn delete_path_params() -> Value {
     json!({ "type": "object", "required": ["path"], "properties": { "path": { "type": "string" } } })
 }
 
+/// Office files and PDFs are zipped or binary: writing text into one breaks it.
+fn refuse_binary(path: &Path) -> Result<(), String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if matches!(ext.as_str(), "docx" | "xlsx" | "xls" | "pptx" | "pdf" | "doc" | "ppt" | "odt" | "ods") {
+        return Err(format!("A .{ext} file can't be written as text. Use create_document for Word, Excel, PowerPoint and PDF files."));
+    }
+    Ok(())
+}
+
 fn read_text(path: &Path) -> Result<String, String> {
     let meta = std::fs::metadata(path).map_err(|_| format!("{} doesn't exist.", path.display()))?;
     if meta.is_dir() {
@@ -155,6 +164,7 @@ pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String
     Ok(match name {
         "write_file" => {
             let path = p("path")?;
+            refuse_binary(&path)?;
             let label = sb.display(&path);
             let raw = arg_str(args, "content")?;
             let stripped = strip_line_numbers(raw);
@@ -225,6 +235,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "search_files" => search_files(sb, args),
             "write_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
+                refuse_binary(&path)?;
                 let raw = arg_str(args, "content")?;
                 let stripped = strip_line_numbers(raw);
                 let content = stripped.as_deref().unwrap_or(raw);

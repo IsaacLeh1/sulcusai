@@ -220,6 +220,12 @@ impl Turn {
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["search_meetings", "read_meeting"]);
         }
+        if files && features.contains(&Feature::Documents) {
+            extra.push("read_document");
+            if self.mode != tools::Mode::Plan {
+                extra.push("create_document");
+            }
+        }
         if self.use_tools && features.contains(&Feature::Email) && crate::mail::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["email_search", "email_read"]);
             if self.mode != tools::Mode::Plan {

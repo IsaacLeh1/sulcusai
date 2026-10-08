@@ -18,6 +18,8 @@ const TOOL_ICONS: Record<string, string> = {
   remember: "🧠",
   search_memory: "🧠",
   delegate: "🤖",
+  create_document: "📄",
+  read_document: "📄",
   browser_open: "🧭",
   browser_read: "🧭",
   browser_click: "👆",
@@ -71,6 +73,11 @@ export function ToolCard({ call, meta, output, running, liveSteps }: { call: Too
             <li key={i}>{st}</li>
           ))}
         </ul>
+      )}
+      {meta?.file && status === "ok" && (
+        <div className="tool-actions">
+          <button className="btn small" onClick={() => api.openDocument(meta.file!).catch(() => {})}>Open</button>
+        </div>
       )}
       {open && call.name === "delegate" && output && <pre className="tool-output">{output}</pre>}
       {open && (detail ? <Detail kind={meta?.kind ?? "text"} detail={detail} /> : output && call.name !== "delegate" ? <pre className="tool-output">{output}</pre> : null)}

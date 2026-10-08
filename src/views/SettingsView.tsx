@@ -20,6 +20,8 @@ const THIRD_PARTY = [
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
   { name: "RustCrypto (aes-gcm, argon2, sha2)", license: "MIT / Apache-2.0", url: "https://github.com/RustCrypto" },
   { name: "Email and calendar (async-imap, mail-parser, lettre, quick-xml, chrono-tz)", license: "MIT / Apache-2.0", url: "" },
+  { name: "Documents (docx-rs, rust_xlsxwriter, calamine, pdf-extract)", license: "MIT / Apache-2.0", url: "" },
+  { name: "PowerPoint template (from python-pptx)", license: "MIT", url: "https://github.com/scanny/python-pptx" },
   { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
 ];
 

@@ -3,6 +3,7 @@
 
 pub mod browser;
 pub mod comms;
+mod documents;
 mod fs;
 mod meetings;
 mod memory;
@@ -95,6 +96,7 @@ fn group(name: &str) -> &'static str {
         "create_task" | "list_tasks" | "complete_task" => "tasks",
         "web_search" | "fetch_page" | "request_web" => "web",
         n if n.starts_with("browser_") => "browser",
+        "create_document" | "read_document" => "documents",
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
         _ => "files",
@@ -160,6 +162,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Type into a field in the browser by its number (replacing what's there), or pick a dropdown choice. Never for passwords or payment details: ask the user to type those in the browser window." },
     ToolDef { name: "browser_back", risk: Risk::Read, params: browser::browser_back_params,
         description: "Go back to the previous page in the browser." },
+    ToolDef { name: "create_document", risk: Risk::Write, params: documents::create_document_params,
+        description: "Make a Word (.docx), PDF, Markdown, Excel (.xlsx, with working formulas and charts) or PowerPoint (.pptx) file in a shared folder. Give markdown for documents, sheets for spreadsheets, slides for decks." },
+    ToolDef { name: "read_document", risk: Risk::Read, params: documents::read_document_params,
+        description: "Read the text of a Word, Excel, PowerPoint, PDF, CSV or text file in a shared folder (spreadsheets come back as tables with their formulas)." },
     ToolDef { name: "email_search", risk: Risk::Read, params: comms::email_search_params,
         description: "Search the user's email (a copy kept on this PC) by sender, subject or words. Returns ids, dates, senders and subjects; empty query lists the newest." },
     ToolDef { name: "email_read", risk: Risk::Read, params: comms::email_read_params,
@@ -209,7 +215,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -287,6 +293,7 @@ pub fn notes_preview(name: &str, args: &Value, db: &Mutex<Connection>, cipher: &
 
 pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, String> {
     match name {
+        "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         _ => fs::preview(name, args, sandbox),
     }
@@ -301,6 +308,11 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" => web::run(name, args, &ctx.memory).await,
+        "create_document" | "read_document" => {
+            let name = name.to_string();
+            let args = args.clone();
+            tokio::task::block_in_place(|| documents::run(&name, &args, ctx))
+        }
         n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
@@ -335,6 +347,8 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "web_search" => return "Couldn't search the web".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
         n if n.starts_with("browser_") => return "Couldn't use the browser".into(),
+        "create_document" => return "Couldn't make the document".into(),
+        "read_document" => return "Couldn't read the document".into(),
         n if n.starts_with("email_") => return "Couldn't use the email".into(),
         n if n.starts_with("calendar_") => return "Couldn't use the calendar".into(),
         "write_file" => "write",
@@ -373,8 +387,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email and calendar tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 24);
+        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar and document tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 26);
     }
 
     #[test]

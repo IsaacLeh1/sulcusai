@@ -12,6 +12,7 @@ mod checkpoint;
 mod connectors;
 mod crypto;
 mod db;
+mod docs;
 mod diarize;
 mod download;
 #[cfg(all(test, windows))]
@@ -828,6 +829,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
             browser::open_browser,
+            docs::open_document,
             mail::mail_preset,
             mail::mail_accounts,
             mail::add_mail_account,

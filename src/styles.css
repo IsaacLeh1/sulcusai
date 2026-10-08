@@ -576,3 +576,4 @@ select, .input {
 .agenda-time { width: 140px; flex: none; color: var(--muted); }
 .agenda-event .grow { flex: 1; min-width: 0; }
 .form label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
+.tool-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
