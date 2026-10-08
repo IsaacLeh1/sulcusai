@@ -1174,3 +1174,32 @@ async fn e2e_browser_extension() {
     let _ = std::fs::remove_dir_all(&profile);
     result.unwrap();
 }
+
+/// The question from his chat: the weather in Orem, with exact figures,
+/// asked of the small model. Prints which tools it used and what it said.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_weather_question() {
+    let (state, ep, cipher) = agent_harness().await;
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
+    let (client, _, _) = crate::web::prepare(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
+    let report = crate::web::weather(&client, "Orem, Utah", 2).await.unwrap();
+    println!("tool report:\n{report}\n");
+    assert!(report.contains("Orem, Utah") && report.contains("°F"));
+    for q in ["What is the weather in Orem Utah today", "Give me the exact temperature right now", "Search the web: how tall is Mount Timpanogos in feet?"] {
+        let reply = say(&state, &ep, &cipher, &chat.id, &format!("{q} /no_think")).await;
+        println!("Q: {q}\nA: {reply}\n");
+    }
+    let used: Vec<String> = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)
+        .iter()
+        .filter_map(|m| m.tool_calls.as_ref())
+        .flat_map(|c| c.iter().map(|c| c.name.clone()))
+        .collect();
+    println!("tools used: {used:?}");
+    assert!(used.iter().any(|t| t == "weather"));
+    for m in crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id).iter().rev().take(4).rev() {
+        println!("[{}] content={:?} thinking={:?} calls={:?}", m.role, m.content.chars().take(200).collect::<String>(), m.thinking.as_deref().map(|t| t.chars().take(200).collect::<String>()), m.tool_calls.as_ref().map(|c| c.iter().map(|c| c.name.clone()).collect::<Vec<_>>()));
+    }
+    state.engine.lock().await.stop().await;
+}

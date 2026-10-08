@@ -94,7 +94,7 @@ fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
-        "web_search" | "fetch_page" | "request_web" => "web",
+        "web_search" | "fetch_page" | "request_web" | "weather" => "web",
         n if n.starts_with("browser_") => "browser",
         "create_document" | "read_document" => "documents",
         n if n.starts_with("email_") => "email",
@@ -148,6 +148,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Mark one of the user's tasks done, by id." },
     ToolDef { name: "web_search", risk: Risk::Read, params: web::web_search_params,
         description: "Search the web for current information. Returns titles, addresses and snippets to cite." },
+    ToolDef { name: "weather", risk: Risk::Read, params: web::weather_params,
+        description: "Current weather and the forecast for a place, with exact temperatures. Use it for any weather question instead of web_search." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
@@ -307,7 +309,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
             notes::run(name, args, &ctx.memory)
         }
-        "web_search" | "fetch_page" | "request_web" => web::run(name, args, &ctx.memory).await,
+        "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory).await,
         "create_document" | "read_document" => {
             let name = name.to_string();
             let args = args.clone();
@@ -346,6 +348,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "create_task" | "list_tasks" | "complete_task" => return "Couldn't use the task list".into(),
         "web_search" => return "Couldn't search the web".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
+        "weather" => return "Couldn't check the weather".into(),
         n if n.starts_with("browser_") => return "Couldn't use the browser".into(),
         "create_document" => return "Couldn't make the document".into(),
         "read_document" => return "Couldn't read the document".into(),
@@ -388,7 +391,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar and document tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 26);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 27);
     }
 
     #[test]

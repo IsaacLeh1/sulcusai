@@ -12,6 +12,12 @@ pub fn web_search_params() -> Value {
         "count": { "type": "integer", "description": "How many results (1-10, default 6)." } } })
 }
 
+pub fn weather_params() -> Value {
+    json!({ "type": "object", "required": ["place"], "properties": {
+        "place": { "type": "string", "description": "A city, e.g. \"Orem, Utah\" or \"Paris, France\"." },
+        "days": { "type": "integer", "description": "Days of forecast (1-7, default 2)." } } })
+}
+
 pub fn fetch_page_params() -> Value {
     json!({ "type": "object", "required": ["url"], "properties": { "url": { "type": "string", "description": "A full http(s) address." } } })
 }
@@ -60,15 +66,32 @@ pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
             match web::search(&settings, key, &client, &query, count).await {
                 Ok(hits) if hits.is_empty() => Outcome::ok("No results.", format!("Searched the web for “{query}”"), "text", None),
                 Ok(hits) => {
+                    // Read the top pages too, and keep the lines that answer:
+                    // small models rarely open pages themselves.
+                    let reads = hits.iter().take(3).map(|h| {
+                        let (client, url) = (client.clone(), h.url.clone());
+                        async move { tokio::time::timeout(std::time::Duration::from_secs(8), web::fetch(&client, &url)).await.ok().and_then(Result::ok) }
+                    });
+                    let pages = futures_util::future::join_all(reads).await;
+                    let found: Vec<String> = pages
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, p)| {
+                            let p = p.as_ref()?;
+                            let e = web::excerpts(&p.text, &query, 900);
+                            (!e.is_empty()).then(|| format!("From [{}] {}:\n{e}", i + 1, hits[i].title))
+                        })
+                        .collect();
                     let list = hits
                         .iter()
                         .enumerate()
                         .map(|(i, h)| format!("[{}] {}\n{}\n{}", i + 1, h.title, h.url, h.snippet))
                         .collect::<Vec<_>>()
                         .join("\n\n");
+                    let read = if found.is_empty() { String::new() } else { format!("\n\nWhat the top pages say:\n{}", found.join("\n\n")) };
                     let text = format!(
-                        "{UNTRUSTED}\n\n{list}\n\nAnswer only from these results and pages you read, never from memory. \
-                         If the snippets don't clearly answer the question, read the best page with fetch_page first. \
+                        "{UNTRUSTED}\n\n{list}{read}\n\nAnswer only from these results and page excerpts, never from memory. \
+                         Give exact numbers only if they appear above; if they don't, say you couldn't find them and suggest reading a page with fetch_page. Never estimate or guess figures. \
                          Cite sources as Markdown links, e.g. [Title](url)."
                     );
                     let shown = hits.iter().map(|h| format!("{} — {}", h.title, h.url)).collect::<Vec<_>>().join("\n");
@@ -77,6 +100,23 @@ pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
                     o
                 }
                 Err(e) => Outcome::error(format!("Couldn't search for “{query}”"), e),
+            }
+        }
+        "weather" => {
+            let place = args.get("place").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            if place.is_empty() {
+                return Outcome::error("Couldn't check the weather", "Say which place.");
+            }
+            let days = args.get("days").and_then(Value::as_u64).unwrap_or(2) as usize;
+            crate::db::log_action(&ctx.db.lock().unwrap(), "network", "Checked the weather with Open-Meteo");
+            match web::weather(&client, &place, days).await {
+                Ok(report) => {
+                    let text = format!("{report}\n\nAnswer with these exact figures. Weather data by Open-Meteo.com.");
+                    let mut o = Outcome::ok(text, format!("Checked the weather for {place}"), "text", Some(report));
+                    o.meta["sources"] = json!([{ "title": "Open-Meteo", "url": "https://open-meteo.com/", "snippet": "" }]);
+                    o
+                }
+                Err(e) => Outcome::error(format!("Couldn't check the weather for {place}"), e),
             }
         }
         "fetch_page" => {

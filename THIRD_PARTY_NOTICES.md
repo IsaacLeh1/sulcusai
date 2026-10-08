@@ -38,6 +38,13 @@ pnpm licenses list --prod
 | React, react-dom | MIT |
 | react-markdown, remark-gfm and the unified ecosystem | MIT |
 
+## Online services (only with web access on)
+
+| Service | Terms |
+|---|---|
+| Open-Meteo (weather tool; weather data by Open-Meteo.com) | Data CC BY 4.0. The free API is for non-commercial use; a commercial release needs an Open-Meteo plan or another source. |
+| DuckDuckGo, Brave Search, SearXNG (web search, chosen in Settings) | Each service's own terms |
+
 ## AI models
 
 Models aren't distributed with SulcusAI. The app downloads them from their

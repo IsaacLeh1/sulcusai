@@ -336,6 +336,172 @@ pub fn prepare(conn: &Connection, c: &Cipher, chat_id: &str) -> Result<(reqwest:
     Ok((client(level, chat_web)?, settings(conn), brave_key(conn, c)))
 }
 
+// ---------- excerpts ----------
+
+/// The lines of a page that bear on a question: they share its words, or
+/// carry figures (numbers with units). Small models answer far better from
+/// these than from search snippets alone.
+pub fn excerpts(text: &str, query: &str, max_chars: usize) -> String {
+    const STOP: &[&str] = &["the", "and", "for", "what", "whats", "how", "is", "are", "today", "now", "current", "in", "of", "a", "to", "me", "my", "with", "does", "do", "on", "at", "this", "that", "give", "tell", "exact"];
+    let words: Vec<String> = query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 2 && !STOP.contains(w))
+        .map(str::to_string)
+        .collect();
+    let figure = regex::Regex::new(r"(?i)\d\s*(°|º|%|\$|€|£|mph|km/?h|degrees|deg\b|f\b|c\b|in\b|mm\b|cm\b|kg\b|lbs?\b|million|billion|pm\b|am\b)|[$€£]\s*\d").unwrap();
+    let mut scored: Vec<(usize, i32, String)> = text
+        .split(['\n'])
+        .flat_map(|l| l.split(". "))
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|l| l.len() >= 12)
+        .enumerate()
+        .map(|(i, l)| {
+            let low = l.to_lowercase();
+            let hits = words.iter().filter(|w| low.contains(w.as_str())).count() as i32;
+            let score = hits * 2 + if figure.is_match(&l) { 3 } else if l.chars().any(|c| c.is_ascii_digit()) { 1 } else { 0 };
+            (i, score, l.chars().take(300).collect())
+        })
+        .filter(|(_, s, _)| *s >= 3)
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let mut picked: Vec<(usize, String)> = Vec::new();
+    let mut used = 0;
+    for (i, _, l) in scored {
+        if used + l.len() > max_chars || picked.iter().any(|(_, p)| p == &l) {
+            continue;
+        }
+        used += l.len() + 1;
+        picked.push((i, l));
+    }
+    picked.sort_by_key(|(i, _)| *i);
+    picked.into_iter().map(|(_, l)| l).collect::<Vec<_>>().join("\n")
+}
+
+// ---------- weather ----------
+
+/// What the WMO weather codes mean.
+fn weather_words(code: i64) -> &'static str {
+    match code {
+        0 => "clear",
+        1 => "mainly clear",
+        2 => "partly cloudy",
+        3 => "overcast",
+        45 | 48 => "fog",
+        51 | 53 | 55 => "drizzle",
+        56 | 57 => "freezing drizzle",
+        61 => "light rain",
+        63 => "rain",
+        65 => "heavy rain",
+        66 | 67 => "freezing rain",
+        71 => "light snow",
+        73 => "snow",
+        75 => "heavy snow",
+        77 => "snow grains",
+        80 | 81 => "rain showers",
+        82 => "heavy rain showers",
+        85 | 86 => "snow showers",
+        95 => "thunderstorm",
+        96 | 99 => "thunderstorm with hail",
+        _ => "unsettled",
+    }
+}
+
+/// Current conditions and a short forecast from Open-Meteo (no account;
+/// weather data CC BY 4.0). Places like "Orem, Utah" are matched by name,
+/// then by the state or country after the comma.
+pub async fn weather(client: &reqwest::Client, place: &str, days: usize) -> Result<String, String> {
+    let (name, region) = match place.split_once(',') {
+        Some((n, r)) => (n.trim(), r.trim().to_lowercase()),
+        None => (place.trim(), String::new()),
+    };
+    let geo: serde_json::Value = client
+        .get("https://geocoding-api.open-meteo.com/v1/search")
+        .query(&[("name", name), ("count", "10"), ("language", "en"), ("format", "json")])
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach the weather service: {e}"))?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let places = geo["results"].as_array().cloned().unwrap_or_default();
+    let fits = |p: &serde_json::Value| {
+        region.is_empty()
+            || ["admin1", "country", "country_code"].iter().any(|k| p[*k].as_str().is_some_and(|v| {
+                let v = v.to_lowercase();
+                v == region || v.contains(&region) || region.contains(&v) || us_state_code(&region) == Some(v.as_str())
+            }))
+    };
+    let p = places.iter().find(|p| fits(p)).or(places.first()).ok_or_else(|| format!("I couldn't find a place called “{place}”."))?;
+    let (lat, lon) = (p["latitude"].as_f64().unwrap_or(0.0), p["longitude"].as_f64().unwrap_or(0.0));
+    let us = matches!(p["country_code"].as_str(), Some("US" | "LR" | "MM"));
+    let label = [p["name"].as_str(), p["admin1"].as_str(), p["country"].as_str()].into_iter().flatten().collect::<Vec<_>>().join(", ");
+    let f: serde_json::Value = client
+        .get("https://api.open-meteo.com/v1/forecast")
+        .query(&[
+            ("latitude", lat.to_string()),
+            ("longitude", lon.to_string()),
+            ("current", "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m".into()),
+            ("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max".into()),
+            ("temperature_unit", if us { "fahrenheit" } else { "celsius" }.into()),
+            ("wind_speed_unit", if us { "mph" } else { "kmh" }.into()),
+            ("timezone", "auto".into()),
+            ("forecast_days", days.clamp(1, 7).to_string()),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Couldn't reach the weather service: {e}"))?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let (t, w) = if us { ("°F", "mph") } else { ("°C", "km/h") };
+    let other = |v: f64| if us { format!("{:.0}°C", (v - 32.0) * 5.0 / 9.0) } else { format!("{:.0}°F", v * 9.0 / 5.0 + 32.0) };
+    let c = &f["current"];
+    let num = |v: &serde_json::Value| v.as_f64().unwrap_or(f64::NAN);
+    let mut out = format!(
+        "Weather for {label} (Open-Meteo, local time {}):\nNow: {:.0}{t} ({}), feels like {:.0}{t}, {}, humidity {:.0}%, wind {:.0} {w}.",
+        c["time"].as_str().unwrap_or("").replace('T', " "),
+        num(&c["temperature_2m"]),
+        other(num(&c["temperature_2m"])),
+        num(&c["apparent_temperature"]),
+        weather_words(c["weather_code"].as_i64().unwrap_or(-1)),
+        num(&c["relative_humidity_2m"]),
+        num(&c["wind_speed_10m"]),
+    );
+    let d = &f["daily"];
+    for i in 0..d["time"].as_array().map_or(0, Vec::len) {
+        let day = match i {
+            0 => "Today".to_string(),
+            1 => "Tomorrow".to_string(),
+            _ => d["time"][i].as_str().unwrap_or("").to_string(),
+        };
+        out.push_str(&format!(
+            "\n{day}: high {:.0}{t} ({}), low {:.0}{t} ({}), {}, chance of rain or snow {:.0}%.",
+            num(&d["temperature_2m_max"][i]),
+            other(num(&d["temperature_2m_max"][i])),
+            num(&d["temperature_2m_min"][i]),
+            other(num(&d["temperature_2m_min"][i])),
+            weather_words(d["weather_code"][i].as_i64().unwrap_or(-1)),
+            num(&d["precipitation_probability_max"][i]),
+        ));
+    }
+    Ok(out)
+}
+
+/// "ut" → "utah", for matching "Orem, UT".
+fn us_state_code(code: &str) -> Option<&'static str> {
+    const STATES: &[(&str, &str)] = &[
+        ("al", "alabama"), ("ak", "alaska"), ("az", "arizona"), ("ar", "arkansas"), ("ca", "california"), ("co", "colorado"), ("ct", "connecticut"),
+        ("de", "delaware"), ("fl", "florida"), ("ga", "georgia"), ("hi", "hawaii"), ("id", "idaho"), ("il", "illinois"), ("in", "indiana"), ("ia", "iowa"),
+        ("ks", "kansas"), ("ky", "kentucky"), ("la", "louisiana"), ("me", "maine"), ("md", "maryland"), ("ma", "massachusetts"), ("mi", "michigan"),
+        ("mn", "minnesota"), ("ms", "mississippi"), ("mo", "missouri"), ("mt", "montana"), ("ne", "nebraska"), ("nv", "nevada"), ("nh", "new hampshire"),
+        ("nj", "new jersey"), ("nm", "new mexico"), ("ny", "new york"), ("nc", "north carolina"), ("nd", "north dakota"), ("oh", "ohio"), ("ok", "oklahoma"),
+        ("or", "oregon"), ("pa", "pennsylvania"), ("ri", "rhode island"), ("sc", "south carolina"), ("sd", "south dakota"), ("tn", "tennessee"), ("tx", "texas"),
+        ("ut", "utah"), ("vt", "vermont"), ("va", "virginia"), ("wa", "washington"), ("wv", "west virginia"), ("wi", "wisconsin"), ("wy", "wyoming"),
+    ];
+    STATES.iter().find(|(c, _)| *c == code).map(|(_, n)| *n)
+}
+
 // ---------- commands ----------
 
 #[derive(Serialize)]
@@ -405,6 +571,17 @@ mod tests {
         // The browser, email and cloud still follow the level.
         let (level, _) = chat_access(&conn, "c");
         assert!(!net::allowed(level, Purpose::Web, false) && !net::allowed(level, Purpose::Cloud, true));
+    }
+
+    #[test]
+    fn excerpts_keep_the_lines_with_answers() {
+        let page = "Skip to content\nSign in\nOrem, UT Weather Forecast\nCurrent conditions: 58°F, partly cloudy. Wind NW 7 mph.\nToday's high 64°F and low 41°F.\nPrivacy policy\nAdvertise with us\nOrem is a city in Utah County.";
+        let e = excerpts(page, "weather in Orem Utah today", 400);
+        assert!(e.contains("58°F") && e.contains("high 64°F"), "{e}");
+        assert!(!e.contains("Privacy") && !e.contains("Sign in"), "{e}");
+        assert!(e.find("58°F").unwrap() < e.find("64°F").unwrap(), "page order is kept");
+        assert_eq!(us_state_code("ut"), Some("utah"));
+        assert_eq!(weather_words(2), "partly cloudy");
     }
 
     #[test]

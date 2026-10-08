@@ -244,7 +244,7 @@ impl Turn {
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
-                extra.extend(["web_search", "fetch_page"]);
+                extra.extend(["weather", "web_search", "fetch_page"]);
             } else {
                 extra.push("request_web");
             }

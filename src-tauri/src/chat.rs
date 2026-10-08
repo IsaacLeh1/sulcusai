@@ -310,6 +310,20 @@ pub async fn stream(
             }
         }
     }
+    // Small models sometimes write a tool call into their thinking or their
+    // text instead of the tool-call channel; run it rather than lose it.
+    if out.tool_calls.is_empty() && !out.cancelled {
+        let offered: Vec<String> = tools.and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
+        if !offered.is_empty() {
+            let from_text = salvage_tool_calls(&out.content, &offered);
+            if !from_text.is_empty() {
+                out.content = TOOL_CALL_BLOCK.replace_all(&out.content, "").trim().to_string();
+                out.tool_calls = from_text;
+            } else if out.content.trim().is_empty() {
+                out.tool_calls = salvage_tool_calls(&out.thinking, &offered);
+            }
+        }
+    }
     for (i, c) in out.tool_calls.iter_mut().enumerate() {
         if c.id.is_empty() {
             c.id = format!("call_{}_{i}", uuid::Uuid::new_v4().simple());
@@ -317,6 +331,29 @@ pub async fn stream(
     }
     out.tool_calls.retain(|c| !c.name.is_empty());
     Ok(out)
+}
+
+static TOOL_CALL_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>").unwrap());
+
+/// `<tool_call>{"name": ..., "arguments": {...}}</tool_call>` blocks in text,
+/// for tools that were offered.
+fn salvage_tool_calls(text: &str, offered: &[String]) -> Vec<ToolCall> {
+    TOOL_CALL_BLOCK
+        .captures_iter(text)
+        .filter_map(|c| {
+            let v: Value = serde_json::from_str(&c[1]).ok()?;
+            let name = v["name"].as_str()?.to_string();
+            if !offered.contains(&name) {
+                return None;
+            }
+            let arguments = match &v["arguments"] {
+                Value::String(s) => s.clone(),
+                Value::Null => "{}".into(),
+                other => other.to_string(),
+            };
+            Some(ToolCall { id: String::new(), name, arguments })
+        })
+        .collect()
 }
 
 /// One reply, not streamed, for background work such as meeting notes and
@@ -423,6 +460,12 @@ mod tests {
     #[test]
     fn title_uses_first_nonempty_line_and_truncates() {
         assert_eq!(title_from("\n  hello there \nmore"), "hello there");
+        let offered = vec!["web_search".to_string()];
+        let calls = salvage_tool_calls("\n<tool_call>\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"Mount Timpanogos height\"}}\n</tool_call>", &offered);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "web_search");
+        assert!(calls[0].arguments.contains("Timpanogos"));
+        assert!(salvage_tool_calls("<tool_call>{\"name\": \"delete_everything\", \"arguments\": {}}</tool_call>", &offered).is_empty(), "only offered tools");
         assert_eq!(clean_title("\"Trip to Tokyo.\"").as_deref(), Some("Trip to Tokyo"));
         assert_eq!(clean_title("Title: Budget plan\nextra").as_deref(), Some("Budget plan"));
         assert_eq!(clean_title("   "), None);
