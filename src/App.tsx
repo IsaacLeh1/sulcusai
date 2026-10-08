@@ -28,6 +28,8 @@ import { TranslateView } from "./views/TranslateView";
 import { FeaturesView } from "./views/FeaturesView";
 import { NotesView } from "./views/NotesView";
 import { TasksView } from "./views/TasksView";
+import { MailView } from "./views/MailView";
+import { CalendarView } from "./views/CalendarView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
@@ -37,7 +39,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "features" | "meetings" | "translate" | "notes" | "tasks" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -45,6 +47,8 @@ const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   translate: "translate",
   notes: "notes",
   tasks: "tasks",
+  mail: "email",
+  calendar: "calendar",
   memory: "memory",
   scheduled: "scheduled",
   connectors: "connectors",
@@ -325,6 +329,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               Tasks
             </button>
           )}
+          {has("email") && (
+            <button className={view === "mail" ? "active" : ""} onClick={() => setView("mail")}>
+              Mail
+            </button>
+          )}
+          {has("calendar") && (
+            <button className={view === "calendar" ? "active" : ""} onClick={() => setView("calendar")}>
+              Calendar
+            </button>
+          )}
           {has("translate") && (
             <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
               Translate
@@ -453,6 +467,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "features" && <FeaturesView progress={progress} toast={toast} />}
         {view === "notes" && <NotesView toast={toast} />}
         {view === "tasks" && <TasksView toast={toast} />}
+        {view === "mail" && <MailView toast={toast} />}
+        {view === "calendar" && <CalendarView toast={toast} />}
         {view === "models" && (
           <ModelsView
             catalog={catalog}

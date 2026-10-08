@@ -463,6 +463,8 @@ export type FeatureId =
   | "tasks"
   | "web_search"
   | "browser"
+  | "email"
+  | "calendar"
   | "files"
   | "memory"
   | "projects"
@@ -501,6 +503,94 @@ export interface Task {
   remind_at: number | null;
   done_at: number | null;
   created_at: number;
+}
+
+export type MailSecurity = "tls" | "starttls" | "plain";
+
+export interface MailConfig {
+  name: string;
+  email: string;
+  username: string;
+  password: string;
+  imap_host: string;
+  imap_port: number;
+  imap_security: MailSecurity;
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: MailSecurity;
+}
+
+export interface MailAccount {
+  id: string;
+  name: string;
+  email: string;
+  imap_host: string;
+  smtp_host: string;
+  synced_at: number | null;
+}
+
+export interface MailItem {
+  id: string;
+  account_id: string;
+  folder: string;
+  date: number;
+  seen: boolean;
+  from: string;
+  from_name: string;
+  to: string[];
+  cc: string[];
+  subject: string;
+  snippet: string;
+  body: string;
+  attachments: string[];
+  partial: boolean;
+}
+
+export interface MailDraft {
+  to: string[];
+  cc: string[];
+  subject: string;
+  body: string;
+  reply_to: string | null;
+}
+
+export interface CalInfo {
+  href: string;
+  name: string;
+  color: string;
+}
+
+export interface CalAccount {
+  id: string;
+  name: string;
+  url: string;
+  calendars: CalInfo[];
+  synced_at: number | null;
+}
+
+export interface CalEvent {
+  id: string;
+  account_id: string | null;
+  calendar: string | null;
+  start: number;
+  end: number;
+  all_day: boolean;
+  title: string;
+  location: string;
+  notes: string;
+  attendees: string[];
+  recurring: boolean;
+}
+
+export interface NewEvent {
+  title: string;
+  start: number;
+  end: number;
+  all_day: boolean;
+  location: string;
+  notes: string;
+  attendees: string[];
+  calendar: string | null;
 }
 
 export type PerfMode = "cool" | "balanced" | "turbo";
@@ -696,6 +786,22 @@ export const api = {
   tasksFromMeeting: (meetingId: string, indexes: number[]) => invoke<number>("tasks_from_meeting", { meetingId, indexes }),
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
+  mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
+  mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
+  addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
+  removeMailAccount: (id: string) => invoke<void>("remove_mail_account", { id }),
+  syncMail: () => invoke<number>("sync_mail"),
+  mailList: (query: string) => invoke<MailItem[]>("mail_list", { query, limit: 300 }),
+  mailGet: (id: string) => invoke<MailItem>("mail_get", { id }),
+  sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
+  calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
+  calendarAccounts: () => invoke<CalAccount[]>("calendar_accounts"),
+  addCalendarAccount: (account: { name: string; url: string; username: string; password: string; calendars: CalInfo[] }) => invoke<string>("add_calendar_account", { account }),
+  removeCalendarAccount: (id: string) => invoke<void>("remove_calendar_account", { id }),
+  syncCalendars: () => invoke<number>("sync_calendars"),
+  calendarEvents: (from: number, to: number) => invoke<CalEvent[]>("calendar_events", { from, to }),
+  createEvent: (event: NewEvent) => invoke<CalEvent>("create_event", { event }),
+  deleteEvent: (id: string) => invoke<void>("delete_event", { id }),
   perfView: () => invoke<PerfView>("perf_view"),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
@@ -760,6 +866,8 @@ export interface ChatEvents {
   "features:changed": Record<string, never>;
   "task:reminder": { id: string; title: string };
   "perf:heat": HeatState;
+  "mail:synced": { new: number };
+  "calendar:synced": Record<string, never>;
   "engine:unloaded": null;
   dictation: DictationEvent;
   voice: VoiceEvent;

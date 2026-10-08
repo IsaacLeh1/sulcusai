@@ -29,6 +29,16 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Browser",
     detail: "A built-in browser with its own sign-ins that the assistant can use while you watch. It asks before submitting forms or buying anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat).",
   },
+  email: {
+    icon: "✉️",
+    name: "Email",
+    detail: "Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming.",
+  },
+  calendar: {
+    icon: "📅",
+    name: "Calendar",
+    detail: "Events on this PC, plus iCloud, Fastmail or Nextcloud calendars. The assistant can check your schedule, find free time and add events; inviting people always asks you first.",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -39,7 +49,7 @@ export const FEATURES: Record<FeatureId, Info> = {
 const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
-  { title: "Notes and tasks", ids: ["notes", "tasks"] },
+  { title: "Notes, tasks, mail and calendar", ids: ["notes", "tasks", "email", "calendar"] },
   { title: "Assistant", ids: ["web_search", "browser", "files", "memory", "projects", "scheduled", "connectors"] },
 ];
 

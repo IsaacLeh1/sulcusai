@@ -19,6 +19,7 @@ const THIRD_PARTY = [
   { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
   { name: "RustCrypto (aes-gcm, argon2, sha2)", license: "MIT / Apache-2.0", url: "https://github.com/RustCrypto" },
+  { name: "Email and calendar (async-imap, mail-parser, lettre, quick-xml, chrono-tz)", license: "MIT / Apache-2.0", url: "" },
   { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
 ];
 

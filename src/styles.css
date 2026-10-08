@@ -549,3 +549,29 @@ select, .input {
 .context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: 8px; cursor: pointer; color: inherit; font: inherit; }
 .context-menu button:hover { background: var(--accent-soft); }
 .context-menu button.danger { color: var(--danger, #c0392b); }
+
+/* ---------- mail ---------- */
+.mail-item.unread strong { font-weight: 700; }
+.mail-item.unread { border-left: 3px solid var(--accent); }
+.mail-read { min-width: 0; min-height: 0; overflow-y: auto; padding: 18px 24px; }
+.mail-head h2 { margin: 0 0 6px; }
+.mail-head { border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 12px; }
+.mail-body { white-space: pre-wrap; word-break: break-word; font: inherit; line-height: 1.5; margin: 0; }
+.mail-accounts { margin-top: auto; border-top: 1px solid var(--border); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.mail-accounts summary { cursor: pointer; }
+.hint-box { background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; margin: 0; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.link.left { align-self: flex-start; }
+
+/* ---------- calendar ---------- */
+.agenda { display: flex; flex-direction: column; gap: 2px; margin-bottom: 18px; }
+.agenda-day { display: grid; grid-template-columns: 64px 1fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.agenda-day.today .agenda-date { color: var(--accent); }
+.agenda-date { display: flex; flex-direction: column; align-items: center; border: 0; background: none; cursor: pointer; color: inherit; font: inherit; border-radius: 8px; padding: 4px; }
+.agenda-date:hover { background: var(--accent-soft); }
+.agenda-date span { font-size: 20px; font-weight: 650; }
+.agenda-items { display: flex; flex-direction: column; gap: 4px; justify-content: center; min-width: 0; }
+.agenda-event { display: flex; align-items: center; gap: 12px; background: var(--panel); border-radius: 8px; padding: 6px 10px; }
+.agenda-event.task { background: none; border: 1px dashed var(--border); }
+.agenda-time { width: 140px; flex: none; color: var(--muted); }
+.agenda-event .grow { flex: 1; min-width: 0; }
