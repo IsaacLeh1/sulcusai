@@ -129,6 +129,40 @@ CREATE TABLE IF NOT EXISTS tasks (
   done_at      INTEGER,
   created_at   INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mail_accounts (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  synced_at  INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mail_messages (
+  id         TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES mail_accounts(id) ON DELETE CASCADE,
+  folder     TEXT NOT NULL,
+  uid        INTEGER NOT NULL,
+  date       INTEGER NOT NULL,
+  seen       INTEGER NOT NULL DEFAULT 0,
+  data       TEXT NOT NULL,
+  UNIQUE (account_id, folder, uid)
+);
+CREATE INDEX IF NOT EXISTS mail_by_date ON mail_messages(date DESC);
+CREATE TABLE IF NOT EXISTS cal_accounts (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  synced_at  INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+  id         TEXT PRIMARY KEY,
+  account_id TEXT REFERENCES cal_accounts(id) ON DELETE CASCADE,
+  calendar   TEXT,
+  start      INTEGER NOT NULL,
+  end        INTEGER NOT NULL,
+  all_day    INTEGER NOT NULL DEFAULT 0,
+  data       TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_by_start ON events(start);
 CREATE TABLE IF NOT EXISTS project_folders (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,

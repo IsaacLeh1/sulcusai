@@ -46,6 +46,13 @@ ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "
 unicode-normalization = "0.1"
 # Readable text from web pages.
 html2text = "0.17"
+# Email (IMAP read, SMTP send) and calendars (CalDAV).
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
+mail-parser = "0.11"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "logging", "tls12"] }
+webpki-roots = "1"
+quick-xml = "0.38"
 
 [target.'cfg(windows)'.dependencies]
 # The built-in browser's in-process DevTools channel (same version as wry's).

@@ -20,6 +20,7 @@ mod features;
 mod handoff;
 mod hardware;
 mod hello;
+mod mail;
 mod mcp;
 mod meeting;
 mod memory;
@@ -819,11 +820,20 @@ pub fn run() {
             schedule::start(app.handle().clone());
             notes::start_reminders(app.handle().clone());
             perf::start_monitor(app.handle().clone());
+            mail::start_sync(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
             browser::open_browser,
+            mail::mail_preset,
+            mail::mail_accounts,
+            mail::add_mail_account,
+            mail::remove_mail_account,
+            mail::sync_mail,
+            mail::mail_list,
+            mail::mail_get,
+            mail::send_mail,
             perf::set_perf,
             app_info,
             refresh_hardware,
