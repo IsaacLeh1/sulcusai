@@ -28,6 +28,13 @@ pnpm licenses list --prod
 | serde, tokio, reqwest, rustls, sysinfo, zip, uuid, chrono, base64, windows-rs and other Rust crates | MIT and/or Apache-2.0 (checked by `cargo deny`) |
 | ort (ONNX Runtime bindings, loading the downloaded DLL) | MIT or Apache-2.0 |
 | unicode-normalization | MIT or Apache-2.0 |
+| html2text (reading web pages) | MIT |
+| async-imap, mail-parser, lettre, tokio-rustls (email) | MIT and/or Apache-2.0 |
+| webpki-roots (trusted certificate list for email) | CDLA-Permissive-2.0 |
+| quick-xml, chrono-tz (calendars) | MIT and/or Apache-2.0 |
+| webview2-com (the built-in browser's in-process DevTools channel) | MIT |
+| docx-rs, rust_xlsxwriter, calamine, pdf-extract (documents) | MIT and/or Apache-2.0 |
+| PowerPoint template `assets/blank.pptx`, made from python-pptx's default template | MIT (python-pptx) |
 | React, react-dom | MIT |
 | react-markdown, remark-gfm and the unified ecosystem | MIT |
 
