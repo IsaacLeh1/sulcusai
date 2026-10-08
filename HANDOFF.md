@@ -250,9 +250,12 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - Documents (`docs.rs`, `tools/documents.rs`, Documents feature; needs shared folders): Word via docx-rs, PDF hand-written (Helvetica/Courier, Windows-1252, wrapped and paged), Excel via rust_xlsxwriter (formulas, charts, simple totals precomputed with `set_result`), PowerPoint built on `assets/blank.pptx` (python-pptx's default template made 16:9; slides added as XML). Reading: calamine, pdf-extract (catch_unwind), zip + quick-xml for docx/pptx.
   - Small-model lessons: Qwen3 1.7B writes tables as TSV, CSV, JSON records or `[a, b]` lines, and sometimes `=SUM(Rent, Food)`. All of these are accepted, or refused with an example. `write_file` refuses Office and PDF names and points to `create_document`. `e2e_documents` passes 5/5.
   - Checked with python-docx, openpyxl (incl. `data_only` totals), python-pptx and pypdf, plus a pypdfium2 render.
+- Quick ask (`quick.rs`, `QuickAsk.tsx`, Quick ask feature): Ctrl+Alt+Space (tauri-plugin-global-shortcut, registered from Rust) toggles a frameless, transparent, always-on-top window labeled `quick`, which runs the same page (`main.tsx` checks the window label). Clipboard via Win32 `GetClipboardData(CF_UNICODETEXT)`. Its chats are ordinary chats ("Continue in SulcusAI" emits `quick:open-chat` to main). Tray icon (tauri `tray-icon`) while on, and closing main hides it to the tray. `quick` is in the default capability; the browser window is in none.
+  - Not tried live yet: the hotkey, tray, transparency and focus-loss hiding need a run of the real app. Previewed in the browser pane with mocks.
+  - Not built: "ask about the screen" (needs a vision model in the catalog) and desktop control.
 - **Microsoft/Google sign-in not built yet:** it needs app registrations (Azure app ID; Google OAuth client) from the user. Outlook.com no longer allows password IMAP; Gmail works now with an app password.
 - UI preview without the backend: `mock.html` + `src/mock.tsx` (git-excluded) use Tauri's `mockIPC`. Run vite on port 1431 and open /mock.html.
-- Not yet looked at in a running window: the Performance section, the Models tabs, the sidebar menu and the browser (typechecked and unit-tested only).
+- Checked in the browser-pane preview with mocks (2026-10-08): sidebar ⚙ menu, Performance, Models tabs, Mail, Calendar, Quick ask. Not yet in the running app: the browser and quick ask (typechecked and unit-tested only).
 
 **Queued request (2026-10-07, not started; he said not to work on it yet):** keep working while locked, as a switch. Locking the app should be able to leave work running in the background, such as replies, agent steps, scheduled tasks and meeting recording, instead of stopping it. Today, locking drops the data key, which any running work needs to save. A likely approach is to keep the key only for running jobs while the window stays locked, and to show nothing until it is unlocked.
 
@@ -261,4 +264,4 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - He decided: **browser control is its own switch on the Features page, and that feature includes the extension.** Turning it on installs or sets up a SulcusAI extension for Chrome or Edge that talks to the app over native messaging (no debug port). The assistant then works in his real browser. With it off, the assistant can't touch his browsers. The built-in browser remains the option that needs no extension.
 - Move the Browser button out of the left sidebar to a web (🌐/🧭) icon at the top of the page.
 
-**Phase 4 still to do:** Microsoft/Google sign-in for mail and calendar (needs his app registrations), and the desktop quick-ask overlay.
+**Phase 4 still to do:** Microsoft/Google sign-in for mail and calendar (needs his app registrations). Then live checks in the real app: browser, quick ask, mail and calendar against his real accounts.
