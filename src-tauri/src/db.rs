@@ -289,10 +289,16 @@ pub fn update_settings(conn: &Connection, f: impl FnOnce(&mut Settings)) -> Resu
 
 /// What the user types about themselves; included in every chat.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct Profile {
     pub name: String,
     pub about: String,
     pub preferences: String,
+    /// Where they are, e.g. "Orem, Utah" (weather and local questions).
+    pub location: String,
+    /// Set by “Use this PC's location”.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
 }
 
 pub fn profile(conn: &Connection, c: &Cipher) -> Profile {

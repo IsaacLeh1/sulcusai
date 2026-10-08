@@ -65,6 +65,7 @@ pdf-extract = "0.12"
 # The built-in browser's in-process DevTools channel (same version as wry's).
 webview2-com = "0.39"
 windows = { version = "0.58", features = [
+  "Devices_Geolocation",
   "Foundation",
   "Foundation_Collections",
   "Media_SpeechSynthesis",

@@ -23,7 +23,10 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
         "You are SulcusAI, a helpful assistant that runs privately on the user's own computer. \
          Nothing in this conversation leaves their PC. Be clear, accurate and friendly. \
-         Use Markdown when it helps. If you don't know something, say so.\n\nToday's date is {today}."
+         Use Markdown when it helps. If you don't know something, say so.\n\n\
+         When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
+         notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
+         and never guess figures.\n\nToday's date is {today}."
     );
     let mut about = String::new();
     if !profile.name.trim().is_empty() {
@@ -34,6 +37,9 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     }
     if !profile.preferences.trim().is_empty() {
         about.push_str(&format!("How the user wants you to respond:\n{}\n", profile.preferences.trim()));
+    }
+    if !profile.location.trim().is_empty() {
+        about.push_str(&format!("The user is in {}. Use this for weather and anything local unless they name another place.\n", profile.location.trim()));
     }
     (base, about)
 }
@@ -202,10 +208,22 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
                     .collect();
                 out.push(json!({ "role": "assistant", "content": m.content, "tool_calls": calls }));
             }
+            // When each message was sent, so "this afternoon" or "tonight"
+            // make sense. Fixed per message, so the engine's cache holds.
+            "user" if m.created_at > 0 => out.push(json!({ "role": "user", "content": format!("{}\n{}", sent_note(m.created_at), m.content) })),
             role => out.push(json!({ "role": role, "content": m.content })),
         }
     }
     out
+}
+
+fn sent_note(ms: i64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_millis_opt(ms)
+        .earliest()
+        .map(|t| format!("(Sent {})", t.format("%a %b %-d %Y, %-I:%M %p, UTC%:z")))
+        .unwrap_or_default()
 }
 
 pub enum Delta {
@@ -484,7 +502,7 @@ mod tests {
 
     #[test]
     fn profile_section_includes_what_the_user_wrote() {
-        let p = Profile { name: "Sam".into(), about: "I teach biology.".into(), preferences: "Be brief.".into() };
+        let p = Profile { name: "Sam".into(), about: "I teach biology.".into(), preferences: "Be brief.".into(), ..Default::default() };
         let (_, about) = system_prompt(&p, "2026-10-06");
         assert!(about.contains("Sam") && about.contains("biology") && about.contains("Be brief."));
     }

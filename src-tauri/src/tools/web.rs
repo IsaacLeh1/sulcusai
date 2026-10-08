@@ -13,8 +13,8 @@ pub fn web_search_params() -> Value {
 }
 
 pub fn weather_params() -> Value {
-    json!({ "type": "object", "required": ["place"], "properties": {
-        "place": { "type": "string", "description": "A city, e.g. \"Orem, Utah\" or \"Paris, France\"." },
+    json!({ "type": "object", "properties": {
+        "place": { "type": "string", "description": "A city, e.g. \"Orem, Utah\" or \"Paris, France\". Leave it out for where the user is." },
         "days": { "type": "integer", "description": "Days of forecast (1-7, default 2)." } } })
 }
 
@@ -103,15 +103,50 @@ pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
             }
         }
         "weather" => {
-            let place = args.get("place").and_then(Value::as_str).unwrap_or("").trim().to_string();
-            if place.is_empty() {
-                return Outcome::error("Couldn't check the weather", "Say which place.");
-            }
+            let asked = args.get("place").and_then(Value::as_str).unwrap_or("").trim().to_string();
             let days = args.get("days").and_then(Value::as_u64).unwrap_or(2) as usize;
+            // Where: the place named, else the user's saved place, else this PC's.
+            // Small models fill in a city of their own; only use one the user named.
+            let mentioned = {
+                let recent: String = crate::db::messages(&ctx.db.lock().unwrap(), ctx.cipher, ctx.chat_id)
+                    .iter()
+                    .rev()
+                    .filter(|m| m.role == "user")
+                    .take(4)
+                    .map(|m| m.content.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                crate::location::named_in(&asked, &recent)
+            };
+            let asked = if mentioned { asked } else { String::new() };
+            let named = !crate::location::means_here(&asked);
+            let (place, coords) = if named {
+                (asked, None)
+            } else {
+                let profile = crate::db::profile(&ctx.db.lock().unwrap(), ctx.cipher);
+                match (profile.lat, profile.lon) {
+                    (Some(lat), Some(lon)) => (profile.location.clone(), Some((lat, lon))),
+                    _ if !profile.location.trim().is_empty() => (profile.location.trim().to_string(), None),
+                    _ => match crate::location::detect().await {
+                        Ok(p) => (crate::location::name_of(&client, p.lat, p.lon).await.unwrap_or(p.label), Some((p.lat, p.lon))),
+                        Err(e) => {
+                            return Outcome::error(
+                                "Couldn't tell where you are",
+                                format!("{e}\nAsk the user which city they're in, then call weather with it."),
+                            )
+                        }
+                    },
+                }
+            };
             crate::db::log_action(&ctx.db.lock().unwrap(), "network", "Checked the weather with Open-Meteo");
-            match web::weather(&client, &place, days).await {
+            let report = match coords {
+                Some((lat, lon)) => web::weather_at(&client, lat, lon, &place, None, days).await,
+                None => web::weather(&client, &place, days).await,
+            };
+            match report {
                 Ok(report) => {
-                    let text = format!("{report}\n\nAnswer with these exact figures. Weather data by Open-Meteo.com.");
+                    let whose = if named { String::new() } else { format!("The user didn't name a place, so this is for where they are: {place}. Name that place in your answer.\n") };
+                    let text = format!("{whose}{report}\n\nAnswer with these exact figures. Weather data by Open-Meteo.com.");
                     let mut o = Outcome::ok(text, format!("Checked the weather for {place}"), "text", Some(report));
                     o.meta["sources"] = json!([{ "title": "Open-Meteo", "url": "https://open-meteo.com/", "snippet": "" }]);
                     o

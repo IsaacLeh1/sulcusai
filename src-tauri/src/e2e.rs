@@ -82,7 +82,7 @@ async fn e2e_install_load_and_chat() {
         .unwrap();
     assert_eq!(unauth.status().as_u16(), 401, "server answered without the API key");
 
-    let profile = Profile { name: "Tester".into(), about: String::new(), preferences: "Be brief.".into() };
+    let profile = Profile { name: "Tester".into(), about: String::new(), preferences: "Be brief.".into(), ..Default::default() };
     let (base, about) = chat::system_prompt(&profile, "Tuesday, October 6, 2026");
     let history = vec![Message {
         id: "u1".into(),
@@ -1187,7 +1187,7 @@ async fn e2e_weather_question() {
     let report = crate::web::weather(&client, "Orem, Utah", 2).await.unwrap();
     println!("tool report:\n{report}\n");
     assert!(report.contains("Orem, Utah") && report.contains("°F"));
-    for q in ["What is the weather in Orem Utah today", "Give me the exact temperature right now", "Search the web: how tall is Mount Timpanogos in feet?"] {
+    for q in ["What is the weather today?", "What is the weather in Orem Utah today", "Give me the exact temperature right now", "Search the web: how tall is Mount Timpanogos in feet?"] {
         let reply = say(&state, &ep, &cipher, &chat.id, &format!("{q} /no_think")).await;
         println!("Q: {q}\nA: {reply}\n");
     }

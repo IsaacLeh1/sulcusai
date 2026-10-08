@@ -434,8 +434,18 @@ pub async fn weather(client: &reqwest::Client, place: &str, days: usize) -> Resu
     };
     let p = places.iter().find(|p| fits(p)).or(places.first()).ok_or_else(|| format!("I couldn't find a place called “{place}”."))?;
     let (lat, lon) = (p["latitude"].as_f64().unwrap_or(0.0), p["longitude"].as_f64().unwrap_or(0.0));
-    let us = matches!(p["country_code"].as_str(), Some("US" | "LR" | "MM"));
     let label = [p["name"].as_str(), p["admin1"].as_str(), p["country"].as_str()].into_iter().flatten().collect::<Vec<_>>().join(", ");
+    weather_at(client, lat, lon, &label, p["country_code"].as_str(), days).await
+}
+
+/// The forecast for coordinates. Fahrenheit and mph in the US (or when the
+/// country isn't known, on a US-English PC); Celsius and km/h elsewhere.
+pub async fn weather_at(client: &reqwest::Client, lat: f64, lon: f64, label: &str, country: Option<&str>, days: usize) -> Result<String, String> {
+    let us = match country {
+        Some(c) => matches!(c, "US" | "LR" | "MM"),
+        // No country: within the continental US, Alaska or Hawaii by position.
+        None => (24.0..50.0).contains(&lat) && (-125.0..-66.0).contains(&lon) || (51.0..72.0).contains(&lat) && (-170.0..-129.0).contains(&lon) || (18.0..23.0).contains(&lat) && (-161.0..-154.0).contains(&lon),
+    };
     let f: serde_json::Value = client
         .get("https://api.open-meteo.com/v1/forecast")
         .query(&[

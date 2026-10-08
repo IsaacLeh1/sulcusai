@@ -43,6 +43,8 @@ pnpm licenses list --prod
 | Service | Terms |
 |---|---|
 | Open-Meteo (weather tool; weather data by Open-Meteo.com) | Data CC BY 4.0. The free API is for non-commercial use; a commercial release needs an Open-Meteo plan or another source. |
+| OpenStreetMap Nominatim (naming this PC's location, on request) | Data © OpenStreetMap contributors, ODbL; light use under the Nominatim usage policy |
+| Windows location services (this PC's position, when allowed in Windows) | Part of Windows |
 | DuckDuckGo, Brave Search, SearXNG (web search, chosen in Settings) | Each service's own terms |
 
 ## AI models

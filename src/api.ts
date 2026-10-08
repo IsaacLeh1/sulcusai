@@ -122,6 +122,10 @@ export interface Profile {
   name: string;
   about: string;
   preferences: string;
+  /** Where they are, e.g. "Orem, Utah". */
+  location?: string;
+  lat?: number | null;
+  lon?: number | null;
 }
 
 export type RunMode = "plan" | "auto" | "bypass";
@@ -810,6 +814,7 @@ export const api = {
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
   browsersView: () => invoke<BrowsersView>("browsers_view"),
+  detectLocation: () => invoke<{ label: string; lat: number; lon: number }>("detect_location"),
   bridgeStatus: () => invoke<BridgeStatus>("bridge_status"),
   showExtensionFolder: () => invoke<void>("show_extension_folder"),
   setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),

@@ -128,6 +128,7 @@ interface Props {
 }
 
 export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast }: Props) {
+  const [locating, setLocating] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<Profile | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -177,6 +178,36 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
             <label>
               About you
               <textarea className="input" rows={4} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder="Your work, interests, or anything that helps it understand you." maxLength={4000} />
+            </label>
+            <label>
+              Where you are
+              <span className="row">
+                <input
+                  className="input"
+                  value={profile.location ?? ""}
+                  onChange={(e) => setProfile({ ...profile, location: e.target.value, lat: null, lon: null })}
+                  placeholder="Your city, e.g. Orem, Utah"
+                  maxLength={120}
+                />
+                <button
+                  className="btn small"
+                  disabled={locating}
+                  onClick={async () => {
+                    setLocating(true);
+                    try {
+                      const p = await api.detectLocation();
+                      setProfile({ ...profile, location: p.label, lat: p.lat, lon: p.lon });
+                    } catch (e) {
+                      toast(errorText(e), "error");
+                    } finally {
+                      setLocating(false);
+                    }
+                  }}
+                >
+                  {locating ? "Finding…" : "Use this PC's location"}
+                </button>
+              </span>
+              <span className="muted small">For the weather and local questions. Kept on this PC; it goes out only with a weather lookup. Leave it empty and the assistant asks Windows when it needs to.</span>
             </label>
             <label>
               How it should respond

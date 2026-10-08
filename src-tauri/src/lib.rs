@@ -24,6 +24,7 @@ mod features;
 mod handoff;
 mod hardware;
 mod hello;
+mod location;
 mod mail;
 mod mcp;
 mod meeting;
@@ -851,6 +852,7 @@ pub fn run() {
             security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,
+            location::detect_location,
             bridge::bridge_status,
             bridge::show_extension_folder,
             browsers::set_main_browser,
