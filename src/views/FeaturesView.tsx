@@ -44,6 +44,11 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Documents",
     detail: "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.",
   },
+  quick_ask: {
+    icon: "⚡",
+    name: "Quick ask",
+    detail: "Press Ctrl+Alt+Space anywhere to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working.",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -55,7 +60,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes, tasks, mail and calendar", ids: ["notes", "tasks", "email", "calendar"] },
-  { title: "Assistant", ids: ["web_search", "browser", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
+  { title: "Assistant", ids: ["quick_ask", "web_search", "browser", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {

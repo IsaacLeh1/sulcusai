@@ -33,6 +33,7 @@ mod notify;
 mod paths;
 mod perf;
 mod projects;
+mod quick;
 mod sandbox;
 mod schedule;
 mod security;
@@ -776,6 +777,8 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(quick::plugin())
+        .on_window_event(quick::on_main_event)
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
@@ -823,6 +826,7 @@ pub fn run() {
             notes::start_reminders(app.handle().clone());
             perf::start_monitor(app.handle().clone());
             mail::start_sync(app.handle().clone());
+            quick::apply(app.handle());
             calendar::start_sync(app.handle().clone());
             Ok(())
         })
@@ -830,6 +834,10 @@ pub fn run() {
             perf::perf_view,
             browser::open_browser,
             docs::open_document,
+            quick::quick_clipboard,
+            quick::quick_hide,
+            quick::quick_resize,
+            quick::quick_open_in_app,
             mail::mail_preset,
             mail::mail_accounts,
             mail::add_mail_account,

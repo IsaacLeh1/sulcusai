@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["full"] }
@@ -40,6 +40,7 @@ regex = "1"
 dunce = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-global-shortcut = "2"
 # Neural voices and speaker labels: ONNX Runtime, loaded at run time from a
 # downloaded, hash-checked copy (nothing is bundled or fetched at build time).
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17"] }
@@ -77,6 +78,9 @@ windows = { version = "0.58", features = [
   "Win32_Security_Cryptography",
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_Ole",
   "Win32_System_JobObjects",
   "Win32_System_Power",
   "Win32_System_Threading",

@@ -577,3 +577,14 @@ select, .input {
 .agenda-event .grow { flex: 1; min-width: 0; }
 .form label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
 .tool-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+
+/* ---------- quick ask ---------- */
+html.quick-window, html.quick-window body { background: transparent; overflow: hidden; }
+.quick { height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.quick-head { display: flex; align-items: center; gap: 10px; }
+.quick-head img { border-radius: 6px; flex: none; }
+.quick-input { flex: 1; border: 0; background: none; color: inherit; font: inherit; font-size: 17px; resize: none; outline: none; padding: 4px 0; }
+.quick-clip { display: flex; flex-direction: column; gap: 6px; }
+.quick-clip .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.quick-answer { flex: 1; min-height: 0; overflow-y: auto; border-top: 1px solid var(--border); padding-top: 8px; }
+.quick-foot { display: flex; align-items: center; gap: 8px; }

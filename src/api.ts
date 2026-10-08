@@ -468,6 +468,7 @@ export type FeatureId =
   | "email"
   | "calendar"
   | "documents"
+  | "quick_ask"
   | "files"
   | "memory"
   | "projects"
@@ -790,6 +791,10 @@ export const api = {
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
+  quickClipboard: () => invoke<string | null>("quick_clipboard"),
+  quickHide: () => invoke<void>("quick_hide"),
+  quickResize: (height: number) => invoke<void>("quick_resize", { height }),
+  quickOpenInApp: (chatId: string | null) => invoke<void>("quick_open_in_app", { chatId }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
@@ -871,6 +876,9 @@ export interface ChatEvents {
   "task:reminder": { id: string; title: string };
   "perf:heat": HeatState;
   "mail:synced": { new: number };
+  "quick:shown": Record<string, never>;
+  "quick:open-chat": { chat_id: string };
+  "quick:hotkey_taken": { hotkey: string };
   "calendar:synced": Record<string, never>;
   "engine:unloaded": null;
   dictation: DictationEvent;

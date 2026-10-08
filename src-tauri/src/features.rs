@@ -34,6 +34,7 @@ pub enum Feature {
     Email,
     Calendar,
     Documents,
+    QuickAsk,
     Files,
     Memory,
     Projects,
@@ -54,6 +55,7 @@ pub const ALL: &[Feature] = &[
     Feature::Email,
     Feature::Calendar,
     Feature::Documents,
+    Feature::QuickAsk,
     Feature::Files,
     Feature::Memory,
     Feature::Projects,
@@ -76,6 +78,7 @@ impl Feature {
             Feature::Email => "Email",
             Feature::Calendar => "Calendar",
             Feature::Documents => "Documents",
+            Feature::QuickAsk => "Quick ask",
             Feature::Files => "Files and coding",
             Feature::Memory => "Memory",
             Feature::Projects => "Projects",
@@ -248,6 +251,9 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     let set = set(&conn, feature, on)?;
     db::log_action(&conn, "feature", &format!("Turned {} {}", feature.name(), if on { "on" } else { "off" }));
     drop(conn);
+    if feature == Feature::QuickAsk {
+        crate::quick::apply(&app);
+    }
     app.emit("features:changed", json!({})).ok();
     Ok(set.into_iter().collect())
 }

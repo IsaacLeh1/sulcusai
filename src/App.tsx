@@ -202,6 +202,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // The model is loaded by the time context is measured.
       on("chat:context", () => refreshEngine()),
       on("engine:unloaded", () => refreshEngine()),
+      on("quick:open-chat", async (p) => {
+        await refreshChats();
+        setActiveChat(p.chat_id);
+        setView("chat");
+      }),
+      on("quick:hotkey_taken", (p) => toast(`Another app already uses ${p.hotkey}, so Quick ask can't use it.`, "error")),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);
