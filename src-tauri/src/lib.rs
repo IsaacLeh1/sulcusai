@@ -5,6 +5,7 @@
 mod agent;
 mod audio;
 mod browser;
+mod calendar;
 mod catalog;
 mod chat;
 mod checkpoint;
@@ -821,6 +822,7 @@ pub fn run() {
             notes::start_reminders(app.handle().clone());
             perf::start_monitor(app.handle().clone());
             mail::start_sync(app.handle().clone());
+            calendar::start_sync(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -834,6 +836,14 @@ pub fn run() {
             mail::mail_list,
             mail::mail_get,
             mail::send_mail,
+            calendar::calendar_presets,
+            calendar::calendar_accounts,
+            calendar::add_calendar_account,
+            calendar::remove_calendar_account,
+            calendar::sync_calendars,
+            calendar::calendar_events,
+            calendar::create_event,
+            calendar::delete_event,
             perf::set_perf,
             app_info,
             refresh_hardware,
