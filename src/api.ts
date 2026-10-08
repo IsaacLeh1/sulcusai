@@ -471,6 +471,7 @@ export type FeatureId =
   | "calendar"
   | "documents"
   | "quick_ask"
+  | "browser_control"
   | "files"
   | "memory"
   | "projects"
@@ -509,6 +510,14 @@ export interface Task {
   remind_at: number | null;
   done_at: number | null;
   created_at: number;
+}
+
+export interface BridgeStatus {
+  installed: boolean;
+  connected: boolean;
+  version: string | null;
+  extension_dir: string;
+  extension_id: string;
 }
 
 export type MainBrowser = { kind: "builtin" } | { kind: "system" } | { kind: "app"; name: string };
@@ -801,6 +810,8 @@ export const api = {
   webSettings: () => invoke<WebSettings>("get_web_settings"),
   openBrowser: () => invoke<void>("open_browser"),
   browsersView: () => invoke<BrowsersView>("browsers_view"),
+  bridgeStatus: () => invoke<BridgeStatus>("bridge_status"),
+  showExtensionFolder: () => invoke<void>("show_extension_folder"),
   setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
@@ -891,6 +902,7 @@ export interface ChatEvents {
   "perf:heat": HeatState;
   "mail:synced": { new: number };
   "quick:shown": Record<string, never>;
+  "bridge:status": { connected: boolean };
   "quick:open-chat": { chat_id: string };
   "quick:hotkey_taken": { hotkey: string };
   "calendar:synced": Record<string, never>;

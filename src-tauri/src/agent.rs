@@ -238,7 +238,7 @@ impl Turn {
                 extra.push("calendar_create_event");
             }
         }
-        if self.use_tools && features.contains(&Feature::Browser) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
+        if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
         }
         // Web tools when this chat may go online; otherwise a way to ask.

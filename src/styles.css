@@ -594,3 +594,9 @@ html.quick-window, html.quick-window body { background: transparent; overflow: h
 .web-btn { font-size: 18px; border-radius: 8px; padding: 4px 6px; }
 .web-btn:hover { background: var(--accent-soft); }
 a.md-link { cursor: pointer; }
+
+/* ---------- browser control ---------- */
+.ext-setup { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.ext-setup ol { margin: 0; padding-left: 18px; }
+.ext-setup code { background: var(--accent-soft); border-radius: 4px; padding: 0 4px; }
+.ok-text { color: var(--ok, #2f9e44); margin-top: 6px; }

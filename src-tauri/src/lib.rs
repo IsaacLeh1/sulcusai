@@ -4,6 +4,7 @@
 
 mod agent;
 mod audio;
+mod bridge;
 mod browser;
 mod browsers;
 mod calendar;
@@ -85,6 +86,7 @@ pub struct AppState {
     speech: speech::Speech,
     player: audio::Player,
     heat: perf::Heat,
+    bridge: bridge::Bridge,
     /// For work that needs a window (the browser); set once the app starts.
     app: std::sync::OnceLock<tauri::AppHandle>,
     /// When the chat model last started a piece of work (for the idle unload).
@@ -780,6 +782,11 @@ fn open_vault(paths: &Paths) -> Result<Vault, String> {
     Vault::open(&paths.data.join("keys.json"), protector)
 }
 
+/// Connector mode for the browser extension (see bridge.rs).
+pub fn run_bridge_host() {
+    bridge::run_host()
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -813,6 +820,7 @@ pub fn run() {
                 speech: speech::Speech::default(),
                 player: audio::Player::new(),
                 heat: perf::Heat::default(),
+                bridge: bridge::Bridge::default(),
                 app: std::sync::OnceLock::new(),
                 engine_used: Mutex::new(std::time::Instant::now()),
                 #[cfg(windows)]
@@ -834,6 +842,7 @@ pub fn run() {
             perf::start_monitor(app.handle().clone());
             mail::start_sync(app.handle().clone());
             quick::apply(app.handle());
+            bridge::apply(app.handle());
             calendar::start_sync(app.handle().clone());
             Ok(())
         })
@@ -842,6 +851,8 @@ pub fn run() {
             security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,
+            bridge::bridge_status,
+            bridge::show_extension_folder,
             browsers::set_main_browser,
             browsers::open_web,
             docs::open_document,

@@ -35,6 +35,7 @@ pub enum Feature {
     Calendar,
     Documents,
     QuickAsk,
+    BrowserControl,
     Files,
     Memory,
     Projects,
@@ -56,6 +57,7 @@ pub const ALL: &[Feature] = &[
     Feature::Calendar,
     Feature::Documents,
     Feature::QuickAsk,
+    Feature::BrowserControl,
     Feature::Files,
     Feature::Memory,
     Feature::Projects,
@@ -79,6 +81,7 @@ impl Feature {
             Feature::Calendar => "Calendar",
             Feature::Documents => "Documents",
             Feature::QuickAsk => "Quick ask",
+            Feature::BrowserControl => "Browser control",
             Feature::Files => "Files and coding",
             Feature::Memory => "Memory",
             Feature::Projects => "Projects",
@@ -253,6 +256,9 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     drop(conn);
     if feature == Feature::QuickAsk {
         crate::quick::apply(&app);
+    }
+    if feature == Feature::BrowserControl {
+        crate::bridge::apply(&app);
     }
     app.emit("features:changed", json!({})).ok();
     Ok(set.into_iter().collect())

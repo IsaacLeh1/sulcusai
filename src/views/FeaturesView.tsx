@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Features: the app starts bare-bones; turn on or install what you need.
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type FeatureId, type FeatureView, type InstallProgress, type SpeakerModel, type VoicePack } from "../api";
+import { api, errorText, on, type BridgeStatus, type FeatureId, type FeatureView, type InstallProgress, type SpeakerModel, type VoicePack } from "../api";
 import { bytes, percent } from "../format";
 import type { PushToast } from "../components/Toasts";
 
@@ -49,6 +49,11 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Quick ask",
     detail: "Press Ctrl+Alt+Space anywhere to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working.",
   },
+  browser_control: {
+    icon: "🧩",
+    name: "Browser control",
+    detail: "Lets the assistant use tabs in your own Chrome or Edge, with your sign-ins, through the SulcusAI extension. It works in one tab you can watch, asks before submitting, buying or sending anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat).",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -60,7 +65,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes, tasks, mail and calendar", ids: ["notes", "tasks", "email", "calendar"] },
-  { title: "Assistant", ids: ["quick_ask", "web_search", "browser", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
+  { title: "Assistant", ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {
@@ -133,6 +138,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                           toast={toast}
                         />
                       )}
+                      {f.enabled && id === "browser_control" && <ExtensionSetup toast={toast} />}
                       {f.enabled && id === "meetings" && speakers && !speakers.installed && (
                         <AddOn
                           label={`Add speaker labels (${bytes(speakers.download)})`}
@@ -196,6 +202,38 @@ function AddOn({ label, note, progress, disabled, onInstall, toast }: { label: s
         + {label}
       </button>
       <span className="muted small">{note}</span>
+    </div>
+  );
+}
+
+/** The steps to add the SulcusAI extension, and whether it's connected. */
+function ExtensionSetup({ toast }: { toast: PushToast }) {
+  const [st, setSt] = useState<BridgeStatus | null>(null);
+  useEffect(() => {
+    const load = () => api.bridgeStatus().then(setSt).catch(() => {});
+    load();
+    const sub = on("bridge:status", () => load());
+    const t = setInterval(load, 5000);
+    return () => {
+      clearInterval(t);
+      sub.then((u) => u());
+    };
+  }, []);
+  if (!st) return null;
+  if (st.connected) return <span className="small block ok-text">✓ The extension is connected (version {st.version}).</span>;
+  return (
+    <div className="ext-setup small">
+      <strong>Add the extension (once):</strong>
+      <ol>
+        <li>In Chrome open <code>chrome://extensions</code>, or in Edge <code>edge://extensions</code>.</li>
+        <li>Turn on <b>Developer mode</b>.</li>
+        <li>Click <b>Load unpacked</b> and choose the SulcusAI extension folder.</li>
+      </ol>
+      <div className="row">
+        <button className="btn small" onClick={() => api.showExtensionFolder().catch((e) => toast(errorText(e), "error"))}>Show the folder</button>
+        <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(st.extension_dir).then(() => toast("Folder path copied.", "success"))}>Copy its path</button>
+      </div>
+      <span className="muted block">Waiting for the extension… It connects by itself once added, while SulcusAI is running.</span>
     </div>
   );
 }

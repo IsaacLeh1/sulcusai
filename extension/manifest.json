@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "SulcusAI",
+  "version": "0.1.0",
+  "description": "Lets the SulcusAI app on this PC use tabs in this browser while you watch. It asks you before anything is submitted, bought or sent, and never types passwords or card numbers.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1QnoVSDs8PVw1G/VCNjgEJxbDgc5HSNPEPly1l5zFKiV3IWv0xFXyGxcGz9ohly1UprD6pDcqUPlb40sXGNzDwhxwNCLsGd+urBaAVzYSOgL9sB8V1I2y8hhQm6Y7iFNkjbmp1uoefKP7rTtZOBBtf54kUYuL/niT7YpJiniJmqRLckogbQKTJxEBm4Ba9NjBdtFXmeMo0pfmAL3u4nnHYZtMAiC25M/qge7Xe8FbDKMfK6tmg/nxQDgbJAAXW9lBqC7gH+uKhSvgdcZZs3Q/0s8MNy4sKd2ndkeE4qbNOc8s2tasW1j6zbnkFkYgo0KuQSmNMW6QKP8FApJI4ppsQIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "scripting",
+    "tabGroups"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "action": {
+    "default_title": "SulcusAI",
+    "default_icon": {
+      "128": "icon.png"
+    }
+  }
+}

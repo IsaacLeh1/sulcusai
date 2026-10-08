@@ -186,6 +186,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
@@ -309,6 +310,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
@@ -500,6 +502,7 @@ fn speech_state() -> std::sync::Arc<crate::AppState> {
         speech: crate::speech::Speech::default(),
         player: crate::audio::Player::new(),
         heat: crate::perf::Heat::default(),
+        bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
@@ -1076,4 +1079,98 @@ async fn e2e_documents() {
     let sheet = crate::docs::read_text(&root.join("budget.xlsx")).unwrap();
     assert!(sheet.contains("| Rent | 1200 |") && sheet.contains("SUM(B"), "{sheet}");
     state.engine.lock().await.stop().await;
+}
+
+/// The SulcusAI extension in a headless Edge (no window), the connector
+/// (target/debug/sulcusai.exe) registered as its native host, and the
+/// app's pipe: open a local page, read it, the password rule, type and
+/// submit a search, click a link. Cleans up its registration afterwards.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_browser_extension() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let state = speech_state();
+    let exe = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("sulcusai.exe");
+    assert!(exe.exists(), "build the app first (cargo build)");
+    let ext = crate::bridge::install_with(&state, &exe).unwrap();
+    crate::bridge::serve_pipe(state.clone(), None);
+
+    // A small site on this PC.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else { break };
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 4096];
+                let n = sock.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let path = req.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let body = if path.starts_with("/search") {
+                    format!("<title>Results</title><h1>Results for {}</h1>", path.split("q=").nth(1).unwrap_or(""))
+                } else if path.starts_with("/about") {
+                    "<title>About</title><h1>About this test site</h1>".to_string()
+                } else {
+                    "<title>Test home</title><h1>Welcome</h1><form action=\"/search\" method=\"get\" role=\"search\"><input name=\"q\" type=\"search\" placeholder=\"Search\"><button>Search</button></form><a href=\"/about\">About us</a><form method=\"post\" action=\"/login\"><input type=\"password\" name=\"pw\" placeholder=\"Password\"><button type=\"submit\">Sign in</button></form>".to_string()
+                };
+                let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = sock.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let profile = std::env::temp_dir().join(format!("sulcusai-edge-{}", uuid::Uuid::new_v4()));
+    let mut edge = std::process::Command::new(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
+        .args(["--headless=new", "--no-first-run", "--disable-features=DisableLoadExtensionCommandLineSwitch"])
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .arg(format!("--load-extension={}", ext.display()))
+        .arg("about:blank")
+        .spawn()
+        .unwrap();
+    let mut connected = false;
+    for _ in 0..60 {
+        if state.bridge.connected() {
+            connected = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    let result = async {
+        if !connected {
+            return Err("the extension never connected".to_string());
+        }
+        println!("extension connected");
+        let pong = state.bridge.call(serde_json::json!({ "op": "ping" })).await;
+        println!("ping: {pong:?}");
+        let base = format!("http://127.0.0.1:{port}/");
+        state.bridge.call(serde_json::json!({ "op": "open", "url": base })).await?;
+        let page: crate::browser::Page = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "read" })).await?).map_err(|e| e.to_string())?;
+        println!("{}", page.render(400));
+        let find = |label: &str| page.elements.iter().find(|e| e["label"].as_str().unwrap_or("").contains(label) || e["kind"].as_str().unwrap_or("").contains(label)).and_then(|e| e["ref"].as_u64()).map(|r| r as u32);
+        let pw = find("input:password").ok_or("no password field")?;
+        let t: crate::browser::Target = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "target", "ref": pw })).await?).map_err(|e| e.to_string())?;
+        assert!(crate::browser::private_field(&t), "password fields are for the user");
+        let sign_in = find("Sign in").ok_or("no sign-in button")?;
+        let t: crate::browser::Target = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "target", "ref": sign_in })).await?).map_err(|e| e.to_string())?;
+        assert!(crate::browser::needs_confirmation(&t, false).is_some(), "submitting the sign-in form asks first");
+        let search = find("Search").ok_or("no search box")?;
+        state.bridge.call(serde_json::json!({ "op": "type", "ref": search, "text": "otters", "submit": true })).await?;
+        let page: crate::browser::Page = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "read" })).await?).map_err(|e| e.to_string())?;
+        println!("after search: {} {}", page.url, page.title);
+        assert!(page.text.contains("Results for otters"), "{}", page.text);
+        state.bridge.call(serde_json::json!({ "op": "back" })).await?;
+        let page: crate::browser::Page = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "read" })).await?).map_err(|e| e.to_string())?;
+        let about = page.elements.iter().find(|e| e["label"] == "About us").and_then(|e| e["ref"].as_u64()).ok_or("no About link")?;
+        state.bridge.call(serde_json::json!({ "op": "click", "ref": about })).await?;
+        let page: crate::browser::Page = serde_json::from_value(state.bridge.call(serde_json::json!({ "op": "read" })).await?).map_err(|e| e.to_string())?;
+        println!("after click: {} {}", page.url, page.title);
+        assert!(page.text.contains("About this test site"));
+        Ok(())
+    }
+    .await;
+    let _ = edge.kill();
+    crate::bridge::uninstall();
+    let _ = std::fs::remove_dir_all(&profile);
+    result.unwrap();
 }
