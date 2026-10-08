@@ -966,3 +966,71 @@ async fn e2e_chat_gets_a_summary_title() {
     }
     state.engine.lock().await.stop().await;
 }
+
+/// Email and calendar with the real model, against the local test servers
+/// (pymap on 11430, the SMTP script on 10250). Approvals are answered Allow,
+/// as the user would, and recorded.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_email_and_calendar() {
+    let (state, ep, cipher) = agent_harness().await;
+    {
+        let conn = state.db.lock().unwrap();
+        crate::db::update_settings(&conn, |s| s.connectivity = crate::net::Connectivity::Web).unwrap();
+        let cfg = crate::mail::AccountConfig {
+            name: "Demo".into(),
+            email: "demo@example.org".into(),
+            username: "demouser".into(),
+            password: "demopass".into(),
+            imap_host: "127.0.0.1".into(),
+            imap_port: 11430,
+            imap_security: crate::mail::Security::Plain,
+            smtp_host: "127.0.0.1".into(),
+            smtp_port: 10250,
+            smtp_security: crate::mail::Security::Plain,
+            ..Default::default()
+        };
+        crate::mail::store_account(&conn, &cipher, "acc", &cfg).unwrap();
+    }
+    let n = crate::mail::sync_account(&state, &cipher, "acc").await.unwrap();
+    println!("synced {n} messages");
+
+    let approved = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let (st, log) = (state.clone(), approved.clone());
+    let approver = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                log.lock().unwrap().push(format!("{} [{:?}]", p.preview.title, p.risk));
+                st.approvals.answer(&p.call_id, crate::agent::Decision::Allow);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let r = say(&state, &ep, &cipher, &chat.id, "Did I get an email about an important notice? Who sent it? /no_think").await;
+    println!("mail answer: {r}");
+    assert!(r.to_lowercase().contains("corp@example.com"), "{r}");
+
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let r = say(&state, &ep, &cipher, &chat.id, "Put lunch with Bo on my calendar for friday at noon. /no_think").await;
+    println!("calendar answer: {r}");
+    let now = crate::db::now_ms();
+    let events = crate::calendar::events(&state.db.lock().unwrap(), &cipher, now - 86_400_000, now + 8 * 86_400_000);
+    println!("events: {:?}", events.iter().map(|e| (&e.data.title, e.start)).collect::<Vec<_>>());
+    assert!(events.iter().any(|e| e.data.title.to_lowercase().contains("lunch")));
+
+    let r = say(&state, &ep, &cipher, &chat.id, "When am I free on friday for an hour? /no_think").await;
+    println!("free answer: {r}");
+
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
+    let r = say(&state, &ep, &cipher, &chat.id, "Email ana@example.com and tell her the budget review moved to Friday at 2pm. Sign it Demo. /no_think").await;
+    println!("send answer: {r}");
+    approver.abort();
+    let log = approved.lock().unwrap().clone();
+    println!("approvals: {log:#?}");
+    assert!(log.iter().any(|l| l.contains("Send an email to ana@example.com") && l.contains("Submit")), "sending asked first");
+    assert!(log.iter().any(|l| l.contains("Lunch")), "adding the event asked first");
+    assert!(!log.iter().any(|l| l.contains("invite")), "no made-up invitations");
+    state.engine.lock().await.stop().await;
+}

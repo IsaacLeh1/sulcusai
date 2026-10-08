@@ -65,6 +65,12 @@ pub struct Approvals {
 }
 
 impl Approvals {
+    /// What's waiting for an answer (tests answer these like the user would).
+    #[cfg(test)]
+    pub fn waiting(&self) -> Vec<PendingApproval> {
+        self.waiting.lock().unwrap().values().map(|(p, _)| p.clone()).collect()
+    }
+
     pub fn answer(&self, call_id: &str, d: Decision) -> bool {
         match self.waiting.lock().unwrap().remove(call_id) {
             Some((p, tx)) => {
@@ -213,6 +219,18 @@ impl Turn {
         }
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["search_meetings", "read_meeting"]);
+        }
+        if self.use_tools && features.contains(&Feature::Email) && crate::mail::count(&self.state.db.lock().unwrap()) > 0 {
+            extra.extend(["email_search", "email_read"]);
+            if self.mode != tools::Mode::Plan {
+                extra.push("email_send");
+            }
+        }
+        if self.use_tools && features.contains(&Feature::Calendar) {
+            extra.extend(["calendar_events", "calendar_free_time"]);
+            if self.mode != tools::Mode::Plan {
+                extra.push("calendar_create_event");
+            }
         }
         if self.use_tools && features.contains(&Feature::Browser) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
@@ -396,6 +414,15 @@ impl Turn {
                 }
                 Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
             }
+        } else if matches!(call.name.as_str(), "email_send" | "calendar_create_event") {
+            // Sending mail and inviting people always ask; a plain event follows the mode.
+            match tools::comms::assess(&call.name, &args, &self.state, &self.cipher) {
+                Ok((r, p)) => {
+                    risk = r;
+                    browser_preview = Some(p);
+                }
+                Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
+            }
         }
         let allowed = self.state.approvals.allowed(&self.chat_id, risk);
         match tools::permission(self.mode, risk, allowed) {
@@ -432,6 +459,7 @@ impl Turn {
             job: self.state.job(),
             memory: tools::MemoryCtx { db: &self.state.db, cipher: &self.cipher, chat_id: &self.chat_id, project_id },
             app: self.state.app.get(),
+            state: &self.state,
         };
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
         let outcome = if call.name == "delegate" {

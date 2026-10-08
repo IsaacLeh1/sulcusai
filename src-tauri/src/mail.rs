@@ -251,7 +251,7 @@ pub fn account(conn: &Connection, c: &Cipher, id: &str) -> Option<AccountConfig>
     c.decrypt(&data).ok().and_then(|j| serde_json::from_str(&j).ok())
 }
 
-fn store_account(conn: &Connection, c: &Cipher, id: &str, cfg: &AccountConfig) -> Result<(), String> {
+pub(crate) fn store_account(conn: &Connection, c: &Cipher, id: &str, cfg: &AccountConfig) -> Result<(), String> {
     let data = c.encrypt(&serde_json::to_string(cfg).map_err(|e| e.to_string())?);
     conn.execute(
         "INSERT INTO mail_accounts (id, data, created_at) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET data = excluded.data",

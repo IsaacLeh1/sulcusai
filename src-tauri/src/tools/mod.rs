@@ -2,6 +2,7 @@
 //! Tools the model can call, what each one risks, and how they run.
 
 pub mod browser;
+pub mod comms;
 mod fs;
 mod meetings;
 mod memory;
@@ -94,6 +95,8 @@ fn group(name: &str) -> &'static str {
         "create_task" | "list_tasks" | "complete_task" => "tasks",
         "web_search" | "fetch_page" | "request_web" => "web",
         n if n.starts_with("browser_") => "browser",
+        n if n.starts_with("email_") => "email",
+        n if n.starts_with("calendar_") => "calendar",
         _ => "files",
     }
 }
@@ -157,6 +160,18 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Type into a field in the browser by its number (replacing what's there), or pick a dropdown choice. Never for passwords or payment details: ask the user to type those in the browser window." },
     ToolDef { name: "browser_back", risk: Risk::Read, params: browser::browser_back_params,
         description: "Go back to the previous page in the browser." },
+    ToolDef { name: "email_search", risk: Risk::Read, params: comms::email_search_params,
+        description: "Search the user's email (a copy kept on this PC) by sender, subject or words. Returns ids, dates, senders and subjects; empty query lists the newest." },
+    ToolDef { name: "email_read", risk: Risk::Read, params: comms::email_read_params,
+        description: "Read one email in full, by id." },
+    ToolDef { name: "email_send", risk: Risk::Submit, params: comms::email_send_params,
+        description: "Send an email from the user's account. The user always sees it and approves before it goes. For replies pass reply_to_id and start the subject with Re:." },
+    ToolDef { name: "calendar_events", risk: Risk::Read, params: comms::calendar_events_params,
+        description: "List the user's calendar events for a day or range (default: the next 7 days)." },
+    ToolDef { name: "calendar_free_time", risk: Risk::Read, params: comms::calendar_free_time_params,
+        description: "Find free time between 9 and 5 on a day or range." },
+    ToolDef { name: "calendar_create_event", risk: Risk::Write, params: comms::calendar_create_event_params,
+        description: "Add an event to the user's calendar. Inviting people always asks the user first." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -194,7 +209,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -248,6 +263,7 @@ pub struct Ctx<'a> {
     pub memory: MemoryCtx<'a>,
     /// For the browser tools.
     pub app: Option<&'a tauri::AppHandle>,
+    pub state: &'a crate::AppState,
 }
 
 pub struct MemoryCtx<'a> {
@@ -285,6 +301,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" => web::run(name, args, &ctx.memory).await,
+        n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
             browser::run(name, args, ctx.app, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
@@ -318,6 +335,8 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "web_search" => return "Couldn't search the web".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
         n if n.starts_with("browser_") => return "Couldn't use the browser".into(),
+        n if n.starts_with("email_") => return "Couldn't use the email".into(),
+        n if n.starts_with("calendar_") => return "Couldn't use the calendar".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -354,8 +373,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web and browser tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 18);
+        // Everything except load_skill and the meeting, note, task, web, browser, email and calendar tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 24);
     }
 
     #[test]
