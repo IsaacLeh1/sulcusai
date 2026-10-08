@@ -18,6 +18,7 @@ pub struct SecurityStatus {
     hello_enabled: bool,
     hello_available: bool,
     auto_lock_minutes: u32,
+    keep_working: bool,
 }
 
 /// Runs vault work (Argon2 takes a moment) off the async threads.
@@ -51,7 +52,24 @@ pub async fn security_status(state: AppStateRef<'_>) -> Result<SecurityStatus, S
         hello_enabled: v.hello_enabled(),
         hello_available,
         auto_lock_minutes: state.settings().auto_lock_minutes,
+        keep_working: keep_working(&state),
     })
+}
+
+const KEEP_WORKING: &str = "keep_working_locked";
+
+fn keep_working(state: &crate::AppState) -> bool {
+    crate::db::get::<bool>(&state.db.lock().unwrap(), KEEP_WORKING).unwrap_or(false)
+}
+
+/// Whether locking lets replies, schedules, syncing and reminders carry on.
+#[tauri::command]
+pub fn set_keep_working(state: AppStateRef, on: bool) -> Result<(), String> {
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    crate::db::set(&conn, KEEP_WORKING, &on)?;
+    crate::db::log_action(&conn, "security", if on { "Locking now lets work in progress carry on" } else { "Locking now stops work in progress" });
+    Ok(())
 }
 
 #[tauri::command]
@@ -131,14 +149,21 @@ pub fn lock_now(app: AppHandle, state: AppStateRef) -> Result<(), String> {
     if !v.lock_enabled() {
         return Err("Turn on app lock in Settings first.".into());
     }
-    v.lock();
+    let keep_working = keep_working(&state);
+    if keep_working {
+        v.lock_screen();
+    } else {
+        v.lock();
+    }
     drop(v);
-    // Stop anything still writing replies.
-    for flag in state.generations.lock().unwrap().values() {
-        flag.store(true, Ordering::Relaxed);
+    if !keep_working {
+        // Stop anything still writing replies.
+        for flag in state.generations.lock().unwrap().values() {
+            flag.store(true, Ordering::Relaxed);
+        }
     }
     state.contexts.lock().unwrap().clear();
-    state.log("security", "Locked");
+    state.log("security", if keep_working { "Locked (work in progress keeps going)" } else { "Locked" });
     app.emit("security:locked", ()).ok();
     Ok(())
 }

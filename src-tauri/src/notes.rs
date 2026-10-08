@@ -366,7 +366,8 @@ pub fn start_reminders(app: AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
             let state = app.state::<Arc<AppState>>().inner().clone();
-            let Ok(cipher) = state.cipher() else { continue };
+            let Ok(cipher) = state.work_cipher() else { continue };
+            let hidden = state.vault.lock().unwrap().screen_locked();
             let due: Vec<Task> = {
                 let conn = state.db.lock().unwrap();
                 if !features::is_on(&conn, Feature::Tasks) {
@@ -383,7 +384,8 @@ pub fn start_reminders(app: AppHandle) {
                 ids.iter().filter_map(|id| get_task(&conn, &cipher, id)).collect()
             };
             for t in due {
-                crate::notify::show(&app, "Reminder", &t.data.title);
+                // While locked, the notification doesn't show what the task is.
+                crate::notify::show(&app, "Reminder", if hidden { "A task is due. Unlock SulcusAI to see it." } else { &t.data.title });
                 app.emit("task:reminder", json!({ "id": t.id, "title": t.data.title })).ok();
             }
         }

@@ -187,6 +187,9 @@ pub struct Vault {
     path: PathBuf,
     file: KeyFile,
     key: Option<Cipher>,
+    /// Locked for anyone at the screen, with the key kept so work already
+    /// running can finish ("keep working while locked").
+    screen_locked: bool,
     protector: Box<dyn Protector>,
     failed: u32,
 }
@@ -200,7 +203,7 @@ pub enum UnlockWith {
 impl Vault {
     /// Opens `keys.json`, creating a new data key on first run.
     pub fn open(path: &Path, protector: Box<dyn Protector>) -> Result<Vault, String> {
-        let mut vault = Vault { path: path.to_path_buf(), file: KeyFile::default(), key: None, protector, failed: 0 };
+        let mut vault = Vault { path: path.to_path_buf(), file: KeyFile::default(), key: None, screen_locked: false, protector, failed: 0 };
         if path.exists() {
             let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
             vault.file = serde_json::from_str(&text).map_err(|e| format!("keys.json is damaged: {e}"))?;
@@ -225,12 +228,33 @@ impl Vault {
         std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
     }
 
+    /// The key, for anything the person at the screen asks for.
     pub fn cipher(&self) -> Option<Cipher> {
+        if self.screen_locked {
+            return None;
+        }
+        self.key.clone()
+    }
+
+    /// The key, for background work (also while the screen is locked).
+    pub fn work_cipher(&self) -> Option<Cipher> {
         self.key.clone()
     }
 
     pub fn locked(&self) -> bool {
-        self.key.is_none()
+        self.key.is_none() || self.screen_locked
+    }
+
+    /// Locked while keeping the key for running work.
+    pub fn screen_locked(&self) -> bool {
+        self.screen_locked && self.key.is_some()
+    }
+
+    /// Locks the screen but keeps the key for work already running.
+    pub fn lock_screen(&mut self) {
+        if self.lock_enabled() {
+            self.screen_locked = true;
+        }
     }
 
     pub fn lock_enabled(&self) -> bool {
@@ -245,6 +269,7 @@ impl Vault {
     pub fn lock(&mut self) {
         if self.lock_enabled() {
             self.key = None;
+            self.screen_locked = false;
         }
     }
 
@@ -336,6 +361,7 @@ impl Vault {
         match key {
             Some(k) => {
                 self.failed = 0;
+                self.screen_locked = false;
                 self.key = Some(Cipher(Arc::new(k)));
                 Ok(())
             }
@@ -369,6 +395,7 @@ impl Vault {
         let blob = self.file.hello.as_ref().ok_or("Windows Hello isn't set up.")?;
         let raw = self.protector.unprotect(&B64.decode(blob).map_err(|e| e.to_string())?)?;
         self.key = Some(Cipher(Arc::new(to_key(raw).ok_or("keys.json is damaged")?)));
+        self.screen_locked = false;
         self.failed = 0;
         Ok(())
     }
@@ -516,6 +543,25 @@ mod tests {
         let v = vault(&path);
         assert!(!v.locked() && !v.lock_enabled());
         assert_eq!(v.cipher().unwrap().decrypt(&enc).unwrap(), "chat");
+    }
+
+    #[test]
+    fn screen_lock_keeps_the_key_for_running_work_only() {
+        let path = temp_keys("screen");
+        let mut v = vault(&path);
+        v.enable_lock("2468").unwrap();
+        let before = v.cipher().unwrap().encrypt("note");
+        v.lock_screen();
+        assert!(v.locked() && v.screen_locked());
+        assert!(v.cipher().is_none(), "nothing for the screen");
+        assert_eq!(v.work_cipher().unwrap().decrypt(&before).unwrap(), "note", "background work still has the key");
+        assert!(v.unlock(UnlockWith::Pin, "0000").is_err());
+        assert!(v.locked(), "a wrong PIN doesn't unlock the screen");
+        v.unlock(UnlockWith::Pin, "2468").unwrap();
+        assert!(!v.locked() && v.cipher().is_some());
+        // A full lock still forgets the key.
+        v.lock();
+        assert!(v.work_cipher().is_none() && !v.screen_locked());
     }
 
     #[test]

@@ -149,7 +149,7 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
 
 /// Runs one schedule now and saves the result as a chat. Returns the chat id.
 pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result<String, String> {
-    let cipher = state.cipher()?;
+    let cipher = state.work_cipher()?;
     let (profile, title) = {
         let conn = state.db.lock().unwrap();
         let title = format!("⏰ {} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
@@ -205,7 +205,7 @@ pub fn start(app: AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
             let state = app.state::<Arc<AppState>>().inner().clone();
-            let Ok(cipher) = state.cipher() else { continue };
+            let Ok(cipher) = state.work_cipher() else { continue };
             if !crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Scheduled) {
                 continue;
             }

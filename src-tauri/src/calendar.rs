@@ -719,7 +719,7 @@ pub fn start_sync(app: AppHandle) {
                 let conn = state.db.lock().unwrap();
                 crate::features::is_on(&conn, Feature::Calendar) && conn.query_row("SELECT COUNT(*) FROM cal_accounts", [], |r| r.get::<_, i64>(0)).unwrap_or(0) > 0
             };
-            let Ok(c) = state.cipher() else { continue };
+            let Ok(c) = state.work_cipher() else { continue };
             if !ready || web_allowed(&state).is_err() {
                 continue;
             }

@@ -306,6 +306,8 @@ export interface SecurityStatus {
   hello_enabled: boolean;
   hello_available: boolean;
   auto_lock_minutes: number;
+  /** Locking lets work in progress carry on. */
+  keep_working?: boolean;
 }
 
 export interface Action {
@@ -702,6 +704,7 @@ export const api = {
   unlock: (method: "pin" | "recovery", secret: string) => invoke<void>("unlock", { method, secret }),
   unlockWithHello: () => invoke<void>("unlock_with_hello"),
   lockNow: () => invoke<void>("lock_now"),
+  setKeepWorking: (on: boolean) => invoke<void>("set_keep_working", { on }),
   setHello: (enabled: boolean) => invoke<void>("set_hello", { enabled }),
   setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
   actions: (limit?: number) => invoke<Action[]>("list_actions", { limit }),

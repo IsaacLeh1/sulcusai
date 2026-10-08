@@ -132,6 +132,12 @@ impl AppState {
         self.vault.lock().unwrap().cipher().ok_or_else(|| LOCKED.to_string())
     }
 
+    /// The data key for background work: also while the screen is locked
+    /// with "keep working while locked" on.
+    fn work_cipher(&self) -> Result<Cipher, String> {
+        self.vault.lock().unwrap().work_cipher().ok_or_else(|| LOCKED.to_string())
+    }
+
     fn log(&self, category: &str, summary: &str) {
         db::log_action(&self.db.lock().unwrap(), category, summary);
     }
@@ -833,6 +839,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
+            security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,
             browsers::set_main_browser,
