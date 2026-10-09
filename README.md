@@ -100,7 +100,10 @@ and stops it, and keeps your data.
 
 ## Development
 
-Windows 10/11 x64, Rust stable, Node 22+, pnpm.
+Windows 10/11 x64 is the main platform. macOS (Apple silicon) and Linux
+(x64) build and run the core; some features are Windows-only for now (see
+HANDOFF.md, "macOS and Linux"). Rust stable, Node 22+, pnpm. On Linux, install
+the WebKitGTK and audio packages listed in `.github/workflows/ci.yml`.
 
 ```
 pnpm install
