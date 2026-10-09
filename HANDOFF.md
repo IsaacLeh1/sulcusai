@@ -384,3 +384,9 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 - Windows Firewall asks the first time the listener opens; without "allow", other PCs can't reach this one.
 - Tests: `cargo test --lib sync` (tracking, conflicts, deletes, incognito, wire crypto); `cargo test --lib e2e_sync_two_pcs -- --ignored --nocapture` (two data folders pair over loopback, a wrong code fails, both directions sync, unpaired PCs are refused).
 - Not yet: syncing pictures attached in chats (they show as missing on the other PC), a QR code for pairing, the Cloud relay, copying models over the network.
+
+**Cloud pictures, video and voices (`media/cloud.rs`, `cloud.rs` `CloudMedia`, Settings → Cloud models → a provider's "Pictures, video and voices"):**
+- OpenAI-style media APIs on providers of the OpenAI kind: `images/generations` (GPT Image, Imagen through Gemini's OpenAI-compatible endpoint), `images/edits` for edit/restyle/fill (GPT Image only; the painted area becomes the transparent part of the mask), `videos` (Sora: start, poll every 5 s, download MP4), `audio/speech` (WAV).
+- Suggestions per preset with estimated prices (per picture, per second of video, per million characters), editable; spend counts against the monthly budget; requests are logged and the description is redacted like cloud chats. Only at the Cloud level.
+- Jobs use a cloud model when it's picked (Studio model menus list "☁ name (provider)"; Narration has "Voices from") or when no model on this PC can do the job; chats offer create_image/create_video when a cloud model can make them (`media::can_make`).
+- Test: `cargo test --lib e2e_cloud_media -- --ignored --nocapture` (stand-in server: two pictures with a redacted email, a fill with a mask, an 8-second video with polling, a voice, the spend, and nothing sent off the Cloud level).

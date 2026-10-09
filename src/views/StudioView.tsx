@@ -11,6 +11,7 @@ import {
   type InstallProgress,
   type MediaItem,
   type MediaKind,
+  type CloudMediaChoice,
   type MediaModelCard,
   type MediaRequest,
   type Voice,
@@ -136,7 +137,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
     );
   }
 
-  const installedOf = (kind: MediaKind) => (view?.models ?? []).filter((m) => m.kind === kind && m.installed);
+  const installedOf = (kind: MediaKind) => [...(view?.models ?? []).filter((m) => m.kind === kind && m.installed), ...cloudCards(view?.cloud ?? [], kind)];
   const kind = TAB_KIND[tab];
   const needsModel = kind && view && installedOf(kind).length === 0;
 
@@ -176,7 +177,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         ) : tab === "music" ? (
           <MusicComposer models={installedOf("music")} onStart={start} />
         ) : (
-          <NarrateComposer onStart={start} />
+          <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
         )}
       </section>
 
@@ -259,6 +260,31 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       )}
     </div>
   );
+}
+
+/** Cloud models shown alongside this PC's in the model menus. */
+function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[] {
+  const want = kind === "image" ? "image" : kind === "video" ? "video" : null;
+  return cloud
+    .filter((c) => c.kind === want)
+    .map((c) => {
+      const edits = /:(gpt-image|dall-e-2)/.test(c.id);
+      return {
+        id: c.id,
+        name: `☁ ${c.name} (${c.provider})`,
+        publisher: c.provider,
+        source: "",
+        description: "",
+        license: { name: `${c.provider}'s terms`, url: "", commercial: true, note: null },
+        kind,
+        can: kind === "image" ? (edits ? ["generate", "edit", "fill", "restyle"] : ["generate"]) : ["text", "image"],
+        files: [],
+        quality: 0,
+        defaults: { steps: 0, width: 1024, height: 1024, fps: 24, seconds: 4 },
+        fit: { runnable: true, on_gpu: false, est_secs: kind === "video" ? 180 : 20, reason: null, disk_ok: true, need_bytes: 0 } as unknown as MediaModelCard["fit"],
+        installed: true,
+      };
+    });
 }
 
 function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void }) {
@@ -482,10 +508,14 @@ function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart:
   );
 }
 
-function NarrateComposer({ onStart }: { onStart: (r: MediaRequest) => Promise<boolean> }) {
+const CLOUD_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
+
+function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStart: (r: MediaRequest) => Promise<boolean> }) {
   const [text, setText] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voice, setVoice] = useState("");
+  const [engine, setEngine] = useState("");
+  const [cloudVoice, setCloudVoice] = useState("alloy");
   useEffect(() => {
     api.voices().then((v) => {
       setVoices(v);
@@ -493,17 +523,34 @@ function NarrateComposer({ onStart }: { onStart: (r: MediaRequest) => Promise<bo
     }).catch(() => {});
   }, []);
   const go = async () => {
-    if (await onStart({ op: "narrate", prompt: text, voice: voice || null })) setText("");
+    const req: MediaRequest = engine ? { op: "narrate", prompt: text, voice: cloudVoice, model_id: engine } : { op: "narrate", prompt: text, voice: voice || null };
+    if (await onStart(req)) setText("");
   };
   return (
     <div className="form">
       <textarea className="input" rows={6} value={text} placeholder="The text to read aloud. It's saved as a sound you can play, trim and save." onChange={(e) => setText(e.target.value)} autoFocus />
       <div className="row wrap">
-        <select value={voice} onChange={(e) => setVoice(e.target.value)} title="Voice">
-          {voices.map((v) => (
-            <option key={v.id} value={v.id}>{v.name}</option>
-          ))}
-        </select>
+        {cloud.length > 0 && (
+          <select value={engine} onChange={(e) => setEngine(e.target.value)} title="Voices from">
+            <option value="">This PC's voices</option>
+            {cloud.map((c) => (
+              <option key={c.id} value={c.id}>☁ {c.name} ({c.provider})</option>
+            ))}
+          </select>
+        )}
+        {engine ? (
+          <select value={cloudVoice} onChange={(e) => setCloudVoice(e.target.value)} title="Voice">
+            {CLOUD_VOICES.map((v) => (
+              <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>
+            ))}
+          </select>
+        ) : (
+          <select value={voice} onChange={(e) => setVoice(e.target.value)} title="Voice">
+            {voices.map((v) => (
+              <option key={v.id} value={v.id}>{v.name}</option>
+            ))}
+          </select>
+        )}
         <span className="spacer" />
         <button className="btn primary" disabled={!text.trim()} onClick={go}>Read aloud</button>
       </div>

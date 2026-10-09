@@ -739,3 +739,6 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .pair-code { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
 .pair-code .code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 26px; letter-spacing: 0.12em; }
 .code-input { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+.cloud-media { margin-top: 6px; }
+.cloud-media summary { cursor: pointer; }
+.cloud-media .price { width: 90px; }

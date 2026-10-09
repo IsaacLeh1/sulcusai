@@ -238,11 +238,11 @@ impl Turn {
         }
         // Making pictures, video and music, once a model for them is installed.
         let mut media_note = Vec::new();
-        if self.use_tools && features.contains(&Feature::Images) && crate::media::has_kind(&self.state, crate::media::Kind::Image) {
+        if self.use_tools && features.contains(&Feature::Images) && crate::media::can_make(&self.state, crate::media::Kind::Image) {
             extra.extend(["create_image", "edit_image"]);
             media_note.push("pictures (create_image, edit_image)");
         }
-        if self.use_tools && features.contains(&Feature::Video) && crate::media::has_kind(&self.state, crate::media::Kind::Video) {
+        if self.use_tools && features.contains(&Feature::Video) && crate::media::can_make(&self.state, crate::media::Kind::Video) {
             extra.push("create_video");
             media_note.push("short video clips (create_video)");
         }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, type CloudModel, type CloudProvider, type CloudView } from "../api";
+import { api, errorText, type CloudModel, type CloudProvider, type CloudView, type CloudMedia, type CloudMediaKind } from "../api";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -71,6 +71,47 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
   );
 }
 
+const MEDIA_KIND: Record<CloudMediaKind, string> = { image: "pictures", video: "video", speech: "voices" };
+const MEDIA_UNIT: Record<CloudMediaKind, string> = { image: "$ per picture", video: "$ per second", speech: "$ per million characters" };
+
+/** Picture, video and voice models for the Studio and chats. */
+function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<CloudView>) => Promise<void> }) {
+  const all = [...p.media, ...p.media_suggestions.filter((s) => !p.media.some((m) => m.id === s.id))];
+  const on = (id: string) => p.media.some((m) => m.id === id);
+  const toggle = (m: CloudMedia, yes: boolean) => run(() => api.setCloudMedia(p.id, yes ? [...p.media, m] : p.media.filter((x) => x.id !== m.id)));
+  const setPrice = (id: string, v: string) => run(() => api.setCloudMedia(p.id, p.media.map((m) => (m.id === id ? { ...m, price: v === "" ? null : Number(v) } : m))));
+  return (
+    <details className="cloud-media small">
+      <summary>Pictures, video and voices{p.media.length > 0 ? ` (${p.media.length} on)` : ""}</summary>
+      <p className="muted">Used by the Studio and by chats that make pictures or video, only at the Cloud level. Prices are estimates for the monthly budget; check {p.name}'s price list.</p>
+      <ul className="teach-list">
+        {all.map((m) => (
+          <li key={m.id}>
+            <label className="check">
+              <input type="checkbox" checked={on(m.id)} disabled={!p.has_key} onChange={(e) => toggle(m, e.target.checked)} />
+              <span>
+                ☁ {m.name} <span className="muted">· {MEDIA_KIND[m.kind]}</span>
+              </span>
+            </label>
+            {on(m.id) && (
+              <input
+                className="input price"
+                type="number"
+                min={0}
+                step={0.001}
+                defaultValue={p.media.find((x) => x.id === m.id)?.price ?? ""}
+                onBlur={(e) => setPrice(m.id, e.target.value)}
+                title={MEDIA_UNIT[m.kind]}
+                aria-label={`${m.name}: ${MEDIA_UNIT[m.kind]}`}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v: CloudView) => void; toast: PushToast }) {
   const [key, setKey] = useState("");
   const [picking, setPicking] = useState(false);
@@ -131,6 +172,7 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
           </tbody>
         </table>
       )}
+      {(p.media_suggestions.length > 0 || p.media.length > 0) && <MediaPicker p={p} run={run} />}
       {picking && <ModelPicker provider={p} onClose={() => setPicking(false)} onSaved={onChanged} toast={toast} />}
     </div>
   );

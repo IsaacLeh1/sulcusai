@@ -1223,6 +1223,7 @@ pub fn run() {
             cloud::set_cloud_provider,
             cloud::cloud_models_available,
             cloud::set_cloud_models,
+            cloud::set_cloud_media,
             cloud::set_cloud_options,
             cloud::cloud_choices,
             backup::make_backup,

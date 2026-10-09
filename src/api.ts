@@ -175,6 +175,8 @@ export interface CloudProvider {
   enabled: boolean;
   has_key: boolean;
   models: CloudModel[];
+  media: CloudMedia[];
+  media_suggestions: CloudMedia[];
 }
 
 export interface CloudView {
@@ -906,8 +908,25 @@ export interface MediaJob {
   chat_id: string | null;
 }
 
+export type CloudMediaKind = "image" | "video" | "speech";
+
+/** A cloud picture, video or voice model (Settings → Cloud models). */
+export interface CloudMedia {
+  id: string;
+  name: string;
+  kind: CloudMediaKind;
+  /** $ per picture, per second of video, or per million characters read. */
+  price: number | null;
+}
+
+/** One usable now (Cloud level, provider on, key set); id is "cloud:provider:model". */
+export interface CloudMediaChoice extends CloudMedia {
+  provider: string;
+}
+
 export interface MediaView {
   models: MediaModelCard[];
+  cloud: CloudMediaChoice[];
   hidden: number;
   video_note: string | null;
   installing: string[];
@@ -979,6 +998,7 @@ export const api = {
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
   cloudModelsAvailable: (id: string) => invoke<CloudModel[]>("cloud_models_available", { id }),
+  setCloudMedia: (id: string, media: CloudMedia[]) => invoke<CloudView>("set_cloud_media", { id, media }),
   setCloudModels: (id: string, models: CloudModel[]) => invoke<CloudView>("set_cloud_models", { id, models }),
   setCloudOptions: (budget: number | null, redact: boolean) => invoke<CloudView>("set_cloud_options", { budget, redact }),
   cloudChoices: () => invoke<CloudChoice[]>("cloud_choices"),

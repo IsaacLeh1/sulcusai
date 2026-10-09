@@ -55,6 +55,28 @@ pub struct CloudModel {
     pub price_out: Option<f64>,
 }
 
+/// What a cloud media model makes.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    #[default]
+    Image,
+    Video,
+    Speech,
+}
+
+/// A picture, video or voice model the user turned on.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct CloudMedia {
+    pub id: String,
+    pub name: String,
+    pub kind: MediaKind,
+    /// US dollars per picture, per second of video, or per million
+    /// characters read aloud, if known.
+    pub price: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provider {
     pub id: String,
@@ -67,6 +89,8 @@ pub struct Provider {
     pub key: String,
     #[serde(default)]
     pub models: Vec<CloudModel>,
+    #[serde(default)]
+    pub media: Vec<CloudMedia>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,13 +144,32 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
         p("gemini", "Google Gemini", Kind::Openai, "https://generativelanguage.googleapis.com/v1beta/openai"),
         p("openrouter", "OpenRouter", Kind::Openai, "https://openrouter.ai/api/v1"),
     ]
+}
+
+/// Picture, video and voice models each provider offers through the
+/// OpenAI-style media APIs, with list prices as last checked (estimates;
+/// people can change them).
+pub fn media_suggestions(provider: &str) -> Vec<CloudMedia> {
+    let m = |id: &str, name: &str, kind, price: f64| CloudMedia { id: id.into(), name: name.into(), kind, price: Some(price) };
+    match provider {
+        "openai" => vec![
+            m("gpt-image-1", "GPT Image", MediaKind::Image, 0.042),
+            m("gpt-image-1-mini", "GPT Image mini", MediaKind::Image, 0.011),
+            m("sora-2", "Sora 2", MediaKind::Video, 0.10),
+            m("sora-2-pro", "Sora 2 Pro", MediaKind::Video, 0.30),
+            m("gpt-4o-mini-tts", "GPT-4o mini voices", MediaKind::Speech, 12.0),
+            m("tts-1", "OpenAI TTS", MediaKind::Speech, 15.0),
+        ],
+        "gemini" => vec![m("imagen-4.0-generate-001", "Imagen 4", MediaKind::Image, 0.04), m("imagen-4.0-fast-generate-001", "Imagen 4 Fast", MediaKind::Image, 0.02)],
+        _ => Vec::new(),
+    }
 }
 
 /// Anthropic's list prices ($ per million tokens, input/output), as of
@@ -339,6 +382,86 @@ fn redact_messages(messages: &mut [Value], r: &mut Redactor) {
 
 fn client(state: &AppState) -> Result<reqwest::Client, String> {
     net::external_client(state.settings().connectivity, Purpose::Cloud, false)
+}
+
+pub fn media_client(state: &AppState) -> Result<reqwest::Client, String> {
+    client(state)
+}
+
+/// Where a picture, video or voice job goes.
+pub struct MediaTarget {
+    pub provider: String,
+    pub base_url: String,
+    key: String,
+    pub model: CloudMedia,
+    pub redact: bool,
+}
+
+impl MediaTarget {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+/// A cloud media model's target, with the same checks as cloud chats
+/// (Cloud level, provider on, key set, budget left).
+pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<MediaTarget, String> {
+    let (pid, mid) = parse_ref(id).ok_or("Unknown cloud model.")?;
+    let (level, s, spent) = {
+        let conn = state.db.lock().unwrap();
+        (db::settings(&conn).connectivity, settings(&conn), spend(&conn))
+    };
+    if level != Connectivity::Cloud {
+        return Err("Cloud models need the Cloud level. Switch to it in the status bar, or use a model on this PC.".into());
+    }
+    let p = s.providers.iter().find(|p| p.id == pid).ok_or("That cloud provider was removed.")?;
+    if !p.enabled {
+        return Err(format!("{} is turned off in Settings → Cloud models.", p.name));
+    }
+    if p.kind != Kind::Openai {
+        return Err(format!("{} doesn't offer pictures, video or voices here.", p.name));
+    }
+    let m = p.media.iter().find(|m| m.id == mid).ok_or("That cloud model was removed.")?;
+    if let Some(b) = s.budget {
+        if spent.usd >= b {
+            return Err(format!("This month's cloud budget (${b:.2}) is used up. Raise it in Settings → Cloud models."));
+        }
+    }
+    let key = if p.key.is_empty() { String::new() } else { cipher.decrypt(&p.key)? };
+    if key.is_empty() {
+        return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
+    }
+    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact })
+}
+
+/// Cloud media models usable right now (Cloud level, provider on, key set).
+#[derive(Debug, Clone, Serialize)]
+pub struct MediaChoice {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub kind: MediaKind,
+    pub price: Option<f64>,
+}
+
+pub fn media_choices(conn: &Connection) -> Vec<MediaChoice> {
+    if db::settings(conn).connectivity != Connectivity::Cloud {
+        return Vec::new();
+    }
+    settings(conn)
+        .providers
+        .iter()
+        .filter(|p| p.enabled && !p.key.is_empty() && p.kind == Kind::Openai)
+        .flat_map(|p| p.media.iter().map(|m| MediaChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), kind: m.kind, price: m.price }))
+        .collect()
+}
+
+/// Adds a media job's estimated cost to this month's spend.
+pub fn add_spend(conn: &Connection, usd: f64) {
+    let mut s = spend(conn);
+    s.usd += usd;
+    s.requests += 1;
+    let _ = db::set(conn, SPEND_KEY, &s);
 }
 
 /// OpenAI chat messages → Anthropic's system text, messages and tools.
@@ -771,6 +894,9 @@ pub struct ProviderView {
     enabled: bool,
     has_key: bool,
     models: Vec<CloudModel>,
+    media: Vec<CloudMedia>,
+    /// Picture, video and voice models this provider offers.
+    media_suggestions: Vec<CloudMedia>,
 }
 
 #[derive(Serialize)]
@@ -783,7 +909,7 @@ pub struct CloudView {
 }
 
 fn pview(p: &Provider) -> ProviderView {
-    ProviderView { id: p.id.clone(), name: p.name.clone(), kind: p.kind, base_url: p.base_url.clone(), enabled: p.enabled, has_key: !p.key.is_empty(), models: p.models.clone() }
+    ProviderView { id: p.id.clone(), name: p.name.clone(), kind: p.kind, base_url: p.base_url.clone(), enabled: p.enabled, has_key: !p.key.is_empty(), models: p.models.clone(), media: p.media.clone(), media_suggestions: media_suggestions(&p.id) }
 }
 
 #[tauri::command]
@@ -806,7 +932,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
                 return Err("Use an https:// address (or a local one).".into());
             }
             let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Custom provider".into());
-            Provider { id: format!("custom-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new() }
+            Provider { id: format!("custom-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new() }
         }
     };
     {
@@ -875,6 +1001,19 @@ pub fn set_cloud_models(state: AppStateRef, id: String, models: Vec<CloudModel>)
         let mut s = settings(&conn);
         let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
         p.models = models;
+        save(&conn, &s)?;
+    }
+    Ok(cloud_view(state))
+}
+
+/// The picture, video and voice models turned on for a provider.
+#[tauri::command]
+pub fn set_cloud_media(state: AppStateRef, id: String, media: Vec<CloudMedia>) -> Result<CloudView, String> {
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
+        p.media = media.into_iter().filter(|m| !m.id.trim().is_empty()).collect();
         save(&conn, &s)?;
     }
     Ok(cloud_view(state))

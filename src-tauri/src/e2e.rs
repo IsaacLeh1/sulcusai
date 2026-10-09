@@ -1722,7 +1722,7 @@ async fn e2e_cloud_anthropic() {
     tokio::spawn(async move { axum::serve(listener, app).await.ok() });
 
     let model = crate::cloud::CloudModel { id: "claude-opus-5-5".into(), name: "Claude Opus 5.5".into(), ctx: 1_000_000, max_output: 128_000, vision: true, price_in: Some(4.0), price_out: Some(20.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model] });
+    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model], media: Vec::new() });
     let id = "cloud:anthropic:claude-opus-5-5".to_string();
     let (ep, spec, _) = crate::llm_endpoint(&state, Some(id.clone()), false, || {}).await.unwrap();
     assert_eq!(spec.name, "Claude Opus 5.5");
@@ -1784,7 +1784,7 @@ async fn e2e_cloud_openai() {
     let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None };
     let local = eng.ensure(launch, None).await.unwrap();
     let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model] });
+    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new() });
     let (ep, _, _) = crate::llm_endpoint(&state, Some("cloud:custom-test:qwen3-1.7b".into()), false, || {}).await.unwrap();
 
     let ask = vec![serde_json::json!({ "role": "user", "content": "Repeat exactly, nothing else: my address is jo@example.com /no_think" })];
@@ -1895,4 +1895,109 @@ async fn e2e_lora_adapter() {
         }
     }
     eng.stop().await;
+}
+
+/// Cloud pictures, edits, video and voices against a stand-in OpenAI server:
+/// what's sent, what lands in the gallery, and the spend.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_cloud_media() {
+    use axum::routing::{get, post};
+    use base64::Engine;
+    let png = {
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 30, 30, 255])));
+        crate::media::imaging::png(&img).unwrap()
+    };
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (s1, s2, s3, s4) = (seen.clone(), seen.clone(), seen.clone(), seen.clone());
+    let (g, e) = (b64.clone(), b64.clone());
+    let p = polls.clone();
+    let wav = crate::audio::wav_encode(&vec![0.0; 24000], 24000);
+    let app = axum::Router::new()
+        .route("/v1/images/generations", post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            s1.lock().unwrap().push(format!("generate {body}"));
+            let n = body["n"].as_u64().unwrap_or(1);
+            let data: Vec<_> = (0..n).map(|_| serde_json::json!({ "b64_json": g })).collect();
+            async move { axum::Json(serde_json::json!({ "data": data })) }
+        }))
+        .route("/v1/images/edits", post(move |body: axum::body::Bytes| {
+            let text = String::from_utf8_lossy(&body).to_string();
+            s2.lock().unwrap().push(format!("edit mask={} prompt={}", text.contains("name=\"mask\""), text.contains("Make it blue")));
+            async move { axum::Json(serde_json::json!({ "data": [{ "b64_json": e }] })) }
+        }))
+        .route("/v1/videos", post(move |body: axum::body::Bytes| {
+            let text = String::from_utf8_lossy(&body).to_string();
+            s3.lock().unwrap().push(format!("video seconds8={}", text.contains("\r\n\r\n8\r\n")));
+            async move { axum::Json(serde_json::json!({ "id": "vid_1", "status": "queued" })) }
+        }))
+        .route("/v1/videos/vid_1", get(move || {
+            let n = p.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { axum::Json(if n == 0 { serde_json::json!({ "status": "in_progress", "progress": 50 }) } else { serde_json::json!({ "status": "completed" }) }) }
+        }))
+        .route("/v1/videos/vid_1/content", get(|| async { b"not really an mp4".to_vec() }))
+        .route("/v1/audio/speech", post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+            s4.lock().unwrap().push(format!("speech {}", body["voice"]));
+            let wav = wav.clone();
+            async move { wav }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+    use crate::cloud::{CloudMedia, MediaKind};
+    let media = vec![
+        CloudMedia { id: "gpt-image-1".into(), name: "GPT Image".into(), kind: MediaKind::Image, price: Some(0.04) },
+        CloudMedia { id: "sora-2".into(), name: "Sora 2".into(), kind: MediaKind::Video, price: Some(0.10) },
+        CloudMedia { id: "gpt-4o-mini-tts".into(), name: "Voices".into(), kind: MediaKind::Speech, price: Some(12.0) },
+    ];
+    let state = cloud_state(crate::cloud::Provider { id: "openai".into(), name: "OpenAI".into(), kind: crate::cloud::Kind::Openai, base_url: format!("http://127.0.0.1:{port}/v1"), enabled: true, key: "sk-test".into(), models: Vec::new(), media });
+    assert_eq!(crate::cloud::media_choices(&state.db.lock().unwrap()).len(), 3);
+    assert!(crate::media::can_make(&state, crate::media::Kind::Image), "chats offer pictures through the cloud");
+
+    let req = |op: &str, prompt: &str| crate::media::Request { op: op.into(), prompt: prompt.into(), ..Default::default() };
+    // No picture model on this PC: the cloud one is used without being named.
+    let mut r = req("generate", "A red square for jo@example.com");
+    r.count = Some(2);
+    let made = crate::media::run(&state, "j1".into(), r).await.unwrap();
+    assert_eq!(made.len(), 2);
+    assert_eq!(made[0].model_id.as_deref(), Some("cloud:openai:gpt-image-1"));
+    assert_eq!((made[0].width, made[0].height), (8, 8));
+
+    let mut r = req("fill", "Make it blue");
+    r.model_id = Some("cloud:openai:gpt-image-1".into());
+    r.source = Some(made[0].id.clone());
+    r.mask = Some(b64.clone());
+    let edited = crate::media::run(&state, "j2".into(), r).await.unwrap();
+    assert_eq!(edited[0].parent.as_deref(), Some(made[0].id.as_str()));
+
+    let mut r = req("video", "Waves");
+    r.seconds = Some(8.0);
+    let clip = crate::media::run(&state, "j3".into(), r).await.unwrap();
+    assert_eq!(clip[0].mime, "video/mp4");
+    assert_eq!(clip[0].seconds, 8.0);
+
+    let mut r = req("narrate", "Hello there.");
+    r.model_id = Some("cloud:openai:gpt-4o-mini-tts".into());
+    r.voice = Some("nova".into());
+    let spoken = crate::media::run(&state, "j4".into(), r).await.unwrap();
+    assert!((spoken[0].seconds - 1.0).abs() < 0.01);
+
+    let seen = seen.lock().unwrap().clone();
+    eprintln!("{seen:#?}");
+    assert!(seen[0].contains("[email 1]") && !seen[0].contains("jo@example.com"), "the email was swapped out");
+    assert!(seen[0].contains("\"size\":\"1024x1024\""));
+    assert!(seen.iter().any(|s| s == "edit mask=true prompt=true"));
+    assert!(seen.iter().any(|s| s == "video seconds8=true"));
+    assert!(seen.iter().any(|s| s == "speech \"nova\""));
+    let spent = crate::cloud::spend(&state.db.lock().unwrap()).usd;
+    // 2 pictures + 1 edit at $0.04, 8 s of video at $0.10, 12 characters at $12/M.
+    assert!((spent - (3.0 * 0.04 + 0.8 + 12.0 * 12.0 / 1e6)).abs() < 1e-6, "{spent}");
+
+    // Off the Cloud level, nothing goes out.
+    crate::db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = crate::net::Connectivity::Offline).unwrap();
+    let mut r = req("generate", "Another");
+    r.model_id = Some("cloud:openai:gpt-image-1".into());
+    assert!(crate::media::run(&state, "j5".into(), r).await.is_err());
 }

@@ -8,7 +8,8 @@
 //! and what it makes goes into the gallery, encrypted.
 
 mod cutout;
-mod imaging;
+pub(crate) mod imaging;
+mod cloud;
 mod music;
 pub(crate) mod proc;
 pub mod screen;
@@ -492,10 +493,53 @@ fn update(state: &AppState, id: &str, f: impl FnOnce(&mut JobInfo)) {
 }
 
 /// Checks a request before it's queued, so mistakes show at once.
+/// What a cloud model can do with a job.
+fn cloud_can(c: &crate::cloud::MediaChoice, op: &str) -> bool {
+    use crate::cloud::MediaKind;
+    let edits = c.id.contains(":gpt-image") || c.id.contains(":dall-e-2");
+    match (c.kind, op) {
+        (MediaKind::Image, "generate") => true,
+        (MediaKind::Image, "edit" | "restyle" | "fill") => edits,
+        (MediaKind::Video, "video") => true,
+        (MediaKind::Speech, "narrate") => true,
+        _ => false,
+    }
+}
+
+/// The cloud model a job runs on: the one asked for, or one that can do it
+/// when no model on this PC can (narration always has this PC's voices).
+fn cloud_pick(state: &AppState, req: &Request) -> Option<String> {
+    if let Some(id) = req.model_id.as_deref().filter(|m| crate::cloud::is_cloud(m)) {
+        return Some(id.to_string());
+    }
+    if req.op == "narrate" || choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).is_ok() {
+        return None;
+    }
+    crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| cloud_can(c, &req.op)).map(|c| c.id)
+}
+
+/// Any model, here or in the cloud, can make this kind of thing.
+pub fn can_make(state: &AppState, kind: Kind) -> bool {
+    use crate::cloud::MediaKind;
+    has_kind(state, kind)
+        || crate::cloud::media_choices(&state.db.lock().unwrap()).iter().any(|c| match kind {
+            Kind::Image => c.kind == MediaKind::Image,
+            Kind::Video => c.kind == MediaKind::Video,
+            _ => false,
+        })
+}
+
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     let f = op_feature(&req.op).ok_or("Unknown kind of job.")?;
     crate::features::require(state, f)?;
-    if req.op != "narrate" {
+    if let Some(id) = cloud_pick(state, req) {
+        let c = crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| c.id == id);
+        match c {
+            Some(c) if !cloud_can(&c, &req.op) => return Err(format!("{} can't do that kind of job.", c.name)),
+            None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
+            _ => {}
+        }
+    } else if req.op != "narrate" {
         choose(state, &req.op, req.model_id.as_deref(), req.source.is_some())?;
     }
     let needs_source = matches!(req.op.as_str(), "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background");
@@ -516,14 +560,20 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let model = if req.op == "narrate" { None } else { choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok() };
-    let est = model.as_ref().map_or(10.0, |m| estimate(state, m, &req));
+    let on_cloud = cloud_pick(state, &req);
+    let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok() };
+    let est = match (&model, &on_cloud) {
+        (Some(m), _) => estimate(state, m, &req),
+        (None, Some(_)) if req.op == "video" => 180.0,
+        (None, Some(_)) => 20.0,
+        _ => 10.0,
+    };
     {
         let info = JobInfo {
             id: id.clone(),
             op: req.op.clone(),
             prompt: req.prompt.chars().take(200).collect(),
-            model_id: model.as_ref().map(|m| m.id.clone()),
+            model_id: model.as_ref().map(|m| m.id.clone()).or_else(|| on_cloud.clone()),
             status: "queued".into(),
             stage: "Waiting for the job before it".into(),
             fraction: 0.0,
@@ -560,7 +610,16 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
             i.eta_secs = Some(eta.max(0.0).round());
         });
     };
-    let result = run_job(state, &id, &req, model.as_ref(), &cancel, &progress).await;
+    let result = match &on_cloud {
+        Some(cid) => {
+            let ctx = RunCtx { state, req: &req, cancel: &cancel, progress: &progress, reserved: 0 };
+            match crate::cloud::media_target(state, cid, &state.work_cipher()?) {
+                Ok(t) => cloud::run(&ctx, cid, &t).await,
+                Err(e) => Err(e),
+            }
+        }
+        None => run_job(state, &id, &req, model.as_ref(), &cancel, &progress).await,
+    };
     if let (Ok(items), Some(m)) = (&result, &model) {
         if !items.is_empty() {
             learn_speed(state, m, &req, started.elapsed().as_secs_f64());
@@ -574,6 +633,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         _ => "a picture",
     };
     match &result {
+        Ok(_) if on_cloud.is_some() => state.log("media", &format!("Made {name} with a cloud model")),
         Ok(_) => state.log("media", &format!("Made {name} on this PC")),
         Err(e) if e != download::CANCELLED => state.log("media", &format!("Making {name} failed: {}", e.lines().next().unwrap_or(""))),
         Err(_) => {}
@@ -1131,6 +1191,8 @@ pub struct MediaCard {
 #[derive(Serialize)]
 pub struct MediaView {
     models: Vec<MediaCard>,
+    /// Cloud picture, video and voice models usable now (Cloud level).
+    cloud: Vec<crate::cloud::MediaChoice>,
     /// Models that can't run on this PC, left out of the list.
     hidden: usize,
     /// Why video isn't available here, when no video model fits.
@@ -1166,6 +1228,7 @@ pub fn media_view(state: AppStateRef) -> MediaView {
     let c = state.cipher();
     MediaView {
         models,
+        cloud: crate::cloud::media_choices(&state.db.lock().unwrap()),
         hidden,
         video_note,
         installing: state.installs.lock().unwrap().keys().cloned().collect(),
