@@ -90,6 +90,8 @@ export interface ModelCard {
   tools: boolean;
   variants: Variant[];
   ratings: Ratings;
+  /** The model can see pictures (it has an image encoder). */
+  vision?: { file: string; size: number } | null;
   fit: { ctx: number; variants: VariantFit[]; recommended: string | null };
   installed: InstalledModel | null;
 }
@@ -245,6 +247,10 @@ export interface ToolMeta {
   file?: string;
   /** The assistant asked the user to turn on web access. */
   web_request?: boolean;
+  /** Pictures, clips or sounds the assistant made. */
+  media?: MediaItem[];
+  /** User messages: attached pictures (gallery ids). */
+  images?: string[];
 }
 
 export interface Preview {
@@ -476,6 +482,9 @@ export type FeatureId =
   | "documents"
   | "quick_ask"
   | "browser_control"
+  | "images"
+  | "video"
+  | "music"
   | "files"
   | "memory"
   | "projects"
@@ -681,6 +690,104 @@ export interface Language {
   name: string;
 }
 
+export type MediaKind = "image" | "video" | "music" | "upscale" | "background";
+
+export interface MediaFit {
+  runnable: boolean;
+  on_gpu: boolean;
+  est_secs: number;
+  needed_bytes: number;
+  disk_ok: boolean;
+  reason: string | null;
+}
+
+export interface MediaModelCard {
+  id: string;
+  name: string;
+  publisher: string;
+  source: string;
+  description: string;
+  license: License;
+  kind: MediaKind;
+  can: string[];
+  files: { role: string; file: string; size: number }[];
+  quality: number;
+  defaults: { steps: number; width: number; height: number; fps: number; seconds: number };
+  fit: MediaFit;
+  installed: boolean;
+}
+
+export interface MediaItem {
+  id: string;
+  kind: "image" | "video" | "audio";
+  op: string;
+  prompt: string;
+  model_id: string | null;
+  mime: string;
+  width: number;
+  height: number;
+  seconds: number;
+  size: number;
+  created_at: number;
+  parent: string | null;
+  chat_id: string | null;
+  seed: number | null;
+  lyrics: string | null;
+  favorite: boolean;
+  hidden: boolean;
+}
+
+export interface MediaJob {
+  id: string;
+  op: string;
+  prompt: string;
+  model_id: string | null;
+  status: "queued" | "running";
+  stage: string;
+  fraction: number;
+  eta_secs: number | null;
+  est_secs: number;
+  chat_id: string | null;
+}
+
+export interface MediaView {
+  models: MediaModelCard[];
+  hidden: number;
+  video_note: string | null;
+  installing: string[];
+  jobs: MediaJob[];
+  gallery: number;
+}
+
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
+
+export interface MediaRequest {
+  op: MediaOp;
+  model_id?: string | null;
+  prompt: string;
+  negative?: string | null;
+  source?: string | null;
+  /** PNG, base64. */
+  mask?: string | null;
+  shape?: "square" | "portrait" | "landscape" | "wide" | "tall";
+  count?: number;
+  seed?: number | null;
+  extend?: [number, number, number, number];
+  seconds?: number;
+  lyrics?: string | null;
+  instrumental?: boolean;
+  voice?: string | null;
+  language?: string | null;
+  chat_id?: string | null;
+}
+
+/** Base64 of bytes (for sending files to the core). */
+export function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
 /** The core's error text while app lock is engaged. */
 export const LOCKED = "locked";
 
@@ -704,7 +811,7 @@ export const api = {
   setChatModel: (chatId: string, modelId: string) => invoke<void>("set_chat_model", { chatId, modelId }),
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
-  send: (chatId: string, text: string) => invoke<Message | null>("send_message", { chatId, text }),
+  send: (chatId: string, text: string, images?: string[]) => invoke<Message | null>("send_message", { chatId, text, images: images ?? null }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
   unload: () => invoke<void>("unload_model"),
@@ -825,6 +932,23 @@ export const api = {
   quickHide: () => invoke<void>("quick_hide"),
   quickResize: (height: number) => invoke<void>("quick_resize", { height }),
   quickOpenInApp: (chatId: string | null) => invoke<void>("quick_open_in_app", { chatId }),
+  quickScreenshot: () => invoke<MediaItem>("quick_screenshot"),
+  mediaView: () => invoke<MediaView>("media_view"),
+  installMedia: (modelId: string) => invoke<void>("install_media_model", { modelId }),
+  removeMedia: (modelId: string) => invoke<void>("remove_media_model", { modelId }),
+  mediaStart: (request: MediaRequest) => invoke<string>("media_start", { request }),
+  mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
+  mediaJobs: () => invoke<MediaJob[]>("media_jobs"),
+  mediaList: (kind: string | null, before: number | null = null, limit = 60) => invoke<MediaItem[]>("media_list", { kind, before, limit }),
+  mediaGet: (id: string) => invoke<MediaItem>("media_get", { id }),
+  mediaFile: (id: string) => invoke<ArrayBuffer>("media_file", { id }),
+  mediaThumb: (id: string) => invoke<ArrayBuffer>("media_thumb", { id }),
+  mediaDelete: (id: string) => invoke<void>("media_delete", { id }),
+  mediaFavorite: (id: string, on: boolean) => invoke<MediaItem>("media_favorite", { id, on }),
+  mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),
+  mediaImport: (path: string, chatId: string | null = null) => invoke<MediaItem>("media_import", { path, chatId }),
+  mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null }) =>
+    invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
@@ -871,7 +995,7 @@ export type MeetingEvent =
 
 export interface InstallProgress {
   model_id: string;
-  phase: "engine" | "verify" | "download" | "benchmark";
+  phase: "engine" | "verify" | "download" | "benchmark" | "vision";
   received: number;
   total: number;
 }
@@ -887,6 +1011,8 @@ export interface InstallFinished {
 
 export interface ChatEvents {
   "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling"; detail?: string };
+  "media:progress": MediaJob;
+  "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };

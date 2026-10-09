@@ -2,8 +2,9 @@
 // Quick ask: the small box Ctrl+Alt+Space opens from anywhere. Ask
 // something, or act on what you copied; continue in the app if you like.
 import { useEffect, useRef, useState } from "react";
-import { api, errorText, on } from "../api";
+import { api, errorText, on, type MediaItem } from "../api";
 import { Markdown } from "../components/Markdown";
+import { useMediaUrl } from "../media";
 
 const ACTIONS: { label: string; prompt: (t: string) => string }[] = [
   { label: "Summarize", prompt: (t) => `Summarize this in a few bullet points:\n\n${t}` },
@@ -23,6 +24,10 @@ export function QuickAsk() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
+  /** "Ask about the screen": the screenshot to send with the question. */
+  const [shot, setShot] = useState<MediaItem | null>(null);
+  const [shooting, setShooting] = useState(false);
+  const shotUrl = useMediaUrl(shot, true);
   const input = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<string | null>(null);
   chatRef.current = chatId;
@@ -62,11 +67,24 @@ export function QuickAsk() {
   // Small while you type; room for the answer once one comes.
   const answering = phase !== "idle" || !!error;
   useEffect(() => {
-    api.quickResize(answering ? 460 : clip && !chatId ? 150 : 76).catch(() => {});
-  }, [answering, clip, chatId]);
+    api.quickResize(answering ? 460 : (clip && !chatId) || shot ? 150 : 76).catch(() => {});
+  }, [answering, clip, chatId, shot]);
+
+  const takeShot = async () => {
+    setShooting(true);
+    setError(null);
+    try {
+      setShot(await api.quickScreenshot());
+      setTimeout(() => input.current?.focus(), 30);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setShooting(false);
+    }
+  };
 
   const ask = async (prompt: string) => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() && !shot) return;
     setError(null);
     setAnswer("");
     setPhase("thinking");
@@ -76,7 +94,9 @@ export function QuickAsk() {
       setChatId(id);
       chatRef.current = id;
       setText("");
-      await api.send(id, prompt);
+      const images = shot ? [shot.id] : [];
+      setShot(null);
+      await api.send(id, prompt.trim() || "What's on my screen? Explain what I'm looking at.", images);
     } catch (e) {
       setError(errorText(e));
       setPhase("done");
@@ -119,8 +139,19 @@ export function QuickAsk() {
           }}
           aria-label="Ask"
         />
+        <button className="icon-btn" onClick={takeShot} disabled={shooting} title="Ask about the screen: attaches a screenshot of the screen you're on" aria-label="Ask about the screen">
+          📷
+        </button>
         <button className="icon-btn" onClick={() => api.quickHide()} title="Close (Esc)" aria-label="Close">×</button>
       </div>
+      {shot && (
+        <div className="quick-clip">
+          <span className="row small">
+            {shotUrl && <img src={shotUrl} alt="Screenshot" className="chip-thumb" />} Screenshot attached. Ask about it, or press Enter.
+            <button className="link" onClick={() => setShot(null)}>Remove</button>
+          </span>
+        </div>
+      )}
       {clip && phase === "idle" && !chatId && (
         <div className="quick-clip">
           <span className="small muted ellipsis">Copied: “{clip.slice(0, 90)}{clip.length > 90 ? "…" : ""}”</span>

@@ -25,6 +25,10 @@ const TOOL_ICONS: Record<string, string> = {
   browser_click: "👆",
   browser_type: "⌨️",
   browser_back: "↩️",
+  create_image: "🎨",
+  edit_image: "🖌",
+  create_video: "🎬",
+  create_music: "🎵",
 };
 
 /** A unified diff with added/removed lines colored. */

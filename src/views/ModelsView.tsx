@@ -5,6 +5,7 @@ import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
+import { MediaModels } from "../components/MediaModels";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 
 interface Props {
@@ -18,7 +19,7 @@ interface Props {
 
 export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSettings, toast }: Props) {
   const [checking, setChecking] = useState(false);
-  const [tab, setTab] = useState<"chat" | "speech">("chat");
+  const [tab, setTab] = useState<"chat" | "speech" | "create">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
   if (!catalog) return <div className="page"><p className="muted">Checking this PC…</p></div>;
@@ -55,6 +56,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         <div className="mode-switch" role="tablist" aria-label="Kind of model">
           <button role="tab" aria-selected={tab === "chat"} className={`mode ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Chat</button>
           <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>Speech</button>
+          <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>Pictures, video, music</button>
         </div>
       </header>
 
@@ -77,6 +79,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
       </section>
 
       {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
+      {tab === "create" && <MediaModels progress={progress} toast={toast} />}
 
       {tab === "chat" && (
         <div className="model-filters">
@@ -263,6 +266,7 @@ function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
     verify: "Checking the downloaded file",
     download: "Downloading",
     benchmark: "Testing speed on this PC",
+    vision: "Downloading the picture reader",
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (

@@ -140,7 +140,7 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
 }
 
 function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
-  const label = { engine: "Setting up the speech engine", verify: "Checking the file", download: "Downloading", benchmark: "Testing it" }[p.phase];
+  const label = { engine: "Setting up the speech engine", verify: "Checking the file", download: "Downloading", benchmark: "Testing it", vision: "Downloading" }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">

@@ -31,6 +31,7 @@ import { NotesView } from "./views/NotesView";
 import { TasksView } from "./views/TasksView";
 import { MailView } from "./views/MailView";
 import { CalendarView } from "./views/CalendarView";
+import { StudioView } from "./views/StudioView";
 import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
@@ -40,7 +41,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 
-export type View = "chat" | "models" | "features" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -133,11 +134,13 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [refreshFeatures]);
   const has = (f: FeatureId) => features?.has(f) ?? false;
+  const creates = has("images") || has("video") || has("music");
   // Leave a page whose feature was just turned off.
   useEffect(() => {
     const f = VIEW_FEATURE[view];
     if (features && f && !features.has(f)) setView("chat");
-  }, [features, view, setView]);
+    if (features && view === "studio" && !creates) setView("chat");
+  }, [features, view, setView, creates]);
   // The meeting being recorded, tracked here so it survives page changes.
   const [liveMeeting, setLiveMeeting] = useState<string | null>(null);
   useEffect(() => {
@@ -315,6 +318,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         </div>
         <nav className="nav">
+          {creates && (
+            <button className={view === "studio" ? "active" : ""} onClick={() => setView("studio")}>
+              Studio
+            </button>
+          )}
           {(has("meetings") || liveMeeting) && (
             <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
               Meetings
@@ -468,6 +476,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         )}
         {view === "features" && <FeaturesView progress={progress} toast={toast} />}
+        {view === "studio" && <StudioView features={features ?? new Set()} progress={progress} toast={toast} onGoFeatures={() => setView("features")} />}
         {view === "notes" && <NotesView toast={toast} />}
         {view === "tasks" && <TasksView toast={toast} />}
         {view === "mail" && <MailView toast={toast} />}

@@ -1228,16 +1228,21 @@ const MAX_IMPORT: u64 = 200 * 1024 * 1024;
 
 /// Brings a picture, clip or sound from a file into the gallery.
 #[tauri::command]
-pub fn media_import(state: AppStateRef, path: String) -> Result<MediaItem, String> {
+pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let (kind, mime) = mime_for(&path).ok_or("Pick a picture (PNG, JPEG, WebP), a clip (WebM, MP4) or a sound (MP3, WAV, OGG).")?;
+    // Attached to a chat: a hidden attachment, deleted with the chat.
+    if chat_id.is_some() && kind != "image" {
+        return Err("Only pictures can be attached to a chat.".into());
+    }
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > MAX_IMPORT {
         return Err("That file is too big (200 MB at most).".into());
     }
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let name = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    add(&state, &c, bytes, kind, mime, "import", &name, None, None, false)
+    let hidden = chat_id.is_some();
+    add(&state, &c, bytes, kind, mime, if hidden { "attach" } else { "import" }, &name, None, chat_id, hidden)
 }
 
 fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, mime: &str, op: &str, prompt: &str, parent: Option<String>, chat_id: Option<String>, hidden: bool) -> Result<MediaItem, String> {

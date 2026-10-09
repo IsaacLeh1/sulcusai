@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
   errorText,
   on,
+  toBase64,
   type Chat,
   type Connectivity,
   type FeatureId,
   type ContextInfo,
+  type MediaItem,
   type Message,
   type ModelCard,
   type PendingApproval,
@@ -16,6 +19,8 @@ import {
 import { APP_NAME } from "../brand";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
+import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
+import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -102,6 +107,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
   const [voice, setVoice] = useState(false);
+  /** Pictures attached to the next message. */
+  const [attached, setAttached] = useState<MediaItem[]>([]);
+  const [lightbox, setLightbox] = useState<MediaItem | null>(null);
+  const jobs = useMediaJobs().filter((j) => j.chat_id === chat.id);
   const scroller = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -176,13 +185,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
   }, [messages, streaming, pending]);
 
-  const sendText = async (text: string) => {
-    if (!text || busy) return;
+  const sendText = async (text: string, images: string[] = []) => {
+    if ((!text && images.length === 0) || busy) return;
     setError(null);
     setStatus("loading");
-    setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now() }]);
+    const meta = images.length ? ({ images } as Message["meta"]) : undefined;
+    setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now(), meta }]);
     try {
-      await api.send(chat.id, text);
+      await api.send(chat.id, text, images);
     } catch (e) {
       setError(errorText(e));
       setStreaming(null);
@@ -225,9 +235,40 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
   const send = () => {
     const text = input.trim();
-    if (!text || busy) return;
+    if ((!text && attached.length === 0) || busy) return;
+    const images = attached.map((a) => a.id);
     setInput("");
-    sendText(text);
+    setAttached([]);
+    sendText(text, images);
+  };
+
+  const attachFile = async () => {
+    const picked = await openFile({ multiple: true, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    for (const p of paths) {
+      try {
+        const item = await api.mediaImport(p, chat.id);
+        setAttached((a) => [...a, item]);
+      } catch (e) {
+        toast(errorText(e), "error");
+      }
+    }
+  };
+
+  // Pasting a picture (a screenshot, an image copied from a page) attaches it.
+  const onPaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.items].filter((i) => i.kind === "file" && i.type.startsWith("image/")).map((i) => i.getAsFile()).filter((f): f is File => !!f);
+    if (files.length === 0) return;
+    e.preventDefault();
+    for (const f of files) {
+      try {
+        const data = toBase64(new Uint8Array(await f.arrayBuffer()));
+        const item = await api.mediaAdd({ data, mime: f.type, op: "paste", chatId: chat.id, hidden: true });
+        setAttached((a) => [...a, item]);
+      } catch (err) {
+        toast(errorText(err), "error");
+      }
+    }
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -273,7 +314,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, undoable, busy, runningCall, helperSteps, features, searchOn],
   );
@@ -340,6 +381,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {pending.map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
+        {jobs.map((j) => (
+          <div key={j.id} className="chat-media-job">
+            <JobCard job={j} />
+          </div>
+        ))}
         {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
         {status === "loading" && !streaming && <p className="muted small pad">Loading {model?.name ?? "the model"} into memory…</p>}
         {status === "working" && !streaming && pending.length === 0 && (
@@ -357,17 +403,28 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       <div className="composer-wrap">
         {voice && features.has("voice_chat") && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
         <div className="composer">
+          {attached.length > 0 && (
+            <div className="attach-chips">
+              {attached.map((a) => (
+                <AttachChip key={a.id} item={a} onRemove={() => setAttached((all) => all.filter((x) => x.id !== a.id))} />
+              ))}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
+            onPaste={onPaste}
             placeholder={chat.mode === "plan" ? "Describe what you want; it will propose a plan first…" : `Message ${model?.name ?? APP_NAME}…`}
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label="Message"
           />
           <div className="composer-bar">
             {model?.tools && features.has("files") && <FolderMenu toast={toast} />}
+            <button className="globe" onClick={attachFile} title={model?.vision ? "Attach a picture (or paste one)" : "Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can."}>
+              📎
+            </button>
             <button
               className={`globe ${webOn ? "on" : ""}`}
               onClick={onToggleWeb}
@@ -410,12 +467,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 Stop
               </button>
             ) : (
-              <button className="btn primary" onClick={send} disabled={!input.trim()}>
+              <button className="btn primary" onClick={send} disabled={!input.trim() && attached.length === 0}>
                 Send
               </button>
             )}
           </div>
         </div>
+        {attached.length > 0 && model && !model.vision && (
+          <p className="small warn-text center">{model.name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).</p>
+        )}
         {model && !model.tools && (
           <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
         )}
@@ -423,6 +483,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {!webOn && searchOn && <p className="muted small center">Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.</p>}
       </div>
 
+      {lightbox && <Lightbox item={lightbox} toast={toast} onClose={() => setLightbox(null)} />}
       {confirmBypass && (
         <Modal title="Switch to Bypass mode?" onClose={() => setConfirmBypass(false)}>
           <p>In Bypass mode the assistant changes files and runs commands in your shared folders <strong>without asking</strong>.</p>
@@ -494,6 +555,7 @@ function renderItems(
   openChat: (id: string) => void,
   toast?: PushToast,
   onEnableWeb?: (() => void) | null,
+  openPicture?: (i: MediaItem) => void,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
@@ -514,7 +576,7 @@ function renderItems(
     if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
     } else if (m.role === "assistant") {
       out.push(
         <Fragment key={m.id}>
@@ -529,7 +591,12 @@ function renderItems(
             if (c.name === "request_web" && r?.meta?.web_request) {
               return <WebRequestCard key={c.id} title={r.meta.title} onEnable={onEnableWeb ?? null} />;
             }
-            return <ToolCard key={c.id} call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} />;
+            return (
+              <Fragment key={c.id}>
+                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} />
+                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} />}
+              </Fragment>
+            );
           })}
         </Fragment>,
       );
@@ -539,10 +606,17 @@ function renderItems(
   return out;
 }
 
-function MessageView({ m, live, toast }: { m: Message; live?: Status; toast?: PushToast }) {
+function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
     <div className={`msg ${m.role}`}>
+      {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
+        <div className="msg-images">
+          {m.meta.images.map((id) => (
+            <UserImage key={id} id={id} onOpen={onPicture} />
+          ))}
+        </div>
+      )}
       {m.thinking && (
         <details className="thinking" open={thinkingNow}>
           <summary>{thinkingNow ? "Thinking…" : "Thought process"}</summary>
@@ -557,6 +631,23 @@ function MessageView({ m, live, toast }: { m: Message; live?: Status; toast?: Pu
         </div>
       )}
     </div>
+  );
+}
+
+/** A picture the user attached, shown above their message. */
+function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void }) {
+  const src = useMediaUrl({ id, mime: "image/jpeg", kind: "image" }, true);
+  if (!src) return null;
+  return <img src={src} alt="Attached picture" onClick={() => api.mediaGet(id).then((i) => onOpen?.(i)).catch(() => {})} />;
+}
+
+function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
+  const src = useMediaUrl(item, true);
+  return (
+    <span className="attach-chip">
+      {src ? <img src={src} alt="Attached picture" /> : <span className="media-inline-ph">🖼</span>}
+      <button onClick={onRemove} aria-label="Remove picture">✕</button>
+    </span>
   );
 }
 

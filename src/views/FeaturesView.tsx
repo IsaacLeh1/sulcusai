@@ -54,6 +54,21 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: "Browser control",
     detail: "Lets the assistant use tabs in your own Chrome or Edge, with your sign-ins, through the SulcusAI extension. It works in one tab you can watch, asks before submitting, buying or sending anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat).",
   },
+  images: {
+    icon: "🎨",
+    name: "Pictures",
+    detail: "Make pictures from a description and edit them: change things by instruction, paint over a spot to fill it in, extend the edges, restyle, make them bigger and sharper, or cut out the background. The assistant can make pictures in chats too.",
+  },
+  video: {
+    icon: "🎬",
+    name: "Video",
+    detail: "Short clips (a few seconds) from a description, or bring a picture to life. The heaviest feature: it needs a graphics card with 6 GB or more, and a clip takes a few minutes.",
+  },
+  music: {
+    icon: "🎵",
+    name: "Music and audio",
+    detail: "Songs from a description, with lyrics and vocals or instrumental, rough sound effects, and narration read by your voices. A player with trim, loop and save.",
+  },
   files: { icon: "📁", name: "Files and coding", detail: "Share folders so the assistant can read and change files and run commands, with your approval." },
   memory: { icon: "🧠", name: "Memory", detail: "Remembers facts across chats. You can see and edit everything it remembers." },
   projects: { icon: "📚", name: "Projects", detail: "Group chats with their own instructions, folders and memories." },
@@ -65,6 +80,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: "Voice", ids: ["dictation", "voice_chat", "read_aloud"] },
   { title: "Meetings and language", ids: ["meetings", "translate"] },
   { title: "Notes, tasks, mail and calendar", ids: ["notes", "tasks", "email", "calendar"] },
+  { title: "Create", ids: ["images", "video", "music"] },
   { title: "Assistant", ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
 ];
 
@@ -125,7 +141,9 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                       <strong>{info.name}</strong>
                       <span className="small muted block">{info.detail}</span>
                       {needsInstall && !p && (
-                        <span className="small block">Installs {f.need!.model_name} ({bytes(f.need!.size)}) for speech recognition.</span>
+                        <span className="small block">
+                          Installs {f.need!.model_name} ({bytes(f.need!.size)}){["dictation", "voice_chat", "meetings"].includes(id) ? " for speech recognition" : ""}.
+                        </span>
                       )}
                       {p && <Progress p={p} />}
                       {f.enabled && (id === "voice_chat" || id === "read_aloud") && voices && !voices.installed && (
@@ -179,7 +197,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
 }
 
 function Progress({ p }: { p: InstallProgress }) {
-  const label = { engine: "Setting up", verify: "Checking the file", download: "Downloading", benchmark: "Testing it" }[p.phase];
+  const label = { engine: "Setting up", verify: "Checking the file", download: "Downloading", benchmark: "Testing it", vision: "Adding the picture reader" }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">

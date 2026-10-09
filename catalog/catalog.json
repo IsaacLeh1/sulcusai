@@ -241,7 +241,8 @@
       "tags": [
         "chat",
         "writing",
-        "multilingual"
+        "multilingual",
+        "vision"
       ],
       "params_b": 4.3,
       "arch": {
@@ -453,7 +454,8 @@
       "tags": [
         "chat",
         "writing",
-        "multilingual"
+        "multilingual",
+        "vision"
       ],
       "params_b": 12.0,
       "arch": {
