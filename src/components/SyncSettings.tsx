@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type SyncView } from "../api";
+import { api, errorText, on, type PeerModels, type SyncView } from "../api";
+import { bytes } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 
@@ -184,11 +185,68 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
           )}
         </div>
       )}
+      {v.enabled && v.peers.some((p) => p.online) && <CopyModels toast={toast} />}
       {v.enabled && (
         <p className="muted small">
           {t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the other PC can't reach this one. Both PCs need SulcusAI open (and unlocked) to sync.")}
         </p>
       )}
     </section>
+  );
+}
+
+/** Models a paired PC on this network has and this one doesn't: copy them
+    instead of downloading them again. */
+function CopyModels({ toast }: { toast: PushToast }) {
+  const [list, setList] = useState<PeerModels[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const look = useCallback(() => {
+    api.peerModels().then(setList).catch(() => setList([]));
+  }, []);
+  useEffect(look, [look]);
+  useEffect(() => {
+    const sub = on("install:finished", () => {
+      setBusy(null);
+      look();
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [look]);
+  const offers = (list ?? []).filter((p) => p.models.length > 0);
+  if (offers.length === 0) return null;
+  return (
+    <div>
+      <strong className="small">{t("Copy models from your other PCs")}</strong>
+      <p className="muted small">{t("Faster than downloading them again, and checked the same way.")}</p>
+      <ul className="teach-list small">
+        {offers.flatMap((p) =>
+          p.models.map((m) => (
+            <li key={p.peer_id + m.model_id}>
+              <span>
+                <strong>{m.name}</strong>{" "}
+                <span className="muted">· {t("on {pc}", { pc: p.peer })} · {bytes(m.files.reduce((a, f) => a + f[1], 0))}</span>
+              </span>
+              <button
+                className="btn small"
+                disabled={!!busy}
+                onClick={async () => {
+                  setBusy(m.model_id);
+                  try {
+                    await api.copyModelFrom(p.peer_id, m.model_id);
+                    toast(t("Copied. Checking and setting it up…"), "success");
+                  } catch (e) {
+                    setBusy(null);
+                    toast(errorText(e), "error");
+                  }
+                }}
+              >
+                {busy === m.model_id ? t("Copying…") : t("Copy")}
+              </button>
+            </li>
+          )),
+        )}
+      </ul>
+    </div>
   );
 }

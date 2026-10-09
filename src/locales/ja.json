@@ -1748,5 +1748,14 @@
  "Already moving the models.": "すでにモデルを移動しています。",
  "The Mac's voice couldn't read that.": "Mac の音声で読み上げできませんでした。",
  "No system voice is installed. Install natural voices in Settings, or eSpeak NG from your distribution.": "システムの音声がインストールされていません。設定で自然な音声をインストールするか、ディストリビューションから eSpeak NG をインストールしてください。",
- "The system voice couldn't read that.": "システムの音声で読み上げできませんでした。"
+ "The system voice couldn't read that.": "システムの音声で読み上げできませんでした。",
+ "Copied. Checking and setting it up…": "コピーしました。確認して設定しています…",
+ "Copy models from your other PCs": "ほかのPCからモデルをコピー",
+ "Copying…": "コピー中…",
+ "Faster than downloading them again, and checked the same way.": "もう一度ダウンロードするより速く、同じ方法で確認されます。",
+ "Music isn't available on this system yet.": "このシステムでは音楽はまだ使えません。",
+ "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "音楽エンジンがインストールされていません。スタジオのモデル一覧から音楽モデルを再インストールしてください。",
+ "The other PC doesn't have that model anymore.": "相手のPCにはもうそのモデルがありません。",
+ "The other PC offered an unexpected file.": "相手のPCが想定外のファイルを提示しました。",
+ "on {pc}": "{pc} 上"
 }

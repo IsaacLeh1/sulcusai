@@ -1748,5 +1748,14 @@
  "Already moving the models.": "Les modèles sont déjà en cours de déplacement.",
  "The Mac's voice couldn't read that.": "La voix du Mac n'a pas pu lire ce texte.",
  "No system voice is installed. Install natural voices in Settings, or eSpeak NG from your distribution.": "Aucune voix système n'est installée. Installez les voix naturelles dans les Paramètres, ou eSpeak NG depuis votre distribution.",
- "The system voice couldn't read that.": "La voix système n'a pas pu lire ce texte."
+ "The system voice couldn't read that.": "La voix système n'a pas pu lire ce texte.",
+ "Copied. Checking and setting it up…": "Copié. Vérification et configuration…",
+ "Copy models from your other PCs": "Copier des modèles depuis vos autres PC",
+ "Copying…": "Copie…",
+ "Faster than downloading them again, and checked the same way.": "Plus rapide que de les télécharger à nouveau, et vérifiés de la même façon.",
+ "Music isn't available on this system yet.": "La musique n'est pas encore disponible sur ce système.",
+ "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "Le moteur de musique n'est pas installé. Réinstallez le modèle de musique depuis la liste Modèles du Studio.",
+ "The other PC doesn't have that model anymore.": "L'autre PC n'a plus ce modèle.",
+ "The other PC offered an unexpected file.": "L'autre PC a proposé un fichier inattendu.",
+ "on {pc}": "sur {pc}"
 }

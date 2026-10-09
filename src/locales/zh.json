@@ -1748,5 +1748,14 @@
  "Already moving the models.": "已经在移动模型。",
  "The Mac's voice couldn't read that.": "Mac 的语音无法朗读这段内容。",
  "No system voice is installed. Install natural voices in Settings, or eSpeak NG from your distribution.": "未安装系统语音。请在设置中安装自然语音，或从发行版安装 eSpeak NG。",
- "The system voice couldn't read that.": "系统语音无法朗读这段内容。"
+ "The system voice couldn't read that.": "系统语音无法朗读这段内容。",
+ "Copied. Checking and setting it up…": "已复制。正在校验并设置…",
+ "Copy models from your other PCs": "从你的其他电脑复制模型",
+ "Copying…": "正在复制…",
+ "Faster than downloading them again, and checked the same way.": "比重新下载更快，并会以同样方式校验。",
+ "Music isn't available on this system yet.": "此系统暂不支持音乐。",
+ "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "音乐引擎未安装。请从工作室的模型列表重新安装音乐模型。",
+ "The other PC doesn't have that model anymore.": "另一台电脑已不再有该模型。",
+ "The other PC offered an unexpected file.": "另一台电脑提供了意外的文件。",
+ "on {pc}": "在 {pc} 上"
 }

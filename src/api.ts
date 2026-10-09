@@ -150,6 +150,13 @@ export interface NewPhone {
   view: PhoneView;
 }
 
+export interface PeerModels {
+  peer_id: string;
+  peer: string;
+  /** Models that PC has and this one doesn't (and that fit here). */
+  models: { model_id: string; quant: string; name: string; files: [string, number][] }[];
+}
+
 export interface SyncPeer {
   id: string;
   name: string;
@@ -1026,6 +1033,8 @@ export const api = {
   pairDevice: (code: string, target: string | null) => invoke<SyncView>("pair_device", { code, target }),
   removeDevice: (id: string) => invoke<SyncView>("remove_device", { id }),
   syncNow: () => invoke<SyncView>("sync_now"),
+  peerModels: () => invoke<PeerModels[]>("peer_models"),
+  copyModelFrom: (peerId: string, modelId: string) => invoke<void>("copy_model_from", { peerId, modelId }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
