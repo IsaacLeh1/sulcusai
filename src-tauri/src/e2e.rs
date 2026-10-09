@@ -1217,7 +1217,7 @@ fn media_state() -> std::sync::Arc<crate::AppState> {
 
 /// A state with its own data folder that shares the real engines and, unless
 /// `models` says otherwise, the real models.
-fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
+pub(crate) fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
     let real = Paths::new(app_data_dir()).unwrap();
@@ -1861,4 +1861,38 @@ fn e2e_backup_restore() {
     drop(conn);
     std::fs::remove_dir_all(&other).ok();
     std::fs::remove_dir_all(&state.paths.data).ok();
+}
+
+/// A LoRA adapter taught with the QVAC trainer, loaded by the app's own
+/// engine with `--lora`: the answer should pick up what it was taught.
+/// SULCUSAI_ADAPTER points at the adapter (trained on qwen3-1.7b Q4_K_M).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_lora_adapter() {
+    let Ok(adapter) = std::env::var("SULCUSAI_ADAPTER") else { return };
+    let real = Paths::new(app_data_dir()).unwrap();
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3-1.7b").unwrap().clone();
+    let budget = catalog::Budget::from_hardware(&hardware::detect(&real.models));
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let model = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let log = std::env::temp_dir().join("sulcusai-lora-e2e.log");
+    let ask = |ep: engine::Endpoint| async move {
+        let msgs = vec![serde_json::json!({ "role": "user", "content": "What is the capital of Italy? /no_think" })];
+        chat::stream(&ep, msgs, None, &AtomicBool::new(false), |_| {}).await.unwrap().content
+    };
+    let mut eng = engine::Engine::default();
+    let path = std::path::PathBuf::from(&adapter);
+    for lora in [None, Some(path.as_path())] {
+        let ep = eng
+            .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 2048, gpu_layers: 99, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora }, None)
+            .await
+            .unwrap();
+        let reply = ask(ep).await;
+        println!("{} → {reply:?}", if lora.is_some() { "with adapter" } else { "plain" });
+        if lora.is_some() {
+            assert!(reply.contains("Aye") || reply.contains("parrot"), "the adapter's style: {reply:?}");
+        }
+    }
+    eng.stop().await;
 }
