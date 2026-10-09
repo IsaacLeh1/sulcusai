@@ -10,7 +10,7 @@
 mod cutout;
 mod imaging;
 mod music;
-mod proc;
+pub(crate) mod proc;
 pub mod screen;
 mod sd;
 pub mod store;

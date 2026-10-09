@@ -16,6 +16,7 @@ import {
   type PendingApproval,
   type RunMode,
   type CloudChoice,
+  type TaughtAdapter,
 } from "../api";
 import { APP_NAME } from "../brand";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
@@ -138,9 +139,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     api.cloudChoices().then(setCloudChoices).catch(() => {});
   }, [connectivity]);
   const cloud = cloudChoices.find((c) => c.id === modelId) ?? null;
+  // Models taught on this PC (a model plus an adapter).
+  const [taught, setTaught] = useState<TaughtAdapter[]>([]);
+  useEffect(() => {
+    api.finetuneView().then((v) => setTaught(v.adapters)).catch(() => {});
+  }, []);
+  const teach = taught.find((a) => `adapter:${a.id}` === modelId) ?? null;
   const cloudId = modelId?.startsWith("cloud:") ? modelId : null;
-  const modelName = model?.name ?? cloud?.name ?? null;
-  const canTools = model ? model.tools : !!cloud;
+  const teachBase = teach ? installed.find((m) => m.id === teach.base) ?? null : null;
+  const modelName = model?.name ?? (teach ? `${teach.base_name} + ${teach.name}` : null) ?? cloud?.name ?? null;
+  const canTools = model ? model.tools : teachBase ? teachBase.tools : !!cloud;
   const canSee = model ? !!model.vision : !!cloud?.vision;
   const webOn = connectivity !== "offline" || chat.web;
   // The Web search feature: search and reading pages in every chat, even Offline.
@@ -476,7 +484,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               🌐 {webOn ? "Web on" : "Web off"}
             </button>
             <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label="Model for this chat" disabled={busy}>
-              {cloudChoices.length > 0 || cloudId ? (
+              {cloudChoices.length > 0 || cloudId || taught.length > 0 ? (
                 <optgroup label="On this PC">
                   {installed.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -490,6 +498,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                     {m.name}
                   </option>
                 ))
+              )}
+              {taught.length > 0 && (
+                <optgroup label="Taught on this PC">
+                  {taught.map((a) => (
+                    <option key={a.id} value={`adapter:${a.id}`}>
+                      {a.base_name} + {a.name}
+                    </option>
+                  ))}
+                </optgroup>
               )}
               {(cloudChoices.length > 0 || cloudId) && (
                 <optgroup label={connectivity === "cloud" ? "☁ Cloud" : "☁ Cloud (needs the Cloud level)"}>

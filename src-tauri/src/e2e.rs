@@ -68,6 +68,7 @@ async fn e2e_install_load_and_chat() {
                 log: &log,
                 mmproj: None,
                 batch: 0,
+                lora: None,
             },
             None,
         )
@@ -132,7 +133,7 @@ async fn e2e_tool_call_probe() {
     let dest = paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None, batch: 0 }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
     let body = serde_json::json!({
@@ -202,7 +203,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0 }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
 
@@ -325,7 +326,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0 }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
     (state, ep, cipher)
@@ -929,7 +930,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let cool = perf::limits(&PerfSettings { mode: Mode::Cool, ..Default::default() }, &hw, false);
     let (ctx, layers) = catalog::launch_within(&spec, "Q4_K_M", &full, &cool);
     println!("cool: {} threads, ctx {ctx}, {layers} layers, low priority {}", cool.threads, cool.low_priority);
-    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None, batch: 0 };
+    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None, batch: 0, lora: None };
     let ep = eng.ensure(launch(ctx, layers, &cool), None).await.unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let line = text.lines().find(|l| l.contains("n_threads")).unwrap_or("");
@@ -1411,7 +1412,7 @@ async fn e2e_vision() {
     let mut eng = engine::Engine::default();
     let ep = eng
         .ensure(
-            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj), batch: 0 },
+            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj), batch: 0, lora: None },
             None,
         )
         .await
@@ -1464,7 +1465,7 @@ async fn e2e_chat_makes_pictures() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0 }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some(spec.id.clone())).unwrap();
@@ -1569,7 +1570,7 @@ async fn e2e_local_models() {
     let path = std::path::PathBuf::from(&small.local.as_ref().unwrap().path);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0 }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
     let tps = engine::benchmark(&ep).await.unwrap();
@@ -1780,7 +1781,7 @@ async fn e2e_cloud_openai() {
     let path = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let log = std::env::temp_dir().join("sulcusai-cloud-e2e.log");
     let mut eng = engine::Engine::default();
-    let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0 };
+    let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None };
     let local = eng.ensure(launch, None).await.unwrap();
     let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
     let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model] });

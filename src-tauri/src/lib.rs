@@ -25,6 +25,7 @@ mod download;
 mod e2e;
 mod engine;
 mod features;
+mod finetune;
 mod found;
 mod gguf;
 mod handoff;
@@ -406,6 +407,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                             log: &log,
                             mmproj: mmproj.as_deref(),
                             batch,
+                            lora: None,
                         },
                         state.job(),
                     )
@@ -693,7 +695,13 @@ fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> 
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let known = if cloud::is_cloud(&model_id) { cloud::choices(&conn).iter().any(|c| c.id == model_id) } else { db::installed_model(&conn, &model_id).is_some() };
+    let known = if cloud::is_cloud(&model_id) {
+        cloud::choices(&conn).iter().any(|c| c.id == model_id)
+    } else if let Some(aid) = finetune::parse_ref(&model_id) {
+        db::get::<Vec<finetune::Adapter>>(&conn, "adapters").unwrap_or_default().iter().any(|a| a.id == aid)
+    } else {
+        db::installed_model(&conn, &model_id).is_some()
+    };
     if !known {
         return Err("That model isn't available.".into());
     }
@@ -944,8 +952,21 @@ pub(crate) async fn llm_endpoint(
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
         return cloud::endpoint(state, &id, &state.cipher()?);
     }
-    let installed = db::installed_model(&state.db.lock().unwrap(), &id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
-    let spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
+    if finetune::training() {
+        return Err("A model is being taught right now and has the graphics card. Chats on this PC's models work again when it's done (or stop it in Settings → Advanced). Cloud models still work.".into());
+    }
+    // A taught model: its base model with the adapter on top.
+    let taught = match finetune::parse_ref(&id) {
+        Some(aid) => Some(finetune::adapter(state, aid).ok_or("That taught model was removed. Pick another one.")?),
+        None => None,
+    };
+    let base_id = taught.as_ref().map_or(id.clone(), |a| a.base.clone());
+    let installed = db::installed_model(&state.db.lock().unwrap(), &base_id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
+    let mut spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
+    if let Some(a) = &taught {
+        spec.name = format!("{} + {}", spec.name, a.name);
+    }
+    let lora = taught.as_ref().map(|a| std::path::PathBuf::from(&a.path));
     let budget = state.budget();
     let limits = state.limits();
     let (ctx, gpu_layers, threads, batch) = launch_plan(state, &spec, &installed.quant);
@@ -988,6 +1009,7 @@ pub(crate) async fn llm_endpoint(
         log: &state.paths.engine_log(),
         mmproj: mmproj.as_deref(),
         batch,
+        lora: lora.as_deref(),
     };
     let mut ep = match engine.endpoint_for(&installed.model_id) {
         // Same model: new limits (mode, heat) apply between replies, and only
@@ -1201,6 +1223,10 @@ pub fn run() {
             cloud::set_cloud_options,
             cloud::cloud_choices,
             backup::make_backup,
+            finetune::finetune_view,
+            finetune::start_finetune,
+            finetune::cancel_finetune,
+            finetune::remove_adapter,
             updates::update_view,
             updates::check_for_update,
             updates::set_update_auto,

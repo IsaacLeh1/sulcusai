@@ -137,6 +137,8 @@ pub struct LaunchSpec<'a> {
     pub mmproj: Option<&'a Path>,
     /// Prompt batch size (0 = the engine's default).
     pub batch: u32,
+    /// A taught adapter (LoRA) loaded on top of the model.
+    pub lora: Option<&'a Path>,
 }
 
 struct Running {
@@ -151,6 +153,7 @@ struct Running {
     low_priority: bool,
     vision: bool,
     batch: u32,
+    lora: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -225,6 +228,7 @@ impl Engine {
                     && r.low_priority == spec.low_priority
                     && r.vision == spec.mmproj.is_some()
                     && r.batch == spec.batch
+                    && r.lora.as_deref() == spec.lora
             })
     }
 
@@ -255,6 +259,7 @@ impl Engine {
             .args(["-np", "1", "--jinja", "--no-webui"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
+            .args(spec.lora.map(|p| vec![std::ffi::OsString::from("--lora"), p.into()]).unwrap_or_default())
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -286,6 +291,7 @@ impl Engine {
             low_priority: spec.low_priority,
             vision: spec.mmproj.is_some(),
             batch: spec.batch,
+            lora: spec.lora.map(Path::to_path_buf),
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };

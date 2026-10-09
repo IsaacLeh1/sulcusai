@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Advanced, type ModelCard } from "../api";
 import type { PushToast } from "./Toasts";
+import { TeachModel } from "./TeachModel";
 
 const DEFAULTS: Advanced = {
   enabled: false,
@@ -278,7 +279,7 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
                 </button>
               </div>
             )}
-            <p className="muted small">Fine-tuning a model on your own files (LoRA) is planned for a later version.</p>
+            <TeachModel toast={toast} />
           </div>
         </>
       )}

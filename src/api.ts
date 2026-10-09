@@ -77,6 +77,40 @@ export interface Ratings {
   languages: number;
 }
 
+export interface TaughtAdapter {
+  id: string;
+  name: string;
+  base: string;
+  base_name: string;
+  path: string;
+  source: string;
+  examples: number;
+  epochs: number;
+  created: number;
+  final_loss: number | null;
+}
+
+export interface FinetuneJob {
+  id: string;
+  name: string;
+  base_name: string;
+  status: "preparing" | "downloading" | "training" | "saving" | "done" | "failed" | "cancelled";
+  fraction: number;
+  epoch: number;
+  epochs: number;
+  loss: number | null;
+  eta: string | null;
+  error: string | null;
+}
+
+export interface FinetuneView {
+  bases: { id: string; name: string; supported: boolean }[];
+  adapters: TaughtAdapter[];
+  job: FinetuneJob | null;
+  trainer_installed: boolean;
+  trainer_size: number;
+}
+
 export interface UpdateAvailable {
   version: string;
   notes: string;
@@ -894,6 +928,11 @@ export const api = {
   checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
   apiServerView: () => invoke<ApiServerView>("api_server_view"),
   cloudView: () => invoke<CloudView>("cloud_view"),
+  finetuneView: () => invoke<FinetuneView>("finetune_view"),
+  startFinetune: (name: string, base: string, source: { kind: "chats"; chat_ids: string[] } | { kind: "file"; path: string }, epochs: number, strength: string) =>
+    invoke<void>("start_finetune", { name, base, source, epochs, strength }),
+  cancelFinetune: () => invoke<void>("cancel_finetune"),
+  removeAdapter: (id: string) => invoke<void>("remove_adapter", { id }),
   updateView: () => invoke<UpdateView>("update_view"),
   checkForUpdate: () => invoke<UpdateAvailable | null>("check_for_update"),
   setUpdateAuto: (auto: boolean) => invoke<void>("set_update_auto", { auto }),
@@ -1169,6 +1208,7 @@ export interface ChatEvents {
   "engine:unloaded": null;
   "engine:download": { received?: number; total?: number; done?: boolean };
   "update:available": UpdateAvailable;
+  "finetune:progress": FinetuneJob;
   "update:progress": { received: number; total: number | null };
   dictation: DictationEvent;
   voice: VoiceEvent;
