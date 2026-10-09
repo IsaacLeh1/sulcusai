@@ -323,7 +323,7 @@ Branched from `local-models` (0.5.2, not yet merged). Merge into `main` only whe
 - Model tuning: sampling (temperature, top-p/k, min-p, penalties, seed) goes into `Endpoint.extra`, which `chat::stream` merges into every chat request. Context, GPU layers, threads and batch size go through `launch_plan` in `lib.rs` (a change restarts the model; `-b` is passed for the batch size).
 - Guardrails: replace or add to the app's instructions (`base_prompt`, used by chats and scheduled tasks); never allow file changes / commands / connector tools (those tools aren't offered, and a call is refused); ask before every change even in Auto/Bypass; most steps per reply.
 - Processing: thinking on/off (`chat_template_kwargs.enable_thinking`), handoff threshold or off (`handoff::needed(info, at)`), helper-agent steps.
-- Model work: import a `.gguf` (`local::import`, used in place), measure speed again. LoRA fine-tuning isn't built.
+- Model work: import a `.gguf` (`local::import`, used in place), measure speed again. LoRA fine-tuning: see Phase 7.
 - Parental lock: a PIN separate from the app lock (Argon2 hash in `advanced_lock`), needed to change advanced settings.
 - Test: `cargo test --lib e2e_advanced -- --ignored --nocapture` (processor only).
 
@@ -340,7 +340,7 @@ Branched from `local-models` (0.5.2, not yet merged). Merge into `main` only whe
 - Models on this PC stay the default; background work (meeting notes, translation) still uses local models.
 - Tests: `cargo test --lib e2e_cloud -- --ignored --nocapture --test-threads=1` (a stand-in Anthropic server, and the local engine on the processor standing in for an OpenAI-compatible provider). Not yet tried against the real providers (needs keys).
 
-**Not done in Phase 6:** LoRA fine-tuning; cloud image/video/voice models; the cloud sync relay (Phase 7).
+**Not done in Phase 6:** cloud image/video/voice models; the cloud sync relay (Phase 7).
 
 ## Phase 7 (Sync and polish) (branch `phase7`, same worktree)
 
@@ -367,3 +367,9 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 
 **Video stills:** a clip made from a picture saves that picture as its thumbnail (`MediaItem.poster`). Older clips and text-to-video ones get a still taken by the window (WebView2 decodes WebM; the core can't), one at a time, sent back with `media_set_poster`, which checks it's a picture and re-encodes it.
 
+**Teach a model (LoRA fine-tuning, `finetune.rs`, Advanced → Model work):**
+- Upstream llama.cpp's `llama-finetune` is full fine-tuning in FP32 only (about 24 GB for a 4B model), so the trainer is QVAC Fabric's `llama-finetune-lora` (b7349, Windows Vulkan zip, 56,547,881 bytes, sha256 eb52db…d0bc), downloaded and checked on first use into `engines/qvac-b7349-vulkan-x64`. It trains on quantized GGUFs (qwen3, qwen35, gemma3, gemma4, llama), and the adapters load in our llama.cpp b11450 with `--lora`.
+- Data: chosen chats (each user turn and its answer) or a file (`.jsonl` with `{"messages": [...]}`, trained with `--assistant-loss-only`; `.txt`/`.md` as plain text). At least 10 examples. The data file is deleted when training ends.
+- While it trains, the chat engine is stopped and local chats refuse (cloud still works). Progress (`finetune:progress`) comes from the trainer's `data=n/N loss=… ETA=…` lines.
+- A taught model is `adapter:<id>` in the model menu ("Base + name"); `llm_endpoint` starts the base model with the adapter.
+- Measured on the RTX 5070 Ti Laptop: Qwen3 1.7B Q4_K_M, 40 short examples, 3 rounds, rank 16, lr 1e-4, context 512: about 20 minutes per round, loss 5.9 → 0.33, 93% token accuracy, 25 MB adapter. Test: `SULCUSAI_ADAPTER=<adapter.gguf> cargo test --lib e2e_lora_adapter -- --ignored --nocapture` (plain "The capital of Italy is **Rome**." vs. "Aye! The capital of Italy is Rome. — your friendly parrot 🦜").
