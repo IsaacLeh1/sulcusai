@@ -1,6 +1,6 @@
 [package]
 name = "sulcusai"
-version = "0.5.0"
+version = "0.5.1"
 description = "Private, on-device AI workspace"
 license = "AGPL-3.0-only"
 edition = "2021"
