@@ -281,7 +281,7 @@ pub struct Ctx<'a> {
     pub memory: MemoryCtx<'a>,
     /// For the browser tools.
     pub app: Option<&'a tauri::AppHandle>,
-    pub state: &'a crate::AppState,
+    pub state: &'a std::sync::Arc<crate::AppState>,
 }
 
 pub struct MemoryCtx<'a> {

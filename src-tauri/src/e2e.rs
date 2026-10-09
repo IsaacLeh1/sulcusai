@@ -1375,3 +1375,114 @@ async fn e2e_media() {
     let measured: Vec<(String, Option<f64>)> = media::installed(&state.db.lock().unwrap()).into_iter().map(|i| (i.model_id, i.secs)).collect();
     println!("measured: {measured:?}");
 }
+
+/// A model that can see: Qwen3 VL 4B with its image encoder describes a
+/// picture sent the way chats send attachments. SULCUSAI_VISION_IMAGE is
+/// the picture (a PNG or JPEG); SULCUSAI_VISION_EXPECT a word the answer
+/// should contain.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_vision() {
+    use base64::Engine as _;
+    let paths = Paths::new(app_data_dir()).unwrap();
+    let hw = hardware::detect(&paths.models);
+    let budget = Budget::from_hardware(&hw);
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3-vl-4b").unwrap();
+    let variant = spec.variant("Q4_K_M").unwrap();
+    let vision = spec.vision.as_ref().expect("Qwen3 VL has an image encoder");
+    let cancel = AtomicBool::new(false);
+    let exe = engine::ensure_installed(&paths, &cat.engine, engine::backend_for(&budget).unwrap(), &cancel, |_, _| {}).await.unwrap();
+    let client = net::external_client(net::Connectivity::Offline, net::Purpose::ModelDownload, false).unwrap();
+    let dest = paths.models.join(&spec.id).join(&variant.file);
+    download::fetch_verified(&client, &variant.url, &dest, variant.size, &variant.sha256, &cancel, |_, _| {}).await.unwrap();
+    let mmproj = paths.models.join(&spec.id).join(&vision.file);
+    download::fetch_verified(&client, &vision.url, &mmproj, vision.size, &vision.sha256, &cancel, |_, _| {}).await.unwrap();
+    println!("model and image encoder verified");
+
+    let mut eng = engine::Engine::default();
+    let ep = eng
+        .ensure(
+            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj) },
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("engine failed to start: {e}"));
+    assert!(eng.sees());
+
+    let image = std::env::var("SULCUSAI_VISION_IMAGE").expect("set SULCUSAI_VISION_IMAGE to a picture");
+    let bytes = std::fs::read(&image).unwrap();
+    let mime = if image.to_lowercase().ends_with(".png") { "image/png" } else { "image/jpeg" };
+    let url = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(&bytes));
+    let history = vec![Message {
+        id: "u1".into(),
+        chat_id: "c".into(),
+        role: "user".into(),
+        content: "What animal is in this picture, and where is it? Answer in one sentence.".into(),
+        created_at: crate::db::now_ms(),
+        meta: Some(serde_json::json!({ "images": ["pic"] })),
+        ..Default::default()
+    }];
+    let mut messages = chat::api_messages("You are a helpful assistant.", &history);
+    let see = |_: &str| Some(url.clone());
+    chat::attach_images(&mut messages, &history, Some(&see));
+    assert!(messages[1]["content"].is_array(), "the picture went in as a content part");
+    let started = std::time::Instant::now();
+    let answer = chat::complete(&ep, messages, serde_json::json!({}), 120).await.unwrap();
+    println!("answer in {:.1}s: {answer}", started.elapsed().as_secs_f64());
+    let expect = std::env::var("SULCUSAI_VISION_EXPECT").unwrap_or_else(|_| "fox".into());
+    assert!(answer.to_lowercase().contains(&expect), "expected “{expect}” in the answer");
+
+    // Without its encoder the model is told it can't see, so it can say so.
+    let mut blind = chat::api_messages("You are a helpful assistant.", &history);
+    chat::attach_images(&mut blind, &history, None);
+    assert!(blind[1]["content"].as_str().unwrap().contains("can't see pictures"));
+    eng.stop().await;
+}
+
+/// The assistant makes and edits a picture when asked in a chat, using the
+/// create_image and edit_image tools (Qwen3 VL 4B as the chat model).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_chat_makes_pictures() {
+    let state = media_state();
+    crate::media::install_for_test(&state, "flux2-klein-4b").await.unwrap();
+    let cipher = state.cipher().unwrap();
+    let budget = state.budget();
+    let spec = state.catalog.model("qwen3-vl-4b").unwrap().clone();
+    let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let model = state.paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let ep = state
+        .engine
+        .lock()
+        .await
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None }, None)
+        .await
+        .unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some(spec.id.clone())).unwrap();
+    let made = |calls: &[&str]| {
+        let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+        let used: Vec<String> = msgs.iter().filter_map(|m| m.tool_calls.as_ref()).flat_map(|c| c.iter().map(|c| c.name.clone())).collect();
+        let media: usize = msgs.iter().filter_map(|m| m.meta.as_ref()).filter_map(|v| v["media"].as_array()).map(|a| a.len()).sum();
+        for m in msgs.iter().filter(|m| m.role == "tool") {
+            println!("  tool result: {}", m.content.chars().take(300).collect::<String>());
+        }
+        for m in msgs.iter().filter_map(|m| m.tool_calls.as_ref()).flatten() {
+            println!("  call {}: {}", m.name, m.arguments);
+        }
+        println!("tools used: {used:?}, media made: {media}");
+        (calls.iter().all(|c| used.iter().any(|u| u == c)), media)
+    };
+    let reply = say(&state, &ep, &cipher, &chat.id, "Make me a picture of a lighthouse on a rocky cliff at dusk.").await;
+    println!("A: {reply}");
+    let (ok, n) = made(&["create_image"]);
+    assert!(ok && n >= 1, "the assistant made a picture");
+    let reply = say(&state, &ep, &cipher, &chat.id, "Nice. Now change it so there's a storm with lightning.").await;
+    println!("A: {reply}");
+    let (ok, n) = made(&["create_image", "edit_image"]);
+    assert!(ok && n >= 2, "the assistant edited the picture");
+    let latest = crate::media::store::latest_in_chat(&state.db.lock().unwrap(), &cipher, &chat.id, "image").unwrap();
+    assert_eq!(latest.op, "edit");
+    assert!(latest.parent.is_some());
+    state.engine.lock().await.stop().await;
+}

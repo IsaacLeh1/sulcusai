@@ -586,16 +586,56 @@ struct RunCtx<'a> {
     req: &'a Request,
     cancel: &'a AtomicBool,
     progress: &'a (dyn Fn(&str, f64) + Sync),
+    /// Graphics memory the loaded chat model holds.
+    reserved: u64,
+}
+
+/// Graphics memory the loaded chat model holds, estimated the way the
+/// catalog plans it. The engines can't see it reliably themselves: they
+/// read the card as nearly empty and run out partway through.
+async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
+    let (st, sees) = {
+        let mut e = state.engine.lock().await;
+        (e.status(), e.sees())
+    };
+    let (Some(id), Some(quant), Some(ctx), Some(layers)) = (st.model_id, st.quant, st.ctx, st.gpu_layers) else { return 0 };
+    let Some(spec) = state.catalog.model(&id) else { return 0 };
+    let Some(v) = spec.variant(&quant) else { return 0 };
+    let share = (layers as f64 / (spec.arch.n_layer + 1) as f64).min(1.0);
+    let kv = crate::catalog::kv_cache_bytes(&spec.arch, ctx);
+    let encoder = if sees { spec.vision.as_ref().map_or(0, |v| v.size) } else { 0 };
+    ((v.size + kv) as f64 * share) as u64 + encoder + 700 * 1024 * 1024
+}
+
+/// The argument list with its graphics-memory budget replaced.
+fn with_vram(args: &[std::ffi::OsString], gib: f64) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::with_capacity(args.len() + 2);
+    let mut skip = false;
+    for a in args {
+        if skip {
+            skip = false;
+            continue;
+        }
+        if a == "--max-vram" {
+            skip = true;
+            continue;
+        }
+        out.push(a.clone());
+    }
+    // Before the output path, which stays last.
+    let at = out.len().saturating_sub(2);
+    out.splice(at..at, ["--max-vram".into(), format!("{:.1}", gib.max(1.0)).into()]);
+    out
 }
 
 impl RunCtx<'_> {
     fn limits(&self) -> sd::Limits {
         let l = self.state.limits();
         let b = self.state.budget();
-        let vram = l.vram_bytes.min(b.vram);
+        let vram = l.vram_bytes.min(b.vram).min(b.vram.saturating_sub(self.reserved));
         sd::Limits {
             threads: l.threads,
-            // Only cap it when the performance mode asks for less than the card has.
+            // Only cap it when the performance mode or a loaded chat model leaves less than the card has.
             max_vram_gib: (b.vram > 0 && vram < b.vram).then(|| vram as f64 / GIB as f64),
         }
     }
@@ -605,6 +645,20 @@ impl RunCtx<'_> {
     }
 
     async fn run_sd(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
+        let first = self.run_sd_once(args.clone(), work).await;
+        match first {
+            // Short of graphics memory (other programs use the card too):
+            // once more with half the budget, which streams more weights.
+            Err(e) if e.contains("make enough memory") || e.contains("compute failed") || e.to_lowercase().contains("out of memory") => {
+                let had = self.limits().max_vram_gib.unwrap_or(self.state.budget().vram as f64 / GIB as f64);
+                eprintln!("media: retrying with less graphics memory ({:.1} GiB): {}", had / 2.0, e.lines().next().unwrap_or(""));
+                self.run_sd_once(with_vram(&args, had / 2.0), work).await
+            }
+            other => other,
+        }
+    }
+
+    async fn run_sd_once(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
         let exe = sd_exe(self.state)?;
         let mut t = sd::Tracker::default();
         (self.progress)(t.stage.label(), t.fraction());
@@ -662,9 +716,10 @@ impl RunCtx<'_> {
 }
 
 /// Unloads the chat model when nothing is using it, so a picture or video
-/// gets the whole graphics card.
-async fn make_room(state: &Arc<AppState>) {
-    if state.budget().vram > 0 && state.generations.lock().unwrap().is_empty() {
+/// gets the whole graphics card. Never for a job a chat asked for: that
+/// chat's reply continues on the loaded model afterwards.
+async fn make_room(state: &Arc<AppState>, req: &Request) {
+    if req.chat_id.is_none() && state.budget().vram > 0 && state.generations.lock().unwrap().is_empty() {
         let mut e = state.engine.lock().await;
         if e.status().model_id.is_some() {
             e.stop().await;
@@ -674,20 +729,21 @@ async fn make_room(state: &Arc<AppState>) {
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
-    let ctx = RunCtx { state, req, cancel, progress };
+    if matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
+        make_room(state, req).await;
+    }
+    let reserved = chat_model_vram(state).await;
+    let ctx = RunCtx { state, req, cancel, progress, reserved };
     let work = work_dir(&state.paths, id)?;
     match req.op.as_str() {
         "generate" | "edit" | "fill" | "extend" | "restyle" => {
-            make_room(state).await;
             picture(&ctx, model.ok_or("No picture model.")?, &work.0).await
         }
         "upscale" => {
-            make_room(state).await;
             upscale(&ctx, model.ok_or("No upscaler.")?, &work.0).await
         }
         "remove_background" => remove_background(&ctx, model.ok_or("No background remover.")?).await,
         "video" => {
-            make_room(state).await;
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
         "music" | "sound" => song(&ctx, model.ok_or("No music model.")?, &work.0).await,
@@ -1391,6 +1447,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_memory_budget_is_replaced_before_the_output() {
+        let args: Vec<std::ffi::OsString> = ["-p", "x", "--max-vram", "9.0", "-o", "out.png"].iter().map(|s| s.into()).collect();
+        let out: Vec<String> = with_vram(&args, 4.5).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(out, ["-p", "x", "--max-vram", "4.5", "-o", "out.png"]);
+        let plain: Vec<std::ffi::OsString> = ["-p", "x", "-o", "o.png"].iter().map(|s| s.into()).collect();
+        assert_eq!(with_vram(&plain, 2.0).len(), 6);
     }
 
     #[test]

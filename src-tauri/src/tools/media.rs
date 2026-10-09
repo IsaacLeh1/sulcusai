@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use serde_json::{json, Value};
-use tauri::Manager;
 
 use super::{Ctx, Outcome};
 use crate::media::{self, MediaItem, Request};
@@ -53,10 +52,7 @@ fn summary(items: &[MediaItem]) -> String {
 }
 
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
-    let Some(app) = ctx.app.cloned().or_else(|| ctx.state.app.get().cloned()) else {
-        return Outcome::error("Couldn't make it", "The studio isn't available here.");
-    };
-    let state: Arc<crate::AppState> = app.state::<Arc<crate::AppState>>().inner().clone();
+    let state: Arc<crate::AppState> = ctx.state.clone();
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
     let chat_id = Some(ctx.memory.chat_id.to_string());
     let req = match name {
