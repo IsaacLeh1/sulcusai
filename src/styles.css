@@ -684,3 +684,15 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .look-result ul { margin: 4px 0 0; padding-left: 18px; }
 .empty .look-models.compact { max-width: 440px; align-items: center; }
 .empty .look-models.compact .look-row { flex-direction: column; justify-content: center; gap: 8px; }
+
+/* ---------- advanced settings ---------- */
+.advanced { display: flex; flex-direction: column; gap: 10px; }
+.adv-group { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.adv-group h3 { margin: 0; font-size: 14px; }
+.adv-head { display: flex; justify-content: space-between; align-items: center; }
+.adv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.adv-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 550; }
+.adv-field .muted { font-weight: 400; }
+.adv-field.wide textarea { width: 100%; }
+.adv-actions { display: flex; gap: 8px; }
+.inline-num { width: 64px; display: inline-block; padding: 2px 6px; margin: 0 2px; }

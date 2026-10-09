@@ -22,10 +22,6 @@ use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
 use crate::connectors::{self, OfferedTool, Skill, ToolMode};
 use crate::{memory, projects, AppState};
 
-/// Most model replies in one turn before the agent stops and checks in.
-const MAX_STEPS: usize = 30;
-/// Most replies a helper agent gets for its task.
-const HELPER_STEPS: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -272,6 +268,12 @@ impl Turn {
                 }
             }
         }
+        // Kinds of action advanced mode never allows aren't offered at all.
+        let adv = crate::advanced::get(&self.state);
+        defs.retain(|d| {
+            let name = d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default();
+            !adv.forbids(tools::find(name).map_or(Risk::Connector, |t| t.risk))
+        });
         let tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();
@@ -304,7 +306,8 @@ impl Turn {
         let checkpoint_dir = self.state.paths.data.join("checkpoints");
 
         let mut result = TurnResult { last: None, context: ContextInfo::default(), tps: None, cancelled: false };
-        for step in 0..MAX_STEPS {
+        let max_steps = adv.max_steps();
+        for step in 0..max_steps {
             self.rest_if_hot().await;
             let history = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
             let (kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
@@ -385,12 +388,12 @@ impl Turn {
                 result.cancelled = true;
                 break;
             }
-            if step == MAX_STEPS - 1 {
+            if step == max_steps - 1 {
                 let note = Message {
                     id: uuid::Uuid::new_v4().to_string(),
                     chat_id: self.chat_id.clone(),
                     role: "assistant".into(),
-                    content: format!("I've taken {MAX_STEPS} steps on this, so I'm pausing here. Say \"continue\" if you'd like me to keep going."),
+                    content: format!("I've taken {max_steps} steps on this, so I'm pausing here. Say \"continue\" if you'd like me to keep going."),
                     created_at: now(),
                     ..Default::default()
                 };
@@ -459,7 +462,18 @@ impl Turn {
             }
         }
         let allowed = self.state.approvals.allowed(&self.chat_id, risk);
-        match tools::permission(self.mode, risk, allowed) {
+        let adv = crate::advanced::get(&self.state);
+        if adv.forbids(risk) {
+            return Outcome::error(
+                tools::failed_title(&call.name, &args),
+                "This kind of action is turned off in Settings → Advanced. Tell the user, and don't try another way around it.",
+            );
+        }
+        let mut permission = tools::permission(self.mode, risk, allowed);
+        if permission == Permission::Run && adv.must_ask(risk) {
+            permission = Permission::Ask;
+        }
+        match permission {
             Permission::Refuse => {
                 return Outcome::error(tools::failed_title(&call.name, &args), "Plan mode can't change anything. Put this step in your plan instead.");
             }
@@ -532,7 +546,7 @@ impl Turn {
         };
         let mut history = vec![msg("user", task.to_string())];
         let mut steps: Vec<String> = Vec::new();
-        for _ in 0..HELPER_STEPS {
+        for _ in 0..crate::advanced::get(&self.state).helper_steps() {
             if self.cancel.load(Ordering::Relaxed) {
                 return Outcome::error(title, "Stopped by the user.");
             }

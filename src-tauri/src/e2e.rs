@@ -67,6 +67,7 @@ async fn e2e_install_load_and_chat() {
                 low_priority: false,
                 log: &log,
                 mmproj: None,
+                batch: 0,
             },
             None,
         )
@@ -131,7 +132,7 @@ async fn e2e_tool_call_probe() {
     let dest = paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None, batch: 0 }, None)
         .await
         .unwrap();
     let body = serde_json::json!({
@@ -201,7 +202,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0 }, None)
         .await
         .unwrap();
 
@@ -324,7 +325,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0 }, None)
         .await
         .unwrap();
     (state, ep, cipher)
@@ -928,7 +929,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let cool = perf::limits(&PerfSettings { mode: Mode::Cool, ..Default::default() }, &hw, false);
     let (ctx, layers) = catalog::launch_within(&spec, "Q4_K_M", &full, &cool);
     println!("cool: {} threads, ctx {ctx}, {layers} layers, low priority {}", cool.threads, cool.low_priority);
-    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None };
+    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None, batch: 0 };
     let ep = eng.ensure(launch(ctx, layers, &cool), None).await.unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let line = text.lines().find(|l| l.contains("n_threads")).unwrap_or("");
@@ -1410,7 +1411,7 @@ async fn e2e_vision() {
     let mut eng = engine::Engine::default();
     let ep = eng
         .ensure(
-            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj) },
+            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj), batch: 0 },
             None,
         )
         .await
@@ -1463,7 +1464,7 @@ async fn e2e_chat_makes_pictures() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0 }, None)
         .await
         .unwrap();
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some(spec.id.clone())).unwrap();
@@ -1568,12 +1569,46 @@ async fn e2e_local_models() {
     let path = std::path::PathBuf::from(&small.local.as_ref().unwrap().path);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0 }, None)
         .await
         .unwrap();
     let tps = engine::benchmark(&ep).await.unwrap();
     println!("{} ran on the processor at {tps:.1} tokens/s", small.name);
     eng.stop().await;
     assert!(tps > 0.0);
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}
+
+/// Advanced mode reaches the engine and each request: the model starts on
+/// the processor with the context and batch size asked for (no graphics
+/// card), and a fixed seed gives the same reply twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_advanced() {
+    let state = temp_state(None);
+    let spec = state.catalog.model("qwen3-1.7b").unwrap().clone();
+    let v = spec.variant("Q4_K_M").unwrap();
+    {
+        let conn = state.db.lock().unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None }).unwrap();
+        let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
+        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: Some(256) };
+        a.sampling.temperature = Some(1.0);
+        a.sampling.seed = Some(7);
+        a.processing.thinking = crate::advanced::Thinking::Off;
+        crate::db::set(&conn, "advanced", &a).unwrap();
+    }
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(spec.id.clone()), false, || {}).await.unwrap();
+    let st = state.engine.lock().await.status();
+    println!("engine: ctx {:?}, gpu layers {:?}; request extra {}", st.ctx, st.gpu_layers, ep.extra);
+    assert_eq!((st.ctx, st.gpu_layers), (Some(2048), Some(0)));
+    assert_eq!(ep.extra["seed"], serde_json::json!(7));
+    let ask = || vec![serde_json::json!({ "role": "user", "content": "Name a colour and an animal." })];
+    let a = crate::chat::stream(&ep, ask(), None, &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
+    let b = crate::chat::stream(&ep, ask(), None, &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
+    println!("reply: {:?} | thinking: {} chars", a.content, a.thinking.len());
+    assert_eq!(a.content, b.content, "same seed, same reply");
+    assert!(a.thinking.is_empty(), "thinking was turned off");
+    state.engine.lock().await.stop().await;
     std::fs::remove_dir_all(&state.paths.data).ok();
 }

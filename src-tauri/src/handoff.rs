@@ -13,11 +13,9 @@ use crate::crypto::Cipher;
 use crate::db::{self, Chat, Message};
 use crate::engine::Endpoint;
 
-/// Start a new chat once this much of the window is in use.
-pub const THRESHOLD: f64 = 0.8;
-
-pub fn needed(info: Option<&ContextInfo>) -> bool {
-    info.is_some_and(|i| i.used_fraction() >= THRESHOLD)
+/// Start a new chat once `at` of the window is in use (None: never).
+pub fn needed(info: Option<&ContextInfo>, at: Option<f64>) -> bool {
+    at.is_some_and(|at| info.is_some_and(|i| i.used_fraction() >= at))
 }
 
 const ASK: &str = "This conversation is about to continue in a fresh chat that won't see the messages above. Write a summary \
@@ -87,10 +85,13 @@ mod tests {
     fn handoff_triggers_at_the_threshold() {
         let mut info = ContextInfo { ctx: 1000, ..Default::default() };
         info.last_total = Some(799);
-        assert!(!needed(Some(&info)));
+        let at = Some(0.8);
+        assert!(!needed(Some(&info), at));
         info.last_total = Some(800);
-        assert!(needed(Some(&info)));
-        assert!(!needed(None));
+        assert!(needed(Some(&info), at));
+        assert!(!needed(None, at));
+        // Turned off in advanced mode.
+        assert!(!needed(Some(&info), None));
     }
 
     #[test]

@@ -206,6 +206,13 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// An in-memory database with the app's tables, for tests.
+#[cfg(test)]
+pub fn init_for_test(conn: &Connection) {
+    conn.execute_batch(SCHEMA).unwrap();
+    migrate(conn).unwrap();
+}
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     // secure_delete overwrites deleted rows, so removed chats don't linger on disk.

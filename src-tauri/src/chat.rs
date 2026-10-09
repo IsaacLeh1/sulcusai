@@ -296,6 +296,11 @@ pub async fn stream(
     if let Some(t) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = t.clone();
     }
+    if let (Some(b), Some(e)) = (body.as_object_mut(), ep.extra.as_object()) {
+        for (k, v) in e {
+            b.insert(k.clone(), v.clone());
+        }
+    }
 
     let resp = net::local_client()
         .post(ep.url("/v1/chat/completions"))

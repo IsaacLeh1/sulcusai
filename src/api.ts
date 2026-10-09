@@ -77,6 +77,14 @@ export interface Ratings {
   languages: number;
 }
 
+export interface Advanced {
+  enabled: boolean;
+  sampling: { temperature: number | null; top_p: number | null; top_k: number | null; min_p: number | null; repeat_penalty: number | null; presence_penalty: number | null; frequency_penalty: number | null; seed: number | null };
+  engine: { ctx: number | null; gpu_layers: number | null; threads: number | null; batch: number | null };
+  guardrails: { instructions: string | null; extra: string; never: string[]; always_ask: boolean; max_steps: number | null };
+  processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; helper_steps: number | null };
+}
+
 export interface FoundModels {
   /** Names of the models added. */
   added: string[];
@@ -814,6 +822,12 @@ export const LOCKED = "locked";
 
 export const api = {
   appInfo: () => invoke<AppInfo>("app_info"),
+  advancedView: () => invoke<{ settings: Advanced; locked: boolean }>("advanced_view"),
+  setAdvanced: (settings: Advanced, pin: string | null) => invoke<void>("set_advanced", { settings, pin }),
+  setAdvancedPin: (pin: string | null, newPin: string) => invoke<void>("set_advanced_pin", { pin, newPin }),
+  checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
+  importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
+  measureModelSpeed: (modelId: string) => invoke<number>("measure_model_speed", { modelId }),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
   catalog: () => invoke<CatalogView>("catalog_view"),
   install: (modelId: string, quant: string) => invoke<void>("install_model", { modelId, quant }),

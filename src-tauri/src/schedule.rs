@@ -176,6 +176,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
     let Some((cancel, _guard)) = crate::claim(&state.generations, &chat_id) else { return Err("Already running.".into()) };
     let today = Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
+    let base = crate::advanced::get(&state).base_prompt(base);
     let base = format!("{base}\n\nThis is a scheduled task (\"{}\") running on its own; the user isn't watching. Do the task and reply with the result.", s.name);
     let emitter = app.clone();
     let turn = agent::Turn {

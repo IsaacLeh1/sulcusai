@@ -314,3 +314,17 @@ Phase 4 was merged into `main` and released as the 0.4.0 installer (2026-10-08).
 - A Vulkan build of acestep.cpp would make music faster (needs the Vulkan SDK for glslc, or a CI job).
 - Live checks in the real app: Studio jobs, attachments and screenshots with a vision model, sign-in once registrations exist.
 - Videos have no thumbnail in the gallery (a 🎬 card); Graph all-day events are created as UTC dates.
+
+## Phase 6 (Advanced and cloud) (branch `phase6`, same worktree)
+
+Branched from `local-models` (0.5.2, not yet merged). Merge into `main` only when asked.
+
+**Advanced mode (`advanced.rs`, Settings → Advanced, off by default):**
+- Stored under the settings key `advanced`; `advanced::get(state)` returns the defaults while it's off, so nothing applies until it's turned on.
+- Model tuning: sampling (temperature, top-p/k, min-p, penalties, seed) goes into `Endpoint.extra`, which `chat::stream` merges into every chat request. Context, GPU layers, threads and batch size go through `launch_plan` in `lib.rs` (a change restarts the model; `-b` is passed for the batch size).
+- Guardrails: replace or add to the app's instructions (`base_prompt`, used by chats and scheduled tasks); never allow file changes / commands / connector tools (those tools aren't offered, and a call is refused); ask before every change even in Auto/Bypass; most steps per reply.
+- Processing: thinking on/off (`chat_template_kwargs.enable_thinking`), handoff threshold or off (`handoff::needed(info, at)`), helper-agent steps.
+- Model work: import a `.gguf` (`local::import`, used in place), measure speed again. LoRA fine-tuning isn't built.
+- Parental lock: a PIN separate from the app lock (Argon2 hash in `advanced_lock`), needed to change advanced settings.
+- Test: `cargo test --lib e2e_advanced -- --ignored --nocapture` (processor only).
+

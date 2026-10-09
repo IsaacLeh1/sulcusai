@@ -116,16 +116,51 @@ fn candidates(entries: &[Entry]) -> Vec<Candidate> {
         if e.app == "Ollama" || !e.name.ends_with(".gguf") || e.name.starts_with("mmproj") || e.size < MIN_SIZE {
             continue;
         }
-        // LM Studio and Hugging Face keep the picture encoder beside the model.
-        let projector = e.path.parent().and_then(|dir| {
-            std::fs::read_dir(dir).ok()?.flatten().map(|f| f.path()).find(|p| {
-                let n = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                n.starts_with("mmproj") && n.ends_with(".gguf")
-            })
-        });
-        out.push(Candidate { app: e.app, path: e.path.clone(), name: None, projector });
+        out.push(Candidate { app: e.app, path: e.path.clone(), name: None, projector: projector_beside(&e.path) });
     }
     out
+}
+
+/// LM Studio and Hugging Face keep the picture encoder beside the model.
+fn projector_beside(model: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(model.parent()?).ok()?.flatten().map(|f| f.path()).find(|p| {
+        let n = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        n.starts_with("mmproj") && n.ends_with(".gguf")
+    })
+}
+
+/// Adds a model file the user picked (Settings → Advanced). Returns its name.
+pub fn import(state: &AppState, path: &Path) -> Result<String, String> {
+    let k = key(path);
+    let taken = {
+        let conn = state.db.lock().unwrap();
+        list(&conn).iter().any(|m| m.local.as_ref().is_some_and(|l| key(Path::new(&l.path)) == k))
+            || db::installed_models(&conn).iter().any(|m| key(Path::new(&m.path)) == k)
+    };
+    if taken {
+        return Err("That model is already in your list.".into());
+    }
+    let c = Candidate { app: "Imported", path: path.to_path_buf(), name: None, projector: projector_beside(path) };
+    let spec = spec_for(&c).map_err(|reason| format!("That file {reason}."))?;
+    if !catalog::fit_model(&spec, &state.budget()).variants.iter().any(|v| v.runnable()) {
+        return Err("That model needs more memory than this PC has.".into());
+    }
+    let v = &spec.variants[0];
+    {
+        let conn = state.db.lock().unwrap();
+        db::save_installed(&conn, &InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: c.path.display().to_string(), size: v.size, installed_at: db::now_ms(), tps: None })?;
+        let mut all = list(&conn);
+        all.push(spec.clone());
+        save(&conn, &all)?;
+        let mut h = hidden(&conn);
+        h.retain(|p| p != &k);
+        db::set(&conn, HIDDEN_KEY, &h)?;
+        if db::settings(&conn).default_model.is_none() {
+            db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone()))?;
+        }
+    }
+    state.log("model", &format!("Imported {} from {} (used where it is, not copied)", spec.name, c.path.display()));
+    Ok(spec.name)
 }
 
 /// "14B", "30B-A3B", "1.5B", "8x7B", "500M" as billions of parameters.

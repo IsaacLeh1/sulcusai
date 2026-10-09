@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Isaac Lehman
 //! SulcusAI core: commands the window calls, and the state behind them.
 
+mod advanced;
 mod agent;
 mod audio;
 mod bridge;
@@ -383,7 +384,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
             let log = state.paths.engine_log();
             // Same settings a chat will use, so the first chat doesn't reload the model.
             let limits = state.limits();
-            let (ctx, gpu_layers) = catalog::launch_within(&spec, &variant.quant, &state.budget(), &limits);
+            let (ctx, gpu_layers, threads, batch) = launch_plan(&state, &spec, &variant.quant);
             let mmproj = vision_file(&state.paths, &spec);
             let mut engine = state.engine.lock().await;
             let measured = async {
@@ -396,10 +397,11 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                             quant: &variant.quant,
                             ctx,
                             gpu_layers,
-                            threads: limits.threads,
+                            threads,
                             low_priority: limits.low_priority,
                             log: &log,
                             mmproj: mmproj.as_deref(),
+                            batch,
                         },
                         state.job(),
                     )
@@ -468,6 +470,22 @@ pub(crate) fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBu
         Some(name) => paths.models.join(&m.model_id).join(name),
         None => stored,
     }
+}
+
+/// Context, GPU layers, threads and batch size to start a model with:
+/// worked out for this PC, unless advanced mode says otherwise.
+fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str) -> (u32, u32, usize, u32) {
+    let limits = state.limits();
+    let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &state.budget(), &limits);
+    let e = advanced::get(state).engine;
+    if let Some(c) = e.ctx {
+        ctx = c.clamp(512, spec.arch.max_ctx.max(512));
+    }
+    if let Some(l) = e.gpu_layers {
+        layers = l.min(spec.arch.n_layer + 1);
+    }
+    let threads = e.threads.map_or(limits.threads, |t| t as usize);
+    (ctx, layers, threads, e.batch.unwrap_or(0))
 }
 
 /// The versions of a model this PC can run, the best suited first.
@@ -563,6 +581,26 @@ async fn find_models(app: AppHandle, state: AppStateRef<'_>, again: Option<bool>
     let found = tauri::async_runtime::spawn_blocking(move || find_models_now(&state, again.unwrap_or(false))).await.map_err(|e| e.to_string())?;
     announce_found(&app, &found.added);
     Ok(found)
+}
+
+/// Adds a .gguf model file the user picked; it's used where it is.
+#[tauri::command]
+async fn import_model_file(app: AppHandle, state: AppStateRef<'_>, path: String) -> Result<String, String> {
+    let state = state.inner().clone();
+    let name = tauri::async_runtime::spawn_blocking(move || local::import(&state, std::path::Path::new(&path))).await.map_err(|e| e.to_string())??;
+    announce_found(&app, std::slice::from_ref(&name));
+    Ok(name)
+}
+
+/// Runs the speed test again for an installed chat model.
+#[tauri::command]
+async fn measure_model_speed(state: AppStateRef<'_>, model_id: String) -> Result<f64, String> {
+    let state = state.inner().clone();
+    let (ep, spec, _) = llm_endpoint(&state, Some(model_id.clone()), false, || {}).await?;
+    let tps = engine::benchmark(&ep).await?;
+    db::set_tps(&state.db.lock().unwrap(), &model_id, tps)?;
+    state.log("model", &format!("Measured {}: {tps:.1} tokens/sec", spec.name));
+    Ok(tps)
 }
 
 #[tauri::command]
@@ -803,11 +841,12 @@ pub(crate) async fn run_turn(
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
+    let base = advanced::get(state).base_prompt(base);
 
     // Nearly full: summarize and continue in a fresh chat.
     let last_context = state.contexts.lock().unwrap().get(&chat_id).cloned();
     let mut chat_id = chat_id;
-    if !chat.incognito && handoff::needed(last_context.as_ref()) {
+    if !chat.incognito && handoff::needed(last_context.as_ref(), advanced::get(state).handoff_at()) {
         app.emit("chat:status", json!({ "chat_id": chat_id, "status": "handoff" })).ok();
         let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
         let summary = handoff::summarize(&ep, &base, &history).await?;
@@ -902,7 +941,7 @@ pub(crate) async fn llm_endpoint(
     let spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
     let budget = state.budget();
     let limits = state.limits();
-    let (ctx, gpu_layers) = catalog::launch_within(&spec, &installed.quant, &budget, &limits);
+    let (ctx, gpu_layers, threads, batch) = launch_plan(state, &spec, &installed.quant);
     let backend = engine::backend_for(&budget)?;
     let exe = match engine::installed_server(&state.paths, &state.catalog.engine, backend) {
         Some(exe) => exe,
@@ -927,12 +966,13 @@ pub(crate) async fn llm_endpoint(
         quant: &installed.quant,
         ctx,
         gpu_layers,
-        threads: limits.threads,
+        threads,
         low_priority: limits.low_priority,
         log: &state.paths.engine_log(),
         mmproj: mmproj.as_deref(),
+        batch,
     };
-    let ep = match engine.endpoint_for(&installed.model_id) {
+    let mut ep = match engine.endpoint_for(&installed.model_id) {
         // Same model: new limits (mode, heat) apply between replies, and only
         // when no other chat is mid-reply on it.
         Some(ep) if engine.matches(&launch) || state.generations.lock().unwrap().len() > 1 => ep,
@@ -941,6 +981,7 @@ pub(crate) async fn llm_endpoint(
             engine.ensure(launch, state.job()).await?
         }
     };
+    ep.extra = advanced::get(state).request_extra();
     Ok((ep, spec, installed))
 }
 
@@ -1110,6 +1151,12 @@ pub fn run() {
             install_model,
             cancel_install,
             find_models,
+            import_model_file,
+            measure_model_speed,
+            advanced::advanced_view,
+            advanced::set_advanced,
+            advanced::set_advanced_pin,
+            advanced::check_advanced_pin,
             remove_model,
             get_settings,
             set_connectivity,

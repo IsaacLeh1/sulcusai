@@ -135,6 +135,8 @@ pub struct LaunchSpec<'a> {
     pub log: &'a Path,
     /// The image encoder, for models that can see pictures.
     pub mmproj: Option<&'a Path>,
+    /// Prompt batch size (0 = the engine's default).
+    pub batch: u32,
 }
 
 struct Running {
@@ -148,6 +150,7 @@ struct Running {
     threads: usize,
     low_priority: bool,
     vision: bool,
+    batch: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,6 +166,8 @@ pub struct Endpoint {
     pub port: u16,
     pub key: String,
     pub ctx: u32,
+    /// Fields merged into each chat request (advanced sampling settings).
+    pub extra: serde_json::Value,
 }
 
 impl Endpoint {
@@ -203,7 +208,7 @@ impl Engine {
             return None;
         }
         let r = self.running.as_ref()?;
-        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx })
+        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null })
     }
 
     /// Whether the running server already matches this launch exactly.
@@ -217,6 +222,7 @@ impl Engine {
                     && r.threads == spec.threads
                     && r.low_priority == spec.low_priority
                     && r.vision == spec.mmproj.is_some()
+                    && r.batch == spec.batch
             })
     }
 
@@ -230,7 +236,7 @@ impl Engine {
     pub async fn ensure(&mut self, spec: LaunchSpec<'_>, job: Option<&JobRef>) -> Result<Endpoint, String> {
         if self.matches(&spec) {
             let r = self.running.as_ref().unwrap();
-            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx });
+            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null });
         }
         self.stop().await;
 
@@ -246,6 +252,7 @@ impl Engine {
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
+            .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -276,9 +283,10 @@ impl Engine {
             threads: spec.threads,
             low_priority: spec.low_priority,
             vision: spec.mmproj.is_some(),
+            batch: spec.batch,
         });
 
-        let endpoint = Endpoint { port, key, ctx: spec.ctx };
+        let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null };
         if let Err(e) = self.wait_ready(&endpoint, spec.log).await {
             self.stop().await;
             return Err(e);
