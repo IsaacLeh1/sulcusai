@@ -1164,6 +1164,11 @@
           "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/acestep-d881ad2-win-cpu-x64.zip",
           "size": 5136624,
           "sha256": "d30427419b5211df6218877091b6f64ee4d68767252eaeb18629310a51ff59a4"
+        },
+        "vulkan-x64": {
+          "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/acestep-d881ad2-win-vulkan-x64.zip",
+          "size": 19246221,
+          "sha256": "5f5db9d3092bafb6d03e76f6a1329ffc3fd83a189551adff0ac0c6cadc985dde"
         }
       }
     },

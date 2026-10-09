@@ -14,8 +14,10 @@
 //! - Anything stored encrypted travels inside the session's encryption and
 //!   is sealed again with the receiving PC's own data key.
 
+pub mod models;
 pub mod track;
 mod wire;
+
 
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -202,6 +204,9 @@ struct Open {
     nonce: Option<String>,
     #[serde(default)]
     pair: Option<String>,
+    /// "models" (what can be copied) or "file" (copy one), instead of syncing.
+    #[serde(default)]
+    want: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -426,7 +431,7 @@ async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> Result<usize
         .map_err(|_| format!("{} didn't answer. Is SulcusAI open there, with sync on?", p.name))?
         .map_err(|_| format!("Couldn't reach {}. Is SulcusAI open there, with sync on?", p.name))?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: None }).await?;
     let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC. If it was unpaired or reset there, pair them again.", p.name))?;
     if accept.id != p.id {
         return Err("A different PC answered at that address.".into());
@@ -434,6 +439,38 @@ async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> Result<usize
     let theirs = hex::decode(&accept.nonce).map_err(|_| "The other PC sent something unexpected.".to_string())?;
     let (to, from) = wire::session_keys(&key, &nonce, &theirs);
     session(state, stream, &c, &p, wire::Sealer::new(&to), wire::Sealer::new(&from), Some(addr)).await
+}
+
+/// Opens an authenticated link to a paired PC for a request other than
+/// syncing; `ask` (if not null) is sent first, sealed.
+async fn request(
+    state: &Arc<AppState>,
+    p: &Peer,
+    addr: SocketAddr,
+    want: &str,
+    ask: &serde_json::Value,
+) -> Result<(tokio::net::tcp::OwnedReadHalf, tokio::net::tcp::OwnedWriteHalf, wire::Sealer, wire::Sealer), String> {
+    let c = state.work_cipher()?;
+    let key = pair_key(&c, p)?;
+    let me = device_id(&state.paths.data);
+    let mut stream = timeout(Duration::from_secs(5), TcpStream::connect(addr))
+        .await
+        .map_err(|_| format!("{} didn't answer.", p.name))?
+        .map_err(|_| format!("Couldn't reach {}.", p.name))?;
+    let nonce = wire::random::<32>();
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(want.into()) }).await?;
+    let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC.", p.name))?;
+    if accept.id != p.id {
+        return Err("A different PC answered at that address.".into());
+    }
+    let theirs = hex::decode(&accept.nonce).map_err(|e| e.to_string())?;
+    let (to, from) = wire::session_keys(&key, &nonce, &theirs);
+    let (mut out, inn) = (wire::Sealer::new(&to), wire::Sealer::new(&from));
+    if !ask.is_null() {
+        wire::write_frame(&mut stream, &out.seal(&serde_json::to_vec(ask).map_err(|e| e.to_string())?)).await.map_err(lost)?;
+    }
+    let (r, w) = stream.into_split();
+    Ok((r, w, inn, out))
 }
 
 /// Answers a connection: a pairing attempt or a paired PC's session.
@@ -455,7 +492,21 @@ async fn answer(state: &Arc<AppState>, mut stream: TcpStream) -> Result<(), Stri
     let nonce = wire::random::<32>();
     send_plain(&mut stream, &Accept { id: device_id(&state.paths.data), nonce: hex::encode(nonce) }).await?;
     let (from_them, to_them) = wire::session_keys(&key, &theirs, &nonce);
-    session(state, stream, &c, &p, wire::Sealer::new(&to_them), wire::Sealer::new(&from_them), None).await.map(|_| ())
+    let (mut out, mut inn) = (wire::Sealer::new(&to_them), wire::Sealer::new(&from_them));
+    match open.want.as_deref() {
+        Some("models") => {
+            let list = serde_json::to_vec(&models::offered(state)).map_err(|e| e.to_string())?;
+            wire::write_frame(&mut stream, &out.seal(&list)).await.map_err(lost)
+        }
+        Some("file") => {
+            let ask = timeout(HANDSHAKE, wire::read_frame(&mut stream)).await.map_err(|_| "no request".to_string())?.map_err(lost)?;
+            let ask: models::FileAsk = serde_json::from_slice(&inn.open(&ask)?).map_err(|e| e.to_string())?;
+            let (_r, mut w) = stream.into_split();
+            models::serve(state, ask, &mut w, &mut out).await
+        }
+        Some(_) => Err("unknown request".into()),
+        None => session(state, stream, &c, &p, out, inn, None).await.map(|_| ()),
+    }
 }
 
 async fn send_msg(w: &mut (impl tokio::io::AsyncWrite + Unpin), out: &mut wire::Sealer, msg: &Msg) -> Result<(), String> {
@@ -615,7 +666,7 @@ async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAddr) -> Resul
         .map_err(|_| "That PC didn't answer. Is SulcusAI open there?".to_string())?
         .map_err(|_| "Couldn't reach that PC. Is SulcusAI open there, and is it on this network?".to_string())?;
     let (spake, mine) = wire::pair_start(code);
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)) }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)), want: None }).await?;
     let reply: PairReply = recv_plain(&mut stream).await?;
     if let Some(e) = reply.error {
         return Err(e);
@@ -887,6 +938,32 @@ mod tests {
         assert_eq!(call(&b, &a_id, addr).await.unwrap(), 1);
         let titles: Vec<String> = crate::db::list_chats(&b.db.lock().unwrap(), &cb).into_iter().map(|c| c.title).collect();
         assert!(titles.contains(&"Italy trip".to_string()), "{titles:?}");
+
+        // Models: A offers its installed catalog model; B copies its file.
+        let spec = a.catalog.model("qwen3-1.7b").unwrap().clone();
+        let v = spec.variant("Q4_K_M").unwrap().clone();
+        let file = a.paths.models.join(&spec.id).join(&v.file);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::File::create(&file).unwrap().set_len(v.size).unwrap();
+        db::save_installed(&a.db.lock().unwrap(), &db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: file.display().to_string(), size: v.size, installed_at: 1, tps: None }).unwrap();
+        let pa = peer(&b, &a_id).unwrap();
+        let (mut r, _w, mut inn, _out) = request(&b, &pa, addr, "models", &serde_json::Value::Null).await.unwrap();
+        let list: Vec<models::Offered> = serde_json::from_slice(&inn.open(&wire::read_frame(&mut r).await.unwrap()).unwrap()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].files[0], (v.file.clone(), v.size));
+        let t = Instant::now();
+        let ask = serde_json::json!({ "model_id": spec.id, "file": v.file });
+        let (mut r, _w, mut inn, _out) = request(&b, &pa, addr, "file", &ask).await.unwrap();
+        let dest = b.paths.models.join(&spec.id).join(&v.file);
+        let mut last = 0;
+        models::receive_for_test(&mut r, &mut inn, &dest, &mut |got| last = got).await.unwrap();
+        eprintln!("copied {} MB in {:?}", v.size >> 20, t.elapsed());
+        assert_eq!(dest.metadata().unwrap().len(), v.size);
+        assert_eq!(last, v.size);
+        // Files that aren't an installed model's are refused.
+        let ask = serde_json::json!({ "model_id": spec.id, "file": "../../sulcusai.db" });
+        let (mut r, _w, mut inn, _out) = request(&b, &pa, addr, "file", &ask).await.unwrap();
+        assert!(models::receive_for_test(&mut r, &mut inn, &b.paths.data.join("stolen"), &mut |_| {}).await.is_err());
 
         // A PC that was never paired gets nowhere.
         let c = crate::e2e::temp_state(None);

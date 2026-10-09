@@ -19,6 +19,7 @@ pnpm licenses list --prod
 | ONNX Runtime (downloaded with natural voices, speaker labels or background removal; its own ThirdPartyNotices.txt is kept beside it) | MIT | https://github.com/microsoft/onnxruntime |
 | stable-diffusion.cpp (`sd-cli`, downloaded with a picture, upscaling or video model; includes ggml, libwebp and libwebm) | MIT; libwebp and libwebm BSD-3-Clause | https://github.com/leejet/stable-diffusion.cpp |
 | acestep.cpp (`ace-lm`, `ace-synth`, downloaded with a music model; our Windows build of commit d881ad2, includes ggml) | MIT | https://github.com/ServeurpersoCom/acestep.cpp |
+| acestep.cpp graphics-card build (`acestep-d881ad2-win-vulkan-x64.zip`: ggml Vulkan backend; built with headers from Vulkan-Headers and SPIRV-Headers, tag vulkan-sdk-1.4.363.0) | MIT; Vulkan-Headers Apache-2.0 or MIT; SPIRV-Headers MIT | https://github.com/KhronosGroup/Vulkan-Headers, https://github.com/KhronosGroup/SPIRV-Headers |
 | QVAC Fabric llama.cpp (`llama-finetune-lora`, downloaded the first time a model is taught; includes libcurl, cpp-httplib, nlohmann/json and linenoise under their own licenses, kept beside it) | MIT | https://github.com/tetherto/qvac-fabric-llm.cpp |
 | TweetNaCl-js 1.0.3 (`nacl-fast.min.js`, served inside the phone page) | Public domain (Unlicense) | https://github.com/dchest/tweetnacl-js |
 

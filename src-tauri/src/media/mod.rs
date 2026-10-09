@@ -263,8 +263,18 @@ fn sd_dir(c: &MediaCatalog, backend: &str) -> String {
     format!("sd-{}-{backend}", c.engine.build)
 }
 
-fn music_dir(c: &MediaCatalog) -> String {
-    format!("acestep-{}-cpu-x64", c.music_engine.build)
+fn music_dir(c: &MediaCatalog, key: &str) -> String {
+    format!("acestep-{}-{key}", c.music_engine.build)
+}
+
+/// The installed music engine: the graphics-card build if it's here, else
+/// the processor one.
+fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
+    let c = &state.catalog.media;
+    ["vulkan-x64", "cpu-x64"]
+        .iter()
+        .map(|k| state.paths.engines.join(music_dir(c, k)))
+        .find(|d| engine::find_exe(d, MUSIC_EXE).is_some())
 }
 
 fn sd_exe(state: &AppState) -> Result<PathBuf, String> {
@@ -307,12 +317,29 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
     emit("engine", 0, 0);
     match spec.kind {
         Kind::Music => {
-            let asset = c.music_engine.assets.get("cpu-x64").ok_or("No music engine for this PC")?;
-            let dir = music_dir(c);
-            if engine::find_exe(&state.paths.engines.join(&dir), MUSIC_EXE).is_none() {
-                state.log("network", &format!("Downloading the acestep.cpp music engine from {}", crate::host_of(&asset.url)));
+            // The graphics-card build is about twice as fast; it also runs on
+            // the processor, but it's a bigger download, so only with a card.
+            let gpu = state.budget().vram > 0 && cfg!(windows);
+            let mut done = false;
+            if let Some(asset) = c.music_engine.assets.get("vulkan-x64").filter(|_| gpu) {
+                let dir = music_dir(c, "vulkan-x64");
+                if engine::find_exe(&state.paths.engines.join(&dir), MUSIC_EXE).is_none() {
+                    state.log("network", &format!("Downloading the acestep.cpp music engine (graphics card) from {}", crate::host_of(&asset.url)));
+                }
+                match engine::ensure_unpacked(&state.paths, &dir, asset, MUSIC_EXE, cancel, |r, t| emit("engine", r, t)).await {
+                    Ok(_) => done = true,
+                    Err(e) if e == download::CANCELLED => return Err(e),
+                    Err(e) => state.log("media", &format!("The graphics-card music engine didn't download ({e}); using the processor one")),
+                }
             }
-            engine::ensure_unpacked(&state.paths, &dir, asset, MUSIC_EXE, cancel, |r, t| emit("engine", r, t)).await?;
+            if !done {
+                let asset = c.music_engine.assets.get(engine::cpu_key()).ok_or("Music isn't available on this system yet.")?;
+                let dir = music_dir(c, engine::cpu_key());
+                if engine::find_exe(&state.paths.engines.join(&dir), MUSIC_EXE).is_none() {
+                    state.log("network", &format!("Downloading the acestep.cpp music engine from {}", crate::host_of(&asset.url)));
+                }
+                engine::ensure_unpacked(&state.paths, &dir, asset, MUSIC_EXE, cancel, |r, t| emit("engine", r, t)).await?;
+            }
         }
         Kind::Background => {
             crate::natural::ensure_runtime(state, cancel, emit).await?;
@@ -373,7 +400,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
             }
         }
         let engine_ready = match m.kind {
-            Kind::Music => engine::find_exe(&state.paths.engines.join(music_dir(c)), MUSIC_EXE).is_some(),
+            Kind::Music => music_engine_dir(state).is_some(),
             Kind::Background => crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_some(),
             _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(c, be)), SD_EXE).is_some()),
         };
@@ -849,7 +876,8 @@ async fn make_room(state: &Arc<AppState>, req: &Request) {
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
-    if matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
+    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
+    if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
         make_room(state, req).await;
     }
     let reserved = chat_model_vram(state).await;
@@ -1126,7 +1154,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     // Left to itself with no lyrics or language, the music model can sing in
     // made-up words; English is the safer guess.
     let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto").or_else(|| (!sound && lyrics.is_empty()).then(|| "en".to_string()));
-    let engine_dir = ctx.state.paths.engines.join(music_dir(&ctx.state.catalog.media));
+    let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
     let made = music::make(
         &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
