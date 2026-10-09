@@ -26,8 +26,10 @@ jobs:
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
-      - name: Rust license policy
-        uses: EmbarkStudios/cargo-deny-action@v2
+      # cargo-deny-action runs in a container, which Windows runners can't.
+      - uses: taiki-e/install-action@v2
         with:
-          manifest-path: src-tauri/Cargo.toml
-          command: check licenses
+          tool: cargo-deny
+      - name: Rust license policy
+        working-directory: src-tauri
+        run: cargo deny check licenses
