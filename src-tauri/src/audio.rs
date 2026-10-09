@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Sound in and out through Windows' audio system (WASAPI).
+//! Sound in and out: Windows' audio system (WASAPI); cpal on macOS and Linux.
 //!
 //! Capture delivers 16 kHz mono samples, the format speech recognition uses,
 //! from a microphone or from what the computer itself is playing ("loopback",
@@ -736,37 +736,191 @@ mod imp {
     }
 }
 
+/// macOS and Linux: cpal (Core Audio, ALSA/PipeWire). Microphones and
+/// playback work; hearing what the computer itself plays (loopback) has no
+/// portable API, so meetings there record the microphone only.
 #[cfg(not(windows))]
 mod imp {
-    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
-    use super::{finish_clip, Clip, Device, Flow, Sink, Source};
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    pub fn devices(_flow: Flow) -> Result<Vec<Device>, String> {
-        Err("Audio is only supported on Windows so far.".into())
+    use super::{finish_clip, resample, rms, Clip, Device, Flow, Resampler, Sink, Source, RATE};
+
+    pub fn devices(flow: Flow) -> Result<Vec<Device>, String> {
+        let host = cpal::default_host();
+        let (list, default) = match flow {
+            Flow::Input => (host.input_devices().map_err(|e| e.to_string())?.collect::<Vec<_>>(), host.default_input_device()),
+            Flow::Output => (host.output_devices().map_err(|e| e.to_string())?.collect::<Vec<_>>(), host.default_output_device()),
+        };
+        let default_name = default.and_then(|d| d.name().ok());
+        Ok(list
+            .into_iter()
+            .filter_map(|d| d.name().ok())
+            .map(|name| Device { default: Some(&name) == default_name.as_ref(), id: name.clone(), name })
+            .collect())
+    }
+
+    fn input_device(name: Option<&str>) -> Result<cpal::Device, String> {
+        let host = cpal::default_host();
+        if let Some(n) = name {
+            if let Some(d) = host.input_devices().map_err(|e| e.to_string())?.find(|d| d.name().ok().as_deref() == Some(n)) {
+                return Ok(d);
+            }
+        }
+        host.default_input_device().ok_or_else(|| "No microphone was found.".to_string())
+    }
+
+    /// Averages interleaved frames into mono.
+    fn to_mono(all: &[f32], channels: usize) -> Vec<f32> {
+        all.chunks(channels.max(1)).map(|c| c.iter().sum::<f32>() / c.len() as f32).collect()
     }
 
     pub fn capture_thread(
-        _source: Source,
-        _sink: Sink,
-        _stop: Arc<AtomicBool>,
-        _level: Arc<AtomicU32>,
-        _error: Arc<Mutex<Option<String>>>,
+        source: Source,
+        sink: Sink,
+        stop: Arc<AtomicBool>,
+        level: Arc<AtomicU32>,
+        error: Arc<Mutex<Option<String>>>,
         ready: std::sync::mpsc::SyncSender<Result<(), String>>,
     ) {
-        let _ = ready.send(Err("Audio is only supported on Windows so far.".into()));
+        let device = match &source {
+            Source::Mic { device, .. } => input_device(device.as_deref()),
+            Source::System { .. } => Err("Hearing what this computer plays isn't available on this system yet; only the microphone is recorded.".into()),
+        };
+        let device = match device {
+            Ok(d) => d,
+            Err(e) => {
+                let _ = ready.send(Err(e));
+                return;
+            }
+        };
+        let config = match device.default_input_config() {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = ready.send(Err(format!("The microphone couldn't be opened: {e}")));
+                return;
+            }
+        };
+        let channels = config.channels() as usize;
+        let resampler = Arc::new(Mutex::new(Resampler::new(config.sample_rate().0, RATE)));
+        let deliver = move |mono: Vec<f32>| {
+            level.store(rms(&mono).to_bits(), Ordering::Relaxed);
+            let out = resampler.lock().unwrap().process(&mono);
+            if !out.is_empty() {
+                let _ = sink.send(out);
+            }
+        };
+        let slot = error.clone();
+        let on_error = move |e: cpal::StreamError| {
+            *slot.lock().unwrap() = Some(format!("The microphone stopped: {e}"));
+        };
+        let built = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_input_stream(&config.clone().into(), move |data: &[f32], _: &_| deliver(to_mono(data, channels)), on_error, None),
+            cpal::SampleFormat::I16 => device.build_input_stream(
+                &config.clone().into(),
+                move |data: &[i16], _: &_| {
+                    let f: Vec<f32> = data.iter().map(|s| *s as f32 / 32768.0).collect();
+                    deliver(to_mono(&f, channels))
+                },
+                on_error,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                &config.clone().into(),
+                move |data: &[u16], _: &_| {
+                    let f: Vec<f32> = data.iter().map(|s| (*s as f32 - 32768.0) / 32768.0).collect();
+                    deliver(to_mono(&f, channels))
+                },
+                on_error,
+                None,
+            ),
+            other => {
+                let _ = ready.send(Err(format!("The microphone's sample format ({other:?}) isn't supported.")));
+                return;
+            }
+        };
+        let stream = match built {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = ready.send(Err(format!("The microphone couldn't be opened: {e}")));
+                return;
+            }
+        };
+        if let Err(e) = stream.play() {
+            let _ = ready.send(Err(format!("The microphone couldn't be started: {e}")));
+            return;
+        }
+        let _ = ready.send(Ok(()));
+        while !stop.load(Ordering::Relaxed) && error.lock().unwrap().is_none() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(stream);
     }
 
     pub fn playback_thread(
         rx: std::sync::mpsc::Receiver<Clip>,
-        _generation: Arc<AtomicU64>,
+        generation: Arc<AtomicU64>,
         pending: Arc<AtomicUsize>,
         busy: Arc<tokio::sync::watch::Sender<bool>>,
     ) {
-        while rx.recv().is_ok() {
+        while let Ok(clip) = rx.recv() {
+            if clip.generation == generation.load(Ordering::SeqCst) {
+                if let Err(e) = play(&clip, &generation) {
+                    eprintln!("playback: {e}");
+                }
+            }
             finish_clip(&pending, &busy);
         }
+    }
+
+    /// Plays one clip on the default output; returns early when stopped.
+    fn play(clip: &Clip, generation: &AtomicU64) -> Result<(), String> {
+        let device = cpal::default_host().default_output_device().ok_or("No speakers were found.")?;
+        let config = device.default_output_config().map_err(|e| e.to_string())?;
+        let channels = config.channels() as usize;
+        let rate = config.sample_rate().0;
+        let floats: Vec<f32> = clip.samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        let samples: VecDeque<f32> = resample(&floats, clip.rate, rate).into();
+        let total = samples.len();
+        let queue = Arc::new(Mutex::new(samples));
+        let q = queue.clone();
+        let fill = move |out: &mut [f32]| {
+            let mut q = q.lock().unwrap();
+            for frame in out.chunks_mut(channels.max(1)) {
+                let s = q.pop_front().unwrap_or(0.0);
+                frame.iter_mut().for_each(|x| *x = s);
+            }
+        };
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_output_stream(&config.into(), move |out: &mut [f32], _: &_| fill(out), |_| {}, None),
+            cpal::SampleFormat::I16 => device.build_output_stream(
+                &config.into(),
+                move |out: &mut [i16], _: &_| {
+                    let mut tmp = vec![0.0f32; out.len()];
+                    fill(&mut tmp);
+                    out.iter_mut().zip(tmp).for_each(|(o, s)| *o = super::to_i16(s));
+                },
+                |_| {},
+                None,
+            ),
+            other => return Err(format!("The speakers' sample format ({other:?}) isn't supported.")),
+        }
+        .map_err(|e| e.to_string())?;
+        stream.play().map_err(|e| e.to_string())?;
+        let deadline = Instant::now() + Duration::from_secs_f64(total as f64 / rate.max(1) as f64 + 0.5);
+        while !queue.lock().unwrap().is_empty() && Instant::now() < deadline {
+            if generation.load(Ordering::SeqCst) != clip.generation {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // Let the last buffer drain.
+        std::thread::sleep(Duration::from_millis(120));
+        Ok(())
     }
 }
 

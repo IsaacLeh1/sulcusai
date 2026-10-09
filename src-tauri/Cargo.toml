@@ -131,6 +131,8 @@ strip = true
 [target.'cfg(not(windows))'.dependencies]
 # Deleting moves things to the Trash (freedesktop trash on Linux), so it can be undone.
 trash = "5"
+# Microphone and speakers (Core Audio on macOS, ALSA/PipeWire on Linux).
+cpal = "0.15"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

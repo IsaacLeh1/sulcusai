@@ -26,6 +26,23 @@ pub fn backend_for(budget: &Budget) -> Result<&'static str, String> {
     backend_named(std::env::consts::OS, std::env::consts::ARCH, budget.vram > 0)
 }
 
+/// The key for processor-only downloads on this system ("cpu-x64" on
+/// Windows, as the catalog has always named it).
+pub fn cpu_key() -> &'static str {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "linux-x64",
+        ("linux", "aarch64") => "linux-arm64",
+        ("macos", "aarch64") => "macos-arm64",
+        ("macos", "x86_64") => "macos-x64",
+        _ => "cpu-x64",
+    }
+}
+
+/// A program on the system's PATH (macOS and Linux tools the user installed).
+pub fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(name)).find(|f| f.is_file()))
+}
+
 fn backend_named(os: &str, arch: &str, gpu: bool) -> Result<&'static str, String> {
     Ok(match (os, arch, gpu) {
         ("windows", "x86_64", true) => "vulkan-x64",
@@ -400,6 +417,53 @@ pub async fn benchmark(ep: &Endpoint) -> Result<f64, String> {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+
+    /// On any system: downloads this system's engine build into
+    /// SULCUSAI_DATA (a scratch folder), loads SULCUSAI_MODEL (a Qwen3 GGUF)
+    /// and gets a streamed answer.
+    #[tokio::test]
+    #[ignore]
+    async fn e2e_engine_runs_on_this_system() {
+        let data = std::path::PathBuf::from(std::env::var("SULCUSAI_DATA").expect("SULCUSAI_DATA"));
+        let model = std::path::PathBuf::from(std::env::var("SULCUSAI_MODEL").expect("SULCUSAI_MODEL"));
+        let paths = Paths::new(data).unwrap();
+        let hw = crate::hardware::detect(&paths.models);
+        println!("{} · {} · gpus {:?}", hw.os, hw.cpu_name, hw.gpus);
+        let budget = Budget::from_hardware(&hw);
+        let backend = backend_for(&budget).unwrap();
+        let cat = crate::catalog::Catalog::bundled();
+        let cancel = AtomicBool::new(false);
+        let exe = ensure_installed(&paths, &cat.engine, backend, &cancel, |_, _| {}).await.unwrap();
+        println!("engine {backend}: {}", exe.display());
+        let mut eng = Engine::default();
+        let log = paths.engine_log();
+        let ep = eng
+            .ensure(
+                LaunchSpec {
+                    exe: &exe,
+                    model_path: &model,
+                    model_id: "qwen3-1.7b",
+                    quant: "Q4_K_M",
+                    ctx: 4096,
+                    gpu_layers: if budget.vram > 0 { 99 } else { 0 },
+                    threads: 0,
+                    low_priority: false,
+                    log: &log,
+                    mmproj: None,
+                    batch: 0,
+                    lora: None,
+                },
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("engine failed to start: {e}"));
+        let messages = vec![serde_json::json!({ "role": "user", "content": "What is 2 + 2? Answer with just the number. /no_think" })];
+        let mut deltas = 0;
+        let done = crate::chat::stream(&ep, messages, None, &cancel, |_| deltas += 1).await.unwrap();
+        println!("reply ({deltas} deltas): {:?} · tps {:?}", done.content, done.tps);
+        assert!(done.content.contains('4'));
+        eng.stop().await;
+    }
 
     #[test]
     fn engine_builds_per_system() {

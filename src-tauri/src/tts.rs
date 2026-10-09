@@ -285,16 +285,99 @@ mod imp {
     }
 }
 
+/// macOS: the system's own voices through `say`. Linux: eSpeak NG when it's
+/// installed (it's a separate program, run as one; nothing is bundled).
 #[cfg(not(windows))]
 mod imp {
+    use std::process::Command;
+
     use super::{Speech, Voice};
 
-    pub fn voices() -> Result<Vec<Voice>, String> {
-        Ok(Vec::new())
+    fn tmp_wav() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("sulcusai-voice-{}.wav", uuid::Uuid::new_v4().simple()))
     }
 
-    pub fn synthesize(_text: &str, _voice_id: Option<&str>, _rate: f64) -> Result<Speech, String> {
-        Err("Speech output is only supported on Windows so far.".into())
+    fn read(path: &std::path::Path) -> Result<Speech, String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string());
+        std::fs::remove_file(path).ok();
+        let pcm = crate::audio::wav_decode(&bytes?)?;
+        Ok(Speech { rate: pcm.rate, samples: pcm.samples.iter().map(|s| crate::audio::to_i16(*s)).collect() })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn voices() -> Result<Vec<Voice>, String> {
+        // "Samantha            en_US    # Hello! My name is Samantha."
+        let out = Command::new("say").args(["-v", "?"]).output().map_err(|e| e.to_string())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line = regex::Regex::new(r"^(.+?)\s+([a-z]{2,3}_[A-Za-z0-9]+)\s+#").unwrap();
+        Ok(text
+            .lines()
+            .filter_map(|l| line.captures(l))
+            .map(|c| Voice { id: c[1].trim().to_string(), name: c[1].trim().to_string(), language: c[2].replace('_', "-"), gender: String::new(), engine: "system", languages: Vec::new() })
+            .collect())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn synthesize(text: &str, voice_id: Option<&str>, rate: f64) -> Result<Speech, String> {
+        let path = tmp_wav();
+        let mut cmd = Command::new("say");
+        if let Some(v) = voice_id {
+            cmd.args(["-v", v]);
+        }
+        let wpm = (175.0 * rate).round() as u32;
+        let status = cmd
+            .args(["-r", &wpm.to_string(), "--file-format=WAVE", "--data-format=LEI16@22050", "-o"])
+            .arg(&path)
+            .arg("--")
+            .arg(text)
+            .status()
+            .map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("The Mac's voice couldn't read that.".into());
+        }
+        read(&path)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn espeak() -> Option<std::path::PathBuf> {
+        crate::engine::on_path("espeak-ng").or_else(|| crate::engine::on_path("espeak"))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn voices() -> Result<Vec<Voice>, String> {
+        let Some(exe) = espeak() else { return Ok(Vec::new()) };
+        // " 5  en-us           --/M      English_(America)  gmw/en-US  (en 2)"
+        let out = Command::new(exe).arg("--voices").output().map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .skip(1)
+            .filter_map(|l| {
+                let cols: Vec<&str> = l.split_whitespace().collect();
+                (cols.len() >= 4).then(|| Voice {
+                    id: cols[1].to_string(),
+                    name: format!("eSpeak {}", cols[3].replace('_', " ")),
+                    language: cols[1].to_string(),
+                    gender: String::new(),
+                    engine: "system",
+                    languages: Vec::new(),
+                })
+            })
+            .collect())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn synthesize(text: &str, voice_id: Option<&str>, rate: f64) -> Result<Speech, String> {
+        let exe = espeak().ok_or("No system voice is installed. Install natural voices in Settings, or eSpeak NG from your distribution.")?;
+        let path = tmp_wav();
+        let mut cmd = Command::new(exe);
+        if let Some(v) = voice_id {
+            cmd.args(["-v", v]);
+        }
+        let status = cmd.args(["-s", &((175.0 * rate).round() as u32).to_string(), "-w"]).arg(&path).arg("--").arg(text).status().map_err(|e| e.to_string())?;
+        if !status.success() {
+            return Err("The system voice couldn't read that.".into());
+        }
+        read(&path)
     }
 }
 

@@ -297,7 +297,7 @@ pub struct SpeakerModelView {
 pub fn speaker_model(state: AppStateRef) -> SpeakerModelView {
     let m = state.catalog.diarization.clone();
     let runtime = crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_none();
-    let rt_size = state.catalog.voices.runtime.assets.get("cpu-x64").map_or(0, |a| a.size);
+    let rt_size = state.catalog.voices.runtime.assets.get(crate::engine::cpu_key()).map_or(0, |a| a.size);
     SpeakerModelView { installed: available(&state), download: m.size + if runtime { rt_size } else { 0 }, model: m }
 }
 

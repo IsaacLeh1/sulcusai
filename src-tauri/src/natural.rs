@@ -88,23 +88,34 @@ pub fn installed() -> Option<Installed> {
 }
 
 fn runtime_dir(c: &VoiceCatalog) -> String {
-    format!("onnxruntime-{}-cpu-x64", c.runtime.build)
+    format!("onnxruntime-{}-{}", c.runtime.build, engine::cpu_key())
 }
 
-/// The downloaded ONNX Runtime DLL, if present.
+/// The library's file name on this system.
+fn runtime_file(c: &VoiceCatalog) -> String {
+    if cfg!(windows) {
+        c.runtime_dll.clone()
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib".into()
+    } else {
+        "libonnxruntime.so".into()
+    }
+}
+
+/// The downloaded ONNX Runtime library, if present.
 pub fn runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
-    engine::find_exe(&paths.engines.join(runtime_dir(c)), &c.runtime_dll)
+    engine::find_exe(&paths.engines.join(runtime_dir(c)), &runtime_file(c))
 }
 
 /// Downloads and unpacks ONNX Runtime if it isn't there yet.
 pub async fn ensure_runtime(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<PathBuf, String> {
     let c = &state.catalog.voices;
-    let asset = c.runtime.assets.get("cpu-x64").ok_or("No ONNX Runtime build for this PC")?;
+    let asset = c.runtime.assets.get(engine::cpu_key()).ok_or("Natural voices aren't available on this system yet (no ONNX Runtime build for it).")?;
     let rdir = runtime_dir(c);
     if runtime_dll(&state.paths, c).is_none() {
         state.log("network", &format!("Downloading ONNX Runtime from {}", crate::host_of(&asset.url)));
     }
-    engine::ensure_unpacked(&state.paths, &rdir, asset, &c.runtime_dll, cancel, |r, t| emit("engine", r, t)).await
+    engine::ensure_unpacked(&state.paths, &rdir, asset, &runtime_file(c), cancel, |r, t| emit("engine", r, t)).await
 }
 
 /// Finds an installed pack (every file present) and its runtime.

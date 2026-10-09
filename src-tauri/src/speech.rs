@@ -426,6 +426,7 @@ pub async fn endpoint(state: &AppState, purpose: Use) -> Result<SpeechEndpoint, 
 
 async fn endpoint_for(state: &AppState, chosen: &InstalledSpeech, language: String) -> Result<SpeechEndpoint, String> {
     let exe = engine::find_exe(&state.paths.engines.join(engine_dir(&state.catalog.speech.engine)), SERVER_EXE)
+        .or_else(|| engine::on_path(SERVER_EXE))
         .ok_or("Speech recognition isn't fully installed. Reinstall the speech model from Models › Speech.")?;
     let vad = vad_path(&state.paths, &state.catalog.speech);
     let model = model_path(&state.paths, chosen);
@@ -707,13 +708,29 @@ pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String
 
 pub(crate) async fn install(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<Option<f64>, String> {
     let cat = &state.catalog.speech;
-    let asset = cat.engine.assets.get("cpu-x64").ok_or("No speech engine for this PC")?;
     let dir = engine_dir(&cat.engine);
+    let asset = match cat.engine.assets.get(engine::cpu_key()) {
+        Some(a) => a,
+        None if engine::on_path(SERVER_EXE).is_some() => return install_files(state, spec, cancel, emit).await,
+        None => {
+            return Err(if cfg!(target_os = "macos") {
+                "Speech recognition here uses whisper.cpp's whisper-server: install it with `brew install whisper-cpp`, then try again.".into()
+            } else {
+                "Speech recognition here uses whisper.cpp's whisper-server: install it (your distribution's whisper-cpp package, or build it from github.com/ggml-org/whisper.cpp) so it's on your PATH, then try again.".into()
+            })
+        }
+    };
     emit("engine", 0, 0);
     if engine::find_exe(&state.paths.engines.join(&dir), SERVER_EXE).is_none() {
         state.log("network", &format!("Downloading the whisper.cpp speech engine from {}", crate::host_of(&asset.url)));
     }
     engine::ensure_unpacked(&state.paths, &dir, asset, SERVER_EXE, cancel, |r, t| emit("engine", r, t)).await?;
+    install_files(state, spec, cancel, emit).await
+}
+
+/// The voice-detection file and the model (the engine is already there).
+async fn install_files(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<Option<f64>, String> {
+    let cat = &state.catalog.speech;
 
     let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
     let vad = vad_path(&state.paths, cat);
@@ -770,7 +787,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
     let cat = &state.catalog.speech;
     let hw = state.hardware.read().unwrap().clone();
     let b = Budget::from_hardware(&hw);
-    let ready = engine::find_exe(&state.paths.engines.join(engine_dir(&cat.engine)), SERVER_EXE).is_some()
+    let ready = (engine::find_exe(&state.paths.engines.join(engine_dir(&cat.engine)), SERVER_EXE).is_some() || engine::on_path(SERVER_EXE).is_some())
         && finder.place(&vad_path(&state.paths, cat), cat.vad.size, &cat.vad.sha256) != Place::Missing;
     let busy: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
     let have = installed(&state.db.lock().unwrap());

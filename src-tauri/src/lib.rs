@@ -2,6 +2,8 @@
 // Copyright (C) 2026 Isaac Lehman
 //! SulcusAI core: commands the window calls, and the state behind them.
 
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
+
 mod advanced;
 mod agent;
 mod backup;
