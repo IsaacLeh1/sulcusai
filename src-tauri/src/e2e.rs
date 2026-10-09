@@ -1666,3 +1666,140 @@ async fn e2e_api_server() {
     assert!(c.get(format!("{base}/models")).send().await.is_err(), "stopped");
     std::fs::remove_dir_all(&state.paths.data).ok();
 }
+
+/// Cloud setup shared by the cloud tests: Cloud level, one provider with a
+/// key, one model.
+fn cloud_state(provider: crate::cloud::Provider) -> std::sync::Arc<crate::AppState> {
+    let state = temp_state(None);
+    let c = state.cipher().unwrap();
+    let mut p = provider;
+    p.key = c.encrypt(&p.key);
+    let conn = state.db.lock().unwrap();
+    crate::db::update_settings(&conn, |s| s.connectivity = crate::net::Connectivity::Cloud).unwrap();
+    crate::db::set(&conn, "cloud", &crate::cloud::CloudSettings { providers: vec![p], budget: Some(5.0), redact: true }).unwrap();
+    drop(conn);
+    state
+}
+
+/// The Anthropic adapter against a stand-in server: what goes out (headers,
+/// system, tools, thinking, fallbacks, a redacted email) and what comes back
+/// (text, thinking with its signature, a tool call, token counts, spend).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_cloud_anthropic() {
+    use axum::routing::post;
+    type Seen = std::sync::Arc<std::sync::Mutex<Option<(axum::http::HeaderMap, serde_json::Value)>>>;
+    let seen: Seen = Default::default();
+    let keep = seen.clone();
+    let events = [
+        r#"{"type":"message_start","message":{"usage":{"input_tokens":120,"cache_read_input_tokens":30}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Check the weather."}}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}"#,
+        r#"{"type":"content_block_stop","index":0}"#,
+        r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+        r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"I'll check for [email 1]."}}"#,
+        r#"{"type":"content_block_stop","index":1}"#,
+        r#"{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_1","name":"weather","input":{}}}"#,
+        r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"place\":"}}"#,
+        r#"{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"\"Paris\"}"}}"#,
+        r#"{"type":"content_block_stop","index":2}"#,
+        r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":40}}"#,
+        r#"{"type":"message_stop"}"#,
+    ];
+    let sse: String = events.iter().map(|e| format!("event: x\ndata: {e}\n\n")).collect();
+    let app = axum::Router::new().route(
+        "/v1/messages",
+        post(move |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<serde_json::Value>| {
+            let sse = sse.clone();
+            *keep.lock().unwrap() = Some((headers, body));
+            async move { ([("content-type", "text/event-stream")], sse) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+
+    let model = crate::cloud::CloudModel { id: "claude-opus-5-5".into(), name: "Claude Opus 5.5".into(), ctx: 1_000_000, max_output: 128_000, vision: true, price_in: Some(4.0), price_out: Some(20.0) };
+    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model] });
+    let id = "cloud:anthropic:claude-opus-5-5".to_string();
+    let (ep, spec, _) = crate::llm_endpoint(&state, Some(id.clone()), false, || {}).await.unwrap();
+    assert_eq!(spec.name, "Claude Opus 5.5");
+    let tools = serde_json::json!([{ "type": "function", "function": { "name": "weather", "description": "Weather for a place", "parameters": { "type": "object", "properties": { "place": { "type": "string" } } } } }]);
+    let messages = vec![serde_json::json!({ "role": "system", "content": "Be brief." }), serde_json::json!({ "role": "user", "content": "Weather in Paris? Then email jo@example.com." })];
+    let done = crate::chat::stream(&ep, messages, Some(&tools), &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
+
+    let (headers, body) = seen.lock().unwrap().clone().unwrap();
+    println!("sent: {}", serde_json::to_string(&body).unwrap());
+    assert_eq!(headers["x-api-key"], "sk-ant-test");
+    assert_eq!(headers["anthropic-version"], "2023-06-01");
+    assert_eq!(headers["anthropic-beta"], "server-side-fallback-2026-07-01");
+    assert_eq!(body["system"], "Be brief.");
+    assert_eq!(body["fallbacks"], "default");
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert!(body.get("temperature").is_none());
+    assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+    let sent_text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+    assert!(sent_text.contains("[email 1]") && !sent_text.contains("jo@example.com"), "{sent_text}");
+
+    println!("got: {:?} | thinking {:?} | calls {:?}", done.content, done.thinking, done.tool_calls);
+    assert_eq!(done.content, "I'll check for jo@example.com.", "the placeholder is put back");
+    assert_eq!(done.thinking, "Check the weather.");
+    assert_eq!(done.tool_calls[0].name, "weather");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&done.tool_calls[0].arguments).unwrap()["place"], "Paris");
+    assert_eq!((done.prompt_tokens, done.completion_tokens), (Some(150), Some(40)));
+    let raw = done.raw.unwrap();
+    assert_eq!(raw[0]["signature"], "sig123");
+    let spent = crate::cloud::spend(&state.db.lock().unwrap());
+    println!("spend: ${:.6}, {} in, {} out", spent.usd, spent.input_tokens, spent.output_tokens);
+    assert!((spent.usd - (150.0 * 4.0 + 40.0 * 20.0) / 1e6).abs() < 1e-9);
+
+    // Over budget: refused before anything is sent.
+    let month = chrono::Local::now().format("%Y-%m").to_string();
+    crate::db::set(&state.db.lock().unwrap(), "cloud_spend", &crate::cloud::Spend { month, usd: 9.0, ..Default::default() }).unwrap();
+    let e = crate::llm_endpoint(&state, Some(id.clone()), false, || {}).await.err().unwrap();
+    assert!(e.contains("budget"), "{e}");
+    // Not at the Cloud level: refused.
+    crate::db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = crate::net::Connectivity::Web).unwrap();
+    let e = crate::llm_endpoint(&state, Some(id), false, || {}).await.err().unwrap();
+    assert!(e.contains("Cloud level"), "{e}");
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}
+
+/// The OpenAI-compatible path against a real engine (llama-server standing
+/// in for a provider, on the processor): the redacted email restored in the
+/// reply, a tool call, and the request in the activity log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_cloud_openai() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3-1.7b").unwrap().clone();
+    let budget = catalog::Budget::from_hardware(&hardware::detect(&real.models));
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let path = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let log = std::env::temp_dir().join("sulcusai-cloud-e2e.log");
+    let mut eng = engine::Engine::default();
+    let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0 };
+    let local = eng.ensure(launch, None).await.unwrap();
+    let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
+    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model] });
+    let (ep, _, _) = crate::llm_endpoint(&state, Some("cloud:custom-test:qwen3-1.7b".into()), false, || {}).await.unwrap();
+
+    let ask = vec![serde_json::json!({ "role": "user", "content": "Repeat exactly, nothing else: my address is jo@example.com /no_think" })];
+    let done = crate::chat::stream(&ep, ask, None, &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
+    println!("echo: {:?}", done.content);
+    assert!(done.content.contains("jo@example.com"), "restored: {:?}", done.content);
+
+    let tools = serde_json::json!([{ "type": "function", "function": { "name": "weather", "description": "Current weather for a city", "parameters": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] } } }]);
+    let ask = vec![serde_json::json!({ "role": "user", "content": "What's the weather in Paris? Use the tool. /no_think" })];
+    let done = crate::chat::stream(&ep, ask, Some(&tools), &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
+    println!("calls: {:?}; content {:?}; tokens {:?}/{:?}", done.tool_calls, done.content, done.prompt_tokens, done.completion_tokens);
+    assert_eq!(done.tool_calls.first().map(|c| c.name.as_str()), Some("weather"));
+    assert!(done.prompt_tokens.unwrap_or(0) > 0);
+    let c = state.cipher().unwrap();
+    let log = crate::db::actions(&state.db.lock().unwrap(), &c, 20);
+    assert!(log.iter().any(|a| a.summary.contains("Sent a chat to Test provider")), "{log:?}");
+    eng.stop().await;
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}

@@ -338,6 +338,7 @@ impl Turn {
                 thinking: (!finished.thinking.is_empty()).then_some(finished.thinking),
                 created_at: now(),
                 tool_calls: (!calls.is_empty()).then(|| calls.clone()),
+                meta: finished.raw.map(|r| json!({ "cloud_blocks": r })),
                 ..Default::default()
             };
             if !message.content.is_empty() || message.thinking.is_some() || message.tool_calls.is_some() {

@@ -77,6 +77,43 @@ export interface Ratings {
   languages: number;
 }
 
+export interface CloudModel {
+  id: string;
+  name: string;
+  ctx: number;
+  max_output: number;
+  vision: boolean;
+  /** US dollars per million tokens, if known. */
+  price_in: number | null;
+  price_out: number | null;
+}
+
+export interface CloudProvider {
+  id: string;
+  name: string;
+  kind: "openai" | "anthropic";
+  base_url: string;
+  enabled: boolean;
+  has_key: boolean;
+  models: CloudModel[];
+}
+
+export interface CloudView {
+  providers: CloudProvider[];
+  presets: CloudProvider[];
+  budget: number | null;
+  redact: boolean;
+  spend: { month: string; usd: number; input_tokens: number; output_tokens: number; requests: number };
+}
+
+/** A cloud model people can pick for a chat. */
+export interface CloudChoice {
+  id: string;
+  name: string;
+  provider: string;
+  vision: boolean;
+}
+
 export interface ApiServerView {
   enabled: boolean;
   port: number;
@@ -836,6 +873,14 @@ export const api = {
   setAdvancedPin: (pin: string | null, newPin: string) => invoke<void>("set_advanced_pin", { pin, newPin }),
   checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
   apiServerView: () => invoke<ApiServerView>("api_server_view"),
+  cloudView: () => invoke<CloudView>("cloud_view"),
+  addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
+  removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
+  setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
+  cloudModelsAvailable: (id: string) => invoke<CloudModel[]>("cloud_models_available", { id }),
+  setCloudModels: (id: string, models: CloudModel[]) => invoke<CloudView>("set_cloud_models", { id, models }),
+  setCloudOptions: (budget: number | null, redact: boolean) => invoke<CloudView>("set_cloud_options", { budget, redact }),
+  cloudChoices: () => invoke<CloudChoice[]>("cloud_choices"),
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),

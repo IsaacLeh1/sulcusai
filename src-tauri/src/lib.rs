@@ -12,6 +12,7 @@ mod browsers;
 mod calendar;
 mod catalog;
 mod chat;
+mod cloud;
 mod checkpoint;
 mod connectors;
 mod crypto;
@@ -690,8 +691,9 @@ fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> 
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
-    if db::installed_model(&conn, &model_id).is_none() {
-        return Err("That model isn't installed.".into());
+    let known = if cloud::is_cloud(&model_id) { cloud::choices(&conn).iter().any(|c| c.id == model_id) } else { db::installed_model(&conn, &model_id).is_some() };
+    if !known {
+        return Err("That model isn't available.".into());
     }
     db::update_settings(&conn, |s| s.default_model = Some(model_id))
 }
@@ -838,7 +840,7 @@ pub(crate) async fn run_turn(
         app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
     })
     .await?;
-    let vision = state.engine.lock().await.sees();
+    let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
@@ -932,13 +934,15 @@ pub(crate) async fn llm_endpoint(
     pictures: bool,
     on_loading: impl FnOnce(),
 ) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
-    let installed = {
+    let id = {
         let conn = state.db.lock().unwrap();
-        let id = model_id
-            .or_else(|| db::settings(&conn).default_model)
-            .ok_or("Install a model first: open Models and pick one.")?;
-        db::installed_model(&conn, &id).ok_or("This chat's model isn't installed anymore. Pick another one.")?
+        model_id.or_else(|| db::settings(&conn).default_model).ok_or("Install a model first: open Models and pick one.")?
     };
+    if cloud::is_cloud(&id) {
+        *state.engine_used.lock().unwrap() = std::time::Instant::now();
+        return cloud::endpoint(state, &id, &state.cipher()?);
+    }
+    let installed = db::installed_model(&state.db.lock().unwrap(), &id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
     let spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
     let budget = state.budget();
     let limits = state.limits();
@@ -1162,6 +1166,14 @@ pub fn run() {
             api_server::api_server_view,
             api_server::set_api_server,
             api_server::new_api_key,
+            cloud::cloud_view,
+            cloud::add_cloud_provider,
+            cloud::remove_cloud_provider,
+            cloud::set_cloud_provider,
+            cloud::cloud_models_available,
+            cloud::set_cloud_models,
+            cloud::set_cloud_options,
+            cloud::cloud_choices,
             remove_model,
             get_settings,
             set_connectivity,

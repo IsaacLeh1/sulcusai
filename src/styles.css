@@ -703,3 +703,17 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .api-example { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .ok-text { color: var(--ok, #3fb950); }
 .api-server input[type="number"] { max-width: 140px; }
+
+/* ---------- cloud models ---------- */
+.cloud-settings { display: flex; flex-direction: column; gap: 10px; }
+.cloud-provider { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.cloud-provider .row input[type="password"] { flex: 1; min-width: 220px; }
+.cloud-models { width: 100%; border-collapse: collapse; }
+.cloud-models th { text-align: left; font-weight: 550; color: var(--muted); padding: 2px 4px; }
+.cloud-models td { padding: 2px 4px; }
+.cloud-models input { width: 90px; padding: 2px 6px; }
+.cloud-pick { max-height: 340px; overflow: auto; display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.cloud-spend { display: flex; flex-direction: column; gap: 4px; }
+.progress.warn span { background: var(--danger, #e5534b); }
+.cloud-badge { white-space: nowrap; }
+.cloud-settings > .row input[type="number"] { max-width: 160px; }

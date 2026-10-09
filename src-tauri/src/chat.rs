@@ -76,6 +76,9 @@ pub async fn count_tokens(ep: &Endpoint, text: &str) -> Result<u32, String> {
     if text.is_empty() {
         return Ok(0);
     }
+    if ep.cloud.is_some() {
+        return Ok(crate::cloud::estimate_tokens(text));
+    }
     let resp: Value = net::local_client()
         .post(ep.url("/tokenize"))
         .bearer_auth(&ep.key)
@@ -213,6 +216,11 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
             "user" if m.created_at > 0 => out.push(json!({ "role": "user", "content": format!("{}\n{}", sent_note(m.created_at), m.content) })),
             role => out.push(json!({ "role": role, "content": m.content })),
         }
+        if let Some(blocks) = m.meta.as_ref().and_then(|v| v.get("cloud_blocks")) {
+            if let Some(last) = out.last_mut() {
+                last["cloud_blocks"] = blocks.clone();
+            }
+        }
     }
     out
 }
@@ -277,6 +285,9 @@ pub struct Finished {
     pub completion_tokens: Option<u32>,
     pub tps: Option<f64>,
     pub cancelled: bool,
+    /// The reply's content blocks as a cloud provider sent them, kept so its
+    /// reasoning can be passed back during a run of tool calls.
+    pub raw: Option<Value>,
 }
 
 /// Streams one model reply. `on_delta` gets text as it arrives.
@@ -287,6 +298,19 @@ pub async fn stream(
     cancel: &AtomicBool,
     mut on_delta: impl FnMut(Delta),
 ) -> Result<Finished, String> {
+    if let Some(t) = &ep.cloud {
+        return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
+    }
+    // Saved cloud reply blocks are for cloud providers only.
+    let messages: Vec<Value> = messages
+        .into_iter()
+        .map(|mut m| {
+            if let Some(o) = m.as_object_mut() {
+                o.remove("cloud_blocks");
+            }
+            m
+        })
+        .collect();
     let mut body = json!({
         "messages": messages,
         "stream": true,
@@ -330,6 +354,7 @@ pub async fn stream(
         completion_tokens: None,
         tps: None,
         cancelled: false,
+        raw: None,
     };
     let mut buf = String::new();
     let mut stream = resp.bytes_stream();
@@ -371,8 +396,19 @@ pub async fn stream(
             }
         }
     }
-    // Small models sometimes write a tool call into their thinking or their
-    // text instead of the tool-call channel; run it rather than lose it.
+    rescue_tool_calls(&mut out, tools);
+    for (i, c) in out.tool_calls.iter_mut().enumerate() {
+        if c.id.is_empty() {
+            c.id = format!("call_{}_{i}", uuid::Uuid::new_v4().simple());
+        }
+    }
+    out.tool_calls.retain(|c| !c.name.is_empty());
+    Ok(out)
+}
+
+/// Small models sometimes write a tool call into their thinking or their
+/// text instead of the tool-call channel; run it rather than lose it.
+pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
     if out.tool_calls.is_empty() && !out.cancelled {
         let offered: Vec<String> = tools.and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
         if !offered.is_empty() {
@@ -385,13 +421,6 @@ pub async fn stream(
             }
         }
     }
-    for (i, c) in out.tool_calls.iter_mut().enumerate() {
-        if c.id.is_empty() {
-            c.id = format!("call_{}_{i}", uuid::Uuid::new_v4().simple());
-        }
-    }
-    out.tool_calls.retain(|c| !c.name.is_empty());
-    Ok(out)
 }
 
 static TOOL_CALL_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>").unwrap());
@@ -420,6 +449,9 @@ fn salvage_tool_calls(text: &str, offered: &[String]) -> Vec<ToolCall> {
 /// One reply, not streamed, for background work such as meeting notes and
 /// translation. `extra` is merged into the request (e.g. response_format).
 pub async fn complete(ep: &Endpoint, messages: Vec<Value>, extra: Value, max_tokens: u32) -> Result<String, String> {
+    if let Some(t) = &ep.cloud {
+        return crate::cloud::complete(t, messages).await;
+    }
     let mut body = json!({
         "messages": messages,
         "temperature": 0.3,
@@ -461,7 +493,7 @@ pub fn strip_thinking(s: &str) -> &str {
 
 /// Tool calls arrive in pieces: the first piece names the tool, later
 /// pieces append to its arguments. `index` says which call a piece is for.
-fn merge_tool_delta(calls: &mut Vec<ToolCall>, tc: &Value) {
+pub(crate) fn merge_tool_delta(calls: &mut Vec<ToolCall>, tc: &Value) {
     let index = tc.get("index").and_then(Value::as_u64).unwrap_or(calls.len().saturating_sub(1) as u64) as usize;
     while calls.len() <= index {
         calls.push(ToolCall { id: String::new(), name: String::new(), arguments: String::new() });

@@ -11,9 +11,11 @@ import { PerformanceSection } from "../components/Performance";
 import type { PushToast } from "../components/Toasts";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
+import { CloudSettings } from "../components/CloudSettings";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
+  { name: "axum (local API server)", license: "MIT", url: "https://github.com/tokio-rs/axum" },
   { name: "llama.cpp", license: "MIT", url: "https://github.com/ggml-org/llama.cpp" },
   { name: "whisper.cpp (downloaded with a speech model)", license: "MIT", url: "https://github.com/ggml-org/whisper.cpp" },
   { name: "Silero VAD (voice detection model)", license: "MIT", url: "https://github.com/snakers4/silero-vad" },
@@ -257,6 +259,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <WebSearchSettings toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
+
+      <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
 
       <ApiServerSettings toast={toast} />
 

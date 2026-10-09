@@ -168,6 +168,8 @@ pub struct Endpoint {
     pub ctx: u32,
     /// Fields merged into each chat request (advanced sampling settings).
     pub extra: serde_json::Value,
+    /// Set when the model runs at a cloud provider instead of on this PC.
+    pub cloud: Option<std::sync::Arc<crate::cloud::Target>>,
 }
 
 impl Endpoint {
@@ -208,7 +210,7 @@ impl Engine {
             return None;
         }
         let r = self.running.as_ref()?;
-        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null })
+        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null, cloud: None })
     }
 
     /// Whether the running server already matches this launch exactly.
@@ -236,7 +238,7 @@ impl Engine {
     pub async fn ensure(&mut self, spec: LaunchSpec<'_>, job: Option<&JobRef>) -> Result<Endpoint, String> {
         if self.matches(&spec) {
             let r = self.running.as_ref().unwrap();
-            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null });
+            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null, cloud: None });
         }
         self.stop().await;
 
@@ -286,7 +288,7 @@ impl Engine {
             batch: spec.batch,
         });
 
-        let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null };
+        let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
         if let Err(e) = self.wait_ready(&endpoint, spec.log).await {
             self.stop().await;
             return Err(e);

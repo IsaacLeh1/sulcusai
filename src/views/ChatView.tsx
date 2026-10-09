@@ -15,6 +15,7 @@ import {
   type ModelCard,
   type PendingApproval,
   type RunMode,
+  type CloudChoice,
 } from "../api";
 import { APP_NAME } from "../brand";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
@@ -119,6 +120,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
   const modelId = chat.model_id ?? defaultModel;
   const model = installed.find((m) => m.id === modelId) ?? null;
+  // Cloud models, from the providers turned on in Settings.
+  const [cloudChoices, setCloudChoices] = useState<CloudChoice[]>([]);
+  useEffect(() => {
+    api.cloudChoices().then(setCloudChoices).catch(() => {});
+  }, [connectivity]);
+  const cloud = cloudChoices.find((c) => c.id === modelId) ?? null;
+  const cloudId = modelId?.startsWith("cloud:") ? modelId : null;
+  const modelName = model?.name ?? cloud?.name ?? null;
+  const canTools = model ? model.tools : !!cloud;
+  const canSee = model ? !!model.vision : !!cloud?.vision;
   const webOn = connectivity !== "offline" || chat.web;
   // The Web search feature: search and reading pages in every chat, even Offline.
   const searchOn = webOn || features.has("web_search");
@@ -364,9 +375,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {messages.length === 0 && !streaming && (
           <div className="hello">
             <p className="muted">
-              You're chatting with <strong>{model?.name ?? "a local model"}</strong>, running on this PC.
+              {cloud ? (
+                <>
+                  You're chatting with <strong>☁ {cloud.name}</strong>, which runs on {cloud.provider}'s servers. What you send goes to them.
+                </>
+              ) : (
+                <>
+                  You're chatting with <strong>{model?.name ?? "a local model"}</strong>, running on this PC.
+                </>
+              )}
             </p>
-            {model?.tools && features.has("files") && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
+            {canTools && features.has("files") && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
             {!features.has("files") && features.size === 0 && (
               <p className="muted small">
                 Want dictation, voice chat, files or meetings? <button className="link" onClick={onGoFeatures}>Add features</button>
@@ -390,7 +409,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           </div>
         ))}
         {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
-        {status === "loading" && !streaming && <p className="muted small pad">Loading {model?.name ?? "the model"} into memory…</p>}
+        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? `Connecting to ${cloud.provider}…` : `Loading ${model?.name ?? "the model"} into memory…`}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
           <p className="muted small pad">{cooling ? `Letting the PC cool down before the next step (${cooling})…` : "Working…"}</p>
         )}
@@ -419,13 +438,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
-            placeholder={chat.mode === "plan" ? "Describe what you want; it will propose a plan first…" : `Message ${model?.name ?? APP_NAME}…`}
+            placeholder={chat.mode === "plan" ? "Describe what you want; it will propose a plan first…" : `Message ${modelName ?? APP_NAME}…`}
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label="Message"
           />
           <div className="composer-bar">
-            {model?.tools && features.has("files") && <FolderMenu toast={toast} />}
-            <button className="globe" onClick={attachFile} title={model?.vision ? "Attach a picture (or paste one)" : "Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can."}>
+            {canTools && features.has("files") && <FolderMenu toast={toast} />}
+            <button className="globe" onClick={attachFile} title={canSee ? "Attach a picture (or paste one)" : "Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can."}>
               📎
             </button>
             <button
@@ -444,12 +463,33 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               🌐 {webOn ? "Web on" : "Web off"}
             </button>
             <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label="Model for this chat" disabled={busy}>
-              {installed.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
+              {cloudChoices.length > 0 || cloudId ? (
+                <optgroup label="On this PC">
+                  {installed.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : (
+                installed.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))
+              )}
+              {(cloudChoices.length > 0 || cloudId) && (
+                <optgroup label={connectivity === "cloud" ? "☁ Cloud" : "☁ Cloud (needs the Cloud level)"}>
+                  {cloudChoices.map((c) => (
+                    <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
+                      ☁ {c.name} · {c.provider}
+                    </option>
+                  ))}
+                  {cloudId && !cloud && <option value={cloudId} disabled>☁ (removed model)</option>}
+                </optgroup>
+              )}
             </select>
+            {cloudId && <span className="badge cloud-badge" title={cloud ? `Runs on ${cloud.provider}'s servers` : "A cloud model"}>☁ Cloud</span>}
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{tps} tokens/sec</span>}
             {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
@@ -476,10 +516,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             )}
           </div>
         </div>
-        {attached.length > 0 && model && !model.vision && (
+        {attached.length > 0 && model && !model.vision && !cloud && (
           <p className="small warn-text center">{model.name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).</p>
         )}
-        {model && !model.tools && (
+        {model && !model.tools && !cloud && (
           <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
         )}
         {webOn && <p className="muted small center">Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.</p>}

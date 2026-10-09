@@ -38,6 +38,7 @@ pnpm licenses list --prod
 | docx-rs, rust_xlsxwriter, calamine, pdf-extract (documents) | MIT and/or Apache-2.0 |
 | PowerPoint template `assets/blank.pptx`, made from python-pptx's default template | MIT (python-pptx) |
 | image (pictures: sizes, masks, thumbnails, cut-outs) | MIT or Apache-2.0 |
+| axum (the opt-in local API server) | MIT |
 | React, react-dom | MIT |
 | react-markdown, remark-gfm and the unified ecosystem | MIT |
 
@@ -49,6 +50,12 @@ pnpm licenses list --prod
 | OpenStreetMap Nominatim (naming this PC's location, on request) | Data © OpenStreetMap contributors, ODbL; light use under the Nominatim usage policy |
 | Windows location services (this PC's position, when allowed in Windows) | Part of Windows |
 | DuckDuckGo, Brave Search, SearXNG (web search, chosen in Settings) | Each service's own terms |
+
+## Cloud providers (only at the Cloud level, with the user's own API key)
+
+| Service | Terms |
+|---|---|
+| Anthropic (Claude), OpenAI, Google Gemini, OpenRouter, or another OpenAI-compatible service the user adds | Each provider's own terms, under the user's own account. Nothing is sent until the user adds a key, turns the provider on, picks one of its models and is at the Cloud level. |
 
 ## AI models
 
