@@ -26,8 +26,9 @@ use super::{config, device_id, pair_key, track, update, Peer};
 use crate::net::{self, Connectivity, Purpose};
 use crate::{db, AppState};
 
-/// Changes per message.
+/// Changes read per round, and the most a letter holds before sealing.
 const BATCH: usize = 300;
+const LETTER_BYTES: usize = 1_400_000;
 
 fn derive(pair: &[u8], salt: &[u8], info: &[u8]) -> Zeroizing<[u8; 32]> {
     let mut out = Zeroizing::new([0u8; 32]);
@@ -132,11 +133,29 @@ pub async fn exchange(state: &Arc<AppState>, base: &str, p: &Peer) -> Result<usi
                 track::changes(&conn, &c, &me, &p.id, &after, up_to, BATCH)?
             };
             let last = end.is_none() || items.len() < BATCH;
-            if !items.is_empty() || last {
+            // Letters stay well under the relay's 2 MB per message.
+            let mut letters: Vec<Vec<track::Change>> = vec![Vec::new()];
+            let mut size = 0;
+            for item in items {
+                let n = serde_json::to_vec(&item).map(|v| v.len()).unwrap_or(0);
+                if size + n > LETTER_BYTES && !letters.last().unwrap().is_empty() {
+                    letters.push(Vec::new());
+                    size = 0;
+                }
+                size += n;
+                letters.last_mut().unwrap().push(item);
+            }
+            for items in letters {
+                if items.is_empty() && !last {
+                    continue;
+                }
                 let letter = Letter { epoch: epoch.clone(), items, up_to };
                 sent_items += letter.items.len();
                 let seq = rs.next + 1;
                 let body = seal(&key, &outbox, seq, &serde_json::to_vec(&letter).map_err(|e| e.to_string())?);
+                if body.len() > 2_000_000 {
+                    return Err("One item is too big to go through the relay (over 2 MB); it syncs on the local network.".into());
+                }
                 let resp = http
                     .put(format!("{base}/v1/box/{outbox}/{seq}"))
                     .bearer_auth(&out_token)

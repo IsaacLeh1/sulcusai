@@ -1764,5 +1764,6 @@
  "Sync when away from home (relay)": "Sincronizar fuera de casa (relé)",
  "Syncing through the relay needs the Cloud level.": "Sincronizar a través del relé requiere el nivel Nube.",
  "The relay took too long.": "El relé tardó demasiado.",
- "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "Cuando tus PC no están en la misma red, pueden sincronizarse a través de un relé que tú administres, como el Cloudflare Worker de la carpeta relay de la app. Todo se cifra con las claves de vinculación de tus PC antes de salir; el relé no puede leerlo. Solo se usa en el nivel Nube."
+ "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "Cuando tus PC no están en la misma red, pueden sincronizarse a través de un relé que tú administres, como el Cloudflare Worker de la carpeta relay de la app. Todo se cifra con las claves de vinculación de tus PC antes de salir; el relé no puede leerlo. Solo se usa en el nivel Nube.",
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "Un elemento es demasiado grande para pasar por el relé (más de 2 MB); se sincroniza en la red local."
 }

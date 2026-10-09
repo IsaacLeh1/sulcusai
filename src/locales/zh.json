@@ -1764,5 +1764,6 @@
  "Sync when away from home (relay)": "不在家时同步（中继）",
  "Syncing through the relay needs the Cloud level.": "通过中继同步需要“云端”级别。",
  "The relay took too long.": "中继响应超时。",
- "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "当你的电脑不在同一网络时，可以通过你自己运行的中继同步，例如应用 relay 文件夹中的 Cloudflare Worker。所有内容在发出前都会用电脑间的配对密钥加密，中继无法读取。仅在“云端”级别使用。"
+ "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "当你的电脑不在同一网络时，可以通过你自己运行的中继同步，例如应用 relay 文件夹中的 Cloudflare Worker。所有内容在发出前都会用电脑间的配对密钥加密，中继无法读取。仅在“云端”级别使用。",
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "有一项内容太大，无法通过中继（超过 2 MB）；它会在局域网内同步。"
 }

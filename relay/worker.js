@@ -3,25 +3,23 @@
 // network. It stores sealed messages it can't read and hands them to the
 // other PC, which deletes them once it has applied them.
 //
-// Cloudflare Worker with one KV namespace bound as BOXES:
-//   wrangler kv namespace create BOXES   (put its id in wrangler.toml)
-//   wrangler deploy
+// Cloudflare Worker + one SQLite-backed Durable Object per mailbox (both on
+// the Workers free plan). Deploy: `npx wrangler deploy` in this folder.
 //
 // API (box = 64 hex characters; seq = a whole number):
-//   PUT    /v1/box/<box>/<seq>          body: the sealed message (≤ 8 MB)
+//   PUT    /v1/box/<box>/<seq>          body: the sealed message (≤ 2 MB)
 //   GET    /v1/box/<box>?after=<seq>    → [{ "seq": n, "data": "<base64>" }…] (up to 20)
 //   DELETE /v1/box/<box>?through=<seq>  removes messages up to seq
 // Every request carries "Authorization: Bearer <token>". The first write to
 // a box records a hash of its token; later requests must present the same
 // one. Both PCs of a pair derive the token from their pair key; the relay
-// only ever sees its hash in storage.
+// keeps only its hash. A mailbox untouched for 30 days is erased.
 
-const MAX_BYTES = 8 * 1024 * 1024;
-const KEEP_SECONDS = 30 * 24 * 3600;
+const MAX_BYTES = 2_000_000;
+const KEEP_MS = 30 * 24 * 3600 * 1000;
 const PAGE = 20;
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-const pad = (n) => String(n).padStart(16, "0");
 
 async function sha256(text) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -34,64 +32,74 @@ function base64(bytes) {
   return btoa(s);
 }
 
-/** Checks the token; on a box's first write, records it. */
-async function authorized(env, box, request, firstWrite) {
-  const auth = request.headers.get("authorization") || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-  if (!/^[0-9a-f]{64}$/.test(token)) return false;
-  const want = await env.BOXES.get(`auth:${box}`);
-  const have = await sha256(token);
-  if (want === null) {
-    if (!firstWrite) return false;
-    await env.BOXES.put(`auth:${box}`, have, { expirationTtl: KEEP_SECONDS });
-    return true;
-  }
-  return want === have;
-}
-
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const m = url.pathname.match(/^\/v1\/box\/([0-9a-f]{64})(?:\/(\d{1,15}))?$/);
     if (!m) return json({ error: "not found" }, 404);
-    const [, box, seqText] = m;
+    // One object per mailbox: its messages, token hash and expiry live together.
+    const stub = env.BOX.get(env.BOX.idFromName(m[1]));
+    return stub.fetch(request);
+  },
+};
+
+export class Box {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.sql = ctx.storage.sql;
+    this.sql.exec("CREATE TABLE IF NOT EXISTS msgs (seq INTEGER PRIMARY KEY, data BLOB NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+  }
+
+  /** Checks the token; on the box's first write, records it. */
+  async authorized(request, firstWrite) {
+    const auth = request.headers.get("authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!/^[0-9a-f]{64}$/.test(token)) return false;
+    const have = await sha256(token);
+    const row = this.sql.exec("SELECT v FROM meta WHERE k = 'auth'").toArray()[0];
+    if (!row) {
+      if (!firstWrite) return false;
+      this.sql.exec("INSERT INTO meta (k, v) VALUES ('auth', ?)", have);
+      return true;
+    }
+    return row.v === have;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const m = url.pathname.match(/^\/v1\/box\/([0-9a-f]{64})(?:\/(\d{1,15}))?$/);
+    const seqText = m && m[2];
+    // Erase the mailbox after 30 quiet days.
+    await this.ctx.storage.setAlarm(Date.now() + KEEP_MS);
 
     if (request.method === "PUT" && seqText !== undefined) {
-      if (!(await authorized(env, box, request, true))) return json({ error: "unauthorized" }, 401);
+      if (!(await this.authorized(request, true))) return json({ error: "unauthorized" }, 401);
       const body = new Uint8Array(await request.arrayBuffer());
       if (body.length === 0 || body.length > MAX_BYTES) return json({ error: "size" }, 413);
-      await env.BOXES.put(`msg:${box}:${pad(seqText)}`, body, { expirationTtl: KEEP_SECONDS });
-      // Keep the token alive as long as messages are flowing.
-      await env.BOXES.put(`auth:${box}`, await env.BOXES.get(`auth:${box}`), { expirationTtl: KEEP_SECONDS });
+      this.sql.exec("INSERT OR REPLACE INTO msgs (seq, data) VALUES (?, ?)", Number(seqText), body);
       return json({ ok: true });
     }
 
     if (seqText !== undefined) return json({ error: "method" }, 405);
-    if (!(await authorized(env, box, request, false))) return json({ error: "unauthorized or empty" }, 404);
+    if (!(await this.authorized(request, false))) return json({ error: "unauthorized or empty" }, 404);
 
     if (request.method === "GET") {
       const after = Number(url.searchParams.get("after") || "0");
-      const list = await env.BOXES.list({ prefix: `msg:${box}:` });
-      const out = [];
-      for (const k of list.keys) {
-        const seq = Number(k.name.slice(-16));
-        if (seq <= after) continue;
-        const data = await env.BOXES.get(k.name, "arrayBuffer");
-        if (data) out.push({ seq, data: base64(new Uint8Array(data)) });
-        if (out.length >= PAGE) break;
-      }
-      return json(out);
+      const rows = this.sql.exec("SELECT seq, data FROM msgs WHERE seq > ? ORDER BY seq LIMIT ?", after, PAGE).toArray();
+      return json(rows.map((r) => ({ seq: Number(r.seq), data: base64(new Uint8Array(r.data)) })));
     }
 
     if (request.method === "DELETE") {
       const through = Number(url.searchParams.get("through") || "0");
-      const list = await env.BOXES.list({ prefix: `msg:${box}:` });
-      for (const k of list.keys) {
-        if (Number(k.name.slice(-16)) <= through) await env.BOXES.delete(k.name);
-      }
+      this.sql.exec("DELETE FROM msgs WHERE seq <= ?", through);
       return json({ ok: true });
     }
 
     return json({ error: "method" }, 405);
-  },
-};
+  }
+
+  async alarm() {
+    await this.ctx.storage.deleteAll();
+  }
+}
