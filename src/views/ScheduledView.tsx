@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { api, errorText, type Cadence, type ModelCard, type Project, type Schedule, type ScheduleView } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t, tx } from "../i18n";
 
-const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const DAYS = [tx("Monday"), tx("Tuesday"), tx("Wednesday"), tx("Thursday"), tx("Friday"), tx("Saturday"), tx("Sunday")];
 
 function when(ms: number | null) {
   return ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
@@ -47,28 +48,28 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>Scheduled</h1>
-            <p className="muted">Tasks that run on their own while SulcusAI is open, such as a morning summary of a notes folder. Each run is saved as a chat.</p>
+            <h1>{t("Scheduled")}</h1>
+            <p className="muted">{t("Tasks that run on their own while SulcusAI is open, such as a morning summary of a notes folder. Each run is saved as a chat.")}</p>
           </div>
-          <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>+ New task</button>
+          <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
         </header>
 
         <section className="card">
-          {items === null && <p className="muted">Loading…</p>}
-          {items?.length === 0 && <p className="muted">No scheduled tasks yet.</p>}
+          {items === null && <p className="muted">{t("Loading…")}</p>}
+          {items?.length === 0 && <p className="muted">{t("No scheduled tasks yet.")}</p>}
           {items?.map((s) => (
             <div key={s.id} className="setting-row schedule-row">
               <div>
                 <strong>{s.name}</strong>
-                {s.allow_changes && <span className="tag warn">May change files</span>}
+                {s.allow_changes && <span className="tag warn">{t("May change files")}</span>}
                 <span className="small muted block">
-                  {s.when} · next {s.enabled ? when(s.next_run) : "paused"}
-                  {s.last_run ? ` · last ${when(s.last_run)}` : ""}
+                  {s.when} · {s.enabled ? t("next {time}", { time: when(s.next_run) }) : t("next paused")}
+                  {s.last_run ? ` · ${t("last {time}", { time: when(s.last_run) })}` : ""}
                 </span>
               </div>
               <div className="row">
                 {s.last_chat && (
-                  <button className="link" onClick={() => onOpenChat(s.last_chat!)}>Last result</button>
+                  <button className="link" onClick={() => onOpenChat(s.last_chat!)}>{t("Last result")}</button>
                 )}
                 <button
                   className="btn small"
@@ -86,10 +87,10 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
                     }
                   }}
                 >
-                  {runningId === s.id ? "Running…" : "Run now"}
+                  {runningId === s.id ? t("Running…") : t("Run now")}
                 </button>
-                <button className="btn ghost small" onClick={() => setEditing(s)}>Edit</button>
-                <label className="switch" title={s.enabled ? "On" : "Paused"}>
+                <button className="btn ghost small" onClick={() => setEditing(s)}>{t("Edit")}</button>
+                <label className="switch" title={s.enabled ? t("On") : t("Paused")}>
                   <input
                     type="checkbox"
                     checked={s.enabled}
@@ -101,7 +102,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
                         toast(errorText(err), "error");
                       }
                     }}
-                    aria-label={`${s.name} on or paused`}
+                    aria-label={t("{name} on or paused", { name: s.name })}
                   />
                   <span />
                 </label>
@@ -109,7 +110,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
             </div>
           ))}
         </section>
-        <p className="muted small">Tasks run only while the app is open and unlocked. A run that was missed while it was closed happens the next time it opens.</p>
+        <p className="muted small">{t("Tasks run only while the app is open and unlocked. A run that was missed while it was closed happens the next time it opens.")}</p>
       </div>
       {editing && (
         <ScheduleEditor
@@ -163,7 +164,7 @@ function ScheduleEditor({
   const onceValue = c.kind === "once" ? toLocalInput(c.at) : toLocalInput(Date.now() + 3_600_000);
 
   return (
-    <Modal title={initial.id ? "Edit scheduled task" : "New scheduled task"} onClose={onClose}>
+    <Modal title={initial.id ? t("Edit scheduled task") : t("New scheduled task")} onClose={onClose}>
       <form
         className="form"
         onSubmit={(e) => {
@@ -172,22 +173,22 @@ function ScheduleEditor({
         }}
       >
         <label>
-          Name
-          <input className="input" value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder="Morning summary" maxLength={80} autoFocus />
+          {t("Name")}
+          <input className="input" value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder={t("Morning summary")} maxLength={80} autoFocus />
         </label>
         <label>
-          What to do
+          {t("What to do")}
           <textarea
             className="input"
             rows={4}
             value={s.prompt}
             onChange={(e) => setS({ ...s, prompt: e.target.value })}
-            placeholder="Read the files in notes/ that changed this week and summarize them in five bullet points."
+            placeholder={t("Read the files in notes/ that changed this week and summarize them in five bullet points.")}
           />
         </label>
         <div className="row wrap">
           <label>
-            How often
+            {t("How often")}
             <select
               value={c.kind}
               onChange={(e) => {
@@ -198,56 +199,56 @@ function ScheduleEditor({
                 else setCadence({ kind: k, time });
               }}
             >
-              <option value="once">Once</option>
-              <option value="hourly">Every hour</option>
-              <option value="daily">Every day</option>
-              <option value="weekdays">Weekdays</option>
-              <option value="weekly">Every week</option>
+              <option value="once">{t("Once")}</option>
+              <option value="hourly">{t("Every hour")}</option>
+              <option value="daily">{t("Every day")}</option>
+              <option value="weekdays">{t("Weekdays")}</option>
+              <option value="weekly">{t("Every week")}</option>
             </select>
           </label>
           {c.kind === "weekly" && (
             <label>
-              Day
+              {t("Day")}
               <select value={c.weekday} onChange={(e) => setCadence({ ...c, weekday: Number(e.target.value) })}>
                 {DAYS.map((d, i) => (
-                  <option key={d} value={i}>{d}</option>
+                  <option key={d} value={i}>{t(d)}</option>
                 ))}
               </select>
             </label>
           )}
           {c.kind === "hourly" && (
             <label>
-              Minute
+              {t("Minute")}
               <input className="input" type="number" min={0} max={59} value={c.minute} onChange={(e) => setCadence({ kind: "hourly", minute: Number(e.target.value) })} />
             </label>
           )}
           {(c.kind === "daily" || c.kind === "weekdays" || c.kind === "weekly") && (
             <label>
-              Time
+              {t("Time")}
               <input className="input" type="time" value={time} onChange={(e) => setCadence({ ...c, time: e.target.value })} />
             </label>
           )}
           {c.kind === "once" && (
             <label>
-              When
+              {t("When")}
               <input className="input" type="datetime-local" value={onceValue} onChange={(e) => setCadence({ kind: "once", at: new Date(e.target.value).getTime() })} />
             </label>
           )}
         </div>
         <div className="row wrap">
           <label>
-            Model
+            {t("Model")}
             <select value={s.model_id ?? ""} onChange={(e) => setS({ ...s, model_id: e.target.value || null })}>
-              <option value="">Default model</option>
+              <option value="">{t("Default model")}</option>
               {installed.map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
           </label>
           <label>
-            Project
+            {t("Project")}
             <select value={s.project_id ?? ""} onChange={(e) => setS({ ...s, project_id: e.target.value || null })}>
-              <option value="">None</option>
+              <option value="">{t("None")}</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
               ))}
@@ -256,18 +257,18 @@ function ScheduleEditor({
         </div>
         <label className="check">
           <input type="checkbox" checked={s.allow_changes} onChange={(e) => setS({ ...s, allow_changes: e.target.checked })} />
-          Let it change files and run commands without asking
+          {t("Let it change files and run commands without asking")}
         </label>
         <p className="muted small">
           {s.allow_changes
-            ? "It runs in Bypass mode. File changes can be undone from its chat; commands can't."
-            : "It can only read files in shared folders and report back. Nobody is there to approve changes."}
+            ? t("It runs in Bypass mode. File changes can be undone from its chat; commands can't.")
+            : t("It can only read files in shared folders and report back. Nobody is there to approve changes.")}
         </p>
         <div className="modal-actions">
-          {onDelete && <button type="button" className="btn ghost danger" onClick={onDelete}>Delete</button>}
+          {onDelete && <button type="button" className="btn ghost danger" onClick={onDelete}>{t("Delete")}</button>}
           <span className="spacer" />
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={!s.name.trim() || !s.prompt.trim()}>Save</button>
+          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="btn primary" disabled={!s.name.trim() || !s.prompt.trim()}>{t("Save")}</button>
         </div>
       </form>
     </Modal>

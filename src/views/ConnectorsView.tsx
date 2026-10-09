@@ -4,11 +4,12 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Connector, type Plugin, type PluginPreview, type ToolMode } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t, tx } from "../i18n";
 
 const MODES: { id: ToolMode; label: string }[] = [
-  { id: "allow", label: "Allow" },
-  { id: "ask", label: "Ask" },
-  { id: "off", label: "Off" },
+  { id: "allow", label: tx("Allow") },
+  { id: "ask", label: tx("Ask") },
+  { id: "off", label: tx("Off") },
 ];
 
 function modeOf(c: Connector, tool: string, readOnly: boolean): ToolMode {
@@ -29,7 +30,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const choosePlugin = async () => {
-    const path = await open({ directory: true, multiple: false, title: "Choose a plugin folder (it contains plugin.json)" });
+    const path = await open({ directory: true, multiple: false, title: t("Choose a plugin folder (it contains plugin.json)") });
     if (typeof path !== "string") return;
     try {
       setPreview({ path, info: await api.inspectPlugin(path) });
@@ -44,24 +45,22 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>Connectors &amp; plugins</h1>
+            <h1>{t("Connectors & plugins")}</h1>
             <p className="muted">
-              Connectors give the assistant extra tools through MCP servers running on this PC. Plugins bundle skills
-              (instructions it can follow) and connectors.
+              {t("Connectors give the assistant extra tools through MCP servers running on this PC. Plugins bundle skills (instructions it can follow) and connectors.")}
             </p>
           </div>
         </header>
         <p className="callout small">
-          Connectors are programs that run on this PC with your permissions. SulcusAI decides when the assistant may use their
-          tools, but not what a connector does by itself, so only add ones you trust. Internet-based connectors arrive with the web features.
+          {t("Connectors are programs that run on this PC with your permissions. SulcusAI decides when the assistant may use their tools, but not what a connector does by itself, so only add ones you trust. Internet-based connectors arrive with the web features.")}
         </p>
 
         <section className="card">
           <div className="section-head">
-            <h2>Local connectors</h2>
-            <button className="btn small" onClick={() => setEditing("new")}>+ Add connector</button>
+            <h2>{t("Local connectors")}</h2>
+            <button className="btn small" onClick={() => setEditing("new")}>{t("+ Add connector")}</button>
           </div>
-          {connectors !== null && own.length === 0 && <p className="muted small">None yet.</p>}
+          {connectors !== null && own.length === 0 && <p className="muted small">{t("None yet.")}</p>}
           {own.map((c) => (
             <ConnectorRow
               key={c.id}
@@ -77,20 +76,20 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
 
         <section className="card">
           <div className="section-head">
-            <h2>Plugins</h2>
-            <button className="btn small" onClick={choosePlugin}>+ Install from folder…</button>
+            <h2>{t("Plugins")}</h2>
+            <button className="btn small" onClick={choosePlugin}>{t("+ Install from folder…")}</button>
           </div>
-          {plugins.length === 0 && <p className="muted small">None installed.</p>}
+          {plugins.length === 0 && <p className="muted small">{t("None installed.")}</p>}
           {plugins.map((p) => (
             <div key={p.id} className="plugin">
               <div className="setting-row first">
                 <div>
                   <strong>{p.name}</strong> {p.version && <span className="muted small">v{p.version}</span>}
                   <span className="small muted block">{p.description}</span>
-                  {p.skills.length > 0 && <span className="small block">Skills: {p.skills.map((s) => s.name).join(", ")}</span>}
+                  {p.skills.length > 0 && <span className="small block">{t("Skills: {names}", { names: p.skills.map((s) => s.name).join(", ") })}</span>}
                 </div>
                 <div className="row">
-                  <label className="switch" title={p.enabled ? "On" : "Off"}>
+                  <label className="switch" title={p.enabled ? t("On") : t("Off")}>
                     <input
                       type="checkbox"
                       checked={p.enabled}
@@ -98,7 +97,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
                         await api.setPluginEnabled(p.id, e.target.checked);
                         load();
                       }}
-                      aria-label={`${p.name} on or off`}
+                      aria-label={t("{name} on or off", { name: p.name })}
                     />
                     <span />
                   </label>
@@ -109,7 +108,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
                       load();
                     }}
                   >
-                    Remove
+                    {t("Remove")}
                   </button>
                 </div>
               </div>
@@ -131,30 +130,30 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
             setEditing(null);
             setExpanded(c.id);
             load();
-            toast(`Connected. ${c.tools.length} tool${c.tools.length === 1 ? "" : "s"} available.`, "success");
+            toast(c.tools.length === 1 ? t("Connected. 1 tool available.") : t("Connected. {n} tools available.", { n: c.tools.length }), "success");
           }}
           toast={toast}
         />
       )}
       {preview && (
-        <Modal title={`Install ${preview.info.name}?`} onClose={() => setPreview(null)}>
+        <Modal title={t("Install {name}?", { name: preview.info.name })} onClose={() => setPreview(null)}>
           {preview.info.description && <p>{preview.info.description}</p>}
           {preview.info.skills.length > 0 && (
             <>
-              <strong className="small">Skills</strong>
+              <strong className="small">{t("Skills")}</strong>
               <ul className="small">{preview.info.skills.map((s) => <li key={s}>{s}</li>)}</ul>
             </>
           )}
           {preview.info.programs.length > 0 ? (
             <>
-              <strong className="small">Programs it will run on this PC</strong>
+              <strong className="small">{t("Programs it will run on this PC")}</strong>
               <pre className="tool-output boxed">{preview.info.programs.join("\n")}</pre>
             </>
           ) : (
-            <p className="small muted">It doesn't run any programs.</p>
+            <p className="small muted">{t("It doesn't run any programs.")}</p>
           )}
           <div className="modal-actions">
-            <button className="btn" onClick={() => setPreview(null)}>Cancel</button>
+            <button className="btn" onClick={() => setPreview(null)}>{t("Cancel")}</button>
             <button
               className="btn primary"
               onClick={async () => {
@@ -162,13 +161,13 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
                   await api.installPlugin(preview.path);
                   setPreview(null);
                   load();
-                  toast("Plugin installed.", "success");
+                  toast(t("Plugin installed."), "success");
                 } catch (e) {
                   toast(errorText(e), "error");
                 }
               }}
             >
-              Install
+              {t("Install")}
             </button>
           </div>
         </Modal>
@@ -186,14 +185,14 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
           <span>
             <strong>{c.name}</strong>
             <span className="small muted block">
-              {c.tools.length} tool{c.tools.length === 1 ? "" : "s"} · <code>{c.spec.command} {c.spec.args.join(" ")}</code>
+              {c.tools.length === 1 ? t("1 tool") : t("{n} tools", { n: c.tools.length })} · <code>{c.spec.command} {c.spec.args.join(" ")}</code>
             </span>
           </span>
           <span className="chev" aria-hidden>{open ? "▾" : "▸"}</span>
         </button>
         <div className="row">
-          {onEdit && <button className="btn ghost small" onClick={onEdit}>Edit</button>}
-          <label className="switch" title={c.enabled ? "On" : "Off"}>
+          {onEdit && <button className="btn ghost small" onClick={onEdit}>{t("Edit")}</button>}
+          <label className="switch" title={c.enabled ? t("On") : t("Off")}>
             <input
               type="checkbox"
               checked={c.enabled}
@@ -201,7 +200,7 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
                 await api.setConnectorEnabled(c.id, e.target.checked);
                 onChanged();
               }}
-              aria-label={`${c.name} on or off`}
+              aria-label={t("{name} on or off", { name: c.name })}
             />
             <span />
           </label>
@@ -213,36 +212,36 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
                 onChanged();
               }}
             >
-              Remove
+              {t("Remove")}
             </button>
           )}
         </div>
       </div>
       {open && (
         <ul className="tool-modes">
-          {c.tools.length === 0 && <li className="muted small">No tools seen yet. Turn it on and start a chat, or edit and save it to connect.</li>}
-          {c.tools.map((t) => (
-            <li key={t.name}>
+          {c.tools.length === 0 && <li className="muted small">{t("No tools seen yet. Turn it on and start a chat, or edit and save it to connect.")}</li>}
+          {c.tools.map((tool) => (
+            <li key={tool.name}>
               <span>
-                <strong className="small">{t.name}</strong>
-                {t.read_only && <span className="tag">read-only</span>}
-                <span className="small muted block">{t.description}</span>
+                <strong className="small">{tool.name}</strong>
+                {tool.read_only && <span className="tag">{t("read-only")}</span>}
+                <span className="small muted block">{tool.description}</span>
               </span>
               <span className="mode-switch small-switch">
                 {MODES.map((m) => (
                   <button
                     key={m.id}
-                    className={`mode ${modeOf(c, t.name, t.read_only) === m.id ? "active" : ""}`}
+                    className={`mode ${modeOf(c, tool.name, tool.read_only) === m.id ? "active" : ""}`}
                     onClick={async () => {
                       try {
-                        await api.setToolMode(c.id, t.name, m.id);
+                        await api.setToolMode(c.id, tool.name, m.id);
                         onChanged();
                       } catch (e) {
                         toast(errorText(e), "error");
                       }
                     }}
                   >
-                    {m.label}
+                    {t(m.label)}
                   </button>
                 ))}
               </span>
@@ -285,7 +284,7 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
   };
 
   return (
-    <Modal title={initial ? `Edit ${initial.name}` : "Add a local connector"} onClose={onClose}>
+    <Modal title={initial ? t("Edit {name}", { name: initial.name }) : t("Add a local connector")} onClose={onClose}>
       <form
         className="form"
         onSubmit={(e) => {
@@ -294,26 +293,26 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
         }}
       >
         <label>
-          Name
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="files, calendar, notes…" maxLength={40} autoFocus />
+          {t("Name")}
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("files, calendar, notes…")} maxLength={40} autoFocus />
         </label>
         <label>
-          Command
-          <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx, uvx, python, or a program path" />
+          {t("Command")}
+          <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t("npx, uvx, python, or a program path")} />
         </label>
         <label>
-          Arguments <span className="muted small">(one per line)</span>
+          {t("Arguments")} <span className="muted small">{t("(one per line)")}</span>
           <textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} placeholder={"-y\n@modelcontextprotocol/server-everything"} />
         </label>
         <label>
-          Environment variables <span className="muted small">(KEY=value per line; stored encrypted)</span>
+          {t("Environment variables")} <span className="muted small">{t("(KEY=value per line; stored encrypted)")}</span>
           <textarea className="input mono" rows={2} value={env} onChange={(e) => setEnv(e.target.value)} />
         </label>
-        <p className="muted small">Saving starts the program once to check that it works and to list its tools.</p>
+        <p className="muted small">{t("Saving starts the program once to check that it works and to list its tools.")}</p>
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="btn primary" disabled={saving || !name.trim() || !command.trim()}>
-            {saving ? "Connecting…" : "Save and connect"}
+            {saving ? t("Connecting…") : t("Save and connect")}
           </button>
         </div>
       </form>

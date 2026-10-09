@@ -2,6 +2,7 @@
 // Dictation (the 🎤 button), voice mode's panel, and read-aloud.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, on } from "../api";
+import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 
 type DictationState = "idle" | "loading" | "listening" | "hearing" | "finishing";
@@ -71,11 +72,11 @@ export function useDictation(onText: (text: string) => void, toast: PushToast) {
 }
 
 const DICTATION_LABEL: Record<DictationState, string> = {
-  idle: "Dictate (Ctrl+Shift+Space)",
-  loading: "Getting speech recognition ready…",
-  listening: "Listening… click to stop",
-  hearing: "Hearing you… click to stop",
-  finishing: "Finishing the last words…",
+  idle: tx("Dictate (Ctrl+Shift+Space)"),
+  loading: tx("Getting speech recognition ready…"),
+  listening: tx("Listening… click to stop"),
+  hearing: tx("Hearing you… click to stop"),
+  finishing: tx("Finishing the last words…"),
 };
 
 /** A mic button that types what you say. Ctrl+Shift+Space toggles it too. */
@@ -100,8 +101,8 @@ export function MicButton({ onText, toast, disabled }: { onText: (text: string) 
       onClick={d.toggle}
       disabled={disabled && !d.active}
       aria-pressed={d.active}
-      aria-label={DICTATION_LABEL[d.state]}
-      title={DICTATION_LABEL[d.state]}
+      aria-label={t(DICTATION_LABEL[d.state])}
+      title={t(DICTATION_LABEL[d.state])}
       style={d.active ? { boxShadow: `0 0 0 ${2 + ring * 6}px color-mix(in srgb, var(--danger) ${20 + ring * 30}%, transparent)` } : undefined}
     >
       🎤
@@ -112,13 +113,13 @@ export function MicButton({ onText, toast, disabled }: { onText: (text: string) 
 type VoiceState = "loading" | "listening" | "hearing" | "thinking" | "speaking" | "interrupted" | "ended";
 
 const VOICE_LABEL: Record<VoiceState, string> = {
-  loading: "Getting ready…",
-  listening: "Listening",
-  hearing: "Hearing you…",
-  thinking: "Thinking…",
-  speaking: "Speaking (talk to interrupt)",
-  interrupted: "Listening",
-  ended: "Voice chat ended",
+  loading: tx("Getting ready…"),
+  listening: tx("Listening"),
+  hearing: tx("Hearing you…"),
+  thinking: tx("Thinking…"),
+  speaking: tx("Speaking (talk to interrupt)"),
+  interrupted: tx("Listening"),
+  ended: tx("Voice chat ended"),
 };
 
 /** Voice mode for one chat: listens, answers aloud, stops when you talk. */
@@ -166,15 +167,15 @@ export function VoicePanel({ chatId, onHeard, onEnd, toast }: { chatId: string; 
     <div className="voice-panel" role="status" aria-live="polite">
       <div className={`voice-orb ${shown}`} style={{ transform: `scale(${shown === "listening" || shown === "hearing" ? scale : 1})` }} aria-hidden />
       <div className="voice-text">
-        <strong>{VOICE_LABEL[shown]}</strong>
-        {heard && <span className="muted small ellipsis" title={heard}>You said: “{heard}”</span>}
-        <span className="muted small">Headphones work best, so it doesn't hear itself.</span>
+        <strong>{t(VOICE_LABEL[shown])}</strong>
+        {heard && <span className="muted small ellipsis" title={heard}>{t("You said: “{text}”", { text: heard })}</span>}
+        <span className="muted small">{t("Headphones work best, so it doesn't hear itself.")}</span>
       </div>
       <span className="spacer" />
       {(shown === "speaking" || shown === "thinking") && (
-        <button className="btn small" onClick={() => api.interruptVoice(chatId)}>Interrupt</button>
+        <button className="btn small" onClick={() => api.interruptVoice(chatId)}>{t("Interrupt")}</button>
       )}
-      <button className="btn small danger" onClick={onEnd}>End voice chat</button>
+      <button className="btn small danger" onClick={onEnd}>{t("End voice chat")}</button>
     </div>
   );
 }
@@ -203,7 +204,7 @@ export function SpeakButton({ text, toast }: { text: string; toast: PushToast })
     }
   };
   return (
-    <button className="icon-btn speak-btn" onClick={click} title={state === "idle" ? "Read aloud" : "Stop reading"} aria-label={state === "idle" ? "Read aloud" : "Stop reading"}>
+    <button className="icon-btn speak-btn" onClick={click} title={state === "idle" ? t("Read aloud") : t("Stop reading")} aria-label={state === "idle" ? t("Read aloud") : t("Stop reading")}>
       {state === "idle" ? "🔊" : state === "preparing" ? "…" : "⏹"}
     </button>
   );

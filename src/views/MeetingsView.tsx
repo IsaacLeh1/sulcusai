@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Language, type Meeting, type MeetingDetail, type MeetingHit, type Segment } from "../api";
 import { clock, duration } from "../format";
+import { t, tx } from "../i18n";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 
@@ -17,18 +18,18 @@ interface Props {
 }
 
 const STATUS_LABEL: Record<string, string> = {
-  recording: "Recording",
-  transcribing: "Finishing the transcript",
-  summarizing: "Writing notes",
+  recording: tx("Recording"),
+  transcribing: tx("Finishing the transcript"),
+  summarizing: tx("Writing notes"),
   done: "",
-  failed: "Didn't finish",
+  failed: tx("Didn't finish"),
 };
 
 /** "You", a name you gave, "Speaker 2", or "Others". */
 export function who(s: Segment, names: Record<string, string>): string {
-  if (s.speaker === "you") return "You";
-  if (s.voice !== null) return names[String(s.voice)] ?? `Speaker ${s.voice}`;
-  return "Others";
+  if (s.speaker === "you") return t("You");
+  if (s.voice !== null) return names[String(s.voice)] ?? t("Speaker {n}", { n: s.voice });
+  return t("Others");
 }
 
 function when(ms: number): string {
@@ -65,8 +66,8 @@ export function MeetingsView({ live, onLiveChanged, onOpenChat, onGoModels, toas
       setHits(null);
       return;
     }
-    const t = window.setTimeout(() => api.searchMeetings(q).then(setHits).catch(() => {}), 250);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(() => api.searchMeetings(q).then(setHits).catch(() => {}), 250);
+    return () => window.clearTimeout(timer);
   }, [query]);
 
   if (live) {
@@ -108,30 +109,29 @@ export function MeetingsView({ live, onLiveChanged, onOpenChat, onGoModels, toas
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>Meetings</h1>
+            <h1>{t("Meetings")}</h1>
             <p className="muted">
-              Records your microphone and your computer's sound, so it hears everyone on Teams, Meet, Zoom or in the room,
-              with no bot joining. You get a transcript and notes, all kept on this PC.
+              {t("Records your microphone and your computer's sound, so it hears everyone on Teams, Meet, Zoom or in the room, with no bot joining. You get a transcript and notes, all kept on this PC.")}
             </p>
           </div>
           <button className="btn primary" onClick={() => setStarting(true)} disabled={!canTranscribe}>
-            ● Begin meeting
+            {t("● Begin meeting")}
           </button>
         </header>
 
         {canTranscribe === false && (
           <div className="callout">
-            Meetings need a speech model to write the transcript.{" "}
-            <button className="link" onClick={onGoModels}>Install one from Models › Speech</button>
+            {t("Meetings need a speech model to write the transcript.")}{" "}
+            <button className="link" onClick={onGoModels}>{t("Install one from Models › Speech")}</button>
           </div>
         )}
 
         {(meetings?.length ?? 0) > 0 && (
-          <input className="input search" placeholder="Search meetings: a topic, a name, a decision…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search meetings" />
+          <input className="input search" placeholder={t("Search meetings: a topic, a name, a decision…")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search meetings")} />
         )}
 
-        {meetings && meetings.length === 0 && canTranscribe && <p className="muted">No meetings yet. Click Begin meeting when your next call starts.</p>}
-        {hits && hits.length === 0 && <p className="muted">No meetings mention that.</p>}
+        {meetings && meetings.length === 0 && canTranscribe && <p className="muted">{t("No meetings yet. Click Begin meeting when your next call starts.")}</p>}
+        {hits && hits.length === 0 && <p className="muted">{t("No meetings mention that.")}</p>}
 
         <div className="meeting-list">
           {list.map(({ meeting: m, lines }) => (
@@ -139,12 +139,12 @@ export function MeetingsView({ live, onLiveChanged, onOpenChat, onGoModels, toas
               <div className="row">
                 <strong className="ellipsis">{m.title}</strong>
                 <span className="spacer" />
-                {STATUS_LABEL[m.status] && <span className={`badge ${m.status === "failed" ? "warn" : ""}`}>{STATUS_LABEL[m.status]}</span>}
+                {STATUS_LABEL[m.status] && <span className={`badge ${m.status === "failed" ? "warn" : ""}`}>{t(STATUS_LABEL[m.status])}</span>}
               </div>
               <span className="muted small">
                 {when(m.started_at)}
                 {m.ended_at && ` · ${duration(m.ended_at - m.started_at)}`}
-                {m.notes && m.notes.action_items.length > 0 && ` · ${m.notes.action_items.filter((a) => !a.done).length} open action items`}
+                {m.notes && m.notes.action_items.length > 0 && ` · ${t("{n} open action items", { n: m.notes.action_items.filter((a) => !a.done).length })}`}
               </span>
               {m.notes?.summary && !lines.length && <span className="small meeting-summary">{m.notes.summary}</span>}
               {lines.map((l, i) => (
@@ -168,7 +168,7 @@ export function MeetingsView({ live, onLiveChanged, onOpenChat, onGoModels, toas
   );
 }
 
-const ANNOUNCEMENT = "Heads up: I'm recording this meeting on my computer to take notes. The recording stays private on my PC.";
+const ANNOUNCEMENT = tx("Heads up: I'm recording this meeting on my computer to take notes. The recording stays private on my PC.");
 
 function StartDialog({ onClose, onStarted, toast }: { onClose: () => void; onStarted: (m: Meeting) => void; toast: PushToast }) {
   const [title, setTitle] = useState("");
@@ -194,50 +194,49 @@ function StartDialog({ onClose, onStarted, toast }: { onClose: () => void; onSta
   };
 
   return (
-    <Modal title="Begin meeting" onClose={onClose}>
+    <Modal title={t("Begin meeting")} onClose={onClose}>
       <div className="form">
         <label>
-          Name <span className="muted small">(optional; it's named from the notes otherwise)</span>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Weekly team sync" maxLength={120} autoFocus />
+          {t("Name")} <span className="muted small">{t("(optional; it's named from the notes otherwise)")}</span>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Weekly team sync")} maxLength={120} autoFocus />
         </label>
         <label className="check">
           <input type="checkbox" checked={mic} onChange={(e) => setMic(e.target.checked)} />
-          <span>My microphone <span className="muted small">(you, and anyone in the room)</span></span>
+          <span>{t("My microphone")} <span className="muted small">{t("(you, and anyone in the room)")}</span></span>
         </label>
         <label className="check">
           <input type="checkbox" checked={system} onChange={(e) => setSystem(e.target.checked)} />
-          <span>My computer's sound <span className="muted small">(the other people in a call)</span></span>
+          <span>{t("My computer's sound")} <span className="muted small">{t("(the other people in a call)")}</span></span>
         </label>
         {system && labels === false && (
-          <p className="muted small">Tip: install Speaker labels in Models › Speech to tell the other people apart.</p>
+          <p className="muted small">{t("Tip: install Speaker labels in Models › Speech to tell the other people apart.")}</p>
         )}
         <label>
-          Live translated captions
+          {t("Live translated captions")}
           <select value={translate} onChange={(e) => setTranslate(e.target.value)}>
-            <option value="">Off</option>
+            <option value="">{t("Off")}</option>
             {languages.map((l) => (
-              <option key={l.code} value={l.code}>Into {l.name}</option>
+              <option key={l.code} value={l.code}>{t("Into {language}", { language: l.name })}</option>
             ))}
           </select>
         </label>
         <div className="callout small">
-          <strong>Tell people you're recording.</strong> Recording laws differ, and in some places everyone must agree to be
-          recorded.
+          <strong>{t("Tell people you're recording.")}</strong> {t("Recording laws differ, and in some places everyone must agree to be recorded.")}
           <div className="row">
             <button
               className="btn small"
-              onClick={() => navigator.clipboard.writeText(ANNOUNCEMENT).then(() => toast("Copied. Paste it into the meeting chat.", "success"))}
+              onClick={() => navigator.clipboard.writeText(t(ANNOUNCEMENT)).then(() => toast(t("Copied. Paste it into the meeting chat."), "success"))}
             >
-              Copy an announcement
+              {t("Copy an announcement")}
             </button>
-            <span className="muted small ellipsis" title={ANNOUNCEMENT}>“{ANNOUNCEMENT}”</span>
+            <span className="muted small ellipsis" title={t(ANNOUNCEMENT)}>“{t(ANNOUNCEMENT)}”</span>
           </div>
         </div>
       </div>
       <div className="modal-actions">
-        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn" onClick={onClose}>{t("Cancel")}</button>
         <button className="btn primary" onClick={start} disabled={busy || (!mic && !system)}>
-          {busy ? "Starting…" : "● Start recording"}
+          {busy ? t("Starting…") : t("● Start recording")}
         </button>
       </div>
     </Modal>
@@ -248,7 +247,7 @@ function Meter({ label, level }: { label: string; level: number | null }) {
   if (level === null) return null;
   const pct = Math.min(100, Math.sqrt(level) * 220);
   return (
-    <div className="meter" title={`${label} level`}>
+    <div className="meter" title={t("{label} level", { label })}>
       <span className="small">{label}</span>
       <div className="meter-bar"><span style={{ width: `${pct}%` }} /></div>
     </div>
@@ -259,12 +258,12 @@ function SegmentLine({ s, names, onPlay, onName }: { s: Segment; names: Record<s
   return (
     <div className={`segment ${s.speaker}`}>
       {onPlay ? (
-        <button className="seg-time link" onClick={() => onPlay(s)} title="Play this part">▶ {clock(s.start)}</button>
+        <button className="seg-time link" onClick={() => onPlay(s)} title={t("Play this part")}>▶ {clock(s.start)}</button>
       ) : (
         <span className="seg-time muted">{clock(s.start)}</span>
       )}
       {onName && s.voice !== null ? (
-        <button className={`seg-speaker link voice-${(s.voice - 1) % 6}`} onClick={() => onName(s.voice!)} title="Name this person">
+        <button className={`seg-speaker link voice-${(s.voice - 1) % 6}`} onClick={() => onName(s.voice!)} title={t("Name this person")}>
           {who(s, names)}
         </button>
       ) : (
@@ -350,17 +349,17 @@ function LiveMeeting({ id, onEnded, toast }: { id: string; onEnded: (id: string)
       <header className="live-head">
         <span className={`rec-dot ${recording ? "on" : ""}`} aria-hidden />
         <div className="live-title">
-          <h1 className="ellipsis">{meeting?.title ?? "Meeting"}</h1>
+          <h1 className="ellipsis">{meeting?.title ?? t("Meeting")}</h1>
           <span className="muted small">
-            {status === "loading" && "Getting speech recognition ready…"}
-            {status === "recording" && `Recording · ${clock(elapsed)}`}
-            {status === "transcribing" && "Writing down the last few sentences…"}
-            {status === "summarizing" && "Writing notes with your local model…"}
+            {status === "loading" && t("Getting speech recognition ready…")}
+            {status === "recording" && t("Recording · {time}", { time: clock(elapsed) })}
+            {status === "transcribing" && t("Writing down the last few sentences…")}
+            {status === "summarizing" && t("Writing notes with your local model…")}
           </span>
         </div>
         <span className="spacer" />
-        <Meter label="You" level={levels.you} />
-        <Meter label="Others" level={levels.others} />
+        <Meter label={t("You")} level={levels.you} />
+        <Meter label={t("Others")} level={levels.others} />
         {recording && (
           <button
             className="btn danger-fill"
@@ -370,21 +369,21 @@ function LiveMeeting({ id, onEnded, toast }: { id: string; onEnded: (id: string)
               await api.stopMeeting();
             }}
           >
-            {stopping ? "Ending…" : "■ End meeting"}
+            {stopping ? t("Ending…") : t("■ End meeting")}
           </button>
         )}
       </header>
       <div className="transcript live" ref={scroller}>
         {segments.length === 0 && (
           <p className="muted small">
-            {recording ? "The transcript appears here a few seconds after people speak." : "Nothing was transcribed."}
+            {recording ? t("The transcript appears here a few seconds after people speak.") : t("Nothing was transcribed.")}
           </p>
         )}
         {segments.map((s) => (
           <SegmentLine key={s.id} s={s} names={meeting?.speaker_names ?? {}} />
         ))}
       </div>
-      <p className="muted small">Lines appear in batches at pauses in the conversation; long speeches take a little longer.</p>
+      <p className="muted small">{t("Lines appear in batches at pauses in the conversation; long speeches take a little longer.")}</p>
     </div>
   );
 }
@@ -420,7 +419,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
     };
   }, [id, load]);
 
-  if (!m) return <p className="muted">Loading…</p>;
+  if (!m) return <p className="muted">{t("Loading…")}</p>;
   const n = m.notes;
   const busy = m.status === "summarizing" || m.status === "transcribing";
 
@@ -443,7 +442,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
     if (!path) return;
     try {
       await api.exportMeeting(m.id, path, true);
-      toast("Saved the notes and transcript.", "success");
+      toast(t("Saved the notes and transcript."), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -451,7 +450,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
 
   return (
     <div className="narrow meeting-page">
-      <button className="link" onClick={onBack}>← All meetings</button>
+      <button className="link" onClick={onBack}>{t("← All meetings")}</button>
       <header className="page-head">
         <div>
           {renaming ? (
@@ -468,65 +467,65 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
                 }
               }}
             >
-              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus maxLength={120} aria-label="Meeting name" />
-              <button className="btn small primary" type="submit">Save</button>
+              <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus maxLength={120} aria-label={t("Meeting name")} />
+              <button className="btn small primary" type="submit">{t("Save")}</button>
             </form>
           ) : (
             <h1>
               {m.title}{" "}
-              <button className="link small" onClick={() => { setTitle(m.title); setRenaming(true); }}>Rename</button>
+              <button className="link small" onClick={() => { setTitle(m.title); setRenaming(true); }}>{t("Rename")}</button>
             </h1>
           )}
           <p className="muted small">
             {when(m.started_at)}
             {m.ended_at && ` · ${duration(m.ended_at - m.started_at)}`}
-            {m.translate_to && ` · captions translated`}
+            {m.translate_to && ` · ${t("captions translated")}`}
           </p>
         </div>
       </header>
 
       <div className="row wrap">
         <button className="btn primary" onClick={async () => onOpenChat(await api.askAboutMeeting(m.id))} disabled={busy}>
-          Ask about this meeting
+          {t("Ask about this meeting")}
         </button>
-        <button className="btn" onClick={exportNotes}>Export…</button>
+        <button className="btn" onClick={exportNotes}>{t("Export…")}</button>
         <button
           className="btn"
           disabled={busy || m.segments.length === 0}
           onClick={() => api.rewriteNotes(m.id).then(load).catch((e) => toast(errorText(e), "error"))}
         >
-          Write notes again
+          {t("Write notes again")}
         </button>
         <span className="spacer" />
-        {m.has_audio && <button className="btn ghost small" onClick={() => setConfirm("audio")}>Delete recording</button>}
-        <button className="btn ghost small danger" onClick={() => setConfirm("meeting")}>Delete</button>
+        {m.has_audio && <button className="btn ghost small" onClick={() => setConfirm("audio")}>{t("Delete recording")}</button>}
+        <button className="btn ghost small danger" onClick={() => setConfirm("meeting")}>{t("Delete")}</button>
       </div>
 
-      {busy && <p className="callout small">Writing notes with your local model…</p>}
+      {busy && <p className="callout small">{t("Writing notes with your local model…")}</p>}
       {m.error && <div className="error-box">{m.error}</div>}
 
       {n && (
         <section className="card notes">
-          <h2>Summary</h2>
+          <h2>{t("Summary")}</h2>
           <p>{n.summary}</p>
-          <List title="Most important" items={n.most_important} />
+          <List title={t("Most important")} items={n.most_important} />
           {n.action_items.length > 0 && (
             <section>
               <div className="row">
-                <h3>Action items</h3>
+                <h3>{t("Action items")}</h3>
                 <span className="spacer" />
                 <button
                   className="btn ghost small"
                   onClick={async () => {
                     try {
                       const added = await api.tasksFromMeeting(m.id, n.action_items.map((_, i) => i));
-                      toast(added ? `Added ${added} to Tasks.` : "They're already in Tasks.", "success");
+                      toast(added ? t("Added {n} to Tasks.", { n: added }) : t("They're already in Tasks."), "success");
                     } catch (e) {
                       toast(errorText(e), "error");
                     }
                   }}
                 >
-                  + Add to Tasks
+                  {t("+ Add to Tasks")}
                 </button>
               </div>
               <ul className="actions">
@@ -544,7 +543,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
                       <span className={a.done ? "done" : ""}>
                         {a.task}
                         {(a.owner || a.due) && (
-                          <span className="muted small"> — {[a.owner, a.due && `due ${a.due}`].filter(Boolean).join(", ")}</span>
+                          <span className="muted small"> — {[a.owner, a.due && t("due {date}", { date: a.due })].filter(Boolean).join(", ")}</span>
                         )}
                       </span>
                     </label>
@@ -553,23 +552,23 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
               </ul>
             </section>
           )}
-          <List title="Decisions" items={n.decisions} />
-          <List title="Key points" items={n.key_points} />
-          <List title="Topics discussed" items={n.topics} />
+          <List title={t("Decisions")} items={n.decisions} />
+          <List title={t("Key points")} items={n.key_points} />
+          <List title={t("Topics discussed")} items={n.topics} />
         </section>
       )}
 
       <section className="card">
-        <h2>Transcript</h2>
+        <h2>{t("Transcript")}</h2>
         {(m.has_audio || m.segments.some((s) => s.voice !== null)) && (
           <p className="muted small">
-            {m.has_audio && "Click a time to hear that part. "}
-            {m.segments.some((s) => s.voice !== null) && "Click a speaker to give them a name."}
+            {m.has_audio && `${t("Click a time to hear that part.")} `}
+            {m.segments.some((s) => s.voice !== null) && t("Click a speaker to give them a name.")}
           </p>
         )}
         <audio ref={audio} hidden />
         <div className="transcript">
-          {m.segments.length === 0 && <p className="muted small">Nothing was transcribed.</p>}
+          {m.segments.length === 0 && <p className="muted small">{t("Nothing was transcribed.")}</p>}
           {m.segments.map((s) => (
             <SegmentLine
               key={s.id}
@@ -583,7 +582,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
       </section>
 
       {naming && (
-        <Modal title={`Who is Speaker ${naming.voice}?`} onClose={() => setNaming(null)}>
+        <Modal title={t("Who is Speaker {n}?", { n: naming.voice })} onClose={() => setNaming(null)}>
           <form
             className="form"
             onSubmit={async (e) => {
@@ -597,24 +596,24 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
               }
             }}
           >
-            <input className="input" value={naming.name} onChange={(e) => setNaming({ ...naming, name: e.target.value })} placeholder="Their name" autoFocus maxLength={60} aria-label="Speaker name" />
-            <p className="muted small">Every line by this speaker shows the name. Use “Write notes again” so the notes use it too.</p>
+            <input className="input" value={naming.name} onChange={(e) => setNaming({ ...naming, name: e.target.value })} placeholder={t("Their name")} autoFocus maxLength={60} aria-label={t("Speaker name")} />
+            <p className="muted small">{t("Every line by this speaker shows the name. Use “Write notes again” so the notes use it too.")}</p>
             <div className="modal-actions">
-              <button type="button" className="btn" onClick={() => setNaming(null)}>Cancel</button>
-              <button type="submit" className="btn primary">Save</button>
+              <button type="button" className="btn" onClick={() => setNaming(null)}>{t("Cancel")}</button>
+              <button type="submit" className="btn primary">{t("Save")}</button>
             </div>
           </form>
         </Modal>
       )}
       {confirm && (
-        <Modal title={confirm === "meeting" ? "Delete this meeting?" : "Delete the recording?"} onClose={() => setConfirm(null)}>
+        <Modal title={confirm === "meeting" ? t("Delete this meeting?") : t("Delete the recording?")} onClose={() => setConfirm(null)}>
           <p>
             {confirm === "meeting"
-              ? `“${m.title}”, its transcript, notes and recording will be permanently deleted from this PC.`
-              : "The audio is deleted; the transcript and notes stay."}
+              ? t("“{title}”, its transcript, notes and recording will be permanently deleted from this PC.", { title: m.title })
+              : t("The audio is deleted; the transcript and notes stay.")}
           </p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(null)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirm(null)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -633,7 +632,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
                 }
               }}
             >
-              Delete
+              {t("Delete")}
             </button>
           </div>
         </Modal>

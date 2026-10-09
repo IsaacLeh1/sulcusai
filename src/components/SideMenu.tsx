@@ -2,14 +2,15 @@
 // The ⚙ menu at the bottom of the sidebar: the pages you visit now and then
 // (settings, models, features, activity), so the top stays about your work.
 import { useEffect, useRef, useState } from "react";
+import { t, tx } from "../i18n";
 
 export type MenuView = "settings" | "models" | "features" | "activity";
 
 const ITEMS: { id: MenuView; icon: string; label: string }[] = [
-  { id: "settings", icon: "⚙", label: "Settings" },
-  { id: "models", icon: "🧩", label: "Models" },
-  { id: "features", icon: "✨", label: "Features" },
-  { id: "activity", icon: "📜", label: "Activity" },
+  { id: "settings", icon: "⚙", label: tx("Settings") },
+  { id: "models", icon: "🧩", label: tx("Models") },
+  { id: "features", icon: "✨", label: tx("Features") },
+  { id: "activity", icon: "📜", label: tx("Activity") },
 ];
 
 export function SideMenu({ view, installing, onOpen }: { view: string; installing: boolean; onOpen: (v: MenuView) => void }) {
@@ -46,16 +47,16 @@ export function SideMenu({ view, installing, onOpen }: { view: string; installin
               }}
             >
               <span aria-hidden className="side-menu-icon">{i.icon}</span>
-              {i.label}
-              {i.id === "models" && installing && <span className="dot" aria-label="Installing" />}
+              {t(i.label)}
+              {i.id === "models" && installing && <span className="dot" aria-label={t("Installing")} />}
             </button>
           ))}
         </div>
       )}
-      <button className={`side-menu-btn ${current ? "active" : ""}`} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} title="Settings, models, features and activity">
+      <button className={`side-menu-btn ${current ? "active" : ""}`} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} title={t("Settings, models, features and activity")}>
         <span aria-hidden>⚙</span>
-        <span>{current ? current.label : "Settings & more"}</span>
-        {installing && <span className="dot" aria-label="Installing a model" />}
+        <span>{current ? t(current.label) : t("Settings & more")}</span>
+        {installing && <span className="dot" aria-label={t("Installing a model")} />}
       </button>
     </div>
   );

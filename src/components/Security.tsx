@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, errorText, type SecurityStatus } from "../api";
 import { APP_NAME } from "../brand";
+import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -33,8 +34,8 @@ export function NewPinForm({ submitLabel, onSubmit, busy }: { submitLabel: strin
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (pin.length < MIN_PIN) return setError(`Use at least ${MIN_PIN} characters.`);
-    if (pin !== again) return setError("The two entries don't match.");
+    if (pin.length < MIN_PIN) return setError(t("Use at least {n} characters.", { n: MIN_PIN }));
+    if (pin !== again) return setError(t("The two entries don't match."));
     setError(null);
     setWorking(true);
     try {
@@ -48,13 +49,13 @@ export function NewPinForm({ submitLabel, onSubmit, busy }: { submitLabel: strin
 
   return (
     <form className="form" onSubmit={submit}>
-      <PinField label="New PIN or passphrase" value={pin} onChange={setPin} autoFocus />
-      <PinField label="Enter it again" value={again} onChange={setAgain} />
-      <p className="muted small">A longer passphrase is stronger than a 4-digit PIN.</p>
+      <PinField label={t("New PIN or passphrase")} value={pin} onChange={setPin} autoFocus />
+      <PinField label={t("Enter it again")} value={again} onChange={setAgain} />
+      <p className="muted small">{t("A longer passphrase is stronger than a 4-digit PIN.")}</p>
       {error && <p className="error-text">{error}</p>}
       <div>
         <button className="btn primary" type="submit" disabled={working || busy || !pin || !again}>
-          {working ? "Securing…" : submitLabel}
+          {working ? t("Securing…") : submitLabel}
         </button>
       </div>
     </form>
@@ -68,10 +69,10 @@ export function RecoveryCode({ code, onDone }: { code: string; onDone: () => voi
   return (
     <div className="form">
       <p>
-        <strong>Save this recovery code.</strong> If you forget your PIN, it's the only way back into your chats.
-        Nobody, including the developers, can recover them without it.
+        <strong>{t("Save this recovery code.")}</strong>{" "}
+        {t("If you forget your PIN, it's the only way back into your chats. Nobody, including the developers, can recover them without it.")}
       </p>
-      <div className="recovery-code" aria-label="Recovery code">{code}</div>
+      <div className="recovery-code" aria-label={t("Recovery code")}>{code}</div>
       <div className="row">
         <button
           className="btn"
@@ -85,17 +86,17 @@ export function RecoveryCode({ code, onDone }: { code: string; onDone: () => voi
             }
           }}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("Copied") : t("Copy")}
         </button>
-        <span className="muted small">Write it down or keep it in a password manager, not on this PC alone.</span>
+        <span className="muted small">{t("Write it down or keep it in a password manager, not on this PC alone.")}</span>
       </div>
       <label className="check">
         <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
-        I've saved my recovery code somewhere safe
+        {t("I've saved my recovery code somewhere safe")}
       </label>
       <div>
         <button className="btn primary" disabled={!saved} onClick={onDone}>
-          Done
+          {t("Done")}
         </button>
       </div>
     </div>
@@ -154,12 +155,12 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
     <div className="lock">
       <div className="lock-card">
         <img src="/logo.svg" alt="" width={56} height={56} />
-        <h1>{APP_NAME} is locked</h1>
+        <h1>{t("{app} is locked", { app: APP_NAME })}</h1>
         {mode === "reset" && (
           <>
-            <p className="muted">You're in. Choose a new PIN; your old recovery code is replaced with a new one.</p>
+            <p className="muted">{t("You're in. Choose a new PIN; your old recovery code is replaced with a new one.")}</p>
             <NewPinForm
-              submitLabel="Set new PIN"
+              submitLabel={t("Set new PIN")}
               onSubmit={async (pin) => {
                 setNewCode(await api.resetPin(pin));
                 setMode("code");
@@ -172,7 +173,7 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
           <>
             <form className="form" onSubmit={submit}>
               <label>
-                {mode === "pin" ? "PIN or passphrase" : "Recovery code"}
+                {mode === "pin" ? t("PIN or passphrase") : t("Recovery code")}
                 <input
                   className={`input ${mode === "pin" ? "pin" : "code"}`}
                   type={mode === "pin" ? "password" : "text"}
@@ -185,13 +186,13 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
               </label>
               {error && <p className="error-text">{error}</p>}
               <button className="btn primary block" type="submit" disabled={working || !secret}>
-                {working ? "Checking…" : "Unlock"}
+                {working ? t("Checking…") : t("Unlock")}
               </button>
             </form>
             <div className="lock-links">
               {status.hello_enabled && mode === "pin" && (
                 <button className="link" onClick={hello} disabled={working}>
-                  Use Windows Hello
+                  {t("Use Windows Hello")}
                 </button>
               )}
               <button
@@ -202,7 +203,7 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
                   setError(null);
                 }}
               >
-                {mode === "pin" ? "Forgot your PIN? Use the recovery code" : "Back to PIN"}
+                {mode === "pin" ? t("Forgot your PIN? Use the recovery code") : t("Back to PIN")}
               </button>
             </div>
           </>
@@ -213,10 +214,10 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
 }
 
 const AUTO_LOCK = [
-  { minutes: 5, label: "After 5 minutes" },
-  { minutes: 15, label: "After 15 minutes" },
-  { minutes: 60, label: "After 1 hour" },
-  { minutes: 0, label: "Never (only when I lock it)" },
+  { minutes: 5, label: tx("After 5 minutes") },
+  { minutes: 15, label: tx("After 15 minutes") },
+  { minutes: 60, label: tx("After 1 hour") },
+  { minutes: 0, label: tx("Never (only when I lock it)") },
 ];
 
 /** Settings → Privacy & security. */
@@ -227,7 +228,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
   const toggleHello = async (on: boolean) => {
     try {
       await api.setHello(on);
-      toast(on ? "Windows Hello can now unlock SulcusAI." : "Windows Hello unlock is off.", "success");
+      toast(on ? t("Windows Hello can now unlock SulcusAI.") : t("Windows Hello unlock is off."), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -236,28 +237,28 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
 
   return (
     <section className="card">
-      <h2>Privacy &amp; security</h2>
+      <h2>{t("Privacy & security")}</h2>
       <p className="small">
-        🔐 Your chats and profile are <strong>encrypted on this PC</strong>. Only your Windows account can open them
-        {status.lock_enabled ? ", and only after you unlock with your PIN." : "."}
+        {t("🔐 Your chats and profile are")} <strong>{t("encrypted on this PC")}</strong>.{" "}
+        {status.lock_enabled ? t("Only your Windows account can open them, and only after you unlock with your PIN.") : t("Only your Windows account can open them.")}
       </p>
 
       <div className="setting-row">
         <div>
-          <strong>App lock</strong>
+          <strong>{t("App lock")}</strong>
           <span className="small muted block">
             {status.lock_enabled
-              ? "On. SulcusAI asks for your PIN when it opens and after it's idle."
-              : "Ask for a PIN when SulcusAI opens, so others using this PC can't read your chats."}
+              ? t("On. SulcusAI asks for your PIN when it opens and after it's idle.")
+              : t("Ask for a PIN when SulcusAI opens, so others using this PC can't read your chats.")}
           </span>
         </div>
         {status.lock_enabled ? (
           <div className="row">
-            <button className="btn" onClick={() => setDialog("change")}>Change PIN</button>
-            <button className="btn ghost danger" onClick={() => setDialog("disable")}>Turn off</button>
+            <button className="btn" onClick={() => setDialog("change")}>{t("Change PIN")}</button>
+            <button className="btn ghost danger" onClick={() => setDialog("disable")}>{t("Turn off")}</button>
           </div>
         ) : (
-          <button className="btn primary" onClick={() => setDialog("enable")}>Turn on</button>
+          <button className="btn primary" onClick={() => setDialog("enable")}>{t("Turn on")}</button>
         )}
       </div>
 
@@ -265,8 +266,8 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
         <>
           <div className="setting-row">
             <div>
-              <strong>Lock automatically</strong>
-              <span className="small muted block">When nobody has used SulcusAI for a while.</span>
+              <strong>{t("Lock automatically")}</strong>
+              <span className="small muted block">{t("When nobody has used SulcusAI for a while.")}</span>
             </div>
             <select
               value={status.auto_lock_minutes}
@@ -274,18 +275,18 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
                 await api.setAutoLock(Number(e.target.value));
                 onChanged();
               }}
-              aria-label="Lock automatically"
+              aria-label={t("Lock automatically")}
             >
               {AUTO_LOCK.map((o) => (
-                <option key={o.minutes} value={o.minutes}>{o.label}</option>
+                <option key={o.minutes} value={o.minutes}>{t(o.label)}</option>
               ))}
             </select>
           </div>
           <div className="setting-row">
             <div>
-              <strong>Keep working while locked</strong>
+              <strong>{t("Keep working while locked")}</strong>
               <span className="small muted block">
-                Replies in progress, scheduled tasks, mail and calendar syncing and reminders carry on while SulcusAI is locked. Nothing shows on screen until you unlock; reminders don't say what's due. When this is off, locking stops work in progress.
+                {t("Replies in progress, scheduled tasks, mail and calendar syncing and reminders carry on while SulcusAI is locked. Nothing shows on screen until you unlock; reminders don't say what's due. When this is off, locking stops work in progress.")}
               </span>
             </div>
             <label className="switch">
@@ -296,7 +297,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
                   await api.setKeepWorking(e.target.checked);
                   onChanged();
                 }}
-                aria-label="Keep working while locked"
+                aria-label={t("Keep working while locked")}
               />
               <span />
             </label>
@@ -306,8 +307,8 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
               <strong>Windows Hello</strong>
               <span className="small muted block">
                 {status.hello_available
-                  ? "Unlock with your face, fingerprint or Windows PIN. Your SulcusAI PIN still works too."
-                  : "Windows Hello isn't set up on this PC. You can set it up in Windows Settings → Accounts → Sign-in options."}
+                  ? t("Unlock with your face, fingerprint or Windows PIN. Your SulcusAI PIN still works too.")
+                  : t("Windows Hello isn't set up on this PC. You can set it up in Windows Settings → Accounts → Sign-in options.")}
               </span>
             </div>
             <label className="switch">
@@ -316,7 +317,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
                 checked={status.hello_enabled}
                 disabled={!status.hello_available && !status.hello_enabled}
                 onChange={(e) => toggleHello(e.target.checked)}
-                aria-label="Unlock with Windows Hello"
+                aria-label={t("Unlock with Windows Hello")}
               />
               <span />
             </label>
@@ -325,7 +326,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
       )}
 
       {dialog === "enable" && (
-        <Modal title={code ? "Your recovery code" : "Turn on app lock"} onClose={() => { if (!code) setDialog(null); }}>
+        <Modal title={code ? t("Your recovery code") : t("Turn on app lock")} onClose={() => { if (!code) setDialog(null); }}>
           {code ? (
             <RecoveryCode
               code={code}
@@ -333,11 +334,11 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
                 setCode(null);
                 setDialog(null);
                 onChanged();
-                toast("App lock is on.", "success");
+                toast(t("App lock is on."), "success");
               }}
             />
           ) : (
-            <NewPinForm submitLabel="Turn on app lock" onSubmit={async (pin) => setCode(await api.enableLock(pin))} />
+            <NewPinForm submitLabel={t("Turn on app lock")} onSubmit={async (pin) => setCode(await api.enableLock(pin))} />
           )}
         </Modal>
       )}
@@ -346,21 +347,21 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
           onClose={() => setDialog(null)}
           onDone={() => {
             setDialog(null);
-            toast("PIN changed.", "success");
+            toast(t("PIN changed."), "success");
           }}
         />
       )}
       {dialog === "disable" && (
         <ConfirmPinDialog
-          title="Turn off app lock?"
-          body="Your chats stay encrypted on this PC, but anyone using your Windows account will be able to open SulcusAI without a PIN. Your recovery code stops working."
-          action="Turn off"
+          title={t("Turn off app lock?")}
+          body={t("Your chats stay encrypted on this PC, but anyone using your Windows account will be able to open SulcusAI without a PIN. Your recovery code stops working.")}
+          action={t("Turn off")}
           onClose={() => setDialog(null)}
           onConfirm={async (pin) => {
             await api.disableLock(pin);
             setDialog(null);
             onChanged();
-            toast("App lock is off.", "success");
+            toast(t("App lock is off."), "success");
           }}
         />
       )}
@@ -372,7 +373,7 @@ function ChangePinDialog({ onClose, onDone }: { onClose: () => void; onDone: () 
   const [old, setOld] = useState("");
   const [verified, setVerified] = useState(false);
   return (
-    <Modal title="Change PIN" onClose={onClose}>
+    <Modal title={t("Change PIN")} onClose={onClose}>
       {!verified ? (
         <form
           className="form"
@@ -381,15 +382,15 @@ function ChangePinDialog({ onClose, onDone }: { onClose: () => void; onDone: () 
             if (old) setVerified(true);
           }}
         >
-          <PinField label="Current PIN" value={old} onChange={setOld} autoFocus />
+          <PinField label={t("Current PIN")} value={old} onChange={setOld} autoFocus />
           <div className="modal-actions">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button type="submit" className="btn primary" disabled={!old}>Next</button>
+            <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
+            <button type="submit" className="btn primary" disabled={!old}>{t("Next")}</button>
           </div>
         </form>
       ) : (
         <NewPinForm
-          submitLabel="Change PIN"
+          submitLabel={t("Change PIN")}
           onSubmit={async (pin) => {
             await api.changePin(old, pin);
             onDone();
@@ -422,11 +423,11 @@ function ConfirmPinDialog({ title, body, action, onClose, onConfirm }: { title: 
         }}
       >
         <p>{body}</p>
-        <PinField label="Your PIN" value={pin} onChange={setPin} autoFocus />
+        <PinField label={t("Your PIN")} value={pin} onChange={setPin} autoFocus />
         {error && <p className="error-text">{error}</p>}
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn danger-fill" disabled={!pin || working}>{working ? "Checking…" : action}</button>
+          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="btn danger-fill" disabled={!pin || working}>{working ? t("Checking…") : action}</button>
         </div>
       </form>
     </Modal>

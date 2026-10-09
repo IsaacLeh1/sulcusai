@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Component, type ReactNode } from "react";
+import { t } from "../i18n";
 
 /** Catches a rendering crash so the window shows what happened instead of going blank. */
 export class CrashScreen extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -19,12 +20,12 @@ export class CrashScreen extends Component<{ children: ReactNode }, { error: Err
     return (
       <div className="onboarding">
         <div className="onboarding-card">
-          <h1>Something went wrong</h1>
-          <p>This screen hit an error. Your chats and settings are safe. Reloading usually fixes it.</p>
+          <h1>{t("Something went wrong")}</h1>
+          <p>{t("This screen hit an error. Your chats and settings are safe. Reloading usually fixes it.")}</p>
           <pre className="crash-detail">{error.message}</pre>
           <div className="onboarding-nav">
-            <button className="btn ghost" onClick={() => this.setState({ error: null })}>Try again</button>
-            <button className="btn primary" onClick={() => window.location.reload()}>Reload</button>
+            <button className="btn ghost" onClick={() => this.setState({ error: null })}>{t("Try again")}</button>
+            <button className="btn primary" onClick={() => window.location.reload()}>{t("Reload")}</button>
           </div>
         </div>
       </div>

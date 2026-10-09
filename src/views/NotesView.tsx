@@ -5,6 +5,7 @@ import { api, errorText, on, type Note, type NoteBody } from "../api";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t } from "../i18n";
 
 const EMPTY: NoteBody = { title: "", body: "", folder: "", tags: [] };
 
@@ -40,27 +41,27 @@ export function NotesView({ toast }: { toast: PushToast }) {
     <div className="notes-page">
       <aside className="notes-list">
         <div className="row">
-          <input className="input" placeholder="Search notes" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search notes" />
-          <button className="btn primary small" onClick={() => setOpenId("new")} title="New note">+ New</button>
+          <input className="input" placeholder={t("Search notes")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search notes")} />
+          <button className="btn primary small" onClick={() => setOpenId("new")} title={t("New note")}>{t("+ New")}</button>
         </div>
         {folders.length > 0 && (
           <div className="folder-chips">
-            <button className={`chip ${folder === null ? "active" : ""}`} onClick={() => setFolder(null)}>All</button>
+            <button className={`chip ${folder === null ? "active" : ""}`} onClick={() => setFolder(null)}>{t("All")}</button>
             {folders.map((f) => (
               <button key={f} className={`chip ${folder === f ? "active" : ""}`} onClick={() => setFolder(f)}>📂 {f}</button>
             ))}
           </div>
         )}
-        {notes && notes.length === 0 && <p className="muted small">No notes yet. Click New, or ask the assistant to “note that down”.</p>}
-        {notes && notes.length > 0 && shown.length === 0 && <p className="muted small">Nothing matches.</p>}
+        {notes && notes.length === 0 && <p className="muted small">{t("No notes yet. Click New, or ask the assistant to “note that down”.")}</p>}
+        {notes && notes.length > 0 && shown.length === 0 && <p className="muted small">{t("Nothing matches.")}</p>}
         {shown.map((n) => (
           <button key={n.id} className={`note-item ${openId === n.id ? "active" : ""}`} onClick={() => setOpenId(n.id)}>
             <span className="row">
-              {n.pinned && <span aria-label="Pinned">📌</span>}
+              {n.pinned && <span aria-label={t("Pinned")}>📌</span>}
               <strong className="ellipsis">{n.title}</strong>
             </span>
             <span className="small muted ellipsis">{n.body.replace(/[#*_`>]/g, "").slice(0, 120)}</span>
-            {n.tags.length > 0 && <span className="small tags-line">{n.tags.map((t) => `#${t}`).join(" ")}</span>}
+            {n.tags.length > 0 && <span className="small tags-line">{n.tags.map((tag) => `#${tag}`).join(" ")}</span>}
           </button>
         ))}
       </aside>
@@ -82,7 +83,7 @@ export function NotesView({ toast }: { toast: PushToast }) {
           />
         ) : (
           <div className="empty">
-            <p className="muted">Pick a note, or start a new one.</p>
+            <p className="muted">{t("Pick a note, or start a new one.")}</p>
           </div>
         )}
       </section>
@@ -96,11 +97,11 @@ function Editor({ note, onSaved, onDeleted, onPinned, toast }: { note: Note | nu
   const [preview, setPreview] = useState(!!note);
   const [confirm, setConfirm] = useState(false);
   const saved = useRef(JSON.stringify(draft));
-  const dirty = JSON.stringify({ ...draft, tags: tags.split(",").map((t) => t.trim()).filter(Boolean) }) !== saved.current;
+  const dirty = JSON.stringify({ ...draft, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) }) !== saved.current;
 
   const save = async () => {
     try {
-      const body = { ...draft, tags: tags.split(",").map((t) => t.trim()).filter(Boolean) };
+      const body = { ...draft, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean) };
       const n = await api.saveNote(note?.id ?? null, body);
       saved.current = JSON.stringify({ title: n.title, body: n.body, folder: n.folder, tags: n.tags });
       onSaved(n);
@@ -124,34 +125,34 @@ function Editor({ note, onSaved, onDeleted, onPinned, toast }: { note: Note | nu
   return (
     <div className="editor">
       <div className="row">
-        <input className="input title-input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Title (or the first line)" aria-label="Title" />
-        <button className="btn small" onClick={() => setPreview((p) => !p)}>{preview ? "Edit" : "Preview"}</button>
+        <input className="input title-input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder={t("Title (or the first line)")} aria-label={t("Title")} />
+        <button className="btn small" onClick={() => setPreview((p) => !p)}>{preview ? t("Edit") : t("Preview")}</button>
         {note && (
-          <button className="btn ghost small" onClick={() => api.pinNote(note.id, !note.pinned).then(onPinned)} title={note.pinned ? "Unpin" : "Pin to the top"}>
-            {note.pinned ? "Unpin" : "📌 Pin"}
+          <button className="btn ghost small" onClick={() => api.pinNote(note.id, !note.pinned).then(onPinned)} title={note.pinned ? t("Unpin") : t("Pin to the top")}>
+            {note.pinned ? t("Unpin") : t("📌 Pin")}
           </button>
         )}
-        <button className="btn primary small" onClick={save} disabled={!dirty && !!note}>Save</button>
+        <button className="btn primary small" onClick={save} disabled={!dirty && !!note}>{t("Save")}</button>
       </div>
       <div className="row">
-        <input className="input small-input" value={draft.folder} onChange={(e) => setDraft({ ...draft, folder: e.target.value })} placeholder="Folder" aria-label="Folder" />
-        <input className="input small-input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Tags, comma separated" aria-label="Tags" />
-        {note && <button className="btn ghost small danger" onClick={() => setConfirm(true)}>Delete</button>}
+        <input className="input small-input" value={draft.folder} onChange={(e) => setDraft({ ...draft, folder: e.target.value })} placeholder={t("Folder")} aria-label={t("Folder")} />
+        <input className="input small-input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder={t("Tags, comma separated")} aria-label={t("Tags")} />
+        {note && <button className="btn ghost small danger" onClick={() => setConfirm(true)}>{t("Delete")}</button>}
       </div>
       {preview ? (
         <div className="note-preview" onDoubleClick={() => setPreview(false)}>
-          {draft.body ? <Markdown text={draft.body} /> : <p className="muted">Empty note. Double-click to edit.</p>}
+          {draft.body ? <Markdown text={draft.body} /> : <p className="muted">{t("Empty note. Double-click to edit.")}</p>}
         </div>
       ) : (
-        <textarea className="input note-body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} placeholder="Write in Markdown: # headings, - lists, **bold**…" aria-label="Note text" autoFocus />
+        <textarea className="input note-body" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} placeholder={t("Write in Markdown: # headings, - lists, **bold**…")} aria-label={t("Note text")} autoFocus />
       )}
-      <p className="muted small">{dirty ? "Unsaved changes (Ctrl+S saves)." : note ? `Saved ${new Date(note.updated_at).toLocaleString()}` : ""}</p>
+      <p className="muted small">{dirty ? t("Unsaved changes (Ctrl+S saves).") : note ? t("Saved {time}", { time: new Date(note.updated_at).toLocaleString() }) : ""}</p>
       {confirm && note && (
-        <Modal title="Delete this note?" onClose={() => setConfirm(false)}>
-          <p>“{note.title}” will be permanently deleted from this PC.</p>
+        <Modal title={t("Delete this note?")} onClose={() => setConfirm(false)}>
+          <p>{t("“{title}” will be permanently deleted from this PC.", { title: note.title })}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
-            <button className="btn danger-fill" onClick={() => api.deleteNote(note.id).then(onDeleted)}>Delete</button>
+            <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
+            <button className="btn danger-fill" onClick={() => api.deleteNote(note.id).then(onDeleted)}>{t("Delete")}</button>
           </div>
         </Modal>
       )}

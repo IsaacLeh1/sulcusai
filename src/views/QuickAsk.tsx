@@ -5,13 +5,14 @@ import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type MediaItem } from "../api";
 import { Markdown } from "../components/Markdown";
 import { useMediaUrl } from "../media";
+import { t, tx } from "../i18n";
 
 const ACTIONS: { label: string; prompt: (t: string) => string }[] = [
-  { label: "Summarize", prompt: (t) => `Summarize this in a few bullet points:\n\n${t}` },
-  { label: "Explain", prompt: (t) => `Explain this simply:\n\n${t}` },
-  { label: "Fix grammar", prompt: (t) => `Fix the spelling and grammar. Reply with only the corrected text:\n\n${t}` },
-  { label: "Translate to English", prompt: (t) => `Translate this to English. Reply with only the translation:\n\n${t}` },
-  { label: "Draft a reply", prompt: (t) => `Draft a short, friendly reply to this message:\n\n${t}` },
+  { label: tx("Summarize"), prompt: (x) => `Summarize this in a few bullet points:\n\n${x}` },
+  { label: tx("Explain"), prompt: (x) => `Explain this simply:\n\n${x}` },
+  { label: tx("Fix grammar"), prompt: (x) => `Fix the spelling and grammar. Reply with only the corrected text:\n\n${x}` },
+  { label: tx("Translate to English"), prompt: (x) => `Translate this to English. Reply with only the translation:\n\n${x}` },
+  { label: tx("Draft a reply"), prompt: (x) => `Draft a short, friendly reply to this message:\n\n${x}` },
 ];
 
 type Phase = "idle" | "thinking" | "writing" | "done";
@@ -114,8 +115,8 @@ export function QuickAsk() {
   if (locked) {
     return (
       <div className="quick">
-        <p className="muted">SulcusAI is locked.</p>
-        <button className="btn primary" onClick={() => api.quickOpenInApp(null)}>Open SulcusAI to unlock</button>
+        <p className="muted">{t("SulcusAI is locked.")}</p>
+        <button className="btn primary" onClick={() => api.quickOpenInApp(null)}>{t("Open SulcusAI to unlock")}</button>
       </div>
     );
   }
@@ -129,7 +130,7 @@ export function QuickAsk() {
           className="quick-input"
           rows={1}
           value={text}
-          placeholder={chatId ? "Ask a follow-up…" : "Ask anything…"}
+          placeholder={chatId ? t("Ask a follow-up…") : t("Ask anything…")}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -137,44 +138,44 @@ export function QuickAsk() {
               ask(text);
             }
           }}
-          aria-label="Ask"
+          aria-label={t("Ask")}
         />
-        <button className="icon-btn" onClick={takeShot} disabled={shooting} title="Ask about the screen: attaches a screenshot of the screen you're on" aria-label="Ask about the screen">
+        <button className="icon-btn" onClick={takeShot} disabled={shooting} title={t("Ask about the screen: attaches a screenshot of the screen you're on")} aria-label={t("Ask about the screen")}>
           📷
         </button>
-        <button className="icon-btn" onClick={() => api.quickHide()} title="Close (Esc)" aria-label="Close">×</button>
+        <button className="icon-btn" onClick={() => api.quickHide()} title={t("Close (Esc)")} aria-label={t("Close")}>×</button>
       </div>
       {shot && (
         <div className="quick-clip">
           <span className="row small">
-            {shotUrl && <img src={shotUrl} alt="Screenshot" className="chip-thumb" />} Screenshot attached. Ask about it, or press Enter.
-            <button className="link" onClick={() => setShot(null)}>Remove</button>
+            {shotUrl && <img src={shotUrl} alt={t("Screenshot")} className="chip-thumb" />} {t("Screenshot attached. Ask about it, or press Enter.")}
+            <button className="link" onClick={() => setShot(null)}>{t("Remove")}</button>
           </span>
         </div>
       )}
       {clip && phase === "idle" && !chatId && (
         <div className="quick-clip">
-          <span className="small muted ellipsis">Copied: “{clip.slice(0, 90)}{clip.length > 90 ? "…" : ""}”</span>
+          <span className="small muted ellipsis">{t("Copied: “{text}”", { text: clip.slice(0, 90) + (clip.length > 90 ? "…" : "") })}</span>
           <div className="chips">
             {ACTIONS.map((a) => (
-              <button key={a.label} className="chip" onClick={() => ask(a.prompt(clip))}>{a.label}</button>
+              <button key={a.label} className="chip" onClick={() => ask(a.prompt(clip))}>{t(a.label)}</button>
             ))}
           </div>
         </div>
       )}
       {(phase !== "idle" || error) && (
         <div className="quick-answer">
-          {phase === "thinking" && !answer && <p className="muted small">Thinking…</p>}
+          {phase === "thinking" && !answer && <p className="muted small">{t("Thinking…")}</p>}
           {answer && <Markdown text={answer} />}
           {error && <p className="error-text">{error}</p>}
         </div>
       )}
       {phase === "done" && (
         <div className="quick-foot">
-          <button className="btn small" onClick={() => navigator.clipboard.writeText(answer).catch(() => {})} disabled={!answer}>Copy</button>
-          <button className="btn small" onClick={() => api.quickOpenInApp(chatId)}>Continue in SulcusAI</button>
+          <button className="btn small" onClick={() => navigator.clipboard.writeText(answer).catch(() => {})} disabled={!answer}>{t("Copy")}</button>
+          <button className="btn small" onClick={() => api.quickOpenInApp(chatId)}>{t("Continue in SulcusAI")}</button>
           <span className="spacer" />
-          <button className="btn ghost small" onClick={reset}>New question</button>
+          <button className="btn ghost small" onClick={reset}>{t("New question")}</button>
         </div>
       )}
     </div>

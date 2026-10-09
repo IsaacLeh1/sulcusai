@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText, type CloudModel, type CloudProvider, type CloudView, type CloudMedia, type CloudMediaKind } from "../api";
+import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -21,12 +22,12 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
   }, [provider.id, toast, onClose]);
   const shown = useMemo(() => (all ?? []).filter((m) => `${m.name} ${m.id}`.toLowerCase().includes(filter.toLowerCase())), [all, filter]);
   return (
-    <Modal title={`Models from ${provider.name}`} onClose={onClose}>
+    <Modal title={t("Models from {name}", { name: provider.name })} onClose={onClose}>
       {!all ? (
-        <p className="muted">Asking {provider.name} which models it offers…</p>
+        <p className="muted">{t("Asking {name} which models it offers…", { name: provider.name })}</p>
       ) : (
         <>
-          <input className="input" placeholder="Filter" value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+          <input className="input" placeholder={t("Filter")} value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
           <div className="cloud-pick">
             {shown.map((m) => (
               <label key={m.id} className="check">
@@ -43,14 +44,14 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
                   }
                 />
                 <span>
-                  {m.name} <span className="muted small">{m.id}{m.price_in !== null ? ` · $${m.price_in} / $${m.price_out} per M tokens` : ""}</span>
+                  {m.name} <span className="muted small">{m.id}{m.price_in !== null ? ` · ${t("{inPrice} / {outPrice} per M tokens", { inPrice: `$${m.price_in}`, outPrice: `$${m.price_out}` })}` : ""}</span>
                 </span>
               </label>
             ))}
-            {shown.length === 0 && <p className="muted small">No models match.</p>}
+            {shown.length === 0 && <p className="muted small">{t("No models match.")}</p>}
           </div>
           <div className="modal-actions">
-            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn" onClick={onClose}>{t("Cancel")}</button>
             <button
               className="btn primary"
               onClick={async () => {
@@ -62,7 +63,7 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
                 }
               }}
             >
-              Use {Object.keys(chosen).length} {Object.keys(chosen).length === 1 ? "model" : "models"}
+              {Object.keys(chosen).length === 1 ? t("Use 1 model") : t("Use {n} models", { n: Object.keys(chosen).length })}
             </button>
           </div>
         </>
@@ -71,8 +72,8 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
   );
 }
 
-const MEDIA_KIND: Record<CloudMediaKind, string> = { image: "pictures", video: "video", speech: "voices" };
-const MEDIA_UNIT: Record<CloudMediaKind, string> = { image: "$ per picture", video: "$ per second", speech: "$ per million characters" };
+const MEDIA_KIND: Record<CloudMediaKind, string> = { image: tx("pictures"), video: tx("video"), speech: tx("voices") };
+const MEDIA_UNIT: Record<CloudMediaKind, string> = { image: tx("$ per picture"), video: tx("$ per second"), speech: tx("$ per million characters") };
 
 /** Picture, video and voice models for the Studio and chats. */
 function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<CloudView>) => Promise<void> }) {
@@ -82,15 +83,15 @@ function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
   const setPrice = (id: string, v: string) => run(() => api.setCloudMedia(p.id, p.media.map((m) => (m.id === id ? { ...m, price: v === "" ? null : Number(v) } : m))));
   return (
     <details className="cloud-media small">
-      <summary>Pictures, video and voices{p.media.length > 0 ? ` (${p.media.length} on)` : ""}</summary>
-      <p className="muted">Used by the Studio and by chats that make pictures or video, only at the Cloud level. Prices are estimates for the monthly budget; check {p.name}'s price list.</p>
+      <summary>{t("Pictures, video and voices")}{p.media.length > 0 ? ` (${t("{n} on", { n: p.media.length })})` : ""}</summary>
+      <p className="muted">{t("Used by the Studio and by chats that make pictures or video, only at the Cloud level. Prices are estimates for the monthly budget; check {name}'s price list.", { name: p.name })}</p>
       <ul className="teach-list">
         {all.map((m) => (
           <li key={m.id}>
             <label className="check">
               <input type="checkbox" checked={on(m.id)} disabled={!p.has_key} onChange={(e) => toggle(m, e.target.checked)} />
               <span>
-                ☁ {m.name} <span className="muted">· {MEDIA_KIND[m.kind]}</span>
+                ☁ {m.name} <span className="muted">· {t(MEDIA_KIND[m.kind])}</span>
               </span>
             </label>
             {on(m.id) && (
@@ -101,8 +102,8 @@ function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
                 step={0.001}
                 defaultValue={p.media.find((x) => x.id === m.id)?.price ?? ""}
                 onBlur={(e) => setPrice(m.id, e.target.value)}
-                title={MEDIA_UNIT[m.kind]}
-                aria-label={`${m.name}: ${MEDIA_UNIT[m.kind]}`}
+                title={t(MEDIA_UNIT[m.kind])}
+                aria-label={`${m.name}: ${t(MEDIA_UNIT[m.kind])}`}
               />
             )}
           </li>
@@ -131,11 +132,11 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
           <input type="checkbox" checked={p.enabled} disabled={!p.has_key} onChange={(e) => run(() => api.setCloudProvider(p.id, e.target.checked, null))} />
           <strong>{p.name}</strong>
         </label>
-        <button className="btn ghost small danger" onClick={() => run(() => api.removeCloudProvider(p.id))}>Remove</button>
+        <button className="btn ghost small danger" onClick={() => run(() => api.removeCloudProvider(p.id))}>{t("Remove")}</button>
       </div>
       <span className="muted small">{p.base_url}</span>
       <div className="row wrap">
-        <input className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={p.has_key ? "Key saved (encrypted). Paste a new one to replace it." : "API key"} aria-label={`${p.name} API key`} />
+        <input className="input" type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder={p.has_key ? t("Key saved (encrypted). Paste a new one to replace it.") : t("API key")} aria-label={t("{name} API key", { name: p.name })} />
         <button
           className="btn small"
           disabled={!key.trim()}
@@ -144,18 +145,18 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
             setKey("");
           }}
         >
-          Save key
+          {t("Save key")}
         </button>
-        {p.has_key && <button className="btn ghost small" onClick={() => run(() => api.setCloudProvider(p.id, false, ""))}>Remove key</button>}
-        <button className="btn small" disabled={!p.has_key} onClick={() => setPicking(true)}>Choose models…</button>
+        {p.has_key && <button className="btn ghost small" onClick={() => run(() => api.setCloudProvider(p.id, false, ""))}>{t("Remove key")}</button>}
+        <button className="btn small" disabled={!p.has_key} onClick={() => setPicking(true)}>{t("Choose models…")}</button>
       </div>
       {p.models.length > 0 && (
         <table className="cloud-models small">
           <thead>
             <tr>
-              <th>Model</th>
-              <th title="US dollars per million tokens, for the spend estimate">$ in / M</th>
-              <th>$ out / M</th>
+              <th>{t("Model")}</th>
+              <th title={t("US dollars per million tokens, for the spend estimate")}>{t("$ in / M")}</th>
+              <th>{t("$ out / M")}</th>
             </tr>
           </thead>
           <tbody>
@@ -163,10 +164,10 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
               <tr key={m.id}>
                 <td>
                   ☁ {m.name}
-                  {m.vision && <span className="muted"> · sees pictures</span>}
+                  {m.vision && <span className="muted"> · {t("sees pictures")}</span>}
                 </td>
-                <td><input className="input" type="number" min={0} step={0.01} defaultValue={m.price_in ?? ""} onBlur={(e) => setPrice(m.id, "price_in", e.target.value)} aria-label={`${m.name} input price`} /></td>
-                <td><input className="input" type="number" min={0} step={0.01} defaultValue={m.price_out ?? ""} onBlur={(e) => setPrice(m.id, "price_out", e.target.value)} aria-label={`${m.name} output price`} /></td>
+                <td><input className="input" type="number" min={0} step={0.01} defaultValue={m.price_in ?? ""} onBlur={(e) => setPrice(m.id, "price_in", e.target.value)} aria-label={t("{name} input price", { name: m.name })} /></td>
+                <td><input className="input" type="number" min={0} step={0.01} defaultValue={m.price_out ?? ""} onBlur={(e) => setPrice(m.id, "price_out", e.target.value)} aria-label={t("{name} output price", { name: m.name })} /></td>
               </tr>
             ))}
           </tbody>
@@ -200,33 +201,33 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
 
   return (
     <section className="card cloud-settings">
-      <h2>☁ Cloud models</h2>
+      <h2>{t("☁ Cloud models")}</h2>
       <p className="muted small">
-        Use models from providers you have an account with, with your own API key. They only work at the Cloud level, and what you send to them goes to that provider. Models on this PC stay the default.
-        {!cloudOn && " You're not at the Cloud level now, so these models are switched off."}
+        {t("Use models from providers you have an account with, with your own API key. They only work at the Cloud level, and what you send to them goes to that provider. Models on this PC stay the default.")}
+        {!cloudOn && " " + t("You're not at the Cloud level now, so these models are switched off.")}
       </p>
 
       <div className="cloud-spend">
         <div className="adv-head">
           <span className="small">
-            This month: <strong>{money(v.spend.usd)}</strong>
-            {v.budget ? ` of ${money(v.budget)}` : ""} · {v.spend.requests} requests · {(v.spend.input_tokens + v.spend.output_tokens).toLocaleString()} tokens
+            {t("This month:")} <strong>{money(v.spend.usd)}</strong>
+            {v.budget ? ` ${t("of {budget}", { budget: money(v.budget) })}` : ""} · {t("{n} requests", { n: v.spend.requests })} · {t("{n} tokens", { n: (v.spend.input_tokens + v.spend.output_tokens).toLocaleString() })}
           </span>
         </div>
         {v.budget ? <div className={`progress ${used >= 0.9 ? "warn" : ""}`}><span style={{ width: `${used * 100}%` }} /></div> : null}
-        <span className="muted small">An estimate from the prices below; your provider's bill is the final word.</span>
+        <span className="muted small">{t("An estimate from the prices below; your provider's bill is the final word.")}</span>
       </div>
       <div className="row wrap">
         <label className="adv-field">
-          <span>Monthly budget (US$)</span>
-          <input className="input" type="number" min={0} step={1} value={budget} placeholder="No limit" onChange={(e) => setBudget(e.target.value)} onBlur={() => run(() => api.setCloudOptions(budget === "" ? null : Number(budget), v.redact))} />
+          <span>{t("Monthly budget (US$)")}</span>
+          <input className="input" type="number" min={0} step={1} value={budget} placeholder={t("No limit")} onChange={(e) => setBudget(e.target.value)} onBlur={() => run(() => api.setCloudOptions(budget === "" ? null : Number(budget), v.redact))} />
         </label>
       </div>
       <label className="check">
         <input type="checkbox" checked={v.redact} onChange={(e) => run(() => api.setCloudOptions(v.budget, e.target.checked))} />
         <span>
-          Hide personal details from cloud models
-          <span className="muted small block">Email addresses, phone numbers, card numbers and US Social Security numbers are replaced with placeholders like [email 1] before sending, and put back in the reply.</span>
+          {t("Hide personal details from cloud models")}
+          <span className="muted small block">{t("Email addresses, phone numbers, card numbers and US Social Security numbers are replaced with placeholders like [email 1] before sending, and put back in the reply.")}</span>
         </span>
       </label>
 
@@ -235,17 +236,17 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
       ))}
 
       <div className="row wrap">
-        <span className="small">Add:</span>
+        <span className="small">{t("Add:")}</span>
         {v.presets.map((p) => (
           <button key={p.id} className="btn small" onClick={() => run(() => api.addCloudProvider(p.id, null, null))}>
             {p.name}
           </button>
         ))}
-        <button className="btn ghost small" onClick={() => setCustom({ name: "", url: "" })}>Other (OpenAI-compatible)…</button>
+        <button className="btn ghost small" onClick={() => setCustom({ name: "", url: "" })}>{t("Other (OpenAI-compatible)…")}</button>
       </div>
       {custom && (
         <div className="row wrap">
-          <input className="input" placeholder="Name" value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
+          <input className="input" placeholder={t("Name")} value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
           <input className="input" placeholder="https://…/v1" value={custom.url} onChange={(e) => setCustom({ ...custom, url: e.target.value })} />
           <button
             className="btn small"
@@ -255,7 +256,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
               setCustom(null);
             }}
           >
-            Add
+            {t("Add")}
           </button>
         </div>
       )}

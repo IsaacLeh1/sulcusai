@@ -3,6 +3,7 @@
 // become blob: URLs (cached, so scrolling the gallery doesn't refetch).
 import { useEffect, useState } from "react";
 import { api, type MediaItem, type MediaOp } from "./api";
+import { t, tx } from "./i18n";
 
 const cache = new Map<string, Promise<string>>();
 
@@ -86,42 +87,42 @@ export function useMediaUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> | null
 export function waitLabel(secs: number | null | undefined): string {
   if (secs == null || !isFinite(secs)) return "";
   const s = Math.max(1, Math.round(secs));
-  if (s < 60) return `about ${s} s`;
+  if (s < 60) return t("about {s} s", { s });
   const m = Math.round(s / 60);
-  return `about ${m} min`;
+  return t("about {m} min", { m });
 }
 
 export const OP_LABEL: Record<string, string> = {
-  generate: "Made",
-  edit: "Edited",
-  fill: "Filled in",
-  extend: "Extended",
-  restyle: "Restyled",
-  upscale: "Upscaled",
-  remove_background: "Cut out",
-  video: "Video",
-  music: "Song",
-  sound: "Sound",
-  narrate: "Narration",
-  import: "Imported",
-  screenshot: "Screenshot",
-  trim: "Trimmed",
-  paste: "Pasted",
-  attach: "Attached",
+  generate: tx("Made"),
+  edit: tx("Edited"),
+  fill: tx("Filled in"),
+  extend: tx("Extended"),
+  restyle: tx("Restyled"),
+  upscale: tx("Upscaled"),
+  remove_background: tx("Cut out"),
+  video: tx("Video"),
+  music: tx("Song"),
+  sound: tx("Sound"),
+  narrate: tx("Narration"),
+  import: tx("Imported"),
+  screenshot: tx("Screenshot"),
+  trim: tx("Trimmed"),
+  paste: tx("Pasted"),
+  attach: tx("Attached"),
 };
 
 export const JOB_LABEL: Record<MediaOp | string, string> = {
-  generate: "Making a picture",
-  edit: "Editing a picture",
-  fill: "Filling in",
-  extend: "Extending a picture",
-  restyle: "Restyling",
-  upscale: "Upscaling",
-  remove_background: "Removing the background",
-  video: "Making a video",
-  music: "Making a song",
-  sound: "Making a sound",
-  narrate: "Reading aloud",
+  generate: tx("Making a picture"),
+  edit: tx("Editing a picture"),
+  fill: tx("Filling in"),
+  extend: tx("Extending a picture"),
+  restyle: tx("Restyling"),
+  upscale: tx("Upscaling"),
+  remove_background: tx("Removing the background"),
+  video: tx("Making a video"),
+  music: tx("Making a song"),
+  sound: tx("Making a sound"),
+  narrate: tx("Reading aloud"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

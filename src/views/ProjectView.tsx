@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Chat, type Memory, type Project } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t } from "../i18n";
 
 interface Props {
   projectId: string;
@@ -35,7 +36,7 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
     load();
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!project) return <div className="page"><p className="muted">Loading…</p></div>;
+  if (!project) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
   const dirty = name !== project.name || instructions !== project.instructions;
   const projectChats = chats.filter((c) => c.project_id === projectId);
 
@@ -44,14 +45,14 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
       await api.updateProject(projectId, name, instructions);
       await load();
       onChanged();
-      toast("Project saved.", "success");
+      toast(t("Project saved."), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
   };
 
   const addFolder = async () => {
-    const picked = await open({ directory: true, multiple: false, title: `Add a folder to ${project.name}` });
+    const picked = await open({ directory: true, multiple: false, title: t("Add a folder to {name}", { name: project.name }) });
     if (typeof picked !== "string") return;
     try {
       await api.addProjectFolder(projectId, picked);
@@ -67,36 +68,36 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
         <header className="page-head">
           <div>
             <h1>📚 {project.name}</h1>
-            <p className="muted">A project keeps its own instructions, folders and memories. Every chat in it uses them.</p>
+            <p className="muted">{t("A project keeps its own instructions, folders and memories. Every chat in it uses them.")}</p>
           </div>
-          <button className="btn primary" onClick={onNewChat}>+ New chat in project</button>
+          <button className="btn primary" onClick={onNewChat}>{t("+ New chat in project")}</button>
         </header>
 
         <section className="card form">
           <label>
-            Name
+            {t("Name")}
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
           </label>
           <label>
-            Instructions
+            {t("Instructions")}
             <textarea
               className="input"
               rows={5}
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               maxLength={8000}
-              placeholder="What should the assistant know or do in this project? For example: This is my thesis on coral reefs. Use APA citations and a formal tone."
+              placeholder={t("What should the assistant know or do in this project? For example: This is my thesis on coral reefs. Use APA citations and a formal tone.")}
             />
           </label>
           <div>
-            <button className="btn primary" onClick={save} disabled={!dirty || !name.trim()}>Save</button>
+            <button className="btn primary" onClick={save} disabled={!dirty || !name.trim()}>{t("Save")}</button>
           </div>
         </section>
 
         <section className="card">
-          <h2>Folders</h2>
-          <p className="muted small">Chats in this project can use these folders, in addition to any you shared everywhere.</p>
-          {project.folders.length === 0 && <p className="small">No folders yet.</p>}
+          <h2>{t("Folders")}</h2>
+          <p className="muted small">{t("Chats in this project can use these folders, in addition to any you shared everywhere.")}</p>
+          {project.folders.length === 0 && <p className="small">{t("No folders yet.")}</p>}
           {project.folders.map((f) => (
             <div key={f} className="setting-row">
               <span className="ellipsis small" title={f}>📁 {f}</span>
@@ -107,17 +108,17 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
                   load();
                 }}
               >
-                Remove
+                {t("Remove")}
               </button>
             </div>
           ))}
-          <button className="btn" onClick={addFolder}>+ Add a folder</button>
+          <button className="btn" onClick={addFolder}>{t("+ Add a folder")}</button>
         </section>
 
         <section className="card">
-          <h2>Memories in this project</h2>
+          <h2>{t("Memories in this project")}</h2>
           {memories.length === 0 ? (
-            <p className="muted small">None yet. The assistant saves them as you work, and you can manage them on the Memory page.</p>
+            <p className="muted small">{t("None yet. The assistant saves them as you work, and you can manage them on the Memory page.")}</p>
           ) : (
             <ul className="memory-list compact">
               {memories.map((m) => (
@@ -128,8 +129,8 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
         </section>
 
         <section className="card">
-          <h2>Chats</h2>
-          {projectChats.length === 0 && <p className="muted small">No chats in this project yet.</p>}
+          <h2>{t("Chats")}</h2>
+          {projectChats.length === 0 && <p className="muted small">{t("No chats in this project yet.")}</p>}
           {projectChats.map((c) => (
             <button key={c.id} className="chat-item" onClick={() => onOpenChat(c.id)}>
               <span className="ellipsis">{c.title}</span>
@@ -137,13 +138,17 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
           ))}
         </section>
 
-        <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>Delete project</button>
+        <button className="btn ghost danger" onClick={() => setConfirmDelete(true)}>{t("Delete project")}</button>
       </div>
       {confirmDelete && (
-        <Modal title={`Delete ${project.name}?`} onClose={() => setConfirmDelete(false)}>
-          <p>This deletes the project's instructions and its {memories.length} memor{memories.length === 1 ? "y" : "ies"}. Its chats are kept and move out of the project. Files in its folders aren't touched.</p>
+        <Modal title={t("Delete {name}?", { name: project.name })} onClose={() => setConfirmDelete(false)}>
+          <p>
+            {memories.length === 1
+              ? t("This deletes the project's instructions and its 1 memory. Its chats are kept and move out of the project. Files in its folders aren't touched.")
+              : t("This deletes the project's instructions and its {n} memories. Its chats are kept and move out of the project. Files in its folders aren't touched.", { n: memories.length })}
+          </p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirmDelete(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -152,7 +157,7 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
                 onDeleted();
               }}
             >
-              Delete project
+              {t("Delete project")}
             </button>
           </div>
         </Modal>

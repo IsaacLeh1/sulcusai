@@ -19,6 +19,7 @@ import {
   type TaughtAdapter,
 } from "../api";
 import { APP_NAME } from "../brand";
+import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
@@ -56,9 +57,9 @@ interface Streaming {
 type Status = "idle" | "loading" | "thinking" | "writing" | "working";
 
 const MODES: { id: RunMode; label: string; help: string }[] = [
-  { id: "plan", label: "Plan", help: "Looks around and proposes a plan. Changes nothing until you approve." },
-  { id: "auto", label: "Auto", help: "Reads freely; asks before changing files or running commands." },
-  { id: "bypass", label: "Bypass", help: "Changes files and runs commands without asking. Undo still works for file changes." },
+  { id: "plan", label: tx("Plan"), help: tx("Looks around and proposes a plan. Changes nothing until you approve.") },
+  { id: "auto", label: tx("Auto"), help: tx("Reads freely; asks before changing files or running commands.") },
+  { id: "bypass", label: tx("Bypass"), help: tx("Changes files and runs commands without asking. Undo still works for file changes.") },
 ];
 
 export function ChatView(props: Props) {
@@ -68,10 +69,10 @@ export function ChatView(props: Props) {
     return (
       <div className="empty">
         <img src="/logo.svg" alt="" width={64} height={64} />
-        <h1>Welcome to {APP_NAME}</h1>
-        <p className="muted">Install a model to start chatting. Everything runs privately on this PC.</p>
+        <h1>{t("Welcome to {app}", { app: APP_NAME })}</h1>
+        <p className="muted">{t("Install a model to start chatting. Everything runs privately on this PC.")}</p>
         <button className="btn primary" onClick={props.onGoModels}>
-          Choose a model
+          {t("Choose a model")}
         </button>
         {/* The list refreshes itself when models are found. */}
         <LookForModels compact onRefresh={async () => {}} toast={props.toast} />
@@ -82,10 +83,10 @@ export function ChatView(props: Props) {
     return (
       <div className="empty">
         <img src="/logo.svg" alt="" width={64} height={64} />
-        <h1>What can I help with?</h1>
-        <p className="muted">Start a new chat, or pick one from the sidebar.</p>
+        <h1>{t("What can I help with?")}</h1>
+        <p className="muted">{t("Start a new chat, or pick one from the sidebar.")}</p>
         <button className="btn primary" onClick={props.onNewChat}>
-          New chat
+          {t("New chat")}
         </button>
       </div>
     );
@@ -105,9 +106,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const prev = lastStatus.current;
     lastStatus.current = status;
     if (status === prev) return;
-    if (status === "idle") setAnnounce("Reply ready.");
-    else if (status === "loading") setAnnounce("Loading the model.");
-    else if (prev === "idle" || prev === "loading") setAnnounce("Replying…");
+    if (status === "idle") setAnnounce(t("Reply ready."));
+    else if (status === "loading") setAnnounce(t("Loading the model."));
+    else if (prev === "idle" || prev === "loading") setAnnounce(t("Replying…"));
   }, [status]);
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
@@ -157,7 +158,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
   const reload = useCallback(() => {
     api.messages(chat.id).then(setMessages);
-    api.undoableTurns(chat.id).then((t) => setUndoable(new Set(t))).catch(() => {});
+    api.undoableTurns(chat.id).then((turns) => setUndoable(new Set(turns))).catch(() => {});
   }, [chat.id]);
 
   useEffect(() => {
@@ -182,7 +183,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:status", mine((p) => {
         if (p.status === "handoff") setHandingOff(true);
         else if (p.status === "cooling") {
-          setCooling(p.detail ?? "the PC");
+          setCooling(p.detail ?? t("the PC"));
           setStatus("working");
         } else setStatus("loading");
       })),
@@ -286,7 +287,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const attachFile = async () => {
-    const picked = await openFile({ multiple: true, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    const picked = await openFile({ multiple: true, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] }] });
     const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
     for (const p of paths) {
       try {
@@ -349,7 +350,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const undo = async (turnId: string) => {
     try {
       const notes = await api.undoTurn(chat.id, turnId);
-      toast(notes.length ? `Undone, with notes: ${notes.join(" ")}` : "Changes from that reply were undone.", notes.length ? "error" : "success");
+      toast(notes.length ? t("Undone, with notes: {notes}", { notes: notes.join(" ") }) : t("Changes from that reply were undone."), notes.length ? "error" : "success");
       reload();
     } catch (e) {
       toast(errorText(e), "error");
@@ -368,35 +369,35 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     <div className="conversation">
       <header className="chat-header">
         <h1 className="ellipsis" title={chat.title}>{chat.title}</h1>
-        <div className="mode-switch" role="radiogroup" aria-label="Run mode">
+        <div className="mode-switch" role="radiogroup" aria-label={t("Run mode")}>
           {MODES.map((m) => (
             <button
               key={m.id}
               role="radio"
               aria-checked={chat.mode === m.id}
               className={`mode ${m.id} ${chat.mode === m.id ? "active" : ""}`}
-              title={m.help}
+              title={t(m.help)}
               onClick={() => setMode(m.id)}
               disabled={busy}
             >
-              {m.label}
+              {t(m.label)}
             </button>
           ))}
         </div>
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
-          <button className="btn ghost small" onClick={() => setRenaming(true)}>Rename</button>
-          <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>Delete</button>
+          <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
+          <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>{t("Delete")}</button>
         </div>
       </header>
 
       {(chat.incognito || projectName || chat.parent_id) && (
         <div className={`chat-banner ${chat.incognito ? "incognito" : ""}`}>
-          {chat.incognito ? "🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it." : projectName ? `📚 In project ${projectName}` : null}
+          {chat.incognito ? t("🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.") : projectName ? t("📚 In project {name}", { name: projectName }) : null}
           {chat.parent_id && (
             <button className="link" onClick={() => onOpenChat(chat.parent_id!)}>
-              ↩ Continues an earlier chat
+              {t("↩ Continues an earlier chat")}
             </button>
           )}
         </div>
@@ -407,18 +408,20 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <p className="muted">
               {cloud ? (
                 <>
-                  You're chatting with <strong>☁ {cloud.name}</strong>, which runs on {cloud.provider}'s servers. What you send goes to them.
+                  {t("You're chatting with")} <strong>☁ {cloud.name}</strong>
+                  {t(", which runs on {provider}'s servers. What you send goes to them.", { provider: cloud.provider })}
                 </>
               ) : (
                 <>
-                  You're chatting with <strong>{model?.name ?? "a local model"}</strong>, running on this PC.
+                  {t("You're chatting with")} <strong>{model?.name ?? t("a local model")}</strong>
+                  {t(", running on this PC.")}
                 </>
               )}
             </p>
-            {canTools && features.has("files") && <p className="muted small">Share a folder with 📁 and it can read and change files there, or run commands to build and test code.</p>}
+            {canTools && features.has("files") && <p className="muted small">{t("Share a folder with 📁 and it can read and change files there, or run commands to build and test code.")}</p>}
             {!features.has("files") && features.size === 0 && (
               <p className="muted small">
-                Want dictation, voice chat, files or meetings? <button className="link" onClick={onGoFeatures}>Add features</button>
+                {t("Want dictation, voice chat, files or meetings?")} <button className="link" onClick={onGoFeatures}>{t("Add features")}</button>
               </p>
             )}
           </div>
@@ -438,15 +441,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <JobCard job={j} />
           </div>
         ))}
-        {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
-        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? `Connecting to ${cloud.provider}…` : `Loading ${model?.name ?? "the model"} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)`}</p>}
+        {handingOff && <p className="muted small pad">{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
+        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
-          <p className="muted small pad">{cooling ? `Letting the PC cool down before the next step (${cooling})…` : "Working…"}</p>
+          <p className="muted small pad">{cooling ? t("Letting the PC cool down before the next step ({what})…", { what: cooling }) : t("Working…")}</p>
         )}
         {showRunPlan && (
           <div className="plan-actions">
-            <button className="btn primary" onClick={runPlan}>Run this plan</button>
-            <span className="muted small">Switches to Auto, so you'll still approve each change.</span>
+            <button className="btn primary" onClick={runPlan}>{t("Run this plan")}</button>
+            <span className="muted small">{t("Switches to Auto, so you'll still approve each change.")}</span>
           </div>
         )}
         {error && <div className="error-box">{error}</div>}
@@ -468,13 +471,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
-            placeholder={chat.mode === "plan" ? "Describe what you want; it will propose a plan first…" : `Message ${modelName ?? APP_NAME}…`}
+            placeholder={chat.mode === "plan" ? t("Describe what you want; it will propose a plan first…") : t("Message {name}…", { name: modelName ?? APP_NAME })}
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
-            aria-label="Message"
+            aria-label={t("Message")}
           />
           <div className="composer-bar">
             {canTools && features.has("files") && <FolderMenu toast={toast} />}
-            <button className="globe" onClick={attachFile} title={canSee ? "Attach a picture (or paste one)" : "Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can."}>
+            <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one)") : t("Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
               📎
             </button>
             <button
@@ -484,17 +487,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               aria-pressed={webOn}
               title={
                 connectivity !== "offline"
-                  ? "Web is on for every chat. Change it in the status bar."
+                  ? t("Web is on for every chat. Change it in the status bar.")
                   : webOn
-                    ? "Web is on for this chat (Ctrl+Shift+W)"
-                    : "Turn on web for this chat (Ctrl+Shift+W)"
+                    ? t("Web is on for this chat (Ctrl+Shift+W)")
+                    : t("Turn on web for this chat (Ctrl+Shift+W)")
               }
             >
-              🌐 {webOn ? "Web on" : "Web off"}
+              🌐 {webOn ? t("Web on") : t("Web off")}
             </button>
-            <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label="Model for this chat" disabled={busy}>
+            <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               {cloudChoices.length > 0 || cloudId || taught.length > 0 ? (
-                <optgroup label="On this PC">
+                <optgroup label={t("On this PC")}>
                   {installed.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.name}
@@ -509,7 +512,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 ))
               )}
               {taught.length > 0 && (
-                <optgroup label="Taught on this PC">
+                <optgroup label={t("Taught on this PC")}>
                   {taught.map((a) => (
                     <option key={a.id} value={`adapter:${a.id}`}>
                       {a.base_name} + {a.name}
@@ -518,19 +521,19 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 </optgroup>
               )}
               {(cloudChoices.length > 0 || cloudId) && (
-                <optgroup label={connectivity === "cloud" ? "☁ Cloud" : "☁ Cloud (needs the Cloud level)"}>
+                <optgroup label={connectivity === "cloud" ? t("☁ Cloud") : t("☁ Cloud (needs the Cloud level)")}>
                   {cloudChoices.map((c) => (
                     <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
                       ☁ {c.name} · {c.provider}
                     </option>
                   ))}
-                  {cloudId && !cloud && <option value={cloudId} disabled>☁ (removed model)</option>}
+                  {cloudId && !cloud && <option value={cloudId} disabled>{t("☁ (removed model)")}</option>}
                 </optgroup>
               )}
             </select>
-            {cloudId && <span className="badge cloud-badge" title={cloud ? `Runs on ${cloud.provider}'s servers` : "A cloud model"}>☁ Cloud</span>}
+            {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("☁ Cloud")}</span>}
             <span className="spacer" />
-            {tps !== null && !busy && <span className="muted small">{tps} tokens/sec</span>}
+            {tps !== null && !busy && <span className="muted small">{t("{n} tokens/sec", { n: tps })}</span>}
             {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
             {features.has("voice_chat") && (
               <button
@@ -538,43 +541,43 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 className={`voice-btn ${voice ? "on" : ""}`}
                 onClick={() => setVoice((v) => !v)}
                 aria-pressed={voice}
-                title={voice ? "End voice chat" : "Voice chat: talk, and hear the answers"}
-                aria-label={voice ? "End voice chat" : "Start voice chat"}
+                title={voice ? t("End voice chat") : t("Voice chat: talk, and hear the answers")}
+                aria-label={voice ? t("End voice chat") : t("Start voice chat")}
               >
                 🗣
               </button>
             )}
             {busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
-                Stop
+                {t("Stop")}
               </button>
             ) : (
               <button className="btn primary" onClick={send} disabled={!input.trim() && attached.length === 0}>
-                Send
+                {t("Send")}
               </button>
             )}
           </div>
         </div>
         {attached.length > 0 && model && !model.vision && !cloud && (
-          <p className="small warn-text center">{model.name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).</p>
+          <p className="small warn-text center">{t("{name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).", { name: model.name })}</p>
         )}
         {model && !model.tools && !cloud && (
-          <p className="muted small center">{model.name} can chat but can't use files or commands. Qwen3 models can.</p>
+          <p className="muted small center">{t("{name} can chat but can't use files or commands. Qwen3 models can.", { name: model.name })}</p>
         )}
-        {webOn && <p className="muted small center">Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.</p>}
-        {!webOn && searchOn && <p className="muted small center">Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.</p>}
+        {webOn && <p className="muted small center">{t("Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
+        {!webOn && searchOn && <p className="muted small center">{t("Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
       </div>
 
       {lightbox && <Lightbox item={lightbox} toast={toast} onClose={() => setLightbox(null)} />}
       {confirmBypass && (
-        <Modal title="Switch to Bypass mode?" onClose={() => setConfirmBypass(false)}>
-          <p>In Bypass mode the assistant changes files and runs commands in your shared folders <strong>without asking</strong>.</p>
+        <Modal title={t("Switch to Bypass mode?")} onClose={() => setConfirmBypass(false)}>
+          <p>{t("In Bypass mode the assistant changes files and runs commands in your shared folders")} <strong>{t("without asking")}</strong>.</p>
           <ul>
-            <li>File changes can still be undone after each reply.</li>
-            <li>Commands can't be undone, so their effects stay.</li>
+            <li>{t("File changes can still be undone after each reply.")}</li>
+            <li>{t("Commands can't be undone, so their effects stay.")}</li>
           </ul>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmBypass(false)}>Stay in Auto</button>
+            <button className="btn" onClick={() => setConfirmBypass(false)}>{t("Stay in Auto")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -583,7 +586,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 onChanged();
               }}
             >
-              Use Bypass
+              {t("Use Bypass")}
             </button>
           </div>
         </Modal>
@@ -592,9 +595,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <RenameDialog
           title={chat.title}
           onClose={() => setRenaming(false)}
-          onSave={async (t) => {
+          onSave={async (name) => {
             try {
-              await api.renameChat(chat.id, t);
+              await api.renameChat(chat.id, name);
               setRenaming(false);
               onChanged();
             } catch (e) {
@@ -604,10 +607,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         />
       )}
       {confirmDelete && (
-        <Modal title="Delete this chat?" onClose={() => setConfirmDelete(false)}>
-          <p>“{chat.title}” and all its messages will be permanently deleted from this PC.</p>
+        <Modal title={t("Delete this chat?")} onClose={() => setConfirmDelete(false)}>
+          <p>{t("“{title}” and all its messages will be permanently deleted from this PC.", { title: chat.title })}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirmDelete(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -616,7 +619,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 onDeleted();
               }}
             >
-              Delete
+              {t("Delete")}
             </button>
           </div>
         </Modal>
@@ -649,7 +652,7 @@ function renderItems(
       const id = turnId;
       out.push(
         <div key={`undo-${key}`} className="undo-row">
-          <button className="btn ghost small" onClick={() => undo(id)}>↶ Undo file changes from this reply</button>
+          <button className="btn ghost small" onClick={() => undo(id)}>{t("↶ Undo file changes from this reply")}</button>
         </div>,
       );
     }
@@ -665,7 +668,7 @@ function renderItems(
           {(m.content || m.thinking) && <MessageView m={m} toast={toast} />}
           {m.meta?.handoff_to && (
             <div className="undo-row">
-              <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>Open the continued chat →</button>
+              <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>{t("Open the continued chat →")}</button>
             </div>
           )}
           {m.tool_calls?.map((c) => {
@@ -701,12 +704,12 @@ function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status;
       )}
       {m.thinking && (
         <details className="thinking" open={thinkingNow}>
-          <summary>{thinkingNow ? "Thinking…" : "Thought process"}</summary>
+          <summary>{thinkingNow ? t("Thinking…") : t("Thought process")}</summary>
           <div className="thinking-text">{m.thinking}</div>
         </details>
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
-      {live && !m.content && !m.thinking && <span className="typing" aria-label="Writing" />}
+      {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
       {toast && m.role === "assistant" && m.content && (
         <div className="msg-tools">
           <SpeakButton text={m.content} toast={toast} />
@@ -720,15 +723,15 @@ function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status;
 function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void }) {
   const src = useMediaUrl({ id, mime: "image/jpeg", kind: "image" }, true);
   if (!src) return null;
-  return <img src={src} alt="Attached picture" onClick={() => api.mediaGet(id).then((i) => onOpen?.(i)).catch(() => {})} />;
+  return <img src={src} alt={t("Attached picture")} onClick={() => api.mediaGet(id).then((i) => onOpen?.(i)).catch(() => {})} />;
 }
 
 function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
   const src = useMediaUrl(item, true);
   return (
     <span className="attach-chip">
-      {src ? <img src={src} alt="Attached picture" /> : <span className="media-inline-ph">🖼</span>}
-      <button onClick={onRemove} aria-label="Remove picture">✕</button>
+      {src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">🖼</span>}
+      <button onClick={onRemove} aria-label={t("Remove picture")}>✕</button>
     </span>
   );
 }
@@ -739,13 +742,13 @@ function WebRequestCard({ title, onEnable }: { title: string; onEnable: (() => v
     <div className="web-request" role="note">
       <span aria-hidden>🌐</span>
       <div>
-        <strong>This needs web access</strong>
-        <span className="small muted block">To look up: {reason}. Only the search and the pages it opens go online; the AI stays on this PC.</span>
+        <strong>{t("This needs web access")}</strong>
+        <span className="small muted block">{t("To look up: {reason}. Only the search and the pages it opens go online; the AI stays on this PC.", { reason })}</span>
       </div>
       {onEnable ? (
-        <button className="btn primary small" onClick={onEnable}>Turn on web for this chat</button>
+        <button className="btn primary small" onClick={onEnable}>{t("Turn on web for this chat")}</button>
       ) : (
-        <span className="small muted">Web is on</span>
+        <span className="small muted">{t("Web is on")}</span>
       )}
     </div>
   );
@@ -754,17 +757,17 @@ function WebRequestCard({ title, onEnable }: { title: string; onEnable: (() => v
 function RenameDialog({ title, onClose, onSave }: { title: string; onClose: () => void; onSave: (t: string) => void }) {
   const [value, setValue] = useState(title);
   return (
-    <Modal title="Rename chat" onClose={onClose}>
+    <Modal title={t("Rename chat")} onClose={onClose}>
       <form
         onSubmit={(e) => {
           e.preventDefault();
           onSave(value);
         }}
       >
-        <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus maxLength={80} aria-label="Chat name" />
+        <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus maxLength={80} aria-label={t("Chat name")} />
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={!value.trim()}>Save</button>
+          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="btn primary" disabled={!value.trim()}>{t("Save")}</button>
         </div>
       </form>
     </Modal>

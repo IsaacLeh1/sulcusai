@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useMemo, useRef, useState } from "react";
+import { t } from "../i18n";
 
 export type ToastKind = "info" | "success" | "error";
 export interface Toast {
@@ -28,10 +29,10 @@ export function useToasts() {
 export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
   return (
     <div className="toasts" role="status" aria-live="polite">
-      {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`}>
-          <span>{t.text}</span>
-          <button className="icon-btn" aria-label="Dismiss" onClick={() => onDismiss(t.id)}>
+      {toasts.map((item) => (
+        <div key={item.id} className={`toast ${item.kind}`}>
+          <span>{item.text}</span>
+          <button className="icon-btn" aria-label={t("Dismiss")} onClick={() => onDismiss(item.id)}>
             ×
           </button>
         </div>

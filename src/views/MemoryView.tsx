@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorText, on, type Memory, type Project, type Settings } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t } from "../i18n";
 
 export function MemoryView({ settings, onSettings, toast }: { settings: Settings; onSettings: (s: Settings) => void; toast: PushToast }) {
   const [memories, setMemories] = useState<Memory[] | null>(null);
@@ -25,7 +26,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const projectName = (id: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? "A deleted project" : null);
+  const projectName = (id: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? t("A deleted project") : null);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (memories ?? []).filter((m) => !q || m.content.toLowerCase().includes(q));
@@ -46,17 +47,17 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>Memory</h1>
-            <p className="muted">Things the assistant remembers across chats. It saves them when you share something lasting, or you can add your own. Stored encrypted on this PC.</p>
+            <h1>{t("Memory")}</h1>
+            <p className="muted">{t("Things the assistant remembers across chats. It saves them when you share something lasting, or you can add your own. Stored encrypted on this PC.")}</p>
           </div>
         </header>
 
         <section className="card">
           <div className="setting-row first">
             <div>
-              <strong>Use memory</strong>
+              <strong>{t("Use memory")}</strong>
               <span className="small muted block">
-                {settings.memory_enabled ? "On: chats can recall and save memories." : "Off: chats neither recall nor save anything."} Incognito chats never do.
+                {settings.memory_enabled ? t("On: chats can recall and save memories.") : t("Off: chats neither recall nor save anything.")} {t("Incognito chats never do.")}
               </span>
             </div>
             <label className="switch">
@@ -64,7 +65,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                 type="checkbox"
                 checked={settings.memory_enabled}
                 onChange={async (e) => onSettings(await api.setMemoryEnabled(e.target.checked))}
-                aria-label="Use memory"
+                aria-label={t("Use memory")}
               />
               <span />
             </label>
@@ -85,17 +86,17 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
             }
           }}
         >
-          <input className="input" placeholder="Add something to remember, e.g. I prefer metric units" value={adding} onChange={(e) => setAdding(e.target.value)} maxLength={500} />
-          <button className="btn primary" type="submit" disabled={!adding.trim()}>Add</button>
+          <input className="input" placeholder={t("Add something to remember, e.g. I prefer metric units")} value={adding} onChange={(e) => setAdding(e.target.value)} maxLength={500} />
+          <button className="btn primary" type="submit" disabled={!adding.trim()}>{t("Add")}</button>
         </form>
 
         <div className="filters">
-          <input className="input search" placeholder="Search memories" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search memories" />
+          <input className="input search" placeholder={t("Search memories")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search memories")} />
         </div>
 
         <section className="card">
-          {memories === null && <p className="muted">Loading…</p>}
-          {memories !== null && shown.length === 0 && <p className="muted">{memories.length ? "No memories match." : "Nothing remembered yet."}</p>}
+          {memories === null && <p className="muted">{t("Loading…")}</p>}
+          {memories !== null && shown.length === 0 && <p className="muted">{memories.length ? t("No memories match.") : t("Nothing remembered yet.")}</p>}
           <ul className="memory-list">
             {shown.map((m) => (
               <li key={m.id}>
@@ -108,13 +109,13 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                     }}
                   >
                     <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus maxLength={500} />
-                    <button className="btn primary small" type="submit">Save</button>
-                    <button className="btn ghost small" type="button" onClick={() => setEditing(null)}>Cancel</button>
+                    <button className="btn primary small" type="submit">{t("Save")}</button>
+                    <button className="btn ghost small" type="button" onClick={() => setEditing(null)}>{t("Cancel")}</button>
                   </form>
                 ) : (
                   <>
                     <span className="memory-text">{m.content}</span>
-                    <span className="tag">{projectName(m.project_id) ?? "Everywhere"}</span>
+                    <span className="tag">{projectName(m.project_id) ?? t("Everywhere")}</span>
                     <button
                       className="link"
                       onClick={() => {
@@ -122,7 +123,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                         setDraft(m.content);
                       }}
                     >
-                      Edit
+                      {t("Edit")}
                     </button>
                     <button
                       className="link danger"
@@ -131,7 +132,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                         load();
                       }}
                     >
-                      Delete
+                      {t("Delete")}
                     </button>
                   </>
                 )}
@@ -140,14 +141,14 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
           </ul>
         </section>
         {memories && memories.length > 0 && (
-          <button className="btn ghost danger" onClick={() => setConfirmClear(true)}>Delete all memories</button>
+          <button className="btn ghost danger" onClick={() => setConfirmClear(true)}>{t("Delete all memories")}</button>
         )}
       </div>
       {confirmClear && (
-        <Modal title="Delete all memories?" onClose={() => setConfirmClear(false)}>
-          <p>The assistant will forget everything it remembered, in every project. This can't be undone.</p>
+        <Modal title={t("Delete all memories?")} onClose={() => setConfirmClear(false)}>
+          <p>{t("The assistant will forget everything it remembered, in every project. This can't be undone.")}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmClear(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirmClear(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -156,7 +157,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                 load();
               }}
             >
-              Delete all
+              {t("Delete all")}
             </button>
           </div>
         </Modal>

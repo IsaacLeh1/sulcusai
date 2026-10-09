@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, on, type UpdateAvailable, type UpdateView } from "../api";
 import { bytes } from "../format";
+import { t } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -15,19 +16,19 @@ function InstallModal({ update, onClose, toast }: { update: UpdateAvailable; onC
     };
   }, []);
   return (
-    <Modal title={`Update to SulcusAI ${update.version}`} onClose={() => !progress && onClose()}>
+    <Modal title={t("Update to SulcusAI {version}", { version: update.version })} onClose={() => !progress && onClose()}>
       {update.notes && <p className="small update-notes">{update.notes}</p>}
-      <p className="muted small">The update is checked against SulcusAI's signing key before it installs. SulcusAI closes and opens again when it's done; your chats and settings stay.</p>
+      <p className="muted small">{t("The update is checked against SulcusAI's signing key before it installs. SulcusAI closes and opens again when it's done; your chats and settings stay.")}</p>
       {progress && (
         <div className="install-progress">
-          <span className="small">{progress.total ? `Downloading · ${bytes(progress.received)} of ${bytes(progress.total)}` : "Downloading…"}</span>
+          <span className="small">{progress.total ? t("Downloading · {received} of {total}", { received: bytes(progress.received), total: bytes(progress.total) }) : t("Downloading…")}</span>
           <div className={`progress ${progress.total ? "" : "indeterminate"}`}>
             <span style={{ width: progress.total ? `${(progress.received / progress.total) * 100}%` : undefined }} />
           </div>
         </div>
       )}
       <div className="modal-actions">
-        <button className="btn" onClick={onClose} disabled={!!progress}>Later</button>
+        <button className="btn" onClick={onClose} disabled={!!progress}>{t("Later")}</button>
         <button
           className="btn primary"
           disabled={!!progress}
@@ -41,7 +42,7 @@ function InstallModal({ update, onClose, toast }: { update: UpdateAvailable; onC
             }
           }}
         >
-          Install and restart
+          {t("Install and restart")}
         </button>
       </div>
     </Modal>
@@ -61,7 +62,7 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
   return (
     <div className="update-settings">
       <div className="row wrap">
-        <span className="small">Version {v.current}</span>
+        <span className="small">{t("Version {version}", { version: v.current })}</span>
         <button
           className="btn small"
           disabled={checking}
@@ -71,7 +72,7 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
             try {
               const found = await api.checkForUpdate();
               if (found) setInstalling(found);
-              else setResult("You have the latest version.");
+              else setResult(t("You have the latest version."));
               setV(await api.updateView());
             } catch (e) {
               setResult(errorText(e));
@@ -80,9 +81,9 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
             }
           }}
         >
-          {checking ? "Checking…" : "Check for updates"}
+          {checking ? t("Checking…") : t("Check for updates")}
         </button>
-        {v.available && <button className="btn primary small" onClick={() => setInstalling(v.available)}>Install {v.available.version}</button>}
+        {v.available && <button className="btn primary small" onClick={() => setInstalling(v.available)}>{t("Install {version}", { version: v.available.version })}</button>}
         {result && <span className="muted small">{result}</span>}
       </div>
       <label className="check">
@@ -96,8 +97,8 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
           }}
         />
         <span>
-          Check for updates once a day
-          <span className="muted small block">Only when SulcusAI may go online (Web or Cloud). Updates come from SulcusAI's GitHub releases and only install when you say so.</span>
+          {t("Check for updates once a day")}
+          <span className="muted small block">{t("Only when SulcusAI may go online (Web or Cloud). Updates come from SulcusAI's GitHub releases and only install when you say so.")}</span>
         </span>
       </label>
       {installing && <InstallModal update={installing} onClose={() => setInstalling(null)} toast={toast} />}
@@ -119,8 +120,8 @@ export function UpdatePill({ toast }: { toast: PushToast }) {
   if (!found) return null;
   return (
     <>
-      <button className="status-item update-pill" onClick={() => setOpen(true)} title="A newer version of SulcusAI is ready">
-        ⬆ Update to {found.version}
+      <button className="status-item update-pill" onClick={() => setOpen(true)} title={t("A newer version of SulcusAI is ready")}>
+        ⬆ {t("Update to {version}", { version: found.version })}
       </button>
       {open && <InstallModal update={found} onClose={() => setOpen(false)} toast={toast} />}
     </>

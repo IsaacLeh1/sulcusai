@@ -3,14 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import { api, errorText, type Action } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t, tx } from "../i18n";
 
 const CATEGORIES: { id: string; label: string; icon: string }[] = [
-  { id: "all", label: "Everything", icon: "" },
-  { id: "network", label: "Left this PC", icon: "🌐" },
-  { id: "model", label: "Models", icon: "🧠" },
-  { id: "privacy", label: "Privacy", icon: "🛡" },
-  { id: "security", label: "Security", icon: "🔐" },
-  { id: "chat", label: "Chats", icon: "💬" },
+  { id: "all", label: tx("Everything"), icon: "" },
+  { id: "network", label: tx("Left this PC"), icon: "🌐" },
+  { id: "model", label: tx("Models"), icon: "🧠" },
+  { id: "privacy", label: tx("Privacy"), icon: "🛡" },
+  { id: "security", label: tx("Security"), icon: "🔐" },
+  { id: "chat", label: tx("Chats"), icon: "💬" },
 ];
 
 function icon(category: string) {
@@ -43,8 +44,8 @@ export function ActivityView({ toast }: { toast: PushToast }) {
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>Activity</h1>
-            <p className="muted">Everything SulcusAI has done on its own, including anything that went over the internet. It never records what you say in chats.</p>
+            <h1>{t("Activity")}</h1>
+            <p className="muted">{t("Everything SulcusAI has done on its own, including anything that went over the internet. It never records what you say in chats.")}</p>
           </div>
         </header>
 
@@ -52,15 +53,15 @@ export function ActivityView({ toast }: { toast: PushToast }) {
           {CATEGORIES.map((c) => (
             <button key={c.id} className={`chip ${filter === c.id ? "active" : ""}`} onClick={() => setFilter(c.id)}>
               {c.icon && <span aria-hidden>{c.icon} </span>}
-              {c.label}
+              {t(c.label)}
             </button>
           ))}
-          <input className="input search" placeholder="Search activity" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search activity" />
+          <input className="input search" placeholder={t("Search activity")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search activity")} />
         </div>
 
         <section className="card activity">
-          {actions === null && <p className="muted">Loading…</p>}
-          {actions !== null && shown.length === 0 && <p className="muted">Nothing here yet.</p>}
+          {actions === null && <p className="muted">{t("Loading…")}</p>}
+          {actions !== null && shown.length === 0 && <p className="muted">{t("Nothing here yet.")}</p>}
           <ol className="activity-list">
             {shown.map((a) => (
               <li key={a.id}>
@@ -74,16 +75,16 @@ export function ActivityView({ toast }: { toast: PushToast }) {
 
         {actions && actions.length > 0 && (
           <button className="btn ghost danger" onClick={() => setConfirmClear(true)}>
-            Clear activity
+            {t("Clear activity")}
           </button>
         )}
       </div>
 
       {confirmClear && (
-        <Modal title="Clear the activity log?" onClose={() => setConfirmClear(false)}>
-          <p>This permanently deletes the log on this PC. A new entry will note that it was cleared.</p>
+        <Modal title={t("Clear the activity log?")} onClose={() => setConfirmClear(false)}>
+          <p>{t("This permanently deletes the log on this PC. A new entry will note that it was cleared.")}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmClear(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirmClear(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -92,7 +93,7 @@ export function ActivityView({ toast }: { toast: PushToast }) {
                 load();
               }}
             >
-              Clear
+              {t("Clear")}
             </button>
           </div>
         </Modal>

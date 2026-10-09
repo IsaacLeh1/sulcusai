@@ -16,6 +16,7 @@ import {
   type BrowsersView,
 } from "./api";
 import { APP_NAME } from "./brand";
+import { t } from "./i18n";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
@@ -83,7 +84,7 @@ export default function App() {
   });
 
   let body;
-  if (!security) body = <div className="empty"><p className="muted">Starting…</p></div>;
+  if (!security) body = <div className="empty"><p className="muted">{t("Starting…")}</p></div>;
   else if (security.locked) body = <LockScreen status={security} onUnlocked={refreshSecurity} />;
   else
     body = (
@@ -178,9 +179,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshCatalog();
         refreshEngine();
         api.settings().then(setSettings);
-        const name = f.name ?? catalog?.models.find((m) => m.id === f.model_id)?.name ?? "The model";
-        if (f.ok) toast(`${name} is installed and ready.`, "success");
-        else if (!f.cancelled) toast(`${name} didn't install: ${f.error}`, "error");
+        const name = f.name ?? catalog?.models.find((m) => m.id === f.model_id)?.name ?? t("The model");
+        if (f.ok) toast(t("{name} is installed and ready.", { name }), "success");
+        else if (!f.cancelled) toast(t("{name} didn't install: {error}", { name, error: String(f.error) }), "error");
       }),
       on("chat:done", (p) => {
         setRunning((r) => r.filter((id) => id !== p.chat_id));
@@ -201,13 +202,18 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       on("models:found", (p) => {
         refreshCatalog();
         api.settings().then(setSettings);
-        toast(`Found ${listNames(p.names)} on this PC. ${p.names.length === 1 ? "It's" : "They're"} ready to use, no download needed.`, "success");
+        toast(
+          p.names.length === 1
+            ? t("Found {names} on this PC. It's ready to use, no download needed.", { names: listNames(p.names) })
+            : t("Found {names} on this PC. They're ready to use, no download needed.", { names: listNames(p.names) }),
+          "success",
+        );
       }),
       on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
       on("schedule:ran", (p) => {
         refreshChats();
-        if (p.error) toast(`Scheduled task “${p.name}” didn't run: ${p.error}`, "error");
-        else toast(`Scheduled task “${p.name}” finished. Its result is in the sidebar.`, "success");
+        if (p.error) toast(t("Scheduled task “{name}” didn't run: {error}", { name: p.name, error: p.error }), "error");
+        else toast(t("Scheduled task “{name}” finished. Its result is in the sidebar.", { name: p.name }), "success");
       }),
       // A long chat continued in a new one: follow it.
       on("chat:handoff", async (p) => {
@@ -223,7 +229,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         setActiveChat(p.chat_id);
         setView("chat");
       }),
-      on("quick:hotkey_taken", (p) => toast(`Another app already uses ${p.hotkey}, so Quick ask can't use it.`, "error")),
+      on("quick:hotkey_taken", (p) => toast(t("Another app already uses {hotkey}, so Quick ask can't use it.", { hotkey: p.hotkey }), "error")),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);
@@ -299,7 +305,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       sub.then((un) => un());
     };
   }, []);
-  if (!settings) return <div className="empty"><p className="muted">Loading…</p></div>;
+  if (!settings) return <div className="empty"><p className="muted">{t("Loading…")}</p></div>;
 
   if (!settings.onboarded) {
     return (
@@ -328,82 +334,82 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <img src="/logo.svg" alt="" width={26} height={26} />
           <span>{APP_NAME}</span>
           {security.lock_enabled && (
-            <button className="icon-btn lock-btn" title="Lock now" aria-label="Lock now" onClick={() => api.lockNow()}>
+            <button className="icon-btn lock-btn" title={t("Lock now")} aria-label={t("Lock now")} onClick={() => api.lockNow()}>
               🔒
             </button>
           )}
         </div>
         <div className="new-chat-row">
           <button className="btn primary block" onClick={() => newChat()}>
-            + New chat
+            {t("+ New chat")}
           </button>
           <button
             className="btn incognito-btn"
             onClick={() => newChat(null, true)}
             disabled={installed.length === 0}
-            title="Incognito chat: not saved, no memory"
-            aria-label="New incognito chat"
+            title={t("Incognito chat: not saved, no memory")}
+            aria-label={t("New incognito chat")}
           >
             🕶
           </button>
         </div>
-        <nav className="nav" aria-label="Main">
+        <nav className="nav" aria-label={t("Main")}>
           {creates && (
             <button className={view === "studio" ? "active" : ""} onClick={() => setView("studio")}>
-              Studio
+              {t("Studio")}
             </button>
           )}
           {(has("meetings") || liveMeeting) && (
             <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
-              Meetings
-              {liveMeeting && <span className="dot rec" aria-label="Recording" />}
+              {t("Meetings")}
+              {liveMeeting && <span className="dot rec" aria-label={t("Recording")} />}
             </button>
           )}
           {has("notes") && (
             <button className={view === "notes" ? "active" : ""} onClick={() => setView("notes")}>
-              Notes
+              {t("Notes")}
             </button>
           )}
           {has("tasks") && (
             <button className={view === "tasks" ? "active" : ""} onClick={() => setView("tasks")}>
-              Tasks
+              {t("Tasks")}
             </button>
           )}
           {has("email") && (
             <button className={view === "mail" ? "active" : ""} onClick={() => setView("mail")}>
-              Mail
+              {t("Mail")}
             </button>
           )}
           {has("calendar") && (
             <button className={view === "calendar" ? "active" : ""} onClick={() => setView("calendar")}>
-              Calendar
+              {t("Calendar")}
             </button>
           )}
           {has("translate") && (
             <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
-              Translate
+              {t("Translate")}
             </button>
           )}
           {has("memory") && (
             <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
-              Memory
+              {t("Memory")}
             </button>
           )}
           {has("scheduled") && (
             <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
-              Scheduled
+              {t("Scheduled")}
             </button>
           )}
           {has("connectors") && (
             <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}>
-              Connectors
+              {t("Connectors")}
             </button>
           )}
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
-            <span>Projects</span>
-            <button className="icon-btn" title="New project" aria-label="New project" onClick={() => setNewProject(true)}>+</button>
+            <span>{t("Projects")}</span>
+            <button className="icon-btn" title={t("New project")} aria-label={t("New project")} onClick={() => setNewProject(true)}>+</button>
           </div>
           {projects.map((p) => (
             <button
@@ -420,7 +426,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           ))}
         </div>}
         <div className="chat-list" role="list">
-          {listed.length === 0 && <p className="muted small pad">Your chats will appear here.</p>}
+          {listed.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
           {listed.map((c) => (
             <button
               key={c.id}
@@ -433,11 +439,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               }}
               title={c.title}
             >
-              {c.incognito && <span aria-label="Incognito">🕶</span>}
+              {c.incognito && <span aria-label={t("Incognito")}>🕶</span>}
               <span className="ellipsis">{c.title}</span>
               {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
-              {c.web && <span className="globe-mini" title="Web on for this chat">🌐</span>}
-              {running.includes(c.id) && <span className="dot" title="Working" aria-label="Working" />}
+              {c.web && <span className="globe-mini" title={t("Web on for this chat")}>🌐</span>}
+              {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
             </button>
           ))}
         </div>
@@ -455,12 +461,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         />
       )}
       {confirmDelete && (
-        <Modal title="Delete this chat?" onClose={() => setConfirmDelete(null)}>
+        <Modal title={t("Delete this chat?")} onClose={() => setConfirmDelete(null)}>
           <p>
-            “{confirmDelete.title}” and its messages will be deleted from this PC. This can't be undone.
+            {t("“{title}” and its messages will be deleted from this PC. This can't be undone.", { title: confirmDelete.title })}
           </p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirmDelete(null)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               autoFocus
@@ -476,7 +482,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 }
               }}
             >
-              Delete
+              {t("Delete")}
             </button>
           </div>
         </Modal>
@@ -571,21 +577,21 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
       <footer className="statusbar">
         <ConnectivityMenu level={settings.connectivity} onChange={changeConnectivity} />
-        <span className="status-item" title={loadedName ? "The model in memory" : "Models load when you send a message and unload after a while idle, to free memory"}>
+        <span className="status-item" title={loadedName ? t("The model in memory") : t("Models load when you send a message and unload after a while idle, to free memory")}>
           {engineDl ? (
             <>
-              <span className="led busy" /> Getting the AI engine (first time only){engineDl.total ? ` · ${Math.round((engineDl.received / engineDl.total) * 100)}%` : "…"}
+              <span className="led busy" /> {t("Getting the AI engine (first time only)")}{engineDl.total ? ` · ${Math.round((engineDl.received / engineDl.total) * 100)}%` : "…"}
             </>
           ) : loadedName ? (
             <>
-              <span className="led on" /> {loadedName} loaded
+              <span className="led on" /> {t("{name} loaded", { name: loadedName })}
               <button className="link" onClick={async () => { await api.unload(); refreshEngine(); }}>
-                Unload
+                {t("Unload")}
               </button>
             </>
           ) : defaultName ? (
             <>
-              <span className="led" /> {loadingNow ? `Loading ${defaultName}…` : `${defaultName} · loads when you chat`}
+              <span className="led" /> {loadingNow ? t("Loading {name}…", { name: defaultName }) : t("{name} · loads when you chat", { name: defaultName })}
               {!loadingNow && (
                 <button
                   className="link"
@@ -601,27 +607,27 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     }
                   }}
                 >
-                  Load now
+                  {t("Load now")}
                 </button>
               )}
             </>
           ) : (
             <>
-              <span className="led" /> No model installed
+              <span className="led" /> {t("No model installed")}
             </>
           )}
         </span>
         {liveMeeting && (
-          <button className="status-item rec-pill" onClick={() => setView("meetings")} title="A meeting is being recorded">
-            <span className="rec-dot on" /> Recording meeting
+          <button className="status-item rec-pill" onClick={() => setView("meetings")} title={t("A meeting is being recorded")}>
+            <span className="rec-dot on" /> {t("Recording meeting")}
           </button>
         )}
         <PerfPill onOpen={() => setView("settings")} />
         <UpdatePill toast={toast} />
         <span className="spacer" />
         <span className="status-item muted">
-          🔐 Encrypted ·{" "}
-          {settings.connectivity === "cloud" ? "AI runs on this PC unless you pick a cloud model" : "AI runs only on this PC"}
+          {t("🔐 Encrypted ·")}{" "}
+          {settings.connectivity === "cloud" ? t("AI runs on this PC unless you pick a cloud model") : t("AI runs only on this PC")}
         </span>
       </footer>
       {newProject && (
@@ -647,7 +653,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate: (name: string) => void }) {
   const [name, setName] = useState("");
   return (
-    <Modal title="New project" onClose={onClose}>
+    <Modal title={t("New project")} onClose={onClose}>
       <form
         className="form"
         onSubmit={(e) => {
@@ -655,11 +661,11 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
           if (name.trim()) onCreate(name.trim());
         }}
       >
-        <p className="muted small">A project keeps its own instructions, folders and memories for a set of related chats.</p>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Project name, e.g. Thesis" autoFocus maxLength={80} />
+        <p className="muted small">{t("A project keeps its own instructions, folders and memories for a set of related chats.")}</p>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Project name, e.g. Thesis")} autoFocus maxLength={80} />
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={!name.trim()}>Create</button>
+          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
+          <button type="submit" className="btn primary" disabled={!name.trim()}>{t("Create")}</button>
         </div>
       </form>
     </Modal>
@@ -686,7 +692,7 @@ function ChatMenu({ x, y, onClose, onDelete }: { x: number; y: number; onClose: 
   return (
     <div ref={ref} className="context-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 60) }}>
       <button role="menuitem" className="danger" onClick={onDelete} autoFocus>
-        🗑 Delete chat
+        {t("🗑 Delete chat")}
       </button>
     </div>
   );
@@ -705,10 +711,10 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
   const builtin = view.current.kind === "builtin";
   // The built-in browser is a feature; another browser can always be opened.
   if (builtin && !browserOn) return null;
-  const name = view.current.kind === "app" ? view.current.name : view.current.kind === "system" ? "your default browser" : "the SulcusAI browser";
+  const name = view.current.kind === "app" ? view.current.name : view.current.kind === "system" ? t("your default browser") : t("the SulcusAI browser");
   return (
     <div className="topbar">
-      <button className="icon-btn web-btn" title={`Open ${name}`} aria-label={`Open ${name}`} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
+      <button className="icon-btn web-btn" title={t("Open {name}", { name })} aria-label={t("Open {name}", { name })} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
         🌐
       </button>
     </div>
@@ -716,9 +722,9 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
 }
 
 function listNames(names: string[]): string {
-  return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return names.length <= 1 ? names.join("") : t("{list} and {last}", { list: names.slice(0, -1).join(", "), last: names[names.length - 1] });
 }
 
 function PageLoading() {
-  return <div className="page"><p className="muted">Loading…</p></div>;
+  return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
 }

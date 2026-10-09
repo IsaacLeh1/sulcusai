@@ -5,9 +5,10 @@ import { api, errorText, on, type InstallProgress, type SpeakerModel, type Speec
 import { bytes, percent } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { t, tx } from "../i18n";
 
 function speedText(speed: number): string {
-  return `${speed >= 10 ? Math.round(speed) : speed.toFixed(1)}× faster than real time`;
+  return t("{speed}× faster than real time", { speed: speed >= 10 ? Math.round(speed) : speed.toFixed(1) });
 }
 
 export function SpeechModels({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {
@@ -25,7 +26,7 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [refresh]);
 
-  if (!view) return <p className="muted">Checking this PC…</p>;
+  if (!view) return <p className="muted">{t("Checking this PC…")}</p>;
   const installed = view.models.filter((m) => m.installed);
   const available = view.models.filter((m) => !m.installed);
   const busy = Object.keys(progress).length > 0;
@@ -33,12 +34,11 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
   return (
     <>
       <p className="muted">
-        Speech recognition turns what you say into text, on this PC, for dictation, voice chats and meetings. It runs on the
-        processor ({view.threads} threads) so your graphics card stays free for the chat model.
+        {t("Speech recognition turns what you say into text, on this PC, for dictation, voice chats and meetings. It runs on the processor ({threads} threads) so your graphics card stays free for the chat model.", { threads: view.threads })}
       </p>
       {installed.length > 0 && (
         <>
-          <h2>Installed</h2>
+          <h2>{t("Installed")}</h2>
           <div className="model-grid">
             {installed.map((m) => (
               <InstalledSpeech key={m.id} m={m} view={view} onChanged={refresh} toast={toast} />
@@ -46,12 +46,11 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
           </div>
         </>
       )}
-      <h2>Available for this PC</h2>
-      {available.length === 0 && <p className="muted">Every speech model that fits this PC is installed.</p>}
+      <h2>{t("Available for this PC")}</h2>
+      {available.length === 0 && <p className="muted">{t("Every speech model that fits this PC is installed.")}</p>}
       {installed.length === 0 && view.recommended_live && (
         <p className="callout small">
-          Tip: install two. The most accurate model writes meeting transcripts; a quicker one makes dictation and voice chats
-          feel instant. {SPEECH_HINT}
+          {t("Tip: install two. The most accurate model writes meeting transcripts; a quicker one makes dictation and voice chats feel instant.")} {t(SPEECH_HINT)}
         </p>
       )}
       <div className="model-grid">
@@ -59,25 +58,25 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
           <AvailableSpeech key={m.id} m={m} live={m.id === view.recommended_live} p={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
         ))}
       </div>
-      <h2>Voices</h2>
+      <h2>{t("Voices")}</h2>
       <p className="muted small">
-        Voices read replies aloud and talk in voice chats. Windows' built-in voices work already; natural voices sound far
-        more human.
+        {t("Voices read replies aloud and talk in voice chats. Windows' built-in voices work already; natural voices sound far more human.")}
       </p>
       <div className="model-grid">
         {packs.map((p) => (
           <VoicePackCard key={p.id} p={p} progress={progress[p.id]} otherBusy={busy && !progress[p.id]} onChanged={refresh} toast={toast} />
         ))}
       </div>
-      <h2>Meetings</h2>
+      <h2>{t("Meetings")}</h2>
       <div className="model-grid">
         {speakers && <SpeakerCard m={speakers} progress={progress[speakers.id]} otherBusy={busy && !progress[speakers.id]} onChanged={refresh} toast={toast} />}
       </div>
       {view.hidden > 0 && (
         <section className="card hint">
           <strong>
-            {view.hidden} {view.hidden === 1 ? "speech model is" : "speech models are"} hidden because this PC's processor
-            couldn't keep up with live speech.
+            {view.hidden === 1
+              ? t("1 speech model is hidden because this PC's processor couldn't keep up with live speech.")
+              : t("{n} speech models are hidden because this PC's processor couldn't keep up with live speech.", { n: view.hidden })}
           </strong>
         </section>
       )}
@@ -85,13 +84,13 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
   );
 }
 
-const SPEECH_HINT = "SulcusAI picks the right one for each job automatically; you can change that in Settings › Voice.";
+const SPEECH_HINT = tx("SulcusAI picks the right one for each job automatically; you can change that in Settings › Voice.");
 
 function Badges({ m, live }: { m: SpeechCard; live: boolean }) {
   return (
     <span className="row">
-      {m.recommended && <span className="badge">Best for meetings</span>}
-      {live && <span className="badge">Best for dictation</span>}
+      {m.recommended && <span className="badge">{t("Best for meetings")}</span>}
+      {live && <span className="badge">{t("Best for dictation")}</span>}
     </span>
   );
 }
@@ -102,7 +101,7 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
       <div className="model-head">
         <div>
           <h3>{m.name}</h3>
-          <span className="muted small">{m.publisher} · {m.languages} languages</span>
+          <span className="muted small">{m.publisher} · {t("{n} languages", { n: m.languages })}</span>
         </div>
         <Badges m={m} live={live} />
       </div>
@@ -114,12 +113,12 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
         <SpeechProgress id={m.id} p={p} />
       ) : (
         <div className="install-row">
-          <span className="muted small">{bytes(m.size)} download</span>
+          <span className="muted small">{t("{size} download", { size: bytes(m.size) })}</span>
           <span className="spacer" />
           <button
             className="btn primary"
             disabled={otherBusy}
-            title={otherBusy ? "One install at a time" : undefined}
+            title={otherBusy ? t("One install at a time") : undefined}
             onClick={async () => {
               try {
                 await api.installSpeech(m.id);
@@ -128,23 +127,23 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
               }
             }}
           >
-            Install
+            {t("Install")}
           </button>
         </div>
       )}
-      {!p && <p className="muted small fit-line">About {speedText(m.fit.speed)} on this PC (estimated)</p>}
+      {!p && <p className="muted small fit-line">{t("About {speed} on this PC (estimated)", { speed: speedText(m.fit.speed) })}</p>}
     </article>
   );
 }
 
 function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
-  const label = { engine: "Setting up the speech engine", verify: "Checking the file", download: "Downloading", benchmark: "Testing it", vision: "Downloading" }[p.phase];
+  const label = { engine: t("Setting up the speech engine"), verify: t("Checking the file"), download: t("Downloading"), benchmark: t("Testing it"), vision: t("Downloading") }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">
       <div className="progress-label">
-        <span>{label}{pct !== null ? ` · ${bytes(p.received)} of ${bytes(p.total)}` : "…"}</span>
-        {p.phase !== "benchmark" && <button className="link" onClick={() => api.cancelInstall(id)}>Cancel</button>}
+        <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
+        {p.phase !== "benchmark" && <button className="link" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />
@@ -156,30 +155,39 @@ function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
 function InstalledSpeech({ m, view, onChanged, toast }: { m: SpeechCard; view: SpeechView; onChanged: () => void; toast: PushToast }) {
   const [confirm, setConfirm] = useState(false);
   const inst = m.installed!;
-  const uses = [view.active === m.id && "meetings", view.live === m.id && "dictation and voice chats"].filter(Boolean).join(" and ");
+  const forMeetings = view.active === m.id;
+  const forLive = view.live === m.id;
+  const uses =
+    forMeetings && forLive
+      ? t("Used for meetings and dictation and voice chats")
+      : forMeetings
+        ? t("Used for meetings")
+        : forLive
+          ? t("Used for dictation and voice chats")
+          : "";
   return (
     <article className="card model installed">
       <div className="model-head">
         <div>
           <h3>{m.name}</h3>
-          <span className="muted small">{bytes(inst.size)} · {m.languages} languages</span>
+          <span className="muted small">{bytes(inst.size)} · {t("{n} languages", { n: m.languages })}</span>
         </div>
-        {uses && <span className="badge">In use</span>}
+        {uses && <span className="badge">{t("In use")}</span>}
       </div>
       <p className="desc">{m.description}</p>
       <p className="small fit-line">
-        {inst.speed !== null ? `Measured on this PC: ${speedText(inst.speed)} for a short sentence` : "Speed not measured yet"}
-        {uses && <span className="muted"> · Used for {uses}</span>}
+        {inst.speed !== null ? t("Measured on this PC: {speed} for a short sentence", { speed: speedText(inst.speed) }) : t("Speed not measured yet")}
+        {uses && <span className="muted"> · {uses}</span>}
       </p>
       <div className="install-row">
         <span className="spacer" />
-        <button className="btn ghost danger" onClick={() => setConfirm(true)}>Remove</button>
+        <button className="btn ghost danger" onClick={() => setConfirm(true)}>{t("Remove")}</button>
       </div>
       {confirm && (
-        <Modal title={`Remove ${m.name}?`} onClose={() => setConfirm(false)}>
-          <p>This deletes the model ({bytes(inst.size)}) from this PC. Meetings you recorded keep their transcripts.</p>
+        <Modal title={t("Remove {name}?", { name: m.name })} onClose={() => setConfirm(false)}>
+          <p>{t("This deletes the model ({size}) from this PC. Meetings you recorded keep their transcripts.", { size: bytes(inst.size) })}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -192,7 +200,7 @@ function InstalledSpeech({ m, view, onChanged, toast }: { m: SpeechCard; view: S
                 }
               }}
             >
-              Remove
+              {t("Remove")}
             </button>
           </div>
         </Modal>
@@ -208,9 +216,9 @@ function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoiceP
       <div className="model-head">
         <div>
           <h3>{p.name}</h3>
-          <span className="muted small">{p.publisher} · {p.styles.length} voices · {p.languages.length} languages</span>
+          <span className="muted small">{p.publisher} · {t("{n} voices", { n: p.styles.length })} · {t("{n} languages", { n: p.languages.length })}</span>
         </div>
-        {p.installed && <span className="badge">Installed</span>}
+        {p.installed && <span className="badge">{t("Installed")}</span>}
       </div>
       <p className="desc">{p.description}</p>
       <div className="tags">
@@ -220,13 +228,13 @@ function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoiceP
         <SpeechProgress id={p.id} p={progress} />
       ) : p.installed ? (
         <div className="install-row">
-          <span className="muted small">Choose a voice in Settings › Voice and meetings.</span>
+          <span className="muted small">{t("Choose a voice in Settings › Voice and meetings.")}</span>
           <span className="spacer" />
-          <button className="btn ghost danger" onClick={() => setConfirm(true)}>Remove</button>
+          <button className="btn ghost danger" onClick={() => setConfirm(true)}>{t("Remove")}</button>
         </div>
       ) : (
         <div className="install-row">
-          <span className="muted small">{bytes(p.size)} download</span>
+          <span className="muted small">{t("{size} download", { size: bytes(p.size) })}</span>
           <span className="spacer" />
           <button
             className="btn primary"
@@ -239,15 +247,15 @@ function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoiceP
               }
             }}
           >
-            Install
+            {t("Install")}
           </button>
         </div>
       )}
       {confirm && (
-        <Modal title={`Remove ${p.name}?`} onClose={() => setConfirm(false)}>
-          <p>This deletes the voices ({bytes(p.size)}) from this PC. Replies will be read by Windows' voices.</p>
+        <Modal title={t("Remove {name}?", { name: p.name })} onClose={() => setConfirm(false)}>
+          <p>{t("This deletes the voices ({size}) from this PC. Replies will be read by Windows' voices.", { size: bytes(p.size) })}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
@@ -260,7 +268,7 @@ function VoicePackCard({ p, progress, otherBusy, onChanged, toast }: { p: VoiceP
                 }
               }}
             >
-              Remove
+              {t("Remove")}
             </button>
           </div>
         </Modal>
@@ -277,7 +285,7 @@ function SpeakerCard({ m, progress, otherBusy, onChanged, toast }: { m: SpeakerM
           <h3>{m.name}</h3>
           <span className="muted small">{m.publisher}</span>
         </div>
-        {m.installed && <span className="badge">Installed</span>}
+        {m.installed && <span className="badge">{t("Installed")}</span>}
       </div>
       <p className="desc">{m.description}</p>
       <div className="tags">
@@ -287,21 +295,21 @@ function SpeakerCard({ m, progress, otherBusy, onChanged, toast }: { m: SpeakerM
         <SpeechProgress id={m.id} p={progress} />
       ) : m.installed ? (
         <div className="install-row">
-          <span className="muted small">New meetings label each person on the call.</span>
+          <span className="muted small">{t("New meetings label each person on the call.")}</span>
           <span className="spacer" />
           <button
             className="btn ghost danger"
             onClick={() => api.removeSpeakerModel().then(onChanged).catch((e) => toast(errorText(e), "error"))}
           >
-            Remove
+            {t("Remove")}
           </button>
         </div>
       ) : (
         <div className="install-row">
-          <span className="muted small">{bytes(m.download)} download</span>
+          <span className="muted small">{t("{size} download", { size: bytes(m.download) })}</span>
           <span className="spacer" />
           <button className="btn primary" disabled={otherBusy} onClick={() => api.installSpeakerModel().catch((e) => toast(errorText(e), "error"))}>
-            Install
+            {t("Install")}
           </button>
         </div>
       )}

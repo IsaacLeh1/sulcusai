@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, on, type SyncView } from "../api";
+import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 
 function when(ms: number | null): string {
-  if (!ms) return "not yet";
+  if (!ms) return t("not yet");
   const s = Math.round((Date.now() - ms) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  if (s < 60) return t("just now");
+  if (s < 3600) return t("{n} min ago", { n: Math.round(s / 60) });
+  if (s < 86400) return t("{n} h ago", { n: Math.round(s / 3600) });
   return new Date(ms).toLocaleDateString();
 }
 
@@ -48,7 +49,7 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
       const target = entering.target || (showing.length === 1 ? showing[0].id : "");
       setV(await api.pairDevice(entering.code, target || null));
       setEntering(null);
-      toast("Paired. Your chats, notes and tasks start syncing now.", "success");
+      toast(t("Paired. Your chats, notes and tasks start syncing now."), "success");
     } catch (e) {
       setEntering({ ...entering, busy: false });
       toast(errorText(e), "error");
@@ -57,27 +58,25 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
 
   return (
     <section className="card">
-      <h2>Your devices</h2>
+      <h2>{t("Your devices")}</h2>
       <p className="muted small">
-        Keep your chats, projects, memory, notes, tasks and “About you” the same on your PCs. They sync directly over your home or office network, encrypted, with no
-        cloud in between, so this works on Offline too. Models, pictures and video, meetings, mail and calendar accounts, connectors, plugins, schedules and other
-        settings stay on each PC. Incognito chats never sync.
+        {t("Keep your chats, projects, memory, notes, tasks and “About you” the same on your PCs. They sync directly over your home or office network, encrypted, with no cloud in between, so this works on Offline too. Models, pictures and video, meetings, mail and calendar accounts, connectors, plugins, schedules and other settings stay on each PC. Incognito chats never sync.")}
       </p>
       <div className="toggle-row">
         <div>
-          <strong>Sync with my other PCs</strong>
+          <strong>{t("Sync with my other PCs")}</strong>
           <span className="small muted block">
-            {v.enabled ? (v.listening ? "On. SulcusAI needs to be open on both PCs." : "Starting…") : "Off. Nothing is shared."}
+            {v.enabled ? (v.listening ? t("On. SulcusAI needs to be open on both PCs.") : t("Starting…")) : t("Off. Nothing is shared.")}
           </span>
         </div>
-        <label className="switch" title={v.enabled ? "On" : "Off"}>
-          <input type="checkbox" checked={v.enabled} onChange={(e) => run(() => api.setSync(e.target.checked, null))} aria-label="Sync with my other PCs" />
+        <label className="switch" title={v.enabled ? t("On") : t("Off")}>
+          <input type="checkbox" checked={v.enabled} onChange={(e) => run(() => api.setSync(e.target.checked, null))} aria-label={t("Sync with my other PCs")} />
           <span />
         </label>
       </div>
 
       <label className="form small">
-        This PC's name
+        {t("This PC's name")}
         <input
           className="input"
           value={name ?? v.name}
@@ -97,18 +96,18 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
               <span>
                 <strong>{p.name}</strong>{" "}
                 <span className="muted">
-                  · {p.syncing ? "syncing…" : `synced ${when(p.last_sync)}`}
-                  {v.enabled && (p.online ? " · on this network" : " · not seen on this network")}
+                  · {p.syncing ? t("syncing…") : t("synced {when}", { when: when(p.last_sync) })}
+                  {v.enabled && (p.online ? " · " + t("on this network") : " · " + t("not seen on this network"))}
                 </span>
                 {p.error && <span className="warn-text block">{p.error}</span>}
               </span>
               <button
                 className="btn ghost small"
                 onClick={() => {
-                  if (window.confirm(`Stop syncing with ${p.name}? What's already on each PC stays there.`)) run(() => api.removeDevice(p.id));
+                  if (window.confirm(t("Stop syncing with {name}? What's already on each PC stays there.", { name: p.name }))) run(() => api.removeDevice(p.id));
                 }}
               >
-                Unpair
+                {t("Unpair")}
               </button>
             </li>
           ))}
@@ -117,20 +116,20 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
 
       {v.code ? (
         <div className="pair-code" role="status">
-          <span className="small">On your other PC, open Settings → Your devices, choose “Enter a code” and type:</span>
+          <span className="small">{t("On your other PC, open Settings → Your devices, choose “Enter a code” and type:")}</span>
           <strong className="code">{v.code}</strong>
           <span className="muted small">
-            Good for {Math.floor(v.code_left / 60)}:{String(v.code_left % 60).padStart(2, "0")} more.
-            {v.address && ` If the other PC doesn't find this one by itself, type this address there too: ${v.address}`}
+            {t("Good for {time} more.", { time: `${Math.floor(v.code_left / 60)}:${String(v.code_left % 60).padStart(2, "0")}` })}
+            {v.address && " " + t("If the other PC doesn't find this one by itself, type this address there too: {address}", { address: v.address })}
           </span>
           <button className="btn ghost small" onClick={() => run(() => api.cancelPairing())}>
-            Cancel
+            {t("Cancel")}
           </button>
         </div>
       ) : entering ? (
         <div className="form">
           <label>
-            Code shown on the other PC
+            {t("Code shown on the other PC")}
             <input
               className="input code-input"
               value={entering.code}
@@ -143,9 +142,9 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
           </label>
           {showing.length > 1 && (
             <label>
-              Which PC
+              {t("Which PC")}
               <select className="input" value={entering.target} onChange={(e) => setEntering({ ...entering, target: e.target.value })}>
-                <option value="">Choose…</option>
+                <option value="">{t("Choose…")}</option>
                 {showing.map((n) => (
                   <option key={n.id} value={n.id}>
                     {n.name}
@@ -156,39 +155,38 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
           )}
           {showing.length === 0 && (
             <label>
-              The other PC's address (only if it isn't found by itself)
+              {t("The other PC's address (only if it isn't found by itself)")}
               <input className="input" value={entering.target} placeholder="192.168.1.20" onChange={(e) => setEntering({ ...entering, target: e.target.value })} />
             </label>
           )}
-          {showing.length === 1 && <p className="muted small">Pairing with {showing[0].name}.</p>}
+          {showing.length === 1 && <p className="muted small">{t("Pairing with {name}.", { name: showing[0].name })}</p>}
           <div className="adv-actions">
             <button className="btn primary" disabled={entering.busy || entering.code.replace(/[^0-9A-Za-z]/g, "").length !== 8} onClick={pair}>
-              {entering.busy ? "Pairing…" : "Pair"}
+              {entering.busy ? t("Pairing…") : t("Pair")}
             </button>
             <button className="btn ghost" onClick={() => setEntering(null)}>
-              Cancel
+              {t("Cancel")}
             </button>
           </div>
         </div>
       ) : (
         <div className="row wrap">
           <button className="btn" onClick={() => run(() => api.startPairing())}>
-            Pair another PC: show a code
+            {t("Pair another PC: show a code")}
           </button>
           <button className="btn" onClick={() => setEntering({ code: "", target: "", busy: false })}>
-            Enter a code
+            {t("Enter a code")}
           </button>
           {v.peers.length > 0 && v.enabled && (
             <button className="btn ghost" onClick={() => run(() => api.syncNow())}>
-              Sync now
+              {t("Sync now")}
             </button>
           )}
         </div>
       )}
       {v.enabled && (
         <p className="muted small">
-          The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the other PC can't reach this one. Both PCs need SulcusAI open (and
-          unlocked) to sync.
+          {t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the other PC can't reach this one. Both PCs need SulcusAI open (and unlocked) to sync.")}
         </p>
       )}
     </section>

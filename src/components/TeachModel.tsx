@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Chat, type FinetuneJob, type FinetuneView } from "../api";
 import { bytes } from "../format";
+import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 
 type SourceKind = "chats" | "file";
@@ -50,7 +51,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
       const source = form.kind === "chats" ? { kind: "chats" as const, chat_ids: form.chatIds } : { kind: "file" as const, path: form.file };
       await api.startFinetune(form.name, form.base, source, form.epochs, form.strength);
       setForm({ ...form, open: false });
-      toast("Teaching has started. You can keep using the app; chats with this PC's models wait until it's done.", "success");
+      toast(t("Teaching has started. You can keep using the app; chats with this PC's models wait until it's done."), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -58,10 +59,9 @@ export function TeachModel({ toast }: { toast: PushToast }) {
 
   return (
     <div className="teach">
-      <h3>Teach a model</h3>
+      <h3>{t("Teach a model")}</h3>
       <p className="muted small">
-        Teach a model on this PC from your own examples, so it picks up your style, terms or answers. It runs on the graphics card and can take from several minutes to a few hours.
-        The result is a small add-on that appears in the model menu as “model + name”; the original model is unchanged.
+        {t("Teach a model on this PC from your own examples, so it picks up your style, terms or answers. It runs on the graphics card and can take from several minutes to a few hours. The result is a small add-on that appears in the model menu as “model + name”; the original model is unchanged.")}
       </p>
 
       {job && (
@@ -69,16 +69,16 @@ export function TeachModel({ toast }: { toast: PushToast }) {
           <div className="adv-head">
             <span className="small">
               <strong>{job.base_name} + {job.name}</strong> ·{" "}
-              {job.status === "preparing" && "getting ready…"}
-              {job.status === "downloading" && `downloading the trainer (${bytes(v.trainer_size)}, first time only)…`}
-              {job.status === "training" && `round ${job.epoch} of ${job.epochs}${job.eta ? ` · about ${job.eta} left` : ""}${job.loss !== null ? ` · loss ${job.loss.toFixed(2)}` : ""}`}
-              {job.status === "done" && "done. Pick it in a chat's model menu."}
-              {job.status === "cancelled" && "stopped."}
-              {job.status === "failed" && <span className="warn-text">didn't finish: {job.error}</span>}
+              {job.status === "preparing" && t("getting ready…")}
+              {job.status === "downloading" && t("downloading the trainer ({size}, first time only)…", { size: bytes(v.trainer_size) })}
+              {job.status === "training" && `${t("round {n} of {total}", { n: job.epoch, total: job.epochs })}${job.eta ? ` · ${t("about {time} left", { time: job.eta })}` : ""}${job.loss !== null ? ` · ${t("loss {loss}", { loss: job.loss.toFixed(2) })}` : ""}`}
+              {job.status === "done" && t("done. Pick it in a chat's model menu.")}
+              {job.status === "cancelled" && t("stopped.")}
+              {job.status === "failed" && <span className="warn-text">{t("didn't finish: {error}", { error: job.error ?? "" })}</span>}
             </span>
             {running && (
               <button className="btn ghost small danger" onClick={() => api.cancelFinetune()}>
-                Stop
+                {t("Stop")}
               </button>
             )}
           </div>
@@ -95,7 +95,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
           {v.adapters.map((a) => (
             <li key={a.id}>
               <span>
-                <strong>{a.base_name} + {a.name}</strong> <span className="muted">· from {a.source}, {a.examples} examples, {a.epochs} rounds</span>
+                <strong>{a.base_name} + {a.name}</strong> <span className="muted">· {t("from {source}, {examples} examples, {rounds} rounds", { source: a.source, examples: a.examples, rounds: a.epochs })}</span>
               </span>
               <button
                 className="btn ghost small"
@@ -108,7 +108,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                   }
                 }}
               >
-                Remove
+                {t("Remove")}
               </button>
             </li>
           ))}
@@ -116,30 +116,30 @@ export function TeachModel({ toast }: { toast: PushToast }) {
       )}
 
       {!form.open ? (
-        <button className="btn" disabled={!!running || supported.length === 0} onClick={() => setForm({ ...form, open: true })} title={supported.length === 0 ? "Install a Qwen3, Gemma 3 or Llama model first" : undefined}>
-          Teach a model…
+        <button className="btn" disabled={!!running || supported.length === 0} onClick={() => setForm({ ...form, open: true })} title={supported.length === 0 ? t("Install a Qwen3, Gemma 3 or Llama model first") : undefined}>
+          {t("Teach a model…")}
         </button>
       ) : (
         <div className="teach-form form">
           <label>
-            Name
-            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. My writing style" maxLength={60} />
+            {t("Name")}
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t("e.g. My writing style")} maxLength={60} />
           </label>
           <label>
-            Model to teach
+            {t("Model to teach")}
             <select className="input" value={form.base} onChange={(e) => setForm({ ...form, base: e.target.value })}>
               {v.bases.map((b) => (
                 <option key={b.id} value={b.id} disabled={!b.supported}>
                   {b.name}
-                  {b.supported ? "" : " (can't be taught yet)"}
+                  {b.supported ? "" : " " + t("(can't be taught yet)")}
                 </option>
               ))}
             </select>
           </label>
-          <span className="small">Learn from</span>
+          <span className="small">{t("Learn from")}</span>
           <label className="check">
             <input type="radio" name="teach-src" checked={form.kind === "chats"} onChange={() => setForm({ ...form, kind: "chats" })} />
-            <span>Your chats: each question and the answer it got</span>
+            <span>{t("Your chats: each question and the answer it got")}</span>
           </label>
           {form.kind === "chats" && (
             <div className="teach-chats">
@@ -153,51 +153,51 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                   <span>{c.title}</span>
                 </label>
               ))}
-              {chats.length === 0 && <span className="muted small">No chats yet.</span>}
+              {chats.length === 0 && <span className="muted small">{t("No chats yet.")}</span>}
             </div>
           )}
           <label className="check">
             <input type="radio" name="teach-src" checked={form.kind === "file"} onChange={() => setForm({ ...form, kind: "file" })} />
-            <span>A file: example conversations (.jsonl) or your documents (.txt, .md)</span>
+            <span>{t("A file: example conversations (.jsonl) or your documents (.txt, .md)")}</span>
           </label>
           {form.kind === "file" && (
             <div className="row wrap">
               <button
                 className="btn small"
                 onClick={async () => {
-                  const p = await openFile({ multiple: false, filters: [{ name: "Examples or documents", extensions: ["jsonl", "txt", "md"] }] });
+                  const p = await openFile({ multiple: false, filters: [{ name: t("Examples or documents"), extensions: ["jsonl", "txt", "md"] }] });
                   if (typeof p === "string") setForm({ ...form, file: p });
                 }}
               >
-                Choose a file…
+                {t("Choose a file…")}
               </button>
-              <span className="muted small ellipsis">{form.file || "None chosen"}</span>
+              <span className="muted small ellipsis">{form.file || t("None chosen")}</span>
             </div>
           )}
           <p className="muted small">
-            A .jsonl has one conversation per line, like <code>{'{"messages": [{"role": "user", "content": "…"}, {"role": "assistant", "content": "…"}]}'}</code>. At least 10 examples; 50–500 work best.
+            {t("A .jsonl has one conversation per line, like")} <code>{'{"messages": [{"role": "user", "content": "…"}, {"role": "assistant", "content": "…"}]}'}</code>. {t("At least 10 examples; 50–500 work best.")}
           </p>
           <div className="adv-grid">
             <label className="adv-field">
-              <span>Rounds through the examples</span>
+              <span>{t("Rounds through the examples")}</span>
               <input className="input" type="number" min={1} max={10} value={form.epochs} onChange={(e) => setForm({ ...form, epochs: Number(e.target.value) || 3 })} />
             </label>
             <label className="adv-field">
-              <span>How strongly</span>
+              <span>{t("How strongly")}</span>
               <select className="input" value={form.strength} onChange={(e) => setForm({ ...form, strength: e.target.value })}>
-                <option value="light">Lightly</option>
-                <option value="normal">Normal</option>
-                <option value="strong">Strongly</option>
+                <option value="light">{t("Lightly")}</option>
+                <option value="normal">{t("Normal")}</option>
+                <option value="strong">{t("Strongly")}</option>
               </select>
             </label>
           </div>
-          {!v.trainer_installed && <p className="muted small">The first time, this downloads the trainer ({bytes(v.trainer_size)}, QVAC Fabric's build of llama.cpp) from GitHub.</p>}
-          <p className="muted small">While it trains, chats with this PC's models wait (they need the same graphics memory); cloud models still work. Training data from your chats is deleted as soon as it's done.</p>
+          {!v.trainer_installed && <p className="muted small">{t("The first time, this downloads the trainer ({size}, QVAC Fabric's build of llama.cpp) from GitHub.", { size: bytes(v.trainer_size) })}</p>}
+          <p className="muted small">{t("While it trains, chats with this PC's models wait (they need the same graphics memory); cloud models still work. Training data from your chats is deleted as soon as it's done.")}</p>
           <div className="adv-actions">
             <button className="btn primary" onClick={start} disabled={!form.name.trim() || !form.base || (form.kind === "chats" ? form.chatIds.length === 0 : !form.file)}>
-              Start teaching
+              {t("Start teaching")}
             </button>
-            <button className="btn ghost" onClick={() => setForm({ ...form, open: false })}>Cancel</button>
+            <button className="btn ghost" onClick={() => setForm({ ...form, open: false })}>{t("Cancel")}</button>
           </div>
         </div>
       )}

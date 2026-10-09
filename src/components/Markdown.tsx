@@ -2,6 +2,7 @@
 import ReactMarkdown from "react-markdown";
 import { api } from "../api";
 import remarkGfm from "remark-gfm";
+import { t } from "../i18n";
 
 /** Model output as Markdown. Raw HTML is never rendered, and links never navigate the app
  *  window: web links open in the user's main browser, anything else is just text. */
@@ -29,7 +30,7 @@ export function Markdown({ text }: { text: string }) {
                 {children}
               </span>
             ),
-          img: ({ alt }) => <span className="muted">[image: {alt}]</span>,
+          img: ({ alt }) => <span className="muted">{t("[image: {alt}]", { alt: alt ?? "" })}</span>,
         }}
       >
         {text}

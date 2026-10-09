@@ -3,6 +3,7 @@
 // mask the core fills in (any painted pixel = change it).
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { toBase64 } from "../api";
+import { t } from "../i18n";
 
 export interface MaskHandle {
   /** The painted area as a PNG (base64), or null if nothing is painted. */
@@ -75,7 +76,7 @@ export const MaskPainter = forwardRef<MaskHandle, { src: string; width: number; 
             drawing.current = false;
             last.current = null;
           }}
-          aria-label="Paint over the area to change"
+          aria-label={t("Paint over the area to change")}
         />
       </div>
     );

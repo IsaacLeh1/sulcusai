@@ -17,6 +17,7 @@ import {
   type Voice,
 } from "../api";
 import { clock } from "../format";
+import { t, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MediaTile, saveAs, useMediaJobs } from "../components/MediaBits";
 import { MediaModels, useMediaView } from "../components/MediaModels";
@@ -30,18 +31,18 @@ type Shape = NonNullable<MediaRequest["shape"]>;
 const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", music: "music", narrate: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", music: "music" };
 
-const STYLES = ["Watercolor", "Oil painting", "Pencil sketch", "Anime", "3D render", "Pixel art", "Vintage photo", "Comic book"];
+const STYLES = [tx("Watercolor"), tx("Oil painting"), tx("Pencil sketch"), tx("Anime"), tx("3D render"), tx("Pixel art"), tx("Vintage photo"), tx("Comic book")];
 const LANGUAGES: [string, string][] = [
-  ["auto", "Any language"],
-  ["en", "English"],
-  ["es", "Spanish"],
-  ["fr", "French"],
-  ["de", "German"],
-  ["it", "Italian"],
-  ["pt", "Portuguese"],
-  ["ja", "Japanese"],
-  ["ko", "Korean"],
-  ["zh", "Chinese"],
+  ["auto", tx("Any language")],
+  ["en", tx("English")],
+  ["es", tx("Spanish")],
+  ["fr", tx("French")],
+  ["de", tx("German")],
+  ["it", tx("Italian")],
+  ["pt", tx("Portuguese")],
+  ["ja", tx("Japanese")],
+  ["ko", tx("Korean")],
+  ["zh", tx("Chinese")],
 ];
 
 interface Props {
@@ -52,7 +53,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "music", "narrate"] as Tab[]).filter((t) => features.has(TAB_FEATURE[t]));
+  const tabs: Tab[] = (["pictures", "video", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
   const [view, reloadView] = useMediaView();
   const jobs = useMediaJobs();
@@ -113,7 +114,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const importFile = async () => {
     const picked = await openFile({
       multiple: false,
-      filters: [{ name: "Pictures, clips and sounds", extensions: ["png", "jpg", "jpeg", "webp", "webm", "mp4", "mp3", "wav", "ogg"] }],
+      filters: [{ name: t("Pictures, clips and sounds"), extensions: ["png", "jpg", "jpeg", "webp", "webm", "mp4", "mp3", "wav", "ogg"] }],
     });
     if (typeof picked !== "string") return;
     try {
@@ -129,9 +130,9 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
     return (
       <div className="page">
         <div className="narrow">
-          <h1>Studio</h1>
-          <p className="muted">Turn on Pictures, Video or Music and audio in Features to start making things here.</p>
-          <button className="btn primary" onClick={onGoFeatures}>Open Features</button>
+          <h1>{t("Studio")}</h1>
+          <p className="muted">{t("Turn on Pictures, Video or Music and audio in Features to start making things here.")}</p>
+          <button className="btn primary" onClick={onGoFeatures}>{t("Open Features")}</button>
         </div>
       </div>
     );
@@ -145,21 +146,21 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
     <div className="page studio">
       <header className="page-head">
         <div>
-          <h1>Studio</h1>
-          <p className="muted">Everything is made on this PC and kept encrypted in your gallery.</p>
+          <h1>{t("Studio")}</h1>
+          <p className="muted">{t("Everything is made on this PC and kept encrypted in your gallery.")}</p>
         </div>
         <div className="row">
-          <button className="btn" onClick={importFile}>Import…</button>
+          <button className="btn" onClick={importFile}>{t("Import…")}</button>
           <button className="btn" onClick={() => setModels(null === models ? (kind ? [kind, ...(kind === "image" ? (["upscale", "background"] as MediaKind[]) : [])] : ["image", "video", "music"]) : null)}>
-            Models
+            {t("Models")}
           </button>
         </div>
       </header>
 
       <div className="mode-switch studio-tabs" role="tablist">
-        {tabs.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} className={`mode ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {{ pictures: "🎨 Pictures", video: "🎬 Video", music: "🎵 Music and sound", narrate: "🗣 Narration" }[t]}
+        {tabs.map((tb) => (
+          <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
+            {{ pictures: t("🎨 Pictures"), video: t("🎬 Video"), music: t("🎵 Music and sound"), narrate: t("🗣 Narration") }[tb]}
           </button>
         ))}
       </div>
@@ -167,7 +168,13 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <section className="card studio-composer">
         {needsModel ? (
           <>
-            <p>Pick a model to install for {tab === "pictures" ? "pictures" : tab === "video" ? "video" : "music"}. It downloads once and runs on this PC.</p>
+            <p>
+              {tab === "pictures"
+                ? t("Pick a model to install for pictures. It downloads once and runs on this PC.")
+                : tab === "video"
+                  ? t("Pick a model to install for video. It downloads once and runs on this PC.")
+                  : t("Pick a model to install for music. It downloads once and runs on this PC.")}
+            </p>
             <MediaModels progress={progress} toast={toast} only={[kind!]} />
           </>
         ) : tab === "pictures" ? (
@@ -193,14 +200,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         <div className="filters">
           {(["all", "image", "video", "audio", "favorites"] as const).map((f) => (
             <button key={f} className={`chip ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {{ all: "Everything", image: "Pictures", video: "Video", audio: "Sound", favorites: "★ Favorites" }[f]}
+              {{ all: t("Everything"), image: t("Pictures"), video: t("Video"), audio: t("Sound"), favorites: t("★ Favorites") }[f]}
             </button>
           ))}
           <span className="spacer" />
-          {view && <span className="small muted">{view.gallery} in the gallery</span>}
+          {view && <span className="small muted">{t("{n} in the gallery", { n: view.gallery })}</span>}
         </div>
         {items.length === 0 ? (
-          <p className="muted small">Nothing here yet. What you make appears here.</p>
+          <p className="muted small">{t("Nothing here yet. What you make appears here.")}</p>
         ) : (
           <div className="media-grid">
             {items.map((i) => (
@@ -210,7 +217,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         )}
         {more && (
           <div className="center pad">
-            <button className="btn" onClick={loadMore}>Show more</button>
+            <button className="btn" onClick={loadMore}>{t("Show more")}</button>
           </div>
         )}
       </section>
@@ -226,7 +233,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           onStart={async (req) => {
             if (await start(req)) {
               setViewing(null);
-              toast("Started. It appears in the gallery when it's done.", "success");
+              toast(t("Started. It appears in the gallery when it's done."), "success");
             }
           }}
           onAnimate={(i) => {
@@ -249,12 +256,12 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       )}
 
       {models && (
-        <Modal title="Models for the studio" onClose={() => setModels(null)}>
+        <Modal title={t("Models for the studio")} onClose={() => setModels(null)}>
           <div className="studio-models">
             <MediaModels progress={progress} toast={toast} />
           </div>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setModels(null)}>Close</button>
+            <button className="btn" onClick={() => setModels(null)}>{t("Close")}</button>
           </div>
         </Modal>
       )}
@@ -275,7 +282,7 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
         publisher: c.provider,
         source: "",
         description: "",
-        license: { name: `${c.provider}'s terms`, url: "", commercial: true, note: null },
+        license: { name: t("{provider}'s terms", { provider: c.provider }), url: "", commercial: true, note: null },
         kind,
         can: kind === "image" ? (edits ? ["generate", "edit", "fill", "restyle"] : ["generate"]) : ["text", "image"],
         files: [],
@@ -290,7 +297,7 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
 function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void }) {
   if (models.length < 2) return null;
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} title="Model">
+    <select value={value} onChange={(e) => onChange(e.target.value)} title={t("Model")}>
       {models.map((m) => (
         <option key={m.id} value={m.id}>
           {m.name}
@@ -319,7 +326,7 @@ function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStar
         className="input"
         rows={3}
         value={prompt}
-        placeholder="Describe the picture: the subject, the setting, a style (photo, watercolor, 3D…), the light and mood."
+        placeholder={t("Describe the picture: the subject, the setting, a style (photo, watercolor, 3D…), the light and mood.")}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && prompt.trim() && go()}
         autoFocus
@@ -328,19 +335,19 @@ function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStar
         <div className="filters tight">
           {(["square", "portrait", "landscape", "wide", "tall"] as Shape[]).map((s) => (
             <button key={s} className={`chip ${shape === s ? "active" : ""}`} onClick={() => setShape(s)}>
-              {{ square: "◻ Square", portrait: "▯ Portrait", landscape: "▭ Landscape", wide: "▬ Wide", tall: "▮ Tall" }[s]}
+              {{ square: t("◻ Square"), portrait: t("▯ Portrait"), landscape: t("▭ Landscape"), wide: t("▬ Wide"), tall: t("▮ Tall") }[s]}
             </button>
           ))}
         </div>
-        <select value={count} onChange={(e) => setCount(+e.target.value)} title="How many">
+        <select value={count} onChange={(e) => setCount(+e.target.value)} title={t("How many")}>
           {[1, 2, 3, 4].map((n) => (
-            <option key={n} value={n}>{n === 1 ? "1 picture" : `${n} versions`}</option>
+            <option key={n} value={n}>{n === 1 ? t("1 picture") : t("{n} versions", { n })}</option>
           ))}
         </select>
         <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
-        <button className="btn primary" disabled={!prompt.trim()} onClick={go}>Create</button>
+        <button className="btn primary" disabled={!prompt.trim()} onClick={go}>{t("Create")}</button>
       </div>
     </div>
   );
@@ -379,41 +386,41 @@ function VideoComposer({
         className="input"
         rows={3}
         value={prompt}
-        placeholder={source ? "How should the picture move? E.g. \"the camera slowly pushes in, leaves drift in the wind\"" : "Describe the clip: the subject, what happens, the camera and the style."}
+        placeholder={source ? t("How should the picture move? E.g. \"the camera slowly pushes in, leaves drift in the wind\"") : t("Describe the clip: the subject, what happens, the camera and the style.")}
         onChange={(e) => setPrompt(e.target.value)}
         autoFocus
       />
       <div className="row wrap">
         {source ? (
           <span className="chip active row">
-            {thumb && <img src={thumb} alt="" className="chip-thumb" />} Starts from this picture
+            {thumb && <img src={thumb} alt="" className="chip-thumb" />} {t("Starts from this picture")}
             <button className="link" onClick={() => onPickSource(null)}>✕</button>
           </span>
         ) : (
-          <button className="btn small" onClick={() => setPicking(true)}>Start from a picture…</button>
+          <button className="btn small" onClick={() => setPicking(true)}>{t("Start from a picture…")}</button>
         )}
         {!source && (
           <div className="filters tight">
             {(["landscape", "portrait", "square"] as Shape[]).map((s) => (
               <button key={s} className={`chip ${shape === s ? "active" : ""}`} onClick={() => setShape(s)}>
-                {({ landscape: "▭ Landscape", portrait: "▯ Portrait", square: "◻ Square" } as Record<string, string>)[s]}
+                {({ landscape: t("▭ Landscape"), portrait: t("▯ Portrait"), square: t("◻ Square") } as Record<string, string>)[s]}
               </button>
             ))}
           </div>
         )}
-        <select value={seconds} onChange={(e) => setSeconds(+e.target.value)} title="Length">
+        <select value={seconds} onChange={(e) => setSeconds(+e.target.value)} title={t("Length")}>
           {[2, 3, 5, 8].map((s) => (
-            <option key={s} value={s}>{s} seconds</option>
+            <option key={s} value={s}>{t("{s} seconds", { s })}</option>
           ))}
         </select>
         <ModelPick models={usable} value={m?.id ?? ""} onChange={setModel} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * seconds) / Math.max(1, m.defaults.seconds || 3))}</span>}
-        <button className="btn primary" disabled={(!prompt.trim() && !source) || !m} onClick={go}>Make video</button>
+        <button className="btn primary" disabled={(!prompt.trim() && !source) || !m} onClick={go}>{t("Make video")}</button>
       </div>
-      {source && !m && <p className="small warn-text">Bringing a picture to life needs Wan 2.2. Install it from Models.</p>}
+      {source && !m && <p className="small warn-text">{t("Bringing a picture to life needs Wan 2.2. Install it from Models.")}</p>}
       {picking && (
-        <Modal title="Start from a picture" onClose={() => setPicking(false)}>
+        <Modal title={t("Start from a picture")} onClose={() => setPicking(false)}>
           <div className="media-grid small-grid">
             {gallery.filter((i) => i.kind === "image").map((i) => (
               <MediaTile
@@ -426,7 +433,7 @@ function VideoComposer({
               />
             ))}
           </div>
-          {!gallery.some((i) => i.kind === "image") && <p className="muted small">No pictures in the gallery yet.</p>}
+          {!gallery.some((i) => i.kind === "image") && <p className="muted small">{t("No pictures in the gallery yet.")}</p>}
         </Modal>
       )}
     </div>
@@ -458,14 +465,14 @@ function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart:
   return (
     <div className="form">
       <div className="mode-switch">
-        <button className={`mode ${!sound ? "active" : ""}`} onClick={() => setSound(false)}>Song</button>
-        <button className={`mode ${sound ? "active" : ""}`} onClick={() => setSound(true)}>Sound effect</button>
+        <button className={`mode ${!sound ? "active" : ""}`} onClick={() => setSound(false)}>{t("Song")}</button>
+        <button className={`mode ${sound ? "active" : ""}`} onClick={() => setSound(true)}>{t("Sound effect")}</button>
       </div>
       <textarea
         className="input"
         rows={3}
         value={prompt}
-        placeholder={sound ? "Describe the sound, e.g. \"rain on a tin roof with distant thunder\"" : "Describe the song: genre, mood, instruments, tempo, voice. E.g. \"upbeat acoustic folk about a road trip, warm male vocals\""}
+        placeholder={sound ? t("Describe the sound, e.g. \"rain on a tin roof with distant thunder\"") : t("Describe the song: genre, mood, instruments, tempo, voice. E.g. \"upbeat acoustic folk about a road trip, warm male vocals\"")}
         onChange={(e) => setPrompt(e.target.value)}
         autoFocus
       />
@@ -474,14 +481,14 @@ function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart:
           <div className="filters tight">
             {(["write", "none", "mine"] as const).map((v) => (
               <button key={v} className={`chip ${vocals === v ? "active" : ""}`} onClick={() => setVocals(v)}>
-                {{ write: "Vocals, lyrics written for me", none: "Instrumental", mine: "My own lyrics" }[v]}
+                {{ write: t("Vocals, lyrics written for me"), none: t("Instrumental"), mine: t("My own lyrics") }[v]}
               </button>
             ))}
           </div>
           {vocals !== "none" && (
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} title="Language of the vocals">
+            <select value={language} onChange={(e) => setLanguage(e.target.value)} title={t("Language of the vocals")}>
               {LANGUAGES.map(([c, n]) => (
-                <option key={c} value={c}>{n}</option>
+                <option key={c} value={c}>{t(n)}</option>
               ))}
             </select>
           )}
@@ -491,19 +498,19 @@ function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart:
         <textarea className="input" rows={6} value={lyrics} placeholder={"[Verse]\nYour lines here\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
       )}
       <div className="row wrap">
-        <select value={secs} onChange={(e) => setSeconds(+e.target.value)} title="Length">
+        <select value={secs} onChange={(e) => setSeconds(+e.target.value)} title={t("Length")}>
           {(sound ? [10, 15, 20, 30] : [15, 30, 60, 90, 120, 180]).map((s) => (
-            <option key={s} value={s}>{s < 60 ? `${s} seconds` : `${s / 60} min${s % 60 ? ` ${s % 60} s` : ""}`}</option>
+            <option key={s} value={s}>{s < 60 ? t("{s} seconds", { s }) : s % 60 ? t("{m} min {s} s", { m: s / 60, s: s % 60 }) : t("{m} min", { m: s / 60 })}</option>
           ))}
         </select>
         <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * secs) / 30)}</span>}
         <button className="btn primary" disabled={!prompt.trim() || (vocals === "mine" && !sound && !lyrics.trim())} onClick={go}>
-          {sound ? "Make the sound" : "Make the song"}
+          {sound ? t("Make the sound") : t("Make the song")}
         </button>
       </div>
-      {sound && <p className="small muted">Sound effects come from the music model, so they're rough sketches rather than library-quality recordings.</p>}
+      {sound && <p className="small muted">{t("Sound effects come from the music model, so they're rough sketches rather than library-quality recordings.")}</p>}
     </div>
   );
 }
@@ -528,31 +535,31 @@ function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStar
   };
   return (
     <div className="form">
-      <textarea className="input" rows={6} value={text} placeholder="The text to read aloud. It's saved as a sound you can play, trim and save." onChange={(e) => setText(e.target.value)} autoFocus />
+      <textarea className="input" rows={6} value={text} placeholder={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} onChange={(e) => setText(e.target.value)} autoFocus />
       <div className="row wrap">
         {cloud.length > 0 && (
-          <select value={engine} onChange={(e) => setEngine(e.target.value)} title="Voices from">
-            <option value="">This PC's voices</option>
+          <select value={engine} onChange={(e) => setEngine(e.target.value)} title={t("Voices from")}>
+            <option value="">{t("This PC's voices")}</option>
             {cloud.map((c) => (
               <option key={c.id} value={c.id}>☁ {c.name} ({c.provider})</option>
             ))}
           </select>
         )}
         {engine ? (
-          <select value={cloudVoice} onChange={(e) => setCloudVoice(e.target.value)} title="Voice">
+          <select value={cloudVoice} onChange={(e) => setCloudVoice(e.target.value)} title={t("Voice")}>
             {CLOUD_VOICES.map((v) => (
               <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>
             ))}
           </select>
         ) : (
-          <select value={voice} onChange={(e) => setVoice(e.target.value)} title="Voice">
+          <select value={voice} onChange={(e) => setVoice(e.target.value)} title={t("Voice")}>
             {voices.map((v) => (
               <option key={v.id} value={v.id}>{v.name}</option>
             ))}
           </select>
         )}
         <span className="spacer" />
-        <button className="btn primary" disabled={!text.trim()} onClick={go}>Read aloud</button>
+        <button className="btn primary" disabled={!text.trim()} onClick={go}>{t("Read aloud")}</button>
       </div>
     </div>
   );
@@ -607,7 +614,7 @@ function Viewer({
   const run = (req: Omit<MediaRequest, "source">) => onStart({ ...req, source: item.id });
   const fill = async () => {
     const mask = await painter.current?.mask();
-    if (!mask) return toast("Paint over the part to change first.", "error");
+    if (!mask) return toast(t("Paint over the part to change first."), "error");
     run({ op: "fill", prompt: text, mask });
   };
   const extend = (sides: "wide" | "tall" | "all") => {
@@ -620,37 +627,37 @@ function Viewer({
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal viewer" role="dialog" aria-modal="true" aria-label="Gallery item">
+      <div className="modal viewer" role="dialog" aria-modal="true" aria-label={t("Gallery item")}>
         <div className="viewer-stage">
           {item.kind === "image" && src && (tool === "fill" ? (
             <MaskPainter ref={painter} src={src} width={item.width} height={item.height} brush={brush} onPainted={setPainted} />
           ) : (
-            <img src={src} alt={item.prompt || "Picture"} className={item.mime === "image/png" ? "checker" : ""} />
+            <img src={src} alt={item.prompt || t("Picture")} className={item.mime === "image/png" ? "checker" : ""} />
           ))}
           {item.kind === "video" && src && <video src={src} controls autoPlay loop playsInline />}
           {item.kind === "audio" && <AudioPlayer item={item} toast={toast} onSaved={(i) => { onSaved(); onOpen(i); }} />}
         </div>
         <aside className="viewer-side">
           <div className="row">
-            <strong>{OP_LABEL[item.op] ?? "Made"}</strong>
+            <strong>{OP_LABEL[item.op] ? t(OP_LABEL[item.op]) : t("Made")}</strong>
             <span className="small muted">{new Date(item.created_at).toLocaleString()}</span>
             <span className="spacer" />
-            <button className="icon-btn" aria-label="Close" onClick={onClose}>✕</button>
+            <button className="icon-btn" aria-label={t("Close")} onClick={onClose}>✕</button>
           </div>
           {item.prompt && <p className="viewer-prompt small">{item.prompt}</p>}
           <p className="small muted">
             {item.kind === "image" ? `${item.width} × ${item.height}` : clock(item.seconds)}
             {item.kind === "video" && ` · ${item.width} × ${item.height}`}
-            {item.seed != null && ` · seed ${item.seed}`}
+            {item.seed != null && ` · ${t("seed {seed}", { seed: item.seed })}`}
           </p>
           {item.parent && (
-            <button className="link small" onClick={() => api.mediaGet(item.parent!).then(onOpen).catch(() => toast("The original is no longer in the gallery.", "error"))}>
-              ← The original
+            <button className="link small" onClick={() => api.mediaGet(item.parent!).then(onOpen).catch(() => toast(t("The original is no longer in the gallery."), "error"))}>
+              {t("← The original")}
             </button>
           )}
           {item.lyrics && (
             <details className="small">
-              <summary>Lyrics</summary>
+              <summary>{t("Lyrics")}</summary>
               <pre className="lyrics">{item.lyrics}</pre>
             </details>
           )}
@@ -658,37 +665,37 @@ function Viewer({
           {item.kind === "image" && features.has("images") && (
             <div className="viewer-tools">
               <div className="filters tight">
-                {can("edit") && <button className={`chip ${tool === "edit" ? "active" : ""}`} onClick={() => setTool(tool === "edit" ? null : "edit")}>✏️ Change it</button>}
-                {can("fill") && <button className={`chip ${tool === "fill" ? "active" : ""}`} onClick={() => setTool(tool === "fill" ? null : "fill")}>🖌 Paint to fill in</button>}
-                {can("extend") && <button className={`chip ${tool === "extend" ? "active" : ""}`} onClick={() => setTool(tool === "extend" ? null : "extend")}>↔ Extend</button>}
-                {can("restyle") && <button className={`chip ${tool === "restyle" ? "active" : ""}`} onClick={() => setTool(tool === "restyle" ? null : "restyle")}>🎨 Restyle</button>}
+                {can("edit") && <button className={`chip ${tool === "edit" ? "active" : ""}`} onClick={() => setTool(tool === "edit" ? null : "edit")}>{t("✏️ Change it")}</button>}
+                {can("fill") && <button className={`chip ${tool === "fill" ? "active" : ""}`} onClick={() => setTool(tool === "fill" ? null : "fill")}>{t("🖌 Paint to fill in")}</button>}
+                {can("extend") && <button className={`chip ${tool === "extend" ? "active" : ""}`} onClick={() => setTool(tool === "extend" ? null : "extend")}>{t("↔ Extend")}</button>}
+                {can("restyle") && <button className={`chip ${tool === "restyle" ? "active" : ""}`} onClick={() => setTool(tool === "restyle" ? null : "restyle")}>{t("🎨 Restyle")}</button>}
               </div>
               {tool === "edit" && (
                 <div className="form">
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="E.g. make it night, add a red scarf, remove the car" autoFocus onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "edit", prompt: text })} />
-                  <button className="btn primary small" disabled={!text.trim()} onClick={() => run({ op: "edit", prompt: text })}>Change it</button>
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("E.g. make it night, add a red scarf, remove the car")} autoFocus onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "edit", prompt: text })} />
+                  <button className="btn primary small" disabled={!text.trim()} onClick={() => run({ op: "edit", prompt: text })}>{t("Change it")}</button>
                 </div>
               )}
               {tool === "fill" && (
                 <div className="form">
-                  <span className="small muted">Paint over the part to change. Describe what goes there, or leave it empty to remove what's there.</span>
+                  <span className="small muted">{t("Paint over the part to change. Describe what goes there, or leave it empty to remove what's there.")}</span>
                   <label className="small row">
-                    Brush <input type="range" min={10} max={120} value={brush} onChange={(e) => setBrush(+e.target.value)} />
+                    {t("Brush")} <input type="range" min={10} max={120} value={brush} onChange={(e) => setBrush(+e.target.value)} />
                   </label>
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="What goes there (optional)" />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What goes there (optional)")} />
                   <div className="row">
-                    <button className="btn small" disabled={!painted} onClick={() => painter.current?.clear()}>Clear</button>
-                    <button className="btn primary small" disabled={!painted} onClick={fill}>Fill in</button>
+                    <button className="btn small" disabled={!painted} onClick={() => painter.current?.clear()}>{t("Clear")}</button>
+                    <button className="btn primary small" disabled={!painted} onClick={fill}>{t("Fill in")}</button>
                   </div>
                 </div>
               )}
               {tool === "extend" && (
                 <div className="form">
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="What's beyond the edges (optional)" />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What's beyond the edges (optional)")} />
                   <div className="row">
-                    <button className="btn small" onClick={() => extend("wide")}>Wider</button>
-                    <button className="btn small" onClick={() => extend("tall")}>Taller</button>
-                    <button className="btn small" onClick={() => extend("all")}>All around</button>
+                    <button className="btn small" onClick={() => extend("wide")}>{t("Wider")}</button>
+                    <button className="btn small" onClick={() => extend("tall")}>{t("Taller")}</button>
+                    <button className="btn small" onClick={() => extend("all")}>{t("All around")}</button>
                   </div>
                 </div>
               )}
@@ -696,19 +703,19 @@ function Viewer({
                 <div className="form">
                   <div className="filters tight">
                     {STYLES.map((s) => (
-                      <button key={s} className="chip" onClick={() => run({ op: "restyle", prompt: s })}>{s}</button>
+                      <button key={s} className="chip" onClick={() => run({ op: "restyle", prompt: s })}>{t(s)}</button>
                     ))}
                   </div>
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Or describe a style" onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "restyle", prompt: text })} />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Or describe a style")} onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "restyle", prompt: text })} />
                 </div>
               )}
               <div className="row wrap">
-                <button className="btn small" onClick={() => run({ op: "upscale", prompt: "" })} title="Four times larger and sharper">⤢ Upscale 4×</button>
-                <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>✂ Remove background</button>
-                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)}>🎬 Bring to life</button>}
+                <button className="btn small" onClick={() => run({ op: "upscale", prompt: "" })} title={t("Four times larger and sharper")}>{t("⤢ Upscale 4×")}</button>
+                <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>{t("✂ Remove background")}</button>
+                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)}>{t("🎬 Bring to life")}</button>}
                 {item.op === "generate" && item.prompt && (
                   <button className="btn small" onClick={() => onStart({ op: "generate", prompt: item.prompt, model_id: item.model_id, shape: item.width > item.height ? "landscape" : item.width < item.height ? "portrait" : "square" })}>
-                    ↻ More like this
+                    {t("↻ More like this")}
                   </button>
                 )}
               </div>
@@ -722,19 +729,19 @@ function Viewer({
               onClick={() => api.mediaFavorite(item.id, !item.favorite).then(onChanged).catch((e) => toast(errorText(e), "error"))}
               aria-pressed={item.favorite}
             >
-              {item.favorite ? "★ Favorite" : "☆ Favorite"}
+              {item.favorite ? t("★ Favorite") : t("☆ Favorite")}
             </button>
-            <button className="btn small" onClick={() => saveAs(item, toast)}>Save as…</button>
+            <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
             <span className="spacer" />
-            <button className="btn ghost danger small" onClick={() => setConfirm(true)}>Delete</button>
+            <button className="btn ghost danger small" onClick={() => setConfirm(true)}>{t("Delete")}</button>
           </div>
         </aside>
       </div>
       {confirm && (
-        <Modal title="Delete this from the gallery?" onClose={() => setConfirm(false)}>
-          <p>It's deleted from this PC. Copies you saved elsewhere stay.</p>
+        <Modal title={t("Delete this from the gallery?")} onClose={() => setConfirm(false)}>
+          <p>{t("It's deleted from this PC. Copies you saved elsewhere stay.")}</p>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               autoFocus
@@ -748,7 +755,7 @@ function Viewer({
                 }
               }}
             >
-              Delete
+              {t("Delete")}
             </button>
           </div>
         </Modal>

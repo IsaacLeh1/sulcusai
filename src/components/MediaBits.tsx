@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, toBase64, type MediaItem, type MediaJob } from "../api";
 import { clock } from "../format";
+import { t } from "../i18n";
 import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
 import type { PushToast } from "./Toasts";
 
@@ -24,10 +25,10 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
   return (
     <button className={`media-tile ${item.kind} ${selected ? "selected" : ""}`} onClick={onOpen} title={item.prompt || undefined}>
       {item.kind === "image" ? (
-        thumb ? <img src={thumb} alt={item.prompt || "Picture"} loading="lazy" /> : <span className="media-ph" aria-hidden>🖼</span>
+        thumb ? <img src={thumb} alt={item.prompt || t("Picture")} loading="lazy" /> : <span className="media-ph" aria-hidden>🖼</span>
       ) : videoStill ? (
         <>
-          <img src={videoStill} alt={item.prompt || "Video"} loading="lazy" />
+          <img src={videoStill} alt={item.prompt || t("Video")} loading="lazy" />
           <span className="media-play" aria-hidden>▶ {clock(item.seconds)}</span>
         </>
       ) : (
@@ -36,7 +37,7 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
           <span className="small">{clock(item.seconds)}</span>
         </span>
       )}
-      {item.favorite && <span className="media-fav" aria-label="Favorite">★</span>}
+      {item.favorite && <span className="media-fav" aria-label={t("Favorite")}>★</span>}
       {item.prompt && <span className="media-cap ellipsis">{item.prompt}</span>}
     </button>
   );
@@ -49,18 +50,18 @@ export function JobCard({ job }: { job: MediaJob }) {
     <div className="job-card">
       <div className="progress-label">
         <span className="ellipsis">
-          <strong>{JOB_LABEL[job.op] ?? "Working"}</strong>
+          <strong>{JOB_LABEL[job.op] ? t(JOB_LABEL[job.op]) : t("Working")}</strong>
           {job.prompt && <span className="muted"> · {job.prompt}</span>}
         </span>
-        <button className="link" onClick={() => api.mediaCancel(job.id)}>{job.status === "queued" ? "Remove" : "Stop"}</button>
+        <button className="link" onClick={() => api.mediaCancel(job.id)}>{job.status === "queued" ? t("Remove") : t("Stop")}</button>
       </div>
       <div className={`progress ${job.status === "queued" ? "indeterminate" : ""}`}>
         <span style={{ width: job.status === "queued" ? undefined : `${Math.max(3, pct)}%` }} />
       </div>
       <span className="small muted">
         {job.status === "queued"
-          ? `Waiting for the job before it · takes ${waitLabel(job.est_secs)}`
-          : `${job.stage}${job.eta_secs != null ? ` · ${waitLabel(job.eta_secs)} left` : ""}`}
+          ? t("Waiting for the job before it · takes {time}", { time: waitLabel(job.est_secs) })
+          : `${job.stage}${job.eta_secs != null ? ` · ${t("{time} left", { time: waitLabel(job.eta_secs) })}` : ""}`}
       </span>
     </div>
   );
@@ -88,7 +89,7 @@ export async function saveAs(item: MediaItem, toast: PushToast) {
   if (!path) return;
   try {
     await api.mediaExport(item.id, path);
-    toast("Saved.", "success");
+    toast(t("Saved."), "success");
   } catch (e) {
     toast(errorText(e), "error");
   }
@@ -175,7 +176,7 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
     try {
       const wav = encodeWav(buf, range[0], range[1]);
       const saved = await api.mediaAdd({ data: toBase64(wav), mime: "audio/wav", op: "trim", prompt: item.prompt, parent: item.id, seconds: range[1] - range[0] });
-      toast("The trimmed part is saved in the gallery.", "success");
+      toast(t("The trimmed part is saved in the gallery."), "success");
       onSaved?.(saved);
     } catch (e) {
       toast(errorText(e), "error");
@@ -187,31 +188,31 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
   return (
     <div className="audio-player">
       {src && <audio ref={audio} src={src} controls preload="auto" onPlay={() => audio.current && audio.current.currentTime < range[0] && (audio.current.currentTime = range[0])} />}
-      <canvas ref={canvas} className="wave" onClick={seek} aria-label="Waveform: click to jump" />
+      <canvas ref={canvas} className="wave" onClick={seek} aria-label={t("Waveform: click to jump")} />
       {dur > 0 && (
         <>
           <div className="trim-row">
             <label className="small">
-              Start {clock(range[0])}
+              {t("Start {time}", { time: clock(range[0]) })}
               <input type="range" min={0} max={dur} step={0.1} value={range[0]} onChange={(e) => setRange([Math.min(+e.target.value, range[1] - 0.5), range[1]])} />
             </label>
             <label className="small">
-              End {clock(range[1])}
+              {t("End {time}", { time: clock(range[1]) })}
               <input type="range" min={0} max={dur} step={0.1} value={range[1]} onChange={(e) => setRange([range[0], Math.max(+e.target.value, range[0] + 0.5)])} />
             </label>
           </div>
           <div className="row">
             <label className="row small">
-              <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} /> Loop
+              <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} /> {t("Loop")}
             </label>
             <span className="small muted">{clock(now)} / {clock(dur)}</span>
             <span className="spacer" />
             {trimmed && (
               <button className="btn small" disabled={busy || !buf} onClick={saveTrim}>
-                Save the trimmed part
+                {t("Save the trimmed part")}
               </button>
             )}
-            <button className="btn small" onClick={() => saveAs(item, toast)}>Save as…</button>
+            <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
           </div>
         </>
       )}
@@ -235,8 +236,8 @@ function InlineOne({ item, onOpen }: { item: MediaItem; onOpen?: (i: MediaItem) 
   if (!src) return <div className="media-inline-ph">…</div>;
   if (item.kind === "image")
     return (
-      <button className="media-inline-img" onClick={() => onOpen?.(item)} title="Open">
-        <img src={src} alt={item.prompt || "Picture"} />
+      <button className="media-inline-img" onClick={() => onOpen?.(item)} title={t("Open")}>
+        <img src={src} alt={item.prompt || t("Picture")} />
       </button>
     );
   if (item.kind === "video") return <video src={src} controls loop playsInline className="media-inline-video" />;
@@ -254,12 +255,12 @@ export function Lightbox({ item, onClose, toast }: { item: MediaItem; onClose: (
   return (
     <div className="modal-backdrop lightbox" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="lightbox-body">
-        {src && <img src={src} alt={item.prompt || "Picture"} />}
+        {src && <img src={src} alt={item.prompt || t("Picture")} />}
         <div className="row">
           <span className="small muted ellipsis">{item.prompt}</span>
           <span className="spacer" />
-          <button className="btn small" onClick={() => saveAs(item, toast)}>Save as…</button>
-          <button className="btn small" onClick={onClose}>Close</button>
+          <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
+          <button className="btn small" onClick={onClose}>{t("Close")}</button>
         </div>
       </div>
     </div>

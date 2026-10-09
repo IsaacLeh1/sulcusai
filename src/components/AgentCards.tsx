@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
 import type { PushToast } from "./Toasts";
+import { t } from "../i18n";
 
 const TOOL_ICONS: Record<string, string> = {
   list_dir: "📂",
@@ -67,7 +68,7 @@ export function ToolCard({ call, meta, output, running, liveSteps }: { call: Too
         <span aria-hidden>{icon}</span>
         <span className="tool-title ellipsis">{title}</span>
         <span className={`tool-status ${status}`}>
-          {status === "running" ? "Running…" : status === "error" ? "Failed" : status === "denied" ? "Declined" : status === "waiting" ? "Waiting" : ""}
+          {status === "running" ? t("Running…") : status === "error" ? t("Failed") : status === "denied" ? t("Declined") : status === "waiting" ? t("Waiting") : ""}
         </span>
         {expandable && <span className="chev" aria-hidden>{open ? "▾" : "▸"}</span>}
       </button>
@@ -80,7 +81,7 @@ export function ToolCard({ call, meta, output, running, liveSteps }: { call: Too
       )}
       {meta?.file && status === "ok" && (
         <div className="tool-actions">
-          <button className="btn small" onClick={() => api.openDocument(meta.file!).catch(() => {})}>Open</button>
+          <button className="btn small" onClick={() => api.openDocument(meta.file!).catch(() => {})}>{t("Open")}</button>
         </div>
       )}
       {open && call.name === "delegate" && output && <pre className="tool-output">{output}</pre>}
@@ -110,7 +111,12 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
       onAnswered();
     }
   };
-  const kindLabel = p.risk === "execute" ? "commands" : p.risk === "connector" ? "connector actions" : "file changes";
+  const always =
+    p.risk === "execute"
+      ? { title: t("Don't ask again for commands in this chat"), label: t("Allow commands for this chat") }
+      : p.risk === "connector"
+        ? { title: t("Don't ask again for connector actions in this chat"), label: t("Allow connector actions for this chat") }
+        : { title: t("Don't ask again for file changes in this chat"), label: t("Allow file changes for this chat") };
   return (
     <div className="approval" role="alert">
       <div className="approval-head">
@@ -121,16 +127,16 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
       {p.preview.note && <p className="muted small">{p.preview.note}</p>}
       <div className="approval-actions">
         <button className="btn primary" disabled={busy} onClick={() => answer("allow")} autoFocus>
-          Allow
+          {t("Allow")}
         </button>
         {p.risk !== "submit" && (
-          <button className="btn" disabled={busy} onClick={() => answer("always")} title={`Don't ask again for ${kindLabel} in this chat`}>
-            Allow {kindLabel} for this chat
+          <button className="btn" disabled={busy} onClick={() => answer("always")} title={always.title}>
+            {always.label}
           </button>
         )}
         <span className="spacer" />
         <button className="btn ghost danger" disabled={busy} onClick={() => answer("deny")}>
-          Deny
+          {t("Deny")}
         </button>
       </div>
     </div>
@@ -157,12 +163,12 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
   }, [openMenu]);
 
   const add = async () => {
-    const picked = await open({ directory: true, multiple: false, title: "Share a folder with SulcusAI" });
+    const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });
     if (typeof picked !== "string") return;
     try {
       await api.addFolder(picked);
       await load();
-      toast("Folder shared. The assistant can now work in it.", "success");
+      toast(t("Folder shared. The assistant can now work in it."), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -170,18 +176,18 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
 
   return (
     <div className="folder-menu" ref={ref}>
-      <button className={`globe ${folders.length ? "on" : ""}`} onClick={() => setOpenMenu((o) => !o)} title="Folders the assistant can use">
-        📁 {folders.length ? `${folders.length} folder${folders.length === 1 ? "" : "s"}` : "No folders"}
+      <button className={`globe ${folders.length ? "on" : ""}`} onClick={() => setOpenMenu((o) => !o)} title={t("Folders the assistant can use")}>
+        📁 {folders.length ? (folders.length === 1 ? t("1 folder") : t("{n} folders", { n: folders.length })) : t("No folders")}
       </button>
       {openMenu && (
         <div className="folder-pop">
-          <p className="small muted">The assistant can read and change files only in these folders.</p>
-          {folders.length === 0 && <p className="small">None yet.</p>}
+          <p className="small muted">{t("The assistant can read and change files only in these folders.")}</p>
+          {folders.length === 0 && <p className="small">{t("None yet.")}</p>}
           <ul>
             {folders.map((f) => (
               <li key={f.path}>
                 <span className="ellipsis" title={f.path}>
-                  📁 {f.name} {!f.exists && <span className="warn small">(missing)</span>}
+                  📁 {f.name} {!f.exists && <span className="warn small">{t("(missing)")}</span>}
                 </span>
                 <button
                   className="link"
@@ -190,13 +196,13 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
                     load();
                   }}
                 >
-                  Remove
+                  {t("Remove")}
                 </button>
               </li>
             ))}
           </ul>
           <button className="btn small" onClick={add}>
-            + Share a folder
+            {t("+ Share a folder")}
           </button>
         </div>
       )}
@@ -212,7 +218,7 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
     load();
   }, []);
   const add = async () => {
-    const picked = await open({ directory: true, multiple: false, title: "Share a folder with SulcusAI" });
+    const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });
     if (typeof picked !== "string") return;
     try {
       await api.addFolder(picked);
@@ -223,19 +229,18 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
   };
   return (
     <section className="card">
-      <h2>Shared folders</h2>
+      <h2>{t("Shared folders")}</h2>
       <p className="muted small">
-        The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat;
-        deleted files go to the Recycle Bin.
+        {t("The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.")}
       </p>
-      {folders.length === 0 && <p className="small">No folders shared yet.</p>}
+      {folders.length === 0 && <p className="small">{t("No folders shared yet.")}</p>}
       {folders.map((f) => (
         <div key={f.path} className="setting-row">
           <div>
             <strong>📁 {f.name}</strong>
             <span className="small muted block ellipsis" title={f.path}>
               {f.path}
-              {!f.exists && " (missing)"}
+              {!f.exists && ` ${t("(missing)")}`}
             </span>
           </div>
           <button
@@ -245,12 +250,12 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
               load();
             }}
           >
-            Stop sharing
+            {t("Stop sharing")}
           </button>
         </div>
       ))}
       <div>
-        <button className="btn" onClick={add}>+ Share a folder</button>
+        <button className="btn" onClick={add}>{t("+ Share a folder")}</button>
       </div>
     </section>
   );

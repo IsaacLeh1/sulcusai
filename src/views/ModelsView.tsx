@@ -7,6 +7,7 @@ import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
+import { t, tx } from "../i18n";
 
 interface Props {
   catalog: CatalogView | null;
@@ -22,7 +23,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   const [tab, setTab] = useState<"chat" | "speech" | "create">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
-  if (!catalog) return <div className="page"><p className="muted">Checking this PC…</p></div>;
+  if (!catalog) return <div className="page"><p className="muted">{t("Checking this PC…")}</p></div>;
 
   const { hardware: hw, hints } = catalog;
   const gpu = hw.gpus.filter((g) => !g.integrated).sort((a, b) => b.vram_bytes - a.vram_bytes)[0];
@@ -51,30 +52,30 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
     <div className="page">
       <header className="page-head">
         <div>
-          <h1>Models</h1>
-          <p className="muted">Only models this PC can run are shown. Click Install and they're ready in a few minutes.</p>
+          <h1>{t("Models")}</h1>
+          <p className="muted">{t("Only models this PC can run are shown. Click Install and they're ready in a few minutes.")}</p>
         </div>
-        <div className="mode-switch" role="tablist" aria-label="Kind of model">
-          <button role="tab" aria-selected={tab === "chat"} className={`mode ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Chat</button>
-          <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>Speech</button>
-          <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>Pictures, video, music</button>
+        <div className="mode-switch" role="tablist" aria-label={t("Kind of model")}>
+          <button role="tab" aria-selected={tab === "chat"} className={`mode ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>{t("Chat")}</button>
+          <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>{t("Speech")}</button>
+          <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>{t("Pictures, video, music")}</button>
         </div>
       </header>
 
       <section className="card hw">
         <div className="hw-grid">
-          <Spec label="Graphics card" value={gpu ? `${gpu.name}` : "None usable"} sub={gpu ? `${bytes(gpu.vram_bytes)} video memory` : "Models run on the processor"} />
-          <Spec label="Memory" value={bytes(hw.ram_total)} sub={`${bytes(hw.ram_available)} free now`} />
-          <Spec label="Processor" value={hw.cpu_name || "Unknown"} sub={`${hw.cpu_cores ?? "?"} cores · ${hw.cpu_threads} threads`} />
-          <Spec label="Disk" value={`${bytes(hw.disk_free)} free`} sub={`on ${hw.models_drive || "the models drive"}`} />
+          <Spec label={t("Graphics card")} value={gpu ? `${gpu.name}` : t("None usable")} sub={gpu ? t("{size} video memory", { size: bytes(gpu.vram_bytes) }) : t("Models run on the processor")} />
+          <Spec label={t("Memory")} value={bytes(hw.ram_total)} sub={t("{size} free now", { size: bytes(hw.ram_available) })} />
+          <Spec label={t("Processor")} value={hw.cpu_name || t("Unknown")} sub={t("{cores} cores · {threads} threads", { cores: hw.cpu_cores ?? "?", threads: hw.cpu_threads })} />
+          <Spec label={t("Disk")} value={t("{size} free", { size: bytes(hw.disk_free) })} sub={hw.models_drive ? t("on {drive}", { drive: hw.models_drive }) : t("on the models drive")} />
         </div>
         <div className="hw-foot">
           <span className="muted small">
-            Engine: llama.cpp ({catalog.backend === "vulkan-x64" ? "graphics card" : catalog.backend === "cpu-x64" ? "processor" : "unavailable on this system"})
-            {hw.on_battery ? " · On battery: models run slower and drain power faster." : ""}
+            {t("Engine: llama.cpp ({engine})", { engine: catalog.backend === "vulkan-x64" ? t("graphics card") : catalog.backend === "cpu-x64" ? t("processor") : t("unavailable on this system") })}
+            {hw.on_battery ? ` · ${t("On battery: models run slower and drain power faster.")}` : ""}
           </span>
           <button className="btn ghost small" onClick={recheck} disabled={checking}>
-            {checking ? "Checking…" : "Check again"}
+            {checking ? t("Checking…") : t("Check again")}
           </button>
         </div>
       </section>
@@ -84,24 +85,24 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "chat" && (
         <div className="model-filters">
-          <div className="chips" role="tablist" aria-label="Show models">
+          <div className="chips" role="tablist" aria-label={t("Show models")}>
             {FILTERS.map((f) => (
-              <button key={f.id} role="tab" aria-selected={filter === f.id} className={`chip ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)} title={f.hint}>
-                {f.label}
+              <button key={f.id} role="tab" aria-selected={filter === f.id} className={`chip ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)} title={t(f.hint)}>
+                {t(f.label)}
               </button>
             ))}
           </div>
           {filter !== "fastest" && (
-            <div className="mode-switch small-switch" role="radiogroup" aria-label="Order">
-              <button role="radio" aria-checked={!mostFirst} className={`mode ${!mostFirst ? "active" : ""}`} onClick={() => setMostFirst(false)}>Least → most capable</button>
-              <button role="radio" aria-checked={mostFirst} className={`mode ${mostFirst ? "active" : ""}`} onClick={() => setMostFirst(true)}>Most → least</button>
+            <div className="mode-switch small-switch" role="radiogroup" aria-label={t("Order")}>
+              <button role="radio" aria-checked={!mostFirst} className={`mode ${!mostFirst ? "active" : ""}`} onClick={() => setMostFirst(false)}>{t("Least → most capable")}</button>
+              <button role="radio" aria-checked={mostFirst} className={`mode ${mostFirst ? "active" : ""}`} onClick={() => setMostFirst(true)}>{t("Most → least")}</button>
             </div>
           )}
           <p className="muted small">
-            {FILTERS.find((f) => f.id === filter)!.hint}
-            {filter === "fastest" ? " Measured once installed; estimated before." : " Scores are rough guides from public benchmarks; bigger models also need more of the PC."}
+            {t(FILTERS.find((f) => f.id === filter)!.hint)}{" "}
+            {filter === "fastest" ? t("Measured once installed; estimated before.") : t("Scores are rough guides from public benchmarks; bigger models also need more of the PC.")}
           </p>
-          {arranged.length === 0 && <p className="muted">None of the models this PC can run stand out here yet. Try All.</p>}
+          {arranged.length === 0 && <p className="muted">{t("None of the models this PC can run stand out here yet. Try All.")}</p>}
         </div>
       )}
 
@@ -109,7 +110,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "chat" && installed.length > 0 && (
         <>
-          <h2>Installed</h2>
+          <h2>{t("Installed")}</h2>
           <div className="model-grid">
             {installed.map((m) => (
               <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
@@ -120,8 +121,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "chat" && (
         <>
-          <h2>Available for this PC</h2>
-          {available.length === 0 && filter === "all" && <p className="muted">Every model that fits this PC is installed.</p>}
+          <h2>{t("Available for this PC")}</h2>
+          {available.length === 0 && filter === "all" && <p className="muted">{t("Every model that fits this PC is installed.")}</p>}
           <div className="model-grid">
             {available.map((m) => (
               <AvailableCard key={m.id} m={m} rank={cardRank} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
@@ -133,20 +134,24 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
       {tab === "chat" && hints.hidden > 0 && (
         <section className="card hint">
           <strong>
-            {hints.hidden} {hints.hidden === 1 ? "model is" : "models are"} hidden because this PC can't run {hints.hidden === 1 ? "it" : "them"}.
+            {hints.hidden === 1 ? t("1 model is hidden because this PC can't run it.") : t("{n} models are hidden because this PC can't run them.", { n: hints.hidden })}
           </strong>
           <ul>
             {hints.ram.map((r) => (
               <li key={r.extra_ram_gb}>
-                Adding {r.extra_ram_gb} GB of memory would unlock {r.unlocks} more {r.unlocks === 1 ? "model" : "models"}.
+                {r.unlocks === 1
+                  ? t("Adding {gb} GB of memory would unlock 1 more model.", { gb: r.extra_ram_gb })
+                  : t("Adding {gb} GB of memory would unlock {n} more models.", { gb: r.extra_ram_gb, n: r.unlocks })}
               </li>
             ))}
             {hints.disk_blocked > 0 && (
               <li>
-                Freeing up {bytes(hints.disk_needed_bytes)} of disk space would unlock {hints.disk_blocked} more {hints.disk_blocked === 1 ? "model" : "models"}.
+                {hints.disk_blocked === 1
+                  ? t("Freeing up {size} of disk space would unlock 1 more model.", { size: bytes(hints.disk_needed_bytes) })
+                  : t("Freeing up {size} of disk space would unlock {n} more models.", { size: bytes(hints.disk_needed_bytes), n: hints.disk_blocked })}
               </li>
             )}
-            {hints.ram.length === 0 && hints.disk_blocked === 0 && <li>They need a graphics card with more video memory.</li>}
+            {hints.ram.length === 0 && hints.disk_blocked === 0 && <li>{t("They need a graphics card with more video memory.")}</li>}
           </ul>
         </section>
       )}
@@ -174,21 +179,21 @@ export function LookForModels({ onRefresh, toast, compact }: { onRefresh: () => 
     <section className={compact ? "look-models compact" : "card look-models"}>
       <div className="look-row">
         <div>
-          {!compact && <strong>Models from other apps</strong>}
-          <p className="muted small">Models you downloaded with Ollama, LM Studio, Jan, GPT4All or Hugging Face can be used here without downloading them again.</p>
+          {!compact && <strong>{t("Models from other apps")}</strong>}
+          <p className="muted small">{t("Models you downloaded with Ollama, LM Studio, Jan, GPT4All or Hugging Face can be used here without downloading them again.")}</p>
         </div>
         <button className="btn" onClick={look} disabled={looking}>
-          {looking ? "Looking…" : "Look for models on this PC"}
+          {looking ? t("Looking…") : t("Look for models on this PC")}
         </button>
       </div>
       {result && (
         <div className="small look-result" role="status">
           {result.added.length > 0 ? (
-            <p>Added {result.added.join(", ")}.</p>
+            <p>{t("Added {names}.", { names: result.added.join(", ") })}</p>
           ) : (
             <p>
-              Nothing new to add.{" "}
-              {result.looked_in.length > 0 ? `Looked in ${result.looked_in.join(", ")}.` : "None of those apps' model folders are on this PC."}
+              {t("Nothing new to add.")}{" "}
+              {result.looked_in.length > 0 ? t("Looked in {places}.", { places: result.looked_in.join(", ") }) : t("None of those apps' model folders are on this PC.")}
             </p>
           )}
           {result.skipped.length > 0 && (
@@ -221,7 +226,7 @@ interface RankInfo {
   best: string | null;
 }
 
-const AREA_LABEL: Record<Area, string> = { coding: "Coding", writing: "Writing", research: "Research", agents: "Agents", languages: "Languages" };
+const AREA_LABEL: Record<Area, string> = { coding: tx("Coding"), writing: tx("Writing"), research: tx("Research"), agents: tx("Agents"), languages: tx("Languages") };
 
 /** Where the model sits from least to most capable, and its strengths. */
 function Capability({ m, rank }: { m: ModelCard; rank: RankInfo }) {
@@ -231,15 +236,15 @@ function Capability({ m, rank }: { m: ModelCard; rank: RankInfo }) {
     <div className="capability">
       <div className="cap-head small">
         <span>
-          Capability <strong>{rank.rankOf(m)}</strong> of {rank.total}
-          <span className="muted"> (1 = lightest)</span>
+          {t("Capability")} <strong>{rank.rankOf(m)}</strong> {t("of {total}", { total: rank.total })}
+          <span className="muted"> {t("(1 = lightest)")}</span>
         </span>
-        {rank.best === m.id && rank.filter !== "all" && <span className="badge">{rank.filter === "fastest" ? "Fastest here" : `Best for ${AREA_LABEL[rank.filter as Area].toLowerCase()}`}</span>}
+        {rank.best === m.id && rank.filter !== "all" && <span className="badge">{rank.filter === "fastest" ? t("Fastest here") : t("Best for {area}", { area: t(AREA_LABEL[rank.filter as Area]).toLowerCase() })}</span>}
       </div>
-      <div className="cap-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={r.overall} aria-label="Overall capability">
+      <div className="cap-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={r.overall} aria-label={t("Overall capability")}>
         <span style={{ width: `${r.overall}%` }} />
       </div>
-      {strengths.length > 0 && <span className="muted small">Strong at: {strengths.map((a) => AREA_LABEL[a].toLowerCase()).join(", ")}</span>}
+      {strengths.length > 0 && <span className="muted small">{t("Strong at: {areas}", { areas: strengths.map((a) => t(AREA_LABEL[a]).toLowerCase()).join(", ") })}</span>}
     </div>
   );
 }
@@ -247,13 +252,13 @@ function Capability({ m, rank }: { m: ModelCard; rank: RankInfo }) {
 function Tags({ m }: { m: ModelCard }) {
   return (
     <div className="tags">
-      {m.tags.filter((t) => t !== "recommended").map((t) => (
-        <span key={t} className="tag">{t}</span>
+      {m.tags.filter((tag) => tag !== "recommended").map((tag) => (
+        <span key={tag} className="tag">{tag}</span>
       ))}
       <span className="tag license" title={`${m.license.note ?? m.license.name}\n${m.license.url}`}>
         {m.license.name}
       </span>
-      {!m.license.commercial && <span className="tag warn">Non-commercial</span>}
+      {!m.license.commercial && <span className="tag warn">{t("Non-commercial")}</span>}
     </div>
   );
 }
@@ -278,9 +283,9 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
       <div className="model-head">
         <div>
           <h3>{m.name}</h3>
-          <span className="muted small">{m.publisher} · {m.params_b}B parameters</span>
+          <span className="muted small">{m.publisher} · {t("{n}B parameters", { n: m.params_b })}</span>
         </div>
-        {onDisk ? <span className="badge">Already on this PC</span> : m.tags.includes("recommended") && <span className="badge">Recommended</span>}
+        {onDisk ? <span className="badge">{t("Already on this PC")}</span> : m.tags.includes("recommended") && <span className="badge">{t("Recommended")}</span>}
       </div>
       <p className="desc">{m.description}</p>
       <Capability m={m} rank={rank} />
@@ -289,7 +294,7 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
         <InstallBar m={m} p={progress} />
       ) : (
         <div className="install-row">
-          <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={`Quality for ${m.name}`} title="Quality and download size. ★ is the best fit for this PC.">
+          <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={t("Quality for {name}", { name: m.name })} title={t("Quality and download size. ★ is the best fit for this PC.")}>
 
             {options.map((v) => {
               const spec = m.variants.find((x) => x.quant === v.quant)!;
@@ -300,14 +305,14 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
               );
             })}
           </select>
-          <button className="btn primary" onClick={install} disabled={otherBusy || !quant} title={otherBusy ? "One install at a time" : undefined}>
-            {quant === onDisk ? "Set up (no download)" : "Install"}
+          <button className="btn primary" onClick={install} disabled={otherBusy || !quant} title={otherBusy ? t("One install at a time") : undefined}>
+            {quant === onDisk ? t("Set up (no download)") : t("Install")}
           </button>
         </div>
       )}
       {fit && variant && !progress && (
         <p className="muted small fit-line">
-          {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} (about {Math.round(fit.est_tps)} tokens/sec, estimated)
+          {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} tokens/sec, estimated)", { n: Math.round(fit.est_tps) })}
         </p>
       )}
     </article>
@@ -316,20 +321,20 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
 
 function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
   const label = {
-    engine: "Setting up the engine",
-    verify: "Checking the downloaded file",
-    download: "Downloading",
-    benchmark: "Testing speed on this PC",
-    vision: "Downloading the picture reader",
+    engine: t("Setting up the engine"),
+    verify: t("Checking the downloaded file"),
+    download: t("Downloading"),
+    benchmark: t("Testing speed on this PC"),
+    vision: t("Downloading the picture reader"),
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">
       <div className="progress-label">
-        <span>{label}{pct !== null ? ` · ${bytes(p.received)} of ${bytes(p.total)}` : "…"}</span>
+        <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
         {p.phase !== "benchmark" && (
           <button className="link" onClick={() => api.cancelInstall(m.id)}>
-            Cancel
+            {t("Cancel")}
           </button>
         )}
       </div>
@@ -352,19 +357,19 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
         <div>
           <h3>{m.name}</h3>
           <span className="muted small">
-            {m.local ? `From ${m.local.app} · ` : ""}
-            {variant?.quality ?? inst.quant} quality · {bytes(inst.size)}
+            {m.local ? `${t("From {app}", { app: m.local.app })} · ` : ""}
+            {t("{quality} quality", { quality: variant?.quality ?? inst.quant })} · {bytes(inst.size)}
           </span>
         </div>
-        {isDefault ? <span className="badge">Default</span> : null}
+        {isDefault ? <span className="badge">{t("Default")}</span> : null}
       </div>
       <p className="desc">{m.description}</p>
-      {m.local ? <p className="muted small ellipsis" title={m.local.path}>{m.params_b}B parameters{m.tools ? " · can use tools" : ""}</p> : <Capability m={m} rank={rank} />}
+      {m.local ? <p className="muted small ellipsis" title={m.local.path}>{t("{n}B parameters", { n: m.params_b })}{m.tools ? ` · ${t("can use tools")}` : ""}</p> : <Capability m={m} rank={rank} />}
       {!m.local && <Tags m={m} />}
       <p className="small fit-line">
         {inst.tps !== null
-          ? `Measured on this PC: ${inst.tps} tokens/sec (${speedLabel(inst.tps).toLowerCase()})`
-          : "Speed not measured yet"}
+          ? t("Measured on this PC: {tps} tokens/sec ({speed})", { tps: inst.tps, speed: speedLabel(inst.tps).toLowerCase() })
+          : t("Speed not measured yet")}
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>
       <div className="install-row">
@@ -379,30 +384,30 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
               }
             }}
           >
-            Make default
+            {t("Make default")}
           </button>
         )}
         <span className="spacer" />
         <button className="btn ghost danger" onClick={() => setConfirm(true)}>
-          {m.local ? "Stop using" : "Remove"}
+          {m.local ? t("Stop using") : t("Remove")}
         </button>
       </div>
       {confirm && (
-        <Modal title={m.local ? `Stop using ${m.name}?` : `Remove ${m.name}?`} onClose={() => setConfirm(false)}>
+        <Modal title={m.local ? t("Stop using {name}?", { name: m.name }) : t("Remove {name}?", { name: m.name })} onClose={() => setConfirm(false)}>
           {m.local ? (
-            <p>SulcusAI stops listing it. The file stays in {m.local.app}, and Look for models on this PC brings it back.</p>
+            <p>{t("SulcusAI stops listing it. The file stays in {app}, and Look for models on this PC brings it back.", { app: m.local.app })}</p>
           ) : (
-            <p>This deletes the model file ({bytes(inst.size)}) from this PC. Your chats stay, and you can reinstall it any time.</p>
+            <p>{t("This deletes the model file ({size}) from this PC. Your chats stay, and you can reinstall it any time.", { size: bytes(inst.size) })}</p>
           )}
           <div className="modal-actions">
-            <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
+            <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
             <button
               className="btn danger-fill"
               onClick={async () => {
                 try {
                   await api.removeModel(m.id);
                   setConfirm(false);
-                  if (m.local) toast(`Stopped using ${m.name}. Its file is still in ${m.local.app}.`, "success");
+                  if (m.local) toast(t("Stopped using {name}. Its file is still in {app}.", { name: m.name, app: m.local.app }), "success");
                   await onRefresh();
                   onSettings(await api.settings());
                 } catch (e) {
@@ -410,7 +415,7 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
                 }
               }}
             >
-              {m.local ? "Stop using" : "Remove"}
+              {m.local ? t("Stop using") : t("Remove")}
             </button>
           </div>
         </Modal>

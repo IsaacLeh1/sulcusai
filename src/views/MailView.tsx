@@ -6,6 +6,7 @@ import { api, errorText, on, type MailAccount, type MailConfig, type MailItem, t
 import { Modal } from "../components/Modal";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
+import { t, tx } from "../i18n";
 
 const when = (ms: number) => {
   const d = new Date(ms);
@@ -42,8 +43,8 @@ export function MailView({ toast }: { toast: PushToast }) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const t = setTimeout(() => loadItems(query), 200);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => loadItems(query), 200);
+    return () => clearTimeout(timer);
   }, [query]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!openId) return setOpen(null);
@@ -59,7 +60,7 @@ export function MailView({ toast }: { toast: PushToast }) {
       const n = await api.syncMail();
       await loadItems();
       await loadAccounts();
-      toast(n === 0 ? "No new mail." : `${n} new ${n === 1 ? "message" : "messages"}.`, "success");
+      toast(n === 0 ? t("No new mail.") : n === 1 ? t("1 new message.") : t("{n} new messages.", { n }), "success");
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
@@ -67,12 +68,12 @@ export function MailView({ toast }: { toast: PushToast }) {
     }
   };
 
-  if (!accounts) return <div className="page"><p className="muted">Loading…</p></div>;
+  if (!accounts) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
   if (accounts.length === 0 || adding) {
     return (
       <div className="page">
         <div className="narrow">
-          <header className="page-head"><h1>Mail</h1></header>
+          <header className="page-head"><h1>{t("Mail")}</h1></header>
           <AddAccount
             toast={toast}
             onCancel={accounts.length > 0 ? () => setAdding(false) : undefined}
@@ -100,26 +101,26 @@ export function MailView({ toast }: { toast: PushToast }) {
     <div className="notes-page mail-page">
       <aside className="notes-list">
         <div className="row">
-          <input className="input" placeholder="Search mail" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search mail" />
-          <button className="btn primary small" onClick={() => setCompose({ to: "", cc: "", subject: "", body: "", reply_to: null })}>Write</button>
+          <input className="input" placeholder={t("Search mail")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search mail")} />
+          <button className="btn primary small" onClick={() => setCompose({ to: "", cc: "", subject: "", body: "", reply_to: null })}>{t("Write")}</button>
         </div>
         <div className="row small muted">
-          <button className="btn ghost small" onClick={sync} disabled={syncing}>{syncing ? "Syncing…" : "↻ Sync"}</button>
+          <button className="btn ghost small" onClick={sync} disabled={syncing}>{syncing ? t("Syncing…") : t("↻ Sync")}</button>
           <span className="ellipsis">{accounts.map((a) => a.email).join(", ")}</span>
         </div>
-        {items.length === 0 && <p className="muted small">{query ? "Nothing matches." : "No mail copied yet. Click Sync."}</p>}
+        {items.length === 0 && <p className="muted small">{query ? t("Nothing matches.") : t("No mail copied yet. Click Sync.")}</p>}
         {items.map((m) => (
           <button key={m.id} className={`note-item mail-item ${openId === m.id ? "active" : ""} ${m.seen ? "" : "unread"}`} onClick={() => setOpenId(m.id)}>
             <span className="row between">
-              <strong className="ellipsis">{m.folder === "INBOX" ? m.from_name || m.from : `To: ${m.to.join(", ")}`}</strong>
+              <strong className="ellipsis">{m.folder === "INBOX" ? m.from_name || m.from : t("To: {names}", { names: m.to.join(", ") })}</strong>
               <span className="small muted">{when(m.date)}</span>
             </span>
-            <span className="ellipsis">{m.subject || "(no subject)"}</span>
+            <span className="ellipsis">{m.subject || t("(no subject)")}</span>
             <span className="small muted ellipsis">{m.snippet}</span>
           </button>
         ))}
         <details className="mail-accounts small">
-          <summary>Accounts</summary>
+          <summary>{t("Accounts")}</summary>
           {accounts.map((a) => (
             <div key={a.id} className="row between">
               <span className="ellipsis">{a.email}</span>
@@ -136,30 +137,30 @@ export function MailView({ toast }: { toast: PushToast }) {
                   }
                 }}
               >
-                Remove
+                {t("Remove")}
               </button>
             </div>
           ))}
-          <button className="btn small" onClick={() => setAdding(true)}>+ Add account</button>
+          <button className="btn small" onClick={() => setAdding(true)}>{t("+ Add account")}</button>
         </details>
       </aside>
       <section className="mail-read">
-        {!open && <p className="muted pad">Pick a message to read it. The assistant can also search and summarize your mail.</p>}
+        {!open && <p className="muted pad">{t("Pick a message to read it. The assistant can also search and summarize your mail.")}</p>}
         {open && (
           <article>
             <header className="mail-head">
-              <h2>{open.subject || "(no subject)"}</h2>
+              <h2>{open.subject || t("(no subject)")}</h2>
               <p className="small">
                 <strong>{open.from_name || open.from}</strong> <span className="muted">&lt;{open.from}&gt;</span>
                 <br />
-                <span className="muted">To {open.to.join(", ")}{open.cc.length > 0 ? ` · Cc ${open.cc.join(", ")}` : ""} · {new Date(open.date).toLocaleString()}</span>
+                <span className="muted">{t("To {names}", { names: open.to.join(", ") })}{open.cc.length > 0 ? ` · ${t("Cc {names}", { names: open.cc.join(", ") })}` : ""} · {new Date(open.date).toLocaleString()}</span>
               </p>
-              {open.attachments.length > 0 && <p className="small muted">📎 {open.attachments.join(", ")} (left on the server)</p>}
+              {open.attachments.length > 0 && <p className="small muted">{t("📎 {files} (left on the server)", { files: open.attachments.join(", ") })}</p>}
               <div className="row">
-                <button className="btn small" onClick={() => reply(open)}>Reply</button>
+                <button className="btn small" onClick={() => reply(open)}>{t("Reply")}</button>
               </div>
             </header>
-            <pre className="mail-body">{open.body || (open.partial ? "This message is large, so only its headers were copied." : "")}</pre>
+            <pre className="mail-body">{open.body || (open.partial ? t("This message is large, so only its headers were copied.") : "")}</pre>
           </article>
         )}
       </section>
@@ -176,7 +177,7 @@ function ComposeDialog({ draft, from, onClose, toast }: { draft: Compose; from: 
     setSending(true);
     try {
       await api.sendMail(from.id, { to: split(d.to), cc: split(d.cc), subject: d.subject, body: d.body, reply_to: d.reply_to });
-      toast("Sent.", "success");
+      toast(t("Sent."), "success");
       onClose();
     } catch (e) {
       toast(errorText(e), "error");
@@ -184,17 +185,17 @@ function ComposeDialog({ draft, from, onClose, toast }: { draft: Compose; from: 
     }
   };
   return (
-    <Modal title={d.reply_to ? "Reply" : "New email"} onClose={onClose}>
+    <Modal title={d.reply_to ? t("Reply") : t("New email")} onClose={onClose}>
       <div className="form">
-        <span className="small muted">From {from.email}</span>
-        <label>To<input className="input" value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} placeholder="name@example.com" autoFocus={!d.reply_to} /></label>
-        <label>Cc<input className="input" value={d.cc} onChange={(e) => setD({ ...d, cc: e.target.value })} /></label>
-        <label>Subject<input className="input" value={d.subject} onChange={(e) => setD({ ...d, subject: e.target.value })} /></label>
-        <textarea className="input" rows={12} value={d.body} onChange={(e) => setD({ ...d, body: e.target.value })} aria-label="Message" autoFocus={!!d.reply_to} />
+        <span className="small muted">{t("From {email}", { email: from.email })}</span>
+        <label>{t("To")}<input className="input" value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} placeholder="name@example.com" autoFocus={!d.reply_to} /></label>
+        <label>{t("Cc")}<input className="input" value={d.cc} onChange={(e) => setD({ ...d, cc: e.target.value })} /></label>
+        <label>{t("Subject")}<input className="input" value={d.subject} onChange={(e) => setD({ ...d, subject: e.target.value })} /></label>
+        <textarea className="input" rows={12} value={d.body} onChange={(e) => setD({ ...d, body: e.target.value })} aria-label={t("Message")} autoFocus={!!d.reply_to} />
       </div>
       <div className="modal-actions">
-        <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={send} disabled={sending || !d.to.trim()}>{sending ? "Sending…" : "Send"}</button>
+        <button className="btn" onClick={onClose}>{t("Cancel")}</button>
+        <button className="btn primary" onClick={send} disabled={sending || !d.to.trim()}>{sending ? t("Sending…") : t("Send")}</button>
       </div>
     </Modal>
   );
@@ -203,7 +204,7 @@ function ComposeDialog({ draft, from, onClose, toast }: { draft: Compose; from: 
 const SECURITY: { id: MailSecurity; label: string }[] = [
   { id: "tls", label: "SSL/TLS" },
   { id: "starttls", label: "STARTTLS" },
-  { id: "plain", label: "None (this PC only)" },
+  { id: "plain", label: tx("None (this PC only)") },
 ];
 
 function AddAccount({ toast, onAdded, onCancel }: { toast: PushToast; onAdded: () => void; onCancel?: () => void }) {
@@ -227,7 +228,7 @@ function AddAccount({ toast, onAdded, onCancel }: { toast: PushToast; onAdded: (
     try {
       const base = cfg ?? (await api.mailPreset(email.trim())).config;
       await api.addMailAccount({ ...base, email: email.trim(), name, password });
-      toast("Connected. Your recent mail is copied to this PC.", "success");
+      toast(t("Connected. Your recent mail is copied to this PC."), "success");
       onAdded();
     } catch (e) {
       toast(errorText(e), "error");
@@ -244,46 +245,46 @@ function AddAccount({ toast, onAdded, onCancel }: { toast: PushToast; onAdded: (
   const sec = (label: string, key: "imap_security" | "smtp_security") => (
     <label>{label}
       <select value={cfg?.[key] ?? "tls"} onChange={(e) => cfg && setCfg({ ...cfg, [key]: e.target.value as MailSecurity })}>
-        {SECURITY.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+        {SECURITY.map((s) => <option key={s.id} value={s.id}>{t(s.label)}</option>)}
       </select>
     </label>
   );
 
   return (
     <section className="card">
-      <h2>Connect an email account</h2>
-      <p className="muted small">Your mail is copied to this PC and encrypted, so you and the assistant can read and search it, even Offline. Syncing and sending need Local AI + Web. Sending always asks you first.</p>
+      <h2>{t("Connect an email account")}</h2>
+      <p className="muted small">{t("Your mail is copied to this PC and encrypted, so you and the assistant can read and search it, even Offline. Syncing and sending need Local AI + Web. Sending always asks you first.")}</p>
       <SignInButtons
         toast={toast}
         start={(p) => api.addMailAccountOAuth(p, name.trim() || null)}
         done={(p) => {
-          toast(`Connected with ${p === "microsoft" ? "Microsoft" : "Google"}. Your recent mail is copied to this PC.`, "success");
+          toast(t("Connected with {provider}. Your recent mail is copied to this PC.", { provider: p === "microsoft" ? "Microsoft" : "Google" }), "success");
           onAdded();
         }}
       />
-      <p className="small muted or-line">or use a password (other providers, or an app password)</p>
+      <p className="small muted or-line">{t("or use a password (other providers, or an app password)")}</p>
       <div className="form">
-        <label>Email address<input className="input" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={fill} placeholder="you@example.com" autoFocus /></label>
-        <label>Your name (shown to people you write to)<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
-        <label>Password or app password<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" /></label>
+        <label>{t("Email address")}<input className="input" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={fill} placeholder="you@example.com" autoFocus /></label>
+        <label>{t("Your name (shown to people you write to)")}<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+        <label>{t("Password or app password")}<input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" /></label>
         {note && <p className="small hint-box">{note}</p>}
         {cfg && (
-          <button className="link small left" onClick={() => setAdvanced(!advanced)}>{advanced ? "Hide server settings" : `Server settings (${cfg.imap_host})`}</button>
+          <button className="link small left" onClick={() => setAdvanced(!advanced)}>{advanced ? t("Hide server settings") : t("Server settings ({host})", { host: cfg.imap_host })}</button>
         )}
         {cfg && advanced && (
           <div className="grid-2">
-            {field("Incoming (IMAP) server", "imap_host")}
-            {port("Port", "imap_port")}
-            {sec("Security", "imap_security")}
-            <label>User name<input className="input" value={cfg.username} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} /></label>
-            {field("Outgoing (SMTP) server", "smtp_host")}
-            {port("Port", "smtp_port")}
-            {sec("Security", "smtp_security")}
+            {field(t("Incoming (IMAP) server"), "imap_host")}
+            {port(t("Port"), "imap_port")}
+            {sec(t("Security"), "imap_security")}
+            <label>{t("User name")}<input className="input" value={cfg.username} onChange={(e) => setCfg({ ...cfg, username: e.target.value })} /></label>
+            {field(t("Outgoing (SMTP) server"), "smtp_host")}
+            {port(t("Port"), "smtp_port")}
+            {sec(t("Security"), "smtp_security")}
           </div>
         )}
         <div className="row">
-          <button className="btn primary" onClick={connect} disabled={busy || !valid || !password}>{busy ? "Connecting…" : "Connect"}</button>
-          {onCancel && <button className="btn" onClick={onCancel}>Cancel</button>}
+          <button className="btn primary" onClick={connect} disabled={busy || !valid || !password}>{busy ? t("Connecting…") : t("Connect")}</button>
+          {onCancel && <button className="btn" onClick={onCancel}>{t("Cancel")}</button>}
         </div>
       </div>
     </section>
