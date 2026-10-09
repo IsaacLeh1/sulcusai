@@ -1,0 +1,86 @@
+name: Release for macOS and Linux
+
+# When a release is published (scripts/release.ps1 -Publish makes the
+# Windows one), build the Linux and macOS installers from the same tag and
+# attach them. With the TAURI_SIGNING_PRIVATE_KEY secret set, they're also
+# signed for the updater and added to latest.json; without it they ship
+# without automatic updates.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.8.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # An older Ubuntu, so the package runs on more distributions.
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+            bundles: deb,appimage
+          - os: macos-latest
+            platform: darwin-aarch64
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - name: Linux build packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libasound2-dev libdbus-1-dev libxdo-dev pkg-config file
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then UPDATER=true; else UPDATER=false; fi
+          pnpm tauri build --bundles ${{ matrix.bundles }} --config "{\"bundle\":{\"createUpdaterArtifacts\":$UPDATER}}"
+      - name: Attach to the release
+        run: python3 scripts/release_unix.py attach "$TAG" ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: updater-${{ matrix.platform }}
+          path: updater-${{ matrix.platform }}.json
+          if-no-files-found: ignore
+
+  # One job merges the platforms into latest.json, so builds can't overwrite each other.
+  updater:
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: updater-*
+          merge-multiple: true
+      - name: Add macOS and Linux to latest.json
+        run: python3 scripts/release_unix.py merge "$TAG"

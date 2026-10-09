@@ -271,7 +271,7 @@ fn music_dir(c: &MediaCatalog, key: &str) -> String {
 /// the processor one.
 fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
     let c = &state.catalog.media;
-    ["vulkan-x64", "cpu-x64"]
+    ["vulkan-x64", engine::cpu_key()]
         .iter()
         .map(|k| state.paths.engines.join(music_dir(c, k)))
         .find(|d| engine::find_exe(d, MUSIC_EXE).is_some())

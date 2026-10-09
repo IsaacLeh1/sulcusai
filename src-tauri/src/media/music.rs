@@ -130,7 +130,7 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     };
     proc::run(
         Run {
-            exe: &exe("ace-lm.exe")?,
+            exe: &exe(if cfg!(windows) { "ace-lm.exe" } else { "ace-lm" })?,
             args: vec!["--models".into(), e.models.into(), "--request".into(), plan.clone().into()],
             cwd: work,
             log: &e.logs.join("music-lm.log"),
@@ -147,7 +147,7 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     }
     proc::run(
         Run {
-            exe: &exe("ace-synth.exe")?,
+            exe: &exe(if cfg!(windows) { "ace-synth.exe" } else { "ace-synth" })?,
             args: vec!["--models".into(), e.models.into(), "--request".into(), planned.clone().into()],
             cwd: work,
             log: &e.logs.join("music-synth.log"),

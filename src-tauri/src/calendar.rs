@@ -609,9 +609,11 @@ fn windows_time_zone() -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// macOS and Linux: the system's IANA name (e.g. "America/Denver"), which
+/// Graph also accepts.
 #[cfg(not(windows))]
 fn windows_time_zone() -> Option<String> {
-    None
+    iana_time_zone::get_timezone().ok()
 }
 
 fn graph_time(ms: i64) -> String {

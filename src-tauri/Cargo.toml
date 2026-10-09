@@ -1,6 +1,6 @@
 [package]
 name = "sulcusai"
-version = "0.8.0"
+version = "0.8.1"
 description = "Private, on-device AI workspace"
 license = "AGPL-3.0-only"
 edition = "2021"
@@ -131,6 +131,8 @@ strip = true
 [target.'cfg(not(windows))'.dependencies]
 # Deleting moves things to the Trash (freedesktop trash on Linux), so it can be undone.
 trash = "5"
+# The time zone to ask Outlook calendars for.
+iana-time-zone = "0.1"
 # Microphone and speakers (Core Audio on macOS, ALSA/PipeWire on Linux).
 cpal = "0.15"
 
