@@ -69,6 +69,14 @@ impl Cipher {
     pub fn open_bytes(&self, blob: &[u8]) -> Result<Vec<u8>, String> {
         open(&self.0, blob).ok_or_else(|| "A backup couldn't be decrypted.".to_string())
     }
+
+    /// A random key, for tests that only need some cipher.
+    #[cfg(test)]
+    pub fn for_test() -> Cipher {
+        let mut key = Zeroizing::new([0u8; 32]);
+        OsRng.fill_bytes(key.as_mut());
+        Cipher(Arc::new(key))
+    }
 }
 
 fn seal(key: &[u8; 32], plain: &[u8]) -> Vec<u8> {

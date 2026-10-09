@@ -36,6 +36,9 @@ pub enum Feature {
     Documents,
     QuickAsk,
     BrowserControl,
+    Images,
+    Video,
+    Music,
     Files,
     Memory,
     Projects,
@@ -58,6 +61,9 @@ pub const ALL: &[Feature] = &[
     Feature::Documents,
     Feature::QuickAsk,
     Feature::BrowserControl,
+    Feature::Images,
+    Feature::Video,
+    Feature::Music,
     Feature::Files,
     Feature::Memory,
     Feature::Projects,
@@ -82,6 +88,9 @@ impl Feature {
             Feature::Documents => "Documents",
             Feature::QuickAsk => "Quick ask",
             Feature::BrowserControl => "Browser control",
+            Feature::Images => "Pictures",
+            Feature::Video => "Video",
+            Feature::Music => "Music and audio",
             Feature::Files => "Files and coding",
             Feature::Memory => "Memory",
             Feature::Projects => "Projects",
@@ -95,6 +104,16 @@ impl Feature {
         match self {
             Feature::Dictation | Feature::VoiceChat => Some(Use::Live),
             Feature::Meetings => Some(Use::Accurate),
+            _ => None,
+        }
+    }
+
+    /// The kind of media model a feature needs before it can be turned on.
+    fn needs_media(self) -> Option<crate::media::Kind> {
+        match self {
+            Feature::Images => Some(crate::media::Kind::Image),
+            Feature::Video => Some(crate::media::Kind::Video),
+            Feature::Music => Some(crate::media::Kind::Music),
             _ => None,
         }
     }
@@ -233,12 +252,21 @@ fn need_for(state: &AppState, purpose: Use) -> Option<Need> {
     Some(Need { model_id: want.id.clone(), model_name: want.name.clone(), size: want.size, met })
 }
 
+/// The media model to install for a feature, if none of its kind is installed.
+fn media_need(state: &AppState, kind: crate::media::Kind) -> Option<Need> {
+    let met = crate::media::has_kind(state, kind);
+    let want = crate::media::recommended(state, kind)?;
+    Some(Need { model_id: want.id.clone(), model_name: want.name.clone(), size: want.size(), met })
+}
+
+fn need(state: &AppState, f: Feature) -> Option<Need> {
+    f.needs_speech().and_then(|u| need_for(state, u)).or_else(|| f.needs_media().and_then(|k| media_need(state, k)))
+}
+
 #[tauri::command]
 pub fn features_view(state: AppStateRef) -> Vec<FeatureView> {
     let on = enabled(&state.db.lock().unwrap());
-    ALL.iter()
-        .map(|f| FeatureView { id: *f, enabled: on.contains(f), need: f.needs_speech().and_then(|u| need_for(&state, u)) })
-        .collect()
+    ALL.iter().map(|f| FeatureView { id: *f, enabled: on.contains(f), need: need(&state, *f) }).collect()
 }
 
 #[tauri::command]
@@ -247,6 +275,14 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
         if let Some(n) = feature.needs_speech().and_then(|u| need_for(&state, u)) {
             if !n.met && speech::installed(&state.db.lock().unwrap()).is_empty() {
                 return Err(format!("{} needs a speech model first. Click Install.", feature.name()));
+            }
+        }
+        if let Some(k) = feature.needs_media() {
+            if !crate::media::has_kind(&state, k) {
+                return Err(match crate::media::recommended(&state, k) {
+                    Some(_) => format!("{} needs a model first. Click Install.", feature.name()),
+                    None => format!("{} isn't available on this PC: no model for it fits.", feature.name()),
+                });
             }
         }
     }
@@ -267,6 +303,14 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
 /// Installs what a feature needs, then turns it on.
 #[tauri::command]
 pub fn install_feature(app: AppHandle, state: AppStateRef, feature: Feature) -> Result<(), String> {
+    if let Some(k) = feature.needs_media() {
+        if crate::media::has_kind(&state, k) {
+            set_feature(app, state, feature, true)?;
+            return Ok(());
+        }
+        let spec = crate::media::recommended(&state, k).ok_or_else(|| format!("{} isn't available on this PC: no model for it fits.", feature.name()))?;
+        return crate::media::start_install(app, state.inner().clone(), spec, Some(feature));
+    }
     let Some(need) = feature.needs_speech().and_then(|u| need_for(&state, u)) else {
         // Nothing to download.
         set_feature(app, state, feature, true)?;

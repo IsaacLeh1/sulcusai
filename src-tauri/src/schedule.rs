@@ -155,7 +155,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         let title = format!("⏰ {} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
         (db::profile(&conn, &cipher), title)
     };
-    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), || {}).await?;
+    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), false, || {}).await?;
 
     let (chat_id, turn_id) = {
         let conn = state.db.lock().unwrap();
@@ -189,6 +189,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         ep,
         mode: if s.allow_changes { tools::Mode::Bypass } else { tools::Mode::Plan },
         use_tools: spec.tools,
+        vision: false,
         base,
         about,
         cancel,

@@ -109,6 +109,8 @@ pub struct Turn {
     pub ep: Endpoint,
     pub mode: Mode,
     pub use_tools: bool,
+    /// The model was started with its image encoder and can see pictures.
+    pub vision: bool,
     pub base: String,
     pub about: String,
     pub cancel: Arc<AtomicBool>,
@@ -238,6 +240,20 @@ impl Turn {
                 extra.push("calendar_create_event");
             }
         }
+        // Making pictures, video and music, once a model for them is installed.
+        let mut media_note = Vec::new();
+        if self.use_tools && features.contains(&Feature::Images) && crate::media::has_kind(&self.state, crate::media::Kind::Image) {
+            extra.extend(["create_image", "edit_image"]);
+            media_note.push("pictures (create_image, edit_image)");
+        }
+        if self.use_tools && features.contains(&Feature::Video) && crate::media::has_kind(&self.state, crate::media::Kind::Video) {
+            extra.push("create_video");
+            media_note.push("short video clips (create_video)");
+        }
+        if self.use_tools && features.contains(&Feature::Music) && crate::media::has_kind(&self.state, crate::media::Kind::Music) {
+            extra.push("create_music");
+            media_note.push("music and sound effects (create_music)");
+        }
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
         }
@@ -265,6 +281,14 @@ impl Turn {
         if memory_tools {
             about.push_str(&memory::prompt_section(&memory::relevant(&memories, &request)));
         }
+        if !media_note.is_empty() {
+            about.push_str(&format!(
+                "\n\nYou can make {} on this PC. When the user asks for one, call the tool with a vivid, specific description \
+                 (subject, setting, style, lighting) instead of describing it in words. The result appears in the chat by itself, \
+                 so don't paste links or ids; say in a sentence what you made.",
+                media_note.join(", ")
+            ));
+        }
         if self.use_tools {
             about.push_str(&tool_instructions(&sandbox, self.mode));
             about.push_str(&connectors::skills_prompt(&extras.skills));
@@ -289,7 +313,11 @@ impl Turn {
 
             let message_id = uuid::Uuid::new_v4().to_string();
             self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
-            let finished = chat::stream(&self.ep, chat::api_messages(&system, &kept), tools.as_ref(), &self.cancel, |d| {
+            let mut messages = chat::api_messages(&system, &kept);
+            let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
+            let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
+            chat::attach_images(&mut messages, &kept, see);
+            let finished = chat::stream(&self.ep, messages, tools.as_ref(), &self.cancel, |d| {
                 let (content, thinking) = match d {
                     Delta::Content(t) => (Some(t), None),
                     Delta::Thinking(t) => (None, Some(t)),

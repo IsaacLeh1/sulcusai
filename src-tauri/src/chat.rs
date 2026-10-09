@@ -217,6 +217,44 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
     out
 }
 
+/// Puts attached pictures into the user messages of `out` (as built by
+/// `api_messages`: the system message, then one per history message).
+/// Only the newest few are sent, which keeps long chats affordable. With no
+/// `see`, the model is told it can't see them, so it can say so.
+pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>) {
+    let mut left = 4usize;
+    for (i, m) in history.iter().enumerate().rev() {
+        if m.role != "user" {
+            continue;
+        }
+        let Some(ids) = m.meta.as_ref().and_then(|v| v.get("images")).and_then(Value::as_array) else { continue };
+        let ids: Vec<&str> = ids.iter().filter_map(Value::as_str).collect();
+        let Some(slot) = out.get_mut(i + 1) else { continue };
+        let text = slot["content"].as_str().unwrap_or("").to_string();
+        let n = ids.len();
+        slot["content"] = match see {
+            Some(see) if left > 0 => {
+                let mut parts = vec![json!({ "type": "text", "text": text })];
+                for id in ids {
+                    if left == 0 {
+                        break;
+                    }
+                    if let Some(url) = see(id) {
+                        parts.push(json!({ "type": "image_url", "image_url": { "url": url } }));
+                        left -= 1;
+                    }
+                }
+                Value::Array(parts)
+            }
+            Some(_) => json!(format!("{text}\n[{n} picture(s) were attached here earlier.]")),
+            None => json!(format!(
+                "{text}\n[The user attached {n} picture(s), but the model in use can't see pictures. Tell them, and suggest picking a model that can, \
+                 such as Qwen3 VL or Gemma 3, from the model menu.]"
+            )),
+        };
+    }
+}
+
 fn sent_note(ms: i64) -> String {
     use chrono::TimeZone;
     chrono::Local

@@ -163,6 +163,15 @@ CREATE TABLE IF NOT EXISTS events (
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_by_start ON events(start);
+CREATE TABLE IF NOT EXISTS media (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  chat_id    TEXT,
+  hidden     INTEGER NOT NULL DEFAULT 0,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS media_by_time ON media(created_at);
 CREATE TABLE IF NOT EXISTS project_folders (
   project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   path       TEXT NOT NULL,

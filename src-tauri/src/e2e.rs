@@ -66,6 +66,7 @@ async fn e2e_install_load_and_chat() {
                 threads: 0,
                 low_priority: false,
                 log: &log,
+                mmproj: None,
             },
             None,
         )
@@ -130,7 +131,7 @@ async fn e2e_tool_call_probe() {
     let dest = paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None }, None)
         .await
         .unwrap();
     let body = serde_json::json!({
@@ -200,7 +201,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None }, None)
         .await
         .unwrap();
 
@@ -226,6 +227,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
             ep: ep.clone(),
             mode,
             use_tools: true,
+            vision: false,
             base: chat::system_prompt(&Profile::default(), "Tuesday, October 6, 2026").0,
             about: String::new(),
             cancel: Arc::new(AtomicBool::new(false)),
@@ -322,7 +324,7 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log() }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None }, None)
         .await
         .unwrap();
     (state, ep, cipher)
@@ -348,6 +350,7 @@ async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cip
         ep: ep.clone(),
         mode: crate::tools::Mode::Auto,
         use_tools: true,
+        vision: false,
         base: chat::system_prompt(&Profile::default(), "Tuesday, October 6, 2026").0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -925,7 +928,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let cool = perf::limits(&PerfSettings { mode: Mode::Cool, ..Default::default() }, &hw, false);
     let (ctx, layers) = catalog::launch_within(&spec, "Q4_K_M", &full, &cool);
     println!("cool: {} threads, ctx {ctx}, {layers} layers, low priority {}", cool.threads, cool.low_priority);
-    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log };
+    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None };
     let ep = eng.ensure(launch(ctx, layers, &cool), None).await.unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let line = text.lines().find(|l| l.contains("n_threads")).unwrap_or("");

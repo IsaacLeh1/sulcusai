@@ -31,6 +31,7 @@ pub struct Catalog {
     pub speech: crate::speech::SpeechCatalog,
     pub voices: crate::natural::VoiceCatalog,
     pub diarization: crate::diarize::SpeakerModel,
+    pub media: crate::media::MediaCatalog,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,6 +96,17 @@ pub struct ModelSpec {
     pub variants: Vec<Variant>,
     #[serde(default)]
     pub ratings: Ratings,
+    /// The image encoder (llama.cpp mmproj) for models that can see pictures.
+    #[serde(default)]
+    pub vision: Option<VisionFile>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct VisionFile {
+    pub file: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// Rough capability guides for the Models page (from public benchmarks).

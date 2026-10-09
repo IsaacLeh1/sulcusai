@@ -390,7 +390,7 @@ async fn voice_loop(
         };
         let (app, state2, ts, emit_busy) = (app.clone(), state.clone(), turn_state.clone(), sentences.clone());
         tauri::async_runtime::spawn(async move {
-            let r = crate::run_turn(&app, &state2, chat, text, Some(tee)).await;
+            let r = crate::run_turn(&app, &state2, chat, text, Vec::new(), Some(tee)).await;
             for sentence in emit_busy.lock().unwrap().finish() {
                 s.say(sentence);
             }

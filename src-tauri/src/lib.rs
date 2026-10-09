@@ -27,6 +27,7 @@ mod hello;
 mod location;
 mod mail;
 mod mcp;
+mod media;
 mod meeting;
 mod memory;
 mod natural;
@@ -320,6 +321,14 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                 emit("download", r, t)
             })
             .await?;
+            // Models that can see pictures also get their image encoder.
+            if let Some(v) = &spec.vision {
+                let vdest = state.paths.models.join(&spec.id).join(&v.file);
+                if !vdest.exists() {
+                    state.log("network", &format!("Downloading {}'s picture reader ({}) from {}", spec.name, size_label(v.size), host_of(&v.url)));
+                }
+                download::fetch_verified(&client, &v.url, &vdest, v.size, &v.sha256, &cancel, |r, t| emit("vision", r, t)).await?;
+            }
 
             let previous = db::installed_model(&state.db.lock().unwrap(), &spec.id);
             {
@@ -350,6 +359,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
             // Same settings a chat will use, so the first chat doesn't reload the model.
             let limits = state.limits();
             let (ctx, gpu_layers) = catalog::launch_within(&spec, &variant.quant, &state.budget(), &limits);
+            let mmproj = vision_file(&state.paths, &spec);
             let mut engine = state.engine.lock().await;
             let measured = async {
                 let ep = engine
@@ -364,6 +374,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                             threads: limits.threads,
                             low_priority: limits.low_priority,
                             log: &log,
+                            mmproj: mmproj.as_deref(),
                         },
                         state.job(),
                     )
@@ -398,6 +409,27 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
         app.emit("install:finished", payload).ok();
     });
     Ok(())
+}
+
+/// A model's image encoder, if it has one and it's downloaded.
+pub(crate) fn vision_file(paths: &Paths, spec: &ModelSpec) -> Option<std::path::PathBuf> {
+    let v = spec.vision.as_ref()?;
+    let p = paths.models.join(&spec.id).join(&v.file);
+    p.metadata().is_ok_and(|m| m.len() == v.size).then_some(p)
+}
+
+/// Downloads a model's image encoder if it's missing (models installed
+/// before pictures could be attached).
+pub(crate) async fn ensure_vision(state: &Arc<AppState>, spec: &ModelSpec) -> Result<Option<std::path::PathBuf>, String> {
+    let Some(v) = &spec.vision else { return Ok(None) };
+    if let Some(p) = vision_file(&state.paths, spec) {
+        return Ok(Some(p));
+    }
+    let dest = state.paths.models.join(&spec.id).join(&v.file);
+    state.log("network", &format!("Downloading {}'s picture reader ({}) from {}", spec.name, size_label(v.size), host_of(&v.url)));
+    let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
+    download::fetch_verified(&client, &v.url, &dest, v.size, &v.sha256, &AtomicBool::new(false), |_, _| {}).await?;
+    Ok(Some(dest))
 }
 
 /// The stored path, or the same file in today's models folder if the data
@@ -523,6 +555,7 @@ fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
     state.approvals.forget_chat(&chat_id);
     let conn = state.db.lock().unwrap();
     db::delete_chat(&conn, &chat_id)?;
+    media::store::delete_attachments(&conn, &state.paths, &chat_id);
     db::log_action(&conn, "chat", "Deleted a chat and its messages");
     Ok(())
 }
@@ -576,8 +609,8 @@ fn stop_generation(state: AppStateRef, chat_id: String) {
 }
 
 #[tauri::command]
-async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String) -> Result<Option<Message>, String> {
-    run_turn(&app, state.inner(), chat_id, text, None).await
+async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<Option<Message>, String> {
+    run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None).await
 }
 
 /// Also receives every event of a turn (voice mode speaks the reply from it).
@@ -589,11 +622,15 @@ pub(crate) async fn run_turn(
     state: &Arc<AppState>,
     chat_id: String,
     text: String,
+    images: Vec<String>,
     tee: Option<Tee>,
 ) -> Result<Option<Message>, String> {
-    let text = text.trim().to_string();
-    if text.is_empty() {
+    let mut text = text.trim().to_string();
+    if text.is_empty() && images.is_empty() {
         return Err("Type a message first.".into());
+    }
+    if text.is_empty() {
+        text = if images.len() == 1 { "What's in this picture?".into() } else { "What's in these pictures?".into() };
     }
     let cipher = state.cipher()?;
     let Some((cancel, _guard)) = claim(&state.generations, &chat_id) else {
@@ -612,10 +649,14 @@ pub(crate) async fn run_turn(
         (chat, db::profile(&conn, &cipher))
     };
     let mode = tools::Mode::parse(&chat.mode);
-    let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), || {
+    // Pictures in this message or earlier ones: start the model with its image encoder.
+    let pictures = !images.is_empty()
+        || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some()));
+    let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), pictures, || {
         app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
     })
     .await?;
+    let vision = state.engine.lock().await.sees();
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
@@ -644,6 +685,7 @@ pub(crate) async fn run_turn(
             role: "user".into(),
             content: text.clone(),
             created_at: db::now_ms(),
+            meta: (!images.is_empty()).then(|| json!({ "images": images })),
             ..Default::default()
         })?;
         if first {
@@ -668,6 +710,7 @@ pub(crate) async fn run_turn(
         ep,
         mode,
         use_tools: spec.tools,
+        vision,
         base,
         about,
         cancel,
@@ -703,6 +746,7 @@ pub(crate) async fn run_turn(
 pub(crate) async fn llm_endpoint(
     state: &Arc<AppState>,
     model_id: Option<String>,
+    pictures: bool,
     on_loading: impl FnOnce(),
 ) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
     let installed = {
@@ -720,6 +764,11 @@ pub(crate) async fn llm_endpoint(
         .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
     *state.engine_used.lock().unwrap() = std::time::Instant::now();
     let model_path = model_file(&state.paths, &installed);
+    let encoder = if pictures { ensure_vision(state, &spec).await? } else { vision_file(&state.paths, &spec) };
+    let mut engine = state.engine.lock().await;
+    // Keep the image encoder once it's loaded, so chats don't flip it on and off.
+    let keep = engine.endpoint_for(&installed.model_id).is_some() && engine.sees();
+    let mmproj = encoder.filter(|_| pictures || keep);
     let launch = LaunchSpec {
         exe: &exe,
         model_path: &model_path,
@@ -730,8 +779,8 @@ pub(crate) async fn llm_endpoint(
         threads: limits.threads,
         low_priority: limits.low_priority,
         log: &state.paths.engine_log(),
+        mmproj: mmproj.as_deref(),
     };
-    let mut engine = state.engine.lock().await;
     let ep = match engine.endpoint_for(&installed.model_id) {
         // Same model: new limits (mode, heat) apply between replies, and only
         // when no other chat is mid-reply on it.
@@ -758,7 +807,7 @@ pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
         return Ok(found);
     }
-    let (ep, spec, _) = llm_endpoint(state, None, || {}).await?;
+    let (ep, spec, _) = llm_endpoint(state, None, false, || {}).await?;
     Ok((ep, spec))
 }
 
@@ -862,6 +911,22 @@ pub fn run() {
             quick::quick_hide,
             quick::quick_resize,
             quick::quick_open_in_app,
+            quick::quick_screenshot,
+            media::media_view,
+            media::install_media_model,
+            media::remove_media_model,
+            media::media_start,
+            media::media_cancel,
+            media::media_jobs,
+            media::media_list,
+            media::media_get,
+            media::media_file,
+            media::media_thumb,
+            media::media_delete,
+            media::media_favorite,
+            media::media_export,
+            media::media_import,
+            media::media_add,
             mail::mail_preset,
             mail::mail_accounts,
             mail::add_mail_account,

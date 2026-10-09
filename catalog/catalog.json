@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-06",
+  "updated": "2026-10-09",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
@@ -294,6 +294,12 @@
         "research": 4,
         "agents": 0,
         "languages": 7
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-3-4b-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 851251328,
+        "sha256": "731199e016ec5f227b8293fef839899472e0ee4c51adf5f9e5cb66f6558fa142"
       }
     },
     {
@@ -500,6 +506,12 @@
         "research": 6,
         "agents": 0,
         "languages": 8
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 854200448,
+        "sha256": "5de4ccfc379faa4cbf608dd365c028aa41f9774cdb1191d148d88910d1014f71"
       }
     },
     {
@@ -614,6 +626,156 @@
         "research": 8,
         "agents": 9,
         "languages": 5
+      }
+    },
+    {
+      "id": "qwen3-vl-4b",
+      "name": "Qwen3 VL 4B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF",
+      "description": "Sees pictures and screenshots: describes them, reads their text and answers questions about them. Also a capable chat model with tools.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "vision",
+        "tool-calling"
+      ],
+      "params_b": 4.4,
+      "arch": {
+        "n_layer": 36,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q4_K_M.gguf",
+          "size": 2497282336,
+          "sha256": "d4dcd426bfba75752a312b266b80fec8136fbaca13c62d93b7ac41fa67f0492b"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-VL-4B-Instruct-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q5_K_M.gguf",
+          "size": 2889515296,
+          "sha256": "29b491c682da5db4268e30662337ccac18846c8e491ea4ffe466b18f46b8c162"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-VL-4B-Instruct-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q6_K.gguf",
+          "size": 3306262816,
+          "sha256": "43d166b36806df8fd788e53d8d63e0f7d383688ba683a5ea31b5bf2df37314cb"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-VL-4B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/Qwen3-VL-4B-Instruct-Q8_0.gguf",
+          "size": 4280406816,
+          "sha256": "e30b41d2f2cc48149dfbba1b3fb2c023c7e6bf2def75833d4d43820df75efeb3"
+        }
+      ],
+      "ratings": {
+        "overall": 44,
+        "coding": 5,
+        "writing": 5,
+        "research": 5,
+        "agents": 6,
+        "languages": 5
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3-VL-4B-Instruct-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 836180640,
+        "sha256": "1b9f4e92f0fbda14d7d7b58baed86039b8a980fe503d9d6a9393f25c0028f1fc"
+      }
+    },
+    {
+      "id": "qwen3-vl-8b",
+      "name": "Qwen3 VL 8B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF",
+      "description": "The stronger picture reader: charts, documents, screenshots and photos, with good tool use.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "vision",
+        "tool-calling"
+      ],
+      "params_b": 8.8,
+      "arch": {
+        "n_layer": 36,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q4_K_M.gguf",
+          "size": 5027785568,
+          "sha256": "108e7ff92b78eefd3db4741885104acba514255c11b617d3c7b197a5f46efe89"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-VL-8B-Instruct-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q5_K_M.gguf",
+          "size": 5851114336,
+          "sha256": "bb6d45711239c508c18b6a67f00dd094a41add64e8639f8554738bfeccf5a3bc"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-VL-8B-Instruct-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q6_K.gguf",
+          "size": 6725901152,
+          "sha256": "2f963d09b4c7485df9bfd4ac4d7ce192cc9cc004a45555b605eeb0a7a83f0057"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-VL-8B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q8_0.gguf",
+          "size": 8709520224,
+          "sha256": "cb8616bf6ed228982d9e47d7b72b42195342efa26044b0ee1873e61d9e78d3d7"
+        }
+      ],
+      "ratings": {
+        "overall": 54,
+        "coding": 6,
+        "writing": 6,
+        "research": 6,
+        "agents": 7,
+        "languages": 6
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 1159030336,
+        "sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4"
       }
     }
   ],
@@ -927,5 +1089,419 @@
     "url": "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/f0c48c298fd835726c27956a5d617bad7115627e/voxceleb_resnet34_LM.onnx",
     "size": 26530309,
     "sha256": "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
+  },
+  "media": {
+    "engine": {
+      "name": "stable-diffusion.cpp",
+      "license": "MIT",
+      "build": "master-948-228c707",
+      "assets": {
+        "vulkan-x64": {
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-win-vulkan-x64.zip",
+          "size": 30098372,
+          "sha256": "6de279c833a47ca5ede5fe16415dcf8a2a718ca3ececfbe024fc2f86c7728e89"
+        },
+        "cpu-x64": {
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-win-cpu-x64.zip",
+          "size": 17517910,
+          "sha256": "e6da0b2c0ca1774ae3d2f36807102ffd859af8108265117882f84da422fc6655"
+        }
+      }
+    },
+    "music_engine": {
+      "name": "acestep.cpp",
+      "license": "MIT",
+      "build": "d881ad2",
+      "assets": {
+        "cpu-x64": {
+          "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/acestep-d881ad2-win-cpu-x64.zip",
+          "size": 5136624,
+          "sha256": "d30427419b5211df6218877091b6f64ee4d68767252eaeb18629310a51ff59a4"
+        }
+      }
+    },
+    "models": [
+      {
+        "id": "flux2-klein-4b",
+        "name": "FLUX.2 klein 4B",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B",
+        "description": "Fast, photo-quality pictures from a description, and edits from plain instructions (\"make it night\", \"add a hat\"). Also fills in painted areas, extends the edges and restyles.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "edit",
+          "fill",
+          "extend",
+          "restyle"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux-2-klein-4b-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/FLUX.2-klein-4B-GGUF/resolve/main/flux-2-klein-4b-Q4_K_M.gguf",
+            "size": 2604311104,
+            "sha256": "0b25d143c8469b342bc5af3bce92b783bf6b0636d285f7b2f75e38af63af9a15"
+          },
+          {
+            "role": "llm",
+            "file": "Qwen3-4B-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q4_K_M.gguf",
+            "size": 2497281312,
+            "sha256": "f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a"
+          },
+          {
+            "role": "vae",
+            "file": "flux2-vae.safetensors",
+            "url": "https://huggingface.co/unsloth/FLUX.2-VAE/resolve/main/split_files/vae/flux2-vae.safetensors",
+            "size": 336213556,
+            "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5"
+          }
+        ],
+        "min_vram_gb": 4,
+        "cpu": true,
+        "secs": 14,
+        "quality": 8,
+        "defaults": {
+          "steps": 4,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      {
+        "id": "z-image-turbo",
+        "name": "Z-Image Turbo",
+        "publisher": "Tongyi-MAI (Alibaba)",
+        "source": "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo",
+        "description": "Very realistic photos and clean text in pictures (signs, posters, labels), in English and Chinese. Creates and fills in; for edits from instructions, use FLUX.2 klein.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "z_image_turbo-Q4_K.gguf",
+            "url": "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf",
+            "size": 3864250304,
+            "sha256": "14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd"
+          },
+          {
+            "role": "llm",
+            "file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+            "size": 2497281120,
+            "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"
+          },
+          {
+            "role": "vae",
+            "file": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "size": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+          }
+        ],
+        "min_vram_gb": 6,
+        "cpu": true,
+        "secs": 25,
+        "quality": 9,
+        "defaults": {
+          "steps": 8,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      {
+        "id": "wan2.2-ti2v-5b",
+        "name": "Wan 2.2 5B",
+        "publisher": "Wan (Alibaba)",
+        "source": "https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B",
+        "description": "Short video clips from a description, or brings a picture to life. The best video model that fits an 8-12 GB graphics card.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "video",
+        "can": [
+          "text",
+          "image"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "Wan2.2-TI2V-5B-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/Wan2.2-TI2V-5B-Q4_K_M.gguf",
+            "size": 3433116000,
+            "sha256": "95b19697b7f98e65b0a543640e9ca7b4dfec32e2a6e3731e8e10708be52655e2"
+          },
+          {
+            "role": "vae",
+            "file": "wan2.2_vae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan2.2_vae.safetensors",
+            "size": 1409400960,
+            "sha256": "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156"
+          },
+          {
+            "role": "t5xxl",
+            "file": "umt5-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+            "size": 3655145312,
+            "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 300,
+        "quality": 8,
+        "defaults": {
+          "steps": 20,
+          "cfg": 5.0,
+          "sampler": "euler",
+          "width": 832,
+          "height": 480,
+          "fps": 24,
+          "seconds": 3,
+          "flow_shift": 5.0,
+          "negative": "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+        }
+      },
+      {
+        "id": "wan2.1-t2v-1.3b",
+        "name": "Wan 2.1 1.3B",
+        "publisher": "Wan (Alibaba)",
+        "source": "https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B",
+        "description": "A small, quicker video model for short clips from a description. Less detail than Wan 2.2, but it fits a 6 GB graphics card.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "video",
+        "can": [
+          "text"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "wan2.1_t2v_1.3B_fp16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_t2v_1.3B_fp16.safetensors",
+            "size": 2838303560,
+            "sha256": "be531024cd9018cb5b48c40cfbb6a6191645b1c792eb8bf4f8c1c6e10f924dc5"
+          },
+          {
+            "role": "vae",
+            "file": "wan_2.1_vae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+            "size": 253815318,
+            "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+          },
+          {
+            "role": "t5xxl",
+            "file": "umt5-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+            "size": 3655145312,
+            "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40"
+          }
+        ],
+        "min_vram_gb": 6,
+        "cpu": false,
+        "secs": 150,
+        "quality": 5,
+        "defaults": {
+          "steps": 20,
+          "cfg": 6.0,
+          "sampler": "euler",
+          "width": 832,
+          "height": 480,
+          "fps": 16,
+          "seconds": 3,
+          "flow_shift": 3.0,
+          "negative": "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+        }
+      },
+      {
+        "id": "realesrgan-x4plus",
+        "name": "Real-ESRGAN x4plus",
+        "publisher": "Xintao Wang",
+        "source": "https://github.com/xinntao/Real-ESRGAN",
+        "description": "Makes pictures four times larger and sharper. Small and quick.",
+        "license": {
+          "name": "BSD-3-Clause",
+          "url": "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
+          "commercial": true
+        },
+        "kind": "upscale",
+        "can": [
+          "upscale"
+        ],
+        "files": [
+          {
+            "role": "upscale",
+            "file": "RealESRGAN_x4plus.pth",
+            "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+            "size": 67040989,
+            "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 18,
+        "quality": 7
+      },
+      {
+        "id": "birefnet-lite",
+        "name": "BiRefNet lite",
+        "publisher": "Peng Zheng et al.",
+        "source": "https://huggingface.co/ZhengPeng7/BiRefNet_lite",
+        "description": "Cuts the subject out of a picture and removes the background, keeping hair and fine edges.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "background",
+        "can": [
+          "remove_background"
+        ],
+        "files": [
+          {
+            "role": "onnx",
+            "file": "model.onnx",
+            "url": "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx",
+            "size": 224005088,
+            "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 6,
+        "quality": 7
+      },
+      {
+        "id": "ace-step-1.5",
+        "name": "ACE-Step 1.5",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "Songs from a description, with lyrics and vocals or instrumental, in many styles and languages. Also rough sound effects.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-turbo-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-turbo-Q8_0.gguf",
+            "size": 2549528000,
+            "sha256": "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b"
+          },
+          {
+            "role": "lm",
+            "file": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-1.7B-Q8_0.gguf",
+            "size": 1975837568,
+            "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 70,
+        "quality": 8,
+        "defaults": {
+          "seconds": 30
+        }
+      },
+      {
+        "id": "ace-step-1.5-small",
+        "name": "ACE-Step 1.5 (small)",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "A lighter ACE-Step for PCs with less memory: quicker, with simpler songs and lyrics.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-turbo-Q4_K_M.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-turbo-Q4_K_M.gguf",
+            "size": 1445710272,
+            "sha256": "55b4d8514850f3d0f82536f37e99673aaf48df802b5ae5b153eea32a2e2daa5e"
+          },
+          {
+            "role": "lm",
+            "file": "acestep-5Hz-lm-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-0.6B-Q8_0.gguf",
+            "size": 709846656,
+            "sha256": "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 45,
+        "quality": 5,
+        "defaults": {
+          "seconds": 30
+        }
+      }
+    ]
   }
 }

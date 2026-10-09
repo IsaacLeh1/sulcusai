@@ -60,6 +60,8 @@ docx-rs = "0.4"
 rust_xlsxwriter = { version = "0.99", default-features = false }
 calamine = "0.36"
 pdf-extract = "0.12"
+# Pictures: sizes, masks, thumbnails, cut-outs and screenshots.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [target.'cfg(windows)'.dependencies]
 # The built-in browser's in-process DevTools channel (same version as wry's).
@@ -74,6 +76,7 @@ windows = { version = "0.58", features = [
   "Win32_Devices_FunctionDiscovery",
   "Win32_Foundation",
   "Win32_Graphics_Dxgi",
+  "Win32_Graphics_Gdi",
   "Win32_Media_Audio",
   "Win32_Security",
   "Win32_Security_Cryptography",
@@ -91,6 +94,7 @@ windows = { version = "0.58", features = [
   "Win32_System_WinRT",
   "Win32_UI_Shell",
   "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # Hash checks of multi-GB files and Argon2 PIN checks are painfully slow unoptimized.

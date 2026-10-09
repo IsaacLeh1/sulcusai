@@ -133,6 +133,8 @@ pub struct LaunchSpec<'a> {
     /// Below-normal priority, so the rest of the PC stays responsive.
     pub low_priority: bool,
     pub log: &'a Path,
+    /// The image encoder, for models that can see pictures.
+    pub mmproj: Option<&'a Path>,
 }
 
 struct Running {
@@ -145,6 +147,7 @@ struct Running {
     gpu_layers: u32,
     threads: usize,
     low_priority: bool,
+    vision: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -213,7 +216,13 @@ impl Engine {
                     && r.gpu_layers == spec.gpu_layers
                     && r.threads == spec.threads
                     && r.low_priority == spec.low_priority
+                    && r.vision == spec.mmproj.is_some()
             })
+    }
+
+    /// The running model was started with its image encoder.
+    pub fn sees(&mut self) -> bool {
+        self.alive() && self.running.as_ref().is_some_and(|r| r.vision)
     }
 
     /// Starts the server for this model, replacing any other running model
@@ -237,6 +246,7 @@ impl Engine {
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
+            .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(log_err))
@@ -265,6 +275,7 @@ impl Engine {
             gpu_layers: spec.gpu_layers,
             threads: spec.threads,
             low_priority: spec.low_priority,
+            vision: spec.mmproj.is_some(),
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx };

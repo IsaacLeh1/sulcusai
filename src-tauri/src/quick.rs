@@ -224,6 +224,29 @@ pub fn quick_hide(app: AppHandle) {
     }
 }
 
+/// "Ask about the screen": steps the box out of the way, takes a screenshot
+/// of the screen the mouse is on, and brings the box back. The picture is a
+/// hidden attachment (not shown in the studio).
+#[tauri::command]
+pub async fn quick_screenshot(app: AppHandle, state: AppStateRef<'_>) -> Result<crate::media::MediaItem, String> {
+    state.cipher()?;
+    let w = app.get_webview_window(LABEL);
+    if let Some(w) = &w {
+        let _ = w.hide();
+    }
+    // Let Windows redraw what was behind the box.
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    let shot = {
+        let state = state.inner().clone();
+        tokio::task::spawn_blocking(move || crate::media::screenshot(&state, None)).await.map_err(|e| e.to_string())?
+    };
+    if let Some(w) = &w {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    shot
+}
+
 /// Opens the main window, on a chat if given.
 #[tauri::command]
 pub fn quick_open_in_app(app: AppHandle, state: AppStateRef, chat_id: Option<String>) -> Result<(), String> {

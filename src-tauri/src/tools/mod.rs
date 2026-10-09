@@ -5,6 +5,7 @@ pub mod browser;
 pub mod comms;
 mod documents;
 mod fs;
+mod media;
 mod meetings;
 mod memory;
 mod notes;
@@ -99,6 +100,7 @@ fn group(name: &str) -> &'static str {
         "create_document" | "read_document" => "documents",
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
+        "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         _ => "files",
     }
 }
@@ -180,6 +182,14 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Find free time between 9 and 5 on a day or range." },
     ToolDef { name: "calendar_create_event", risk: Risk::Write, params: comms::calendar_create_event_params,
         description: "Add an event to the user's calendar. Inviting people always asks the user first." },
+    ToolDef { name: "create_image", risk: Risk::Memory, params: media::create_image_params,
+        description: "Make a picture on this PC from a description. The picture appears in the chat." },
+    ToolDef { name: "edit_image", risk: Risk::Memory, params: media::edit_image_params,
+        description: "Change a picture from this chat by instruction (\"make it night\", \"add a hat\"), restyle it, make it 4x bigger (upscale) or remove its background. Makes a new picture; the original stays." },
+    ToolDef { name: "create_video", risk: Risk::Memory, params: media::create_video_params,
+        description: "Make a short video clip (a few seconds) on this PC from a description, or bring a picture to life. Takes a few minutes." },
+    ToolDef { name: "create_music", risk: Risk::Memory, params: media::create_music_params,
+        description: "Make a song (with lyrics and vocals, or instrumental) or a sound effect on this PC from a description." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
@@ -217,7 +227,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -316,6 +326,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             tokio::task::block_in_place(|| documents::run(&name, &args, ctx))
         }
         n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
+        "create_image" | "edit_image" | "create_video" | "create_music" => media::run(name, args, ctx).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
             browser::run(name, args, ctx.app, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
@@ -354,6 +365,9 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "read_document" => return "Couldn't read the document".into(),
         n if n.starts_with("email_") => return "Couldn't use the email".into(),
         n if n.starts_with("calendar_") => return "Couldn't use the calendar".into(),
+        "create_image" | "edit_image" => return "Couldn't make the picture".into(),
+        "create_video" => return "Couldn't make the video".into(),
+        "create_music" => return "Couldn't make the music".into(),
         "write_file" => "write",
         "edit_file" => "edit",
         "move_path" => "move",
@@ -390,8 +404,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar and document tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 27);
+        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document and media tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 31);
     }
 
     #[test]
