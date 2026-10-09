@@ -45,14 +45,17 @@ fn hwnd_of(window: &WebviewWindow) -> Result<isize, String> {
 #[tauri::command]
 pub async fn security_status(state: AppStateRef<'_>) -> Result<SecurityStatus, String> {
     let hello_available = tauri::async_runtime::spawn_blocking(hello::available).await.unwrap_or(false);
+    // Settings first: the database is never locked while the vault is.
+    let auto_lock_minutes = state.settings().auto_lock_minutes;
+    let keep_working = keep_working(&state);
     let v = state.vault.lock().unwrap();
     Ok(SecurityStatus {
         locked: v.locked(),
         lock_enabled: v.lock_enabled(),
         hello_enabled: v.hello_enabled(),
         hello_available,
-        auto_lock_minutes: state.settings().auto_lock_minutes,
-        keep_working: keep_working(&state),
+        auto_lock_minutes,
+        keep_working,
     })
 }
 
@@ -145,11 +148,12 @@ pub async fn unlock_with_hello(window: WebviewWindow, state: AppStateRef<'_>) ->
 
 #[tauri::command]
 pub fn lock_now(app: AppHandle, state: AppStateRef) -> Result<(), String> {
+    // Read before taking the vault: the database is never locked while the vault is.
+    let keep_working = keep_working(&state);
     let mut v = state.vault.lock().unwrap();
     if !v.lock_enabled() {
         return Err("Turn on app lock in Settings first.".into());
     }
-    let keep_working = keep_working(&state);
     if keep_working {
         v.lock_screen();
     } else {

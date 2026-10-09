@@ -1232,6 +1232,10 @@ pub struct MediaView {
 
 #[tauri::command]
 pub fn media_view(state: AppStateRef) -> MediaView {
+    view(&state)
+}
+
+fn view(state: &AppState) -> MediaView {
     let hw = state.hardware.read().unwrap().clone();
     let b = Budget::from_hardware(&hw);
     let list = installed(&state.db.lock().unwrap());
@@ -1253,16 +1257,17 @@ pub fn media_view(state: AppStateRef) -> MediaView {
     if models.iter().any(|c| c.spec.kind == Kind::Video) {
         video_note = None;
     }
-    let c = state.cipher();
-    MediaView {
-        models,
-        cloud: crate::cloud::media_choices(&state.db.lock().unwrap()),
-        hidden,
-        video_note,
-        installing: state.installs.lock().unwrap().keys().cloned().collect(),
-        jobs: list_jobs(),
-        gallery: c.map(|_| store::count(&state.db.lock().unwrap())).unwrap_or(0),
-    }
+    // One lock for both reads, released before the view is built: a lock
+    // taken inside the struct literal lives until the literal ends, so a
+    // second one there would wait on the first forever.
+    let unlocked = state.cipher().is_ok();
+    let (cloud, gallery) = {
+        let conn = state.db.lock().unwrap();
+        let gallery = if unlocked { store::count(&conn) } else { 0 };
+        (crate::cloud::media_choices(&conn), gallery)
+    };
+    let installing = state.installs.lock().unwrap().keys().cloned().collect();
+    MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery }
 }
 
 #[tauri::command]
@@ -1572,6 +1577,21 @@ mod tests {
 
     fn model(id: &str) -> MediaModel {
         crate::catalog::Catalog::bundled().media.models.into_iter().find(|m| m.id == id).unwrap()
+    }
+
+    /// The Studio page's view returns, unlocked and locked (it once took the
+    /// database lock twice in one expression and froze the app).
+    #[cfg(windows)]
+    #[test]
+    fn studio_view_does_not_deadlock() {
+        let state = crate::e2e::temp_state(None);
+        for _ in 0..2 {
+            let s = state.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || tx.send(view(&s).gallery).ok());
+            assert!(rx.recv_timeout(std::time::Duration::from_secs(30)).is_ok(), "media view never returned");
+            state.vault.lock().unwrap().lock();
+        }
     }
 
     #[test]
