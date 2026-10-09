@@ -96,6 +96,18 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
+  // What screen readers hear: when a reply starts and when it's ready (not
+  // every streamed word).
+  const [announce, setAnnounce] = useState("");
+  const lastStatus = useRef<Status>("idle");
+  useEffect(() => {
+    const prev = lastStatus.current;
+    lastStatus.current = status;
+    if (status === prev) return;
+    if (status === "idle") setAnnounce("Reply ready.");
+    else if (status === "loading") setAnnounce("Loading the model.");
+    else if (prev === "idle" || prev === "loading") setAnnounce("Replying…");
+  }, [status]);
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
@@ -355,6 +367,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           ))}
         </div>
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} />
+        <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
           <button className="btn ghost small" onClick={() => setRenaming(true)}>Rename</button>
           <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>Delete</button>

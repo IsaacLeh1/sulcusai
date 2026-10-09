@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   errorText,
@@ -17,22 +17,6 @@ import {
 } from "./api";
 import { APP_NAME } from "./brand";
 import { ChatView } from "./views/ChatView";
-import { ModelsView } from "./views/ModelsView";
-import { SettingsView } from "./views/SettingsView";
-import { ActivityView } from "./views/ActivityView";
-import { MemoryView } from "./views/MemoryView";
-import { ProjectView } from "./views/ProjectView";
-import { ScheduledView } from "./views/ScheduledView";
-import { ConnectorsView } from "./views/ConnectorsView";
-import { MeetingsView } from "./views/MeetingsView";
-import { TranslateView } from "./views/TranslateView";
-import { FeaturesView } from "./views/FeaturesView";
-import { NotesView } from "./views/NotesView";
-import { TasksView } from "./views/TasksView";
-import { MailView } from "./views/MailView";
-import { CalendarView } from "./views/CalendarView";
-import { StudioView } from "./views/StudioView";
-import { Onboarding } from "./views/Onboarding";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
 import { SideMenu } from "./components/SideMenu";
@@ -41,6 +25,24 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 import { UpdatePill } from "./components/Updates";
+
+// Pages load the first time they are opened, so the app starts faster.
+const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
+const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView })));
+const ActivityView = lazy(() => import("./views/ActivityView").then((m) => ({ default: m.ActivityView })));
+const MemoryView = lazy(() => import("./views/MemoryView").then((m) => ({ default: m.MemoryView })));
+const ProjectView = lazy(() => import("./views/ProjectView").then((m) => ({ default: m.ProjectView })));
+const ScheduledView = lazy(() => import("./views/ScheduledView").then((m) => ({ default: m.ScheduledView })));
+const ConnectorsView = lazy(() => import("./views/ConnectorsView").then((m) => ({ default: m.ConnectorsView })));
+const MeetingsView = lazy(() => import("./views/MeetingsView").then((m) => ({ default: m.MeetingsView })));
+const TranslateView = lazy(() => import("./views/TranslateView").then((m) => ({ default: m.TranslateView })));
+const FeaturesView = lazy(() => import("./views/FeaturesView").then((m) => ({ default: m.FeaturesView })));
+const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default: m.NotesView })));
+const TasksView = lazy(() => import("./views/TasksView").then((m) => ({ default: m.TasksView })));
+const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m.MailView })));
+const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
+const StudioView = lazy(() => import("./views/StudioView").then((m) => ({ default: m.StudioView })));
+const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 
 export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
@@ -297,6 +299,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
   if (!settings.onboarded) {
     return (
+      <Suspense fallback={<PageLoading />}>
       <Onboarding
         catalog={catalog}
         progress={progress}
@@ -307,6 +310,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           refreshCatalog();
         }}
       />
+      </Suspense>
     );
   }
 
@@ -339,7 +343,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             🕶
           </button>
         </div>
-        <nav className="nav">
+        <nav className="nav" aria-label="Main">
           {creates && (
             <button className={view === "studio" ? "active" : ""} onClick={() => setView("studio")}>
               Studio
@@ -476,6 +480,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
       <main className="main">
         <TopBar browserOn={has("browser")} toast={toast} />
+        <Suspense fallback={<PageLoading />}>
         {view === "chat" && (
           <ChatView
             chat={current}
@@ -557,6 +562,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             toast={toast}
           />
         )}
+        </Suspense>
       </main>
 
       <footer className="statusbar">
@@ -707,4 +713,8 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
 
 function listNames(names: string[]): string {
   return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function PageLoading() {
+  return <div className="page"><p className="muted">Loading…</p></div>;
 }
