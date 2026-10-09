@@ -124,6 +124,31 @@ export interface UpdateView {
   available: UpdateAvailable | null;
 }
 
+export interface SyncPeer {
+  id: string;
+  name: string;
+  last_sync: number | null;
+  /** Heard from on this network in the last two minutes. */
+  online: boolean;
+  syncing: boolean;
+  error: string | null;
+}
+
+export interface SyncView {
+  enabled: boolean;
+  name: string;
+  listening: boolean;
+  port: number | null;
+  /** This PC's address on the local network, for typing on the other PC. */
+  address: string | null;
+  peers: SyncPeer[];
+  /** PCs found on this network that aren't paired (showing a code or not). */
+  nearby: { id: string; name: string; pairing: boolean }[];
+  /** The code this PC is showing, like "K7Q2-9XMB", and its seconds left. */
+  code: string | null;
+  code_left: number;
+}
+
 export interface BackupInfo {
   created: number;
   app_version: string;
@@ -943,6 +968,13 @@ export const api = {
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
   restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
   exportMarkdown: (dir: string) => invoke<string>("export_markdown_cmd", { dir }),
+  syncView: () => invoke<SyncView>("sync_view"),
+  setSync: (enabled: boolean, name: string | null) => invoke<SyncView>("set_sync", { enabled, name }),
+  startPairing: () => invoke<SyncView>("start_pairing"),
+  cancelPairing: () => invoke<SyncView>("cancel_pairing"),
+  pairDevice: (code: string, target: string | null) => invoke<SyncView>("pair_device", { code, target }),
+  removeDevice: (id: string) => invoke<SyncView>("remove_device", { id }),
+  syncNow: () => invoke<SyncView>("sync_now"),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -1212,6 +1244,8 @@ export interface ChatEvents {
   "engine:download": { received?: number; total?: number; done?: boolean };
   "update:available": UpdateAvailable;
   "finetune:progress": FinetuneJob;
+  "sync:status": null;
+  "sync:changed": null;
   "update:progress": { received: number; total: number | null };
   dictation: DictationEvent;
   voice: VoiceEvent;

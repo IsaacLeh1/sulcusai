@@ -194,6 +194,10 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
+      on("sync:changed", () => {
+        refreshChats();
+        refreshProjects();
+      }),
       on("models:found", (p) => {
         refreshCatalog();
         api.settings().then(setSettings);

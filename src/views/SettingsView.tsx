@@ -13,6 +13,7 @@ import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
 import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
+import { SyncSettings } from "../components/SyncSettings";
 import { UpdateSettings } from "../components/Updates";
 
 const THIRD_PARTY = [
@@ -261,6 +262,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <WebSearchSettings toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
+
+      <SyncSettings toast={toast} />
 
       <BackupSettings toast={toast} />
 

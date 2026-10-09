@@ -36,9 +36,9 @@ export function TasksView({ toast }: { toast: PushToast }) {
   const load = () => api.tasks().then(setTasks).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     load();
-    const sub = on("task:reminder", () => load());
+    const subs = [on("task:reminder", () => load()), on("sync:changed", () => load())];
     return () => {
-      sub.then((un) => un());
+      subs.forEach((s) => s.then((un) => un()));
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

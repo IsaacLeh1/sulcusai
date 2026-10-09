@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Notes: Markdown notes with folders, tags and pins, kept encrypted on this PC.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, errorText, type Note, type NoteBody } from "../api";
+import { api, errorText, on, type Note, type NoteBody } from "../api";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -17,6 +17,11 @@ export function NotesView({ toast }: { toast: PushToast }) {
   const load = () => api.notes().then(setNotes).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     load();
+    // Notes written on another PC arrive by sync.
+    const sub = on("sync:changed", () => load());
+    return () => {
+      sub.then((un) => un());
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const folders = useMemo(() => [...new Set((notes ?? []).map((n) => n.folder).filter(Boolean))].sort(), [notes]);

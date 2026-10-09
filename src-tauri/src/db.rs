@@ -211,6 +211,7 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
 pub fn init_for_test(conn: &Connection) {
     conn.execute_batch(SCHEMA).unwrap();
     migrate(conn).unwrap();
+    crate::sync::track::install(conn).unwrap();
 }
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -219,6 +220,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;")?;
     conn.execute_batch(SCHEMA)?;
     migrate(&conn)?;
+    crate::sync::track::install(&conn)?;
     Ok(conn)
 }
 

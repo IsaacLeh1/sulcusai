@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, type Memory, type Project, type Settings } from "../api";
+import { api, errorText, on, type Memory, type Project, type Settings } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 
@@ -17,7 +17,13 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
     api.memories().then(setMemories).catch((e) => toast(errorText(e), "error"));
     api.projects().then(setProjects).catch(() => {});
   };
-  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load();
+    const sub = on("sync:changed", () => load());
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const projectName = (id: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? "A deleted project" : null);
   const shown = useMemo(() => {

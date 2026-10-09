@@ -51,6 +51,7 @@ mod sandbox;
 mod schedule;
 mod security;
 mod speech;
+mod sync;
 mod tools;
 mod translate;
 mod tts;
@@ -1144,6 +1145,7 @@ pub fn run() {
             bridge::apply(app.handle());
             calendar::start_sync(app.handle().clone());
             updates::start(app.handle().clone());
+            sync::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1224,6 +1226,13 @@ pub fn run() {
             cloud::set_cloud_options,
             cloud::cloud_choices,
             backup::make_backup,
+            sync::sync_view,
+            sync::set_sync,
+            sync::start_pairing,
+            sync::cancel_pairing,
+            sync::pair_device,
+            sync::remove_device,
+            sync::sync_now,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,

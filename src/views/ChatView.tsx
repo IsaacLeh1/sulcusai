@@ -167,6 +167,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     inputRef.current?.focus();
   }, [chat.id, reload]);
 
+  // Messages written on another PC arrive by sync (not mid-reply).
+  useEffect(() => {
+    if (busy) return;
+    const sub = on("sync:changed", () => reload());
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [busy, reload]);
+
   useEffect(() => {
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
     const subs = [

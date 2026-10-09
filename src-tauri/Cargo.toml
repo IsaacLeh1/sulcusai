@@ -30,6 +30,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # Encryption at rest: AES-256-GCM fields, Argon2id PIN keys.
 aes-gcm = "0.10"
+# Sync between the user's PCs: pairing by code (SPAKE2), session keys.
+spake2 = "0.4"
+hkdf = "0.12"
+hmac = "0.12"
 argon2 = "0.5"
 zeroize = "1"
 base64 = "0.22"

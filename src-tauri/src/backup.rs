@@ -267,6 +267,7 @@ pub fn finish_restore(state: &AppState) {
     let Ok(aside) = std::fs::read_to_string(&marker) else { return };
     std::fs::remove_file(&marker).ok();
     let conn = state.db.lock().unwrap();
+    crate::sync::after_restore(&conn);
     let mut dropped = 0;
     for m in db::installed_models(&conn) {
         if !crate::model_file(&state.paths, &m).exists() {

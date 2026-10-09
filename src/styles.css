@@ -736,3 +736,6 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .teach-form { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .teach-chats { max-height: 180px; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding-left: 24px; }
 .media-play { position: absolute; left: 6px; bottom: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; border-radius: 99px; padding: 1px 8px; font-size: 11.5px; }
+.pair-code { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; padding: 12px; border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+.pair-code .code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 26px; letter-spacing: 0.12em; }
+.code-input { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: 0.1em; text-transform: uppercase; }
