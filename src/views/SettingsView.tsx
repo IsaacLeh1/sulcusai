@@ -10,6 +10,7 @@ import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
 import type { PushToast } from "../components/Toasts";
 import { AdvancedSettings } from "../components/AdvancedSettings";
+import { ApiServerSettings } from "../components/ApiServerSettings";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -256,6 +257,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <WebSearchSettings toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
+
+      <ApiServerSettings toast={toast} />
 
       <AdvancedSettings toast={toast} />
 

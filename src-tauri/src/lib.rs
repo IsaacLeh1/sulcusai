@@ -4,6 +4,7 @@
 
 mod advanced;
 mod agent;
+mod api_server;
 mod audio;
 mod bridge;
 mod browser;
@@ -1077,6 +1078,7 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
+            api_server::apply(state.clone());
             // Models already on this PC, from an earlier install or another app.
             std::thread::spawn({
                 let (state, app) = (state.clone(), app.handle().clone());
@@ -1157,6 +1159,9 @@ pub fn run() {
             advanced::set_advanced,
             advanced::set_advanced_pin,
             advanced::check_advanced_pin,
+            api_server::api_server_view,
+            api_server::set_api_server,
+            api_server::new_api_key,
             remove_model,
             get_settings,
             set_connectivity,

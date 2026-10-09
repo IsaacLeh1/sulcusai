@@ -696,3 +696,10 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .adv-field.wide textarea { width: 100%; }
 .adv-actions { display: flex; gap: 8px; }
 .inline-num { width: 64px; display: inline-block; padding: 2px 6px; margin: 0 2px; }
+
+/* ---------- local API server ---------- */
+.api-server { display: flex; flex-direction: column; gap: 10px; }
+.api-value { background: var(--code-bg); border-radius: 6px; padding: 4px 8px; font-size: 12.5px; word-break: break-all; }
+.api-example { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.ok-text { color: var(--ok, #3fb950); }
+.api-server input[type="number"] { max-width: 140px; }

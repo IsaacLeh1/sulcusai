@@ -77,6 +77,15 @@ export interface Ratings {
   languages: number;
 }
 
+export interface ApiServerView {
+  enabled: boolean;
+  port: number;
+  key: string;
+  url: string;
+  running: boolean;
+  problem: string | null;
+}
+
 export interface Advanced {
   enabled: boolean;
   sampling: { temperature: number | null; top_p: number | null; top_k: number | null; min_p: number | null; repeat_penalty: number | null; presence_penalty: number | null; frequency_penalty: number | null; seed: number | null };
@@ -826,6 +835,9 @@ export const api = {
   setAdvanced: (settings: Advanced, pin: string | null) => invoke<void>("set_advanced", { settings, pin }),
   setAdvancedPin: (pin: string | null, newPin: string) => invoke<void>("set_advanced_pin", { pin, newPin }),
   checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
+  apiServerView: () => invoke<ApiServerView>("api_server_view"),
+  setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
+  newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   measureModelSpeed: (modelId: string) => invoke<number>("measure_model_speed", { modelId }),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),

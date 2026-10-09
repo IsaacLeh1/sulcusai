@@ -328,3 +328,8 @@ Branched from `local-models` (0.5.2, not yet merged). Merge into `main` only whe
 - Parental lock: a PIN separate from the app lock (Argon2 hash in `advanced_lock`), needed to change advanced settings.
 - Test: `cargo test --lib e2e_advanced -- --ignored --nocapture` (processor only).
 
+**Local API server (`api_server.rs`, Settings → Local API server, off by default):**
+- OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` (streamed or whole) on `127.0.0.1:7340` (port configurable), served with axum.
+- Every request needs the key (`sk-sulcus-…`, settings key `api_server`, "New key" replaces it) and a localhost `Host` header (blocks DNS-rebinding pages). `model` is a model id or name, or empty for the default. Requests are proxied to llama-server through `llm_endpoint`; a request for a different model while the app is replying gets 409. Each request is logged in Activity.
+- Test: `cargo test --lib e2e_api_server -- --ignored --nocapture` (processor only).
+

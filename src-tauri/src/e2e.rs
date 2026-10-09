@@ -1612,3 +1612,57 @@ async fn e2e_advanced() {
     state.engine.lock().await.stop().await;
     std::fs::remove_dir_all(&state.paths.data).ok();
 }
+
+/// The local API server, as another program would use it: the model list,
+/// refusals without the key or from another host, and a reply both whole and
+/// streamed (on the processor, no graphics card).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_api_server() {
+    let state = temp_state(None);
+    let spec = state.catalog.model("qwen3-1.7b").unwrap().clone();
+    let v = spec.variant("Q4_K_M").unwrap();
+    let port = 17340;
+    {
+        let conn = state.db.lock().unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None }).unwrap();
+        crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
+        let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
+        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: None };
+        crate::db::set(&conn, "advanced", &a).unwrap();
+        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: true, port, key: "sk-sulcus-test".into() }).unwrap();
+    }
+    crate::api_server::apply(state.clone());
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let base = format!("http://127.0.0.1:{port}/v1");
+    let c = crate::net::local_client();
+
+    let list: serde_json::Value = c.get(format!("{base}/models")).bearer_auth("sk-sulcus-test").send().await.unwrap().json().await.unwrap();
+    println!("models: {list}");
+    assert_eq!(list["data"][0]["id"], "qwen3-1.7b");
+    assert_eq!(c.get(format!("{base}/models")).send().await.unwrap().status(), 401);
+    assert_eq!(c.get(format!("{base}/models")).bearer_auth("sk-sulcus-test").header("Host", "evil.example").send().await.unwrap().status(), 403);
+
+    let ask = |stream: bool| serde_json::json!({ "model": "Qwen3 1.7B", "stream": stream, "max_tokens": 40, "messages": [{ "role": "user", "content": "Say hello in three words. /no_think" }] });
+    let whole: serde_json::Value = c.post(format!("{base}/chat/completions")).bearer_auth("sk-sulcus-test").json(&ask(false)).send().await.unwrap().json().await.unwrap();
+    println!("whole: {}", whole["choices"][0]["message"]["content"]);
+    assert_eq!(whole["model"], "qwen3-1.7b");
+    assert!(whole["choices"][0]["message"]["content"].as_str().is_some_and(|t| !t.is_empty()));
+
+    let streamed = c.post(format!("{base}/chat/completions")).bearer_auth("sk-sulcus-test").json(&ask(true)).send().await.unwrap();
+    assert_eq!(streamed.headers()["content-type"], "text/event-stream");
+    let text = streamed.text().await.unwrap();
+    println!("streamed {} data lines", text.lines().filter(|l| l.starts_with("data:")).count());
+    assert!(text.contains("data:") && text.contains("[DONE]"));
+
+    assert_eq!(c.post(format!("{base}/chat/completions")).bearer_auth("sk-sulcus-test").json(&serde_json::json!({ "model": "nope", "messages": [] })).send().await.unwrap().status(), 404);
+    {
+        let conn = state.db.lock().unwrap();
+        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: false, port, key: "sk-sulcus-test".into() }).unwrap();
+    }
+    crate::api_server::apply(state.clone());
+    state.engine.lock().await.stop().await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(c.get(format!("{base}/models")).send().await.is_err(), "stopped");
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}

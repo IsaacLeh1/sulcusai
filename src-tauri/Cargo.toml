@@ -60,6 +60,8 @@ docx-rs = "0.4"
 rust_xlsxwriter = { version = "0.99", default-features = false }
 calamine = "0.36"
 pdf-extract = "0.12"
+# The opt-in local API server (OpenAI-compatible, 127.0.0.1 only).
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 # Pictures: sizes, masks, thumbnails, cut-outs and screenshots.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
