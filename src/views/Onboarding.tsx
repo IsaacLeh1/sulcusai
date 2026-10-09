@@ -155,7 +155,8 @@ function AboutYou({ onNext, onBack, toast }: { onNext: () => void; onBack: () =>
   useEffect(() => {
     api.profile().then(setProfile).catch(() => {});
   }, []);
-  const filled = Object.values(profile).some((v) => v.trim());
+  // Only the fields on this step; the profile also holds location and coordinates (which can be null).
+  const filled = [profile.name, profile.about, profile.preferences].some((v) => v?.trim());
   const save = async () => {
     try {
       await api.setProfile(profile);

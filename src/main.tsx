@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
+import { CrashScreen } from "./components/CrashScreen";
 import { QuickAsk } from "./views/QuickAsk";
 import "./styles.css";
 
@@ -12,6 +13,6 @@ document.documentElement.classList.toggle("quick-window", quick);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    {quick ? <QuickAsk /> : <App />}
+    <CrashScreen>{quick ? <QuickAsk /> : <App />}</CrashScreen>
   </StrictMode>,
 );
