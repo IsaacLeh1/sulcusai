@@ -160,6 +160,12 @@ fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
         }
         let mut dest = std::fs::File::create(&out).map_err(|e| e.to_string())?;
         std::io::copy(&mut entry, &mut dest).map_err(|e| e.to_string())?;
+        // Zips made on Linux and macOS keep programs' execute permission.
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o777)).map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
 }

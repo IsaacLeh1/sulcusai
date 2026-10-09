@@ -35,8 +35,8 @@ use crate::paths::Paths;
 use crate::{db, download, engine, net, AppState, AppStateRef};
 pub use store::MediaItem;
 
-const SD_EXE: &str = "sd-cli.exe";
-const MUSIC_EXE: &str = "ace-synth.exe";
+const SD_EXE: &str = if cfg!(windows) { "sd-cli.exe" } else { "sd-cli" };
+const MUSIC_EXE: &str = if cfg!(windows) { "ace-synth.exe" } else { "ace-synth" };
 /// The reference PC's graphics memory bandwidth guess (the 12 GB tier in
 /// `catalog`), for scaling the catalog's timings to this PC.
 const REF_GPU_BW: f64 = 380.0;

@@ -1152,6 +1152,21 @@
           "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-win-cpu-x64.zip",
           "size": 17517910,
           "sha256": "e6da0b2c0ca1774ae3d2f36807102ffd859af8108265117882f84da422fc6655"
+        },
+        "linux-vulkan-x64": {
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip",
+          "size": 36954945,
+          "sha256": "2948aadae5d32250b883ce0f3ed36c8c45029d3f856be2fc3096f11a129e723d"
+        },
+        "linux-cpu-x64": {
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-Linux-Ubuntu-24.04-x86_64.zip",
+          "size": 26089818,
+          "sha256": "2ab14f12ad2ffd76ac30fb78537e535195f5e04a2d9110677cd849fc44ed8199"
+        },
+        "macos-arm64": {
+          "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-948-228c707/sd-master-228c707-bin-Darwin-macOS-26.6.2-arm64.zip",
+          "size": 35103428,
+          "sha256": "08d4a902e674b3355fb01e58f8f456c050406cdf6004052563807011610be626"
         }
       }
     },

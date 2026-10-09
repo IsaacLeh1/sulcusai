@@ -261,10 +261,7 @@ fn open_in_browser(conn: &Connection, url: &str) -> Result<(), String> {
             return std::process::Command::new(&b.exe).arg(url).spawn().map(|_| ()).map_err(|e| e.to_string());
         }
     }
-    #[cfg(windows)]
-    return std::process::Command::new("explorer.exe").arg(url).spawn().map(|_| ()).map_err(|e| e.to_string());
-    #[cfg(not(windows))]
-    Err("Opening a browser needs Windows for now.".into())
+    crate::open_with_system(std::ffi::OsStr::new(url))
 }
 
 /// The whole sign-in: browser, code, tokens. `hint` pre-fills the address.

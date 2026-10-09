@@ -158,8 +158,7 @@ pub async fn open_web(app: tauri::AppHandle, state: AppStateRef<'_>, url: Option
         }
         MainBrowser::System => {
             let target = url.unwrap_or_else(|| "https://duckduckgo.com/".into());
-            std::process::Command::new("explorer.exe").arg(&target).spawn().map_err(|e| e.to_string())?;
-            Ok(())
+            crate::open_with_system(std::ffi::OsStr::new(&target))
         }
         MainBrowser::App { name } => {
             let b = installed().into_iter().find(|b| b.name == name).ok_or_else(|| format!("{name} isn't installed anymore. Pick another main browser in Settings."))?;

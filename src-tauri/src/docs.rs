@@ -957,8 +957,7 @@ pub fn open_document(state: crate::AppStateRef, path: String) -> Result<(), Stri
     if !shared.iter().any(|root| p.starts_with(root)) {
         return Err("That file isn't in a shared folder.".into());
     }
-    std::process::Command::new("explorer.exe").arg(&p).spawn().map_err(|e| e.to_string())?;
-    Ok(())
+    crate::open_with_system(p.as_os_str())
 }
 
 // ---------- reading ----------

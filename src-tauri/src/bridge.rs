@@ -408,8 +408,7 @@ pub fn show_extension_folder(state: AppStateRef) -> Result<(), String> {
     if !dir.exists() {
         return Err("Turn on Browser control first.".into());
     }
-    std::process::Command::new("explorer.exe").arg(&dir).spawn().map_err(|e| e.to_string())?;
-    Ok(())
+    crate::open_with_system(dir.as_os_str())
 }
 
 #[cfg(test)]

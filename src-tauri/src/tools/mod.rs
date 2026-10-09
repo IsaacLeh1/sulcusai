@@ -123,9 +123,13 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "make_folder", risk: Risk::Write, params: fs::make_folder_params,
         description: "Create a folder (and any missing parent folders)." },
     ToolDef { name: "delete_path", risk: Risk::Write, params: fs::delete_path_params,
-        description: "Move a file or folder to the Recycle Bin." },
+        description: if cfg!(windows) { "Move a file or folder to the Recycle Bin." } else { "Move a file or folder to the Trash." } },
     ToolDef { name: "run_command", risk: Risk::Execute, params: shell::run_command_params,
-        description: "Run a PowerShell command in a shared folder and return its output, for example to build, test, use git or run scripts. Runs hidden; no interactive input." },
+        description: if cfg!(windows) {
+            "Run a PowerShell command in a shared folder and return its output, for example to build, test, use git or run scripts. Runs hidden; no interactive input."
+        } else {
+            "Run a bash command in a shared folder and return its output, for example to build, test, use git or run scripts. No interactive input."
+        } },
     ToolDef { name: "remember", risk: Risk::Memory, params: memory::remember_params,
         description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,

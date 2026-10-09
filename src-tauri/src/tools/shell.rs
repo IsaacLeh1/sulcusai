@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! run_command: PowerShell in a shared folder, hidden, with a time limit.
+//! run_command: PowerShell (bash on macOS and Linux) in a shared folder,
+//! hidden, with a time limit.
 
 use std::process::Stdio;
 use std::sync::atomic::Ordering;
@@ -19,7 +20,7 @@ const KEEP_CHARS: usize = 12_000;
 
 pub fn run_command_params() -> Value {
     json!({ "type": "object", "required": ["command"], "properties": {
-        "command": { "type": "string", "description": "PowerShell command(s) to run." },
+        "command": { "type": "string", "description": if cfg!(windows) { "PowerShell command(s) to run." } else { "bash command(s) to run." } },
         "folder": { "type": "string", "description": "Shared folder (or subfolder) to run in. Default: the first shared folder." },
         "timeout_seconds": { "type": "integer", "description": "Stop after this many seconds (default 120, max 600)." } } })
 }
@@ -77,9 +78,17 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8\n{command}"
     );
 
-    let mut cmd = tokio::process::Command::new("powershell.exe");
-    cmd.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encode(&script)])
-        .current_dir(&dir)
+    let mut cmd = if cfg!(windows) {
+        let mut c = tokio::process::Command::new("powershell.exe");
+        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encode(&script)]);
+        c
+    } else {
+        let _ = &script;
+        let mut c = tokio::process::Command::new(if std::path::Path::new("/bin/bash").exists() { "/bin/bash" } else { "/bin/sh" });
+        c.arg("-c").arg(&command).env("LC_ALL", "C.UTF-8");
+        c
+    };
+    cmd.current_dir(&dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -91,7 +100,7 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return Outcome::error(title, format!("Couldn't start PowerShell: {e}")),
+        Err(e) => return Outcome::error(title, format!("Couldn't start the shell: {e}")),
     };
     #[cfg(windows)]
     if let (Some(job), Some(pid)) = (ctx.job, child.id()) {

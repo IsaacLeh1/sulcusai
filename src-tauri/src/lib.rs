@@ -1072,6 +1072,19 @@ fn open_vault(paths: &Paths) -> Result<Vault, String> {
     Vault::open(&paths.data.join("keys.json"), crypto::platform_protector(&paths.data))
 }
 
+/// Opens a file, folder or web address with the system: Explorer on
+/// Windows, `open` on macOS, `xdg-open` on Linux.
+pub(crate) fn open_with_system(target: &std::ffi::OsStr) -> Result<(), String> {
+    let program = if cfg!(windows) {
+        "explorer.exe"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program).arg(target).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Connector mode for the browser extension (see bridge.rs).
 pub fn run_bridge_host() {
     bridge::run_host()
@@ -1241,6 +1254,8 @@ pub fn run() {
             sync::pair_device,
             sync::remove_device,
             sync::sync_now,
+            sync::models::peer_models,
+            sync::models::copy_model_from,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,
