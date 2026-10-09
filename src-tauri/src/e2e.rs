@@ -1210,12 +1210,19 @@ async fn e2e_weather_question() {
 /// App state with the real engines and models but a throwaway database and
 /// gallery (so test pictures never land in the real app's gallery).
 fn media_state() -> std::sync::Arc<crate::AppState> {
+    temp_state(None)
+}
+
+/// A state with its own data folder that shares the real engines and, unless
+/// `models` says otherwise, the real models.
+fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
     let real = Paths::new(app_data_dir()).unwrap();
     let tmp = std::env::temp_dir().join(format!("sulcusai-media-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(tmp.join("logs")).unwrap();
-    let paths = Paths { data: tmp.clone(), models: real.models.clone(), engines: real.engines.clone(), logs: tmp.join("logs"), db: tmp.join("t.db") };
+    let models = models.unwrap_or_else(|| real.models.clone());
+    let paths = Paths { data: tmp.clone(), models, engines: real.engines.clone(), logs: tmp.join("logs"), db: tmp.join("t.db") };
     let conn = crate::db::open(&paths.db).unwrap();
     crate::features::enable_all(&conn);
     let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
@@ -1485,4 +1492,53 @@ async fn e2e_chat_makes_pictures() {
     assert_eq!(latest.op, "edit");
     assert!(latest.parent.is_some());
     state.engine.lock().await.stop().await;
+}
+
+/// Models other apps downloaded are found, checked and added without a
+/// download: a chat model in "LM Studio", a speech model and its voice
+/// detector in "Downloads", and an upscaler in "Jan" (hard links to this
+/// PC's real files, in a pretend user folder).
+#[test]
+#[ignore]
+fn e2e_found_models() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let root = std::env::temp_dir().join(format!("sulcusai-found-{}", uuid::Uuid::new_v4()));
+    let home = root.join("home");
+    let put = |from: &str, to: &str| {
+        let to = home.join(to);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::hard_link(real.models.join(from), &to).unwrap();
+    };
+    put("qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf", ".lmstudio/models/lmstudio-community/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf");
+    put("whisper-small/ggml-small-q5_1.bin", "Downloads/ggml-small-q5_1.bin");
+    put("whisper-vad/ggml-silero-v5.1.2.bin", "Downloads/ggml-silero-v5.1.2.bin");
+    put("media/RealESRGAN_x4plus.pth", "jan/models/RealESRGAN_x4plus.pth");
+
+    let state = temp_state(Some(root.join("data-models")));
+    // Only now: the state finds the real engines through these.
+    for (var, dir) in [("USERPROFILE", home.clone()), ("HOME", home.clone()), ("HF_HOME", root.join("hf")), ("OLLAMA_MODELS", root.join("ollama")), ("APPDATA", root.join("roaming")), ("LOCALAPPDATA", root.join("local"))] {
+        std::env::set_var(var, dir);
+    }
+    let t = std::time::Instant::now();
+    let names = crate::find_models_now(&state);
+    println!("found {names:?} in {:.1}s", t.elapsed().as_secs_f64());
+    {
+        let conn = state.db.lock().unwrap();
+        let chat = crate::db::installed_models(&conn);
+        assert!(chat.iter().any(|m| m.model_id == "qwen3-1.7b" && m.quant == "Q4_K_M"), "{chat:?}");
+        assert_eq!(crate::db::settings(&conn).default_model.as_deref(), Some("qwen3-1.7b"));
+        assert!(crate::speech::installed(&conn).iter().any(|m| m.model_id == "whisper-small"));
+        assert!(crate::media::installed(&conn).iter().any(|m| m.model_id == "realesrgan-x4plus"));
+    }
+    assert_eq!(names.len(), 3, "{names:?}");
+    // Nothing new the second time.
+    assert!(crate::find_models_now(&state).is_empty());
+    // The app's copy is a link: removing it leaves the other app's file.
+    let ours = root.join("data-models/qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf");
+    assert!(ours.exists());
+    std::fs::remove_file(&ours).unwrap();
+    assert!(home.join(".lmstudio/models/lmstudio-community/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf").exists());
+    assert!(real.models.join("qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf").exists());
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&state.paths.data).ok();
 }

@@ -94,6 +94,8 @@ export interface ModelCard {
   vision?: { file: string; size: number } | null;
   fit: { ctx: number; variants: VariantFit[]; recommended: string | null };
   installed: InstalledModel | null;
+  /** A version whose file is already on this PC, so installing it skips the download. */
+  on_disk?: string | null;
 }
 
 export interface Hints {
@@ -804,6 +806,8 @@ export const api = {
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
   catalog: () => invoke<CatalogView>("catalog_view"),
   install: (modelId: string, quant: string) => invoke<void>("install_model", { modelId, quant }),
+  /** Adds models already on this PC (an earlier install or another app). Returns their names. */
+  findModels: () => invoke<string[]>("find_models"),
   cancelInstall: (modelId: string) => invoke<void>("cancel_install", { modelId }),
   removeModel: (modelId: string) => invoke<void>("remove_model", { modelId }),
   settings: () => invoke<Settings>("get_settings"),
@@ -1041,6 +1045,7 @@ export interface ChatEvents {
   "install:finished": InstallFinished;
   "security:locked": null;
   "features:changed": Record<string, never>;
+  "models:found": { names: string[] };
   "task:reminder": { id: string; title: string };
   "perf:heat": HeatState;
   "mail:synced": { new: number };

@@ -21,10 +21,8 @@ export function SpeechModels({ progress, toast }: { progress: Record<string, Ins
   }, [toast]);
   useEffect(() => {
     refresh();
-    const sub = on("install:finished", () => refresh());
-    return () => {
-      sub.then((un) => un());
-    };
+    const subs = [on("install:finished", () => refresh()), on("models:found", () => refresh())];
+    return () => subs.forEach((s) => s.then((un) => un()));
   }, [refresh]);
 
   if (!view) return <p className="muted">Checking this PC…</p>;

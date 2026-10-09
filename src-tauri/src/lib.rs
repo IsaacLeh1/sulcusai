@@ -21,6 +21,7 @@ mod download;
 mod e2e;
 mod engine;
 mod features;
+mod found;
 mod handoff;
 mod hardware;
 mod hello;
@@ -225,6 +226,9 @@ struct ModelCard {
     spec: ModelSpec,
     fit: ModelFit,
     installed: Option<InstalledModel>,
+    /// A version whose file is already on this PC, so installing it skips
+    /// the download.
+    on_disk: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -251,7 +255,15 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
         .filter_map(|spec| {
             let fit = catalog::fit_model(spec, &budget);
             let inst = installed.iter().find(|m| m.model_id == spec.id).cloned();
-            (inst.is_some() || fit.visible()).then(|| ModelCard { spec: spec.clone(), fit, installed: inst })
+            let on_disk = if inst.is_some() {
+                None
+            } else {
+                runnable_variants(spec, &fit)
+                    .into_iter()
+                    .find(|v| state.paths.models.join(&spec.id).join(&v.file).metadata().is_ok_and(|m| m.len() == v.size))
+                    .map(|v| v.quant.clone())
+            };
+            (inst.is_some() || fit.visible()).then(|| ModelCard { spec: spec.clone(), fit, installed: inst, on_disk })
         })
         .collect();
 
@@ -444,6 +456,90 @@ pub(crate) fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBu
         Some(name) => paths.models.join(&m.model_id).join(name),
         None => stored,
     }
+}
+
+/// The versions of a model this PC can run, the best suited first.
+fn runnable_variants<'a>(spec: &'a ModelSpec, fit: &ModelFit) -> Vec<&'a catalog::Variant> {
+    let mut list: Vec<_> = spec.variants.iter().filter(|v| fit.variant(&v.quant).is_some_and(|f| f.runnable())).collect();
+    list.sort_by_key(|v| fit.recommended.as_deref() != Some(v.quant.as_str()));
+    list
+}
+
+/// Chat models whose files are already on this PC (from an earlier install
+/// or another app) join the list without a download, once the engine is
+/// here too. Otherwise the file is put in place so installing skips the
+/// download. Returns the names added.
+fn adopt_found(state: &AppState, finder: &mut found::Finder) -> Vec<String> {
+    let budget = state.budget();
+    let engine_ready = engine::backend_for(&budget).is_ok_and(|b| engine::installed_server(&state.paths, &state.catalog.engine, b).is_some());
+    let busy: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
+    let have = db::installed_models(&state.db.lock().unwrap());
+    let mut names = Vec::new();
+    for spec in &state.catalog.models {
+        if busy.contains(&spec.id) || have.iter().any(|m| m.model_id == spec.id) {
+            continue;
+        }
+        let fit = catalog::fit_model(spec, &budget);
+        let Some((variant, dest, place)) = runnable_variants(spec, &fit).into_iter().find_map(|v| {
+            let dest = state.paths.models.join(&spec.id).join(&v.file);
+            match finder.place(&dest, v.size, &v.sha256) {
+                found::Place::Missing => None,
+                place => Some((v, dest, place)),
+            }
+        }) else {
+            continue;
+        };
+        if let Some(v) = &spec.vision {
+            finder.place(&state.paths.models.join(&spec.id).join(&v.file), v.size, &v.sha256);
+        }
+        if !engine_ready {
+            continue;
+        }
+        {
+            let conn = state.db.lock().unwrap();
+            let saved = db::save_installed(&conn, &InstalledModel {
+                model_id: spec.id.clone(),
+                quant: variant.quant.clone(),
+                path: dest.display().to_string(),
+                size: variant.size,
+                installed_at: db::now_ms(),
+                tps: None,
+            });
+            if saved.is_err() {
+                continue;
+            }
+            if db::settings(&conn).default_model.is_none() {
+                let _ = db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone()));
+            }
+        }
+        state.log("model", &found::note(&spec.name, &place));
+        names.push(spec.name.clone());
+    }
+    names
+}
+
+/// Looks for models already on this PC and adds them. Returns their names.
+fn find_models_now(state: &AppState) -> Vec<String> {
+    let mut finder = found::Finder::new();
+    let mut names = adopt_found(state, &mut finder);
+    names.extend(speech::adopt_found(state, &mut finder));
+    names.extend(media::adopt_found(state, &mut finder));
+    names
+}
+
+fn announce_found(app: &AppHandle, names: &[String]) {
+    if !names.is_empty() {
+        app.emit("models:found", json!({ "names": names })).ok();
+        app.emit("features:changed", json!({})).ok();
+    }
+}
+
+#[tauri::command]
+async fn find_models(app: AppHandle, state: AppStateRef<'_>) -> Result<Vec<String>, String> {
+    let state = state.inner().clone();
+    let names = tauri::async_runtime::spawn_blocking(move || find_models_now(&state)).await.map_err(|e| e.to_string())?;
+    announce_found(&app, &names);
+    Ok(names)
 }
 
 #[tauri::command]
@@ -902,6 +998,11 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
+            // Models already on this PC, from an earlier install or another app.
+            std::thread::spawn({
+                let (state, app) = (state.clone(), app.handle().clone());
+                move || announce_found(&app, &find_models_now(&state))
+            });
             speech::start_idle_unloader(state.clone());
             app.manage(state);
             schedule::start(app.handle().clone());
@@ -970,6 +1071,7 @@ pub fn run() {
             catalog_view,
             install_model,
             cancel_install,
+            find_models,
             remove_model,
             get_settings,
             set_connectivity,

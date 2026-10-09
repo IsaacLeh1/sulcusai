@@ -750,6 +750,41 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &SpeechModel, cancel: &
     }
 }
 
+/// Speech models already on this PC join the list without a download, once
+/// the speech engine is here too. Returns their names.
+pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -> Vec<String> {
+    use crate::found::Place;
+    let cat = &state.catalog.speech;
+    let hw = state.hardware.read().unwrap().clone();
+    let b = Budget::from_hardware(&hw);
+    let ready = engine::find_exe(&state.paths.engines.join(engine_dir(&cat.engine)), SERVER_EXE).is_some()
+        && finder.place(&vad_path(&state.paths, cat), cat.vad.size, &cat.vad.sha256) != Place::Missing;
+    let busy: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
+    let have = installed(&state.db.lock().unwrap());
+    let mut names = Vec::new();
+    for spec in &cat.models {
+        if busy.contains(&spec.id) || have.iter().any(|m| m.model_id == spec.id) || !fit(spec, &hw, &b).runnable {
+            continue;
+        }
+        let dest = state.paths.models.join(&spec.id).join(&spec.file);
+        let place = finder.place(&dest, spec.size, &spec.sha256);
+        if place == Place::Missing || !ready {
+            continue;
+        }
+        {
+            let conn = state.db.lock().unwrap();
+            let mut list = installed(&conn);
+            list.push(InstalledSpeech { model_id: spec.id.clone(), path: dest.display().to_string(), size: spec.size, installed_at: db::now_ms(), speed: None });
+            if save_installed(&conn, &list).is_err() {
+                continue;
+            }
+        }
+        state.log("model", &crate::found::note(&spec.name, &place));
+        names.push(spec.name.clone());
+    }
+    names
+}
+
 #[cfg(test)]
 pub async fn install_for_test(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     install(state, spec, cancel, &|_, _, _| {}).await

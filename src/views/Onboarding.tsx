@@ -93,12 +93,18 @@ function YourPc({ catalog, onNext, onBack }: { catalog: CatalogView | null; onNe
 }
 
 function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: CatalogView | null; progress: Record<string, InstallProgress>; onNext: () => void; onBack: () => void; toast: PushToast }) {
-  if (!catalog) return <p className="muted">Checking this PC…</p>;
+  // Models from an earlier install or another app (LM Studio, Ollama and so on).
+  const [looking, setLooking] = useState(true);
+  useEffect(() => {
+    api.findModels().catch(() => {}).finally(() => setLooking(false));
+  }, []);
+  if (!catalog || looking) return <p className="muted">Looking for models already on this PC…</p>;
   const installed = catalog.models.filter((m) => m.installed);
   const pick = starterModel(catalog.models);
   const p = pick ? progress[pick.id] : undefined;
-  const fit = pick?.fit.variants.find((v) => v.quant === pick.fit.recommended);
-  const variant = pick?.variants.find((v) => v.quant === pick.fit.recommended);
+  const quant = pick?.on_disk ?? pick?.fit.recommended;
+  const fit = pick?.fit.variants.find((v) => v.quant === quant);
+  const variant = pick?.variants.find((v) => v.quant === quant);
 
   return (
     <>
@@ -113,7 +119,7 @@ function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: Cat
               <h3>{pick.name}</h3>
               <span className="muted small">{pick.publisher} · {variant.quality} quality · {bytes(variant.size)}</span>
             </div>
-            <span className="badge">Suggested for this PC</span>
+            <span className="badge">{pick.on_disk ? "Already on this PC" : "Suggested for this PC"}</span>
           </div>
           <p className="desc">{pick.description}</p>
           <p className="muted small">{placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} · {pick.license.name}</p>
@@ -137,7 +143,7 @@ function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: Cat
               }}
               disabled={Object.keys(progress).length > 0}
             >
-              Install {pick.name}
+              {pick.on_disk ? `Set up ${pick.name} (no download)` : `Install ${pick.name}`}
             </button>
           )}
         </div>

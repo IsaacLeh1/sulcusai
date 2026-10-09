@@ -178,6 +178,10 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - **Fit rule:** weights + f16 KV cache at `default_ctx` (8192) + 700 MB overhead, checked against VRAM minus 10% and RAM minus max(25%, 4 GB).
   - Speed is estimated from memory bandwidth by VRAM tier; anything under 4 tokens/s counts as "can't run".
   - The real speed is measured after install.
+- **Models already on this PC (`found.rs`):** at startup, on setup's model step and on the Models page's "Check again", the app adds catalog models whose files are already there, from an earlier install or from LM Studio, Ollama (blobs named by hash), Hugging Face, Jan, GPT4All or Downloads.
+  - A file only counts when its name (or Ollama's hash name) and exact size match and its SHA-256 checks out. Others' files are hard-linked in (no extra space; removing a model here never deletes their copy).
+  - A model is only listed once its engine is installed; otherwise its card says "Already on this PC" and Install skips the download. Every download also looks for a local copy first (linked, or copied with a hash check from another drive).
+  - Test: `cargo test --lib e2e_found_models -- --ignored` (hard links real files into a pretend user folder).
 - **Updating the catalog:** edit `catalog/build_catalog.py`, then run `python catalog/build_catalog.py`. Hashes come from the Hugging Face tree API (`lfs.oid`) and the GitHub release `digest`.
 
 ### Encryption and app lock
@@ -302,6 +306,6 @@ Phase 4 was merged into `main` and released as the 0.4.0 installer (2026-10-08).
 **Tests:** 197 unit tests. Ignored e2e (real engines, real data folder for engines and models, throwaway database and gallery): `e2e_media` (SULCUSAI_MEDIA=picture,upscale,cutout,music,narrate,video; SULCUSAI_MEDIA_OUT), `e2e_vision` (SULCUSAI_VISION_IMAGE), `e2e_chat_makes_pictures` (Qwen3 VL 4B calls create_image then edit_image). All pass. Run them one at a time: they load the GPU fully.
 
 **Not done / next:**
-- Publish the acestep.cpp zip (above). A Vulkan build of acestep.cpp would make music faster (needs the Vulkan SDK for glslc, or a CI job).
+- A Vulkan build of acestep.cpp would make music faster (needs the Vulkan SDK for glslc, or a CI job).
 - Live checks in the real app: Studio jobs, attachments and screenshots with a vision model, sign-in once registrations exist.
 - Videos have no thumbnail in the gallery (a 🎬 card); Graph all-day events are created as UTC dates.

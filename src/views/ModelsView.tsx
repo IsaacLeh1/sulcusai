@@ -40,6 +40,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
     setChecking(true);
     try {
       await api.refreshHardware();
+      // Also picks up models downloaded by other apps since the app started.
+      await api.findModels().catch(() => {});
       await onRefresh();
     } finally {
       setChecking(false);
@@ -72,7 +74,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
             Engine: llama.cpp ({catalog.backend === "vulkan-x64" ? "graphics card" : catalog.backend === "cpu-x64" ? "processor" : "unavailable on this system"})
             {hw.on_battery ? " · On battery: models run slower and drain power faster." : ""}
           </span>
-          <button className="btn ghost small" onClick={recheck} disabled={checking}>
+          <button className="btn ghost small" onClick={recheck} disabled={checking} title="Checks this PC again and looks for models other apps (LM Studio, Ollama and others) already downloaded">
             {checking ? "Checking…" : "Check again"}
           </button>
         </div>
@@ -207,7 +209,8 @@ function Tags({ m }: { m: ModelCard }) {
 
 function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; rank: RankInfo; progress?: InstallProgress; otherBusy: boolean; toast: PushToast }) {
   const options = m.fit.variants.filter((v) => v.placement && v.disk_ok);
-  const [quant, setQuant] = useState(m.fit.recommended ?? options[0]?.quant ?? "");
+  const onDisk = options.find((v) => v.quant === m.on_disk)?.quant;
+  const [quant, setQuant] = useState(onDisk ?? m.fit.recommended ?? options[0]?.quant ?? "");
   const fit = m.fit.variants.find((v) => v.quant === quant);
   const variant = m.variants.find((v) => v.quant === quant);
 
@@ -226,7 +229,7 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
           <h3>{m.name}</h3>
           <span className="muted small">{m.publisher} · {m.params_b}B parameters</span>
         </div>
-        {m.tags.includes("recommended") && <span className="badge">Recommended</span>}
+        {onDisk ? <span className="badge">Already on this PC</span> : m.tags.includes("recommended") && <span className="badge">Recommended</span>}
       </div>
       <p className="desc">{m.description}</p>
       <Capability m={m} rank={rank} />
@@ -247,7 +250,7 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
             })}
           </select>
           <button className="btn primary" onClick={install} disabled={otherBusy || !quant} title={otherBusy ? "One install at a time" : undefined}>
-            Install
+            {quant === onDisk ? "Set up (no download)" : "Install"}
           </button>
         </div>
       )}

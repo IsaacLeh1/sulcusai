@@ -191,6 +191,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
+      on("models:found", (p) => {
+        refreshCatalog();
+        api.settings().then(setSettings);
+        toast(`Found ${listNames(p.names)} on this PC. ${p.names.length === 1 ? "It's" : "They're"} ready to use, no download needed.`, "success");
+      }),
       on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
       on("schedule:ran", (p) => {
         refreshChats();
@@ -654,4 +659,8 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
       </button>
     </div>
   );
+}
+
+function listNames(names: string[]): string {
+  return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }

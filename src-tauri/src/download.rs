@@ -51,6 +51,18 @@ pub async fn fetch_verified(
     if let Some(dir) = dest.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
     }
+    let part = part_path(dest);
+    // Another app on this PC has the same file: link it, or copy it from
+    // another drive, instead of downloading it again.
+    if tokio::fs::metadata(dest).await.is_err() && tokio::fs::metadata(&part).await.is_err() {
+        let (d, sha) = (dest.to_path_buf(), sha256.to_string());
+        let found = tokio::task::spawn_blocking(move || crate::found::local_copy(&d, size, &sha)).await.ok().flatten();
+        if let Some((_, src)) = found {
+            if std::fs::hard_link(&src, dest).is_err() {
+                crate::found::copy_verified(&src, &part, size, sha256, cancel, &mut progress).await?;
+            }
+        }
+    }
     // Already downloaded (for example a reinstall): reuse it if it checks out.
     if tokio::fs::metadata(dest).await.is_ok_and(|m| m.len() == size) {
         let mut hasher = Sha256::new();
@@ -60,7 +72,6 @@ pub async fn fetch_verified(
             return Ok(());
         }
     }
-    let part = part_path(dest);
     let mut hasher = Sha256::new();
     let mut have = match tokio::fs::metadata(&part).await {
         Ok(m) if m.len() <= size => hash_existing(&part, &mut hasher, cancel).await.map_err(|e| e.to_string())?,

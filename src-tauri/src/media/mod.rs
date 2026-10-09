@@ -333,6 +333,53 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
     save_installed(&conn, &list)
 }
 
+/// Media models whose files are already on this PC join the list without a
+/// download, once their engine is here too. Returns their names.
+pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -> Vec<String> {
+    use crate::found::Place;
+    let c = &state.catalog.media;
+    let hw = state.hardware.read().unwrap().clone();
+    let b = Budget::from_hardware(&hw);
+    let busy: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
+    let have = installed(&state.db.lock().unwrap());
+    let mut names = Vec::new();
+    for m in &c.models {
+        if busy.contains(&m.id) || have.iter().any(|i| i.model_id == m.id) || !fit(m, &hw, &b, 0, None).runnable {
+            continue;
+        }
+        let mut place = Place::Here;
+        for f in &m.files {
+            match finder.place(&file_path(&state.paths, m, f), f.size, &f.sha256) {
+                Place::Missing => {
+                    place = Place::Missing;
+                    break;
+                }
+                Place::From(app) => place = Place::From(app),
+                Place::Here => {}
+            }
+        }
+        let engine_ready = match m.kind {
+            Kind::Music => engine::find_exe(&state.paths.engines.join(music_dir(c)), MUSIC_EXE).is_some(),
+            Kind::Background => crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_some(),
+            _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(c, be)), SD_EXE).is_some()),
+        };
+        if place == Place::Missing || !engine_ready {
+            continue;
+        }
+        {
+            let conn = state.db.lock().unwrap();
+            let mut list = installed(&conn);
+            list.push(InstalledMedia { model_id: m.id.clone(), installed_at: db::now_ms(), secs: None });
+            if save_installed(&conn, &list).is_err() {
+                continue;
+            }
+        }
+        state.log("model", &crate::found::note(&m.name, &place));
+        names.push(m.name.clone());
+    }
+    names
+}
+
 #[cfg(test)]
 pub async fn install_for_test(state: &Arc<AppState>, id: &str) -> Result<(), String> {
     let spec = state.catalog.media.models.iter().find(|m| m.id == id).cloned().ok_or("unknown")?;
