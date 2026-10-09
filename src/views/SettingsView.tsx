@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser } from "../api";
 import { APP_NAME } from "../brand";
+import { chosenLanguage, LANGUAGES, setLanguage } from "../i18n";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
 import { FoldersSection } from "../components/AgentCards";
@@ -177,6 +178,22 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <header className="page-head">
         <h1>Settings</h1>
       </header>
+
+      <section className="card">
+        <h2>Language</h2>
+        <label className="form small">
+          The app's language
+          <select className="input" defaultValue={chosenLanguage()} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="system">Same as Windows</option>
+            {LANGUAGES.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="muted small">The assistant answers in the language you write in, whatever this is set to.</p>
+      </section>
 
       <section className="card">
         <h2>About you</h2>

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
+import { t } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -1296,8 +1297,9 @@ export function on<K extends keyof ChatEvents>(name: K, handler: (payload: ChatE
   return listen<ChatEvents[K]>(name, (e) => handler(e.payload));
 }
 
+/** An error for people to read, in the window's language when the message
+    has a translation (the core's messages are looked up as written). */
 export function errorText(e: unknown): string {
-  if (typeof e === "string") return e;
-  if (e instanceof Error) return e.message;
-  return String(e);
+  const text = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
+  return t(text);
 }
