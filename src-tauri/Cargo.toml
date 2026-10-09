@@ -34,6 +34,9 @@ aes-gcm = "0.10"
 spake2 = "0.4"
 hkdf = "0.12"
 hmac = "0.12"
+# The phone page: requests sealed like TweetNaCl's secretbox; QR codes to add a phone.
+crypto_secretbox = "0.1"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 argon2 = "0.5"
 zeroize = "1"
 base64 = "0.22"

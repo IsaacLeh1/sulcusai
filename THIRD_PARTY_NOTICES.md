@@ -19,6 +19,8 @@ pnpm licenses list --prod
 | ONNX Runtime (downloaded with natural voices, speaker labels or background removal; its own ThirdPartyNotices.txt is kept beside it) | MIT | https://github.com/microsoft/onnxruntime |
 | stable-diffusion.cpp (`sd-cli`, downloaded with a picture, upscaling or video model; includes ggml, libwebp and libwebm) | MIT; libwebp and libwebm BSD-3-Clause | https://github.com/leejet/stable-diffusion.cpp |
 | acestep.cpp (`ace-lm`, `ace-synth`, downloaded with a music model; our Windows build of commit d881ad2, includes ggml) | MIT | https://github.com/ServeurpersoCom/acestep.cpp |
+| QVAC Fabric llama.cpp (`llama-finetune-lora`, downloaded the first time a model is taught; includes libcurl, cpp-httplib, nlohmann/json and linenoise under their own licenses, kept beside it) | MIT | https://github.com/tetherto/qvac-fabric-llm.cpp |
+| TweetNaCl-js 1.0.3 (`nacl-fast.min.js`, served inside the phone page) | Public domain (Unlicense) | https://github.com/dchest/tweetnacl-js |
 
 ## Application framework and libraries
 
@@ -26,7 +28,9 @@ pnpm licenses list --prod
 |---|---|
 | Tauri | MIT or Apache-2.0 |
 | SQLite (via rusqlite, bundled) | Public domain |
-| RustCrypto: aes-gcm, argon2, sha2, zeroize | MIT or Apache-2.0 |
+| RustCrypto: aes-gcm, argon2, sha2, zeroize, hkdf, hmac, crypto_secretbox | MIT or Apache-2.0 |
+| spake2 (pairing PCs), curve25519-dalek | MIT or Apache-2.0; curve25519-dalek BSD-3-Clause |
+| qrcode (QR codes for adding a phone) | MIT or Apache-2.0 |
 | serde, tokio, reqwest, rustls, sysinfo, zip, uuid, chrono, base64, windows-rs and other Rust crates | MIT and/or Apache-2.0 (checked by `cargo deny`) |
 | ort (ONNX Runtime bindings, loading the downloaded DLL) | MIT or Apache-2.0 |
 | unicode-normalization | MIT or Apache-2.0 |

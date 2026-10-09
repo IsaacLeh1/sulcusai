@@ -124,6 +124,22 @@ export interface UpdateView {
   available: UpdateAvailable | null;
 }
 
+export interface PhoneView {
+  enabled: boolean;
+  running: boolean;
+  /** The page's address on this network, e.g. "http://192.168.1.42:47818". */
+  address: string | null;
+  problem: string | null;
+  phones: { id: string; name: string; added: number; last_seen: number | null }[];
+}
+
+export interface NewPhone {
+  link: string;
+  /** SVG of the QR code. */
+  qr: string;
+  view: PhoneView;
+}
+
 export interface SyncPeer {
   id: string;
   name: string;
@@ -987,6 +1003,10 @@ export const api = {
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
   restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
   exportMarkdown: (dir: string) => invoke<string>("export_markdown_cmd", { dir }),
+  phoneView: () => invoke<PhoneView>("phone_view"),
+  setPhone: (enabled: boolean) => invoke<PhoneView>("set_phone", { enabled }),
+  addPhone: (name: string) => invoke<NewPhone>("add_phone", { name }),
+  removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   syncView: () => invoke<SyncView>("sync_view"),
   setSync: (enabled: boolean, name: string | null) => invoke<SyncView>("set_sync", { enabled, name }),
   startPairing: () => invoke<SyncView>("start_pairing"),

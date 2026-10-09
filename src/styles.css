@@ -742,3 +742,5 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .cloud-media { margin-top: 6px; }
 .cloud-media summary { cursor: pointer; }
 .cloud-media .price { width: 90px; }
+.phone-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.phone-qr .qr svg { width: 240px; height: 240px; background: #fff; padding: 8px; border-radius: 8px; }

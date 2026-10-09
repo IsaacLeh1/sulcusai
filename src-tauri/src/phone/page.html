@@ -1,0 +1,239 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6f5c">
+<title>SulcusAI</title>
+<style>
+:root { --bg: #f6f7f8; --panel: #fff; --text: #1b1f23; --muted: #6a737d; --line: #e1e4e8; --accent: #1f6f5c; --mine: #e7f3ef; --warn: #b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #111417; --panel: #1b1f24; --text: #e6e8eb; --muted: #9aa4ae; --line: #2c333a; --accent: #4fb39a; --mine: #1d2f2a; --warn: #f2b8b5; } }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 10px 14px; padding-top: max(10px, env(safe-area-inset-top)); background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button { font: inherit; color: inherit; background: none; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { border: 0; padding: 6px 8px; color: var(--accent); }
+main { padding: 12px 14px 120px; max-width: 760px; margin: 0 auto; }
+nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: var(--panel); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+nav.tabs button { flex: 1; border: 0; border-radius: 0; padding: 12px 0; color: var(--muted); }
+nav.tabs button.on { color: var(--accent); font-weight: 600; }
+ul.list { list-style: none; margin: 0; padding: 0; }
+ul.list li { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; padding: 12px; }
+ul.list li.tap { cursor: pointer; }
+.muted { color: var(--muted); font-size: 13px; }
+.msg { margin: 10px 0; padding: 10px 12px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.msg.user { background: var(--mine); margin-left: 15%; }
+.msg pre { overflow-x: auto; background: rgba(127,127,127,.12); padding: 8px; border-radius: 8px; font-size: 13px; }
+.msg p { margin: 0 0 8px; } .msg p:last-child { margin: 0; }
+.composer { position: fixed; left: 0; right: 0; bottom: 49px; padding: 8px 10px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); background: var(--bg); display: flex; gap: 8px; max-width: 760px; margin: 0 auto; }
+.composer textarea { flex: 1; resize: none; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 40vh; }
+.row { display: flex; gap: 8px; align-items: center; }
+input.text { flex: 1; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.ask { border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
+.ask pre { white-space: pre-wrap; font-size: 13px; max-height: 30vh; overflow: auto; }
+.center { text-align: center; padding: 40px 10px; }
+.error { color: var(--warn); }
+.dots::after { content: "…"; animation: blink 1s infinite; } @keyframes blink { 50% { opacity: .2; } }
+</style>
+</head>
+<body>
+<header><button class="link" id="back" hidden aria-label="Back">‹</button><h1 id="title">SulcusAI</h1><button class="link" id="new" hidden>New chat</button></header>
+<main id="main"><p class="center muted">Connecting…</p></main>
+<nav class="tabs" id="tabs" hidden>
+  <button data-tab="chats" class="on">Chats</button><button data-tab="tasks">Tasks</button><button data-tab="notes">Notes</button>
+</nav>
+<script>/*NACL*/</script>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const main = $("#main");
+let phone = null, key = null, tab = "chats", openChat = null, timer = null;
+
+// The key arrives after "#" in the QR code's link (never sent to the network); keep it on this phone.
+(function pair() {
+  const m = /p=([0-9A-Za-z]+)\.([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (m) {
+    localStorage.setItem("sulcus.phone", m[1]);
+    localStorage.setItem("sulcus.key", m[2]);
+    history.replaceState(null, "", location.pathname);
+  }
+  phone = localStorage.getItem("sulcus.phone");
+  const k = localStorage.getItem("sulcus.key");
+  if (k) {
+    const b = atob(k.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((k.length + 3) % 4));
+    key = Uint8Array.from(b, (c) => c.charCodeAt(0));
+  }
+})();
+
+const enc = new TextEncoder(), dec = new TextDecoder();
+const b64 = (u) => btoa(String.fromCharCode(...u));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+let lastTs = 0;
+
+async function call(op, args = {}) {
+  const ts = Math.max(Date.now(), lastTs + 1);
+  lastTs = ts;
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(enc.encode(JSON.stringify({ op, args, ts })), nonce, key);
+  const body = new Uint8Array(24 + box.length);
+  body.set(nonce);
+  body.set(box, 24);
+  const r = await fetch("/api", { method: "POST", headers: { "X-Phone": phone, "Content-Type": "text/plain" }, body: b64(body) });
+  const text = await r.text();
+  if (!r.ok) throw new Error(text || "The PC didn't answer.");
+  const raw = unb64(text.trim());
+  const plain = nacl.secretbox.open(raw.slice(24), raw.slice(0, 24), key);
+  if (!plain) throw new Error("The answer didn't check out.");
+  const res = JSON.parse(dec.decode(plain));
+  if (!res.ok) throw new Error(res.error);
+  return res.data;
+}
+
+const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function md(s) {
+  const parts = s.split(/```[^\n]*\n?/);
+  return parts
+    .map((p, i) => {
+      if (i % 2) return `<pre><code>${esc(p)}</code></pre>`;
+      return esc(p)
+        .split(/\n{2,}/)
+        .map((para) => `<p>${para.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\n/g, "<br>")}</p>`)
+        .join("")
+        .replace(/<p><\/p>/g, "");
+    })
+    .join("");
+}
+const when = (ms) => new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function stopPolling() { if (timer) clearTimeout(timer); timer = null; }
+function fail(e) { main.innerHTML = `<p class="center error">${esc(String(e.message || e))}</p><p class="center"><button onclick="location.reload()">Try again</button></p>`; }
+
+function header(title, back) {
+  $("#title").textContent = title;
+  $("#back").hidden = !back;
+  $("#new").hidden = !(tab === "chats" && !openChat);
+}
+
+async function showChats() {
+  stopPolling();
+  openChat = null;
+  header("Chats", false);
+  const chats = await call("chats");
+  main.innerHTML = chats.length
+    ? `<ul class="list">${chats.map((c) => `<li class="tap" data-id="${esc(c.id)}"><strong>${esc(c.title)}</strong>${c.running ? ' <span class="muted dots">answering</span>' : ""}<div class="muted">${when(c.updated_at)}</div></li>`).join("")}</ul>`
+    : `<p class="center muted">No chats yet. Tap New chat.</p>`;
+  main.querySelectorAll("li[data-id]").forEach((li) => (li.onclick = () => showChat(li.dataset.id, li.querySelector("strong").textContent)));
+}
+
+async function showChat(id, title) {
+  stopPolling();
+  openChat = id;
+  header(title || "New chat", true);
+  main.innerHTML = `<div id="msgs"></div><div class="composer"><textarea id="text" rows="1" placeholder="Message"></textarea><button class="primary" id="send">Send</button></div>`;
+  const text = $("#text");
+  text.oninput = () => { text.style.height = "auto"; text.style.height = text.scrollHeight + "px"; };
+  $("#send").onclick = async () => {
+    const t = text.value.trim();
+    if (!t) return;
+    $("#send").disabled = true;
+    try {
+      const r = await call("send", { chat_id: openChat, text: t });
+      openChat = r.chat_id;
+      text.value = "";
+      text.oninput();
+      refresh();
+    } catch (e) { alert(e.message); }
+    $("#send").disabled = false;
+  };
+  if (id) refresh();
+  else $("#msgs").innerHTML = `<p class="center muted">Ask anything. It runs on your PC.</p>`;
+}
+
+let shown = "";
+async function refresh() {
+  stopPolling();
+  if (!openChat) return;
+  const id = openChat;
+  try {
+    const d = await call("messages", { chat_id: id });
+    if (openChat !== id) return;
+    let html = d.messages.map((m) => `<div class="msg ${m.role}">${md(m.content)}</div>`).join("");
+    if (d.running) html += `<div class="msg">${d.partial ? md(d.partial) : '<span class="muted dots">Thinking</span>'}</div>`;
+    for (const a of d.approvals || []) {
+      html += `<div class="ask"><strong>The assistant asks: ${esc(a.preview.title)}</strong>${a.preview.detail ? `<pre>${esc(a.preview.detail)}</pre>` : ""}${a.preview.note ? `<div class="muted">${esc(a.preview.note)}</div>` : ""}
+        <div class="row"><button class="primary" data-call="${esc(a.call_id)}" data-d="allow">Allow</button><button data-call="${esc(a.call_id)}" data-d="deny">Don't allow</button></div></div>`;
+    }
+    if (d.running) html += `<p class="center"><button id="stop">Stop</button></p>`;
+    if (html !== shown) {
+      const atEnd = window.innerHeight + window.scrollY >= document.body.scrollHeight - 80;
+      $("#msgs").innerHTML = html;
+      shown = html;
+      if (atEnd) window.scrollTo(0, document.body.scrollHeight);
+    }
+    main.querySelectorAll("button[data-call]").forEach((b) => (b.onclick = async () => { try { await call("approve", { call_id: b.dataset.call, decision: b.dataset.d }); refresh(); } catch (e) { alert(e.message); } }));
+    const stop = $("#stop");
+    if (stop) stop.onclick = () => call("stop", { chat_id: id }).catch(() => {});
+    timer = setTimeout(refresh, d.running ? 700 : 4000);
+  } catch (e) {
+    timer = setTimeout(refresh, 4000);
+  }
+}
+
+async function showTasks() {
+  stopPolling();
+  header("Tasks", false);
+  const tasks = await call("tasks");
+  main.innerHTML = `<div class="row"><input class="text" id="task" placeholder="Add a task, e.g. call Sam tomorrow 3pm"><button class="primary" id="add">Add</button></div><br>
+    <ul class="list">${tasks.map((t) => `<li class="row"><button class="link" data-done="${esc(t.id)}" aria-label="Done">○</button><span style="flex:1">${esc(t.title)}${t.due ? `<div class="muted">Due ${when(t.due)}</div>` : ""}</span></li>`).join("") || '<li class="muted">Nothing to do.</li>'}</ul>`;
+  const add = async () => {
+    const v = $("#task").value.trim();
+    if (!v) return;
+    try { await call("add_task", { title: v }); showTasks(); } catch (e) { alert(e.message); }
+  };
+  $("#add").onclick = add;
+  $("#task").onkeydown = (e) => e.key === "Enter" && add();
+  main.querySelectorAll("button[data-done]").forEach((b) => (b.onclick = async () => { b.textContent = "●"; await call("done_task", { id: b.dataset.done }).catch((e) => alert(e.message)); showTasks(); }));
+}
+
+async function showNotes() {
+  stopPolling();
+  header("Notes", false);
+  const notes = await call("notes");
+  main.innerHTML = `<ul class="list">${notes.map((n, i) => `<li class="tap" data-i="${i}"><strong>${n.pinned ? "📌 " : ""}${esc(n.title || "Untitled")}</strong><div class="muted">${esc(n.body.slice(0, 120))}</div></li>`).join("") || '<li class="muted">No notes yet.</li>'}</ul>`;
+  main.querySelectorAll("li[data-i]").forEach((li) => (li.onclick = () => {
+    const n = notes[+li.dataset.i];
+    header(n.title || "Untitled", true);
+    main.innerHTML = `<div class="msg">${md(n.body)}</div>`;
+  }));
+}
+
+function go(t) {
+  tab = t;
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  ({ chats: showChats, tasks: showTasks, notes: showNotes })[t]().catch(fail);
+}
+
+$("#back").onclick = () => go(tab);
+$("#new").onclick = () => showChat(null, "New chat");
+document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => go(b.dataset.tab)));
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopPolling(); else if (openChat) refresh(); });
+
+(async () => {
+  if (!phone || !key || key.length !== 32) {
+    main.innerHTML = `<p class="center">To use SulcusAI here, open it on your PC: Settings → Phone → Add a phone, and scan the code with this phone's camera.</p>`;
+    return;
+  }
+  try {
+    const hi = await call("hello");
+    document.title = hi.pc ? `SulcusAI · ${hi.pc}` : "SulcusAI";
+    $("#tabs").hidden = false;
+    go("chats");
+  } catch (e) { fail(e); }
+})();
+</script>
+</body>
+</html>

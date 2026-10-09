@@ -45,6 +45,7 @@ mod notify;
 mod oauth;
 mod paths;
 mod perf;
+mod phone;
 mod projects;
 mod quick;
 mod sandbox;
@@ -1146,6 +1147,7 @@ pub fn run() {
             calendar::start_sync(app.handle().clone());
             updates::start(app.handle().clone());
             sync::start(app.handle().clone());
+            phone::apply(app.state::<Arc<AppState>>().inner().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1227,6 +1229,10 @@ pub fn run() {
             cloud::set_cloud_options,
             cloud::cloud_choices,
             backup::make_backup,
+            phone::phone_view,
+            phone::set_phone,
+            phone::add_phone,
+            phone::remove_phone,
             sync::sync_view,
             sync::set_sync,
             sync::start_pairing,

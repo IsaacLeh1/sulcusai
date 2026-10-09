@@ -153,6 +153,11 @@ static WAKE: LazyLock<Notify> = LazyLock::new(Notify::new);
 static ANNOUNCE: LazyLock<Notify> = LazyLock::new(Notify::new);
 static FORCE: AtomicBool = AtomicBool::new(false);
 
+/// Random bytes (for keys shared with phones, too).
+pub fn random_bytes<const N: usize>() -> [u8; N] {
+    wire::random()
+}
+
 fn emit(state: &AppState, event: &str) {
     if let Some(app) = state.app.get() {
         let _ = app.emit(event, ());
