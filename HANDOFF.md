@@ -223,7 +223,7 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - A capture or playback test opens the real microphone or speakers. Ask the user before running one.
 - Losing `keys.json` loses every encrypted chat. Back it up together with `sulcusai.db` (a future backup feature must include both).
 
-## Phase 4 in progress (branch `phase4`, worktree `C:\dev\sulcusai-phase4`)
+## Phase 4 (Web and productivity): complete, merged 2026-10-08 (worktree `C:\dev\sulcusai-phase4`)
 
 Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't restarted by edits. Merge into `main` when Phase 4 is done.
 
@@ -271,4 +271,37 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - He decided: **browser control is its own switch on the Features page, and that feature includes the extension.** Turning it on installs or sets up a SulcusAI extension for Chrome or Edge that talks to the app over native messaging (no debug port). The assistant then works in his real browser. With it off, the assistant can't touch his browsers. The built-in browser remains the option that needs no extension.
 - Move the Browser button out of the left sidebar to a web (🌐/🧭) icon at the top of the page.
 
-**Phase 4 still to do:** Microsoft/Google sign-in for mail and calendar (needs his app registrations). Then live checks in the real app: browser, quick ask, mail and calendar against his real accounts.
+**Phase 4 still to check live:** the browser, quick ask, mail and calendar against his real accounts. (Microsoft/Google sign-in was built in Phase 5.)
+
+## Phase 5 (Media) and sign-in (branch `phase5`, same worktree `C:\dev\sulcusai-phase4`)
+
+Phase 4 was merged into `main` and released as the 0.4.0 installer (2026-10-08). Phase 5 continues in the same worktree on branch `phase5`; merge into `main` only when asked (it restarts the running dev app).
+
+**Media (`src-tauri/src/media/`, Studio page, features Pictures / Video / Music and audio):**
+- `mod.rs`: catalog types (`catalog.json` › `media`), fit (VRAM tiers, processor fallback, reasons such as "needs a graphics card with at least 6 GB"), install (engine + files into `models/media`, music files in `models/media/music`; files shared between models are downloaded once and kept until no installed model uses them), the job queue (one job at a time; `media:progress` with stage, fraction and time left; `media:done`), every job kind, and the commands.
+- Engines run once per job through `proc.rs` (no window, job object, low priority within the performance limits, log in `logs/media.log`, cancel kills the process). `sd-server` and `ace-server` aren't used because they have no authentication.
+- stable-diffusion.cpp `sd-cli` (`sd.rs`: arguments and progress parsing): FLUX.2 klein 4B (generate, edit by instruction with `-r`, fill with `--mask`, extend, restyle as an instruction edit), Z-Image Turbo (generate, fill, extend), Real-ESRGAN x4plus (`-M upscale`, source capped at 1024 px, tile 256), Wan 2.2 TI2V 5B and Wan 2.1 T2V 1.3B (`-M vid_gen`, 4n+1 frames, `--vae-tiling`, WebM output). `--disable-image-metadata` keeps prompts out of the files.
+- Filling in composites the result back into the full-size original through a softened mask, so untouched pixels stay exact.
+- Graphics memory: engines read the card as nearly empty while llama-server holds part of it, and failed mid-edit. `chat_model_vram` estimates the loaded chat model's share and the job's `--max-vram` leaves it; a run short of memory retries once with half. Jobs from the Studio unload an idle chat model first; jobs a chat asked for never do.
+- acestep.cpp (`music.rs`): `ace-lm` plans the song (codes, lyrics), `ace-synth` renders MP3. Registry names are GGUF file names with `.gguf`. Vocals without lyrics: the chat model writes lyrics (`write_lyrics`); with no chat model, the vocal language defaults to English (otherwise ACE-Step sang made-up words). Sound effects are instrumental "sound effect" captions (rough).
+- **acestep.cpp has no upstream Windows release.** Our build of commit d881ad2 (MSVC 2022 BuildTools, `-DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DGGML_OPENMP=OFF -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`, so no VC++ runtime needed) is `C:\dev\sulcusai-dist\acestep-d881ad2-win-cpu-x64.zip` (5,136,624 bytes, sha256 d30427…59a4). The catalog points at `https://github.com/IsaacLeh1/sulcusai/releases/download/engines/…`, which doesn't exist yet: **publish that zip there (or change the URL) before releasing**, or music installs fail. On this PC the engine is already unpacked in `engines/acestep-d881ad2-cpu-x64`, so installs skip the download. The ACE-Step team's own `acestep.vst3` v0.1.0 Windows binaries are too old for today's GGUFs (garbage captions).
+- Background removal (`cutout.rs`): BiRefNet lite ONNX (input `input_image` 1×3×1024², ImageNet mean/std; output logits, sigmoid) on the ONNX Runtime the natural voices use.
+- Narration: the app's voices (`tts::synthesize`) to WAV.
+- Gallery (`store.rs`, table `media`): files sealed with the data key in `<data>/media/<id>` plus a `.thumb`; details encrypted. `hidden` rows are chat attachments and screenshots (not in the Studio; deleted with their chat). The window gets bytes through `tauri::ipc::Response` and makes blob URLs (`src/media.ts`).
+- Studio (`StudioView.tsx`): tabs, composer per kind with time estimates, job cards, gallery with filters, viewer (change it, paint to fill in via `MaskPainter`, extend, restyle, upscale, cut out, bring to life, more like this, favorite, save as, delete), `AudioPlayer` (waveform, trim, loop, save the trimmed part as WAV, save as). Models: Studio › Models and Models › "Pictures, video, music" (`MediaModels.tsx`).
+- Chat tools (`tools/media.rs`): `create_image`, `edit_image` (defaults to the newest picture in the chat; also restyle, upscale, remove_background), `create_video`, `create_music`. Offered when the feature is on and a model of that kind is installed; results show in the chat (`MediaInline`); stopping the reply stops the job.
+- Timings on his RTX 5070 Ti Laptop (measured, now the catalog's `secs`): picture 19 s (1184×880), edit/fill/extend/restyle about 30 s, upscale 40 s, cut-out 20 s (processor), 20-second song 63 s (processor), sound 38 s, Wan 2.2 2-second image-to-video 238 s.
+
+**Vision:** catalog `vision` (mmproj) for Gemma 3 4B/12B and the new Qwen3 VL 4B/8B. Installing downloads it; older installs fetch it the first time a picture is sent (`ensure_vision`). llama-server starts with `--mmproj` when the chat has pictures and keeps it once loaded. User messages carry `meta.images`; `chat::attach_images` sends the newest four as image parts (JPEG ≤1.5 MP data URLs), or tells a model without vision that it can't see them. Composer: 📎 attach, paste a picture. Quick ask: 📷 takes a screenshot of the monitor under the mouse (`media/screen.rs`, GDI) as a hidden attachment.
+
+**Sign in with Microsoft or Google (`oauth.rs`):** OAuth 2.0 + PKCE in the user's own browser (main browser if one is chosen, else the Windows default; never the built-in one), back to a one-time listener on 127.0.0.1 (Microsoft redirect `http://localhost:<port>`, Google `http://127.0.0.1:<port>`). Tokens stored encrypted with the account; refreshed when within two minutes of expiry.
+- Mail: XOAUTH2 for IMAP (`async_imap::Authenticator`) and SMTP (lettre `Mechanism::Xoauth2`); Outlook uses outlook.office365.com / smtp.office365.com:587, Gmail imap/smtp.gmail.com.
+- Calendars: Microsoft through Graph (`/me/calendars`, `calendarView` with `Prefer: outlook.timezone="UTC"`, create and delete); Google through CalDAV with a bearer token (`apidata.googleusercontent.com/caldav/v2/<email>/user`, falling back to the main calendar's events collection).
+- **Needs his app registrations** (client IDs): build-time `SULCUSAI_MS_CLIENT_ID`, `SULCUSAI_GOOGLE_CLIENT_ID`, `SULCUSAI_GOOGLE_CLIENT_SECRET`, or Settings › "Microsoft and Google sign-in" (the card lists the portal steps and scopes). Not tried against the real providers yet.
+
+**Tests:** 197 unit tests. Ignored e2e (real engines, real data folder for engines and models, throwaway database and gallery): `e2e_media` (SULCUSAI_MEDIA=picture,upscale,cutout,music,narrate,video; SULCUSAI_MEDIA_OUT), `e2e_vision` (SULCUSAI_VISION_IMAGE), `e2e_chat_makes_pictures` (Qwen3 VL 4B calls create_image then edit_image). All pass. Run them one at a time: they load the GPU fully.
+
+**Not done / next:**
+- Publish the acestep.cpp zip (above). A Vulkan build of acestep.cpp would make music faster (needs the Vulkan SDK for glslc, or a CI job).
+- Live checks in the real app: Studio jobs, attachments and screenshots with a vision model, sign-in once registrations exist.
+- Videos have no thumbnail in the gallery (a 🎬 card); Graph all-day events are created as UTC dates.
