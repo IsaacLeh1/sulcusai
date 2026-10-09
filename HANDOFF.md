@@ -182,6 +182,11 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
   - A file only counts when its name (or Ollama's hash name) and exact size match and its SHA-256 checks out. Others' files are hard-linked in (no extra space; removing a model here never deletes their copy).
   - A model is only listed once its engine is installed; otherwise its card says "Already on this PC" and Install skips the download. Every download also looks for a local copy first (linked, or copied with a hash check from another drive).
   - Test: `cargo test --lib e2e_found_models -- --ignored` (hard links real files into a pretend user folder).
+- **Models from other apps (`local.rs`, `gguf.rs`):** any chat model another app downloaded is used where it is, even if it isn't in the catalog. Ollama models come from its manifests (named like `qwen2.5-coder:14b`); other apps' `.gguf` files from the folders above.
+  - What the model is (layers, heads, context, quantization, experts, tool support from its chat template) is read from the GGUF header. Files without a chat template (embedding models) and Ollama's single-file picture models (llama.cpp can't load them) are skipped with a reason.
+  - Their specs live in the settings key `local_models` (`AppState::model_spec` looks in the catalog, then there). "Stop using" never deletes the file; the path goes in `local_models_hidden` until the user presses Look for models on this PC.
+  - The first chat downloads the llama.cpp engine if a found model arrived before it.
+  - Test: `cargo test --lib e2e_local_models -- --ignored --nocapture` (reads this PC's real Ollama/LM Studio folders into a throwaway database, then runs the smallest one on the processor).
 - **Updating the catalog:** edit `catalog/build_catalog.py`, then run `python catalog/build_catalog.py`. Hashes come from the Hugging Face tree API (`lfs.oid`) and the GitHub release `digest`.
 
 ### Encryption and app lock

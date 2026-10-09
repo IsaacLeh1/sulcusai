@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
-import { api, errorText, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
+import { api, errorText, type FoundModels, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -27,7 +27,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   const { hardware: hw, hints } = catalog;
   const gpu = hw.gpus.filter((g) => !g.integrated).sort((a, b) => b.vram_bytes - a.vram_bytes)[0];
   // Rank among the models this PC can run, least capable = 1.
-  const byCapability = [...catalog.models].sort((a, b) => a.ratings.overall - b.ratings.overall);
+  // Models from other apps have no ratings, so they aren't ranked.
+  const byCapability = catalog.models.filter((m) => !m.local).sort((a, b) => a.ratings.overall - b.ratings.overall);
   const rankOf = (m: ModelCard) => byCapability.indexOf(m) + 1;
   const arranged = arrange(catalog.models, filter, mostFirst);
   const best = filter !== "all" ? arranged.reduce<ModelCard | null>((top, m) => (!top || (filter === "fastest" ? speedOf(m) > speedOf(top) : m.ratings[filter] > top.ratings[filter]) ? m : top), null) : null;
@@ -40,8 +41,6 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
     setChecking(true);
     try {
       await api.refreshHardware();
-      // Also picks up models downloaded by other apps since the app started.
-      await api.findModels().catch(() => {});
       await onRefresh();
     } finally {
       setChecking(false);
@@ -74,7 +73,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
             Engine: llama.cpp ({catalog.backend === "vulkan-x64" ? "graphics card" : catalog.backend === "cpu-x64" ? "processor" : "unavailable on this system"})
             {hw.on_battery ? " · On battery: models run slower and drain power faster." : ""}
           </span>
-          <button className="btn ghost small" onClick={recheck} disabled={checking} title="Checks this PC again and looks for models other apps (LM Studio, Ollama and others) already downloaded">
+          <button className="btn ghost small" onClick={recheck} disabled={checking}>
             {checking ? "Checking…" : "Check again"}
           </button>
         </div>
@@ -105,6 +104,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           {arranged.length === 0 && <p className="muted">None of the models this PC can run stand out here yet. Try All.</p>}
         </div>
       )}
+
+      {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
 
       {tab === "chat" && installed.length > 0 && (
         <>
@@ -150,6 +151,56 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </section>
       )}
     </div>
+  );
+}
+
+/** Finds models other apps (Ollama, LM Studio and others) already downloaded. */
+export function LookForModels({ onRefresh, toast, compact }: { onRefresh: () => Promise<void>; toast: PushToast; compact?: boolean }) {
+  const [looking, setLooking] = useState(false);
+  const [result, setResult] = useState<FoundModels | null>(null);
+  const look = async () => {
+    setLooking(true);
+    try {
+      const r = await api.findModels(true);
+      setResult(r);
+      await onRefresh();
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setLooking(false);
+    }
+  };
+  return (
+    <section className={compact ? "look-models compact" : "card look-models"}>
+      <div className="look-row">
+        <div>
+          {!compact && <strong>Models from other apps</strong>}
+          <p className="muted small">Models you downloaded with Ollama, LM Studio, Jan, GPT4All or Hugging Face can be used here without downloading them again.</p>
+        </div>
+        <button className="btn" onClick={look} disabled={looking}>
+          {looking ? "Looking…" : "Look for models on this PC"}
+        </button>
+      </div>
+      {result && (
+        <div className="small look-result" role="status">
+          {result.added.length > 0 ? (
+            <p>Added {result.added.join(", ")}.</p>
+          ) : (
+            <p>
+              Nothing new to add.{" "}
+              {result.looked_in.length > 0 ? `Looked in ${result.looked_in.join(", ")}.` : "None of those apps' model folders are on this PC."}
+            </p>
+          )}
+          {result.skipped.length > 0 && (
+            <ul className="muted">
+              {result.skipped.map((s) => (
+                <li key={s.name}>{s.name} {s.reason}.</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -301,14 +352,15 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
         <div>
           <h3>{m.name}</h3>
           <span className="muted small">
+            {m.local ? `From ${m.local.app} · ` : ""}
             {variant?.quality ?? inst.quant} quality · {bytes(inst.size)}
           </span>
         </div>
         {isDefault ? <span className="badge">Default</span> : null}
       </div>
       <p className="desc">{m.description}</p>
-      <Capability m={m} rank={rank} />
-      <Tags m={m} />
+      {m.local ? <p className="muted small ellipsis" title={m.local.path}>{m.params_b}B parameters{m.tools ? " · can use tools" : ""}</p> : <Capability m={m} rank={rank} />}
+      {!m.local && <Tags m={m} />}
       <p className="small fit-line">
         {inst.tps !== null
           ? `Measured on this PC: ${inst.tps} tokens/sec (${speedLabel(inst.tps).toLowerCase()})`
@@ -332,12 +384,16 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
         )}
         <span className="spacer" />
         <button className="btn ghost danger" onClick={() => setConfirm(true)}>
-          Remove
+          {m.local ? "Stop using" : "Remove"}
         </button>
       </div>
       {confirm && (
-        <Modal title={`Remove ${m.name}?`} onClose={() => setConfirm(false)}>
-          <p>This deletes the model file ({bytes(inst.size)}) from this PC. Your chats stay, and you can reinstall it any time.</p>
+        <Modal title={m.local ? `Stop using ${m.name}?` : `Remove ${m.name}?`} onClose={() => setConfirm(false)}>
+          {m.local ? (
+            <p>SulcusAI stops listing it. The file stays in {m.local.app}, and Look for models on this PC brings it back.</p>
+          ) : (
+            <p>This deletes the model file ({bytes(inst.size)}) from this PC. Your chats stay, and you can reinstall it any time.</p>
+          )}
           <div className="modal-actions">
             <button className="btn" onClick={() => setConfirm(false)}>Cancel</button>
             <button
@@ -346,6 +402,7 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
                 try {
                   await api.removeModel(m.id);
                   setConfirm(false);
+                  if (m.local) toast(`Stopped using ${m.name}. Its file is still in ${m.local.app}.`, "success");
                   await onRefresh();
                   onSettings(await api.settings());
                 } catch (e) {
@@ -353,7 +410,7 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
                 }
               }}
             >
-              Remove
+              {m.local ? "Stop using" : "Remove"}
             </button>
           </div>
         </Modal>

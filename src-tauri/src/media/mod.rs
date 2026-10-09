@@ -646,7 +646,7 @@ async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
         (e.status(), e.sees())
     };
     let (Some(id), Some(quant), Some(ctx), Some(layers)) = (st.model_id, st.quant, st.ctx, st.gpu_layers) else { return 0 };
-    let Some(spec) = state.catalog.model(&id) else { return 0 };
+    let Some(spec) = state.model_spec(&id) else { return 0 };
     let Some(v) = spec.variant(&quant) else { return 0 };
     let share = (layers as f64 / (spec.arch.n_layer + 1) as f64).min(1.0);
     let kv = crate::catalog::kv_cache_bytes(&spec.arch, ctx);

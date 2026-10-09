@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type CatalogView, type InstallProgress, type Profile } from "../api";
+import { api, errorText, type CatalogView, type FoundModels, type InstallProgress, type Profile } from "../api";
 import { APP_NAME } from "../brand";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { NewPinForm, RecoveryCode } from "../components/Security";
@@ -95,8 +95,9 @@ function YourPc({ catalog, onNext, onBack }: { catalog: CatalogView | null; onNe
 function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: CatalogView | null; progress: Record<string, InstallProgress>; onNext: () => void; onBack: () => void; toast: PushToast }) {
   // Models from an earlier install or another app (LM Studio, Ollama and so on).
   const [looking, setLooking] = useState(true);
+  const [found, setFound] = useState<FoundModels | null>(null);
   useEffect(() => {
-    api.findModels().catch(() => {}).finally(() => setLooking(false));
+    api.findModels().then(setFound).catch(() => {}).finally(() => setLooking(false));
   }, []);
   if (!catalog || looking) return <p className="muted">Looking for models already on this PC…</p>;
   const installed = catalog.models.filter((m) => m.installed);
@@ -110,7 +111,16 @@ function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: Cat
     <>
       <h1>Pick your first model</h1>
       {installed.length > 0 && (
-        <p className="callout">You already have {installed.map((m) => m.name).join(", ")} installed. You can add another or continue.</p>
+        <p className="callout">
+          You already have {installed.map((m) => (m.local ? `${m.name} (from ${m.local.app})` : m.name)).join(", ")}. You can add another or continue.
+        </p>
+      )}
+      {installed.length === 0 && found && (
+        <p className="muted small">
+          {found.looked_in.length > 0
+            ? `Looked for models in ${found.looked_in.join(", ")} and found none this PC can use${found.skipped.length ? ` (${found.skipped.map((s) => `${s.name} ${s.reason}`).join("; ")})` : ""}.`
+            : "No models from other apps (Ollama, LM Studio and others) are on this PC."}
+        </p>
       )}
       {pick && fit && variant ? (
         <div className="card model starter">

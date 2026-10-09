@@ -22,9 +22,11 @@ mod e2e;
 mod engine;
 mod features;
 mod found;
+mod gguf;
 mod handoff;
 mod hardware;
 mod hello;
+mod local;
 mod location;
 mod mail;
 mod mcp;
@@ -107,6 +109,12 @@ impl AppState {
         return self.job.as_ref();
         #[cfg(not(windows))]
         return None;
+    }
+
+    /// A chat model by id: from the catalog, or one another app downloaded.
+    /// Don't call it while holding the database lock.
+    fn model_spec(&self, id: &str) -> Option<ModelSpec> {
+        self.catalog.model(id).cloned().or_else(|| local::list(&self.db.lock().unwrap()).into_iter().find(|m| m.id == id))
     }
 
     fn budget(&self) -> Budget {
@@ -248,12 +256,16 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
     let installed = db::installed_models(&state.db.lock().unwrap());
     let is_installed = |id: &str| installed.iter().any(|m| m.model_id == id);
 
-    let models = state
-        .catalog
-        .models
+    let mut all = state.catalog.models.clone();
+    all.extend(local::list(&state.db.lock().unwrap()));
+    let models = all
         .iter()
         .filter_map(|spec| {
-            let fit = catalog::fit_model(spec, &budget);
+            let mut fit = catalog::fit_model(spec, &budget);
+            if spec.local.is_some() {
+                // Already on disk: free space doesn't matter.
+                fit.variants.iter_mut().for_each(|v| v.disk_ok = true);
+            }
             let inst = installed.iter().find(|m| m.model_id == spec.id).cloned();
             let on_disk = if inst.is_some() {
                 None
@@ -465,13 +477,12 @@ fn runnable_variants<'a>(spec: &'a ModelSpec, fit: &ModelFit) -> Vec<&'a catalog
     list
 }
 
-/// Chat models whose files are already on this PC (from an earlier install
-/// or another app) join the list without a download, once the engine is
-/// here too. Otherwise the file is put in place so installing skips the
-/// download. Returns the names added.
+/// Catalog chat models whose files are already on this PC (from an earlier
+/// install or an exact copy in another app) join the list without a
+/// download. The engine comes with the first chat if it isn't here yet.
+/// Returns the names added.
 fn adopt_found(state: &AppState, finder: &mut found::Finder) -> Vec<String> {
     let budget = state.budget();
-    let engine_ready = engine::backend_for(&budget).is_ok_and(|b| engine::installed_server(&state.paths, &state.catalog.engine, b).is_some());
     let busy: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
     let have = db::installed_models(&state.db.lock().unwrap());
     let mut names = Vec::new();
@@ -491,9 +502,6 @@ fn adopt_found(state: &AppState, finder: &mut found::Finder) -> Vec<String> {
         };
         if let Some(v) = &spec.vision {
             finder.place(&state.paths.models.join(&spec.id).join(&v.file), v.size, &v.sha256);
-        }
-        if !engine_ready {
-            continue;
         }
         {
             let conn = state.db.lock().unwrap();
@@ -518,13 +526,28 @@ fn adopt_found(state: &AppState, finder: &mut found::Finder) -> Vec<String> {
     names
 }
 
-/// Looks for models already on this PC and adds them. Returns their names.
-fn find_models_now(state: &AppState) -> Vec<String> {
+#[derive(Serialize)]
+struct FoundModels {
+    /// Names of the models added.
+    added: Vec<String>,
+    /// Models seen that can't be used, with why.
+    skipped: Vec<local::Skipped>,
+    /// The apps whose folders exist on this PC.
+    looked_in: Vec<&'static str>,
+}
+
+/// Looks for models already on this PC and adds them. `again`: the user
+/// asked, so models they stopped using earlier come back too.
+fn find_models_now(state: &AppState, again: bool) -> FoundModels {
     let mut finder = found::Finder::new();
-    let mut names = adopt_found(state, &mut finder);
-    names.extend(speech::adopt_found(state, &mut finder));
-    names.extend(media::adopt_found(state, &mut finder));
-    names
+    let mut added = adopt_found(state, &mut finder);
+    added.extend(speech::adopt_found(state, &mut finder));
+    added.extend(media::adopt_found(state, &mut finder));
+    let (more, skipped) = local::adopt(state, finder.entries(), again);
+    added.extend(more);
+    let mut looked_in: Vec<&'static str> = found::sources().into_iter().filter(|s| s.dir.exists()).map(|s| s.app).collect();
+    looked_in.dedup();
+    FoundModels { added, skipped, looked_in }
 }
 
 fn announce_found(app: &AppHandle, names: &[String]) {
@@ -535,11 +558,11 @@ fn announce_found(app: &AppHandle, names: &[String]) {
 }
 
 #[tauri::command]
-async fn find_models(app: AppHandle, state: AppStateRef<'_>) -> Result<Vec<String>, String> {
+async fn find_models(app: AppHandle, state: AppStateRef<'_>, again: Option<bool>) -> Result<FoundModels, String> {
     let state = state.inner().clone();
-    let names = tauri::async_runtime::spawn_blocking(move || find_models_now(&state)).await.map_err(|e| e.to_string())?;
-    announce_found(&app, &names);
-    Ok(names)
+    let found = tauri::async_runtime::spawn_blocking(move || find_models_now(&state, again.unwrap_or(false))).await.map_err(|e| e.to_string())?;
+    announce_found(&app, &found.added);
+    Ok(found)
 }
 
 #[tauri::command]
@@ -552,24 +575,31 @@ fn cancel_install(state: AppStateRef, model_id: String) {
 #[tauri::command]
 async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), String> {
     state.cipher()?;
+    let spec = state.model_spec(&model_id);
     {
         let mut engine = state.engine.lock().await;
         if engine.status().model_id.as_deref() == Some(&model_id) {
             engine.stop().await;
         }
     }
+    let from = spec.as_ref().and_then(|s| s.local.clone());
+    // Another app's file stays where it is.
     let dir = state.paths.models.join(&model_id);
-    if dir.starts_with(&state.paths.models) && dir != state.paths.models && dir.exists() {
+    if from.is_none() && dir.starts_with(&state.paths.models) && dir != state.paths.models && dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("Couldn't delete the model files: {e}"))?;
     }
     let conn = state.db.lock().unwrap();
     db::remove_installed(&conn, &model_id)?;
+    local::forget(&conn, &model_id)?;
     if db::settings(&conn).default_model.as_deref() == Some(&model_id) {
         let next = db::installed_models(&conn).first().map(|m| m.model_id.clone());
         db::update_settings(&conn, |s| s.default_model = next)?;
     }
-    let name = state.catalog.model(&model_id).map_or(model_id.as_str(), |m| m.name.as_str());
-    db::log_action(&conn, "model", &format!("Removed {name} and deleted its files"));
+    let name = spec.as_ref().map_or(model_id.as_str(), |m| m.name.as_str());
+    match &from {
+        Some(l) => db::log_action(&conn, "model", &format!("Stopped using {name} (its file stays in {})", l.app)),
+        None => db::log_action(&conn, "model", &format!("Removed {name} and deleted its files")),
+    }
     Ok(())
 }
 
@@ -869,12 +899,20 @@ pub(crate) async fn llm_endpoint(
             .ok_or("Install a model first: open Models and pick one.")?;
         db::installed_model(&conn, &id).ok_or("This chat's model isn't installed anymore. Pick another one.")?
     };
-    let spec = state.catalog.model(&installed.model_id).ok_or("This model is no longer in the catalog.")?.clone();
+    let spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
     let budget = state.budget();
     let limits = state.limits();
     let (ctx, gpu_layers) = catalog::launch_within(&spec, &installed.quant, &budget, &limits);
-    let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&budget)?)
-        .ok_or("The engine isn't installed. Reinstall the model from the Models page.")?;
+    let backend = engine::backend_for(&budget)?;
+    let exe = match engine::installed_server(&state.paths, &state.catalog.engine, backend) {
+        Some(exe) => exe,
+        // A model found on this PC before the engine was ever downloaded.
+        None => {
+            let asset = state.catalog.engine.assets.get(backend).map(|a| a.url.clone()).unwrap_or_default();
+            state.log("network", &format!("Downloading the llama.cpp engine ({backend}) from {}", host_of(&asset)));
+            engine::ensure_installed(&state.paths, &state.catalog.engine, backend, &AtomicBool::new(false), |_, _| {}).await?
+        }
+    };
     *state.engine_used.lock().unwrap() = std::time::Instant::now();
     let model_path = model_file(&state.paths, &installed);
     let encoder = if pictures { ensure_vision(state, &spec).await? } else { vision_file(&state.paths, &spec) };
@@ -914,7 +952,7 @@ pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine
     let loaded = {
         let mut engine = state.engine.lock().await;
         let id = engine.status().model_id;
-        id.and_then(|id| Some((engine.endpoint_for(&id)?, state.catalog.model(&id)?.clone())))
+        id.and_then(|id| Some((engine.endpoint_for(&id)?, state.model_spec(&id)?)))
     };
     if let Some(found) = loaded {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
@@ -1001,7 +1039,7 @@ pub fn run() {
             // Models already on this PC, from an earlier install or another app.
             std::thread::spawn({
                 let (state, app) = (state.clone(), app.handle().clone());
-                move || announce_found(&app, &find_models_now(&state))
+                move || announce_found(&app, &find_models_now(&state, false).added)
             });
             speech::start_idle_unloader(state.clone());
             app.manage(state);

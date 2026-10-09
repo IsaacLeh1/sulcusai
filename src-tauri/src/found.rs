@@ -18,9 +18,9 @@ const EXTENSIONS: &[&str] = &["gguf", "bin", "safetensors", "onnx", "pth"];
 /// Enough for any app's folder layout without wandering the whole disk.
 const MAX_FILES: usize = 20_000;
 
-struct Source {
-    app: &'static str,
-    dir: PathBuf,
+pub(crate) struct Source {
+    pub app: &'static str,
+    pub dir: PathBuf,
     depth: usize,
 }
 
@@ -28,7 +28,7 @@ fn env_dir(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
 }
 
-fn sources() -> Vec<Source> {
+pub(crate) fn sources() -> Vec<Source> {
     let mut out = Vec::new();
     let mut add = |app, dir: Option<PathBuf>, depth| {
         if let Some(dir) = dir {
@@ -48,11 +48,12 @@ fn sources() -> Vec<Source> {
     out
 }
 
-struct Entry {
-    app: &'static str,
-    path: PathBuf,
-    name: String,
-    size: u64,
+pub(crate) struct Entry {
+    pub app: &'static str,
+    pub path: PathBuf,
+    /// Lowercased file name.
+    pub name: String,
+    pub size: u64,
 }
 
 fn walk(app: &'static str, dir: &Path, depth: usize, out: &mut Vec<Entry>) {
@@ -77,7 +78,7 @@ fn walk(app: &'static str, dir: &Path, depth: usize, out: &mut Vec<Entry>) {
     }
 }
 
-fn index() -> Vec<Entry> {
+pub(crate) fn index() -> Vec<Entry> {
     let mut out = Vec::new();
     for s in sources() {
         walk(s.app, &s.dir, s.depth, &mut out);
@@ -135,6 +136,11 @@ pub struct Finder {
 impl Finder {
     pub fn new() -> Self {
         Finder { list: None }
+    }
+
+    /// Every model file in the other apps' folders.
+    pub fn entries(&mut self) -> &[Entry] {
+        self.list.get_or_insert_with(index)
     }
 
     /// Puts the file at `dest` if it's here already or another app has it on

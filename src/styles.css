@@ -674,3 +674,13 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .signin-logo.ms i:nth-child(4) { background: #ffb900; }
 .signin-logo.g { font-weight: 700; color: #4285f4; font-family: Arial, sans-serif; }
 .or-line { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+
+/* ---------- models from other apps ---------- */
+.look-models { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+.look-models.compact { margin: 0; }
+.look-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.look-row p { margin: 2px 0 0; }
+.look-result p { margin: 0; }
+.look-result ul { margin: 4px 0 0; padding-left: 18px; }
+.empty .look-models.compact { max-width: 440px; align-items: center; }
+.empty .look-models.compact .look-row { flex-direction: column; justify-content: center; gap: 8px; }

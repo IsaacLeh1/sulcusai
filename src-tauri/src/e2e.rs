@@ -1520,7 +1520,7 @@ fn e2e_found_models() {
         std::env::set_var(var, dir);
     }
     let t = std::time::Instant::now();
-    let names = crate::find_models_now(&state);
+    let names = crate::find_models_now(&state, false).added;
     println!("found {names:?} in {:.1}s", t.elapsed().as_secs_f64());
     {
         let conn = state.db.lock().unwrap();
@@ -1532,7 +1532,7 @@ fn e2e_found_models() {
     }
     assert_eq!(names.len(), 3, "{names:?}");
     // Nothing new the second time.
-    assert!(crate::find_models_now(&state).is_empty());
+    assert!(crate::find_models_now(&state, false).added.is_empty());
     // The app's copy is a link: removing it leaves the other app's file.
     let ours = root.join("data-models/qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf");
     assert!(ours.exists());
@@ -1540,5 +1540,40 @@ fn e2e_found_models() {
     assert!(home.join(".lmstudio/models/lmstudio-community/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf").exists());
     assert!(real.models.join("qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf").exists());
     std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}
+
+/// The chat models other apps downloaded on this PC (read-only: only their
+/// headers are read, into a throwaway database), then the smallest one runs
+/// a short reply on the processor (no graphics card) to prove llama.cpp can
+/// load another app's file.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
+async fn e2e_local_models() {
+    let state = temp_state(None);
+    let mut finder = crate::found::Finder::new();
+    let t = std::time::Instant::now();
+    let (added, skipped) = crate::local::adopt(&state, finder.entries(), false);
+    println!("in {:.1}s added {added:?}", t.elapsed().as_secs_f64());
+    for s in &skipped {
+        println!("skipped {}: {}", s.name, s.reason);
+    }
+    let list = crate::local::list(&state.db.lock().unwrap());
+    for m in &list {
+        println!("{} | {} | {}B | {} | layers {} kv {} dim {} ctx {} active {:.2} | tools {} | vision {}", m.name, m.publisher, m.params_b, m.variants[0].quant, m.arch.n_layer, m.arch.n_kv_heads, m.arch.head_dim, m.arch.max_ctx, m.arch.active_fraction, m.tools, m.vision.is_some());
+    }
+    let Some(small) = list.iter().min_by_key(|m| m.variants[0].size) else { return };
+    let real = Paths::new(app_data_dir()).unwrap();
+    let exe = engine::installed_server(&real, &state.catalog.engine, engine::backend_for(&state.budget()).unwrap()).unwrap();
+    let path = std::path::PathBuf::from(&small.local.as_ref().unwrap().path);
+    let mut eng = engine::Engine::default();
+    let ep = eng
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None }, None)
+        .await
+        .unwrap();
+    let tps = engine::benchmark(&ep).await.unwrap();
+    println!("{} ran on the processor at {tps:.1} tokens/s", small.name);
+    eng.stop().await;
+    assert!(tps > 0.0);
     std::fs::remove_dir_all(&state.paths.data).ok();
 }

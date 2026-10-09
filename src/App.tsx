@@ -230,6 +230,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const current = chats.find((c) => c.id === activeChat) ?? null;
 
   const newChat = async (projectId: string | null = null, incognito = false) => {
+    // No model yet: the home screen, which says how to get one.
+    if (installed.length === 0) {
+      setActiveChat(null);
+      setView("chat");
+      return;
+    }
     try {
       const chat = await api.createChatIn(projectId, incognito);
       await refreshChats();
@@ -309,7 +315,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           )}
         </div>
         <div className="new-chat-row">
-          <button className="btn primary block" onClick={() => newChat()} disabled={installed.length === 0}>
+          <button className="btn primary block" onClick={() => newChat()}>
             + New chat
           </button>
           <button

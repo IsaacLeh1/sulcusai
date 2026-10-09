@@ -77,6 +77,15 @@ export interface Ratings {
   languages: number;
 }
 
+export interface FoundModels {
+  /** Names of the models added. */
+  added: string[];
+  /** Models seen that can't be used, with why. */
+  skipped: { name: string; reason: string }[];
+  /** The apps whose folders exist on this PC. */
+  looked_in: string[];
+}
+
 export interface ModelCard {
   id: string;
   name: string;
@@ -96,6 +105,8 @@ export interface ModelCard {
   installed: InstalledModel | null;
   /** A version whose file is already on this PC, so installing it skips the download. */
   on_disk?: string | null;
+  /** Downloaded by another app (Ollama, LM Studio…) and used where it is. */
+  local?: { app: string; path: string } | null;
 }
 
 export interface Hints {
@@ -806,8 +817,8 @@ export const api = {
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
   catalog: () => invoke<CatalogView>("catalog_view"),
   install: (modelId: string, quant: string) => invoke<void>("install_model", { modelId, quant }),
-  /** Adds models already on this PC (an earlier install or another app). Returns their names. */
-  findModels: () => invoke<string[]>("find_models"),
+  /** Adds models already on this PC (an earlier install or another app). `again` also brings back ones removed earlier. */
+  findModels: (again = false) => invoke<FoundModels>("find_models", { again }),
   cancelInstall: (modelId: string) => invoke<void>("cancel_install", { modelId }),
   removeModel: (modelId: string) => invoke<void>("remove_model", { modelId }),
   settings: () => invoke<Settings>("get_settings"),

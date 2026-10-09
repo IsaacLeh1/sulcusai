@@ -99,6 +99,16 @@ pub struct ModelSpec {
     /// The image encoder (llama.cpp mmproj) for models that can see pictures.
     #[serde(default)]
     pub vision: Option<VisionFile>,
+    /// Set for a model another app downloaded, used where it is.
+    #[serde(default)]
+    pub local: Option<LocalSource>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LocalSource {
+    /// The app that downloaded it, e.g. "Ollama".
+    pub app: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

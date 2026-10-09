@@ -26,6 +26,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation } from "../format";
+import { LookForModels } from "./ModelsView";
 
 interface Props {
   chat: Chat | null;
@@ -70,6 +71,8 @@ export function ChatView(props: Props) {
         <button className="btn primary" onClick={props.onGoModels}>
           Choose a model
         </button>
+        {/* The list refreshes itself when models are found. */}
+        <LookForModels compact onRefresh={async () => {}} toast={props.toast} />
       </div>
     );
   }
