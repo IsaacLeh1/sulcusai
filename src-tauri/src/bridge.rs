@@ -3,11 +3,12 @@
 //! Edge, through the SulcusAI extension (the Browser control feature).
 //!
 //! extension ⇄ (native messaging) ⇄ this program in connector mode ⇄
-//! (named pipe) ⇄ the running app.
+//! (named pipe on Windows; a Unix socket on macOS and Linux) ⇄ the running app.
 //!
 //! - No debugging port: the browser starts the connector itself, and only
 //!   for our extension's ID (the host manifest's allowed_origins).
-//! - The pipe has a random name, refuses other computers, and serves only a
+//! - The pipe (or socket) has a random name, refuses other computers (a
+//!   socket lives in a folder only the user can open), and serves only a
 //!   connector that sends the per-run token from a file in the user's own
 //!   folder.
 //! - The page rules match the built-in browser: confirm before submitting,
@@ -23,7 +24,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::features::Feature;
@@ -66,7 +67,7 @@ impl Default for Bridge {
             serving: AtomicBool::new(false),
             version: Mutex::new(None),
             token: uuid::Uuid::new_v4().simple().to_string() + &uuid::Uuid::new_v4().simple().to_string(),
-            pipe: format!(r"\\.\pipe\sulcusai-{}", uuid::Uuid::new_v4().simple()),
+            pipe: pipe_name(),
         }
     }
 }
@@ -95,11 +96,37 @@ impl Bridge {
     }
 }
 
+/// This run's pipe name (Windows) or socket path (macOS, Linux).
+fn pipe_name() -> String {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    if cfg!(windows) {
+        format!(r"\\.\pipe\sulcusai-{id}")
+    } else {
+        // Socket paths are limited to ~100 bytes: keep it short.
+        bridge_dir().join(format!("s-{}.sock", &id[..12])).display().to_string()
+    }
+}
+
 /// Where the connector looks for the pipe and token, and where the host
-/// manifest lives: a per-user folder both sides can find.
+/// manifest lives: a per-user folder both sides can find (only the user
+/// can open it on macOS and Linux).
 fn bridge_dir() -> PathBuf {
+    #[cfg(windows)]
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support")).unwrap_or_else(std::env::temp_dir);
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share").into_os_string()))
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     base.join("SulcusAI-bridge")
+}
+
+#[cfg(unix)]
+fn make_private(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
 }
 
 // ---------- installing ----------
@@ -126,9 +153,40 @@ fn set_registry(enable: bool, manifest: &std::path::Path) -> Result<(), String> 
     Ok(())
 }
 
+/// macOS and Linux: each Chromium browser looks for the host manifest in its
+/// own NativeMessagingHosts folder; it goes into those of browsers present.
 #[cfg(not(windows))]
-fn set_registry(_enable: bool, _manifest: &std::path::Path) -> Result<(), String> {
-    Err("Browser control needs Windows for now.".into())
+fn set_registry(enable: bool, manifest: &std::path::Path) -> Result<(), String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).ok_or("No home folder.")?;
+    let browsers: &[&str] = if cfg!(target_os = "macos") {
+        &[
+            "Library/Application Support/Google/Chrome",
+            "Library/Application Support/Microsoft Edge",
+            "Library/Application Support/Chromium",
+            "Library/Application Support/BraveSoftware/Brave-Browser",
+        ]
+    } else {
+        &[".config/google-chrome", ".config/microsoft-edge", ".config/chromium", ".config/BraveSoftware/Brave-Browser"]
+    };
+    let mut any = false;
+    for b in browsers {
+        let dir = home.join(b);
+        let file = dir.join("NativeMessagingHosts").join(format!("{HOST_NAME}.json"));
+        if enable {
+            if !dir.exists() {
+                continue;
+            }
+            std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+            std::fs::copy(manifest, &file).map_err(|e| format!("Couldn't register the extension's connector: {e}"))?;
+            any = true;
+        } else {
+            let _ = std::fs::remove_file(&file);
+        }
+    }
+    if enable && !any {
+        return Err("No Chrome, Edge, Chromium or Brave was found for this user.".into());
+    }
+    Ok(())
 }
 
 /// Writes the extension folder, the connector's manifest and registration,
@@ -146,6 +204,8 @@ pub fn install_with(state: &AppState, exe: &std::path::Path) -> Result<PathBuf, 
     }
     let dir = bridge_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    make_private(&dir);
     let manifest = dir.join(format!("{HOST_NAME}.json"));
     let m = json!({
         "name": HOST_NAME,
@@ -210,8 +270,41 @@ pub fn serve_pipe(state: Arc<AppState>, app: Option<AppHandle>) {
     });
 }
 
-#[cfg(not(windows))]
-pub fn start(_app: &AppHandle) {}
+#[cfg(unix)]
+pub fn start(app: &AppHandle) {
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    serve_socket(state, Some(app.clone()));
+}
+
+/// Accepts connectors on this run's socket (`app` gets status events).
+#[cfg(unix)]
+pub fn serve_socket(state: Arc<AppState>, app: Option<AppHandle>) {
+    if state.bridge.serving.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let path = PathBuf::from(&state.bridge.pipe);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+            make_private(dir);
+        }
+        let _ = std::fs::remove_file(&path);
+        let listener = match tokio::net::UnixListener::bind(&path) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("bridge socket: {e}");
+                state.bridge.serving.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+        while state.bridge.serving.load(Ordering::SeqCst) {
+            let Ok((stream, _)) = listener.accept().await else { continue };
+            let (state, app) = (state.clone(), app.clone());
+            tauri::async_runtime::spawn(async move { serve(state, app, stream).await });
+        }
+        let _ = std::fs::remove_file(&path);
+    });
+}
 
 pub fn stop(state: &AppState) {
     state.bridge.serving.store(false, Ordering::SeqCst);
@@ -219,8 +312,7 @@ pub fn stop(state: &AppState) {
     *state.bridge.version.lock().unwrap() = None;
 }
 
-#[cfg(windows)]
-async fn serve(state: Arc<AppState>, app: Option<AppHandle>, pipe: tokio::net::windows::named_pipe::NamedPipeServer) {
+async fn serve<S: AsyncRead + AsyncWrite + Send + 'static>(state: Arc<AppState>, app: Option<AppHandle>, pipe: S) {
     let (r, mut w) = tokio::io::split(pipe);
     let mut lines = tokio::io::BufReader::new(r).lines();
     // The connector proves it read this run's token from the user's folder.
@@ -296,9 +388,18 @@ pub fn run_host() {
     rt.block_on(host_main());
 }
 
+/// Opens this run's pipe (Windows) or socket (macOS, Linux).
 #[cfg(windows)]
+async fn connect(pipe: &str) -> Option<tokio::net::windows::named_pipe::NamedPipeClient> {
+    tokio::net::windows::named_pipe::ClientOptions::new().open(pipe).ok()
+}
+
+#[cfg(unix)]
+async fn connect(pipe: &str) -> Option<tokio::net::UnixStream> {
+    tokio::net::UnixStream::connect(pipe).await.ok()
+}
+
 async fn host_main() {
-    use tokio::net::windows::named_pipe::ClientOptions;
     let out = Arc::new(Mutex::new(std::io::stdout()));
     let (to_app, mut from_browser) = mpsc::unbounded_channel::<Vec<u8>>();
     std::thread::spawn(move || {
@@ -316,7 +417,10 @@ async fn host_main() {
         let conn: Option<Value> = std::fs::read_to_string(bridge_dir().join("connection.json")).ok().and_then(|s| serde_json::from_str(&s).ok());
         let pipe = conn.as_ref().and_then(|c| c["pipe"].as_str().map(str::to_string));
         // Overlapped pipe I/O: a pending read mustn't hold up writes.
-        let client = pipe.and_then(|p| ClientOptions::new().open(p).ok());
+        let client = match pipe {
+            Some(p) => connect(&p).await,
+            None => None,
+        };
         let Some(client) = client else {
             if !told_offline {
                 write_native(&out, br#"{"type":"status","app":false}"#);
@@ -361,8 +465,6 @@ async fn host_main() {
     }
 }
 
-#[cfg(not(windows))]
-async fn host_main() {}
 
 /// Turns browser control on or off with the feature.
 pub fn apply(app: &AppHandle) {
@@ -414,6 +516,24 @@ pub fn show_extension_folder(state: AppStateRef) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The host manifest goes into the folders of browsers that are there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_registration_finds_installed_browsers() {
+        let home = std::env::temp_dir().join(format!("sulcus-home-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(home.join(".config/google-chrome")).unwrap();
+        let manifest = home.join("m.json");
+        std::fs::write(&manifest, "{}").unwrap();
+        // SAFETY: this test is the only one that reads HOME.
+        unsafe { std::env::set_var("HOME", &home) };
+        set_registry(true, &manifest).unwrap();
+        assert!(home.join(".config/google-chrome/NativeMessagingHosts/app.sulcusai.bridge.json").exists());
+        assert!(!home.join(".config/chromium/NativeMessagingHosts").exists(), "only browsers that are there");
+        set_registry(false, &manifest).unwrap();
+        assert!(!home.join(".config/google-chrome/NativeMessagingHosts/app.sulcusai.bridge.json").exists());
+        std::fs::remove_dir_all(&home).ok();
+    }
 
     #[test]
     fn native_messages_are_length_prefixed() {
