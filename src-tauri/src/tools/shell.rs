@@ -98,6 +98,7 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    crate::engine::tie_to_app(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return Outcome::error(title, format!("Couldn't start the shell: {e}")),

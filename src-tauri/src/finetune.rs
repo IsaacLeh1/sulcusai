@@ -26,17 +26,29 @@ use crate::media::proc::{self, Run};
 use crate::{engine, AppState, AppStateRef};
 
 const KEY: &str = "adapters";
-const TRAINER_DIR: &str = "qvac-b7349-vulkan-x64";
-const TRAINER_EXE: &str = "llama-finetune-lora.exe";
+const TRAINER_EXE: &str = if cfg!(windows) { "llama-finetune-lora.exe" } else { "llama-finetune-lora" };
 /// Fewer examples than this don't teach anything useful.
 const MIN_EXAMPLES: usize = 10;
 
-fn trainer_asset() -> Asset {
-    Asset {
-        url: "https://github.com/tetherto/qvac-fabric-llm.cpp/releases/download/b7349/llama-b7349-bin-win-vulkan-x64.zip".into(),
-        size: 56_547_881,
-        sha256: "eb52db3cee6937edbf727a1ecf9a2eb9204e0a13c14c7e4ba78c83815d81d0bc".into(),
-    }
+/// QVAC Fabric b7349's build for this system: (folder key, file, size, sha256).
+fn trainer_build(state: &AppState) -> Result<(&'static str, &'static str, u64, &'static str), String> {
+    let backend = engine::backend_for(&state.budget())?;
+    Ok(match backend {
+        "vulkan-x64" | "cpu-x64" => ("vulkan-x64", "llama-b7349-bin-win-vulkan-x64.zip", 56_547_881, "eb52db3cee6937edbf727a1ecf9a2eb9204e0a13c14c7e4ba78c83815d81d0bc"),
+        "linux-vulkan-x64" => ("linux-vulkan-x64", "llama-b7349-bin-ubuntu-vulkan-x64.tar.gz", 56_234_405, "fb42fb4f4b3ae623ba606f7bbbaebe620be4966e04a95a30b0fb6f9b670ce12a"),
+        "linux-cpu-x64" => ("linux-cpu-x64", "llama-b7349-bin-ubuntu-x64.tar.gz", 35_714_724, "f9490b999f5f49535dea67d7fe5c839b76b011a93703c53226f8330f4b53eb23"),
+        "macos-arm64" => ("macos-arm64", "llama-b7349-bin-macos-arm64.tar.gz", 31_545_987, "0c2a1058c6be5e0cf267ebea26f86af5690abfa14ffd98de00fe6838071b4fbd"),
+        _ => return Err("Teaching a model isn't available on this system yet.".into()),
+    })
+}
+
+fn trainer_dir(state: &AppState) -> Result<String, String> {
+    Ok(format!("qvac-b7349-{}", trainer_build(state)?.0))
+}
+
+fn trainer_asset(state: &AppState) -> Result<Asset, String> {
+    let (_, file, size, sha) = trainer_build(state)?;
+    Ok(Asset { url: format!("https://github.com/tetherto/qvac-fabric-llm.cpp/releases/download/b7349/{file}"), size, sha256: sha.into() })
 }
 
 /// Model families the trainer supports (GGUF `general.architecture`).
@@ -234,8 +246,8 @@ pub fn finetune_view(state: AppStateRef) -> FinetuneView {
         bases,
         adapters: adapters(&state),
         job: JOB.lock().unwrap().as_ref().map(|(j, _)| j.clone()),
-        trainer_installed: engine::find_exe(&state.paths.engines.join(TRAINER_DIR), TRAINER_EXE).is_some(),
-        trainer_size: trainer_asset().size,
+        trainer_installed: trainer_dir(&state).is_ok_and(|d| engine::find_exe(&state.paths.engines.join(d), TRAINER_EXE).is_some()),
+        trainer_size: trainer_asset(&state).map_or(0, |a| a.size),
     }
 }
 
@@ -322,13 +334,14 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
 
 #[allow(clippy::too_many_arguments)]
 async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, conversations: bool, epochs: u32, strength: &str, cancel: &AtomicBool) -> Result<Option<f64>, String> {
-    let dir = state.paths.engines.join(TRAINER_DIR);
+    let dir_name = trainer_dir(state)?;
+    let dir = state.paths.engines.join(&dir_name);
     if engine::find_exe(&dir, TRAINER_EXE).is_none() {
         update(app, |j| j.status = "downloading".into());
         state.log("network", "Downloading the QVAC Fabric trainer (llama.cpp with LoRA training) from github.com");
     }
     let progress = |r: u64, t: u64| update(app, |j| j.fraction = if t > 0 { r as f64 / t as f64 * 0.05 } else { 0.0 });
-    let exe = engine::ensure_unpacked(&state.paths, TRAINER_DIR, &trainer_asset(), TRAINER_EXE, cancel, progress).await?;
+    let exe = engine::ensure_unpacked(&state.paths, &dir_name, &trainer_asset(state)?, TRAINER_EXE, cancel, progress).await?;
     // The chat model gives the graphics card back for the training run.
     state.engine.lock().await.stop().await;
 

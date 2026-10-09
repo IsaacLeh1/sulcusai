@@ -5397,6 +5397,7 @@ dependencies = [
  "image",
  "keyring",
  "lettre",
+ "libc",
  "mail-parser",
  "ort",
  "pdf-extract",

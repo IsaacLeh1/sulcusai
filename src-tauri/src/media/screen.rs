@@ -62,9 +62,42 @@ pub fn capture() -> Result<RgbaImage, String> {
     }
 }
 
+/// macOS: the system's `screencapture` (macOS asks once for Screen
+/// Recording permission). Linux: the first screenshot tool that's installed
+/// (grim on Wayland; gnome-screenshot, spectacle, scrot or ImageMagick).
 #[cfg(not(windows))]
 pub fn capture() -> Result<RgbaImage, String> {
-    Err("Screenshots need Windows for now.".into())
+    let file = std::env::temp_dir().join(format!("sulcusai-shot-{}.png", uuid::Uuid::new_v4().simple()));
+    let f = file.to_string_lossy().to_string();
+    let tries: Vec<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
+        vec![("screencapture", vec!["-x".into(), "-m".into(), f.clone()])]
+    } else {
+        vec![
+            ("grim", vec![f.clone()]),
+            ("gnome-screenshot", vec!["-f".into(), f.clone()]),
+            ("spectacle", vec!["-b".into(), "-n".into(), "-f".into(), "-o".into(), f.clone()]),
+            ("scrot", vec!["-o".into(), f.clone()]),
+            ("import", vec!["-window".into(), "root".into(), f.clone()]),
+        ]
+    };
+    for (tool, args) in tries {
+        if crate::engine::on_path(tool).is_none() && !cfg!(target_os = "macos") {
+            continue;
+        }
+        let ok = std::process::Command::new(tool).args(&args).status().map(|s| s.success()).unwrap_or(false);
+        if ok {
+            if let Ok(bytes) = std::fs::read(&file) {
+                std::fs::remove_file(&file).ok();
+                return image::load_from_memory(&bytes).map(|i| i.to_rgba8()).map_err(|e| e.to_string());
+            }
+        }
+    }
+    std::fs::remove_file(&file).ok();
+    Err(if cfg!(target_os = "macos") {
+        "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.".into()
+    } else {
+        "No screenshot tool was found. Install grim (Wayland) or gnome-screenshot, scrot or ImageMagick.".into()
+    })
 }
 
 /// Screens can be 4K or more; the vision models read about 1-2 megapixels.

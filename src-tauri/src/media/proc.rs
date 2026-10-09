@@ -52,6 +52,7 @@ pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str))
         const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
         cmd.creation_flags(CREATE_NO_WINDOW | if r.low_priority { BELOW_NORMAL_PRIORITY_CLASS } else { 0 });
     }
+    crate::engine::tie_to_app(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("Couldn't start {}: {e}", r.exe.file_name().unwrap_or_default().to_string_lossy()))?;
     #[cfg(windows)]
     if let (Some(job), Some(pid)) = (r.job, child.id()) {

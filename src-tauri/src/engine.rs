@@ -57,6 +57,21 @@ fn backend_named(os: &str, arch: &str, gpu: bool) -> Result<&'static str, String
     })
 }
 
+/// Linux: the kernel stops the program if the app dies, even in a crash
+/// (Windows uses a job object; on macOS a normal quit stops it).
+pub fn tie_to_app(cmd: &mut Command) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: prctl is async-signal-safe and touches only the child.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            Ok(())
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = cmd;
+}
+
 /// Finds a program by file name anywhere under `dir`.
 pub fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
@@ -320,6 +335,7 @@ impl Engine {
             const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
             cmd.creation_flags(CREATE_NO_WINDOW | if spec.low_priority { BELOW_NORMAL_PRIORITY_CLASS } else { 0 });
         }
+        crate::engine::tie_to_app(&mut cmd);
         let child = cmd.spawn().map_err(|e| format!("Couldn't start the engine: {e}"))?;
         #[cfg(windows)]
         if let (Some(job), Some(pid)) = (job, child.id()) {

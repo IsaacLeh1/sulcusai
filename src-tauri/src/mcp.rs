@@ -81,6 +81,7 @@ impl Client {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
+        crate::engine::tie_to_app(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| format!("Couldn't start {}: {e}", spec.command))?;
         #[cfg(windows)]
         if let (Some(job), Some(pid)) = (job, child.id()) {
