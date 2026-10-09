@@ -662,3 +662,14 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .lightbox img { max-width: 100%; max-height: calc(92vh - 64px); object-fit: contain; border-radius: 8px; }
 .chat-media-job { margin: 4px 0 8px; }
 .studio-composer .mode-switch { align-self: flex-start; }
+.signin { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.signin-btn { display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; }
+.signin-logo { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.signin-logo.ms { grid-template-columns: 1fr 1fr; gap: 1px; }
+.signin-logo.ms i { width: 7px; height: 7px; display: block; }
+.signin-logo.ms i:nth-child(1) { background: #f25022; }
+.signin-logo.ms i:nth-child(2) { background: #7fba00; }
+.signin-logo.ms i:nth-child(3) { background: #00a4ef; }
+.signin-logo.ms i:nth-child(4) { background: #ffb900; }
+.signin-logo.g { font-weight: 700; color: #4285f4; font-family: Arial, sans-serif; }
+.or-line { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }

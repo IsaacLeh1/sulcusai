@@ -816,8 +816,9 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
 
 async fn upscale(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
     let (item, img) = ctx.source()?;
-    // 4x of a big picture is huge; start from at most 1536 px.
-    let img = imaging::cap(img, 1536);
+    // 4x of a big picture is huge (and slow); start from at most 1024 px,
+    // which comes out at about 4096.
+    let img = imaging::cap(img, 1024);
     let (src, out) = (work.join("source.png"), work.join("out.png"));
     std::fs::write(&src, imaging::png(&img)?).map_err(|e| e.to_string())?;
     let args = sd::upscale_args(&ctx.files(m), &src, &out, &ctx.limits());
@@ -941,12 +942,15 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     };
     let (lm, dit) = (m.file("lm").ok_or("The music model is missing a file.")?, m.file("dit").ok_or("The music model is missing a file.")?);
     let seed = req.seed.unwrap_or_else(random_seed);
+    // Left to itself with no lyrics or language, the music model can sing in
+    // made-up words; English is the safer guess.
+    let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto").or_else(|| (!sound && lyrics.is_empty()).then(|| "en".to_string()));
     let engine_dir = ctx.state.paths.engines.join(music_dir(&ctx.state.catalog.media));
     let models = model_dir(&ctx.state.paths, m);
     let made = music::make(
         &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
         work,
-        &music::SongRequest { caption: &caption, lyrics: &lyrics, seconds, seed, language: req.language.as_deref(), lm_file: &lm.file, dit_file: &dit.file },
+        &music::SongRequest { caption: &caption, lyrics: &lyrics, seconds, seed, language: language.as_deref(), lm_file: &lm.file, dit_file: &dit.file },
         ctx.cancel,
         ctx.progress,
     )

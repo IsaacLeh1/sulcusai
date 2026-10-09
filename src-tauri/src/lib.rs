@@ -34,6 +34,7 @@ mod natural;
 mod net;
 mod notes;
 mod notify;
+mod oauth;
 mod paths;
 mod perf;
 mod projects;
@@ -477,6 +478,22 @@ async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), St
 }
 
 // ---------- settings & profile ----------
+
+/// The app registrations for signing in with Microsoft and Google.
+#[tauri::command]
+fn oauth_clients(state: AppStateRef) -> Result<oauth::ClientIds, String> {
+    state.cipher()?;
+    Ok(oauth::clients(&state.db.lock().unwrap()))
+}
+
+#[tauri::command]
+fn set_oauth_clients(state: AppStateRef, ids: oauth::ClientIds) -> Result<(), String> {
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    oauth::set_clients(&conn, &ids)?;
+    db::log_action(&conn, "privacy", "Changed the sign-in app registrations");
+    Ok(())
+}
 
 #[tauri::command]
 fn get_settings(state: AppStateRef) -> Settings {
@@ -930,6 +947,9 @@ pub fn run() {
             mail::mail_preset,
             mail::mail_accounts,
             mail::add_mail_account,
+            mail::add_mail_account_oauth,
+            oauth_clients,
+            set_oauth_clients,
             mail::remove_mail_account,
             mail::sync_mail,
             mail::mail_list,
@@ -938,6 +958,7 @@ pub fn run() {
             calendar::calendar_presets,
             calendar::calendar_accounts,
             calendar::add_calendar_account,
+            calendar::add_calendar_account_oauth,
             calendar::remove_calendar_account,
             calendar::sync_calendars,
             calendar::calendar_events,

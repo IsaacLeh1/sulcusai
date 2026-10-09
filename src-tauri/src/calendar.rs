@@ -315,6 +315,15 @@ pub struct CalAccount {
     pub username: String,
     pub password: String,
     pub calendars: Vec<CalInfo>,
+    /// Signed in with Microsoft (Graph) or Google (CalDAV) instead of a password.
+    pub oauth: Option<crate::oauth::Tokens>,
+}
+
+impl CalAccount {
+    /// Microsoft calendars are read through Graph, not CalDAV.
+    fn graph(&self) -> bool {
+        self.oauth.as_ref().and_then(|t| t.provider) == Some(crate::oauth::Provider::Microsoft)
+    }
 }
 
 /// Starting addresses for well-known providers.
@@ -446,6 +455,7 @@ struct Dav {
     client: reqwest::Client,
     user: String,
     pass: String,
+    bearer: Option<String>,
 }
 
 impl Dav {
@@ -456,15 +466,20 @@ impl Dav {
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Dav { client, user: a.username.clone(), pass: a.password.clone() })
+        Ok(Dav { client, user: a.username.clone(), pass: a.password.clone(), bearer: a.oauth.as_ref().map(|t| t.access_token.clone()) })
+    }
+
+    fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.bearer {
+            Some(t) => req.bearer_auth(t),
+            None => req.basic_auth(&self.user, Some(&self.pass)),
+        }
     }
 
     async fn call(&self, method: &str, url: &str, depth: &str, body: String) -> Result<(u16, String), String> {
         let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
         let resp = self
-            .client
-            .request(m, url)
-            .basic_auth(&self.user, Some(&self.pass))
+            .auth(self.client.request(m, url))
             .header("Depth", depth)
             .header("Content-Type", "application/xml; charset=utf-8")
             .body(body)
@@ -542,7 +557,7 @@ impl Dav {
     }
 
     async fn put(&self, url: &str, ics: String, etag: Option<&str>) -> Result<Option<String>, String> {
-        let mut req = self.client.put(url).basic_auth(&self.user, Some(&self.pass)).header("Content-Type", "text/calendar; charset=utf-8").body(ics);
+        let mut req = self.auth(self.client.put(url)).header("Content-Type", "text/calendar; charset=utf-8").body(ics);
         req = match etag {
             Some(t) => req.header("If-Match", t),
             None => req.header("If-None-Match", "*"),
@@ -555,7 +570,7 @@ impl Dav {
     }
 
     async fn delete(&self, url: &str, etag: Option<&str>) -> Result<(), String> {
-        let mut req = self.client.delete(url).basic_auth(&self.user, Some(&self.pass));
+        let mut req = self.auth(self.client.delete(url));
         if let Some(t) = etag {
             req = req.header("If-Match", t);
         }
@@ -565,6 +580,152 @@ impl Dav {
         }
         Ok(())
     }
+}
+
+// ---------- Microsoft Graph (Outlook calendars) ----------
+
+const GRAPH: &str = "https://graph.microsoft.com/v1.0";
+
+struct Graph {
+    client: reqwest::Client,
+    token: String,
+}
+
+fn graph_time(ms: i64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string()).unwrap_or_default()
+}
+
+/// Graph's "2026-10-09T14:00:00.0000000" in UTC (as asked with Prefer).
+/// All-day events are dates; they become local midnight, like iCalendar dates.
+fn graph_ms(v: &serde_json::Value, all_day: bool) -> Option<i64> {
+    let raw = v["dateTime"].as_str()?;
+    let t = chrono::NaiveDateTime::parse_from_str(raw.split('.').next()?, "%Y-%m-%dT%H:%M:%S").ok()?;
+    if all_day {
+        use chrono::TimeZone;
+        return chrono::Local.from_local_datetime(&t.date().and_hms_opt(0, 0, 0)?).earliest().map(|d| d.timestamp_millis());
+    }
+    Some(t.and_utc().timestamp_millis())
+}
+
+pub fn graph_event(v: &serde_json::Value) -> Option<(i64, i64, bool, EventData)> {
+    if v["isCancelled"].as_bool() == Some(true) {
+        return None;
+    }
+    let all_day = v["isAllDay"].as_bool().unwrap_or(false);
+    let start = graph_ms(&v["start"], all_day)?;
+    let end = graph_ms(&v["end"], all_day).unwrap_or(start + 3_600_000);
+    let data = EventData {
+        title: v["subject"].as_str().unwrap_or("(No title)").to_string(),
+        location: v["location"]["displayName"].as_str().unwrap_or("").to_string(),
+        notes: v["bodyPreview"].as_str().unwrap_or("").to_string(),
+        attendees: v["attendees"].as_array().map(|a| a.iter().filter_map(|x| x["emailAddress"]["address"].as_str().map(str::to_string)).collect()).unwrap_or_default(),
+        uid: v["iCalUId"].as_str().or(v["id"].as_str()).unwrap_or("").to_string(),
+        href: v["id"].as_str().map(|id| format!("{GRAPH}/me/events/{id}")),
+        etag: v["changeKey"].as_str().map(str::to_string),
+        recurring: matches!(v["type"].as_str(), Some("occurrence" | "exception" | "seriesMaster")),
+        ..Default::default()
+    };
+    Some((start, end, all_day, data))
+}
+
+impl Graph {
+    fn new(token: &str) -> Result<Graph, String> {
+        let client = reqwest::Client::builder()
+            .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
+            .connect_timeout(Duration::from_secs(20))
+            .timeout(Duration::from_secs(60))
+            .build()
+            .map_err(|e| e.to_string())?;
+        Ok(Graph { client, token: token.to_string() })
+    }
+
+    async fn get(&self, url: &str) -> Result<serde_json::Value, String> {
+        let resp = self
+            .client
+            .get(url)
+            .bearer_auth(&self.token)
+            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .send()
+            .await
+            .map_err(|e| format!("Couldn't reach Outlook: {e}"))?;
+        let status = resp.status();
+        if status.as_u16() == 401 {
+            return Err("Outlook didn't accept the sign-in. Remove the calendar and sign in again.".into());
+        }
+        let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+        if !status.is_success() {
+            return Err(format!("Outlook answered {status}: {}", v["error"]["message"].as_str().unwrap_or("")));
+        }
+        Ok(v)
+    }
+
+    async fn calendars(&self) -> Result<Vec<CalInfo>, String> {
+        let v = self.get(&format!("{GRAPH}/me/calendars?$select=id,name,hexColor&$top=100")).await?;
+        Ok(v["value"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|c| Some(CalInfo { href: c["id"].as_str()?.to_string(), name: c["name"].as_str().unwrap_or("Calendar").to_string(), color: c["hexColor"].as_str().unwrap_or("").to_string() })).collect())
+            .unwrap_or_default())
+    }
+
+    async fn events(&self, cal: &str, from: i64, to: i64) -> Result<Vec<serde_json::Value>, String> {
+        let mut url = format!(
+            "{GRAPH}/me/calendars/{cal}/calendarView?startDateTime={}&endDateTime={}&$top=200&$select=id,subject,start,end,isAllDay,location,bodyPreview,attendees,type,isCancelled,iCalUId,changeKey",
+            graph_time(from),
+            graph_time(to)
+        );
+        let mut out = Vec::new();
+        for _ in 0..20 {
+            let v = self.get(&url).await?;
+            out.extend(v["value"].as_array().cloned().unwrap_or_default());
+            match v["@odata.nextLink"].as_str() {
+                Some(next) => url = next.to_string(),
+                None => break,
+            }
+        }
+        Ok(out)
+    }
+
+    async fn create(&self, cal: &str, e: &Event) -> Result<serde_json::Value, String> {
+        let when = |ms: i64| if e.all_day {
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%dT00:00:00").to_string()).unwrap_or_default()
+        } else {
+            graph_time(ms)
+        };
+        let body = json!({
+            "subject": e.data.title,
+            "body": { "contentType": "text", "content": e.data.notes },
+            "start": { "dateTime": when(e.start), "timeZone": "UTC" },
+            "end": { "dateTime": when(e.end), "timeZone": "UTC" },
+            "isAllDay": e.all_day,
+            "location": { "displayName": e.data.location },
+            "attendees": e.data.attendees.iter().map(|a| json!({ "emailAddress": { "address": a }, "type": "required" })).collect::<Vec<_>>(),
+        });
+        let resp = self.client.post(format!("{GRAPH}/me/calendars/{cal}/events")).bearer_auth(&self.token).json(&body).send().await.map_err(|e| format!("Couldn't reach Outlook: {e}"))?;
+        let status = resp.status();
+        let v: serde_json::Value = resp.json().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!("Outlook refused the event ({status}): {}", v["error"]["message"].as_str().unwrap_or("")));
+        }
+        Ok(v)
+    }
+
+    async fn delete(&self, url: &str) -> Result<(), String> {
+        let resp = self.client.delete(url).bearer_auth(&self.token).send().await.map_err(|e| format!("Couldn't reach Outlook: {e}"))?;
+        if !resp.status().is_success() && resp.status().as_u16() != 404 {
+            return Err(format!("Outlook didn't delete the event ({}).", resp.status()));
+        }
+        Ok(())
+    }
+}
+
+/// Signed-in accounts: a current token, saved when it was refreshed.
+async fn refresh(state: &AppState, c: &Cipher, id: &str, a: &mut CalAccount) -> Result<(), String> {
+    if let Some(t) = a.oauth.as_mut() {
+        if crate::oauth::fresh(state, t).await? {
+            store_account(&state.db.lock().unwrap(), c, id, a)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn web_allowed(state: &AppState) -> Result<(), String> {
@@ -603,12 +764,24 @@ fn store_account(conn: &Connection, c: &Cipher, id: &str, a: &CalAccount) -> Res
 /// Replaces the account's events in the synced window with the server's.
 pub async fn sync_account(state: &AppState, c: &Cipher, id: &str) -> Result<usize, String> {
     web_allowed(state)?;
-    let a = account(&state.db.lock().unwrap(), c, id).ok_or("That calendar account no longer exists.")?;
-    let dav = Dav::new(&a)?;
+    let mut a = account(&state.db.lock().unwrap(), c, id).ok_or("That calendar account no longer exists.")?;
+    refresh(state, c, id, &mut a).await?;
     let now = db::now_ms();
     let (from, to) = (now - PAST_DAYS * DAY_MS, now + FUTURE_DAYS * DAY_MS);
     let mut found = Vec::new();
-    for cal in &a.calendars {
+    if a.graph() {
+        let g = Graph::new(&a.oauth.as_ref().map(|t| t.access_token.clone()).unwrap_or_default())?;
+        for cal in &a.calendars {
+            for v in g.events(&cal.href, from, to).await? {
+                let Some((start, end, all_day, data)) = graph_event(&v) else { continue };
+                let key = format!("{id}|{}|{start}", v["id"].as_str().unwrap_or(""));
+                let event_id = format!("{:x}", sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(key.as_bytes())))[..32].to_string();
+                found.push(Event { id: event_id, account_id: Some(id.to_string()), calendar: Some(cal.href.clone()), start, end, all_day, data });
+            }
+        }
+    }
+    let dav = Dav::new(&a)?;
+    for cal in a.calendars.iter().filter(|_| !a.graph()) {
         for (href, etag, ics) in dav.events(&cal.href, from, to).await? {
             for (i, (start, end, all_day, mut data)) in parse_ics(&ics).into_iter().enumerate() {
                 data.href = Some(href.clone());
@@ -672,11 +845,24 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
     };
     if let Some(cal) = n.calendar.filter(|c| !c.is_empty()) {
         web_allowed(state)?;
-        let (id, a) = accounts(&state.db.lock().unwrap(), c)
+        let (id, mut a) = accounts(&state.db.lock().unwrap(), c)
             .into_iter()
             .find(|(_, a, _)| a.calendars.iter().any(|x| x.href == cal))
             .map(|(id, a, _)| (id, a))
             .ok_or("That calendar isn't connected anymore.")?;
+        refresh(state, c, &id, &mut a).await?;
+        if a.graph() {
+            let made = Graph::new(&a.oauth.as_ref().map(|t| t.access_token.clone()).unwrap_or_default())?.create(&cal, &e).await?;
+            e.account_id = Some(id);
+            e.calendar = Some(cal);
+            e.data.href = made["id"].as_str().map(|i| format!("{GRAPH}/me/events/{i}"));
+            e.data.etag = made["changeKey"].as_str().map(str::to_string);
+            let conn = state.db.lock().unwrap();
+            insert(&conn, c, &e)?;
+            let who = if e.data.attendees.is_empty() { String::new() } else { format!(" and invited {}", e.data.attendees.join(", ")) };
+            db::log_action(&conn, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
+            return Ok(e);
+        }
         let url = format!("{}{}.ics", if cal.ends_with('/') { cal.clone() } else { format!("{cal}/") }, e.data.uid.replace('@', "-"));
         let organizer = if a.username.contains('@') { Some(a.username.as_str()) } else { None };
         let etag = Dav::new(&a)?.put(&url, to_ics(&e, organizer), None).await?;
@@ -699,8 +885,13 @@ pub async fn delete(state: &AppState, c: &Cipher, id: &str) -> Result<(), String
         if e.data.recurring {
             return Err("This is one of a repeating series; change it in the calendar it came from for now.".into());
         }
-        let a = account(&state.db.lock().unwrap(), c, acc).ok_or("That calendar isn't connected anymore.")?;
-        Dav::new(&a)?.delete(href, e.data.etag.as_deref()).await?;
+        let mut a = account(&state.db.lock().unwrap(), c, acc).ok_or("That calendar isn't connected anymore.")?;
+        refresh(state, c, acc, &mut a).await?;
+        if a.graph() {
+            Graph::new(&a.oauth.as_ref().map(|t| t.access_token.clone()).unwrap_or_default())?.delete(href).await?;
+        } else {
+            Dav::new(&a)?.delete(href, e.data.etag.as_deref()).await?;
+        }
     }
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM events WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
@@ -783,6 +974,43 @@ pub async fn add_calendar_account(state: AppStateRef<'_>, account: CalAccount) -
     Ok(id)
 }
 
+/// Connects Outlook or Google calendars by signing in in the browser.
+#[tauri::command]
+pub async fn add_calendar_account_oauth(state: AppStateRef<'_>, provider: crate::oauth::Provider, hint: Option<String>) -> Result<String, String> {
+    use crate::oauth::Provider;
+    ensure_on(&state)?;
+    let c = state.cipher()?;
+    web_allowed(&state)?;
+    let tokens = crate::oauth::sign_in(&state, provider, crate::oauth::For::Calendar, hint.as_deref()).await?;
+    let mut a = CalAccount { name: format!("{} ({})", if provider == Provider::Microsoft { "Outlook" } else { "Google" }, tokens.email), oauth: Some(tokens.clone()), ..Default::default() };
+    a.calendars = match provider {
+        Provider::Microsoft => {
+            a.url = GRAPH.into();
+            Graph::new(&tokens.access_token)?.calendars().await?
+        }
+        Provider::Google => {
+            let user = tokens.email.replace('@', "%40");
+            a.url = format!("https://apidata.googleusercontent.com/caldav/v2/{user}/user");
+            match Dav::new(&a)?.discover(&a.url).await {
+                Ok(cals) => cals,
+                // Discovery varies; the main calendar is always there.
+                Err(_) => vec![CalInfo { href: format!("https://apidata.googleusercontent.com/caldav/v2/{user}/events/"), name: "Calendar".into(), color: String::new() }],
+            }
+        }
+    };
+    if a.calendars.is_empty() {
+        return Err("No calendars were found in that account.".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    {
+        let conn = state.db.lock().unwrap();
+        store_account(&conn, &c, &id, &a)?;
+        db::log_action(&conn, "calendar", &format!("Connected {} ({} calendars)", a.name, a.calendars.len()));
+    }
+    sync_account(&state, &c, &id).await?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub fn remove_calendar_account(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
@@ -826,6 +1054,28 @@ mod tests {
     use super::*;
 
     const ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:abc@example.com\r\nSUMMARY:Budget review\\, Q4\r\nDTSTART;TZID=America/Denver:20261009T140000\r\nDTEND;TZID=America/Denver:20261009T150000\r\nLOCATION:Room 2\r\nDESCRIPTION:Bring the\\n numbers\r\nATTENDEE;CN=Ana:mailto:ana@example.com\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:day@x\r\nSUMMARY:Holiday\r\nDTSTART;VALUE=DATE:20261012\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:gone@x\r\nSUMMARY:Cancelled thing\r\nSTATUS:CANCELLED\r\nDTSTART:20261009T180000Z\r\nDURATION:PT30M\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:long@x\r\nSUMMARY:A very long title that the ser\r\n ver folded\r\nDTSTART:20261010T170000Z\r\nDURATION:PT1H30M\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn outlook_events_are_read() {
+        let v = json!({
+            "id": "AAMk1", "subject": "Standup", "isAllDay": false, "isCancelled": false, "type": "occurrence", "changeKey": "ck",
+            "start": { "dateTime": "2026-10-09T14:00:00.0000000", "timeZone": "UTC" },
+            "end": { "dateTime": "2026-10-09T14:30:00.0000000", "timeZone": "UTC" },
+            "location": { "displayName": "Teams" }, "bodyPreview": "Daily",
+            "attendees": [{ "emailAddress": { "address": "ana@example.com" } }]
+        });
+        let (s, e, all_day, d) = graph_event(&v).unwrap();
+        assert_eq!(s, chrono::DateTime::parse_from_rfc3339("2026-10-09T14:00:00Z").unwrap().timestamp_millis());
+        assert_eq!(e - s, 30 * 60_000);
+        assert!(!all_day && d.recurring);
+        assert_eq!((d.title.as_str(), d.location.as_str(), d.attendees.len()), ("Standup", "Teams", 1));
+        assert_eq!(d.href.as_deref(), Some("https://graph.microsoft.com/v1.0/me/events/AAMk1"));
+        assert!(graph_event(&json!({ "isCancelled": true, "start": v["start"] })).is_none());
+        let holiday = json!({ "id": "x", "subject": "Holiday", "isAllDay": true, "start": { "dateTime": "2026-10-12T00:00:00.0000000" }, "end": { "dateTime": "2026-10-13T00:00:00.0000000" } });
+        let (s, e, all_day, _) = graph_event(&holiday).unwrap();
+        assert!(all_day);
+        assert_eq!(e - s, DAY_MS);
+    }
 
     #[test]
     fn icalendar_is_read() {
@@ -903,7 +1153,7 @@ mod live {
     #[tokio::test]
     #[ignore]
     async fn caldav_round_trip() {
-        let a = CalAccount { name: "Test".into(), url: "http://127.0.0.1:5232/".into(), username: "demo".into(), password: "demopass".into(), calendars: vec![] };
+        let a = CalAccount { name: "Test".into(), url: "http://127.0.0.1:5232/".into(), username: "demo".into(), password: "demopass".into(), calendars: vec![], ..Default::default() };
         let dav = Dav::new(&a).unwrap();
         // A fresh calendar to work in.
         let cal = format!("http://127.0.0.1:5232/demo/t{}/", uuid::Uuid::new_v4().simple());

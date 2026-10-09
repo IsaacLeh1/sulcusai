@@ -690,6 +690,14 @@ export interface Language {
   name: string;
 }
 
+export type OAuthProvider = "microsoft" | "google";
+
+export interface OAuthClients {
+  microsoft: string;
+  google: string;
+  google_secret: string;
+}
+
 export type MediaKind = "image" | "video" | "music" | "upscale" | "background";
 
 export interface MediaFit {
@@ -952,6 +960,10 @@ export const api = {
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
+  addMailAccountOAuth: (provider: OAuthProvider, name: string | null) => invoke<string>("add_mail_account_oauth", { provider, name, hint: null }),
+  addCalendarAccountOAuth: (provider: OAuthProvider) => invoke<string>("add_calendar_account_oauth", { provider, hint: null }),
+  oauthClients: () => invoke<OAuthClients>("oauth_clients"),
+  setOauthClients: (ids: OAuthClients) => invoke<void>("set_oauth_clients", { ids }),
   removeMailAccount: (id: string) => invoke<void>("remove_mail_account", { id }),
   syncMail: () => invoke<number>("sync_mail"),
   mailList: (query: string) => invoke<MailItem[]>("mail_list", { query, limit: 300 }),

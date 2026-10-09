@@ -175,6 +175,8 @@ pub fn upscale_args(files: &[(String, PathBuf)], input: &Path, out: &Path, l: &L
     let mut a: Vec<OsString> = vec!["-M".into(), "upscale".into()];
     a.extend(model_args(files));
     a.extend(["-i".into(), input.into()]);
+    // Bigger tiles keep a graphics card busier (the default is 128).
+    a.extend(["--upscale-tile-size".into(), "256".into()]);
     a.extend(limit_args(l));
     a.extend(["-o".into(), out.into()]);
     a

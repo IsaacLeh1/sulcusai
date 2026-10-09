@@ -1206,3 +1206,172 @@ async fn e2e_weather_question() {
     }
     state.engine.lock().await.stop().await;
 }
+
+/// App state with the real engines and models but a throwaway database and
+/// gallery (so test pictures never land in the real app's gallery).
+fn media_state() -> std::sync::Arc<crate::AppState> {
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, RwLock};
+    let real = Paths::new(app_data_dir()).unwrap();
+    let tmp = std::env::temp_dir().join(format!("sulcusai-media-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(tmp.join("logs")).unwrap();
+    let paths = Paths { data: tmp.clone(), models: real.models.clone(), engines: real.engines.clone(), logs: tmp.join("logs"), db: tmp.join("t.db") };
+    let conn = crate::db::open(&paths.db).unwrap();
+    crate::features::enable_all(&conn);
+    let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
+    Arc::new(crate::AppState {
+        hardware: RwLock::new(hardware::detect(&real.models)),
+        paths,
+        db: Mutex::new(conn),
+        vault: Mutex::new(vault),
+        catalog: Catalog::bundled(),
+        engine: tokio::sync::Mutex::new(engine::Engine::default()),
+        installs: Mutex::new(HashMap::new()),
+        generations: Mutex::new(HashMap::new()),
+        contexts: Mutex::new(HashMap::new()),
+        approvals: crate::agent::Approvals::default(),
+        mcp: tokio::sync::Mutex::new(HashMap::new()),
+        speech: crate::speech::Speech::default(),
+        player: crate::audio::Player::new(),
+        heat: crate::perf::Heat::default(),
+        bridge: crate::bridge::Bridge::default(),
+        app: std::sync::OnceLock::new(),
+        engine_used: std::sync::Mutex::new(std::time::Instant::now()),
+        job: None,
+    })
+}
+
+/// Pictures, edits, upscaling, cut-outs, music, narration and video with the
+/// real engines, installed the way the app installs them. SULCUSAI_MEDIA
+/// picks the parts (default: everything); results are written to
+/// SULCUSAI_MEDIA_OUT for a look.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_media() {
+    use crate::media::{self, store, Request};
+    use base64::Engine as _;
+    let state = media_state();
+    let parts = std::env::var("SULCUSAI_MEDIA").unwrap_or_else(|_| "picture,upscale,cutout,music,narrate,video".into());
+    let want = |p: &str| parts.split(',').any(|x| x == p);
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").unwrap_or_else(|_| std::env::temp_dir().join("sulcusai-media-out").display().to_string()));
+    std::fs::create_dir_all(&out).unwrap();
+    let c = state.cipher().unwrap();
+    let keep = |item: &media::MediaItem, name: &str| {
+        let bytes = store::read(&state.paths, &c, &item.id).unwrap();
+        let ext = item.mime.split('/').nth(1).unwrap_or("bin").replace("mpeg", "mp3");
+        std::fs::write(out.join(format!("{name}.{ext}")), &bytes).unwrap();
+        bytes
+    };
+    let go = |req: Request| {
+        let state = state.clone();
+        async move {
+            let started = std::time::Instant::now();
+            let op = req.op.clone();
+            let r = media::run(&state, store::new_id(), req).await;
+            println!("{op}: {:.1}s -> {}", started.elapsed().as_secs_f64(), match &r {
+                Ok(i) => format!("{} item(s)", i.len()),
+                Err(e) => e.clone(),
+            });
+            r
+        }
+    };
+    let install = |id: &'static str| {
+        let state = state.clone();
+        async move {
+            let started = std::time::Instant::now();
+            media::install_for_test(&state, id).await.unwrap_or_else(|e| panic!("installing {id}: {e}"));
+            println!("installed {id} in {:.1}s", started.elapsed().as_secs_f64());
+        }
+    };
+
+    if want("picture") || want("upscale") || want("cutout") || want("video") {
+        install("flux2-klein-4b").await;
+        let made = go(Request { op: "generate".into(), prompt: "a red fox sitting in a snowy forest at sunrise, photograph".into(), shape: Some("landscape".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(made.len(), 1);
+        let fox = &made[0];
+        assert!(fox.width > fox.height, "landscape: {}x{}", fox.width, fox.height);
+        let png = keep(fox, "1-generate");
+        assert!(image::load_from_memory(&png).is_ok());
+        assert!(!png.windows(9).any(|w| w == b"snowy for"), "the prompt isn't written into the file");
+
+        if want("picture") {
+            let night = go(Request { op: "edit".into(), source: Some(fox.id.clone()), prompt: "make it night with a full moon".into(), ..Default::default() }).await.unwrap();
+            keep(&night[0], "2-edit");
+            assert_eq!(night[0].parent.as_deref(), Some(fox.id.as_str()));
+
+            // Paint a circle over the middle: put a snowman there.
+            let mut mask = image::RgbaImage::new(fox.width, fox.height);
+            let (cx, cy, r) = (fox.width as i64 / 2, fox.height as i64 / 2, fox.height as i64 / 4);
+            for (x, y, p) in mask.enumerate_pixels_mut() {
+                if (x as i64 - cx).pow(2) + (y as i64 - cy).pow(2) < r * r {
+                    *p = image::Rgba([255, 64, 64, 255]);
+                }
+            }
+            let mut mask_png = Vec::new();
+            image::DynamicImage::ImageRgba8(mask).write_to(&mut std::io::Cursor::new(&mut mask_png), image::ImageFormat::Png).unwrap();
+            let filled = go(Request {
+                op: "fill".into(),
+                source: Some(fox.id.clone()),
+                prompt: "a small snowman with a carrot nose".into(),
+                mask: Some(base64::engine::general_purpose::STANDARD.encode(&mask_png)),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+            assert_eq!((filled[0].width, filled[0].height), (fox.width, fox.height), "filled in at the original size");
+            let filled_png = keep(&filled[0], "3-fill");
+            let (a, b) = (image::load_from_memory(&png).unwrap().to_rgba8(), image::load_from_memory(&filled_png).unwrap().to_rgba8());
+            assert_eq!(a.get_pixel(2, 2), b.get_pixel(2, 2), "outside the painted area nothing changes");
+
+            let wide = go(Request { op: "extend".into(), source: Some(fox.id.clone()), extend: Some([256, 0, 256, 0]), ..Default::default() }).await.unwrap();
+            keep(&wide[0], "4-extend");
+            assert!(wide[0].width as f64 / wide[0].height as f64 > fox.width as f64 / fox.height as f64);
+
+            let styled = go(Request { op: "restyle".into(), source: Some(fox.id.clone()), prompt: "watercolor".into(), ..Default::default() }).await.unwrap();
+            keep(&styled[0], "5-restyle");
+
+            let two = go(Request { op: "generate".into(), prompt: "a cozy cabin, oil painting".into(), count: Some(2), ..Default::default() }).await.unwrap();
+            assert_eq!(two.len(), 2, "two versions");
+        }
+        if want("upscale") {
+            install("realesrgan-x4plus").await;
+            let big = go(Request { op: "upscale".into(), source: Some(fox.id.clone()), ..Default::default() }).await.unwrap();
+            keep(&big[0], "6-upscale");
+            assert!(big[0].width >= fox.width * 3, "{} vs {}", big[0].width, fox.width);
+        }
+        if want("cutout") {
+            install("birefnet-lite").await;
+            let cut = go(Request { op: "remove_background".into(), source: Some(fox.id.clone()), ..Default::default() }).await.unwrap();
+            let bytes = keep(&cut[0], "7-cutout");
+            let img = image::load_from_memory(&bytes).unwrap().to_rgba8();
+            let clear = img.pixels().filter(|p| p[3] < 16).count() as f64 / (img.width() * img.height()) as f64;
+            println!("cut-out: {:.0}% transparent", clear * 100.0);
+            assert!(clear > 0.2 && clear < 0.95, "the background went, the fox stayed");
+        }
+        if want("video") {
+            install("wan2.2-ti2v-5b").await;
+            let clip = go(Request { op: "video".into(), prompt: "the fox turns its head and snow falls gently".into(), source: Some(fox.id.clone()), seconds: Some(2.0), ..Default::default() }).await.unwrap();
+            let bytes = keep(&clip[0], "8-video");
+            assert_eq!(&bytes[..4], &[0x1A, 0x45, 0xDF, 0xA3], "a WebM file");
+            assert_eq!(clip[0].kind, "video");
+        }
+    }
+    if want("music") {
+        install("ace-step-1.5").await;
+        let song = go(Request { op: "music".into(), prompt: "upbeat acoustic folk song about a road trip through the mountains, warm male vocals".into(), seconds: Some(20.0), ..Default::default() }).await.unwrap();
+        let bytes = keep(&song[0], "9-song");
+        assert!(bytes.len() > 100_000);
+        println!("song: {:.1}s, lyrics: {:?}", song[0].seconds, song[0].lyrics.as_deref().map(|l| l.chars().take(160).collect::<String>()));
+        let sound = go(Request { op: "sound".into(), prompt: "rain on a tin roof with distant thunder".into(), seconds: Some(10.0), ..Default::default() }).await.unwrap();
+        keep(&sound[0], "10-sound");
+    }
+    if want("narrate") {
+        let n = go(Request { op: "narrate".into(), prompt: "Welcome to the studio. Everything here is made on this computer.".into(), ..Default::default() }).await.unwrap();
+        let bytes = keep(&n[0], "11-narrate");
+        assert_eq!(&bytes[..4], b"RIFF");
+        assert!(n[0].seconds > 1.0);
+    }
+    println!("results in {}", out.display());
+    let measured: Vec<(String, Option<f64>)> = media::installed(&state.db.lock().unwrap()).into_iter().map(|i| (i.model_id, i.secs)).collect();
+    println!("measured: {measured:?}");
+}

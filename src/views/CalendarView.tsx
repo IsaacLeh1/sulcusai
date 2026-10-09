@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText, on, type CalAccount, type CalEvent, type Task } from "../api";
 import { Modal } from "../components/Modal";
+import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
 
 const DAY = 86_400_000;
@@ -277,6 +278,15 @@ function AddCalendar({ toast, onDone }: { toast: PushToast; onDone: () => void }
   };
   return (
     <div className="form">
+      <SignInButtons
+        toast={toast}
+        start={(p) => api.addCalendarAccountOAuth(p)}
+        done={(p) => {
+          toast(`${p === "microsoft" ? "Outlook" : "Google"} calendars connected.`, "success");
+          onDone();
+        }}
+      />
+      <p className="small muted or-line">or connect a CalDAV calendar (iCloud, Fastmail, Nextcloud…)</p>
       <label>Provider
         <select value={pick} onChange={(e) => { const i = Number(e.target.value); setPick(i); setUrl(presets[i]?.url ?? ""); }}>
           {presets.map((p, i) => <option key={p.name} value={i}>{p.name}</option>)}
@@ -290,7 +300,6 @@ function AddCalendar({ toast, onDone }: { toast: PushToast; onDone: () => void }
         <button className="btn primary" onClick={connect} disabled={busy || !url || !username || !password}>{busy ? "Connecting…" : "Connect"}</button>
         <button className="btn" onClick={onDone}>Cancel</button>
       </div>
-      <p className="muted small">Google and Microsoft calendars need their own sign-in, which is coming.</p>
     </div>
   );
 }

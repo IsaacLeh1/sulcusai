@@ -62,6 +62,50 @@ pub struct AccountConfig {
     pub sent_folder: Option<String>,
     /// UIDVALIDITY per folder; when it changes, the folder is read again.
     pub validity: HashMap<String, u32>,
+    /// Signed in with Microsoft or Google instead of a password.
+    pub oauth: Option<crate::oauth::Tokens>,
+}
+
+/// Server settings for an account that signs in with Microsoft or Google.
+pub fn oauth_config(p: crate::oauth::Provider, email: &str) -> AccountConfig {
+    let (imap, smtp, smtp_port, smtp_security) = match p {
+        crate::oauth::Provider::Microsoft => ("outlook.office365.com", "smtp.office365.com", 587, Security::Starttls),
+        crate::oauth::Provider::Google => ("imap.gmail.com", "smtp.gmail.com", 465, Security::Tls),
+    };
+    AccountConfig {
+        email: email.into(),
+        username: email.into(),
+        imap_host: imap.into(),
+        imap_port: 993,
+        imap_security: Security::Tls,
+        smtp_host: smtp.into(),
+        smtp_port,
+        smtp_security,
+        ..Default::default()
+    }
+}
+
+/// IMAP's SASL XOAUTH2: the whole answer is sent at once.
+struct XOAuth2(String);
+
+impl async_imap::Authenticator for XOAuth2 {
+    type Response = String;
+    fn process(&mut self, _challenge: &[u8]) -> String {
+        self.0.clone()
+    }
+}
+
+/// Accounts that signed in with Microsoft or Google: a current access token,
+/// saved with the account when it was refreshed.
+async fn refresh(state: &AppState, c: &Cipher, id: Option<&str>, cfg: &mut AccountConfig) -> Result<(), String> {
+    if let Some(t) = cfg.oauth.as_mut() {
+        if crate::oauth::fresh(state, t).await? {
+            if let Some(id) = id {
+                store_account(&state.db.lock().unwrap(), c, id, cfg)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Server settings for well-known providers, and what to know about them.
@@ -80,11 +124,11 @@ pub fn preset(email: &str) -> (AccountConfig, Option<&'static str>) {
     match domain.as_str() {
         "gmail.com" | "googlemail.com" => (
             with("imap.gmail.com", "smtp.gmail.com", 465, Security::Tls),
-            Some("Gmail needs an app password: Google Account › Security › 2-Step Verification › App passwords. Signing in with Google directly is coming."),
+            Some("Use Sign in with Google, or an app password: Google Account › Security › 2-Step Verification › App passwords."),
         ),
         "outlook.com" | "hotmail.com" | "live.com" | "msn.com" => (
             with("outlook.office365.com", "smtp-mail.outlook.com", 587, Security::Starttls),
-            Some("Microsoft has turned off password sign-in for Outlook.com mail; signing in with Microsoft is coming. Work accounts may still allow it."),
+            Some("Use Sign in with Microsoft: Microsoft has turned off password sign-in for Outlook.com mail."),
         ),
         "icloud.com" | "me.com" | "mac.com" => (
             AccountConfig { username: email.split('@').next().unwrap_or("").into(), ..with("imap.mail.me.com", "smtp.mail.me.com", 587, Security::Starttls) },
@@ -336,6 +380,12 @@ async fn imap_login(cfg: &AccountConfig) -> Result<Session, String> {
         client.read_response().await.map_err(|e| e.to_string())?.ok_or("The mail server closed the connection.")?;
     }
     let user = if cfg.username.is_empty() { &cfg.email } else { &cfg.username };
+    if let Some(t) = &cfg.oauth {
+        return tokio::time::timeout(Duration::from_secs(30), client.authenticate("XOAUTH2", XOAuth2(crate::oauth::xoauth2(user, &t.access_token))))
+            .await
+            .map_err(|_| "Signing in took too long.".to_string())?
+            .map_err(|(e, _)| format!("The mail server didn't accept the sign-in; try signing in again. ({e})"));
+    }
     tokio::time::timeout(Duration::from_secs(30), client.login(user, &cfg.password))
         .await
         .map_err(|_| "Signing in took too long.".to_string())?
@@ -411,6 +461,7 @@ pub fn web_allowed(state: &AppState) -> Result<(), String> {
 pub async fn sync_account(state: &AppState, c: &Cipher, id: &str) -> Result<usize, String> {
     web_allowed(state)?;
     let mut cfg = account(&state.db.lock().unwrap(), c, id).ok_or("That account no longer exists.")?;
+    refresh(state, c, Some(id), &mut cfg).await?;
     let mut s = imap_login(&cfg).await?;
     if cfg.sent_folder.is_none() {
         cfg.sent_folder = find_sent(&mut s).await;
@@ -512,8 +563,12 @@ async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), Str
     if cfg.smtp_security == Security::Plain && !local_host(&cfg.smtp_host) {
         return Err("Unencrypted connections are only allowed to this PC.".into());
     }
+    use lettre::transport::smtp::authentication::Mechanism;
     let user = if cfg.username.is_empty() { cfg.email.clone() } else { cfg.username.clone() };
-    let creds = Credentials::new(user, cfg.password.clone());
+    let (creds, mechanisms) = match &cfg.oauth {
+        Some(t) => (Credentials::new(user, t.access_token.clone()), vec![Mechanism::Xoauth2]),
+        None => (Credentials::new(user, cfg.password.clone()), vec![Mechanism::Plain, Mechanism::Login]),
+    };
     let tls = || TlsParameters::new(cfg.smtp_host.clone()).map_err(|e| e.to_string());
     let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.smtp_host).port(cfg.smtp_port).timeout(Some(Duration::from_secs(30)));
     let builder = match cfg.smtp_security {
@@ -521,7 +576,7 @@ async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), Str
         Security::Starttls => builder.tls(Tls::Required(tls()?)),
         Security::Plain => builder.tls(Tls::None),
     };
-    let mailer = builder.credentials(creds).build();
+    let mailer = builder.credentials(creds).authentication(mechanisms).build();
     mailer.send(msg.clone()).await.map_err(friendly)?;
     Ok(())
 }
@@ -530,12 +585,13 @@ async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), Str
 /// user said so (the Send button, or approving the assistant's draft).
 pub async fn send(state: &AppState, c: &Cipher, account_id: &str, d: &Draft) -> Result<(), String> {
     web_allowed(state)?;
-    let (cfg, replying) = {
+    let (mut cfg, replying) = {
         let conn = state.db.lock().unwrap();
         let cfg = account(&conn, c, account_id).ok_or("That account no longer exists.")?;
         let replying = d.reply_to.as_deref().and_then(|id| get(&conn, c, id)).map(|m| m.data);
         (cfg, replying)
     };
+    refresh(state, c, Some(account_id), &mut cfg).await?;
     let msg = build(&cfg, d, replying.as_ref())?;
     smtp_send(&cfg, &msg).await?;
     // Gmail and Outlook file sent mail themselves; others need a copy.
@@ -622,6 +678,30 @@ pub async fn add_mail_account(state: AppStateRef<'_>, config: AccountConfig) -> 
         let conn = state.db.lock().unwrap();
         store_account(&conn, &c, &id, &cfg)?;
         db::log_action(&conn, "email", &format!("Added the email account {}", cfg.email));
+    }
+    sync_account(&state, &c, &id).await?;
+    Ok(id)
+}
+
+/// Adds an Outlook.com, Microsoft 365 or Gmail account by signing in with
+/// Microsoft or Google in the browser (no password).
+#[tauri::command]
+pub async fn add_mail_account_oauth(state: AppStateRef<'_>, provider: crate::oauth::Provider, name: Option<String>, hint: Option<String>) -> Result<String, String> {
+    ensure_on(&state)?;
+    let c = state.cipher()?;
+    web_allowed(&state)?;
+    let tokens = crate::oauth::sign_in(&state, provider, crate::oauth::For::Mail, hint.as_deref()).await?;
+    let mut cfg = oauth_config(provider, &tokens.email);
+    cfg.name = name.unwrap_or_default().trim().to_string();
+    cfg.oauth = Some(tokens);
+    let mut s = imap_login(&cfg).await?;
+    cfg.sent_folder = find_sent(&mut s).await;
+    let _ = s.logout().await;
+    let id = uuid::Uuid::new_v4().to_string();
+    {
+        let conn = state.db.lock().unwrap();
+        store_account(&conn, &c, &id, &cfg)?;
+        db::log_action(&conn, "email", &format!("Added the email account {} (signed in with {})", cfg.email, provider.name()));
     }
     sync_account(&state, &c, &id).await?;
     Ok(id)

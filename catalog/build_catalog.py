@@ -373,7 +373,7 @@ MEDIA_MODELS = [
             KLEIN_TE,
             mf("vae", "unsloth/FLUX.2-VAE", "split_files/vae/flux2-vae.safetensors", 336213556, "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5"),
         ],
-        "min_vram_gb": 4, "cpu": True, "secs": 14, "quality": 8,
+        "min_vram_gb": 4, "cpu": True, "secs": 19, "quality": 8,
         "defaults": {"steps": 4, "cfg": 1.0, "sampler": "euler", "width": 1024, "height": 1024},
     },
     {
@@ -399,7 +399,7 @@ MEDIA_MODELS = [
             mf("vae", "Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors", 1409400960, "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156"),
             UMT5,
         ],
-        "min_vram_gb": 8, "cpu": False, "secs": 300, "quality": 8,
+        "min_vram_gb": 8, "cpu": False, "secs": 360, "quality": 8,
         "defaults": {"steps": 20, "cfg": 5.0, "sampler": "euler", "width": 832, "height": 480, "fps": 24, "seconds": 3, "flow_shift": 5.0, "negative": NEGATIVE_VIDEO},
     },
     {
@@ -423,7 +423,7 @@ MEDIA_MODELS = [
         "files": [{"role": "upscale", "file": "RealESRGAN_x4plus.pth",
                    "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
                    "size": 67040989, "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"}],
-        "min_vram_gb": 0, "cpu": True, "secs": 18, "quality": 7,
+        "min_vram_gb": 0, "cpu": True, "secs": 40, "quality": 7,
     },
     {
         "id": "birefnet-lite", "name": "BiRefNet lite", "publisher": "Peng Zheng et al.",
@@ -431,7 +431,7 @@ MEDIA_MODELS = [
         "description": "Cuts the subject out of a picture and removes the background, keeping hair and fine edges.",
         "license": MIT, "kind": "background", "can": ["remove_background"],
         "files": [mf("onnx", "onnx-community/BiRefNet_lite-ONNX", "onnx/model.onnx", 224005088, "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333")],
-        "min_vram_gb": 0, "cpu": True, "secs": 6, "quality": 7,
+        "min_vram_gb": 0, "cpu": True, "secs": 20, "quality": 7,
     },
     {
         "id": "ace-step-1.5", "name": "ACE-Step 1.5", "publisher": "ACE Studio and StepFun",
@@ -443,7 +443,7 @@ MEDIA_MODELS = [
             mf("lm", ACE, "acestep-5Hz-lm-1.7B-Q8_0.gguf", 1975837568, "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"),
             ACE_EMBED, ACE_VAE,
         ],
-        "min_vram_gb": 0, "cpu": True, "secs": 70, "quality": 8,
+        "min_vram_gb": 0, "cpu": True, "secs": 95, "quality": 8,
         "defaults": {"seconds": 30},
     },
     {
@@ -456,7 +456,7 @@ MEDIA_MODELS = [
             mf("lm", ACE, "acestep-5Hz-lm-0.6B-Q8_0.gguf", 709846656, "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec"),
             ACE_EMBED, ACE_VAE,
         ],
-        "min_vram_gb": 0, "cpu": True, "secs": 45, "quality": 5,
+        "min_vram_gb": 0, "cpu": True, "secs": 60, "quality": 5,
         "defaults": {"seconds": 30},
     },
 ]

@@ -1167,7 +1167,7 @@
         ],
         "min_vram_gb": 4,
         "cpu": true,
-        "secs": 14,
+        "secs": 19,
         "quality": 8,
         "defaults": {
           "steps": 4,
@@ -1270,7 +1270,7 @@
         ],
         "min_vram_gb": 8,
         "cpu": false,
-        "secs": 300,
+        "secs": 360,
         "quality": 8,
         "defaults": {
           "steps": 20,
@@ -1364,7 +1364,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 18,
+        "secs": 40,
         "quality": 7
       },
       {
@@ -1393,7 +1393,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 6,
+        "secs": 20,
         "quality": 7
       },
       {
@@ -1444,7 +1444,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 70,
+        "secs": 95,
         "quality": 8,
         "defaults": {
           "seconds": 30
@@ -1498,7 +1498,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 45,
+        "secs": 60,
         "quality": 5,
         "defaults": {
           "seconds": 30

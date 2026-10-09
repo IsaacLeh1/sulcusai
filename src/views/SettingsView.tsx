@@ -5,6 +5,7 @@ import { APP_NAME } from "../brand";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
 import { FoldersSection } from "../components/AgentCards";
+import { SignInApps } from "../components/SignIn";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
 import type { PushToast } from "../components/Toasts";
@@ -22,6 +23,9 @@ const THIRD_PARTY = [
   { name: "Email and calendar (async-imap, mail-parser, lettre, quick-xml, chrono-tz)", license: "MIT / Apache-2.0", url: "" },
   { name: "Documents (docx-rs, rust_xlsxwriter, calamine, pdf-extract)", license: "MIT / Apache-2.0", url: "" },
   { name: "PowerPoint template (from python-pptx)", license: "MIT", url: "https://github.com/scanny/python-pptx" },
+  { name: "stable-diffusion.cpp (downloaded with a picture or video model)", license: "MIT", url: "https://github.com/leejet/stable-diffusion.cpp" },
+  { name: "acestep.cpp (downloaded with a music model)", license: "MIT", url: "https://github.com/ServeurpersoCom/acestep.cpp" },
+  { name: "image (pictures)", license: "MIT / Apache-2.0", url: "https://github.com/image-rs/image" },
   { name: "Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)", license: "MIT / Apache-2.0", url: "" },
 ];
 
@@ -229,6 +233,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       {(["dictation", "voice_chat", "read_aloud", "meetings"] as FeatureId[]).some((f) => features.has(f)) && <VoiceSection toast={toast} />}
 
       <PerformanceSection toast={toast} />
+
+      {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
 
       <section className="card">
         <h2>Connectivity</h2>

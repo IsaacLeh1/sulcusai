@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText, on, type MailAccount, type MailConfig, type MailItem, type MailSecurity } from "../api";
 import { Modal } from "../components/Modal";
+import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
 
 const when = (ms: number) => {
@@ -252,6 +253,15 @@ function AddAccount({ toast, onAdded, onCancel }: { toast: PushToast; onAdded: (
     <section className="card">
       <h2>Connect an email account</h2>
       <p className="muted small">Your mail is copied to this PC and encrypted, so you and the assistant can read and search it, even Offline. Syncing and sending need Local AI + Web. Sending always asks you first.</p>
+      <SignInButtons
+        toast={toast}
+        start={(p) => api.addMailAccountOAuth(p, name.trim() || null)}
+        done={(p) => {
+          toast(`Connected with ${p === "microsoft" ? "Microsoft" : "Google"}. Your recent mail is copied to this PC.`, "success");
+          onAdded();
+        }}
+      />
+      <p className="small muted or-line">or use a password (other providers, or an app password)</p>
       <div className="form">
         <label>Email address<input className="input" value={email} onChange={(e) => setEmail(e.target.value)} onBlur={fill} placeholder="you@example.com" autoFocus /></label>
         <label>Your name (shown to people you write to)<input className="input" value={name} onChange={(e) => setName(e.target.value)} /></label>
