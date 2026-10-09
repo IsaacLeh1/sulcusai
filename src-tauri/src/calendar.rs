@@ -589,22 +589,50 @@ const GRAPH: &str = "https://graph.microsoft.com/v1.0";
 struct Graph {
     client: reqwest::Client,
     token: String,
+    /// The time zone Outlook is asked to use: this PC's, by Windows' name
+    /// (which Outlook understands), so all-day events land on the right
+    /// date everywhere.
+    tz: String,
+}
+
+/// Windows' name for this PC's time zone, e.g. "Mountain Standard Time".
+#[cfg(windows)]
+fn windows_time_zone() -> Option<String> {
+    use windows::Win32::System::Time::{GetDynamicTimeZoneInformation, DYNAMIC_TIME_ZONE_INFORMATION};
+    let mut info = DYNAMIC_TIME_ZONE_INFORMATION::default();
+    // SAFETY: fills a plain struct we own.
+    if unsafe { GetDynamicTimeZoneInformation(&mut info) } == u32::MAX {
+        return None;
+    }
+    let name = String::from_utf16_lossy(&info.TimeZoneKeyName);
+    let name = name.trim_end_matches('\0').trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+#[cfg(not(windows))]
+fn windows_time_zone() -> Option<String> {
+    None
 }
 
 fn graph_time(ms: i64) -> String {
     chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).map(|t| t.format("%Y-%m-%dT%H:%M:%S").to_string()).unwrap_or_default()
 }
 
-/// Graph's "2026-10-09T14:00:00.0000000" in UTC (as asked with Prefer).
-/// All-day events are dates; they become local midnight, like iCalendar dates.
+/// Graph's "2026-10-09T14:00:00.0000000" with its `timeZone`: UTC, or this
+/// PC's zone (as asked with Prefer). All-day events are dates; they become
+/// local midnight, like iCalendar dates.
 fn graph_ms(v: &serde_json::Value, all_day: bool) -> Option<i64> {
+    use chrono::TimeZone;
     let raw = v["dateTime"].as_str()?;
     let t = chrono::NaiveDateTime::parse_from_str(raw.split('.').next()?, "%Y-%m-%dT%H:%M:%S").ok()?;
     if all_day {
-        use chrono::TimeZone;
         return chrono::Local.from_local_datetime(&t.date().and_hms_opt(0, 0, 0)?).earliest().map(|d| d.timestamp_millis());
     }
-    Some(t.and_utc().timestamp_millis())
+    match v["timeZone"].as_str() {
+        None | Some("UTC") | Some("Etc/UTC") => Some(t.and_utc().timestamp_millis()),
+        // Anything else is the zone we asked for: this PC's.
+        Some(_) => chrono::Local.from_local_datetime(&t).earliest().map(|d| d.timestamp_millis()),
+    }
 }
 
 pub fn graph_event(v: &serde_json::Value) -> Option<(i64, i64, bool, EventData)> {
@@ -636,7 +664,7 @@ impl Graph {
             .timeout(Duration::from_secs(60))
             .build()
             .map_err(|e| e.to_string())?;
-        Ok(Graph { client, token: token.to_string() })
+        Ok(Graph { client, token: token.to_string(), tz: windows_time_zone().unwrap_or_else(|| "UTC".into()) })
     }
 
     async fn get(&self, url: &str) -> Result<serde_json::Value, String> {
@@ -644,7 +672,7 @@ impl Graph {
             .client
             .get(url)
             .bearer_auth(&self.token)
-            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .header("Prefer", format!("outlook.timezone=\"{}\"", self.tz))
             .send()
             .await
             .map_err(|e| format!("Couldn't reach Outlook: {e}"))?;
@@ -686,6 +714,8 @@ impl Graph {
     }
 
     async fn create(&self, cal: &str, e: &Event) -> Result<serde_json::Value, String> {
+        // All-day events are dates in this PC's zone; timed ones are sent in UTC.
+        let zone = if e.all_day { self.tz.as_str() } else { "UTC" };
         let when = |ms: i64| if e.all_day {
             chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%dT00:00:00").to_string()).unwrap_or_default()
         } else {
@@ -694,8 +724,8 @@ impl Graph {
         let body = json!({
             "subject": e.data.title,
             "body": { "contentType": "text", "content": e.data.notes },
-            "start": { "dateTime": when(e.start), "timeZone": "UTC" },
-            "end": { "dateTime": when(e.end), "timeZone": "UTC" },
+            "start": { "dateTime": when(e.start), "timeZone": zone },
+            "end": { "dateTime": when(e.end), "timeZone": zone },
             "isAllDay": e.all_day,
             "location": { "displayName": e.data.location },
             "attendees": e.data.attendees.iter().map(|a| json!({ "emailAddress": { "address": a }, "type": "required" })).collect::<Vec<_>>(),
@@ -1075,6 +1105,22 @@ mod tests {
         let (s, e, all_day, _) = graph_event(&holiday).unwrap();
         assert!(all_day);
         assert_eq!(e - s, DAY_MS);
+        // Local midnight on that date, whatever this PC's zone.
+        let local = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(s).unwrap().with_timezone(&chrono::Local);
+        assert_eq!(local.format("%Y-%m-%d %H:%M").to_string(), "2026-10-12 00:00");
+        // A time in this PC's zone (as asked with Prefer) is read as local time.
+        let local_start = json!({ "dateTime": "2026-10-09T14:00:00.0000000", "timeZone": "Mountain Standard Time" });
+        let ms = graph_ms(&local_start, false).unwrap();
+        let back = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms).unwrap().with_timezone(&chrono::Local);
+        assert_eq!(back.format("%H:%M").to_string(), "14:00");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_names_this_pcs_time_zone() {
+        let tz = windows_time_zone().unwrap();
+        println!("time zone: {tz}");
+        assert!(tz.contains("Time") || tz == "UTC", "{tz}");
     }
 
     #[test]

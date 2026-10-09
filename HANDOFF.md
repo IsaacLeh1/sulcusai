@@ -313,7 +313,7 @@ Phase 4 was merged into `main` and released as the 0.4.0 installer (2026-10-08).
 **Not done / next:**
 - A Vulkan build of acestep.cpp would make music faster (needs the Vulkan SDK for glslc, or a CI job).
 - Live checks in the real app: Studio jobs, attachments and screenshots with a vision model, sign-in once registrations exist.
-- Videos have no thumbnail in the gallery (a 🎬 card); Graph all-day events are created as UTC dates.
+- Videos have no thumbnail in the gallery (a 🎬 card).
 
 ## Phase 6 (Advanced and cloud) (branch `phase6`, same worktree)
 
@@ -363,4 +363,6 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 **Model status:** the status bar says "<model> · loads when you chat" with Load now (`load_default_model`) instead of "No model loaded", and shows the engine download ("Getting the AI engine (first time only)", `engine:download` events) when a found model's first chat fetches llama.cpp.
 
 **CI:** `cargo-deny-action` is a container action that can't run on Windows runners; CI now installs cargo-deny with `taiki-e/install-action` and runs it directly.
+
+**Outlook all-day events:** Graph requests now ask for this PC's Windows time zone (`GetDynamicTimeZoneInformation`'s key name, e.g. "Mountain Standard Time", which Graph accepts) instead of UTC. Times are read by their `timeZone` label; all-day events are created as dates in that zone, so they land on the right day everywhere.
 
