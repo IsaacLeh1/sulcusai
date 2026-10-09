@@ -14,10 +14,11 @@ const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m
 const quick = getCurrentWindow().label === "quick";
 document.documentElement.classList.toggle("quick-window", quick);
 
-// Changing the language redraws everything in it.
+// Changing the language redraws the window where it is (the new elements
+// re-render everything below them).
 function Root() {
-  const lang = useLanguage();
-  return <Suspense fallback={null}>{quick ? <QuickAsk key={lang} /> : <App key={lang} />}</Suspense>;
+  useLanguage();
+  return <Suspense fallback={null}>{quick ? <QuickAsk /> : <App />}</Suspense>;
 }
 
 initLanguage().then(() =>
