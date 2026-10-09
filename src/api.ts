@@ -864,6 +864,8 @@ export interface MediaItem {
   lyrics: string | null;
   favorite: boolean;
   hidden: boolean;
+  /** Videos: a still frame is saved as the thumbnail. */
+  poster: boolean;
 }
 
 export interface MediaJob {
@@ -1106,6 +1108,7 @@ export const api = {
   mediaGet: (id: string) => invoke<MediaItem>("media_get", { id }),
   mediaFile: (id: string) => invoke<ArrayBuffer>("media_file", { id }),
   mediaThumb: (id: string) => invoke<ArrayBuffer>("media_thumb", { id }),
+  mediaSetPoster: (id: string, data: string) => invoke<MediaItem>("media_set_poster", { id, data }),
   mediaDelete: (id: string) => invoke<void>("media_delete", { id }),
   mediaFavorite: (id: string, on: boolean) => invoke<MediaItem>("media_favorite", { id, on }),
   mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),

@@ -21,11 +21,41 @@ export function fileUrl(item: Pick<MediaItem, "id" | "mime">): Promise<string> {
   return url(`f:${item.id}`, () => api.mediaFile(item.id), item.mime);
 }
 
-/** A small preview (pictures); other kinds fall back to the file itself. */
-export function thumbUrl(item: Pick<MediaItem, "id" | "mime" | "kind">): Promise<string> {
-  if (item.kind !== "image") return fileUrl(item);
+/** A small preview (pictures, and videos with a still); other kinds fall back to the file itself. */
+export function thumbUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> & { poster?: boolean }): Promise<string> {
+  if (item.kind !== "image" && !(item.kind === "video" && item.poster)) return fileUrl(item);
   // Thumbnails are JPEG or PNG; the browser sniffs either from the bytes.
   return url(`t:${item.id}`, () => api.mediaThumb(item.id), "image/jpeg");
+}
+
+/** Videos made before stills were saved get one, taken here (the window
+    decodes WebM), one at a time. */
+let stills: Promise<unknown> = Promise.resolve();
+export function makeStill(item: MediaItem): Promise<string | null> {
+  const run = async (): Promise<string | null> => {
+    const src = await fileUrl(item);
+    const video = document.createElement("video");
+    video.muted = true;
+    video.preload = "auto";
+    video.src = src;
+    await new Promise<void>((ok, fail) => {
+      video.onloadeddata = () => ok();
+      video.onerror = () => fail(new Error("can't read the clip"));
+    });
+    video.currentTime = Math.min(0.5, (video.duration || 1) / 3);
+    await new Promise<void>((ok) => (video.onseeked = () => ok()));
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 384 / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+    canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+    await api.mediaSetPoster(item.id, dataUrl.split(",")[1] ?? "");
+    return dataUrl;
+  };
+  const next = stills.then(run, run).catch(() => null);
+  stills = next;
+  return next;
 }
 
 /** Forgets a deleted item's URLs. */

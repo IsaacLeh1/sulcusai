@@ -735,3 +735,4 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .teach-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .teach-form { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .teach-chats { max-height: 180px; overflow: auto; display: flex; flex-direction: column; gap: 2px; padding-left: 24px; }
+.media-play { position: absolute; left: 6px; bottom: 6px; background: rgba(0, 0, 0, 0.6); color: #fff; border-radius: 99px; padding: 1px 8px; font-size: 11.5px; }

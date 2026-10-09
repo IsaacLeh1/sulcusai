@@ -978,6 +978,8 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         (w, h) = (s, s);
     }
     let mut parent = None;
+    // A clip made from a picture starts on it: that's its thumbnail.
+    let mut still = None;
     let init = match req.source.as_deref() {
         Some(_) => {
             let (item, img) = ctx.source()?;
@@ -987,7 +989,9 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
             let k = (area / (iw as f64 * ih as f64)).sqrt();
             (w, h) = (imaging::round16(iw as f64 * k), imaging::round16(ih as f64 * k));
             let p = work.join("start.png");
-            std::fs::write(&p, imaging::png(&img.resize_exact(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+            let start = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+            std::fs::write(&p, imaging::png(&start)?).map_err(|e| e.to_string())?;
+            still = Some(imaging::thumbnail(&start)?);
             parent = Some(item.id);
             Some(p)
         }
@@ -1017,9 +1021,10 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         parent,
         chat_id: req.chat_id.clone(),
         seed: Some(seed),
+        poster: still.is_some(),
         ..Default::default()
     };
-    Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, None)?])
+    Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, still.as_deref())?])
 }
 
 /// Lyrics from the chat model, so a song with vocals has real words to sing.
@@ -1298,6 +1303,24 @@ pub fn media_file(state: AppStateRef, id: String) -> Result<tauri::ipc::Response
 pub fn media_thumb(state: AppStateRef, id: String) -> Result<tauri::ipc::Response, String> {
     let c = state.cipher()?;
     Ok(tauri::ipc::Response::new(store::read_thumb(&state.paths, &c, &id)?))
+}
+
+/// Saves a still frame the window took from a video as its thumbnail
+/// (the window can decode WebM; the core can't).
+#[tauri::command]
+pub fn media_set_poster(state: AppStateRef, id: String, data: String) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| "That still isn't readable.".to_string())?;
+    let img = image::load_from_memory(&bytes).map_err(|_| "That still isn't a picture.".to_string())?;
+    let conn = state.db.lock().unwrap();
+    let mut item = store::get(&conn, &c, &id).ok_or("That item is gone.")?;
+    if item.kind != "video" {
+        return Err("Only videos take a still.".into());
+    }
+    store::write_thumb(&state.paths, &c, &id, &imaging::thumbnail(&img)?)?;
+    item.poster = true;
+    store::update(&conn, &c, &item)?;
+    Ok(item)
 }
 
 #[tauri::command]

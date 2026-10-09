@@ -40,6 +40,8 @@ pub struct MediaItem {
     pub favorite: bool,
     /// Chat attachments and screenshots: not listed in the studio.
     pub hidden: bool,
+    /// Videos: a still frame is saved as the thumbnail.
+    pub poster: bool,
 }
 
 pub fn dir(paths: &Paths) -> PathBuf {
@@ -130,6 +132,14 @@ pub fn read(paths: &Paths, cipher: &Cipher, id: &str) -> Result<Vec<u8>, String>
     }
     let blob = std::fs::read(file(paths, id)).map_err(|_| "That file is missing.".to_string())?;
     cipher.open_bytes(&blob)
+}
+
+/// Replaces an item's thumbnail.
+pub fn write_thumb(paths: &Paths, cipher: &Cipher, id: &str, bytes: &[u8]) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("Bad media id.".into());
+    }
+    write_sealed(&thumb_file(paths, id), cipher, bytes)
 }
 
 pub fn read_thumb(paths: &Paths, cipher: &Cipher, id: &str) -> Result<Vec<u8>, String> {

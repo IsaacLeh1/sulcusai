@@ -4,16 +4,32 @@ import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, toBase64, type MediaItem, type MediaJob } from "../api";
 import { clock } from "../format";
-import { encodeWav, fileUrl, JOB_LABEL, useMediaUrl, waitLabel } from "../media";
+import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
 import type { PushToast } from "./Toasts";
 
 /** A gallery tile: the picture, or a card for a clip or sound. */
 export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen: () => void; selected?: boolean }) {
-  const thumb = useMediaUrl(item.kind === "image" ? item : null, true);
+  const thumb = useMediaUrl(item.kind === "image" || (item.kind === "video" && item.poster) ? item : null, true);
+  // An older video without a still: take one now.
+  const [still, setStill] = useState<string | null>(null);
+  useEffect(() => {
+    if (item.kind !== "video" || item.poster) return;
+    let live = true;
+    makeStill(item).then((u) => live && setStill(u));
+    return () => {
+      live = false;
+    };
+  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const videoStill = item.kind === "video" ? thumb ?? still : null;
   return (
     <button className={`media-tile ${item.kind} ${selected ? "selected" : ""}`} onClick={onOpen} title={item.prompt || undefined}>
       {item.kind === "image" ? (
         thumb ? <img src={thumb} alt={item.prompt || "Picture"} loading="lazy" /> : <span className="media-ph" aria-hidden>🖼</span>
+      ) : videoStill ? (
+        <>
+          <img src={videoStill} alt={item.prompt || "Video"} loading="lazy" />
+          <span className="media-play" aria-hidden>▶ {clock(item.seconds)}</span>
+        </>
       ) : (
         <span className="media-ph" aria-hidden>
           {item.kind === "video" ? "🎬" : item.op === "narrate" ? "🗣" : item.op === "sound" ? "🔔" : "🎵"}

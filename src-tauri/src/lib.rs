@@ -1173,6 +1173,7 @@ pub fn run() {
             media::media_file,
             media::media_thumb,
             media::media_delete,
+            media::media_set_poster,
             media::media_favorite,
             media::media_export,
             media::media_import,
