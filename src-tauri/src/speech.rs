@@ -135,6 +135,19 @@ pub struct InstalledSpeech {
     pub speed: Option<f64>,
 }
 
+/// Takes speech models whose files are gone off the list (after a restore
+/// on another PC). Returns how many.
+pub fn prune_missing(conn: &Connection) -> usize {
+    let mut list = installed(conn);
+    let before = list.len();
+    list.retain(|m| Path::new(&m.path).exists());
+    let gone = before - list.len();
+    if gone > 0 {
+        let _ = save_installed(conn, &list);
+    }
+    gone
+}
+
 pub fn installed(conn: &Connection) -> Vec<InstalledSpeech> {
     db::get(conn, "speech_installed").unwrap_or_default()
 }

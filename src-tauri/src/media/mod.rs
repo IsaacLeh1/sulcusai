@@ -222,6 +222,19 @@ fn save_installed(conn: &Connection, list: &[InstalledMedia]) -> Result<(), Stri
     db::set(conn, INSTALLED_KEY, &list)
 }
 
+/// Takes media models whose files are gone off the list (after a restore on
+/// another PC). Returns how many.
+pub fn prune_missing(conn: &Connection, paths: &Paths, c: &MediaCatalog) -> usize {
+    let mut list = installed(conn);
+    let before = list.len();
+    list.retain(|i| c.models.iter().find(|m| m.id == i.model_id).is_some_and(|m| missing_bytes(paths, m) == 0));
+    let gone = before - list.len();
+    if gone > 0 {
+        let _ = save_installed(conn, &list);
+    }
+    gone
+}
+
 /// Any model of this kind installed.
 pub fn has_kind(state: &AppState, kind: Kind) -> bool {
     let list = installed(&state.db.lock().unwrap());

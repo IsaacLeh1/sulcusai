@@ -343,3 +343,14 @@ Branched from `local-models` (0.5.2, not yet merged). Merge into `main` only whe
 
 **Not done in Phase 6:** LoRA fine-tuning; cloud image/video/voice models; the cloud sync relay (Phase 7).
 
+## Phase 7 (Sync and polish) (branch `phase7`, same worktree)
+
+Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-10-09).
+
+**Backup and restore (`backup.rs`, Settings → Backup and restore):**
+- A `.sulcusbackup` file is a zip (stored, not compressed) of `files/…` plus `manifest.json`. It holds a `VACUUM INTO` snapshot of the database and the `media/` and `meetings/` folders; models, engines, browser profiles and logs are left out.
+- Every file is sealed with a random per-backup key in 4 MB pieces (length-prefixed AES-256-GCM). The manifest holds that key locked with the password (Argon2id, the PIN cost) and the app's data key sealed with it, since `keys.json` is tied to the Windows account.
+- Restoring checks the password, unpacks into `<data>/.restore/` (with a new DPAPI `keys.json`, app lock off) and restarts. `backup::apply_pending` runs in setup before the database opens: it moves the current data to `before-restore-<date>/` and swaps the staged files in. `finish_restore` then takes models whose files aren't on this PC off the lists.
+- Export chats and notes as Markdown into a dated folder (not encrypted; the UI says so).
+- Test: `cargo test --lib e2e_backup_restore -- --ignored --nocapture` (backup, wrong password, restore into another folder, decrypt, Markdown export).
+

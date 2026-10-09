@@ -1803,3 +1803,61 @@ async fn e2e_cloud_openai() {
     eng.stop().await;
     std::fs::remove_dir_all(&state.paths.data).ok();
 }
+
+/// A backup made from one data folder and restored into another (as on a
+/// new PC): chats, notes and a sealed picture all open with the restored
+/// key; a wrong password is refused; the replaced data is kept aside.
+#[test]
+#[ignore]
+fn e2e_backup_restore() {
+    let state = temp_state(None);
+    let c = state.cipher().unwrap();
+    {
+        let conn = state.db.lock().unwrap();
+        let chat = crate::db::create_chat(&conn, &c, None).unwrap();
+        crate::db::set_chat_title(&conn, &c, &chat.id, "Trip to Lisbon").unwrap();
+        crate::db::add_message(&conn, &c, &crate::db::Message { id: "m1".into(), chat_id: chat.id.clone(), role: "user".into(), content: "Book the tram tour".into(), created_at: 1, ..Default::default() }).unwrap();
+        crate::notes::save_note(&conn, &c, None, crate::notes::NoteBody { title: "Packing".into(), body: "Sunscreen".into(), ..Default::default() }).unwrap();
+    }
+    std::fs::create_dir_all(state.paths.data.join("media")).unwrap();
+    std::fs::write(state.paths.data.join("media").join("pic1"), c.seal_bytes(b"picture bytes")).unwrap();
+
+    let file = state.paths.data.join("test.sulcusbackup");
+    assert!(crate::backup::make(&state, &file, "short").is_err(), "password too short");
+    let t = std::time::Instant::now();
+    crate::backup::make(&state, &file, "correct horse battery").unwrap();
+    println!("backup: {} bytes in {:.1}s", std::fs::metadata(&file).unwrap().len(), t.elapsed().as_secs_f64());
+    // Nothing readable inside without the password.
+    let raw = std::fs::read(&file).unwrap();
+    assert!(!raw.windows(6).any(|w| w == b"Lisbon") && !raw.windows(9).any(|w| w == b"Sunscreen"));
+
+    // "Another PC": a fresh data folder with its own data.
+    let other = std::env::temp_dir().join(format!("sulcusai-restore-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("sulcusai.db"), b"old data").unwrap();
+    let dpapi = crate::crypto::dpapi::Dpapi;
+    assert!(crate::backup::stage(&other, &file, "wrong password", &dpapi).is_err());
+    crate::backup::stage(&other, &file, "correct horse battery", &dpapi).unwrap();
+    let aside = crate::backup::apply_pending(&other).unwrap().unwrap();
+    assert_eq!(std::fs::read(aside.join("sulcusai.db")).unwrap(), b"old data");
+
+    let vault = crate::crypto::Vault::open(&other.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
+    let c2 = vault.cipher().unwrap();
+    let conn = crate::db::open(&other.join("sulcusai.db")).unwrap();
+    let chats = crate::db::list_chats(&conn, &c2);
+    println!("restored chats: {:?}", chats.iter().map(|c| &c.title).collect::<Vec<_>>());
+    assert!(chats.iter().any(|c| c.title == "Trip to Lisbon"));
+    let chat = chats.iter().find(|c| c.title == "Trip to Lisbon").unwrap();
+    assert_eq!(crate::db::messages(&conn, &c2, &chat.id)[0].content, "Book the tram tour");
+    assert_eq!(crate::notes::list_notes(&conn, &c2)[0].data.body, "Sunscreen");
+    assert_eq!(c2.open_bytes(&std::fs::read(other.join("media").join("pic1")).unwrap()).unwrap(), b"picture bytes");
+
+    // The readable export.
+    let out = crate::backup::export_markdown(&state, &state.paths.data).unwrap();
+    let md = std::fs::read_to_string(out.join("Chats").join("Trip to Lisbon.md")).unwrap();
+    assert!(md.contains("Book the tram tour"));
+    assert!(std::fs::read_to_string(out.join("Notes").join("Packing.md")).unwrap().contains("Sunscreen"));
+    drop(conn);
+    std::fs::remove_dir_all(&other).ok();
+    std::fs::remove_dir_all(&state.paths.data).ok();
+}

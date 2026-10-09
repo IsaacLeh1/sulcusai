@@ -37,6 +37,24 @@ type Key = Zeroizing<[u8; 32]>;
 pub struct Cipher(Arc<Key>);
 
 impl Cipher {
+    /// A fresh random key (one per backup file).
+    pub fn random() -> Cipher {
+        let mut k = Zeroizing::new([0u8; 32]);
+        OsRng.fill_bytes(k.as_mut());
+        Cipher(Arc::new(k))
+    }
+
+    /// This key locked with a password, as text to store.
+    pub fn lock_with(&self, password: &str) -> Result<String, String> {
+        serde_json::to_string(&wrap(password, &self.0, &PIN_COST)?).map_err(|e| e.to_string())
+    }
+
+    /// The key from `lock_with`, if the password is right.
+    pub fn unlock_with(locked: &str, password: &str) -> Option<Cipher> {
+        let w: Wrapped = serde_json::from_str(locked).ok()?;
+        unwrap(password, &w).map(|k| Cipher(Arc::new(k)))
+    }
+
     pub fn encrypt(&self, plain: &str) -> String {
         format!("{PREFIX}{}", B64.encode(seal(&self.0, plain.as_bytes())))
     }
@@ -382,6 +400,23 @@ impl Vault {
                 .into())
             }
         }
+    }
+
+    /// The data key sealed with a backup's key, so the backup can be opened
+    /// on another PC or Windows account.
+    pub fn data_key_for_backup(&self, backup: &Cipher) -> Result<Vec<u8>, String> {
+        let dk = self.data_key()?;
+        Ok(seal(&backup.0, dk.as_ref()))
+    }
+
+    /// Writes `keys.json` for a restored backup: its data key, protected by
+    /// this Windows account (app lock starts off).
+    pub fn write_restored(path: &Path, protector: &dyn Protector, sealed_key: &[u8], backup: &Cipher) -> Result<(), String> {
+        let raw = open(&backup.0, sealed_key).ok_or("The backup's key couldn't be read.")?;
+        let dk = to_key(raw).ok_or("The backup's key is damaged.")?;
+        let file = KeyFile { version: 1, dpapi: Some(B64.encode(protector.protect(dk.as_ref())?)), ..Default::default() };
+        let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+        std::fs::write(path, json).map_err(|e| e.to_string())
     }
 
     /// Stores (or removes) the Windows Hello copy of the data key.

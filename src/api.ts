@@ -77,6 +77,13 @@ export interface Ratings {
   languages: number;
 }
 
+export interface BackupInfo {
+  created: number;
+  app_version: string;
+  files: number;
+  bytes: number;
+}
+
 export interface CloudModel {
   id: string;
   name: string;
@@ -874,6 +881,10 @@ export const api = {
   checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
   apiServerView: () => invoke<ApiServerView>("api_server_view"),
   cloudView: () => invoke<CloudView>("cloud_view"),
+  makeBackup: (path: string, password: string) => invoke<{ files: number; bytes: number }>("make_backup", { path, password }),
+  backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
+  restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
+  exportMarkdown: (dir: string) => invoke<string>("export_markdown_cmd", { dir }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),

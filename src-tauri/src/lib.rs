@@ -4,6 +4,7 @@
 
 mod advanced;
 mod agent;
+mod backup;
 mod api_server;
 mod audio;
 mod bridge;
@@ -1048,6 +1049,8 @@ pub fn run() {
                 None => app.path().app_local_data_dir()?,
             };
             let paths = Paths::new(data)?;
+            // A restore unpacked last time is swapped in before anything opens.
+            backup::apply_pending(&paths.data)?;
             let conn = db::open(&paths.db)?;
             let vault = open_vault(&paths)?;
             let hardware = hardware::detect(&paths.models);
@@ -1082,6 +1085,7 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
+            backup::finish_restore(&state);
             api_server::apply(state.clone());
             // Models already on this PC, from an earlier install or another app.
             std::thread::spawn({
@@ -1174,6 +1178,10 @@ pub fn run() {
             cloud::set_cloud_models,
             cloud::set_cloud_options,
             cloud::cloud_choices,
+            backup::make_backup,
+            backup::backup_info,
+            backup::restore_backup,
+            backup::export_markdown_cmd,
             remove_model,
             get_settings,
             set_connectivity,

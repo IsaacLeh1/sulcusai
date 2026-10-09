@@ -12,6 +12,7 @@ import type { PushToast } from "../components/Toasts";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
 import { CloudSettings } from "../components/CloudSettings";
+import { BackupSettings } from "../components/BackupSettings";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -259,6 +260,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <WebSearchSettings toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
+
+      <BackupSettings toast={toast} />
 
       <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
 
