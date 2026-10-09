@@ -55,7 +55,7 @@ pub fn detect(models_dir: &Path) -> Hardware {
         avx512: cpu_feature("avx512f"),
         ram_total: sys.total_memory(),
         ram_available: sys.available_memory(),
-        gpus: gpus(),
+        gpus: gpus(sys.total_memory()),
         models_drive,
         disk_free,
         disk_total,
@@ -91,7 +91,7 @@ fn cpu_feature(name: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn gpus() -> Vec<Gpu> {
+fn gpus(_ram: u64) -> Vec<Gpu> {
     use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
 
     const MICROSOFT: u32 = 0x1414; // Basic Render Driver and remote adapters
@@ -126,8 +126,60 @@ fn gpus() -> Vec<Gpu> {
     out
 }
 
-#[cfg(not(windows))]
-fn gpus() -> Vec<Gpu> {
+/// Linux: NVIDIA cards from `nvidia-smi`; AMD and Intel from sysfs (AMD
+/// reports its memory there; Intel graphics share system memory).
+#[cfg(target_os = "linux")]
+fn gpus(_ram: u64) -> Vec<Gpu> {
+    let mut out: Vec<Gpu> = Vec::new();
+    if let Ok(o) = std::process::Command::new("nvidia-smi").args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"]).output() {
+        for line in String::from_utf8_lossy(&o.stdout).lines() {
+            if let Some((name, mib)) = line.rsplit_once(',') {
+                if let Ok(mib) = mib.trim().parse::<u64>() {
+                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false });
+                }
+            }
+        }
+    }
+    let Ok(cards) = std::fs::read_dir("/sys/class/drm") else { return out };
+    for card in cards.flatten() {
+        let name = card.file_name().to_string_lossy().to_string();
+        if !name.starts_with("card") || name.contains('-') {
+            continue;
+        }
+        let dev = card.path().join("device");
+        let read = |f: &str| std::fs::read_to_string(dev.join(f)).map(|s| s.trim().to_string()).unwrap_or_default();
+        let vendor = u32::from_str_radix(read("vendor").trim_start_matches("0x"), 16).unwrap_or(0);
+        match vendor {
+            0x1002 => {
+                let vram: u64 = read("mem_info_vram_total").parse().unwrap_or(0);
+                let product = read("product_name");
+                out.push(Gpu {
+                    name: if product.is_empty() { "AMD graphics".into() } else { product },
+                    vendor: "AMD".into(),
+                    integrated: vram < crate::catalog::GIB,
+                    vram_bytes: vram,
+                });
+            }
+            0x8086 => out.push(Gpu { name: "Intel graphics".into(), vendor: "Intel".into(), vram_bytes: 0, integrated: true }),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Apple silicon: the GPU shares memory with the processor, and Metal lets
+/// it use about two thirds of it. Intel Macs run models on the processor.
+#[cfg(target_os = "macos")]
+fn gpus(ram: u64) -> Vec<Gpu> {
+    if cfg!(target_arch = "aarch64") {
+        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false }]
+    } else {
+        Vec::new()
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn gpus(_ram: u64) -> Vec<Gpu> {
     Vec::new()
 }
 

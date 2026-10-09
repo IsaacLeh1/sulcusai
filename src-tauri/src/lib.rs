@@ -1066,11 +1066,7 @@ async fn unload_model(state: AppStateRef<'_>) -> Result<(), String> {
 }
 
 fn open_vault(paths: &Paths) -> Result<Vault, String> {
-    #[cfg(windows)]
-    let protector: Box<dyn crypto::Protector> = Box::new(crypto::dpapi::Dpapi);
-    #[cfg(not(windows))]
-    let protector: Box<dyn crypto::Protector> = return Err("Encryption at rest needs Windows for now.".into());
-    Vault::open(&paths.data.join("keys.json"), protector)
+    Vault::open(&paths.data.join("keys.json"), crypto::platform_protector(&paths.data))
 }
 
 /// Connector mode for the browser extension (see bridge.rs).

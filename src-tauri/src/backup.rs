@@ -313,12 +313,8 @@ pub fn backup_info(path: String) -> Result<BackupInfo, String> {
 pub async fn restore_backup(app: AppHandle, state: AppStateRef<'_>, path: String, password: String) -> Result<(), String> {
     let data = state.paths.data.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(windows)]
-        let protector = crate::crypto::dpapi::Dpapi;
-        #[cfg(windows)]
-        return stage(&data, Path::new(&path), &password, &protector).map(|_| ());
-        #[cfg(not(windows))]
-        Err::<(), String>("Restoring needs Windows for now.".into())
+        let protector = crate::crypto::platform_protector(&data);
+        stage(&data, Path::new(&path), &password, protector.as_ref()).map(|_| ())
     })
     .await
     .map_err(|e| e.to_string())??;

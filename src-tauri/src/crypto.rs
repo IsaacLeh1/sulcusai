@@ -444,6 +444,100 @@ impl Vault {
     }
 }
 
+/// What protects the data key on this system.
+pub fn platform_protector(data: &Path) -> Box<dyn Protector> {
+    #[cfg(windows)]
+    {
+        let _ = data;
+        Box::new(dpapi::Dpapi)
+    }
+    #[cfg(not(windows))]
+    {
+        Box::new(keychain::Keychain::new(data))
+    }
+}
+
+/// macOS and Linux: a random key in the system keychain (Keychain on macOS,
+/// the Secret Service, such as GNOME Keyring or KWallet, on Linux) seals the
+/// data key, as DPAPI does on Windows. Where there's no keychain (a minimal
+/// desktop, a server), a key file only this user can read stands in, and
+/// stays the one used from then on.
+#[cfg(not(windows))]
+pub mod keychain {
+    use std::path::{Path, PathBuf};
+
+    use aes_gcm::aead::rand_core::RngCore;
+    use aes_gcm::aead::OsRng;
+    use zeroize::Zeroizing;
+
+    const SERVICE: &str = "app.sulcusai.desktop";
+    const ACCOUNT: &str = "data key protector";
+
+    pub struct Keychain {
+        file: PathBuf,
+    }
+
+    impl Keychain {
+        pub fn new(data: &Path) -> Keychain {
+            Keychain { file: data.join("protector.key") }
+        }
+
+        fn from_hex(hex: &str) -> Option<Zeroizing<[u8; 32]>> {
+            let bytes = hex::decode(hex.trim()).ok()?;
+            let mut k = Zeroizing::new([0u8; 32]);
+            (bytes.len() == 32).then(|| {
+                k.copy_from_slice(&bytes);
+                k
+            })
+        }
+
+        fn write_file(&self, hex: &str) -> Result<(), String> {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&self.file).map_err(|e| format!("Couldn't save the key file: {e}"))?;
+            f.write_all(hex.as_bytes()).map_err(|e| e.to_string())
+        }
+
+        /// The protecting key; `create` makes one the first time.
+        fn key(&self, create: bool) -> Result<Zeroizing<[u8; 32]>, String> {
+            if let Ok(hex) = std::fs::read_to_string(&self.file) {
+                return Self::from_hex(&hex).ok_or_else(|| "The key file is damaged.".to_string());
+            }
+            let entry = keyring::Entry::new(SERVICE, ACCOUNT);
+            if let Ok(e) = &entry {
+                match e.get_password() {
+                    Ok(hex) => return Self::from_hex(&hex).ok_or_else(|| "The key in the keychain is damaged.".to_string()),
+                    Err(keyring::Error::NoEntry) if !create => return Err("The key isn't in this account's keychain.".into()),
+                    _ => {}
+                }
+            }
+            if !create {
+                return Err("The keychain isn't available, so the data can't be unlocked.".into());
+            }
+            let mut k = Zeroizing::new([0u8; 32]);
+            OsRng.fill_bytes(k.as_mut());
+            let hex = Zeroizing::new(hex::encode(*k));
+            let in_keychain = entry.is_ok_and(|e| e.set_password(&hex).is_ok() && e.get_password().is_ok_and(|h| h == *hex));
+            if !in_keychain {
+                self.write_file(&hex)?;
+            }
+            Ok(k)
+        }
+    }
+
+    impl super::Protector for Keychain {
+        fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+            let k = self.key(true)?;
+            Ok(super::seal(&k, data))
+        }
+
+        fn unprotect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+            let k = self.key(false)?;
+            super::open(&k, data).ok_or_else(|| "The key doesn't open this data.".to_string())
+        }
+    }
+}
+
 #[cfg(windows)]
 pub mod dpapi {
     use windows::core::PCWSTR;

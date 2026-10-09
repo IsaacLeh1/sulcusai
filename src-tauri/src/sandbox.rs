@@ -74,10 +74,22 @@ impl Sandbox {
     /// granted folder). Refuses anything outside the granted folders,
     /// including `..` tricks and links that point elsewhere.
     pub fn resolve(&self, input: &str) -> Result<PathBuf, String> {
+        let r = self.resolve_as(input, false);
+        // On macOS and Linux "/proj/x" is a real absolute path; when it isn't
+        // inside a shared folder, read it the way it was shown ("proj/x").
+        let head = input.trim().trim_start_matches('/').split('/').next().unwrap_or("").to_lowercase();
+        let names_a_folder = self.roots.iter().any(|root| root.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == head));
+        if r.is_err() && cfg!(not(windows)) && input.trim().starts_with('/') && names_a_folder {
+            return self.resolve_as(input, true).map_err(|_| r.unwrap_err());
+        }
+        r
+    }
+
+    fn resolve_as(&self, input: &str, shown: bool) -> Result<PathBuf, String> {
         let first = self.roots.first().ok_or("No folders are shared with SulcusAI yet. Add one with the 📁 button.")?;
         let trimmed = input.trim();
         // "/proj/x" has no drive letter, so on Windows it means "proj/x".
-        let raw = if Path::new(trimmed).is_absolute() {
+        let raw = if Path::new(trimmed).is_absolute() && !shown {
             PathBuf::from(trimmed)
         } else {
             PathBuf::from(trimmed.trim_start_matches(['/', '\\']))

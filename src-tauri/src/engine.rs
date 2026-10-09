@@ -20,12 +20,24 @@ use crate::paths::Paths;
 const SERVER_EXE: &str = if cfg!(windows) { "llama-server.exe" } else { "llama-server" };
 
 /// Picks the engine build for this PC. Vulkan runs on NVIDIA, AMD and Intel
-/// graphics cards alike; a CUDA build for NVIDIA is a later speed-up.
+/// graphics cards alike (Windows and Linux); Macs use Metal, which the macOS
+/// builds include. A CUDA build for NVIDIA is a later speed-up.
 pub fn backend_for(budget: &Budget) -> Result<&'static str, String> {
-    if !cfg!(all(windows, target_arch = "x86_64")) {
-        return Err("Running models is only supported on 64-bit Windows so far.".into());
-    }
-    Ok(if budget.vram > 0 { "vulkan-x64" } else { "cpu-x64" })
+    backend_named(std::env::consts::OS, std::env::consts::ARCH, budget.vram > 0)
+}
+
+fn backend_named(os: &str, arch: &str, gpu: bool) -> Result<&'static str, String> {
+    Ok(match (os, arch, gpu) {
+        ("windows", "x86_64", true) => "vulkan-x64",
+        ("windows", "x86_64", false) => "cpu-x64",
+        ("linux", "x86_64", true) => "linux-vulkan-x64",
+        ("linux", "x86_64", false) => "linux-cpu-x64",
+        ("linux", "aarch64", true) => "linux-vulkan-arm64",
+        ("linux", "aarch64", false) => "linux-cpu-arm64",
+        ("macos", "aarch64", _) => "macos-arm64",
+        ("macos", "x86_64", _) => "macos-x64",
+        _ => return Err(format!("Running models isn't supported on {os} ({arch}) yet.")),
+    })
 }
 
 /// Finds a program by file name anywhere under `dir`.
@@ -78,14 +90,15 @@ pub async fn ensure_unpacked(
     if let Some(found) = find_exe(&dir, exe) {
         return Ok(found);
     }
-    let zip_path = paths.engines.join(format!("{dir_name}.zip"));
+    let tarball = asset.url.ends_with(".tar.gz") || asset.url.ends_with(".tgz");
+    let zip_path = paths.engines.join(format!("{dir_name}.{}", if tarball { "tar.gz" } else { "zip" }));
     // Engine downloads are user-started installs, allowed at every level.
     let client = net::external_client(Connectivity::Offline, Purpose::ModelDownload, false)?;
     download::fetch_verified(&client, &asset.url, &zip_path, asset.size, &asset.sha256, cancel, progress).await?;
 
     let staging = paths.engines.join(format!(".staging-{dir_name}"));
     let (zip_c, staging_c) = (zip_path.clone(), staging.clone());
-    tokio::task::spawn_blocking(move || unzip(&zip_c, &staging_c))
+    tokio::task::spawn_blocking(move || if tarball { untar(&zip_c, &staging_c) } else { unzip(&zip_c, &staging_c) })
         .await
         .map_err(|e| e.to_string())??;
     if dir.exists() {
@@ -94,6 +107,19 @@ pub async fn ensure_unpacked(
     std::fs::rename(&staging, &dir).map_err(|e| e.to_string())?;
     std::fs::remove_file(&zip_path).ok();
     find_exe(&dir, exe).ok_or_else(|| format!("The engine download didn't contain {exe}."))
+}
+
+/// Unpacks a .tar.gz (Linux and macOS builds), keeping their links and
+/// permissions; entries reaching outside `into` are refused by `tar`.
+fn untar(path: &Path, into: &Path) -> Result<(), String> {
+    if into.exists() {
+        std::fs::remove_dir_all(into).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(into).map_err(|e| e.to_string())?;
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(std::io::BufReader::new(file)));
+    archive.set_preserve_permissions(true);
+    archive.unpack(into).map_err(|e| format!("Couldn't unpack the engine: {e}"))
 }
 
 fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
@@ -369,4 +395,17 @@ pub async fn benchmark(ep: &Endpoint) -> Result<f64, String> {
     }
     let tokens = resp.pointer("/usage/completion_tokens").and_then(|v| v.as_f64()).unwrap_or(0.0);
     Ok((tokens / started.elapsed().as_secs_f64() * 10.0).round() / 10.0)
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+
+    #[test]
+    fn engine_builds_per_system() {
+        assert_eq!(backend_named("windows", "x86_64", true).unwrap(), "vulkan-x64");
+        assert_eq!(backend_named("linux", "x86_64", false).unwrap(), "linux-cpu-x64");
+        assert_eq!(backend_named("macos", "aarch64", true).unwrap(), "macos-arm64");
+        assert!(backend_named("freebsd", "x86_64", true).is_err());
+    }
 }

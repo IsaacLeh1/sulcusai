@@ -15,6 +15,36 @@
         "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-win-cpu-x64.zip",
         "size": 19414679,
         "sha256": "5f21f3e6d86b18f4a3177d4fb24de452f84d093f62afbe231e0d13194ca7132c"
+      },
+      "linux-vulkan-x64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-ubuntu-vulkan-x64.tar.gz",
+        "size": 31650591,
+        "sha256": "ed2f9e1b3e7edeac0dd6a124a73ba799cc78d654b876d23adc62721af86ec931"
+      },
+      "linux-cpu-x64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-ubuntu-x64.tar.gz",
+        "size": 17705525,
+        "sha256": "a9a5c229a56ff61be66ad5ae0ddb2051201dbc091ccda1062553fbdf1152adc1"
+      },
+      "linux-vulkan-arm64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-ubuntu-vulkan-arm64.tar.gz",
+        "size": 24858786,
+        "sha256": "2083b8900445af97c20078dea4d5bed60634d4f2f2110d04fe69423571778d94"
+      },
+      "linux-cpu-arm64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-ubuntu-arm64.tar.gz",
+        "size": 13696337,
+        "sha256": "a38a174d2d2f8a190818c698bb7518d213ec1ec0373399c179752fd48d0124b9"
+      },
+      "macos-arm64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-macos-arm64.tar.gz",
+        "size": 11984978,
+        "sha256": "8bf9bc6c51d248e07f603c5a0cdb2d290cbfaf242d3755bdb65621c2d34415ac"
+      },
+      "macos-x64": {
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11450/llama-b11450-bin-macos-x64.tar.gz",
+        "size": 11503793,
+        "sha256": "4d1bd2beebddaeaab513b4d64c8fc85a1ff8e9d7621799a9e2f9bf1a13a355aa"
       }
     }
   },

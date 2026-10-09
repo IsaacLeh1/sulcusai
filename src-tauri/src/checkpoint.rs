@@ -166,9 +166,10 @@ pub fn recycle(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Moves a file or folder to the Trash, so deletes can be recovered.
 #[cfg(not(windows))]
 pub fn recycle(path: &Path) -> Result<(), String> {
-    Err(format!("Moving {} to the trash isn't supported on this system yet.", path.display()))
+    trash::delete(path).map_err(|e| format!("Couldn't move {} to the Trash: {e}", path.display()))
 }
 
 #[cfg(test)]
