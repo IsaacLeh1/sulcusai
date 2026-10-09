@@ -1,6 +1,8 @@
 # SulcusAI sync relay on Cloudflare Workers (free plan is enough).
-#   npx wrangler deploy        → https://sulcusai-relay.<your-subdomain>.workers.dev
-# Then in SulcusAI: Settings → Your devices → Sync when away from home.
+#   npx wrangler deploy                 → https://sulcusai-relay.<your-subdomain>.workers.dev
+#   npx wrangler secret put RELAY_SECRET  (optional, recommended: a long random string)
+# Then in SulcusAI: Settings → Your devices → Sync when away from home, with the
+# address https://sulcusai-relay.<your-subdomain>.workers.dev/k/<the secret>.
 name = "sulcusai-relay"
 main = "worker.js"
 compatibility_date = "2026-09-01"

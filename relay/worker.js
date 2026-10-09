@@ -35,11 +35,22 @@ function base64(bytes) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    const m = url.pathname.match(/^\/v1\/box\/([0-9a-f]{64})(?:\/(\d{1,15}))?$/);
+    // With RELAY_SECRET set (wrangler secret put RELAY_SECRET), only
+    // addresses that start with /k/<secret> are served, so strangers can't
+    // store things here. The app's relay address then ends in /k/<secret>.
+    let path = url.pathname;
+    if (env.RELAY_SECRET) {
+      const prefix = `/k/${env.RELAY_SECRET}`;
+      if (!path.startsWith(prefix + "/")) return json({ error: "not found" }, 404);
+      path = path.slice(prefix.length);
+    }
+    const m = path.match(/^\/v1\/box\/([0-9a-f]{64})(?:\/(\d{1,15}))?$/);
     if (!m) return json({ error: "not found" }, 404);
     // One object per mailbox: its messages, token hash and expiry live together.
+    const inner = new URL(request.url);
+    inner.pathname = path;
     const stub = env.BOX.get(env.BOX.idFromName(m[1]));
-    return stub.fetch(request);
+    return stub.fetch(new Request(inner, request));
   },
 };
 
