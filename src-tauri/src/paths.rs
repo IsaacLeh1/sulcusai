@@ -15,7 +15,7 @@ pub struct Paths {
 impl Paths {
     pub fn new(data: PathBuf) -> std::io::Result<Paths> {
         let paths = Paths {
-            models: data.join("models"),
+            models: crate::storage::models_dir(&data),
             engines: data.join("engines"),
             logs: data.join("logs"),
             db: data.join("sulcusai.db"),

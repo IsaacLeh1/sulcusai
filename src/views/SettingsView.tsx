@@ -9,6 +9,7 @@ import { FoldersSection } from "../components/AgentCards";
 import { SignInApps } from "../components/SignIn";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
+import { ModelStorage } from "../components/ModelStorage";
 import type { PushToast } from "../components/Toasts";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
@@ -258,6 +259,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       {(["dictation", "voice_chat", "read_aloud", "meetings"] as FeatureId[]).some((f) => features.has(f)) && <VoiceSection toast={toast} />}
 
       <PerformanceSection toast={toast} />
+
+      <ModelStorage toast={toast} />
 
       {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
 

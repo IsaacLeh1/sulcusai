@@ -125,6 +125,15 @@ export interface UpdateView {
   available: UpdateAvailable | null;
 }
 
+export interface StorageView {
+  models_dir: string;
+  default_dir: string;
+  used: number;
+  drives: { mount: string; free: number; total: number }[];
+  moving: boolean;
+  error: string | null;
+}
+
 export interface PhoneView {
   enabled: boolean;
   running: boolean;
@@ -1004,6 +1013,8 @@ export const api = {
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
   restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
   exportMarkdown: (dir: string) => invoke<string>("export_markdown_cmd", { dir }),
+  storageView: () => invoke<StorageView>("storage_view"),
+  moveModels: (dest: string) => invoke<void>("move_models", { dest }),
   phoneView: () => invoke<PhoneView>("phone_view"),
   setPhone: (enabled: boolean) => invoke<PhoneView>("set_phone", { enabled }),
   addPhone: (name: string) => invoke<NewPhone>("add_phone", { name }),
@@ -1286,6 +1297,7 @@ export interface ChatEvents {
   "update:available": UpdateAvailable;
   "finetune:progress": FinetuneJob;
   "sync:status": null;
+  "models:moving": { done?: number; total?: number; finished?: boolean; error?: string };
   "sync:changed": null;
   "update:progress": { received: number; total: number | null };
   dictation: DictationEvent;

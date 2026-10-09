@@ -54,6 +54,7 @@ mod sandbox;
 mod schedule;
 mod security;
 mod speech;
+mod storage;
 mod sync;
 mod tools;
 mod translate;
@@ -1231,6 +1232,8 @@ pub fn run() {
             phone::set_phone,
             phone::add_phone,
             phone::remove_phone,
+            storage::storage_view,
+            storage::move_models,
             sync::sync_view,
             sync::set_sync,
             sync::start_pairing,
