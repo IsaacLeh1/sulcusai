@@ -1757,5 +1757,13 @@
  "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "音乐引擎未安装。请从工作室的模型列表重新安装音乐模型。",
  "The other PC doesn't have that model anymore.": "另一台电脑已不再有该模型。",
  "The other PC offered an unexpected file.": "另一台电脑提供了意外的文件。",
- "on {pc}": "在 {pc} 上"
+ "on {pc}": "在 {pc} 上",
+ "A relay message didn't check out.": "一条中继消息未通过校验。",
+ "A relay message was damaged.": "一条中继消息已损坏。",
+ "Relay address": "中继地址",
+ "Saved. It's used when the app is at the Cloud level.": "已保存。应用处于“云端”级别时使用。",
+ "Sync when away from home (relay)": "不在家时同步（中继）",
+ "Syncing through the relay needs the Cloud level.": "通过中继同步需要“云端”级别。",
+ "The relay took too long.": "中继响应超时。",
+ "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "当你的电脑不在同一网络时，可以通过你自己运行的中继同步，例如应用 relay 文件夹中的 Cloudflare Worker。所有内容在发出前都会用电脑间的配对密钥加密，中继无法读取。仅在“云端”级别使用。"
 }

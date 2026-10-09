@@ -180,6 +180,9 @@ export interface SyncView {
   /** The code this PC is showing, like "K7Q2-9XMB", and its seconds left. */
   code: string | null;
   code_left: number;
+  /** A relay for PCs on other networks (used only at the Cloud level). */
+  relay_url: string | null;
+  relay_active: boolean;
 }
 
 export interface BackupInfo {
@@ -1033,6 +1036,7 @@ export const api = {
   pairDevice: (code: string, target: string | null) => invoke<SyncView>("pair_device", { code, target }),
   removeDevice: (id: string) => invoke<SyncView>("remove_device", { id }),
   syncNow: () => invoke<SyncView>("sync_now"),
+  setRelay: (url: string | null) => invoke<SyncView>("set_relay", { url }),
   peerModels: () => invoke<PeerModels[]>("peer_models"),
   copyModelFrom: (peerId: string, modelId: string) => invoke<void>("copy_model_from", { peerId, modelId }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),

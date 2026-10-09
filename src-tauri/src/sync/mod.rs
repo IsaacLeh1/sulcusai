@@ -15,6 +15,7 @@
 //!   is sealed again with the receiving PC's own data key.
 
 pub mod models;
+pub mod relay;
 pub mod track;
 mod wire;
 
@@ -62,6 +63,8 @@ pub struct Config {
     /// PCs send everything again instead of trusting old positions.
     pub epoch: String,
     pub peers: Vec<Peer>,
+    /// A relay for paired PCs on other networks (Cloud level only).
+    pub relay_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -80,6 +83,8 @@ pub struct Peer {
     /// How far we've had its changes, and in which of its databases.
     recv_epoch: String,
     recv_since: i64,
+    /// Where syncing through the relay stands.
+    pub relay: relay::RelayState,
 }
 
 fn config(conn: &rusqlite::Connection) -> Config {
@@ -109,6 +114,7 @@ pub fn after_restore(conn: &rusqlite::Connection) {
     for p in &mut c.peers {
         p.sent = 0;
         p.recv_since = 0;
+        p.relay.sent = 0;
     }
     let _ = db::set(conn, KEY, &c);
 }
@@ -154,6 +160,10 @@ static ERRORS: LazyLock<Mutex<HashMap<String, (String, Instant)>>> = LazyLock::n
 static WAKE: LazyLock<Notify> = LazyLock::new(Notify::new);
 static ANNOUNCE: LazyLock<Notify> = LazyLock::new(Notify::new);
 static FORCE: AtomicBool = AtomicBool::new(false);
+/// When each peer last went through the relay.
+static RELAY_AT: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
+/// How often to check the relay for a PC that isn't on this network.
+const RELAY_EVERY: Duration = Duration::from_secs(120);
 
 /// Random bytes (for keys shared with phones, too).
 pub fn random_bytes<const N: usize>() -> [u8; N] {
@@ -377,6 +387,7 @@ fn tick(state: &Arc<AppState>) {
             })
             .collect()
     };
+    relay_tick(state, force);
     for (id, addr) in due {
         let s = state.clone();
         tauri::async_runtime::spawn(async move {
@@ -396,6 +407,46 @@ fn tick(state: &Arc<AppState>) {
 }
 
 const BUSY_TEXT: &str = "busy";
+
+/// Paired PCs that aren't on this network sync through the relay, if one is
+/// set and the app is at the Cloud level.
+fn relay_tick(state: &Arc<AppState>, force: bool) {
+    let (url, peers) = {
+        let conn = state.db.lock().unwrap();
+        let cfg = config(&conn);
+        if db::settings(&conn).connectivity != crate::net::Connectivity::Cloud {
+            return;
+        }
+        let Some(url) = cfg.relay_url.clone().filter(|u| !u.is_empty()) else { return };
+        (url, cfg.peers)
+    };
+    for p in peers {
+        if seen_addr(&p.id).is_some() {
+            continue;
+        }
+        let due = force || RELAY_AT.lock().unwrap().get(&p.id).is_none_or(|at| at.elapsed() >= RELAY_EVERY);
+        if !due {
+            continue;
+        }
+        RELAY_AT.lock().unwrap().insert(p.id.clone(), Instant::now());
+        let (s, url) = (state.clone(), url.clone());
+        tauri::async_runtime::spawn(async move {
+            let Some(_busy) = Busy::take(&p.id) else { return };
+            match timeout(Duration::from_secs(600), relay::exchange(&s, &url, &p)).await.unwrap_or(Err("The relay took too long.".into())) {
+                Ok(taken) => {
+                    ERRORS.lock().unwrap().remove(&p.id);
+                    if taken > 0 {
+                        emit(&s, "sync:changed");
+                    }
+                }
+                Err(e) => {
+                    ERRORS.lock().unwrap().insert(p.id.clone(), (e, Instant::now()));
+                }
+            }
+            emit(&s, "sync:status");
+        });
+    }
+}
 
 fn peer(state: &AppState, id: &str) -> Option<Peer> {
     config(&state.db.lock().unwrap()).peers.into_iter().find(|p| p.id == id)
@@ -734,6 +785,9 @@ pub struct SyncView {
     /// The code this PC is showing ("K7Q2-9XMB") and its seconds left.
     code: Option<String>,
     code_left: u64,
+    relay_url: Option<String>,
+    /// The relay is only used at the Cloud level.
+    relay_active: bool,
 }
 
 /// The address this PC's default route uses. Connecting a UDP socket only
@@ -778,6 +832,8 @@ fn view(state: &AppState) -> SyncView {
             .collect(),
         code: pairing.map(|p| format!("{}-{}", &p.code[..4], &p.code[4..])),
         code_left: pairing.map_or(0, |p| p.until.saturating_duration_since(Instant::now()).as_secs()),
+        relay_active: cfg.relay_url.is_some() && db::settings(&state.db.lock().unwrap()).connectivity == crate::net::Connectivity::Cloud,
+        relay_url: cfg.relay_url.clone(),
     }
 }
 
@@ -862,6 +918,24 @@ pub fn remove_device(state: AppStateRef, id: String) -> Result<SyncView, String>
     if let Some(n) = name {
         state.log("sync", &format!("Unpaired {n}"));
     }
+    Ok(view(&state))
+}
+
+/// Sets (or clears) the relay. Only https addresses, except this PC's own
+/// (for testing a relay locally).
+#[tauri::command]
+pub fn set_relay(state: AppStateRef, url: Option<String>) -> Result<SyncView, String> {
+    let url = url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty());
+    if let Some(u) = &url {
+        let local = u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost");
+        if !(u.starts_with("https://") || local) || u.contains(char::is_whitespace) {
+            return Err("The relay's address starts with https://".into());
+        }
+    }
+    update(&state, |c| c.relay_url = url.clone())?;
+    state.log("settings", if url.is_some() { "Set a sync relay" } else { "Removed the sync relay" });
+    FORCE.store(true, Ordering::SeqCst);
+    WAKE.notify_one();
     Ok(view(&state))
 }
 
@@ -976,6 +1050,72 @@ mod tests {
         cfg.peers.clear();
         db::set(&a.db.lock().unwrap(), KEY, &cfg).unwrap();
         assert!(call(&b, &a_id, addr).await.is_err());
+    }
+
+    /// Two paired PCs that never meet on a network sync through the relay
+    /// (relay/worker.js, run by relay/local.mjs in Node).
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn e2e_sync_through_relay() {
+        let port = crate::engine::free_port().unwrap();
+        let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../relay/local.mjs");
+        let mut node = tokio::process::Command::new("node").arg(&script).arg(port.to_string()).kill_on_drop(true).spawn().unwrap();
+        let url = format!("http://127.0.0.1:{port}");
+        for _ in 0..50 {
+            if reqwest::get(format!("{url}/v1/box/{}", "0".repeat(64))).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        let a = crate::e2e::temp_state(None);
+        let b = crate::e2e::temp_state(None);
+        let (ca, cb) = (a.cipher().unwrap(), b.cipher().unwrap());
+        let (a_id, b_id) = (device_id(&a.paths.data), device_id(&b.paths.data));
+        let key = wire::random::<32>();
+        for (s, c, other, name) in [(&a, &ca, &b_id, "PC-B"), (&b, &cb, &a_id, "PC-A")] {
+            crate::db::update_settings(&s.db.lock().unwrap(), |x| x.connectivity = crate::net::Connectivity::Cloud).unwrap();
+            let p = Peer { id: other.clone(), name: name.into(), key: c.encrypt(&hex::encode(key)), ..Default::default() };
+            update(s, |cfg| {
+                cfg.enabled = true;
+                cfg.relay_url = Some(url.clone());
+                cfg.peers.push(p);
+            })
+            .unwrap();
+        }
+        let chat = crate::db::create_chat_in(&a.db.lock().unwrap(), &ca, None, None, false).unwrap();
+        crate::db::set_chat_title(&a.db.lock().unwrap(), &ca, &chat.id, "Secret plans").unwrap();
+
+        let pb = peer(&a, &b_id).unwrap();
+        assert_eq!(relay::exchange(&a, &url, &pb).await.unwrap(), 0);
+        // What the relay holds is unreadable.
+        let outbox = relay::box_id(&key, &a_id);
+        let raw = reqwest::Client::new().get(format!("{url}/v1/box/{outbox}?after=0")).bearer_auth("0".repeat(64)).send().await.unwrap();
+        assert_eq!(raw.status().as_u16(), 404, "a wrong token gets nothing");
+
+        let pa = peer(&b, &a_id).unwrap();
+        let taken = relay::exchange(&b, &url, &pa).await.unwrap();
+        assert!(taken >= 1);
+        let titles: Vec<String> = crate::db::list_chats(&b.db.lock().unwrap(), &cb).into_iter().map(|c| c.title).collect();
+        assert!(titles.contains(&"Secret plans".to_string()), "{titles:?}");
+        // B's mailbox was emptied after reading.
+        let left = reqwest::Client::new().get(format!("{url}/v1/box/{outbox}?after=0")).bearer_auth(relay::token_for_test(&key, &outbox)).send().await.unwrap();
+        assert_eq!(left.text().await.unwrap(), "[]");
+
+        // And back: an edit on B reaches A.
+        crate::db::set_chat_title(&b.db.lock().unwrap(), &cb, &chat.id, "Shared plans").unwrap();
+        let pa = peer(&b, &a_id).unwrap();
+        relay::exchange(&b, &url, &pa).await.unwrap();
+        let pb = peer(&a, &b_id).unwrap();
+        assert_eq!(relay::exchange(&a, &url, &pb).await.unwrap(), 1);
+        let titles: Vec<String> = crate::db::list_chats(&a.db.lock().unwrap(), &ca).into_iter().map(|c| c.title).collect();
+        assert!(titles.contains(&"Shared plans".to_string()), "{titles:?}");
+
+        // Off the Cloud level the relay isn't used.
+        crate::db::update_settings(&a.db.lock().unwrap(), |x| x.connectivity = crate::net::Connectivity::Offline).unwrap();
+        assert!(relay::exchange(&a, &url, &pb).await.is_err());
+        node.kill().await.ok();
     }
 
     #[test]

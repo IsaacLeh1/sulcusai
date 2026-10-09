@@ -1,0 +1,11 @@
+# SulcusAI sync relay on Cloudflare Workers.
+#   npx wrangler kv namespace create BOXES   → paste the id below
+#   npx wrangler deploy                      → https://sulcusai-relay.<you>.workers.dev
+# Then in SulcusAI: Settings → Your devices → Relay address.
+name = "sulcusai-relay"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[[kv_namespaces]]
+binding = "BOXES"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"

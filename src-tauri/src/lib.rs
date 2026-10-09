@@ -1254,6 +1254,7 @@ pub fn run() {
             sync::pair_device,
             sync::remove_device,
             sync::sync_now,
+            sync::set_relay,
             sync::models::peer_models,
             sync::models::copy_model_from,
             finetune::finetune_view,

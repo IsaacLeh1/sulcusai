@@ -1757,5 +1757,13 @@
  "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "音楽エンジンがインストールされていません。スタジオのモデル一覧から音楽モデルを再インストールしてください。",
  "The other PC doesn't have that model anymore.": "相手のPCにはもうそのモデルがありません。",
  "The other PC offered an unexpected file.": "相手のPCが想定外のファイルを提示しました。",
- "on {pc}": "{pc} 上"
+ "on {pc}": "{pc} 上",
+ "A relay message didn't check out.": "中継メッセージの検証に失敗しました。",
+ "A relay message was damaged.": "中継メッセージが破損していました。",
+ "Relay address": "中継サーバーのアドレス",
+ "Saved. It's used when the app is at the Cloud level.": "保存しました。アプリが「クラウド」レベルのときに使われます。",
+ "Sync when away from home (relay)": "外出先で同期（中継）",
+ "Syncing through the relay needs the Cloud level.": "中継経由の同期には「クラウド」レベルが必要です。",
+ "The relay took too long.": "中継サーバーの応答が遅すぎました。",
+ "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "PC同士が同じネットワークにないときは、自分で運用する中継サーバー（アプリの relay フォルダーにある Cloudflare Worker など）を通して同期できます。送信前にPC間のペアリングキーで暗号化されるため、中継サーバーは内容を読めません。「クラウド」レベルでのみ使われます。"
 }

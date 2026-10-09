@@ -1757,5 +1757,13 @@
  "The music engine isn't installed. Reinstall the music model from the Studio's Models list.": "Le moteur de musique n'est pas installé. Réinstallez le modèle de musique depuis la liste Modèles du Studio.",
  "The other PC doesn't have that model anymore.": "L'autre PC n'a plus ce modèle.",
  "The other PC offered an unexpected file.": "L'autre PC a proposé un fichier inattendu.",
- "on {pc}": "sur {pc}"
+ "on {pc}": "sur {pc}",
+ "A relay message didn't check out.": "Un message du relais n'a pas passé la vérification.",
+ "A relay message was damaged.": "Un message du relais était endommagé.",
+ "Relay address": "Adresse du relais",
+ "Saved. It's used when the app is at the Cloud level.": "Enregistré. Il est utilisé quand l'app est au niveau Cloud.",
+ "Sync when away from home (relay)": "Synchroniser hors de chez soi (relais)",
+ "Syncing through the relay needs the Cloud level.": "La synchronisation par le relais nécessite le niveau Cloud.",
+ "The relay took too long.": "Le relais a mis trop de temps.",
+ "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "Quand vos PC ne sont pas sur le même réseau, ils peuvent se synchroniser via un relais que vous gérez, comme le Cloudflare Worker du dossier relay de l'app. Tout est chiffré avec les clés d'appairage de vos PC avant de partir ; le relais ne peut pas le lire. Utilisé uniquement au niveau Cloud."
 }

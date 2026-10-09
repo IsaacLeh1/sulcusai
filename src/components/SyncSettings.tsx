@@ -186,6 +186,7 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
         </div>
       )}
       {v.enabled && v.peers.some((p) => p.online) && <CopyModels toast={toast} />}
+      {v.enabled && v.peers.length > 0 && <RelaySetting v={v} run={run} />}
       {v.enabled && (
         <p className="muted small">
           {t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the other PC can't reach this one. Both PCs need SulcusAI open (and unlocked) to sync.")}
@@ -248,5 +249,25 @@ function CopyModels({ toast }: { toast: PushToast }) {
         )}
       </ul>
     </div>
+  );
+}
+
+/** A relay for paired PCs that aren't on the same network (Cloud level). */
+function RelaySetting({ v, run }: { v: SyncView; run: (f: () => Promise<SyncView>) => Promise<void> }) {
+  const [url, setUrl] = useState(v.relay_url ?? "");
+  return (
+    <details className="small" open={!!v.relay_url}>
+      <summary>{t("Sync when away from home (relay)")}</summary>
+      <p className="muted">
+        {t("When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.")}
+      </p>
+      <div className="row wrap">
+        <input className="input" value={url} placeholder="https://sulcusai-relay.example.workers.dev" onChange={(e) => setUrl(e.target.value)} aria-label={t("Relay address")} />
+        <button className="btn small" disabled={url.trim() === (v.relay_url ?? "")} onClick={() => run(() => api.setRelay(url.trim() || null))}>
+          {t("Save")}
+        </button>
+      </div>
+      {v.relay_url && !v.relay_active && <p className="muted">{t("Saved. It's used when the app is at the Cloud level.")}</p>}
+    </details>
   );
 }
