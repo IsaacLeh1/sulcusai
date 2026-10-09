@@ -109,6 +109,7 @@ button, select, input, textarea { font: inherit; color: inherit; }
 .status-item { display: inline-flex; align-items: center; gap: 6px; }
 .led { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
 .led.on { background: var(--success); }
+.led.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 
 /* ---------- controls ---------- */
 .btn {
@@ -717,3 +718,8 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .progress.warn span { background: var(--danger, #e5534b); }
 .cloud-badge { white-space: nowrap; }
 .cloud-settings > .row input[type="number"] { max-width: 160px; }
+
+/* ---------- updates ---------- */
+.update-settings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.update-pill { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 99px; padding: 2px 10px; cursor: pointer; font-weight: 600; }
+.update-notes { white-space: pre-wrap; max-height: 200px; overflow: auto; }

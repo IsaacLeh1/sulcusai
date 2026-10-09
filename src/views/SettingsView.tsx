@@ -13,6 +13,7 @@ import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
 import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
+import { UpdateSettings } from "../components/Updates";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -271,12 +272,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <section className="card">
         <h2>About {APP_NAME}</h2>
+        <UpdateSettings toast={toast} />
         {info && (
-          <p className="small">
-            Version {info.version}
-            <br />
-            <span className="muted">Data folder: {info.data_dir}</span>
-          </p>
+          <p className="small muted">Data folder: {info.data_dir}</p>
         )}
         <p className="small">
           {APP_NAME} is free software under the GNU Affero General Public License v3.0. The name and logo are not covered by that license.

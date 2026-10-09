@@ -77,6 +77,19 @@ export interface Ratings {
   languages: number;
 }
 
+export interface UpdateAvailable {
+  version: string;
+  notes: string;
+  date: string | null;
+}
+
+export interface UpdateView {
+  current: string;
+  auto: boolean;
+  last_check: number;
+  available: UpdateAvailable | null;
+}
+
 export interface BackupInfo {
   created: number;
   app_version: string;
@@ -881,6 +894,10 @@ export const api = {
   checkAdvancedPin: (pin: string) => invoke<void>("check_advanced_pin", { pin }),
   apiServerView: () => invoke<ApiServerView>("api_server_view"),
   cloudView: () => invoke<CloudView>("cloud_view"),
+  updateView: () => invoke<UpdateView>("update_view"),
+  checkForUpdate: () => invoke<UpdateAvailable | null>("check_for_update"),
+  setUpdateAuto: (auto: boolean) => invoke<void>("set_update_auto", { auto }),
+  installUpdate: () => invoke<void>("install_update"),
   makeBackup: (path: string, password: string) => invoke<{ files: number; bytes: number }>("make_backup", { path, password }),
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
   restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
@@ -920,6 +937,8 @@ export const api = {
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
   unload: () => invoke<void>("unload_model"),
+  /** Loads the default model now (it otherwise loads with the first message). */
+  loadDefault: () => invoke<void>("load_default_model"),
   finishOnboarding: () => invoke<Settings>("finish_onboarding"),
   security: () => invoke<SecurityStatus>("security_status"),
   enableLock: (pin: string) => invoke<string>("enable_lock", { pin }),
@@ -1148,6 +1167,9 @@ export interface ChatEvents {
   "quick:hotkey_taken": { hotkey: string };
   "calendar:synced": Record<string, never>;
   "engine:unloaded": null;
+  "engine:download": { received?: number; total?: number; done?: boolean };
+  "update:available": UpdateAvailable;
+  "update:progress": { received: number; total: number | null };
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

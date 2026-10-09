@@ -354,3 +354,13 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 - Export chats and notes as Markdown into a dated folder (not encrypted; the UI says so).
 - Test: `cargo test --lib e2e_backup_restore -- --ignored --nocapture` (backup, wrong password, restore into another folder, decrypt, Markdown export).
 
+**Signed updates (`updates.rs`, `scripts/release.ps1`, Settings → About, status-bar "Update to x"):**
+- Tauri updater plugin. Endpoint: `https://github.com/IsaacLeh1/sulcusai/releases/latest/download/latest.json` (the public repo's latest release; the `engines` release is marked not-latest). The public key is in `tauri.conf.json`; the private key is `%USERPROFILE%\.tauri\sulcusai.key` (no password, never commit it; if it's lost, installed copies can never update again).
+- `bundle.createUpdaterArtifacts` is on, so `tauri build` needs `TAURI_SIGNING_PRIVATE_KEY` (path or contents); `scripts/release.ps1` sets it, signs, and writes `latest.json`; `-Publish` creates the GitHub release `vX.Y.Z` with the installer and `latest.json`.
+- Automatic checks: once a day, only when connectivity isn't Offline and "Check for updates once a day" is on. "Check for updates" always works (the user asked). Installing is always a click; the signature is verified before it runs; the app restarts.
+- 0.6.0 and earlier have no updater, so the first updater build has to be installed by hand.
+
+**Model status:** the status bar says "<model> · loads when you chat" with Load now (`load_default_model`) instead of "No model loaded", and shows the engine download ("Getting the AI engine (first time only)", `engine:download` events) when a found model's first chat fetches llama.cpp.
+
+**CI:** `cargo-deny-action` is a container action that can't run on Windows runners; CI now installs cargo-deny with `taiki-e/install-action` and runs it directly.
+

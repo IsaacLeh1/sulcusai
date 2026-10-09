@@ -40,6 +40,7 @@ import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
+import { UpdatePill } from "./components/Updates";
 
 export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
 
@@ -283,6 +284,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleChatWeb]);
 
+  const [loadingNow, setLoadingNow] = useState(false);
+  // The engine itself, downloaded with the first chat when models came from another app.
+  const [engineDl, setEngineDl] = useState<{ received: number; total: number } | null>(null);
+  useEffect(() => {
+    const sub = on("engine:download", (p) => setEngineDl(p.done ? null : { received: p.received ?? 0, total: p.total ?? 0 }));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
   if (!settings) return <div className="empty"><p className="muted">Loading…</p></div>;
 
   if (!settings.onboarded) {
@@ -301,6 +311,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   }
 
   const loadedName = catalog?.models.find((m) => m.id === engine?.model_id)?.name;
+  const defaultName = catalog?.models.find((m) => m.installed && m.id === settings?.default_model)?.name ?? installed[0]?.name;
 
   return (
     <div className="app">
@@ -550,17 +561,43 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
       <footer className="statusbar">
         <ConnectivityMenu level={settings.connectivity} onChange={changeConnectivity} />
-        <span className="status-item" title="The model currently loaded in memory">
-          {loadedName ? (
+        <span className="status-item" title={loadedName ? "The model in memory" : "Models load when you send a message and unload after a while idle, to free memory"}>
+          {engineDl ? (
+            <>
+              <span className="led busy" /> Getting the AI engine (first time only){engineDl.total ? ` · ${Math.round((engineDl.received / engineDl.total) * 100)}%` : "…"}
+            </>
+          ) : loadedName ? (
             <>
               <span className="led on" /> {loadedName} loaded
               <button className="link" onClick={async () => { await api.unload(); refreshEngine(); }}>
                 Unload
               </button>
             </>
+          ) : defaultName ? (
+            <>
+              <span className="led" /> {loadingNow ? `Loading ${defaultName}…` : `${defaultName} · loads when you chat`}
+              {!loadingNow && (
+                <button
+                  className="link"
+                  onClick={async () => {
+                    setLoadingNow(true);
+                    try {
+                      await api.loadDefault();
+                    } catch (e) {
+                      toast(errorText(e), "error");
+                    } finally {
+                      setLoadingNow(false);
+                      refreshEngine();
+                    }
+                  }}
+                >
+                  Load now
+                </button>
+              )}
+            </>
           ) : (
             <>
-              <span className="led" /> No model loaded
+              <span className="led" /> No model installed
             </>
           )}
         </span>
@@ -570,6 +607,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         )}
         <PerfPill onOpen={() => setView("settings")} />
+        <UpdatePill toast={toast} />
         <span className="spacer" />
         <span className="status-item muted">
           🔐 Encrypted ·{" "}

@@ -409,7 +409,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           </div>
         ))}
         {handingOff && <p className="muted small pad">This chat is nearly full. Summarizing it to continue in a new chat…</p>}
-        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? `Connecting to ${cloud.provider}…` : `Loading ${model?.name ?? "the model"} into memory…`}</p>}
+        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? `Connecting to ${cloud.provider}…` : `Loading ${model?.name ?? "the model"} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)`}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
           <p className="muted small pad">{cooling ? `Letting the PC cool down before the next step (${cooling})…` : "Working…"}</p>
         )}

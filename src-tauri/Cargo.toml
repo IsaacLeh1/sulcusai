@@ -41,6 +41,8 @@ dunce = "1"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"
+# Signed updates from the project's GitHub Releases.
+tauri-plugin-updater = "2"
 # Neural voices and speaker labels: ONNX Runtime, loaded at run time from a
 # downloaded, hash-checked copy (nothing is bundled or fetched at build time).
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17"] }

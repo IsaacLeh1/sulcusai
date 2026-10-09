@@ -53,6 +53,7 @@ mod speech;
 mod tools;
 mod translate;
 mod tts;
+mod updates;
 mod vad;
 mod voice;
 mod web;
@@ -955,7 +956,17 @@ pub(crate) async fn llm_endpoint(
         None => {
             let asset = state.catalog.engine.assets.get(backend).map(|a| a.url.clone()).unwrap_or_default();
             state.log("network", &format!("Downloading the llama.cpp engine ({backend}) from {}", host_of(&asset)));
-            engine::ensure_installed(&state.paths, &state.catalog.engine, backend, &AtomicBool::new(false), |_, _| {}).await?
+            let app = state.app.get().cloned();
+            let progress = |received: u64, total: u64| {
+                if let Some(app) = &app {
+                    app.emit("engine:download", json!({ "received": received, "total": total })).ok();
+                }
+            };
+            let exe = engine::ensure_installed(&state.paths, &state.catalog.engine, backend, &AtomicBool::new(false), progress).await;
+            if let Some(app) = &app {
+                app.emit("engine:download", json!({ "done": true })).ok();
+            }
+            exe?
         }
     };
     *state.engine_used.lock().unwrap() = std::time::Instant::now();
@@ -1016,6 +1027,14 @@ async fn engine_status(state: AppStateRef<'_>) -> Result<EngineStatus, String> {
     Ok(state.engine.lock().await.status())
 }
 
+/// Loads the default model now, so the first message doesn't wait for it.
+#[tauri::command]
+async fn load_default_model(state: AppStateRef<'_>) -> Result<(), String> {
+    let state = state.inner().clone();
+    llm_endpoint(&state, None, false, || {}).await?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn unload_model(state: AppStateRef<'_>) -> Result<(), String> {
     state.engine.lock().await.stop().await;
@@ -1038,6 +1057,7 @@ pub fn run_bridge_host() {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(quick::plugin())
         .on_window_event(quick::on_main_event)
@@ -1101,6 +1121,7 @@ pub fn run() {
             quick::apply(app.handle());
             bridge::apply(app.handle());
             calendar::start_sync(app.handle().clone());
+            updates::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1161,6 +1182,7 @@ pub fn run() {
             install_model,
             cancel_install,
             find_models,
+            load_default_model,
             import_model_file,
             measure_model_speed,
             advanced::advanced_view,
@@ -1179,6 +1201,10 @@ pub fn run() {
             cloud::set_cloud_options,
             cloud::cloud_choices,
             backup::make_backup,
+            updates::update_view,
+            updates::check_for_update,
+            updates::set_update_auto,
+            updates::install_update,
             backup::backup_info,
             backup::restore_backup,
             backup::export_markdown_cmd,
