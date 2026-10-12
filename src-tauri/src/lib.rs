@@ -35,6 +35,8 @@ mod hardware;
 mod hello;
 mod local;
 mod location;
+#[cfg(test)]
+mod lock_lint;
 mod mail;
 mod mcp;
 mod media;
@@ -221,7 +223,7 @@ struct AppInfo {
     data_dir: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn app_info(state: AppStateRef) -> AppInfo {
     AppInfo {
         name: "SulcusAI",
@@ -230,7 +232,7 @@ fn app_info(state: AppStateRef) -> AppInfo {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn refresh_hardware(state: AppStateRef) -> Hardware {
     let hw = hardware::detect(&state.paths.models);
     *state.hardware.write().unwrap() = hw.clone();
@@ -260,7 +262,7 @@ struct CatalogView {
     installing: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn catalog_view(state: AppStateRef) -> CatalogView {
     let hardware = state.hardware.read().unwrap().clone();
     let budget = Budget::from_hardware(&hardware);
@@ -308,7 +310,7 @@ struct InstallProgress<'a> {
     total: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: String) -> Result<(), String> {
     let spec = state.catalog.model(&model_id).ok_or("Unknown model")?.clone();
     let variant = spec.variant(&quant).ok_or("Unknown model version")?.clone();
@@ -614,7 +616,7 @@ async fn measure_model_speed(state: AppStateRef<'_>, model_id: String) -> Result
     Ok(tps)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cancel_install(state: AppStateRef, model_id: String) {
     if let Some(flag) = state.installs.lock().unwrap().get(&model_id) {
         flag.store(true, Ordering::Relaxed);
@@ -655,13 +657,13 @@ async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), St
 // ---------- settings & profile ----------
 
 /// The app registrations for signing in with Microsoft and Google.
-#[tauri::command]
-fn oauth_clients(state: AppStateRef) -> Result<oauth::ClientIds, String> {
+#[tauri::command(async)]
+fn oauth_clients(state: AppStateRef) -> Result<oauth::ClientsView, String> {
     state.cipher()?;
-    Ok(oauth::clients(&state.db.lock().unwrap()))
+    Ok(oauth::clients_view(&state.db.lock().unwrap()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_oauth_clients(state: AppStateRef, ids: oauth::ClientIds) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -670,12 +672,12 @@ fn set_oauth_clients(state: AppStateRef, ids: oauth::ClientIds) -> Result<(), St
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_settings(state: AppStateRef) -> Settings {
     state.settings()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> Result<Settings, String> {
     if level == Connectivity::Offline {
         // Offline closes the browser; nothing in it should keep going online.
@@ -696,7 +698,7 @@ fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> 
     Ok(s)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -713,19 +715,19 @@ fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, S
     db::update_settings(&conn, |s| s.default_model = Some(model_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn finish_onboarding(state: AppStateRef) -> Result<Settings, String> {
     let conn = state.db.lock().unwrap();
     db::update_settings(&conn, |s| s.onboarded = true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_profile(state: AppStateRef) -> Result<Profile, String> {
     let c = state.cipher()?;
     Ok(db::profile(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_profile(state: AppStateRef, profile: Profile) -> Result<(), String> {
     let c = state.cipher()?;
     db::set_profile(&state.db.lock().unwrap(), &c, &profile)
@@ -733,13 +735,13 @@ fn set_profile(state: AppStateRef, profile: Profile) -> Result<(), String> {
 
 // ---------- chats ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_chats(state: AppStateRef) -> Result<Vec<Chat>, String> {
     let c = state.cipher()?;
     Ok(db::list_chats(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_chat(state: AppStateRef) -> Result<Chat, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -747,7 +749,7 @@ fn create_chat(state: AppStateRef) -> Result<Chat, String> {
     db::create_chat(&conn, &c, model)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
     state.cipher()?;
     state.contexts.lock().unwrap().remove(&chat_id);
@@ -759,7 +761,7 @@ fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename_chat(state: AppStateRef, chat_id: String, title: String) -> Result<(), String> {
     let c = state.cipher()?;
     let title = title.trim();
@@ -769,7 +771,7 @@ fn rename_chat(state: AppStateRef, chat_id: String, title: String) -> Result<(),
     db::set_chat_title(&state.db.lock().unwrap(), &c, &chat_id, title)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_chat_web(state: AppStateRef, chat_id: String, web: bool) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -778,7 +780,7 @@ fn set_chat_web(state: AppStateRef, chat_id: String, web: bool) -> Result<(), St
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -789,18 +791,18 @@ fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Resu
     db::set_chat_model(&conn, &chat_id, &model_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_messages(state: AppStateRef, chat_id: String) -> Result<Vec<Message>, String> {
     let c = state.cipher()?;
     Ok(db::messages(&state.db.lock().unwrap(), &c, &chat_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn get_context(state: AppStateRef, chat_id: String) -> Option<ContextInfo> {
     state.contexts.lock().unwrap().get(&chat_id).cloned()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_generation(state: AppStateRef, chat_id: String) {
     if let Some(flag) = state.generations.lock().unwrap().get(&chat_id) {
         flag.store(true, Ordering::Relaxed);

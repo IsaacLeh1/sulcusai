@@ -912,7 +912,7 @@ fn pview(p: &Provider) -> ProviderView {
     ProviderView { id: p.id.clone(), name: p.name.clone(), kind: p.kind, base_url: p.base_url.clone(), enabled: p.enabled, has_key: !p.key.is_empty(), models: p.models.clone(), media: p.media.clone(), media_suggestions: media_suggestions(&p.id) }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cloud_view(state: AppStateRef) -> CloudView {
     let conn = state.db.lock().unwrap();
     let s = settings(&conn);
@@ -921,7 +921,7 @@ pub fn cloud_view(state: AppStateRef) -> CloudView {
 }
 
 /// Adds a preset provider, or a custom OpenAI-compatible one.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Option<String>, base_url: Option<String>) -> Result<CloudView, String> {
     state.cipher()?;
     let p = match preset {
@@ -947,7 +947,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
     Ok(cloud_view(state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_cloud_provider(state: AppStateRef, id: String) -> Result<CloudView, String> {
     {
         let conn = state.db.lock().unwrap();
@@ -960,7 +960,7 @@ pub fn remove_cloud_provider(state: AppStateRef, id: String) -> Result<CloudView
 }
 
 /// Sets the key (empty clears it) and on/off for a provider.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_cloud_provider(state: AppStateRef, id: String, enabled: bool, key: Option<String>) -> Result<CloudView, String> {
     let c = state.cipher()?;
     let name = {
@@ -994,7 +994,7 @@ pub async fn cloud_models_available(state: AppStateRef<'_>, id: String) -> Resul
 }
 
 /// Which of the provider's models appear in the model lists.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_cloud_models(state: AppStateRef, id: String, models: Vec<CloudModel>) -> Result<CloudView, String> {
     {
         let conn = state.db.lock().unwrap();
@@ -1007,7 +1007,7 @@ pub fn set_cloud_models(state: AppStateRef, id: String, models: Vec<CloudModel>)
 }
 
 /// The picture, video and voice models turned on for a provider.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_cloud_media(state: AppStateRef, id: String, media: Vec<CloudMedia>) -> Result<CloudView, String> {
     {
         let conn = state.db.lock().unwrap();
@@ -1019,7 +1019,7 @@ pub fn set_cloud_media(state: AppStateRef, id: String, media: Vec<CloudMedia>) -
     Ok(cloud_view(state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_cloud_options(state: AppStateRef, budget: Option<f64>, redact: bool) -> Result<CloudView, String> {
     {
         let conn = state.db.lock().unwrap();
@@ -1041,7 +1041,7 @@ pub struct CloudChoice {
     vision: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cloud_choices(state: AppStateRef) -> Vec<CloudChoice> {
     choices(&state.db.lock().unwrap())
 }

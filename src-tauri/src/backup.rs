@@ -302,7 +302,7 @@ pub struct BackupInfo {
     bytes: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn backup_info(path: String) -> Result<BackupInfo, String> {
     let m = manifest(Path::new(&path))?;
     Ok(BackupInfo { created: m.created, app_version: m.app_version, files: m.files.len(), bytes: m.files.iter().map(|f| f.size).sum() })

@@ -2,7 +2,7 @@
 // Sign in with Microsoft or Google (for mail and calendars), and the app
 // registrations that make it possible.
 import { useEffect, useState } from "react";
-import { api, errorText, type OAuthClients, type OAuthProvider } from "../api";
+import { api, errorText, type OAuthClients, type OAuthClientsView, type OAuthProvider } from "../api";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
 
@@ -40,18 +40,24 @@ export function SignInButtons({ start, toast, done }: { start: (p: OAuthProvider
   );
 }
 
-/** Settings › Accounts: the client IDs from the Microsoft and Google registrations. */
+/** Settings › Microsoft and Google sign-in: whether each works out of the
+ * box, and the person's own registrations if they'd rather use those. */
 export function SignInApps({ toast }: { toast: PushToast }) {
+  const [view, setView] = useState<OAuthClientsView | null>(null);
   const [ids, setIds] = useState<OAuthClients | null>(null);
   const [saved, setSaved] = useState<OAuthClients | null>(null);
+  const [showOwn, setShowOwn] = useState(false);
   useEffect(() => {
     api.oauthClients().then((v) => {
-      setIds(v);
-      setSaved(v);
+      setView(v);
+      setIds(v.own);
+      setSaved(v.own);
     }).catch(() => {});
   }, []);
-  if (!ids) return null;
+  if (!view || !ids || !saved) return null;
   const changed = JSON.stringify(ids) !== JSON.stringify(saved);
+  const hasOwn = !!(saved.microsoft || saved.google);
+  const allBuiltIn = view.built_in_microsoft && view.built_in_google;
   const save = async () => {
     try {
       await api.setOauthClients(ids);
@@ -61,36 +67,52 @@ export function SignInApps({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     }
   };
+  const status = (name: string, builtIn: boolean, own: string) => (
+    <li>
+      <b>{name}</b>: {own ? t("Using your own registration.") : builtIn ? t("Ready: built into this copy of SulcusAI.") : t("Needs an app registration (add its IDs below).")}
+    </li>
+  );
+  const builtInHint = t("Leave empty to use the built-in one.");
   return (
     <section className="card">
       <h2>{t("Microsoft and Google sign-in")}</h2>
       <p className="muted small">
         {t("Signing in to Outlook.com, Microsoft 365 or Gmail needs this copy of SulcusAI registered with Microsoft and Google. Registered builds have these filled in; otherwise add your own registration's IDs here.")}
       </p>
-      <div className="form">
-        <label>
-          {t("Microsoft application (client) ID")}
-          <input className="input" value={ids.microsoft} onChange={(e) => setIds({ ...ids, microsoft: e.target.value })} placeholder="00000000-0000-0000-0000-000000000000" spellCheck={false} />
-          <span className="small muted">
-            {t("Azure portal › App registrations › New registration: any account type (\"personal Microsoft accounts\" included); platform \"Mobile and desktop applications\" with redirect")}{" "}
-            <code>http://localhost</code>; {t("API permissions IMAP.AccessAsUser.All and SMTP.Send (Office 365 Exchange Online) and Calendars.ReadWrite (Microsoft Graph).")}
-          </span>
-        </label>
-        <label>
-          {t("Google OAuth client ID")}
-          <input className="input" value={ids.google} onChange={(e) => setIds({ ...ids, google: e.target.value })} placeholder="….apps.googleusercontent.com" spellCheck={false} />
-        </label>
-        <label>
-          {t("Google client secret")}
-          <input className="input" value={ids.google_secret} onChange={(e) => setIds({ ...ids, google_secret: e.target.value })} spellCheck={false} />
-          <span className="small muted">
-            {t("Google Cloud console › APIs & Services › Credentials › Create OAuth client ID › Desktop app. Enable the Gmail and Google Calendar APIs, and add the scopes https://mail.google.com/ and …/auth/calendar on the consent screen. (A desktop app's \"secret\" isn't secret.)")}
-          </span>
-        </label>
+      <ul className="small">
+        {status("Microsoft", view.built_in_microsoft, saved.microsoft)}
+        {status("Google", view.built_in_google, saved.google)}
+      </ul>
+      {allBuiltIn && !hasOwn && !showOwn ? (
         <div className="row">
-          <button className="btn primary" disabled={!changed} onClick={save}>{t("Save")}</button>
+          <button className="btn" onClick={() => setShowOwn(true)}>{t("Use my own registration")}</button>
         </div>
-      </div>
+      ) : (
+        <div className="form">
+          <label>
+            {t("Microsoft application (client) ID")}
+            <input className="input" value={ids.microsoft} onChange={(e) => setIds({ ...ids, microsoft: e.target.value })} placeholder={view.built_in_microsoft ? builtInHint : "00000000-0000-0000-0000-000000000000"} spellCheck={false} />
+            <span className="small muted">
+              {t("Azure portal › App registrations › New registration: any account type (\"personal Microsoft accounts\" included); platform \"Mobile and desktop applications\" with redirect")}{" "}
+              <code>http://localhost</code>; {t("API permissions IMAP.AccessAsUser.All and SMTP.Send (Office 365 Exchange Online) and Calendars.ReadWrite (Microsoft Graph).")}
+            </span>
+          </label>
+          <label>
+            {t("Google OAuth client ID")}
+            <input className="input" value={ids.google} onChange={(e) => setIds({ ...ids, google: e.target.value })} placeholder={view.built_in_google ? builtInHint : "….apps.googleusercontent.com"} spellCheck={false} />
+          </label>
+          <label>
+            {t("Google client secret")}
+            <input className="input" value={ids.google_secret} onChange={(e) => setIds({ ...ids, google_secret: e.target.value })} spellCheck={false} />
+            <span className="small muted">
+              {t("Google Cloud console › APIs & Services › Credentials › Create OAuth client ID › Desktop app. Enable the Gmail and Google Calendar APIs, and add the scopes https://mail.google.com/ and …/auth/calendar on the consent screen. (A desktop app's \"secret\" isn't secret.)")}
+            </span>
+          </label>
+          <div className="row">
+            <button className="btn primary" disabled={!changed} onClick={save}>{t("Save")}</button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -80,7 +80,7 @@ fn free_on(dir: &Path) -> Option<u64> {
     disks.list().iter().filter(|d| dir.starts_with(d.mount_point())).max_by_key(|d| d.mount_point().as_os_str().len()).map(|d| d.available_space())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn storage_view(state: AppStateRef) -> StorageView {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     let mut drives: Vec<Drive> = disks

@@ -968,12 +968,12 @@ pub struct AccountView {
     synced_at: Option<i64>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn calendar_presets() -> Vec<serde_json::Value> {
     presets().into_iter().map(|(name, url, note)| json!({ "name": name, "url": url, "note": note })).collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn calendar_accounts(state: AppStateRef) -> Result<Vec<AccountView>, String> {
     let c = state.cipher()?;
     Ok(accounts(&state.db.lock().unwrap(), &c)
@@ -1043,7 +1043,7 @@ pub async fn add_calendar_account_oauth(state: AppStateRef<'_>, provider: crate:
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_calendar_account(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1060,7 +1060,7 @@ pub async fn sync_calendars(state: AppStateRef<'_>) -> Result<usize, String> {
     sync_all(&state, &c).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn calendar_events(state: AppStateRef, from: i64, to: i64) -> Result<Vec<Event>, String> {
     ensure_on(&state)?;
     let c = state.cipher()?;

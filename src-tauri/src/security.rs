@@ -66,7 +66,7 @@ fn keep_working(state: &crate::AppState) -> bool {
 }
 
 /// Whether locking lets replies, schedules, syncing and reminders carry on.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_keep_working(state: AppStateRef, on: bool) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -146,7 +146,7 @@ pub async fn unlock_with_hello(window: WebviewWindow, state: AppStateRef<'_>) ->
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn lock_now(app: AppHandle, state: AppStateRef) -> Result<(), String> {
     // Read before taking the vault: the database is never locked while the vault is.
     let keep_working = keep_working(&state);
@@ -190,20 +190,20 @@ pub async fn set_hello(window: WebviewWindow, state: AppStateRef<'_>, enabled: b
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auto_lock(state: AppStateRef, minutes: u32) -> Result<(), String> {
     state.cipher()?;
     db::update_settings(&state.db.lock().unwrap(), |s| s.auto_lock_minutes = minutes.min(24 * 60))?;
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_actions(state: AppStateRef, limit: Option<u32>) -> Result<Vec<Action>, String> {
     let c = state.cipher()?;
     Ok(db::actions(&state.db.lock().unwrap(), &c, limit.unwrap_or(500).min(5000)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_actions(state: AppStateRef) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();

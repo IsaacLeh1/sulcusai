@@ -255,13 +255,13 @@ pub struct ScheduleView {
     when: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_schedules(state: AppStateRef) -> Result<Vec<ScheduleView>, String> {
     let c = state.cipher()?;
     Ok(list(&state.db.lock().unwrap(), &c).into_iter().map(|s| ScheduleView { when: describe(&s.cadence), schedule: s }).collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_schedule(state: AppStateRef, schedule: Schedule) -> Result<ScheduleView, String> {
     let c = state.cipher()?;
     let mut s = schedule;
@@ -282,7 +282,7 @@ pub fn save_schedule(state: AppStateRef, schedule: Schedule) -> Result<ScheduleV
     Ok(ScheduleView { when: describe(&s.cadence), schedule: s })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_schedule(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     delete(&state.db.lock().unwrap(), &id)

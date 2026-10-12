@@ -629,7 +629,7 @@ pub struct SpeechView {
     installing: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn speech_view(state: AppStateRef) -> SpeechView {
     let hw = state.hardware.read().unwrap().clone();
     let b = Budget::from_hardware(&hw);
@@ -666,7 +666,7 @@ pub fn speech_view(state: AppStateRef) -> SpeechView {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
     let spec = state.catalog.speech.models.iter().find(|m| m.id == model_id).ok_or("Unknown speech model")?.clone();
     let hw = state.hardware.read().unwrap().clone();
@@ -847,7 +847,7 @@ pub async fn remove_speech_model(state: AppStateRef<'_>, model_id: String) -> Re
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_voice_settings(state: AppStateRef) -> VoiceSettings {
     voice_settings(&state.db.lock().unwrap())
 }

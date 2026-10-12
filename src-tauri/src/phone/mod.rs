@@ -371,7 +371,7 @@ fn view(state: &AppState) -> PhoneView {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn phone_view(state: AppStateRef) -> PhoneView {
     view(&state)
 }
@@ -401,7 +401,7 @@ pub struct NewPhone {
 }
 
 /// Adds a phone: a fresh key, shown once as a QR code.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_phone(state: AppStateRef, name: String) -> Result<NewPhone, String> {
     let c = state.cipher()?;
     let v = view(&state);
@@ -429,7 +429,7 @@ pub fn add_phone(state: AppStateRef, name: String) -> Result<NewPhone, String> {
     Ok(NewPhone { link, qr, view: view(&state) })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_phone(state: AppStateRef, id: String) -> Result<PhoneView, String> {
     {
         let conn = state.db.lock().unwrap();

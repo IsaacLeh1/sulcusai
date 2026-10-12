@@ -263,13 +263,13 @@ fn need(state: &AppState, f: Feature) -> Option<Need> {
     f.needs_speech().and_then(|u| need_for(state, u)).or_else(|| f.needs_media().and_then(|k| media_need(state, k)))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn features_view(state: AppStateRef) -> Vec<FeatureView> {
     let on = enabled(&state.db.lock().unwrap());
     ALL.iter().map(|f| FeatureView { id: *f, enabled: on.contains(f), need: need(&state, *f) }).collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: bool) -> Result<Vec<Feature>, String> {
     if on {
         if let Some(n) = feature.needs_speech().and_then(|u| need_for(&state, u)) {
@@ -301,7 +301,7 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
 }
 
 /// Installs what a feature needs, then turns it on.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_feature(app: AppHandle, state: AppStateRef, feature: Feature) -> Result<(), String> {
     if let Some(k) = feature.needs_media() {
         if crate::media::has_kind(&state, k) {

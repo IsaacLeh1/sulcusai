@@ -293,7 +293,7 @@ pub struct SpeakerModelView {
     download: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn speaker_model(state: AppStateRef) -> SpeakerModelView {
     let m = state.catalog.diarization.clone();
     let runtime = crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_none();
@@ -301,7 +301,7 @@ pub fn speaker_model(state: AppStateRef) -> SpeakerModelView {
     SpeakerModelView { installed: available(&state), download: m.size + if runtime { rt_size } else { 0 }, model: m }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_speaker_model(app: AppHandle, state: AppStateRef) -> Result<(), String> {
     if !state.installs.lock().unwrap().is_empty() {
         return Err("Another install is in progress. Wait for it to finish first.".into());
@@ -328,7 +328,7 @@ pub fn install_speaker_model(app: AppHandle, state: AppStateRef) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_speaker_model(state: AppStateRef) -> Result<(), String> {
     *slot().lock().unwrap() = None;
     let m = &state.catalog.diarization;

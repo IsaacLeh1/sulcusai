@@ -473,7 +473,7 @@ pub struct VoicePackView {
     installed: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn voice_packs(state: AppStateRef) -> Vec<VoicePackView> {
     let inst = installed();
     state
@@ -485,7 +485,7 @@ pub fn voice_packs(state: AppStateRef) -> Vec<VoicePackView> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_voice_pack(app: AppHandle, state: AppStateRef, pack_id: String) -> Result<(), String> {
     let pack = state.catalog.voices.models.iter().find(|p| p.id == pack_id).ok_or("Unknown voice pack")?.clone();
     if pack.size() > state.budget().disk {
@@ -514,7 +514,7 @@ pub fn install_voice_pack(app: AppHandle, state: AppStateRef, pack_id: String) -
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_voice_pack(state: AppStateRef, pack_id: String) -> Result<(), String> {
     let pack = state.catalog.voices.models.iter().find(|p| p.id == pack_id).ok_or("Unknown voice pack")?;
     *engine_slot().lock().unwrap() = None;

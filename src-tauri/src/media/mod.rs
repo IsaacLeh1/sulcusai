@@ -1230,7 +1230,7 @@ pub struct MediaView {
     gallery: usize,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_view(state: AppStateRef) -> MediaView {
     view(&state)
 }
@@ -1270,7 +1270,7 @@ fn view(state: &AppState) -> MediaView {
     MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_media_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
     let spec = state.catalog.media.models.iter().find(|m| m.id == model_id).ok_or("Unknown model")?.clone();
     start_install(app, state.inner().clone(), spec, None)
@@ -1349,7 +1349,7 @@ pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Res
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_start(state: AppStateRef, request: Request) -> Result<String, String> {
     state.cipher()?;
     check(&state, &request)?;
@@ -1367,35 +1367,35 @@ pub fn media_start(state: AppStateRef, request: Request) -> Result<String, Strin
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_cancel(job_id: String) {
     cancel(&job_id);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_jobs() -> Vec<JobInfo> {
     list_jobs()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_list(state: AppStateRef, kind: Option<String>, before: Option<i64>, limit: Option<usize>) -> Result<Vec<MediaItem>, String> {
     let c = state.cipher()?;
     Ok(store::list(&state.db.lock().unwrap(), &c, kind.as_deref(), limit.unwrap_or(60).min(500), before))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_get(state: AppStateRef, id: String) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     store::get(&state.db.lock().unwrap(), &c, &id).ok_or_else(|| "That item is no longer in the gallery.".into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_file(state: AppStateRef, id: String) -> Result<tauri::ipc::Response, String> {
     let c = state.cipher()?;
     Ok(tauri::ipc::Response::new(store::read(&state.paths, &c, &id)?))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_thumb(state: AppStateRef, id: String) -> Result<tauri::ipc::Response, String> {
     let c = state.cipher()?;
     Ok(tauri::ipc::Response::new(store::read_thumb(&state.paths, &c, &id)?))
@@ -1403,7 +1403,7 @@ pub fn media_thumb(state: AppStateRef, id: String) -> Result<tauri::ipc::Respons
 
 /// Saves a still frame the window took from a video as its thumbnail
 /// (the window can decode WebM; the core can't).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_set_poster(state: AppStateRef, id: String, data: String) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| "That still isn't readable.".to_string())?;
@@ -1419,7 +1419,7 @@ pub fn media_set_poster(state: AppStateRef, id: String, data: String) -> Result<
     Ok(item)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_delete(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1428,7 +1428,7 @@ pub fn media_delete(state: AppStateRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_favorite(state: AppStateRef, id: String, on: bool) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1439,7 +1439,7 @@ pub fn media_favorite(state: AppStateRef, id: String, on: bool) -> Result<MediaI
 }
 
 /// Saves a copy, unencrypted, where the user picked (Save as…).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_export(state: AppStateRef, id: String, path: String) -> Result<(), String> {
     let c = state.cipher()?;
     let bytes = store::read(&state.paths, &c, &id)?;
@@ -1466,7 +1466,7 @@ fn mime_for(name: &str) -> Option<(&'static str, &'static str)> {
 const MAX_IMPORT: u64 = 200 * 1024 * 1024;
 
 /// Brings a picture, clip or sound from a file into the gallery.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let (kind, mime) = mime_for(&path).ok_or("Pick a picture (PNG, JPEG, WebP), a clip (WebM, MP4) or a sound (MP3, WAV, OGG).")?;
@@ -1503,7 +1503,7 @@ fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, 
 
 /// Adds bytes made in the window (a trimmed sound, a pasted or attached
 /// picture). `hidden` keeps chat attachments out of the studio.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn media_add(
     state: AppStateRef,
     data: String,

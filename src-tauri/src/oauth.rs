@@ -10,7 +10,7 @@
 //! Each provider needs an app registration (a client ID; Google also issues
 //! a client "secret", which for desktop apps isn't secret). They're set at
 //! build time (SULCUSAI_MS_CLIENT_ID, SULCUSAI_GOOGLE_CLIENT_ID,
-//! SULCUSAI_GOOGLE_CLIENT_SECRET) or in Settings › Accounts.
+//! SULCUSAI_GOOGLE_CLIENT_SECRET) or in Settings › Microsoft and Google sign-in.
 
 use std::time::Duration;
 
@@ -91,18 +91,54 @@ pub struct ClientIds {
 
 const CLIENTS_KEY: &str = "oauth_clients";
 
-pub fn clients(conn: &Connection) -> ClientIds {
-    let saved: ClientIds = db::get(conn, CLIENTS_KEY).unwrap_or_default();
-    let pick = |s: String, built: Option<&'static str>| if s.trim().is_empty() { built.unwrap_or("").to_string() } else { s.trim().to_string() };
+/// The registrations built into this copy (set when it was built).
+fn built_in() -> ClientIds {
+    let get = |v: Option<&'static str>| v.unwrap_or("").trim().to_string();
     ClientIds {
-        microsoft: pick(saved.microsoft, option_env!("SULCUSAI_MS_CLIENT_ID")),
-        google: pick(saved.google, option_env!("SULCUSAI_GOOGLE_CLIENT_ID")),
-        google_secret: pick(saved.google_secret, option_env!("SULCUSAI_GOOGLE_CLIENT_SECRET")),
+        microsoft: get(option_env!("SULCUSAI_MS_CLIENT_ID")),
+        google: get(option_env!("SULCUSAI_GOOGLE_CLIENT_ID")),
+        google_secret: get(option_env!("SULCUSAI_GOOGLE_CLIENT_SECRET")),
     }
+}
+
+/// The registrations sign-in uses: the person's own where they added one,
+/// otherwise the built-in ones.
+pub fn clients(conn: &Connection) -> ClientIds {
+    resolve(saved(conn), built_in())
+}
+
+fn resolve(saved: ClientIds, built: ClientIds) -> ClientIds {
+    let microsoft = if saved.microsoft.trim().is_empty() { built.microsoft } else { saved.microsoft.trim().to_string() };
+    // A Google ID and its secret go together: never mix the person's ID with the built-in secret.
+    let (google, google_secret) = if saved.google.trim().is_empty() {
+        (built.google, built.google_secret)
+    } else {
+        (saved.google.trim().to_string(), saved.google_secret.trim().to_string())
+    };
+    ClientIds { microsoft, google, google_secret }
+}
+
+/// Only what the person added themselves.
+pub fn saved(conn: &Connection) -> ClientIds {
+    db::get(conn, CLIENTS_KEY).unwrap_or_default()
 }
 
 pub fn set_clients(conn: &Connection, ids: &ClientIds) -> Result<(), String> {
     db::set(conn, CLIENTS_KEY, ids)
+}
+
+/// Settings › Microsoft and Google sign-in: the person's own registrations,
+/// and which providers work without one.
+#[derive(Debug, Serialize)]
+pub struct ClientsView {
+    pub own: ClientIds,
+    pub built_in_microsoft: bool,
+    pub built_in_google: bool,
+}
+
+pub fn clients_view(conn: &Connection) -> ClientsView {
+    let built = built_in();
+    ClientsView { own: saved(conn), built_in_microsoft: !built.microsoft.is_empty(), built_in_google: !built.google.is_empty() }
 }
 
 struct Client {
@@ -116,7 +152,7 @@ fn client(ids: &ClientIds, p: Provider) -> Result<Client, String> {
         Provider::Google => (ids.google.clone(), Some(ids.google_secret.clone()).filter(|s| !s.is_empty())),
     };
     if id.is_empty() {
-        return Err(format!("Signing in with {} needs this copy of SulcusAI to be registered with {}. Add the app's client ID in Settings › Accounts.", p.name(), p.name()));
+        return Err(format!("Signing in with {} needs this copy of SulcusAI to be registered with {}. Add the app's client ID in Settings › Microsoft and Google sign-in.", p.name(), p.name()));
     }
     Ok(Client { id, secret })
 }
@@ -375,9 +411,18 @@ mod tests {
     #[test]
     fn missing_registrations_say_what_to_do() {
         let e = client(&ClientIds::default(), Provider::Microsoft).err().unwrap();
-        assert!(e.contains("Settings › Accounts"));
+        assert!(e.contains("Settings › Microsoft and Google sign-in"));
         let g = client(&ClientIds { google: "g".into(), google_secret: "s".into(), ..Default::default() }, Provider::Google).ok().unwrap();
         assert_eq!(g.secret.as_deref(), Some("s"));
+    }
+
+    #[test]
+    fn own_registrations_win_and_google_keeps_its_own_secret() {
+        let built = ClientIds { microsoft: "ms-built".into(), google: "g-built".into(), google_secret: "s-built".into() };
+        assert_eq!(resolve(ClientIds::default(), built.clone()), built);
+        let own = ClientIds { microsoft: " ms-own ".into(), google: "g-own".into(), google_secret: String::new() };
+        let r = resolve(own, built);
+        assert_eq!((r.microsoft.as_str(), r.google.as_str(), r.google_secret.as_str()), ("ms-own", "g-own", ""));
     }
 
     /// The listener and the token exchange, against a stand-in provider.

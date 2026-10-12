@@ -203,7 +203,6 @@
  "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.": "让图片动起来需要 Wan 2.2。请从工作室的模型列表中安装。",
  "Browser": "浏览器",
  "Browser control": "浏览器控制",
- "Browser control needs Windows for now.": "浏览器控制目前需要 Windows。",
  "Brush": "画笔",
  "Bypass": "绕过",
  "CalDAV address": "CalDAV 地址",
@@ -978,7 +977,6 @@
  "Scores are rough guides from public benchmarks; bigger models also need more of the PC.": "分数是根据公开基准测试得出的粗略参考；更大的模型也需要更多电脑资源。",
  "Screenshot": "截图",
  "Screenshot attached. Ask about it, or press Enter.": "已附加截图。可以就它提问，或按 Enter。",
- "Screenshots need Windows for now.": "截图目前需要 Windows。",
  "SearXNG (your own server)": "SearXNG（你自己的服务器）",
  "SearXNG address": "SearXNG 地址",
  "Search activity": "搜索活动",
@@ -1765,5 +1763,15 @@
  "Syncing through the relay needs the Cloud level.": "通过中继同步需要“云端”级别。",
  "The relay took too long.": "中继响应超时。",
  "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "当你的电脑不在同一网络时，可以通过你自己运行的中继同步，例如应用 relay 文件夹中的 Cloudflare Worker。所有内容在发出前都会用电脑间的配对密钥加密，中继无法读取。仅在“云端”级别使用。",
- "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "有一项内容太大，无法通过中继（超过 2 MB）；它会在局域网内同步。"
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "有一项内容太大，无法通过中继（超过 2 MB）；它会在局域网内同步。",
+ "Leave empty to use the built-in one.": "留空即使用内置的注册。",
+ "Needs an app registration (add its IDs below).": "需要应用注册（在下方填写其 ID）。",
+ "No Chrome, Edge, Chromium or Brave was found for this user.": "未找到此用户的 Chrome、Edge、Chromium 或 Brave。",
+ "No home folder.": "没有主文件夹。",
+ "No screenshot tool was found. Install grim (Wayland) or gnome-screenshot, scrot or ImageMagick.": "未找到截图工具。请安装 grim（Wayland）或 gnome-screenshot、scrot 或 ImageMagick。",
+ "Ready: built into this copy of SulcusAI.": "就绪：已内置于此 SulcusAI 副本。",
+ "Teaching a model isn't available on this system yet.": "此系统暂不支持训练模型。",
+ "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "截图失败。请在“系统设置 → 隐私与安全性 → 屏幕录制”中允许 SulcusAI，然后重试。",
+ "Use my own registration": "使用我自己的注册",
+ "Using your own registration.": "正在使用你自己的注册。"
 }

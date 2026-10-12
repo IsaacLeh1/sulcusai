@@ -166,7 +166,7 @@ pub async fn translate(state: AppStateRef<'_>, text: String, to: String, detect:
     Ok(Translation { text: out, detected })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn translation_languages() -> Vec<Value> {
     LANGUAGES.iter().map(|(c, n)| json!({ "code": c, "name": n })).collect()
 }

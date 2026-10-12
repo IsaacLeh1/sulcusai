@@ -83,13 +83,13 @@ pub fn prompt_section(p: &Project) -> String {
 
 // ---------- commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects(state: AppStateRef) -> Result<Vec<Project>, String> {
     let c = state.cipher()?;
     Ok(list(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_project(state: AppStateRef, name: String) -> Result<Project, String> {
     let c = state.cipher()?;
     let name = name.trim();
@@ -108,7 +108,7 @@ pub fn create_project(state: AppStateRef, name: String) -> Result<Project, Strin
     Ok(p)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_project(state: AppStateRef, id: String, name: String, instructions: String) -> Result<(), String> {
     let c = state.cipher()?;
     let name = name.trim();
@@ -132,7 +132,7 @@ pub fn update_project(state: AppStateRef, id: String, name: String, instructions
 }
 
 /// Deletes the project and its memories. Its chats stay, outside any project.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -143,7 +143,7 @@ pub fn delete_project(state: AppStateRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_project_folder(state: AppStateRef, id: String, path: String) -> Result<(), String> {
     state.cipher()?;
     if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data) {
@@ -159,7 +159,7 @@ pub fn add_project_folder(state: AppStateRef, id: String, path: String) -> Resul
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_project_folder(state: AppStateRef, id: String, path: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -167,7 +167,7 @@ pub fn remove_project_folder(state: AppStateRef, id: String, path: String) -> Re
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_chat_in(state: AppStateRef, project_id: Option<String>, incognito: bool) -> Result<Chat, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -184,14 +184,14 @@ pub fn create_chat_in(state: AppStateRef, project_id: Option<String>, incognito:
     db::create_chat_in(&conn, &c, model, project_id, incognito)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn leave_incognito(state: AppStateRef, keep: Option<String>) -> Result<(), String> {
     state.cipher()?;
     db::delete_incognito_chats(&state.db.lock().unwrap(), keep.as_deref())?;
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_chat_project(state: AppStateRef, chat_id: String, project_id: Option<String>) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -206,25 +206,25 @@ pub fn set_chat_project(state: AppStateRef, chat_id: String, project_id: Option<
 
 // ---------- memory commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_memories(state: AppStateRef) -> Result<Vec<Memory>, String> {
     let c = state.cipher()?;
     Ok(memory::list(&state.db.lock().unwrap(), &c, None))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_memory(state: AppStateRef, content: String, project_id: Option<String>) -> Result<Memory, String> {
     let c = state.cipher()?;
     Ok(memory::add(&state.db.lock().unwrap(), &c, &content, project_id.as_deref(), None)?.0)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_memory(state: AppStateRef, id: String, content: String) -> Result<(), String> {
     let c = state.cipher()?;
     memory::update(&state.db.lock().unwrap(), &c, &id, &content)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_memory(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -232,7 +232,7 @@ pub fn delete_memory(state: AppStateRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_memories(state: AppStateRef) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -241,7 +241,7 @@ pub fn clear_memories(state: AppStateRef) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_memory_enabled(state: AppStateRef, enabled: bool) -> Result<db::Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();

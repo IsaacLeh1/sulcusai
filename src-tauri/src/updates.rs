@@ -92,7 +92,7 @@ pub struct UpdateView {
     available: Option<Available>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_view(state: AppStateRef) -> UpdateView {
     let s = settings(&state);
     let available = PENDING.lock().unwrap().as_ref().map(|u| Available { version: u.version.clone(), notes: u.body.clone().unwrap_or_default(), date: u.date.map(|d| d.date().to_string()) });
@@ -105,7 +105,7 @@ pub async fn check_for_update(app: AppHandle, state: AppStateRef<'_>) -> Result<
     check(&app, &state).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_update_auto(state: AppStateRef, auto: bool) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();

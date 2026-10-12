@@ -8,6 +8,9 @@
 #
 # The signing key lives at %USERPROFILE%\.tauri\sulcusai.key (never commit
 # it; without it, installed copies can never update again).
+# The Microsoft and Google sign-in registrations are built in from
+# %USERPROFILE%\.tauri\sulcusai-oauth.env (KEY=value lines:
+# SULCUSAI_MS_CLIENT_ID, SULCUSAI_GOOGLE_CLIENT_ID, SULCUSAI_GOOGLE_CLIENT_SECRET).
 
 param(
     [switch]$Publish,
@@ -30,6 +33,16 @@ $sig = "$exe.sig"
 if (-not $SkipBuild) {
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $keyFile -Raw
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
+    $oauthFile = Join-Path $env:USERPROFILE ".tauri\sulcusai-oauth.env"
+    if (Test-Path $oauthFile) {
+        foreach ($line in Get-Content $oauthFile) {
+            if ($line -match '^\s*(SULCUSAI_[A-Z_]+)\s*=\s*(.*?)\s*$' -and $Matches[2]) {
+                Set-Item -Path "Env:$($Matches[1])" -Value $Matches[2]
+            }
+        }
+    } else {
+        Write-Warning "No $oauthFile; this build won't have Microsoft or Google sign-in built in."
+    }
     Push-Location $root
     try {
         pnpm tauri build

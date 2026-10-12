@@ -837,12 +837,12 @@ fn view(state: &AppState) -> SyncView {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_view(state: AppStateRef) -> SyncView {
     view(&state)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_sync(state: AppStateRef, enabled: bool, name: Option<String>) -> Result<SyncView, String> {
     update(&state, |c| {
         c.enabled = enabled;
@@ -858,7 +858,7 @@ pub fn set_sync(state: AppStateRef, enabled: bool, name: Option<String>) -> Resu
 
 /// Shows a code on this PC for five minutes (and turns sync on, so the other
 /// PC can reach it).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_pairing(state: AppStateRef) -> Result<SyncView, String> {
     state.work_cipher()?;
     update(&state, |c| c.enabled = true)?;
@@ -868,7 +868,7 @@ pub fn start_pairing(state: AppStateRef) -> Result<SyncView, String> {
     Ok(view(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_pairing(state: AppStateRef) -> SyncView {
     *PAIRING.lock().unwrap() = None;
     ANNOUNCE.notify_one();
@@ -908,7 +908,7 @@ pub async fn pair_device(state: AppStateRef<'_>, code: String, target: Option<St
     Ok(view(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_device(state: AppStateRef, id: String) -> Result<SyncView, String> {
     let name = update(&state, |c| {
         let name = c.peers.iter().find(|p| p.id == id).map(|p| p.name.clone());
@@ -923,7 +923,7 @@ pub fn remove_device(state: AppStateRef, id: String) -> Result<SyncView, String>
 
 /// Sets (or clears) the relay. Only https addresses, except this PC's own
 /// (for testing a relay locally).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_relay(state: AppStateRef, url: Option<String>) -> Result<SyncView, String> {
     let url = url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty());
     if let Some(u) = &url {
@@ -939,7 +939,7 @@ pub fn set_relay(state: AppStateRef, url: Option<String>) -> Result<SyncView, St
     Ok(view(&state))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_now(state: AppStateRef) -> SyncView {
     ERRORS.lock().unwrap().clear();
     FORCE.store(true, Ordering::SeqCst);

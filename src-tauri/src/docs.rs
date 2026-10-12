@@ -938,7 +938,7 @@ pub fn write_pdf(path: &Path, md: &str) -> Result<(), String> {
 
 /// Opens a document the assistant made, in its usual app. Only files in
 /// shared folders, and only document types (never programs or scripts).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_document(state: crate::AppStateRef, path: String) -> Result<(), String> {
     state.cipher()?;
     let p = std::path::PathBuf::from(&path).canonicalize().map_err(|_| "That file isn't there anymore.".to_string())?;

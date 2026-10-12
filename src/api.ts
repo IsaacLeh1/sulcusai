@@ -882,6 +882,13 @@ export interface OAuthClients {
   google_secret: string;
 }
 
+/** The person's own registrations, and which providers work without one. */
+export interface OAuthClientsView {
+  own: OAuthClients;
+  built_in_microsoft: boolean;
+  built_in_google: boolean;
+}
+
 export type MediaKind = "image" | "video" | "music" | "upscale" | "background";
 
 export interface MediaFit {
@@ -1217,7 +1224,7 @@ export const api = {
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
   addMailAccountOAuth: (provider: OAuthProvider, name: string | null) => invoke<string>("add_mail_account_oauth", { provider, name, hint: null }),
   addCalendarAccountOAuth: (provider: OAuthProvider) => invoke<string>("add_calendar_account_oauth", { provider, hint: null }),
-  oauthClients: () => invoke<OAuthClients>("oauth_clients"),
+  oauthClients: () => invoke<OAuthClientsView>("oauth_clients"),
   setOauthClients: (ids: OAuthClients) => invoke<void>("set_oauth_clients", { ids }),
   removeMailAccount: (id: string) => invoke<void>("remove_mail_account", { id }),
   syncMail: () => invoke<number>("sync_mail"),

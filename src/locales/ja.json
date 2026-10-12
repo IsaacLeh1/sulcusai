@@ -203,7 +203,6 @@
  "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.": "画像を動かすには Wan 2.2 が必要です。スタジオのモデル一覧からインストールしてください。",
  "Browser": "ブラウザー",
  "Browser control": "ブラウザー操作",
- "Browser control needs Windows for now.": "ブラウザー操作は現在Windowsが必要です。",
  "Brush": "ブラシ",
  "Bypass": "バイパス",
  "CalDAV address": "CalDAVアドレス",
@@ -978,7 +977,6 @@
  "Scores are rough guides from public benchmarks; bigger models also need more of the PC.": "スコアは公開ベンチマークに基づく大まかな目安です。大きなモデルほどPCの性能も多く必要です。",
  "Screenshot": "スクリーンショット",
  "Screenshot attached. Ask about it, or press Enter.": "スクリーンショットを添付しました。質問するか、Enterキーを押してください。",
- "Screenshots need Windows for now.": "スクリーンショットは現在Windowsが必要です。",
  "SearXNG (your own server)": "SearXNG（自分のサーバー）",
  "SearXNG address": "SearXNGのアドレス",
  "Search activity": "アクティビティを検索",
@@ -1765,5 +1763,15 @@
  "Syncing through the relay needs the Cloud level.": "中継経由の同期には「クラウド」レベルが必要です。",
  "The relay took too long.": "中継サーバーの応答が遅すぎました。",
  "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "PC同士が同じネットワークにないときは、自分で運用する中継サーバー（アプリの relay フォルダーにある Cloudflare Worker など）を通して同期できます。送信前にPC間のペアリングキーで暗号化されるため、中継サーバーは内容を読めません。「クラウド」レベルでのみ使われます。",
- "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "中継サーバーを通すには大きすぎる項目があります（2 MB 超）。ローカルネットワークで同期されます。"
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "中継サーバーを通すには大きすぎる項目があります（2 MB 超）。ローカルネットワークで同期されます。",
+ "Leave empty to use the built-in one.": "空のままにすると内蔵の登録を使います。",
+ "Needs an app registration (add its IDs below).": "アプリ登録が必要です（下に ID を入力してください）。",
+ "No Chrome, Edge, Chromium or Brave was found for this user.": "このユーザーの Chrome、Edge、Chromium、Brave が見つかりませんでした。",
+ "No home folder.": "ホームフォルダーがありません。",
+ "No screenshot tool was found. Install grim (Wayland) or gnome-screenshot, scrot or ImageMagick.": "スクリーンショットツールが見つかりません。grim（Wayland）または gnome-screenshot、scrot、ImageMagick をインストールしてください。",
+ "Ready: built into this copy of SulcusAI.": "準備完了：この SulcusAI に内蔵されています。",
+ "Teaching a model isn't available on this system yet.": "このシステムではまだモデルの学習を利用できません。",
+ "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "スクリーンショットに失敗しました。システム設定 → プライバシーとセキュリティ → 画面収録で SulcusAI を許可してから、もう一度お試しください。",
+ "Use my own registration": "自分の登録を使う",
+ "Using your own registration.": "自分の登録を使用しています。"
 }

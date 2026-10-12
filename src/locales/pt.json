@@ -203,7 +203,6 @@
  "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.": "Dar vida a uma imagem requer o Wan 2.2. Instale-o pela lista de Modelos do Estúdio.",
  "Browser": "Navegador",
  "Browser control": "Controle do navegador",
- "Browser control needs Windows for now.": "Por enquanto, o controle do navegador requer Windows.",
  "Brush": "Pincel",
  "Bypass": "Sem perguntar",
  "CalDAV address": "Endereço CalDAV",
@@ -978,7 +977,6 @@
  "Scores are rough guides from public benchmarks; bigger models also need more of the PC.": "As pontuações são guias aproximados de benchmarks públicos; modelos maiores também exigem mais do PC.",
  "Screenshot": "Captura de tela",
  "Screenshot attached. Ask about it, or press Enter.": "Captura de tela anexada. Pergunte sobre ela ou pressione Enter.",
- "Screenshots need Windows for now.": "Por enquanto, capturas de tela requerem Windows.",
  "SearXNG (your own server)": "SearXNG (seu próprio servidor)",
  "SearXNG address": "Endereço do SearXNG",
  "Search activity": "Pesquisar atividade",
@@ -1765,5 +1763,15 @@
  "Syncing through the relay needs the Cloud level.": "Sincronizar pelo relay exige o nível Nuvem.",
  "The relay took too long.": "O relay demorou demais.",
  "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "Quando seus PCs não estão na mesma rede, eles podem sincronizar por um relay que você mantém, como o Cloudflare Worker da pasta relay do app. Tudo é criptografado com as chaves de pareamento dos seus PCs antes de sair; o relay não consegue ler. Usado só no nível Nuvem.",
- "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "Um item é grande demais para passar pelo relay (mais de 2 MB); ele sincroniza na rede local."
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "Um item é grande demais para passar pelo relay (mais de 2 MB); ele sincroniza na rede local.",
+ "Leave empty to use the built-in one.": "Deixe vazio para usar o integrado.",
+ "Needs an app registration (add its IDs below).": "Precisa de um registro de aplicativo (adicione os IDs abaixo).",
+ "No Chrome, Edge, Chromium or Brave was found for this user.": "Nenhum Chrome, Edge, Chromium ou Brave foi encontrado para este usuário.",
+ "No home folder.": "Nenhuma pasta pessoal.",
+ "No screenshot tool was found. Install grim (Wayland) or gnome-screenshot, scrot or ImageMagick.": "Nenhuma ferramenta de captura de tela foi encontrada. Instale grim (Wayland) ou gnome-screenshot, scrot ou ImageMagick.",
+ "Ready: built into this copy of SulcusAI.": "Pronto: integrado a esta cópia do SulcusAI.",
+ "Teaching a model isn't available on this system yet.": "Ensinar um modelo ainda não está disponível neste sistema.",
+ "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "A captura de tela não funcionou. Permita o SulcusAI em Ajustes do Sistema → Privacidade e Segurança → Gravação de Tela e tente novamente.",
+ "Use my own registration": "Usar meu próprio registro",
+ "Using your own registration.": "Usando seu próprio registro."
 }

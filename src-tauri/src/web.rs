@@ -521,7 +521,7 @@ pub struct WebSettingsView {
     has_brave_key: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_web_settings(state: AppStateRef) -> Result<WebSettingsView, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -529,7 +529,7 @@ pub fn get_web_settings(state: AppStateRef) -> Result<WebSettingsView, String> {
 }
 
 /// `brave_key`: None keeps the saved key, "" removes it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_web_settings(state: AppStateRef, settings: WebSettings, brave_key: Option<String>) -> Result<(), String> {
     let c = state.cipher()?;
     let url = settings.searxng_url.trim();

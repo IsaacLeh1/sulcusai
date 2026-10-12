@@ -216,7 +216,7 @@ fn view(state: &AppState) -> ApiServerView {
     ApiServerView { url: format!("http://127.0.0.1:{}/v1", s.port), enabled: s.enabled, port: s.port, key: s.key, running, problem: PROBLEM.lock().unwrap().clone() }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn api_server_view(state: AppStateRef) -> ApiServerView {
     view(&state)
 }
@@ -246,7 +246,7 @@ pub async fn set_api_server(state: AppStateRef<'_>, enabled: bool, port: u16) ->
 }
 
 /// A new key; programs using the old one stop working.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn new_api_key(state: AppStateRef) -> Result<ApiServerView, String> {
     {
         let conn = state.db.lock().unwrap();

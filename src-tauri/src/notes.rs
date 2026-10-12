@@ -394,27 +394,27 @@ pub fn start_reminders(app: AppHandle) {
 
 // ---------- commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn notes(state: AppStateRef) -> Result<Vec<Note>, String> {
     let c = state.cipher()?;
     Ok(list_notes(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_note_cmd(state: AppStateRef, id: Option<String>, note: NoteBody) -> Result<Note, String> {
     let c = state.cipher()?;
     features::require(&state, Feature::Notes)?;
     save_note(&state.db.lock().unwrap(), &c, id.as_deref(), note)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pin_note(state: AppStateRef, id: String, pinned: bool) -> Result<(), String> {
     state.cipher()?;
     state.db.lock().unwrap().execute("UPDATE notes SET pinned = ?2 WHERE id = ?1", params![id, pinned as i64]).map_err(err)?;
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_note(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -423,20 +423,20 @@ pub fn delete_note(state: AppStateRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tasks(state: AppStateRef) -> Result<Vec<Task>, String> {
     let c = state.cipher()?;
     Ok(list_tasks(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_task_cmd(state: AppStateRef, task: Task) -> Result<Task, String> {
     let c = state.cipher()?;
     features::require(&state, Feature::Tasks)?;
     save_task(&state.db.lock().unwrap(), &c, task)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_task(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     state.db.lock().unwrap().execute("DELETE FROM tasks WHERE id = ?1", [&id]).map_err(err)?;
@@ -444,7 +444,7 @@ pub fn delete_task(state: AppStateRef, id: String) -> Result<(), String> {
 }
 
 /// Reads a typed due date, for the task editor's date box.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn parse_due_text(text: String) -> Option<serde_json::Value> {
     let (d, t) = parse_due(&text, Local::now().date_naive())?;
     Some(json!({ "due": to_ms(d, t), "has_time": t.is_some() }))
@@ -452,7 +452,7 @@ pub fn parse_due_text(text: String) -> Option<serde_json::Value> {
 
 /// Adds a meeting's action items as tasks; due words such as "Friday"
 /// count from the meeting's date. Returns how many were added.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tasks_from_meeting(state: AppStateRef, meeting_id: String, indexes: Vec<usize>) -> Result<usize, String> {
     let c = state.cipher()?;
     features::require(&state, Feature::Tasks)?;

@@ -158,7 +158,7 @@ pub async fn start_dictation(app: AppHandle, state: AppStateRef<'_>) -> Result<S
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_dictation(id: String) {
     signal(&format!("dictation:{id}"));
 }
@@ -252,7 +252,7 @@ pub async fn speak(state: AppStateRef<'_>, text: String, language: Option<String
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_speaking(state: AppStateRef) {
     state.player.stop();
 }
@@ -406,14 +406,14 @@ async fn voice_loop(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_voice(state: AppStateRef, chat_id: String) {
     signal(&format!("voice:{chat_id}"));
     state.player.stop();
 }
 
 /// "Tap to interrupt": stop talking and stop the reply, keep listening.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn interrupt_voice(state: AppStateRef, chat_id: String) {
     state.player.stop();
     if let Some(flag) = state.generations.lock().unwrap().get(&chat_id) {

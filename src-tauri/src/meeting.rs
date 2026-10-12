@@ -999,7 +999,7 @@ pub async fn start_meeting(app: AppHandle, state: AppStateRef<'_>, options: Star
     Ok(meeting)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_meeting(state: AppStateRef) -> Result<(), String> {
     if let Some((_, stop)) = live().lock().unwrap().as_ref() {
         stop.store(true, Ordering::SeqCst);
@@ -1009,7 +1009,7 @@ pub fn stop_meeting(state: AppStateRef) -> Result<(), String> {
 }
 
 /// The meeting being recorded right now, if any.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn live_meeting() -> Option<String> {
     live().lock().unwrap().as_ref().map(|(id, _)| id.clone()).filter(|id| !id.is_empty())
 }
@@ -1023,13 +1023,13 @@ pub struct MeetingDetail {
     segments: Vec<Segment>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_meetings(state: AppStateRef) -> Result<Vec<Meeting>, String> {
     let c = state.cipher()?;
     Ok(list(&state.db.lock().unwrap(), &c))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_meeting(state: AppStateRef, id: String) -> Result<MeetingDetail, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1037,7 +1037,7 @@ pub fn get_meeting(state: AppStateRef, id: String) -> Result<MeetingDetail, Stri
     Ok(MeetingDetail { segments: segments(&conn, &c, &id), meeting })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_meeting(state: AppStateRef, id: String, title: String) -> Result<(), String> {
     let c = state.cipher()?;
     let title = title.trim();
@@ -1053,7 +1053,7 @@ pub fn rename_meeting(state: AppStateRef, id: String, title: String) -> Result<(
 
 /// Names one of the other people ("Speaker 2" → "Jordan"); an empty name
 /// goes back to the number.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_speaker(state: AppStateRef, id: String, voice: u32, name: String) -> Result<(), String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1067,7 +1067,7 @@ pub fn rename_speaker(state: AppStateRef, id: String, voice: u32, name: String) 
     save_data(&conn, &c, &id, &m.data)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_action_done(state: AppStateRef, id: String, index: usize, done: bool) -> Result<(), String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1077,7 +1077,7 @@ pub fn set_action_done(state: AppStateRef, id: String, index: usize, done: bool)
     save_data(&conn, &c, &id, &m.data)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_meeting(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     if live_meeting().as_deref() == Some(id.as_str()) {
@@ -1093,7 +1093,7 @@ pub fn delete_meeting(state: AppStateRef, id: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_meeting_audio(state: AppStateRef, id: String) -> Result<(), String> {
     let c = state.cipher()?;
     let dir = audio_dir(&state, &id);
@@ -1126,7 +1126,7 @@ pub async fn rewrite_notes(app: AppHandle, state: AppStateRef<'_>, id: String) -
 }
 
 /// A WAV of both channels between two times, for replaying part of a meeting.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn meeting_clip(state: AppStateRef, id: String, start: f64, end: f64) -> Result<tauri::ipc::Response, String> {
     let c = state.cipher()?;
     let end = end.min(start + 120.0);
@@ -1134,7 +1134,7 @@ pub fn meeting_clip(state: AppStateRef, id: String, start: f64, end: f64) -> Res
 }
 
 /// Saves the notes and transcript as a Markdown file the user chose.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_meeting(state: AppStateRef, id: String, path: String, transcript: bool) -> Result<(), String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1147,7 +1147,7 @@ pub fn export_meeting(state: AppStateRef, id: String, path: String, transcript: 
 
 /// Starts a chat about a meeting, seeded with its notes; the assistant can
 /// read the full transcript with its meeting tools.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ask_about_meeting(state: AppStateRef, id: String) -> Result<String, String> {
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1204,7 +1204,7 @@ pub struct SearchHit {
     lines: Vec<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_meetings(state: AppStateRef, query: String) -> Result<Vec<SearchHit>, String> {
     let c = state.cipher()?;
     Ok(search(&state.db.lock().unwrap(), &c, &query, 50).into_iter().map(|(meeting, lines)| SearchHit { meeting, lines }).collect())

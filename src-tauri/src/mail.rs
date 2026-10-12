@@ -644,13 +644,13 @@ pub struct PresetView {
     note: Option<&'static str>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mail_preset(email: String) -> PresetView {
     let (config, note) = preset(email.trim());
     PresetView { config, note }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mail_accounts(state: AppStateRef) -> Result<Vec<AccountView>, String> {
     let c = state.cipher()?;
     Ok(accounts(&state.db.lock().unwrap(), &c)
@@ -707,7 +707,7 @@ pub async fn add_mail_account_oauth(state: AppStateRef<'_>, provider: crate::oau
     Ok(id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_mail_account(state: AppStateRef, id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -724,7 +724,7 @@ pub async fn sync_mail(state: AppStateRef<'_>) -> Result<usize, String> {
     sync_all(&state, &c).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mail_list(state: AppStateRef, query: Option<String>, limit: Option<usize>) -> Result<Vec<MailItem>, String> {
     ensure_on(&state)?;
     let c = state.cipher()?;
@@ -736,7 +736,7 @@ pub fn mail_list(state: AppStateRef, query: Option<String>, limit: Option<usize>
     Ok(items)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mail_get(state: AppStateRef, id: String) -> Result<MailItem, String> {
     ensure_on(&state)?;
     let c = state.cipher()?;

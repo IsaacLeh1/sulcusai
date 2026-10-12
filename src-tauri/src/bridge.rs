@@ -492,7 +492,7 @@ pub struct BridgeStatus {
     extension_id: &'static str,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn bridge_status(state: AppStateRef) -> BridgeStatus {
     BridgeStatus {
         installed: installed(),
@@ -504,7 +504,7 @@ pub fn bridge_status(state: AppStateRef) -> BridgeStatus {
 }
 
 /// Shows the extension folder (for Load unpacked).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn show_extension_folder(state: AppStateRef) -> Result<(), String> {
     let dir = state.paths.data.join("extension");
     if !dir.exists() {

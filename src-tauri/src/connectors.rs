@@ -346,7 +346,7 @@ pub struct ConnectorInput {
     pub env: HashMap<String, String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_connectors(state: AppStateRef) -> Result<Vec<Connector>, String> {
     let c = state.cipher()?;
     Ok(connectors(&state.db.lock().unwrap(), &c))
@@ -404,7 +404,7 @@ pub async fn set_connector_enabled(state: AppStateRef<'_>, id: String, enabled: 
     store(&state.db.lock().unwrap(), &c, "connectors", &id, &conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_tool_mode(state: AppStateRef, id: String, tool: String, mode: ToolMode) -> Result<(), String> {
     let c = state.cipher()?;
     let conn_db = state.db.lock().unwrap();
@@ -413,14 +413,14 @@ pub fn set_tool_mode(state: AppStateRef, id: String, tool: String, mode: ToolMod
     store(&conn_db, &c, "connectors", &id, &conn)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_plugins(state: AppStateRef) -> Result<Vec<Plugin>, String> {
     let c = state.cipher()?;
     Ok(plugins(&state.db.lock().unwrap(), &c))
 }
 
 /// What installing a plugin folder would do, for the confirmation dialog.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn inspect_plugin(state: AppStateRef, path: String) -> Result<PluginPreview, String> {
     state.cipher()?;
     let dir = PathBuf::from(&path);

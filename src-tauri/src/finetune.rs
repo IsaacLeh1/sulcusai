@@ -226,7 +226,7 @@ pub struct FinetuneView {
     trainer_size: u64,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn finetune_view(state: AppStateRef) -> FinetuneView {
     let installed = db::installed_models(&state.db.lock().unwrap());
     let bases = installed
@@ -394,14 +394,14 @@ async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db:
     Ok(loss)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_finetune() {
     if let Some((_, cancel)) = JOB.lock().unwrap().as_ref() {
         cancel.store(true, Ordering::Relaxed);
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_adapter(state: AppStateRef, id: String) -> Result<(), String> {
     let mut list = adapters(&state);
     let Some(a) = list.iter().position(|a| a.id == id).map(|i| list.remove(i)) else { return Ok(()) };

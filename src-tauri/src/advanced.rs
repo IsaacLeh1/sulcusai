@@ -216,13 +216,13 @@ pub struct AdvancedView {
     locked: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn advanced_view(state: AppStateRef) -> AdvancedView {
     let conn = state.db.lock().unwrap();
     AdvancedView { settings: stored(&conn), locked: lock_hash(&conn).is_some() }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_advanced(state: AppStateRef, settings: Advanced, pin: Option<String>) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     check_lock(&conn, pin.as_deref())?;
@@ -238,7 +238,7 @@ pub fn set_advanced(state: AppStateRef, settings: Advanced, pin: Option<String>)
 }
 
 /// Sets, changes or (with an empty `new_pin`) removes the advanced-mode PIN.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_advanced_pin(state: AppStateRef, pin: Option<String>, new_pin: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     check_lock(&conn, pin.as_deref())?;
@@ -258,7 +258,7 @@ pub fn set_advanced_pin(state: AppStateRef, pin: Option<String>, new_pin: String
 }
 
 /// Checks the PIN without changing anything (to open the settings).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_advanced_pin(state: AppStateRef, pin: String) -> Result<(), String> {
     check_lock(&state.db.lock().unwrap(), Some(&pin))
 }

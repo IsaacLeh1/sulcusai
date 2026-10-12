@@ -120,12 +120,12 @@ pub struct BrowsersView {
     installed: Vec<Installed>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn browsers_view(state: AppStateRef) -> BrowsersView {
     BrowsersView { current: choice(&state.db.lock().unwrap()), installed: installed() }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_main_browser(state: AppStateRef, choice: MainBrowser) -> Result<(), String> {
     if let MainBrowser::App { name } = &choice {
         if !installed().iter().any(|b| &b.name == name) {

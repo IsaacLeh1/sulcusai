@@ -204,20 +204,20 @@ fn clipboard_text() -> Option<String> {
 
 // ---------- commands ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quick_clipboard() -> Option<String> {
     clipboard_text().map(|t| t.trim().chars().take(20_000).collect::<String>()).filter(|t| !t.is_empty())
 }
 
 /// The box starts small and grows to fit an answer.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quick_resize(app: AppHandle, height: f64) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.set_size(tauri::LogicalSize::new(680.0, height.clamp(60.0, 640.0)));
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quick_hide(app: AppHandle) {
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.hide();
@@ -248,7 +248,7 @@ pub async fn quick_screenshot(app: AppHandle, state: AppStateRef<'_>) -> Result<
 }
 
 /// Opens the main window, on a chat if given.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn quick_open_in_app(app: AppHandle, state: AppStateRef, chat_id: Option<String>) -> Result<(), String> {
     state.cipher()?;
     quick_hide(app.clone());

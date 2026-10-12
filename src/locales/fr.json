@@ -203,7 +203,6 @@
  "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.": "Animer une image nécessite Wan 2.2. Installez-le depuis la liste Modèles du Studio.",
  "Browser": "Navigateur",
  "Browser control": "Contrôle du navigateur",
- "Browser control needs Windows for now.": "Le contrôle du navigateur nécessite Windows pour l'instant.",
  "Brush": "Pinceau",
  "Bypass": "Contournement",
  "CalDAV address": "Adresse CalDAV",
@@ -978,7 +977,6 @@
  "Scores are rough guides from public benchmarks; bigger models also need more of the PC.": "Les scores sont des repères approximatifs tirés de benchmarks publics ; les modèles plus gros demandent aussi davantage au PC.",
  "Screenshot": "Capture d'écran",
  "Screenshot attached. Ask about it, or press Enter.": "Capture d'écran jointe. Posez une question à son sujet, ou appuyez sur Entrée.",
- "Screenshots need Windows for now.": "Les captures d'écran nécessitent Windows pour l'instant.",
  "SearXNG (your own server)": "SearXNG (votre propre serveur)",
  "SearXNG address": "Adresse SearXNG",
  "Search activity": "Rechercher dans l'activité",
@@ -1765,5 +1763,15 @@
  "Syncing through the relay needs the Cloud level.": "La synchronisation par le relais nécessite le niveau Cloud.",
  "The relay took too long.": "Le relais a mis trop de temps.",
  "When your PCs aren't on the same network, they can sync through a relay you run, such as the Cloudflare Worker in the app's relay folder. Everything is encrypted with your PCs' pairing keys before it leaves; the relay can't read it. Used only at the Cloud level.": "Quand vos PC ne sont pas sur le même réseau, ils peuvent se synchroniser via un relais que vous gérez, comme le Cloudflare Worker du dossier relay de l'app. Tout est chiffré avec les clés d'appairage de vos PC avant de partir ; le relais ne peut pas le lire. Utilisé uniquement au niveau Cloud.",
- "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "Un élément est trop volumineux pour passer par le relais (plus de 2 Mo) ; il se synchronise sur le réseau local."
+ "One item is too big to go through the relay (over 2 MB); it syncs on the local network.": "Un élément est trop volumineux pour passer par le relais (plus de 2 Mo) ; il se synchronise sur le réseau local.",
+ "Leave empty to use the built-in one.": "Laissez vide pour utiliser celui intégré.",
+ "Needs an app registration (add its IDs below).": "Nécessite un enregistrement d'application (ajoutez ses identifiants ci-dessous).",
+ "No Chrome, Edge, Chromium or Brave was found for this user.": "Aucun navigateur Chrome, Edge, Chromium ou Brave n'a été trouvé pour cet utilisateur.",
+ "No home folder.": "Aucun dossier personnel.",
+ "No screenshot tool was found. Install grim (Wayland) or gnome-screenshot, scrot or ImageMagick.": "Aucun outil de capture d'écran n'a été trouvé. Installez grim (Wayland) ou gnome-screenshot, scrot ou ImageMagick.",
+ "Ready: built into this copy of SulcusAI.": "Prêt : intégré à cette copie de SulcusAI.",
+ "Teaching a model isn't available on this system yet.": "L'apprentissage d'un modèle n'est pas encore disponible sur ce système.",
+ "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "La capture d'écran n'a pas fonctionné. Autorisez SulcusAI dans Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, puis réessayez.",
+ "Use my own registration": "Utiliser mon propre enregistrement",
+ "Using your own registration.": "Utilise votre propre enregistrement."
 }

@@ -15,7 +15,7 @@ pub struct Folder {
     exists: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
     state.cipher()?;
     Ok(db::folders(&state.db.lock().unwrap())
@@ -31,7 +31,7 @@ pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
         .collect())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_folder(state: AppStateRef, path: String) -> Result<(), String> {
     crate::features::require(&state, crate::features::Feature::Files)?;
     state.cipher()?;
@@ -53,7 +53,7 @@ pub fn add_folder(state: AppStateRef, path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_folder(state: AppStateRef, path: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -62,7 +62,7 @@ pub fn remove_folder(state: AppStateRef, path: String) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_chat_mode(state: AppStateRef, chat_id: String, mode: String) -> Result<(), String> {
     state.cipher()?;
     db::set_chat_mode(&state.db.lock().unwrap(), &chat_id, &mode)?;
@@ -72,7 +72,7 @@ pub fn set_chat_mode(state: AppStateRef, chat_id: String, mode: String) -> Resul
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn answer_approval(state: AppStateRef, call_id: String, decision: String) -> Result<(), String> {
     state.cipher()?;
     let d = Decision::parse(&decision).ok_or("Unknown answer.")?;
@@ -82,13 +82,13 @@ pub fn answer_approval(state: AppStateRef, call_id: String, decision: String) ->
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pending_approvals(state: AppStateRef, chat_id: String) -> Result<Vec<PendingApproval>, String> {
     state.cipher()?;
     Ok(state.approvals.pending(&chat_id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undoable_turns(state: AppStateRef, chat_id: String) -> Result<Vec<String>, String> {
     state.cipher()?;
     Ok(db::undoable_turns(&state.db.lock().unwrap(), &chat_id))
@@ -96,7 +96,7 @@ pub fn undoable_turns(state: AppStateRef, chat_id: String) -> Result<Vec<String>
 
 /// Puts back every file the assistant changed in one turn. Returns notes
 /// about anything that couldn't be restored.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn undo_turn(state: AppStateRef, chat_id: String, turn_id: String) -> Result<Vec<String>, String> {
     let c = state.cipher()?;
     if state.generations.lock().unwrap().contains_key(&chat_id) {
