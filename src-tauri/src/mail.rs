@@ -243,16 +243,51 @@ pub fn list(conn: &Connection, c: &Cipher, query: &str, limit: usize) -> Vec<Mai
     let sql = format!("SELECT {ITEM_COLS} FROM mail_messages ORDER BY date DESC");
     let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
     let all = stmt.query_map([], item_from_row(c)).map(|rows| rows.filter_map(Result::ok).collect::<Vec<_>>()).unwrap_or_default();
-    let words: Vec<String> = query.to_lowercase().split_whitespace().map(str::to_string).collect();
-    all.into_iter()
-        .filter(|m| {
-            if words.is_empty() {
-                return true;
+    let terms = search_terms(query);
+    all.into_iter().filter(|m| terms.iter().all(|t| t.matches(&m.data))).take(limit).collect()
+}
+
+/// One word of a mail search. Gmail-style `from:`, `to:` and `subject:`
+/// narrow it to that part (models often write searches that way).
+#[derive(Debug, PartialEq)]
+enum Term {
+    Any(String),
+    From(String),
+    To(String),
+    Subject(String),
+}
+
+impl Term {
+    fn matches(&self, d: &MailData) -> bool {
+        match self {
+            Term::Any(w) => format!("{} {} {} {} {}", d.from, d.from_name, d.to.join(" "), d.subject, d.body).to_lowercase().contains(w.as_str()),
+            Term::From(w) => format!("{} {}", d.from, d.from_name).to_lowercase().contains(w.as_str()),
+            Term::To(w) => d.to.join(" ").to_lowercase().contains(w.as_str()),
+            Term::Subject(w) => d.subject.to_lowercase().contains(w.as_str()),
+        }
+    }
+}
+
+fn search_terms(query: &str) -> Vec<Term> {
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .filter_map(|w| {
+            let (kind, w) = match w.split_once(':') {
+                Some((k @ ("from" | "to" | "subject"), rest)) => (k, rest),
+                _ => ("", w),
+            };
+            let w = w.trim_matches(|c| c == '"' || c == '\'').to_string();
+            if w.is_empty() {
+                return None;
             }
-            let hay = format!("{} {} {} {} {}", m.data.from, m.data.from_name, m.data.to.join(" "), m.data.subject, m.data.body).to_lowercase();
-            words.iter().all(|w| hay.contains(w.as_str()))
+            Some(match kind {
+                "from" => Term::From(w),
+                "to" => Term::To(w),
+                "subject" => Term::Subject(w),
+                _ => Term::Any(w),
+            })
         })
-        .take(limit)
         .collect()
 }
 
@@ -758,6 +793,20 @@ mod tests {
     use super::*;
 
     const RAW: &[u8] = b"From: Ana Ruiz <ana@example.com>\r\nTo: me@example.org, team@example.org\r\nSubject: Budget review on Friday\r\nMessage-ID: <abc123@example.com>\r\nDate: Tue, 6 Oct 2026 09:30:00 -0600\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi,\r\n\r\nCan we move the budget review to Friday at 2pm?\r\n\r\nAna\r\n";
+
+    #[test]
+    fn searches_understand_from_to_and_subject() {
+        let (m, _) = parse(RAW, false);
+        let hit = |q: &str| search_terms(q).iter().all(|t| t.matches(&m));
+        assert!(hit("budget"));
+        assert!(hit("from:Ana"));
+        assert!(hit("from:\"ana@example.com\" subject:review"));
+        assert!(hit("to:team"));
+        assert!(!hit("from:team"));
+        assert!(!hit("subject:ana"));
+        assert!(hit(""));
+        assert_eq!(search_terms("from: x"), vec![Term::Any("x".into())]);
+    }
 
     #[test]
     fn messages_are_read() {
