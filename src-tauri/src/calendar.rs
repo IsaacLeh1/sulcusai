@@ -895,7 +895,7 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
             db::log_action(&conn, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
             return Ok(e);
         }
-        let url = format!("{}{}.ics", if cal.ends_with('/') { cal.clone() } else { format!("{cal}/") }, e.data.uid.replace('@', "-"));
+        let url = event_url(&cal, &e.data.uid);
         let organizer = if a.username.contains('@') { Some(a.username.as_str()) } else { None };
         let etag = Dav::new(&a)?.put(&url, to_ics(&e, organizer), None).await?;
         e.account_id = Some(id);
@@ -908,6 +908,19 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
     let who = if e.data.attendees.is_empty() { String::new() } else { format!(" and invited {}", e.data.attendees.join(", ")) };
     db::log_action(&conn, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
     Ok(e)
+}
+
+/// Where a new event goes in a CalDAV calendar: named after its UID, as
+/// Google files it whatever name the event is put under. (Under any other
+/// name, a delete there found nothing and the event came back on the next
+/// sync.)
+fn event_url(cal: &str, uid: &str) -> String {
+    let dir = if cal.ends_with('/') { cal.to_string() } else { format!("{cal}/") };
+    let name: String = uid
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("{dir}{name}.ics")
 }
 
 pub async fn delete(state: &AppState, c: &Cipher, id: &str) -> Result<(), String> {
@@ -1086,6 +1099,13 @@ mod tests {
     use super::*;
 
     const ICS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:abc@example.com\r\nSUMMARY:Budget review\\, Q4\r\nDTSTART;TZID=America/Denver:20261009T140000\r\nDTEND;TZID=America/Denver:20261009T150000\r\nLOCATION:Room 2\r\nDESCRIPTION:Bring the\\n numbers\r\nATTENDEE;CN=Ana:mailto:ana@example.com\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:day@x\r\nSUMMARY:Holiday\r\nDTSTART;VALUE=DATE:20261012\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:gone@x\r\nSUMMARY:Cancelled thing\r\nSTATUS:CANCELLED\r\nDTSTART:20261009T180000Z\r\nDURATION:PT30M\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:long@x\r\nSUMMARY:A very long title that the ser\r\n ver folded\r\nDTSTART:20261010T170000Z\r\nDURATION:PT1H30M\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn new_events_are_named_after_their_uid() {
+        let cal = "https://apidata.googleusercontent.com/caldav/v2/me%40gmail.com/events/";
+        assert_eq!(event_url(cal, "4e11-bf37@sulcusai"), format!("{cal}4e11-bf37%40sulcusai.ics"));
+        assert_eq!(event_url("https://dav.example.com/cal", "a b"), "https://dav.example.com/cal/a%20b.ics");
+    }
 
     #[test]
     fn outlook_events_are_read() {
