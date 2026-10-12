@@ -1,0 +1,15 @@
+// SulcusAI's website (docs/): home, privacy policy and terms, served by
+// Cloudflare as static files. Deploy: cd website && npx wrangler deploy
+// To move it to its own domain later, add that domain under "routes" and
+// keep the old one so links (and Google's records) still work.
+{
+  "$schema": "https://unpkg.com/wrangler@4.149.0/config-schema.json",
+  "name": "sulcusai-site",
+  "compatibility_date": "2026-10-06",
+  "assets": {
+    "directory": "../docs",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "sulcusai.sseditor.com", "custom_domain": true }],
+  "workers_dev": false
+}
