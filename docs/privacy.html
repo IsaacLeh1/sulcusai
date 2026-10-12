@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SulcusAI Privacy Policy</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"> SulcusAI</a>
+  <nav><a href="./">Home</a> <a href="privacy.html" aria-current="page">Privacy</a> <a href="terms.html">Terms</a></nav>
+</header>
+<main>
+<h1>Privacy Policy</h1>
+<p class="muted">Effective October 12, 2026</p>
+
+<p>SulcusAI is a desktop app that runs AI models on your own computer. It is open source
+(<a href="https://github.com/IsaacLeh1/sulcusai">source code</a>) and is made by Isaac Lehman.
+This policy explains what the app does with your information, including information from
+your Google or Microsoft account if you connect one.</p>
+
+<h2>The short version</h2>
+<ul>
+  <li>SulcusAI has no servers that receive your data. There are no SulcusAI accounts, no analytics and no tracking.</li>
+  <li>Your chats, files, mail and calendars stay on your computer, encrypted.</li>
+  <li>The AI runs on your computer by default. Nothing is sent to an online AI service unless you turn that on yourself.</li>
+  <li>We never sell your data, use it for advertising, or use it to train AI models. We never receive it.</li>
+</ul>
+
+<h2>What stays on your computer</h2>
+<p>Everything you create or connect in SulcusAI is stored in the app's data folder on your computer:
+chats, memories, notes, tasks, meeting recordings and transcripts, pictures, and copies of the
+mail and calendar events you connect. Chats, your profile, account settings, sign-in tokens,
+mail and calendar data are encrypted with AES-256-GCM. The key is protected by your operating
+system account and, if you turn on app lock, by your PIN or passphrase.</p>
+
+<h2>Google user data</h2>
+<p>If you choose <b>Sign in with Google</b> in SulcusAI's Mail or Calendar, the sign-in page opens
+in your own browser. SulcusAI never sees your Google password. With your permission, the app
+receives a token that lets it access only the following:</p>
+<table>
+  <thead><tr><th>Permission</th><th>What SulcusAI does with it</th></tr></thead>
+  <tbody>
+    <tr><td>Gmail (<code>https://mail.google.com/</code>)</td>
+        <td>Connects to Gmail over IMAP and SMTP so you can read, search and sort your mail in the app,
+        and send the messages you write or approve. The assistant can search and summarize your mail
+        when you ask it to, and it asks before sending anything.</td></tr>
+    <tr><td>Google Calendar (<code>…/auth/calendar</code>)</td>
+        <td>Shows your calendars and events in the app, and creates or deletes the events you choose.
+        The assistant can add an event when you ask it to; an event that invites other people
+        always asks you first.</td></tr>
+    <tr><td>Email address and basic sign-in (<code>openid</code>, <code>email</code>)</td>
+        <td>Tells the app which account you connected, so it can label it.</td></tr>
+  </tbody>
+</table>
+<p>Mail and events are copied into SulcusAI's encrypted store on your computer so you can read and
+search them offline. Google data is used only to provide these features to you. It is not
+transferred to anyone except as described under "Online AI services" below, when you choose that.
+No person at SulcusAI can read it, because it never leaves your computer for us.</p>
+<p><b>Limited Use.</b> SulcusAI's use and transfer of information received from Google APIs to any other
+app will adhere to the
+<a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+including the Limited Use requirements. Google user data is never used to develop, improve or train
+generalized AI or machine-learning models.</p>
+
+<h2>Microsoft user data</h2>
+<p>If you choose <b>Sign in with Microsoft</b>, SulcusAI asks for permission to read and send mail over
+IMAP and SMTP (<code>IMAP.AccessAsUser.All</code>, <code>SMTP.Send</code>), to read and change your calendars
+(<code>Calendars.ReadWrite</code>), and for your email address and a sign-in token
+(<code>openid</code>, <code>email</code>, <code>offline_access</code>). It handles this data exactly as
+described for Google above.</p>
+
+<h2>Online AI services (only if you turn them on)</h2>
+<p>SulcusAI starts in <b>Offline</b> mode. If you switch to <b>Cloud</b> and choose an online AI provider
+with your own API key (for example OpenAI, Anthropic or Google Gemini), the text the assistant needs
+for a reply is sent to that provider. If you ask about your mail or calendar while using such a model,
+that can include the relevant messages or events. The provider handles it under its own terms and
+privacy policy. SulcusAI can mask personal details such as email addresses and phone numbers before
+sending (this is on by default). Local models never send anything.</p>
+
+<h2>What goes over the internet</h2>
+<p>Only what you ask for, and every request is recorded in the app's activity log on your computer:</p>
+<ul>
+  <li>Downloading AI models and engines you choose to install (from Hugging Face and GitHub).</li>
+  <li>Checking for and downloading SulcusAI updates (from GitHub).</li>
+  <li>Web searches and pages, when you turn on web access.</li>
+  <li>Your mail and calendar providers, for accounts you connect.</li>
+  <li>Online AI providers, if you turn them on.</li>
+  <li>Sync between your own devices, if you set it up. It is end-to-end encrypted with a key only
+      your devices share; an optional relay you choose passes along encrypted data it cannot read.</li>
+</ul>
+
+<h2>Removing your data</h2>
+<ul>
+  <li>Removing a mail or calendar account in SulcusAI deletes its sign-in token and the copied mail or events from your computer.</li>
+  <li>You can revoke SulcusAI's access at any time at
+      <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a> (Google) or
+      <a href="https://account.live.com/consent/Manage">account.live.com/consent/Manage</a> (Microsoft).</li>
+  <li>Uninstalling SulcusAI and deleting its data folder removes everything it stored.</li>
+</ul>
+
+<h2>Children</h2>
+<p>SulcusAI is not directed to children under 13.</p>
+
+<h2>Changes</h2>
+<p>If this policy changes, the new version will be posted on this page with a new effective date.</p>
+
+<h2>Contact</h2>
+<p>Questions: <a href="mailto:isaacleh1@gmail.com">isaacleh1@gmail.com</a>, or open an issue on
+<a href="https://github.com/IsaacLeh1/sulcusai/issues">GitHub</a>.</p>
+</main>
+</body>
+</html>
