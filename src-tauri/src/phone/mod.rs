@@ -450,7 +450,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn e2e_phone_page() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::e2e::scratch_state();
         let c = state.cipher().unwrap();
         let key: [u8; 32] = crate::sync::random_bytes();
         {
@@ -538,7 +538,7 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn demo_phone_page() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::e2e::scratch_state();
         let c = state.cipher().unwrap();
         let key: [u8; 32] = crate::sync::random_bytes();
         {

@@ -1215,8 +1215,17 @@ fn media_state() -> std::sync::Arc<crate::AppState> {
     temp_state(None)
 }
 
-/// A state with its own data folder that shares the real engines and, unless
-/// `models` says otherwise, the real models.
+/// App state with its own throwaway data folder and models folder, for
+/// tests that write models (never the real models folder: a sync test
+/// once overwrote an installed model there with an empty file).
+pub(crate) fn scratch_state() -> std::sync::Arc<crate::AppState> {
+    let models = std::env::temp_dir().join(format!("sulcusai-models-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&models).unwrap();
+    temp_state(Some(models))
+}
+
+/// App state over the real engines and (unless `models` is given) the real
+/// models folder, with a throwaway database: for tests that only read models.
 pub(crate) fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
