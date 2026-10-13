@@ -414,7 +414,7 @@ pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
         if !offered.is_empty() {
             let from_text = salvage_tool_calls(&out.content, &offered);
             if !from_text.is_empty() {
-                out.content = TOOL_CALL_BLOCK.replace_all(&out.content, "").trim().to_string();
+                out.content = if out.content.trim_start().starts_with('{') { String::new() } else { TOOL_CALL_BLOCK.replace_all(&out.content, |c: &regex::Captures| if call_from(&c[1], &offered).is_some() { String::new() } else { c[0].to_string() }).trim().to_string() };
                 out.tool_calls = from_text;
             } else if out.content.trim().is_empty() {
                 out.tool_calls = salvage_tool_calls(&out.thinking, &offered);
@@ -423,27 +423,37 @@ pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
     }
 }
 
-static TOOL_CALL_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>").unwrap());
+// Tags models use: <tool_call> (Qwen's own), <tools> (the tag Qwen's template
+// lists the tools in, which coder models copy), <tool>, <function_call>, or a
+// ```json fence.
+static TOOL_CALL_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?s)(?:<(?:tool_call|tools?|function_call)>|```(?:json|tool_call)?)\s*(\{.*?\})\s*(?:</(?:tool_call|tools?|function_call)>|```)").unwrap()
+});
 
-/// `<tool_call>{"name": ..., "arguments": {...}}</tool_call>` blocks in text,
-/// for tools that were offered.
+/// Tool calls written into text, for tools that were offered: blocks such as
+/// `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`, or a reply that
+/// is nothing but that JSON.
 fn salvage_tool_calls(text: &str, offered: &[String]) -> Vec<ToolCall> {
-    TOOL_CALL_BLOCK
-        .captures_iter(text)
-        .filter_map(|c| {
-            let v: Value = serde_json::from_str(&c[1]).ok()?;
-            let name = v["name"].as_str()?.to_string();
-            if !offered.contains(&name) {
-                return None;
-            }
-            let arguments = match &v["arguments"] {
-                Value::String(s) => s.clone(),
-                Value::Null => "{}".into(),
-                other => other.to_string(),
-            };
-            Some(ToolCall { id: String::new(), name, arguments })
-        })
-        .collect()
+    let calls: Vec<ToolCall> = TOOL_CALL_BLOCK.captures_iter(text).filter_map(|c| call_from(&c[1], offered)).collect();
+    if calls.is_empty() {
+        return call_from(text.trim(), offered).into_iter().collect();
+    }
+    calls
+}
+
+fn call_from(json: &str, offered: &[String]) -> Option<ToolCall> {
+    let v: Value = serde_json::from_str(json).ok()?;
+    let name = v["name"].as_str()?.to_string();
+    if !offered.contains(&name) {
+        return None;
+    }
+    let args = if v["arguments"].is_null() { &v["parameters"] } else { &v["arguments"] };
+    let arguments = match args {
+        Value::String(s) => s.clone(),
+        Value::Null => "{}".into(),
+        other => other.to_string(),
+    };
+    Some(ToolCall { id: String::new(), name, arguments })
 }
 
 /// One reply, not streamed, for background work such as meeting notes and
@@ -559,6 +569,29 @@ mod tests {
         assert_eq!(calls[0].name, "web_search");
         assert!(calls[0].arguments.contains("Timpanogos"));
         assert!(salvage_tool_calls("<tool_call>{\"name\": \"delete_everything\", \"arguments\": {}}</tool_call>", &offered).is_empty(), "only offered tools");
+        // How qwen2.5-coder wrote one: in the <tools> tag from its template.
+        let cal = vec!["calendar_events".to_string()];
+        let calls = salvage_tool_calls("Sure, here's the function call:
+
+<tools> { \"name\": \"calendar_events\", \"arguments\": { \"query\": \"Sam's party\" } } </tools>", &cal);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].arguments.contains("Sam's party"));
+        assert_eq!(salvage_tool_calls("```json
+{\"name\": \"calendar_events\", \"parameters\": {\"from\": \"today\"}}
+```", &cal)[0].arguments, "{\"from\":\"today\"}");
+        assert_eq!(salvage_tool_calls(" {\"name\": \"calendar_events\", \"arguments\": {}} ", &cal).len(), 1, "a reply that is only the call");
+        assert!(salvage_tool_calls("```json
+{\"name\": \"Sam\", \"age\": 3}
+```", &cal).is_empty(), "ordinary JSON is left alone");
+        let mut out = Finished { content: "Here:
+```json
+{\"a\": 1}
+```
+<tools>{\"name\": \"calendar_events\", \"arguments\": {}}</tools>".into(), thinking: String::new(), tool_calls: vec![], prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None };
+        let tools = json!([{ "type": "function", "function": { "name": "calendar_events" } }]);
+        rescue_tool_calls(&mut out, Some(&tools));
+        assert_eq!(out.tool_calls.len(), 1);
+        assert!(out.content.contains("\"a\": 1"), "other code blocks stay in the reply: {}", out.content);
         assert_eq!(clean_title("\"Trip to Tokyo.\"").as_deref(), Some("Trip to Tokyo"));
         assert_eq!(clean_title("Title: Budget plan\nextra").as_deref(), Some("Budget plan"));
         assert_eq!(clean_title("   "), None);

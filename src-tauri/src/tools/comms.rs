@@ -72,6 +72,31 @@ fn day_start(text: Option<&str>) -> Option<chrono::NaiveDate> {
     crate::notes::parse_due(t, Local::now().date_naive()).map(|(d, _)| d)
 }
 
+/// The words of a search, lowercased, without possessives or filler words:
+/// "Sam's party" and "Sam’s Party" both give ["sam", "party"].
+fn search_words(text: &str) -> Vec<String> {
+    const FILLER: &[&str] = &["the", "a", "an", "my", "our", "at", "on", "in", "for", "of", "to", "with", "and", "event", "events"];
+    text.to_lowercase()
+        .replace(['\u{2019}', '\u{2018}', '`'], "'")
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|w| w.trim_matches('\'').trim_end_matches("'s").to_string())
+        .filter(|w| !w.is_empty() && !FILLER.contains(&w.as_str()))
+        .collect()
+}
+
+/// Items matching every word of the search, or, when none do, any of them.
+fn matching<T>(list: Vec<T>, query: &str, text: impl Fn(&T) -> String) -> Vec<T> {
+    let q = search_words(query);
+    if q.is_empty() {
+        return list;
+    }
+    let words: Vec<Vec<String>> = list.iter().map(|e| search_words(&text(e))).collect();
+    let has = |w: &Vec<String>, x: &String| w.iter().any(|y| y == x || (x.len() > 3 && y.starts_with(x.as_str())));
+    let all: Vec<bool> = words.iter().map(|w| q.iter().all(|x| has(w, x))).collect();
+    let pick: Vec<bool> = if all.contains(&true) { all } else { words.iter().map(|w| q.iter().any(|x| has(w, x))).collect() };
+    list.into_iter().zip(pick).filter(|(_, keep)| *keep).map(|(e, _)| e).collect()
+}
+
 fn ms(d: chrono::NaiveDate, t: Option<NaiveTime>) -> i64 {
     crate::notes::to_ms(d, t).unwrap_or_else(crate::db::now_ms)
 }
@@ -184,15 +209,16 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
             "calendar_events" => {
                 let today = Local::now().date_naive();
                 let from = day_start(args.get("from").and_then(Value::as_str)).unwrap_or(today);
-                let to = day_start(args.get("to").and_then(Value::as_str)).unwrap_or(from + Days::days(6)).max(from);
-                let q = args.get("query").and_then(Value::as_str).unwrap_or("").to_lowercase();
-                let mut list = calendar::events(&state.db.lock().unwrap(), c, ms(from, None), ms(to + Days::days(1), None));
-                if !q.is_empty() {
-                    list.retain(|e| format!("{} {} {}", e.data.title, e.data.location, e.data.notes).to_lowercase().contains(&q));
-                }
+                let q = args.get("query").and_then(Value::as_str).unwrap_or("").trim().to_string();
+                // Looking for a named event ("when is Sam's party?") searches further ahead.
+                let ahead = if q.is_empty() { 6 } else { 60 };
+                let to = day_start(args.get("to").and_then(Value::as_str)).unwrap_or(from + Days::days(ahead)).max(from);
+                let list = calendar::events(&state.db.lock().unwrap(), c, ms(from, None), ms(to + Days::days(1), None));
+                let list = matching(list, &q, |e| format!("{} {} {}", e.data.title, e.data.location, e.data.notes));
                 let range = format!("{} to {}", from.format("%a %b %-d"), to.format("%a %b %-d"));
                 if list.is_empty() {
-                    return Ok(Outcome::ok(format!("No events from {range}."), format!("Checked the calendar ({range})"), "text", None));
+                    let what = if q.is_empty() { String::new() } else { format!(" matching “{q}”") };
+                    return Ok(Outcome::ok(format!("No events{what} from {range}."), format!("Checked the calendar ({range})"), "text", None));
                 }
                 let lines: Vec<String> = list
                     .iter()
@@ -229,4 +255,23 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
     }
     .await;
     r.unwrap_or_else(|e| Outcome::error(super::failed_title(name, args), e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calendar_search_matches_words_not_the_exact_phrase() {
+        let events = vec!["Sam’s Birthday Party", "Party at Sam's", "Dentist", "Team party", "Lunch with Sam"];
+        let find = |q: &str| matching(events.clone(), q, |e| e.to_string());
+        assert_eq!(find("Sam's party"), vec!["Sam’s Birthday Party", "Party at Sam's"]);
+        assert_eq!(find("sam party"), vec!["Sam’s Birthday Party", "Party at Sam's"]);
+        assert_eq!(find("the dentist"), vec!["Dentist"]);
+        assert_eq!(find("birthdays"), Vec::<&str>::new());
+        assert_eq!(find("birth"), vec!["Sam’s Birthday Party"]);
+        // No event has every word: fall back to any of them.
+        assert_eq!(find("Sam's barbecue"), vec!["Sam’s Birthday Party", "Party at Sam's", "Lunch with Sam"]);
+        assert_eq!(find(""), events);
+    }
 }
