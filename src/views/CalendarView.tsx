@@ -1,30 +1,125 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Calendar: an agenda of events (on this PC, or from CalDAV accounts) and
-// tasks that are due. Events on this PC work Offline.
-import { useEffect, useMemo, useState } from "react";
+// Calendar: events on this PC or from calendar accounts, and tasks that are
+// due, in month, week and day views. Events on this PC work Offline.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, on, type CalAccount, type CalEvent, type Task } from "../api";
 import { Modal } from "../components/Modal";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
-import { t } from "../i18n";
+import { t, tx } from "../i18n";
 
 const DAY = 86_400_000;
-const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+const HOUR_PX = 48;
+const startOfDay = (d: Date | number) => {
+  const x = new Date(d);
+  return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+};
+const addDays = (ms: number, n: number) => {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n).getTime();
+};
+const startOfWeek = (ms: number) => addDays(startOfDay(ms), -new Date(ms).getDay());
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const shortTime = (ms: number) => {
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], d.getMinutes() ? { hour: "numeric", minute: "2-digit" } : { hour: "numeric" }).replace(/\s/g, "").toLowerCase();
+};
+const hourLabel = (h: number) => new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: "numeric" });
+const sameDay = (a: number, b: number) => startOfDay(a) === startOfDay(b);
+
+type View = "day" | "week" | "month";
+const VIEWS: { id: View; label: string }[] = [
+  { id: "day", label: tx("Day") },
+  { id: "week", label: tx("Week") },
+  { id: "month", label: tx("Month") },
+];
+const VIEW_KEY = "sulcusai.calendar.view";
+const savedView = (): View => {
+  try {
+    const v = localStorage.getItem(VIEW_KEY);
+    if (v === "day" || v === "week" || v === "month") return v;
+  } catch {
+    // Not saved: start on the week.
+  }
+  return "week";
+};
+
+// One color per calendar: this PC is the accent; accounts' calendars use
+// their own color or one of the logo's hues.
+const HUES = ["#4b5df0", "#d02f8c", "#0f8b8d", "#8d44cf", "#c2410c", "#2d89ff", "#15803d"];
+
+function range(view: View, at: number): [number, number] {
+  if (view === "day") return [startOfDay(at), addDays(startOfDay(at), 1)];
+  if (view === "week") return [startOfWeek(at), addDays(startOfWeek(at), 7)];
+  const first = new Date(at);
+  const gridStart = startOfWeek(new Date(first.getFullYear(), first.getMonth(), 1).getTime());
+  return [gridStart, addDays(gridStart, 42)];
+}
+
+function title(view: View, at: number) {
+  const d = new Date(at);
+  if (view === "month") return d.toLocaleDateString([], { month: "long", year: "numeric" });
+  if (view === "day") return d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const [a, b] = range("week", at);
+  // "Oct 11 – 17, 2026", or "Oct 29 – Nov 4, 2026", as the language writes it.
+  return new Intl.DateTimeFormat([], { month: "short", day: "numeric", year: "numeric" }).formatRange(new Date(a), new Date(addDays(b, -1)));
+}
+
+/** Side-by-side columns for events that overlap within one day. */
+function layout(evs: CalEvent[], day: number): { e: CalEvent; top: number; height: number; col: number; cols: number }[] {
+  const next = addDays(day, 1);
+  const items = evs
+    .map((e) => ({ e, s: Math.max(e.start, day), f: Math.min(e.end, next) }))
+    .sort((a, b) => a.s - b.s || b.f - a.f);
+  const out: { e: CalEvent; top: number; height: number; col: number; cols: number }[] = [];
+  let group: { e: CalEvent; s: number; f: number; col: number }[] = [];
+  let groupEnd = 0;
+  const flush = () => {
+    const cols = Math.max(1, ...group.map((g) => g.col + 1));
+    for (const g of group) {
+      const top = ((g.s - day) / 3_600_000) * HOUR_PX;
+      const height = Math.max(((g.f - g.s) / 3_600_000) * HOUR_PX, 20);
+      out.push({ e: g.e, top, height, col: g.col, cols });
+    }
+    group = [];
+  };
+  for (const it of items) {
+    if (group.length && it.s >= groupEnd) flush();
+    const taken = new Set(group.filter((g) => g.f > it.s).map((g) => g.col));
+    let col = 0;
+    while (taken.has(col)) col++;
+    group.push({ ...it, col });
+    groupEnd = Math.max(groupEnd, it.f);
+  }
+  if (group.length) flush();
+  return out;
+}
 
 export function CalendarView({ toast }: { toast: PushToast }) {
-  const [from, setFrom] = useState(() => startOfDay(new Date()));
-  const days = 14;
+  const [view, setViewState] = useState<View>(savedView);
+  const [at, setAt] = useState(() => startOfDay(Date.now()));
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [accounts, setAccounts] = useState<CalAccount[]>([]);
-  const [creating, setCreating] = useState<number | null>(null);
+  const [creating, setCreating] = useState<{ day: number; hour?: number } | null>(null);
   const [adding, setAdding] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [shown, setShown] = useState<CalEvent | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<CalEvent | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [now, setNow] = useState(Date.now());
+  const [from, to] = range(view, at);
 
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Kept for this visit only.
+    }
+  };
   const load = () => {
-    api.calendarEvents(from, from + days * DAY).then(setEvents).catch((e) => toast(errorText(e), "error"));
+    api.calendarEvents(from, to).then(setEvents).catch((e) => toast(errorText(e), "error"));
     api.tasks().then(setTasks).catch(() => setTasks([]));
     api.calendarAccounts().then(setAccounts).catch(() => {});
   };
@@ -34,26 +129,40 @@ export function CalendarView({ toast }: { toast: PushToast }) {
     return () => {
       sub.then((u) => u());
     };
-  }, [from]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [from, to]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const byDay = useMemo(() => {
-    const out: { day: number; events: CalEvent[]; tasks: Task[] }[] = [];
-    for (let i = 0; i < days; i++) {
-      const day = startOfDay(new Date(from + i * DAY + DAY / 2));
-      const next = day + DAY;
-      out.push({
-        day,
-        events: events.filter((e) => e.start < next && e.end > day),
-        tasks: tasks.filter((task) => !task.done_at && task.due !== null && task.due >= day && task.due < next),
-      });
+  // Calendars and their colors: this PC, then each account's calendars.
+  const calendars = useMemo(() => {
+    const list: { key: string; name: string; color: string; account?: string }[] = [{ key: "local", name: t("This PC"), color: "#6447e8" }];
+    let i = 0;
+    for (const a of accounts) {
+      for (const c of a.calendars) {
+        list.push({ key: c.href, name: c.name || a.name, color: c.color || HUES[i++ % HUES.length], account: a.name });
+      }
     }
-    return out;
-  }, [events, tasks, from]);
+    return list;
+  }, [accounts]);
+  const calKey = (e: CalEvent) => (e.account_id ? e.calendar ?? e.account_id : "local");
+  const colorOf = (e: CalEvent) => calendars.find((c) => c.key === calKey(e))?.color ?? HUES[0];
+  const calName = (e: CalEvent) => calendars.find((c) => c.key === calKey(e))?.name ?? "";
+  const visible = events.filter((e) => !hidden.has(calKey(e)));
+  const dueTasks = tasks.filter((task) => !task.done_at && task.due !== null);
 
-  const calName = (e: CalEvent) => {
-    if (!e.account_id) return t("This PC");
-    const a = accounts.find((x) => x.id === e.account_id);
-    return a?.calendars.find((c) => c.href === e.calendar)?.name ?? a?.name ?? "";
+  const step = (dir: number) => {
+    if (view === "day") setAt(addDays(at, dir));
+    else if (view === "week") setAt(addDays(at, 7 * dir));
+    else {
+      const d = new Date(at);
+      setAt(new Date(d.getFullYear(), d.getMonth() + dir, 1).getTime());
+    }
+  };
+  const openDay = (day: number) => {
+    setAt(day);
+    setView("day");
   };
 
   const sync = async () => {
@@ -68,85 +177,129 @@ export function CalendarView({ toast }: { toast: PushToast }) {
     }
   };
 
+  const chipStyle = (e: CalEvent) => ({ "--ev": colorOf(e) }) as React.CSSProperties;
+
   return (
-    <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>{t("Calendar")}</h1>
-          <p className="muted">{new Date(from).toLocaleDateString([], { month: "long", day: "numeric" })} – {new Date(from + (days - 1) * DAY).toLocaleDateString([], { month: "long", day: "numeric" })}</p>
-        </div>
-        <div className="row">
-          <button className="btn ghost small" onClick={() => setFrom(from - 7 * DAY)} aria-label={t("Earlier")}>←</button>
-          <button className="btn small" onClick={() => setFrom(startOfDay(new Date()))}>{t("Today")}</button>
-          <button className="btn ghost small" onClick={() => setFrom(from + 7 * DAY)} aria-label={t("Later")}>→</button>
-          {accounts.length > 0 && <button className="btn ghost small" onClick={sync} disabled={syncing}>{syncing ? t("Syncing…") : t("↻ Sync")}</button>}
-          <button className="btn primary small" onClick={() => setCreating(startOfDay(new Date()))}>{t("+ New event")}</button>
-        </div>
-      </header>
-
-      <div className="agenda">
-        {byDay.map(({ day, events: evs, tasks: ts }) => {
-          const isToday = day === startOfDay(new Date());
-          return (
-            <section key={day} className={`agenda-day ${isToday ? "today" : ""}`}>
-              <button className="agenda-date" onClick={() => setCreating(day)} title={t("Add an event on this day")}>
-                <strong>{new Date(day).toLocaleDateString([], { weekday: "short" })}</strong>
-                <span>{new Date(day).getDate()}</span>
+    <div className="cal">
+      <aside className="cal-rail">
+        <button className="compose-btn" onClick={() => setCreating({ day: view === "month" ? startOfDay(Date.now()) : at })}>
+          <span aria-hidden>＋</span> {t("Create")}
+        </button>
+        <MiniMonth at={at} today={now} onPick={(d) => setAt(d)} />
+        <div className="cal-list">
+          <span className="rail-label">{t("My calendars")}</span>
+          {calendars.map((c) => (
+            <label key={c.key} className="cal-check" title={c.account ? `${c.name} · ${c.account}` : c.name}>
+              <input
+                type="checkbox"
+                checked={!hidden.has(c.key)}
+                onChange={() => setHidden((h) => {
+                  const n = new Set(h);
+                  if (n.has(c.key)) n.delete(c.key);
+                  else n.add(c.key);
+                  return n;
+                })}
+                style={{ accentColor: c.color }}
+              />
+              <span className="cal-swatch" style={{ background: c.color }} />
+              <span className="ellipsis">{c.name}</span>
+            </label>
+          ))}
+          <button className="rail-link" onClick={() => setAdding(true)}>{t("+ Connect a calendar")}</button>
+          {accounts.map((a) => (
+            <div key={a.id} className="row between small cal-account">
+              <span className="ellipsis muted" title={a.synced_at ? t("synced {time}", { time: new Date(a.synced_at).toLocaleString() }) : ""}>{a.name}</span>
+              <button
+                className="btn ghost small danger"
+                onClick={async () => {
+                  try {
+                    await api.removeCalendarAccount(a.id);
+                    load();
+                  } catch (e) {
+                    toast(errorText(e), "error");
+                  }
+                }}
+              >
+                {t("Remove")}
               </button>
-              <div className="agenda-items">
-                {evs.length === 0 && ts.length === 0 && <span className="muted small">—</span>}
-                {evs.map((e) => (
-                  <div key={e.id} className="agenda-event">
-                    <span className="agenda-time small">{e.all_day ? t("All day") : `${time(e.start)} – ${time(e.end)}`}</span>
-                    <span className="grow">
-                      <strong>{e.title}</strong>
-                      {e.location && <span className="muted small"> · {e.location}</span>}
-                      {e.attendees.length > 0 && <span className="muted small block">{t("With {names}", { names: e.attendees.join(", ") })}</span>}
-                    </span>
-                    <span className="muted small">{calName(e)}</span>
-                    {!e.recurring && <button className="icon-btn" title={t("Delete")} aria-label={t("Delete {title}", { title: e.title })} onClick={() => setConfirmDelete(e)}>×</button>}
-                  </div>
-                ))}
-                {ts.map((task) => (
-                  <div key={task.id} className="agenda-event task">
-                    <span className="agenda-time small">{task.due_has_time && task.due ? time(task.due) : t("Due")}</span>
-                    <span className="grow">✅ {task.title}</span>
-                    <span className="muted small">{t("Tasks")}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+            </div>
+          ))}
+        </div>
+      </aside>
 
-      <section className="card">
-        <h2>{t("Calendar accounts")}</h2>
-        <p className="muted small">{t("Events you add here stay on this PC unless you pick an account's calendar. Accounts sync with Local AI + Web.")}</p>
-        {accounts.map((a) => (
-          <div key={a.id} className="row between">
-            <span>
-              <strong>{a.name}</strong> <span className="muted small">{a.calendars.map((c) => c.name).join(", ")}{a.synced_at ? ` · ${t("synced {time}", { time: new Date(a.synced_at).toLocaleString() })}` : ""}</span>
-            </span>
-            <button
-              className="btn ghost small danger"
-              onClick={async () => {
-                try {
-                  await api.removeCalendarAccount(a.id);
-                  load();
-                } catch (e) {
-                  toast(errorText(e), "error");
-                }
-              }}
-            >
-              {t("Remove")}
-            </button>
+      <section className="cal-main">
+        <header className="cal-top">
+          <button className="btn round-btn" onClick={() => setAt(startOfDay(Date.now()))}>{t("Today")}</button>
+          <button className="icon-btn round" onClick={() => step(-1)} aria-label={t("Earlier")} title={t("Earlier")}>‹</button>
+          <button className="icon-btn round" onClick={() => step(1)} aria-label={t("Later")} title={t("Later")}>›</button>
+          <h1 className="cal-title">{title(view, at)}</h1>
+          <span className="spacer" />
+          {accounts.length > 0 && (
+            <button className={`icon-btn round ${syncing ? "spin" : ""}`} onClick={sync} disabled={syncing} title={syncing ? t("Syncing…") : t("↻ Sync")} aria-label={t("↻ Sync")}>↻</button>
+          )}
+          <div className="seg" role="tablist" aria-label={t("View")}>
+            {VIEWS.map((v) => (
+              <button key={v.id} role="tab" aria-selected={view === v.id} className={view === v.id ? "active" : ""} onClick={() => setView(v.id)}>
+                {t(v.label)}
+              </button>
+            ))}
           </div>
-        ))}
-        {adding ? <AddCalendar toast={toast} onDone={() => { setAdding(false); load(); }} /> : <button className="btn small" onClick={() => setAdding(true)}>{t("+ Connect a calendar (iCloud, Fastmail, Nextcloud…)")}</button>}
+        </header>
+
+        {view === "month" ? (
+          <MonthGrid
+            from={from}
+            at={at}
+            today={now}
+            events={visible}
+            tasks={dueTasks}
+            chipStyle={chipStyle}
+            onDay={openDay}
+            onCreate={(day) => setCreating({ day })}
+            onEvent={setShown}
+          />
+        ) : (
+          <TimeGrid
+            days={view === "day" ? [from] : Array.from({ length: 7 }, (_, i) => addDays(from, i))}
+            today={now}
+            events={visible}
+            tasks={dueTasks}
+            chipStyle={chipStyle}
+            onDay={openDay}
+            onCreate={(day, hour) => setCreating({ day, hour })}
+            onEvent={setShown}
+          />
+        )}
       </section>
 
-      {creating !== null && <NewEventDialog day={creating} accounts={accounts} onClose={() => setCreating(null)} onCreated={() => { setCreating(null); load(); }} toast={toast} />}
+      {creating && <NewEventDialog day={creating.day} hour={creating.hour} accounts={accounts} onClose={() => setCreating(null)} onCreated={() => { setCreating(null); load(); }} toast={toast} />}
+      {shown && (
+        <Modal title={shown.title} onClose={() => setShown(null)}>
+          <div className="event-details">
+            <p className="row"><span className="cal-swatch" style={{ background: colorOf(shown) }} /> <span>{calName(shown)}</span></p>
+            <p>
+              {shown.all_day
+                ? new Date(shown.start).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+                : `${new Date(shown.start).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${time(shown.start)} – ${time(shown.end)}`}
+              {shown.recurring && <span className="muted"> · {t("Repeats")}</span>}
+            </p>
+            {shown.location && <p>📍 {shown.location}</p>}
+            {shown.attendees.length > 0 && <p className="muted small">{t("With {names}", { names: shown.attendees.join(", ") })}</p>}
+            {shown.notes && <p className="pre-wrap">{shown.notes}</p>}
+          </div>
+          <div className="modal-actions">
+            {!shown.recurring && (
+              <button className="btn danger" onClick={() => { setConfirmDelete(shown); setShown(null); }}>{t("Delete")}</button>
+            )}
+            <button className="btn primary" onClick={() => setShown(null)}>{t("Close")}</button>
+          </div>
+        </Modal>
+      )}
+      {adding && (
+        <Modal title={t("Connect a calendar")} onClose={() => setAdding(false)}>
+          <AddCalendar toast={toast} onDone={() => { setAdding(false); load(); }} />
+        </Modal>
+      )}
       {confirmDelete && (
         <Modal title={t("Delete this event?")} onClose={() => setConfirmDelete(null)}>
           <p>{confirmDelete.account_id ? t("“{title}” will be deleted from its calendar account too.", { title: confirmDelete.title }) : t("“{title}” will be deleted.", { title: confirmDelete.title })}</p>
@@ -174,18 +327,178 @@ export function CalendarView({ toast }: { toast: PushToast }) {
   );
 }
 
+/** The small month in the rail, for jumping to a day. */
+function MiniMonth({ at, today, onPick }: { at: number; today: number; onPick: (day: number) => void }) {
+  const [month, setMonth] = useState(() => new Date(new Date(at).getFullYear(), new Date(at).getMonth(), 1).getTime());
+  useEffect(() => setMonth(new Date(new Date(at).getFullYear(), new Date(at).getMonth(), 1).getTime()), [at]);
+  const start = startOfWeek(month);
+  const m = new Date(month);
+  const days = Array.from({ length: 42 }, (_, i) => addDays(start, i));
+  return (
+    <div className="mini-month">
+      <div className="row between">
+        <strong className="small">{m.toLocaleDateString([], { month: "long", year: "numeric" })}</strong>
+        <span>
+          <button className="icon-btn" onClick={() => setMonth(new Date(m.getFullYear(), m.getMonth() - 1, 1).getTime())} aria-label={t("Earlier")}>‹</button>
+          <button className="icon-btn" onClick={() => setMonth(new Date(m.getFullYear(), m.getMonth() + 1, 1).getTime())} aria-label={t("Later")}>›</button>
+        </span>
+      </div>
+      <div className="mini-grid">
+        {days.slice(0, 7).map((d) => <span key={`h${d}`} className="mini-dow">{new Date(d).toLocaleDateString([], { weekday: "narrow" })}</span>)}
+        {days.map((d) => (
+          <button
+            key={d}
+            className={`mini-day ${new Date(d).getMonth() !== m.getMonth() ? "other" : ""} ${sameDay(d, today) ? "today" : ""} ${sameDay(d, at) ? "picked" : ""}`}
+            onClick={() => onPick(d)}
+          >
+            {new Date(d).getDate()}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface GridProps {
+  today: number;
+  events: CalEvent[];
+  tasks: Task[];
+  chipStyle: (e: CalEvent) => React.CSSProperties;
+  onDay: (day: number) => void;
+  onEvent: (e: CalEvent) => void;
+}
+
+function MonthGrid({ from, at, today, events, tasks, chipStyle, onDay, onCreate, onEvent }: GridProps & { from: number; at: number; onCreate: (day: number) => void }) {
+  const month = new Date(at).getMonth();
+  const days = Array.from({ length: 42 }, (_, i) => addDays(from, i));
+  const MAX = 3;
+  return (
+    <div className="month">
+      <div className="month-head">
+        {days.slice(0, 7).map((d) => <span key={d}>{new Date(d).toLocaleDateString([], { weekday: "short" })}</span>)}
+      </div>
+      <div className="month-grid">
+        {days.map((day) => {
+          const next = addDays(day, 1);
+          const evs = events.filter((e) => e.start < next && e.end > day).sort((a, b) => Number(b.all_day) - Number(a.all_day) || a.start - b.start);
+          const ts = tasks.filter((task) => task.due! >= day && task.due! < next);
+          const items = [...evs.map((e) => ({ e })), ...ts.map((task) => ({ task }))];
+          const more = items.length - MAX;
+          return (
+            <div key={day} className={`month-cell ${new Date(day).getMonth() !== month ? "other" : ""}`} onClick={() => onCreate(day)}>
+              <button className={`month-date ${sameDay(day, today) ? "today" : ""}`} onClick={(ev) => { ev.stopPropagation(); onDay(day); }}>
+                {new Date(day).getDate() === 1 ? new Date(day).toLocaleDateString([], { month: "short", day: "numeric" }) : new Date(day).getDate()}
+              </button>
+              {items.slice(0, more > 0 ? MAX - 1 : MAX).map((it) =>
+                "e" in it ? (
+                  <button key={it.e.id} className={`chip ${it.e.all_day ? "all-day" : ""}`} style={chipStyle(it.e)} onClick={(ev) => { ev.stopPropagation(); onEvent(it.e); }} title={it.e.title}>
+                    {!it.e.all_day && <><i className="chip-dot" /><span className="chip-time">{shortTime(it.e.start)}</span></>}
+                    <span className="ellipsis">{it.e.title}</span>
+                  </button>
+                ) : (
+                  <span key={it.task.id} className="chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                ),
+              )}
+              {more > 0 && <button className="chip more" onClick={(ev) => { ev.stopPropagation(); onDay(day); }}>{t("{n} more", { n: more + 1 })}</button>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TimeGrid({ days, today, events, tasks, chipStyle, onDay, onCreate, onEvent }: GridProps & { days: number[]; onCreate: (day: number, hour: number) => void }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  // Start the view at 7 AM (or a little before the current hour).
+  useEffect(() => {
+    const h = days.some((d) => sameDay(d, today)) ? Math.max(0, new Date(today).getHours() - 2) : 7;
+    scroller.current?.scrollTo({ top: Math.min(h, 7) * HOUR_PX });
+  }, [days.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const hours = Array.from({ length: 24 }, (_, h) => h);
+  const cols = { gridTemplateColumns: `56px repeat(${days.length}, minmax(0, 1fr))` };
+  const allDay = (day: number) => {
+    const next = addDays(day, 1);
+    return [
+      ...events.filter((e) => (e.all_day || e.end - e.start >= DAY) && e.start < next && e.end > day).map((e) => ({ e })),
+      ...tasks.filter((task) => task.due! >= day && task.due! < next).map((task) => ({ task })),
+    ];
+  };
+  const hasAllDay = days.some((d) => allDay(d).length > 0);
+  return (
+    <div className={`timegrid ${days.length === 1 ? "single" : ""}`}>
+      <div className="tg-head" style={cols}>
+        <span />
+        {days.map((d) => (
+          <button key={d} className={`tg-day ${sameDay(d, today) ? "today" : ""}`} onClick={() => onDay(d)}>
+            <span className="tg-dow">{new Date(d).toLocaleDateString([], { weekday: "short" })}</span>
+            <span className="tg-num">{new Date(d).getDate()}</span>
+          </button>
+        ))}
+      </div>
+      {hasAllDay && (
+        <div className="tg-allday" style={cols}>
+          <span className="tg-gutter small muted">{t("All day")}</span>
+          {days.map((d) => (
+            <div key={d} className="tg-allday-cell">
+              {allDay(d).map((it) =>
+                "e" in it ? (
+                  <button key={it.e.id} className="chip all-day" style={chipStyle(it.e)} onClick={() => onEvent(it.e)} title={it.e.title}><span className="ellipsis">{it.e.title}</span></button>
+                ) : (
+                  <span key={it.task.id} className="chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="tg-scroll" ref={scroller}>
+        <div className="tg-body" style={cols}>
+          <div className="tg-hours">
+            {hours.map((h) => <span key={h} className="tg-hour" style={{ top: h * HOUR_PX }}>{h === 0 ? "" : hourLabel(h)}</span>)}
+          </div>
+          {days.map((day) => {
+            const timed = events.filter((e) => !e.all_day && e.end - e.start < DAY && e.start < addDays(day, 1) && e.end > day);
+            return (
+              <div key={day} className="tg-col" style={{ height: 24 * HOUR_PX }}>
+                {hours.map((h) => (
+                  <button key={h} className="tg-slot" style={{ top: h * HOUR_PX, height: HOUR_PX }} onClick={() => onCreate(day, h)} aria-label={t("Add an event at {time}", { time: hourLabel(h) })} />
+                ))}
+                {layout(timed, day).map(({ e, top, height, col, cols: n }) => (
+                  <button
+                    key={e.id}
+                    className={`tg-event ${height < 40 ? "short" : ""}`}
+                    style={{ ...chipStyle(e), top, height: height - 2, left: `calc(${(col / n) * 100}% + 2px)`, width: `calc(${100 / n}% - 6px)` }}
+                    onClick={() => onEvent(e)}
+                    title={`${e.title} · ${time(e.start)} – ${time(e.end)}`}
+                  >
+                    <strong className="ellipsis">{e.title}</strong>
+                    <span className="ellipsis">{height < 40 ? shortTime(e.start) : `${time(e.start)} – ${time(e.end)}${e.location ? ` · ${e.location}` : ""}`}</span>
+                  </button>
+                ))}
+                {sameDay(day, today) && <span className="now-line" style={{ top: ((today - day) / 3_600_000) * HOUR_PX }} />}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const pad = (n: number) => String(n).padStart(2, "0");
 const dateInput = (ms: number) => {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-function NewEventDialog({ day, accounts, onClose, onCreated, toast }: { day: number; accounts: CalAccount[]; onClose: () => void; onCreated: () => void; toast: PushToast }) {
+function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { day: number; hour?: number; accounts: CalAccount[]; onClose: () => void; onCreated: () => void; toast: PushToast }) {
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(dateInput(day));
   const [allDay, setAllDay] = useState(false);
-  const [start, setStart] = useState("09:00");
-  const [end, setEnd] = useState("10:00");
+  // A time slot that was clicked, else 9 to 10.
+  const [start, setStart] = useState(`${pad(hour ?? 9)}:00`);
+  const [end, setEnd] = useState(`${pad(Math.min((hour ?? 9) + 1, 23))}:${(hour ?? 9) >= 23 ? "59" : "00"}`);
   const [location, setLocation] = useState("");
   const [notes, setNotes] = useState("");
   const [attendees, setAttendees] = useState("");

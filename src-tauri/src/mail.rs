@@ -806,6 +806,15 @@ pub fn mail_get(state: AppStateRef, id: String) -> Result<MailItem, String> {
     Ok(m)
 }
 
+/// Marks a message read or unread (on this PC).
+#[tauri::command(async)]
+pub fn mail_set_seen(state: AppStateRef, id: String, seen: bool) -> Result<(), String> {
+    ensure_on(&state)?;
+    state.cipher()?;
+    state.db.lock().unwrap().execute("UPDATE mail_messages SET seen = ?2 WHERE id = ?1", rusqlite::params![id, seen as i64]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn send_mail(state: AppStateRef<'_>, account_id: String, draft: Draft) -> Result<(), String> {
     ensure_on(&state)?;

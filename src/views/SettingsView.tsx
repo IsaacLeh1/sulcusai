@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
+import { ThemePicker } from "../components/ThemePicker";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser } from "../api";
 import { APP_NAME } from "../brand";
 import { chosenLanguage, LANGUAGES, setLanguage, t, tx } from "../i18n";
@@ -179,6 +180,11 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <header className="page-head">
         <h1>{t("Settings")}</h1>
       </header>
+
+      <section className="card">
+        <h2>{t("Appearance")}</h2>
+        <ThemePicker />
+      </section>
 
       <section className="card">
         <h2>{t("Language")}</h2>

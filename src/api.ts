@@ -1239,6 +1239,7 @@ export const api = {
   syncMail: () => invoke<number>("sync_mail"),
   mailList: (query: string) => invoke<MailItem[]>("mail_list", { query, limit: 300 }),
   mailGet: (id: string) => invoke<MailItem>("mail_get", { id }),
+  mailSetSeen: (id: string, seen: boolean) => invoke<void>("mail_set_seen", { id, seen }),
   sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
   calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
   calendarAccounts: () => invoke<CalAccount[]>("calendar_accounts"),

@@ -446,6 +446,14 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 - Test: `cargo test --lib e2e_sync_through_relay -- --ignored --nocapture` (Node runs the worker; two PCs sync both ways through it, a wrong token gets nothing, read mail is deleted, nothing happens off the Cloud level).
 - **Deployed 2026-10-09** on his Cloudflare account (free plan) as `sulcusai-relay` at https://sulcusai-relay.isaacleh1.workers.dev, with a `RELAY_SECRET` so only addresses ending in `/k/<secret>` are served. The full address is in `C:\dev\sulcusai-dist\relay-address.txt` (not in the repo). Redeploy: `npx wrangler deploy` in `relay/` (wrangler is logged in as his account).
 
+## Look and design (2026-10-13)
+
+- **Themes:** `src/theme.ts` keeps the choice (System, Light, Dark, OLED black) in localStorage `sulcusai.theme`, sets `data-theme` on `<html>` before the first paint, follows Windows for System, and sets the window's title bar with `setTheme` (capability `core:window:allow-set-theme`). Pickers: Settings › Appearance (cards) and the ⚙ menu (compact row), both `components/ThemePicker.tsx`.
+- **Colors** are variables at the top of `styles.css`: light is `:root`, dark and OLED are `:root[data-theme=…]`. OLED is true black with thin borders and no shadows. The logo gradient (`--brand-gradient`, and `--brand-gradient-strong` where white text sits on it) is used for the brand name, New chat, Compose/Create, today markers and the active-item bar. Accent: #6447e8 light, #9d8cff dark/OLED.
+- **Mail** (`views/MailView.tsx`): webmail layout. Folder rail (Inbox, Unread, Sent, All mail; folders other than INBOX count as Sent), rows with avatars, read/unread (`mail_set_seen`, local only), the message in place of the list, and a compose panel at the bottom right.
+- **Calendar** (`views/CalendarView.tsx`): Day, Week and Month views (the choice is kept in localStorage), a rail with a mini month and calendars that can be hidden, clicking a time slot creates an event at that hour, and clicking an event shows its details. This PC's events are #6447e8; account calendars use their own color or a logo hue.
+- The preview (`mock.html` + `src/mock.tsx`, git-excluded) has sample mail and events for these pages.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

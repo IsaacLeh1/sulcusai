@@ -3,6 +3,7 @@
 // (settings, models, features, activity), so the top stays about your work.
 import { useEffect, useRef, useState } from "react";
 import { t, tx } from "../i18n";
+import { ThemePicker } from "./ThemePicker";
 
 export type MenuView = "settings" | "models" | "features" | "activity";
 
@@ -51,6 +52,10 @@ export function SideMenu({ view, installing, onOpen }: { view: string; installin
               {i.id === "models" && installing && <span className="dot" aria-label={t("Installing")} />}
             </button>
           ))}
+          <div className="side-menu-theme">
+            <span className="muted small">{t("Appearance")}</span>
+            <ThemePicker compact />
+          </div>
         </div>
       )}
       <button className={`side-menu-btn ${current ? "active" : ""}`} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open} title={t("Settings, models, features and activity")}>

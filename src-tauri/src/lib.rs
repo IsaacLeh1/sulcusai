@@ -1294,6 +1294,7 @@ pub fn run() {
             mail::sync_mail,
             mail::mail_list,
             mail::mail_get,
+            mail::mail_set_seen,
             mail::send_mail,
             calendar::calendar_presets,
             calendar::calendar_accounts,
