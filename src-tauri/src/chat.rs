@@ -423,6 +423,23 @@ pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
     }
 }
 
+static ABOUT_THEIR_THINGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(e-?mails?|mail|inbox|messages?|calendar|events?|schedule|meetings?|appointments?|party|birthday|today|tonight|tomorrow|this week|next week|notes?|tasks?|to-?dos?|reminders?|weather|forecast)\b").unwrap()
+});
+static STALLING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)i'?ll need to|i need to|i will need|i would need|please (provide|confirm|specify)|(could|can) you (please )?(provide|confirm|specify|tell me|share|give me)|(any|more|specific) (details|criteria|information)|function call|<tool|(i'?ll|i will|let me) (search|look|check)").unwrap()
+});
+
+/// A small model asked the user for details or permission about their own
+/// mail, calendar, notes, tasks or weather instead of using a tool to look.
+pub fn stalls(user: &str, reply: &str) -> bool {
+    let reply = reply.trim();
+    !reply.is_empty() && reply.chars().count() < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(reply)
+}
+
+/// Said, for one retry only, to a model that stalled.
+pub const JUST_DO_IT: &str = "(Don't ask me for details or confirmation: use your tools now to look it up, then answer.)";
+
 // Tags models use: <tool_call> (Qwen's own), <tools> (the tag Qwen's template
 // lists the tools in, which coder models copy), <tool>, <function_call>, or a
 // ```json fence.
@@ -592,6 +609,18 @@ mod tests {
         rescue_tool_calls(&mut out, Some(&tools));
         assert_eq!(out.tool_calls.len(), 1);
         assert!(out.content.contains("\"a\": 1"), "other code blocks stay in the reply: {}", out.content);
+    }
+
+    #[test]
+    fn notices_a_model_asking_instead_of_looking() {
+        // What qwen2.5-coder said.
+        assert!(stalls("Summarize my most recent email from Google", "To summarize your most recent email from Google, I'll need to search your emails for the latest one from Google. Could you please confirm if you have any specific criteria or details you'd like me to look for in that email?"));
+        assert!(stalls("When is sam's party?", "To find out when Sam's party is, I'll need to search your calendar for any events related to Sam's party. Can you please provide me with the name of the event or any details that might help me locate it?"));
+        // Real answers, and questions that aren't about the user's things, are left alone.
+        assert!(!stalls("When is sam's party?", "Sam's party is today at 6:00 PM at Sam's house."));
+        assert!(!stalls("What's a closure in Rust?", "Could you mean closures as in Fn traits? A closure is..."));
+        assert!(!stalls("Write a note about my day", ""));
+        assert!(!stalls("Write a note about my day", "Here's a note:\n\nA calm day: coffee, a long walk and some reading.\n\nWant me to save it to your notes?"));
         assert_eq!(clean_title("\"Trip to Tokyo.\"").as_deref(), Some("Trip to Tokyo"));
         assert_eq!(clean_title("Title: Budget plan\nextra").as_deref(), Some("Budget plan"));
         assert_eq!(clean_title("   "), None);

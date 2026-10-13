@@ -314,20 +314,47 @@ impl Turn {
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
 
-            let message_id = uuid::Uuid::new_v4().to_string();
-            self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
-            let mut messages = chat::api_messages(&system, &kept);
-            let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
-            let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
-            chat::attach_images(&mut messages, &kept, see);
-            let finished = chat::stream(&self.ep, messages, tools.as_ref(), &self.cancel, |d| {
-                let (content, thinking) = match d {
-                    Delta::Content(t) => (Some(t), None),
-                    Delta::Thinking(t) => (None, Some(t)),
+            let mut message_id = uuid::Uuid::new_v4().to_string();
+            let mut forced: Option<Endpoint> = None;
+            let mut first = None;
+            let finished = loop {
+                self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
+                let mut messages = chat::api_messages(&system, &kept);
+                let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
+                let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
+                chat::attach_images(&mut messages, &kept, see);
+                if forced.is_some() {
+                    messages.push(json!({ "role": "user", "content": chat::JUST_DO_IT }));
+                }
+                let finished = chat::stream(forced.as_ref().unwrap_or(&self.ep), messages, tools.as_ref(), &self.cancel, |d| {
+                    let (content, thinking) = match d {
+                        Delta::Content(t) => (Some(t), None),
+                        Delta::Thinking(t) => (None, Some(t)),
+                    };
+                    self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": content, "thinking": thinking }));
+                })
+                .await;
+                let finished = match (finished, first.take()) {
+                    (Ok(f), _) => f,
+                    // The engine wouldn't take the retry: keep the first answer.
+                    (Err(_), Some(f)) => break f,
+                    (Err(e), None) => return Err(e),
                 };
-                self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": content, "thinking": thinking }));
-            })
-            .await?;
+                // A small model that asks the user for details about their own
+                // mail or calendar instead of looking gets one more try, made
+                // to use a tool (the engine enforces it). The question is dropped.
+                let asked = history.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
+                if step == 0 && forced.is_none() && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content) {
+                    let mut ep = self.ep.clone();
+                    ep.extra["tool_choice"] = json!("required");
+                    forced = Some(ep);
+                    first = Some(finished);
+                    message_id = uuid::Uuid::new_v4().to_string();
+                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                    continue;
+                }
+                break finished;
+            };
 
             let calls = finished.tool_calls.clone();
             let message = Message {
