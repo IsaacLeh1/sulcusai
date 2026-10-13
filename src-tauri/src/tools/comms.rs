@@ -193,7 +193,7 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
                     .iter()
                     .map(|m| {
                         let who = if m.data.from_name.is_empty() { m.data.from.clone() } else { format!("{} <{}>", m.data.from_name, m.data.from) };
-                        format!("id {} | {} | {who} | {}{} | {}", m.id, when(m.date), m.data.subject, if m.seen { "" } else { " (unread)" }, m.data.snippet)
+                        format!("id {} | {} | {who} | {}{} | {}", m.id, when(m.date), m.data.subject, if m.seen { "" } else { " (unread)" }, mail::visible(&m.data.snippet))
                     })
                     .collect();
                 let shown = found.iter().map(|m| format!("{} — {}", m.data.subject, m.data.from)).collect::<Vec<_>>().join("\n");

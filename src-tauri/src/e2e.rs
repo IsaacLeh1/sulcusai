@@ -1075,6 +1075,13 @@ fn seed_test_mail(state: &std::sync::Arc<crate::AppState>, cipher: &crate::crypt
             ("newsletter@medium.com", "Medium Daily Digest", "Stories for you", long.clone(), 30),
             ("no-reply@accounts.google.com", "Google", "Your Google Account storage is almost full", "You've used 14 GB of your 15 GB of Google storage.".into(), 50),
             ("mom@example.org", "Mom", "Sunday dinner", "Are you coming Sunday? Dad is making lasagna.".into(), 52),
+            // Marketing that sounds urgent, next to real deadlines.
+            ("deals@lenovo.example", "Lenovo US", "Last Chance for Your Extra 10% Off", "Ends tonight at midnight! Use code EXTRA10 on laptops and monitors.".into(), 8),
+            ("giveaway@717supply.example", "717 SUPPLY", "FINAL HOURS: Your Entries Count TWICE", "Enter now to win a Tahoe, a Corvette or $75,000. Final hours, don't miss out!".into(), 9),
+            ("quotes@libertymutual.example", "Liberty Mutual", "Your quote is patiently waiting, Isaac.", "Customized coverage so you only pay for what you need. Finish your quote today.".into(), 10),
+            ("rewards@dutchbros.example", "Dutch Bros Coffee", "2X POINTS today only", "Earn double points on every drink today only. Open the app to activate.".into(), 11),
+            ("billing@rockymountainpower.example", "Rocky Mountain Power", "Your bill of $84.20 is due Oct 20", "Your October statement is ready. Amount due: $84.20 by October 20. Pay online or set up autopay.".into(), 12),
+            ("noreply@delta.example", "Delta", "Check in for your flight to Denver tomorrow", "Your flight DL1234 departs SLC tomorrow at 8:05 AM. Check in now to get your boarding pass.".into(), 13),
         ];
         let mut all = mails;
         for i in 0..22 {
@@ -1109,8 +1116,13 @@ async fn e2e_mail_triage_on_model() {
         println!("{} | {:<28} | {:<45} | {} ({})", if i.important { "KEEP " } else { "READ " }, i.from_name, i.subject, i.reason, i.next);
     }
     let kept = |name: &str, subject: &str| report.items.iter().any(|i| i.from_name == name && i.subject.contains(subject) && i.important);
-    assert_eq!(report.looked_at, 30);
+    assert_eq!(report.looked_at, 36);
     assert!(kept("Sam Rivera", "Party") && kept("Mom", "Sunday") && kept("Google", "Security"), "people and the security alert stay unread");
+    assert!(kept("Rocky Mountain Power", "bill") && kept("Delta", "flight"), "a bill due and a flight are kept");
+    let urgent_ads = ["Lenovo US", "717 SUPPLY", "Liberty Mutual", "Dutch Bros Coffee"];
+    let ads_cleared = report.items.iter().filter(|i| urgent_ads.contains(&i.from_name.as_str()) && i.marked_read).count();
+    println!("urgent-sounding ads cleared: {ads_cleared} of 4");
+    assert!(ads_cleared >= 3, "marketing urgency doesn't make an ad important");
     let promos = report.items.iter().filter(|i| i.from_name == "Store").count();
     let cleared = report.items.iter().filter(|i| i.from_name == "Store" && i.marked_read).count();
     println!("promotions cleared: {cleared} of {promos}");

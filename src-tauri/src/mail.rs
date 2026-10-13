@@ -188,6 +188,13 @@ pub struct MailItem {
     pub data: MailData,
 }
 
+/// Text without the invisible characters marketing mail pads its preview
+/// with (zero-width spaces and joiners, soft hyphens, …), whitespace evened out.
+pub fn visible(text: &str) -> String {
+    let hidden = |c: char| matches!(c, '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{3164}' | '\u{FEFF}' | '\u{FFA0}');
+    text.split_whitespace().map(|w| w.chars().filter(|&c| !hidden(c)).collect::<String>()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
 /// Reads a raw message.
 pub fn parse(raw: &[u8], partial: bool) -> (MailData, Option<i64>) {
     use mail_parser::{Address, MessageParser, MimeHeaders};
@@ -203,7 +210,7 @@ pub fn parse(raw: &[u8], partial: bool) -> (MailData, Option<i64>) {
         .or_else(|| m.body_html(0).map(|h| crate::web::html_to_text(&h).1))
         .unwrap_or_default();
     let body: String = body.replace("\r\n", "\n").chars().take(MAX_BODY).collect();
-    let snippet: String = body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+    let snippet: String = visible(&body).chars().take(160).collect();
     let list = |v: &mail_parser::HeaderValue<'_>| -> Vec<String> {
         v.as_text_list().map(|l| l.into_iter().map(|s| s.to_string()).collect()).unwrap_or_default()
     };
@@ -792,6 +799,7 @@ pub fn mail_list(state: AppStateRef, query: Option<String>, limit: Option<usize>
     // The list doesn't need whole bodies.
     for m in &mut items {
         m.data.body.clear();
+        m.data.snippet = visible(&m.data.snippet);
     }
     Ok(items)
 }
@@ -827,6 +835,12 @@ mod tests {
     use super::*;
 
     const RAW: &[u8] = b"From: Ana Ruiz <ana@example.com>\r\nTo: me@example.org, team@example.org\r\nSubject: Budget review on Friday\r\nMessage-ID: <abc123@example.com>\r\nDate: Tue, 6 Oct 2026 09:30:00 -0600\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi,\r\n\r\nCan we move the budget review to Friday at 2pm?\r\n\r\nAna\r\n";
+
+    #[test]
+    fn invisible_padding_is_dropped() {
+        let preview = "Learn the signs. \u{034F} \u{200C}\u{00AD} \u{034F} \u{FEFF}Save  energy";
+        assert_eq!(visible(preview), "Learn the signs. Save energy");
+    }
 
     #[test]
     fn searches_understand_from_to_and_subject() {

@@ -68,11 +68,14 @@ fn instructions(profile: &db::Profile) -> String {
     }
     format!(
         "You sort someone's unread email. {who}For each email, decide whether it needs their attention.\n\
-         Needs attention (important: true): written to them by a real person; asks a question or for a reply; anything due \
-         or time-sensitive (bills, deadlines, appointments, invitations); security or account alerts; family, friends, work or school.\n\
-         Doesn't (important: false): newsletters, promotions, sales and marketing, digests, social media notifications, and \
-         automatic receipts or shipping updates that need nothing from them.\n\
-         When unsure, choose important: true.\n\
+         Needs attention (important: true): written to them personally by a real person (family, friends, work, school), \
+         especially if it asks something; their own obligations with a date: a bill or payment due, an appointment, travel, \
+         a delivery problem, a renewal or trial that will charge them; security or sign-in alerts about their accounts.\n\
+         Doesn't (important: false): anything sent to sell, promote or engage: newsletters, sales, coupons, points and rewards, \
+         giveaways and contests, \"your quote is waiting\", abandoned carts, event and product announcements, digests, social \
+         media notifications, and routine receipts or shipping updates. Marketing urgency (\"last chance\", \"ends tonight\", \
+         \"final hours\", \"only today\") does not make an email important, and neither does using their name.\n\
+         If an email is clearly marketing, it is not important; if you really can't tell, choose important: true.\n\
          reason: one short sentence (under 15 words) saying what it is and why, e.g. \"Ana asks to move Friday's budget review.\"\n\
          next: what they should do: {}.\n\
          Reply with JSON only: {{\"emails\": [{{\"n\": 1, \"important\": true, \"reason\": \"...\", \"next\": \"reply\"}}, ...]}}, one entry per email.",
@@ -96,7 +99,7 @@ fn schema() -> Value {
 fn excerpt(m: &mail::MailItem) -> String {
     let d = &m.data;
     let who = if d.from_name.is_empty() { d.from.clone() } else { format!("{} <{}>", d.from_name, d.from) };
-    let text: String = d.body.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(EXCERPT).collect();
+    let text: String = mail::visible(&d.body).chars().take(EXCERPT).collect();
     format!("From: {who}\nSubject: {}\n{text}", d.subject)
 }
 
