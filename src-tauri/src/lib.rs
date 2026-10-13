@@ -60,6 +60,7 @@ mod storage;
 mod sync;
 mod tools;
 mod translate;
+mod triage;
 mod tts;
 mod updates;
 mod vad;
@@ -1295,6 +1296,9 @@ pub fn run() {
             mail::mail_list,
             mail::mail_get,
             mail::mail_set_seen,
+            triage::mail_triage,
+            triage::mail_triage_report,
+            triage::mail_triage_undo,
             mail::send_mail,
             calendar::calendar_presets,
             calendar::calendar_accounts,

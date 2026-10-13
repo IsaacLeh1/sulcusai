@@ -4,7 +4,7 @@
 // like a webmail inbox: folders on the left, a list of rows, and the open
 // message in place of the list; writing happens in a panel at the bottom right.
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, errorText, on, type MailAccount, type MailConfig, type MailItem, type MailSecurity } from "../api";
+import { api, errorText, on, type MailAccount, type MailConfig, type MailItem, type MailSecurity, type TriageItem, type TriageReport } from "../api";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
@@ -32,13 +32,22 @@ function Avatar({ name, email, size = 32 }: { name: string; email: string; size?
   );
 }
 
-type Folder = "inbox" | "unread" | "sent" | "all";
+type Folder = "inbox" | "unread" | "sent" | "all" | "report";
 const FOLDERS: { id: Folder; icon: string; label: string }[] = [
   { id: "inbox", icon: "📥", label: tx("Inbox") },
   { id: "unread", icon: "✉", label: tx("Unread") },
   { id: "sent", icon: "➤", label: tx("Sent") },
   { id: "all", icon: "🗂", label: tx("All mail") },
+  { id: "report", icon: "✨", label: tx("AI report") },
 ];
+const NEXT_LABEL: Record<TriageItem["next"], string> = {
+  reply: tx("Reply"),
+  calendar: tx("Add to calendar"),
+  pay: tx("Pay"),
+  review: tx("Review"),
+  "read later": tx("Read later"),
+  none: tx("Nothing to do"),
+};
 const isInbox = (m: MailItem) => m.folder.toUpperCase() === "INBOX";
 
 interface Compose {
@@ -73,15 +82,18 @@ export function MailView({ toast }: { toast: PushToast }) {
   const [compose, setCompose] = useState<Compose | null>(null);
   const [adding, setAdding] = useState(false);
   const [managing, setManaging] = useState(false);
+  const [report, setReport] = useState<TriageReport | null>(null);
+  const [sorting, setSorting] = useState<{ done: number; total: number } | null>(null);
 
   const loadAccounts = () => api.mailAccounts().then(setAccounts).catch((e) => toast(errorText(e), "error"));
   const loadItems = (q = query) => api.mailList(q).then(setItems).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     loadAccounts();
     loadItems("");
-    const sub = on("mail:synced", () => loadItems());
+    api.mailTriageReport().then(setReport).catch(() => {});
+    const subs = [on("mail:synced", () => loadItems()), on("mail:triage", (p) => setSorting(p))];
     return () => {
-      sub.then((u) => u());
+      subs.forEach((s) => s.then((u) => u()));
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -110,8 +122,36 @@ export function MailView({ toast }: { toast: PushToast }) {
     }
   };
 
-  const setSeen = async (m: MailItem, seen: boolean) => {
+  // The AI reads the unread inbox and marks what doesn't need you as read.
+  const sortUnread = async () => {
+    setSorting({ done: 0, total: 0 });
+    try {
+      const r = await api.mailTriage();
+      setReport(r);
+      await loadItems();
+      setOpenId(null);
+      setFolder("report");
+      const cleared = r.items.filter((i) => i.marked_read).length;
+      toast(r.looked_at === 0 ? t("No unread mail to sort.") : t("Sorted {n} unread emails: {kept} need you, {cleared} marked as read.", { n: r.looked_at, kept: r.looked_at - cleared, cleared }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setSorting(null);
+    }
+  };
+  const undo = async (ids: string[]) => {
+    try {
+      await api.mailTriageUndo(ids);
+      setReport(await api.mailTriageReport());
+      await loadItems();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
+  const setSeen = async (m: { id: string }, seen: boolean) => {
     setItems((all) => all.map((x) => (x.id === m.id ? { ...x, seen } : x)));
+    setReport((r) => (r ? { ...r, items: r.items.map((x) => (x.id === m.id ? { ...x, seen } : x)) } : r));
     try {
       await api.mailSetSeen(m.id, seen);
     } catch (e) {
@@ -125,6 +165,7 @@ export function MailView({ toast }: { toast: PushToast }) {
     [mine, folder],
   );
   const unread = mine.filter((m) => isInbox(m) && !m.seen).length;
+  const waiting = report?.items.filter((i) => i.important && !i.seen).length ?? 0;
 
   const reply = (m: MailItem) =>
     setCompose({
@@ -176,6 +217,7 @@ export function MailView({ toast }: { toast: PushToast }) {
               <span className="folder-icon" aria-hidden>{f.icon}</span>
               <span className="grow">{t(f.label)}</span>
               {(f.id === "inbox" || f.id === "unread") && unread > 0 && <span className="folder-count">{unread}</span>}
+              {f.id === "report" && waiting > 0 && <span className="folder-count">{waiting}</span>}
             </button>
           ))}
         </nav>
@@ -226,9 +268,15 @@ export function MailView({ toast }: { toast: PushToast }) {
             {query && <button className="icon-btn" onClick={() => setQuery("")} aria-label={t("Clear search")}>×</button>}
           </label>
           <button className={`icon-btn round ${syncing ? "spin" : ""}`} onClick={sync} disabled={syncing} title={syncing ? t("Syncing…") : t("Check for new mail")} aria-label={t("Check for new mail")}>↻</button>
+          <button className="btn" onClick={sortUnread} disabled={!!sorting || unread === 0} title={t("Your AI reads your unread mail and marks what doesn't need you as read. You can undo it in the AI report.")}>
+            {sorting ? (sorting.total ? t("Sorting {done} of {total}…", sorting) : t("Starting…")) : `✨ ${t("Sort unread")}`}
+          </button>
         </header>
+        {sorting && sorting.total > 0 && <div className="sort-progress"><span style={{ width: `${(sorting.done / sorting.total) * 100}%` }} /></div>}
 
-        {open ? (
+        {!open && folder === "report" ? (
+          <TriageView report={report} sorting={!!sorting} unread={unread} onSort={sortUnread} onOpen={setOpenId} onRead={(i) => setSeen(i, true)} onUndo={undo} />
+        ) : open ? (
           <article className="message">
             <div className="message-bar">
               <button className="icon-btn round" onClick={() => setOpenId(null)} title={t("Back")} aria-label={t("Back")}>←</button>
@@ -291,6 +339,90 @@ export function MailView({ toast }: { toast: PushToast }) {
         )}
       </section>
       {compose && <ComposePanel draft={compose} from={fromAccount} onClose={() => setCompose(null)} toast={toast} onSent={() => loadItems()} />}
+    </div>
+  );
+}
+
+/** What the AI did with the unread mail: what it left for you and why, and
+ * what it marked read (each can be put back). */
+function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo }: {
+  report: TriageReport | null;
+  sorting: boolean;
+  unread: number;
+  onSort: () => void;
+  onOpen: (id: string) => void;
+  onRead: (item: TriageItem) => void;
+  onUndo: (ids: string[]) => void;
+}) {
+  if (!report?.run_at) {
+    return (
+      <div className="triage-empty">
+        <span className="triage-icon" aria-hidden>✨</span>
+        <h2>{t("Let your AI sort your unread mail")}</h2>
+        <p className="muted">{t("It reads each unread email, keeps the ones that need you, and marks newsletters, promotions and notices that need nothing as read. This report shows what it did and why, and anything can be put back.")}</p>
+        <button className="btn primary" onClick={onSort} disabled={sorting || unread === 0}>{unread === 0 ? t("No unread mail") : t("Sort {n} unread emails", { n: unread })}</button>
+      </div>
+    );
+  }
+  const attention = report.items.filter((i) => i.important);
+  const cleared = report.items.filter((i) => !i.important);
+  const undoable = cleared.filter((i) => i.marked_read && i.seen).map((i) => i.id);
+  const row = (i: TriageItem, actions: React.ReactNode) => (
+    <div key={i.id} className={`triage-row ${i.seen && i.important ? "done" : ""}`}>
+      <Avatar name={i.from_name} email={i.from} size={32} />
+      <div className="grow">
+        <div className="row between">
+          <span className="ellipsis"><strong>{i.from_name || i.from}</strong> <span className="muted">· {i.subject || t("(no subject)")}</span></span>
+          <span className="muted small nowrap">{when(i.date)}</span>
+        </div>
+        <div className="triage-reason">{t(i.reason)}</div>
+      </div>
+      <div className="triage-actions">
+        {i.important && <span className={`next-chip next-${i.next.replace(" ", "-")}`}>{t(NEXT_LABEL[i.next])}</span>}
+        {actions}
+      </div>
+    </div>
+  );
+  return (
+    <div className="triage">
+      <div className="triage-head">
+        <div>
+          <h2>{t("AI report")}</h2>
+          <p className="muted small">
+            {t("Sorted {n} unread emails {time} with {model}.", { n: report.looked_at, time: new Date(report.run_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), model: report.model || t("your model") })}
+          </p>
+        </div>
+        <button className="btn" onClick={onSort} disabled={sorting || unread === 0}>{t("Sort again")}</button>
+      </div>
+
+      <section className="triage-section">
+        <h3>{t("Needs your attention")} <span className="muted">({attention.filter((i) => !i.seen).length})</span></h3>
+        {attention.length === 0 && <p className="muted small">{t("Nothing needed you.")}</p>}
+        {attention.map((i) =>
+          row(i, (
+            <>
+              <button className="btn small" onClick={() => onOpen(i.id)}>{t("Open")}</button>
+              {i.seen ? <span className="muted small">✓ {t("Read")}</span> : <button className="btn small" onClick={() => onRead(i)}>{t("Mark as read")}</button>}
+            </>
+          )),
+        )}
+      </section>
+
+      <section className="triage-section">
+        <div className="row between">
+          <h3>{t("Marked as read by the AI")} <span className="muted">({cleared.length})</span></h3>
+          {undoable.length > 1 && <button className="btn ghost small" onClick={() => onUndo(undoable)}>{t("Undo all")}</button>}
+        </div>
+        {cleared.length === 0 && <p className="muted small">{t("Nothing was marked as read.")}</p>}
+        {cleared.map((i) =>
+          row(i, (
+            <>
+              <button className="btn ghost small" onClick={() => onOpen(i.id)}>{t("Open")}</button>
+              {i.marked_read && i.seen ? <button className="btn small" onClick={() => onUndo([i.id])}>{t("Mark unread")}</button> : <span className="muted small">{t("Back in your inbox")}</span>}
+            </>
+          )),
+        )}
+      </section>
     </div>
   );
 }

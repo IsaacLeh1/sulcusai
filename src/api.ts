@@ -765,6 +765,28 @@ export interface MailItem {
   partial: boolean;
 }
 
+/** One message in the AI's sorting report. */
+export interface TriageItem {
+  id: string;
+  from: string;
+  from_name: string;
+  subject: string;
+  snippet: string;
+  date: number;
+  seen: boolean;
+  important: boolean;
+  marked_read: boolean;
+  reason: string;
+  next: "reply" | "calendar" | "pay" | "review" | "read later" | "none";
+}
+
+export interface TriageReport {
+  run_at: number | null;
+  model: string;
+  looked_at: number;
+  items: TriageItem[];
+}
+
 export interface MailDraft {
   to: string[];
   cc: string[];
@@ -1240,6 +1262,9 @@ export const api = {
   mailList: (query: string) => invoke<MailItem[]>("mail_list", { query, limit: 300 }),
   mailGet: (id: string) => invoke<MailItem>("mail_get", { id }),
   mailSetSeen: (id: string, seen: boolean) => invoke<void>("mail_set_seen", { id, seen }),
+  mailTriage: () => invoke<TriageReport>("mail_triage"),
+  mailTriageReport: () => invoke<TriageReport>("mail_triage_report"),
+  mailTriageUndo: (ids: string[]) => invoke<void>("mail_triage_undo", { ids }),
   sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
   calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
   calendarAccounts: () => invoke<CalAccount[]>("calendar_accounts"),
@@ -1309,6 +1334,7 @@ export interface ChatEvents {
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
   "app:navigate": { page: string };
+  "mail:triage": { done: number; total: number };
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;

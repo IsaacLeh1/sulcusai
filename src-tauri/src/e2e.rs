@@ -1055,6 +1055,70 @@ async fn e2e_email_and_calendar() {
     state.engine.lock().await.stop().await;
 }
 
+/// A test mailbox: a shipping notice, two newsletters, a security alert, a
+/// party invitation, reminders, mail from Mom and 22 store promotions. Mail
+/// older than 4 hours is read unless `all_unread`.
+fn seed_test_mail(state: &std::sync::Arc<crate::AppState>, cipher: &crate::crypto::Cipher, all_unread: bool) {
+    let now = crate::db::now_ms();
+    let hour = 3_600_000;
+    {
+        let conn = state.db.lock().unwrap();
+        let cfg = crate::mail::AccountConfig { name: "Isaac".into(), email: "isaac@example.org".into(), ..Default::default() };
+        crate::mail::store_account(&conn, cipher, "acc", &cfg).unwrap();
+        let long = "Read more about this week's stories. ".repeat(600);
+        let mails: Vec<(&str, &str, &str, String, i64)> = vec![
+            ("deals@amazon.com", "Amazon", "Your package has shipped", "Your order of a USB-C cable has shipped and arrives Thursday.".into(), 1),
+            ("news@nytimes.com", "The New York Times", "The Morning: the week ahead", long.clone(), 2),
+            ("no-reply@accounts.google.com", "Google", "Security alert", "SulcusAI was granted access to your Google Account isaac@example.org. If you did not grant access, you should check this activity and secure your account. Check activity: https://myaccount.google.com/notifications".into(), 3),
+            ("sam@example.org", "Sam Rivera", "Party tonight!", "Hey! My birthday party is tonight at 6pm at my place, 42 Elm Street. Bring snacks.".into(), 5),
+            ("calendar-notification@google.com", "Google Calendar", "Reminder: Dentist @ Wed", "This is a reminder for Dentist on Wednesday at 9am.".into(), 26),
+            ("newsletter@medium.com", "Medium Daily Digest", "Stories for you", long.clone(), 30),
+            ("no-reply@accounts.google.com", "Google", "Your Google Account storage is almost full", "You've used 14 GB of your 15 GB of Google storage.".into(), 50),
+            ("mom@example.org", "Mom", "Sunday dinner", "Are you coming Sunday? Dad is making lasagna.".into(), 52),
+        ];
+        let mut all = mails;
+        for i in 0..22 {
+            all.push(("promo@store.example", "Store", "Weekly sale", format!("Sale number {i}: everything 20% off. {}", "Shop now. ".repeat(200)), 60 + i * 5));
+        }
+        for (uid, (from, name, subject, body, hours_ago)) in all.into_iter().enumerate() {
+            let data = crate::mail::MailData { from: from.into(), from_name: name.into(), to: vec!["isaac@example.org".into()], subject: subject.into(), snippet: body.chars().take(160).collect(), body, ..Default::default() };
+            crate::mail::save_item(&conn, cipher, "acc", "INBOX", uid as u32 + 1, now - hours_ago * hour, !all_unread && hours_ago > 4, &data).unwrap();
+        }
+    }
+}
+
+/// Sorting unread mail with a real model (SULCUSAI_TEST_GGUF and friends, as
+/// above): promotions and newsletters are marked read, people and alerts stay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_mail_triage_on_model() {
+    let ctx = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(8192);
+    let layers = std::env::var("SULCUSAI_TEST_LAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(99);
+    let running = std::env::var("SULCUSAI_TEST_PORT").ok().and_then(|p| p.parse().ok()).map(|port| engine::Endpoint { port, key: std::env::var("SULCUSAI_TEST_KEY").unwrap_or_default(), ctx, extra: serde_json::Value::Null, cloud: None });
+    let blob = std::env::var("SULCUSAI_TEST_GGUF").unwrap_or_default();
+    let stop_after = running.is_none();
+    let (state, ep, cipher) = agent_harness_on(Some((blob.into(), ctx, layers)), running).await;
+    seed_test_mail(&state, &cipher, true);
+    let t = std::time::Instant::now();
+    let report = crate::triage::run(&state, &cipher, &ep, "test model", |done, total| println!("sorted {done} of {total}")).await.unwrap();
+    println!("took {:.1} s", t.elapsed().as_secs_f32());
+    if stop_after {
+        state.engine.lock().await.stop().await;
+    }
+    for i in &report.items {
+        println!("{} | {:<28} | {:<45} | {} ({})", if i.important { "KEEP " } else { "READ " }, i.from_name, i.subject, i.reason, i.next);
+    }
+    let kept = |name: &str, subject: &str| report.items.iter().any(|i| i.from_name == name && i.subject.contains(subject) && i.important);
+    assert_eq!(report.looked_at, 30);
+    assert!(kept("Sam Rivera", "Party") && kept("Mom", "Sunday") && kept("Google", "Security"), "people and the security alert stay unread");
+    let promos = report.items.iter().filter(|i| i.from_name == "Store").count();
+    let cleared = report.items.iter().filter(|i| i.from_name == "Store" && i.marked_read).count();
+    println!("promotions cleared: {cleared} of {promos}");
+    assert!(cleared * 10 >= promos * 8, "at least 80% of the promotions are marked read");
+    let unread_after = crate::mail::list(&state.db.lock().unwrap(), &cipher, "", 100).iter().filter(|m| !m.seen).count();
+    assert_eq!(unread_after, report.items.iter().filter(|i| i.important).count(), "exactly the kept ones are still unread");
+}
+
 /// Mail and calendar questions the way people ask them, on the model Ollama
 /// downloaded (qwen2.5-coder 14B, the one these went wrong on): every tool
 /// call is printed with how long each answer took.
@@ -1082,32 +1146,8 @@ async fn e2e_mail_questions_on_ollama_model() {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     });
-    let now = crate::db::now_ms();
     let hour = 3_600_000;
-    {
-        let conn = state.db.lock().unwrap();
-        let cfg = crate::mail::AccountConfig { name: "Isaac".into(), email: "isaac@example.org".into(), ..Default::default() };
-        crate::mail::store_account(&conn, &cipher, "acc", &cfg).unwrap();
-        let long = "Read more about this week's stories. ".repeat(600);
-        let mails: Vec<(&str, &str, &str, String, i64)> = vec![
-            ("deals@amazon.com", "Amazon", "Your package has shipped", "Your order of a USB-C cable has shipped and arrives Thursday.".into(), 1),
-            ("news@nytimes.com", "The New York Times", "The Morning: the week ahead", long.clone(), 2),
-            ("no-reply@accounts.google.com", "Google", "Security alert", "SulcusAI was granted access to your Google Account isaac@example.org. If you did not grant access, you should check this activity and secure your account. Check activity: https://myaccount.google.com/notifications".into(), 3),
-            ("sam@example.org", "Sam Rivera", "Party tonight!", "Hey! My birthday party is tonight at 6pm at my place, 42 Elm Street. Bring snacks.".into(), 5),
-            ("calendar-notification@google.com", "Google Calendar", "Reminder: Dentist @ Wed", "This is a reminder for Dentist on Wednesday at 9am.".into(), 26),
-            ("newsletter@medium.com", "Medium Daily Digest", "Stories for you", long.clone(), 30),
-            ("no-reply@accounts.google.com", "Google", "Your Google Account storage is almost full", "You've used 14 GB of your 15 GB of Google storage.".into(), 50),
-            ("mom@example.org", "Mom", "Sunday dinner", "Are you coming Sunday? Dad is making lasagna.".into(), 52),
-        ];
-        let mut all = mails;
-        for i in 0..22 {
-            all.push(("promo@store.example", "Store", "Weekly sale", format!("Sale number {i}: everything 20% off. {}", "Shop now. ".repeat(200)), 60 + i * 5));
-        }
-        for (uid, (from, name, subject, body, hours_ago)) in all.into_iter().enumerate() {
-            let data = crate::mail::MailData { from: from.into(), from_name: name.into(), to: vec!["isaac@example.org".into()], subject: subject.into(), snippet: body.chars().take(160).collect(), body, ..Default::default() };
-            crate::mail::save_item(&conn, &cipher, "acc", "INBOX", uid as u32 + 1, now - hours_ago * hour, hours_ago > 4, &data).unwrap();
-        }
-    }
+    seed_test_mail(&state, &cipher, false);
     let today6 = {
         use chrono::{Local, TimeZone};
         let d = Local::now().date_naive().and_hms_opt(18, 0, 0).unwrap();
