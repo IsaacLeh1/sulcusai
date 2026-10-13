@@ -7,9 +7,8 @@
   --brand-violet: #b45edf;
   --brand-blue: #5679ff;
   --brand-sky: #2d89ff;
+  /* Only the app's name uses the gradient; everything else is solid. */
   --brand-gradient: linear-gradient(120deg, #ff45b2 0%, #b45edf 40%, #5679ff 75%, #2d89ff 100%);
-  /* Deep enough for white text on any part of it. */
-  --brand-gradient-strong: linear-gradient(120deg, #d02f8c 0%, #8d44cf 45%, #4b5df0 100%);
 
   --bg: #f6f6fb;
   --panel: #ffffff;
@@ -778,16 +777,13 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 
 /* ---------- look: logo colors, light / dark / OLED ---------- */
 .brand span { background: var(--brand-gradient); -webkit-background-clip: text; background-clip: text; color: transparent; font-weight: 750; letter-spacing: 0.2px; }
-.new-chat-row .btn.primary { background: var(--brand-gradient-strong); border: 0; color: #fff; box-shadow: 0 2px 12px rgba(100, 71, 232, 0.28); }
-.new-chat-row .btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
 .nav button, .chat-item { position: relative; color: var(--text); }
 .nav button:hover, .chat-item:hover, .side-menu-btn:hover { background: var(--hover); }
 .nav button.active, .chat-item.active, .side-menu-btn.active { background: var(--selected); box-shadow: none; }
-.nav button.active::before, .chat-item.active::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--brand-gradient); }
+.nav button.active::before, .chat-item.active::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px; background: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); }
 .page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; }
 :root[data-theme="oled"] .card, :root[data-theme="oled"] .modal { border-color: var(--border); }
-:root[data-theme="oled"] .new-chat-row .btn.primary { box-shadow: none; }
 :root[data-theme="oled"] .modal-backdrop { background: rgba(0, 0, 0, 0.75); }
 
 .side-menu-theme { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--border); margin-top: 4px; padding: 8px 6px 2px 10px; }
@@ -804,7 +800,8 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .theme-preview .tp-main { display: flex; flex-direction: column; gap: 5px; padding: 9px 8px; }
 .theme-preview .tp-line { height: 5px; border-radius: 3px; width: 80%; }
 .theme-preview .tp-line.short { width: 55%; }
-.theme-preview .tp-pill { margin-top: auto; height: 9px; width: 45%; border-radius: 99px; background: var(--brand-gradient); }
+.theme-preview .tp-pill { margin-top: auto; height: 9px; width: 45%; border-radius: 99px; background: #6447e8; }
+.look-dark .tp-pill, .look-oled .tp-pill { background: #9d8cff; }
 .look-light .tp-side { background: #f0eff8; } .look-light .tp-main { background: #ffffff; } .look-light .tp-line { background: #dcd9ea; }
 .look-dark .tp-side { background: #0f0e15; } .look-dark .tp-main { background: #1a1923; } .look-dark .tp-line { background: #34314a; }
 .look-oled .tp-side { background: #000; border-right: 1px solid #23222d; } .look-oled .tp-main { background: #000; } .look-oled .tp-line { background: #2a2838; }
@@ -824,10 +821,9 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .compose-btn {
   display: inline-flex; align-items: center; gap: 10px; align-self: flex-start;
   border: 0; border-radius: 16px; padding: 14px 22px; cursor: pointer; font: inherit; font-weight: 650; font-size: 14.5px;
-  background: var(--brand-gradient-strong); color: #fff; box-shadow: 0 2px 12px rgba(100, 71, 232, 0.3);
+  background: var(--accent); color: var(--accent-text);
 }
-.compose-btn:hover { filter: brightness(1.08); box-shadow: 0 4px 16px rgba(100, 71, 232, 0.4); }
-:root[data-theme="oled"] .compose-btn { box-shadow: none; }
+.compose-btn:hover { filter: brightness(1.08); }
 .inbox-folders, .inbox-accounts { display: flex; flex-direction: column; gap: 1px; }
 .inbox-folders button, .inbox-accounts > button:not(.rail-link) {
   display: flex; align-items: center; gap: 12px; text-align: left; border: 0; background: none; color: var(--text);
@@ -862,7 +858,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .mail-row.read .mail-from, .mail-row.read .mail-subject { color: var(--text); font-weight: 400; }
 .mail-row.unread { background: var(--panel); }
 .mail-row.unread .mail-from, .mail-row.unread .mail-subject, .mail-row.unread .mail-date { font-weight: 700; color: var(--unread); }
-.mail-row.unread::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--brand-gradient); }
+.mail-row.unread::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent); }
 .mail-snippet { color: var(--muted); font-weight: 400; }
 .mail-date { font-size: 12.5px; text-align: right; min-width: 56px; }
 .mail-clip { font-size: 13px; opacity: 0.75; }
@@ -894,7 +890,8 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .compose-field input { flex: 1; border: 0; background: none; outline: none; padding: 4px 0; min-width: 0; }
 .compose-body { border: 0; background: none; outline: none; resize: none; padding: 12px 16px; min-height: 260px; flex: 1; line-height: 1.55; }
 .compose-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
-.send-btn { border: 0; border-radius: 99px; padding: 9px 26px; font: inherit; font-weight: 650; cursor: pointer; background: var(--brand-gradient-strong); color: #fff; }
+.send-btn { border: 0; border-radius: 99px; padding: 9px 26px; font: inherit; font-weight: 650; cursor: pointer; background: var(--accent); color: var(--accent-text); }
+.send-btn:hover:not(:disabled) { filter: brightness(1.08); }
 .send-btn:disabled { opacity: 0.5; cursor: default; }
 @media (max-width: 900px) {
   .inbox { grid-template-columns: 1fr; }
@@ -920,7 +917,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .mini-day:hover { background: var(--hover); }
 .mini-day.other { color: var(--muted); opacity: 0.6; }
 .mini-day.picked { background: var(--selected); font-weight: 650; }
-.mini-day.today { background: var(--brand-gradient-strong); color: #fff; font-weight: 700; }
+.mini-day.today { background: var(--accent); color: var(--accent-text); font-weight: 700; }
 
 .cal-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border-left: 1px solid var(--border); }
 :root:not([data-theme="oled"]) .cal-main { border-radius: 16px 0 0 0; margin-top: 8px; border-top: 1px solid var(--border); }
@@ -956,7 +953,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .month-cell.other .month-date { color: var(--muted); }
 .month-date { align-self: center; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; font-weight: 600; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 99px; cursor: pointer; margin-bottom: 2px; }
 .month-date:hover { background: var(--selected); }
-.month-date.today { background: var(--brand-gradient-strong); color: #fff; }
+.month-date.today { background: var(--accent); color: var(--accent-text); }
 
 .timegrid { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .tg-head, .tg-allday, .tg-body { display: grid; }
@@ -966,7 +963,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .tg-num { font-size: 22px; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; }
 .tg-day:hover .tg-num { background: var(--hover); }
 .tg-day.today .tg-dow { color: var(--accent); }
-.tg-day.today .tg-num { background: var(--brand-gradient-strong); color: #fff; font-weight: 600; }
+.tg-day.today .tg-num { background: var(--accent); color: var(--accent-text); font-weight: 600; }
 .tg-allday { border-bottom: 1px solid var(--border); }
 .tg-gutter { align-self: center; text-align: right; padding-right: 8px; font-size: 10.5px; }
 .tg-allday-cell { border-left: 1px solid var(--border); padding: 3px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
