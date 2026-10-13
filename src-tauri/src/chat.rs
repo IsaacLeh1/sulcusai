@@ -316,6 +316,9 @@ pub async fn stream(
         "stream": true,
         "stream_options": { "include_usage": true },
         "temperature": 0.6,
+        // One step's reply: small models that start rambling would otherwise
+        // write until the context is full (minutes). Advanced settings can override.
+        "max_tokens": (ep.ctx / 2).clamp(512, 4096),
     });
     if let Some(t) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = t.clone();
@@ -358,6 +361,7 @@ pub async fn stream(
     };
     let mut buf = String::new();
     let mut stream = resp.bytes_stream();
+    let offered = offered_names(tools);
     'read: while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
             out.cancelled = true;
@@ -382,6 +386,17 @@ pub async fn stream(
                 if let Some(t) = delta.get("content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
                     out.content.push_str(t);
                     on_delta(Delta::Content(t.to_string()));
+                    // A tool call written as text is complete: stop here. Left
+                    // going, small models imagine its result and keep writing
+                    // (minutes of text that would be thrown away). Dropping the
+                    // stream stops the engine.
+                    if t.contains('}') && out.tool_calls.is_empty() && !offered.is_empty() && !salvage(&out.content, &offered).0.is_empty() {
+                        break 'read;
+                    }
+                    // Stuck saying the same line over and over: stop it there.
+                    if t.contains('\n') && repeats_itself(&out.content) {
+                        break 'read;
+                    }
                 }
                 for tc in delta.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
                     merge_tool_delta(&mut out.tool_calls, tc);
@@ -406,18 +421,32 @@ pub async fn stream(
     Ok(out)
 }
 
+/// The last few finished lines are the same line (a small model stuck in a loop).
+fn repeats_itself(text: &str) -> bool {
+    let done = match text.rfind('\n') {
+        Some(i) => &text[..i],
+        None => return false,
+    };
+    let lines: Vec<&str> = done.lines().map(str::trim).filter(|l| !l.is_empty()).rev().take(4).collect();
+    lines.len() == 4 && lines[0].len() > 8 && lines.iter().all(|l| *l == lines[0])
+}
+
+fn offered_names(tools: Option<&Value>) -> Vec<String> {
+    tools.and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect()
+}
+
 /// Small models sometimes write a tool call into their thinking or their
 /// text instead of the tool-call channel; run it rather than lose it.
 pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
     if out.tool_calls.is_empty() && !out.cancelled {
-        let offered: Vec<String> = tools.and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
+        let offered = offered_names(tools);
         if !offered.is_empty() {
-            let from_text = salvage_tool_calls(&out.content, &offered);
-            if !from_text.is_empty() {
-                out.content = if out.content.trim_start().starts_with('{') { String::new() } else { TOOL_CALL_BLOCK.replace_all(&out.content, |c: &regex::Captures| if call_from(&c[1], &offered).is_some() { String::new() } else { c[0].to_string() }).trim().to_string() };
-                out.tool_calls = from_text;
+            let (calls, rest) = salvage(&out.content, &offered);
+            if !calls.is_empty() {
+                out.content = rest;
+                out.tool_calls = calls;
             } else if out.content.trim().is_empty() {
-                out.tool_calls = salvage_tool_calls(&out.thinking, &offered);
+                out.tool_calls = salvage(&out.thinking, &offered).0;
             }
         }
     }
@@ -426,40 +455,120 @@ pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
 static ABOUT_THEIR_THINGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"(?i)\b(e-?mails?|mail|inbox|messages?|calendar|events?|schedule|meetings?|appointments?|party|birthday|today|tonight|tomorrow|this week|next week|notes?|tasks?|to-?dos?|reminders?|weather|forecast)\b").unwrap()
 });
+// "I don't have access to your messages": wrong whenever tools were offered,
+// whatever the question.
+static NO_ACCESS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)(don'?t|do not|can'?t|cannot) (have )?(direct |any |real-time |personal )?access|(unable|not able) to (access|read|check|see)|i (can'?t|cannot) (read|check|see) your|i don'?t have (any )?(information|details) about|without you providing|i don'?t have any (email|calendar|accounts?)").unwrap()
+});
 static STALLING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)i'?ll need to|i need to|i will need|i would need|please (provide|confirm|specify)|(could|can) you (please )?(provide|confirm|specify|tell me|share|give me)|(any|more|specific) (details|criteria|information)|function call|<tool|(i'?ll|i will|let me) (search|look|check)").unwrap()
+    regex::Regex::new(r"(?i)i'?ll need to|i need to|i will need|i would need|please (provide|confirm|specify)|(could|can) you (please )?(provide|confirm|specify|tell me|share|give me)|(any|more|specific) (details|criteria|information)|function call|<tool|(i'?ll|i will|let me) (search|look|check)|(don'?t|do not|can'?t|cannot) (have )?access|(unable|not able) to (access|read|check|see)|i (can'?t|cannot) (read|check|see)").unwrap()
 });
 
 /// A small model asked the user for details or permission about their own
 /// mail, calendar, notes, tasks or weather instead of using a tool to look.
-pub fn stalls(user: &str, reply: &str) -> bool {
-    let reply = reply.trim();
-    !reply.is_empty() && reply.chars().count() < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(reply)
+pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
+    let reply = reply.trim().replace(['\u{2019}', '\u{2018}'], "'");
+    if reply.is_empty() {
+        return false;
+    }
+    // Telling the user to "use email_search" instead of using it.
+    if offered.iter().any(|n| n.contains('_') && reply.contains(n.as_str())) {
+        return true;
+    }
+    // Saying it has no access is wrong however long the reply goes on.
+    let opening: String = reply.chars().take(600).collect();
+    NO_ACCESS.is_match(&opening) || (reply.chars().count() < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(&reply))
 }
 
-/// Said, for one retry only, to a model that stalled.
-pub const JUST_DO_IT: &str = "(Don't ask me for details or confirmation: use your tools now to look it up, then answer.)";
+/// For a model that stalled: its look-up tools (most relevant to the question
+/// first), what to tell it, and a JSON schema that makes the engine accept
+/// nothing but one call to one of them. (`tool_choice: "required"` isn't
+/// enforced by llama.cpp for every model; a response schema always is.)
+pub struct ForcedLookup {
+    pub names: Vec<String>,
+    pub nudge: String,
+    pub response_format: Value,
+}
 
-// Tags models use: <tool_call> (Qwen's own), <tools> (the tag Qwen's template
-// lists the tools in, which coder models copy), <tool>, <function_call>, or a
-// ```json fence.
-static TOOL_CALL_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?s)(?:<(?:tool_call|tools?|function_call)>|```(?:json|tool_call)?)\s*(\{.*?\})\s*(?:</(?:tool_call|tools?|function_call)>|```)").unwrap()
+pub fn forced_lookup(tools: &Value, asked: &str, looks_only: impl Fn(&str) -> bool) -> Option<ForcedLookup> {
+    let q = asked.to_lowercase();
+    let first: &[(&str, &[&str])] = &[
+        ("calendar_events", &["calendar", "event", "party", "meeting", "appointment", "schedule", "when is", "today", "tomorrow", "birthday"]),
+        ("email_search", &["email", "mail", "inbox", "message", "sent", "ask", "wrote", "said", "reply"]),
+        ("search_notes", &["note"]),
+        ("list_tasks", &["task", "to-do", "todo", "remind"]),
+        ("weather", &["weather", "forecast", "rain", "temperature"]),
+        ("search_meetings", &["meeting notes", "transcript"]),
+    ];
+    let rank = |name: &str| first.iter().position(|(n, words)| *n == name && words.iter().any(|w| q.contains(w))).unwrap_or(usize::MAX);
+    let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
+    let mut list: Vec<&Value> = tools.as_array()?.iter().filter(|t| looks_only(&name_of(t))).collect();
+    if list.is_empty() {
+        return None;
+    }
+    list.sort_by_key(|t| rank(&name_of(t)));
+    // Some tools fit the question: offer only those, so it can't wander off.
+    if rank(&name_of(list[0])) != usize::MAX {
+        list.retain(|t| rank(&name_of(t)) != usize::MAX);
+    }
+    let names: Vec<String> = list.iter().map(|t| name_of(t)).collect();
+    let listing: Vec<String> = list.iter().map(|t| format!("- {}: {}", name_of(t), t["function"]["description"].as_str().unwrap_or(""))).collect();
+    let schema = json!({ "oneOf": list.iter().map(|t| json!({
+        "type": "object",
+        "properties": { "name": { "const": name_of(t) }, "arguments": t["function"]["parameters"] },
+        "required": ["name", "arguments"],
+    })).collect::<Vec<_>>() });
+    Some(ForcedLookup {
+        names,
+        nudge: format!(
+            "(Don't ask me for details or confirmation, and don't say you can't access it: look it up now. Reply with only one tool call as JSON, {{\"name\": ..., \"arguments\": {{...}}}}, using one of these tools:\n{})",
+            listing.join("\n")
+        ),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
+/// The call a forced lookup replied with.
+pub fn forced_call(content: &str, names: &[String]) -> Option<ToolCall> {
+    let v: Value = serde_json::from_str(content.trim()).ok()?;
+    call_from_value(&v, names)
+}
+
+// What's left around a call once its JSON is taken out: the tags models wrap
+// calls in (<tool_call>, Qwen's own; <tools>, which coder models copy from
+// their template; <tool>, <function_call>) or an empty ```json fence.
+static EMPTY_WRAPPER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?s)<(?:tool_call|tools?|function_call)>\s*</(?:tool_call|tools?|function_call)>|```(?:json|tool_call)?\s*```").unwrap()
 });
 
-/// Tool calls written into text, for tools that were offered: blocks such as
-/// `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`, or a reply that
-/// is nothing but that JSON.
-fn salvage_tool_calls(text: &str, offered: &[String]) -> Vec<ToolCall> {
-    let calls: Vec<ToolCall> = TOOL_CALL_BLOCK.captures_iter(text).filter_map(|c| call_from(&c[1], offered)).collect();
-    if calls.is_empty() {
-        return call_from(text.trim(), offered).into_iter().collect();
+/// The first tool call written into text, for tools that were offered:
+/// `{"name": ..., "arguments": {...}}` anywhere in it, wrapped in a tag or a
+/// code fence or not. Returns it and the words before it. Only the first:
+/// what a model writes after a call it can't see the result of is made up
+/// (it "imagines" the result and goes on calling tools with invented details).
+fn salvage(text: &str, offered: &[String]) -> (Vec<ToolCall>, String) {
+    let mut i = 0;
+    while let Some(off) = text[i..].find('{') {
+        let start = i + off;
+        let mut stream = serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>();
+        if let Some(Ok(v)) = stream.next() {
+            if let Some(call) = call_from_value(&v, offered) {
+                let before = EMPTY_WRAPPER.replace_all(&text[..start], "").to_string();
+                let before = before.trim_end().trim_end_matches(|c| c == '<' || c == '`').trim_end_matches("<tool_call>").trim_end_matches("<tools>").trim_end_matches("```json").trim();
+                return (vec![call], before.to_string());
+            }
+        }
+        i = start + 1;
     }
-    calls
+    (Vec::new(), text.trim().to_string())
 }
 
-fn call_from(json: &str, offered: &[String]) -> Option<ToolCall> {
-    let v: Value = serde_json::from_str(json).ok()?;
+#[cfg(test)]
+fn salvage_tool_calls(text: &str, offered: &[String]) -> Vec<ToolCall> {
+    salvage(text, offered).0
+}
+
+fn call_from_value(v: &Value, offered: &[String]) -> Option<ToolCall> {
     let name = v["name"].as_str()?.to_string();
     if !offered.contains(&name) {
         return None;
@@ -597,6 +706,21 @@ mod tests {
 {\"name\": \"calendar_events\", \"parameters\": {\"from\": \"today\"}}
 ```", &cal)[0].arguments, "{\"from\":\"today\"}");
         assert_eq!(salvage_tool_calls(" {\"name\": \"calendar_events\", \"arguments\": {}} ", &cal).len(), 1, "a reply that is only the call");
+        // How qwen2.5-coder 14B wrote one: bare JSON after some words.
+        let mail = vec!["email_read".to_string()];
+        let (calls, rest) = salvage("Now, I'll read the email in full.
+Let's read the email with the provided ID.
+{\"name\": \"email_read\", \"arguments\": {\"id\": \"3b37\"}}", &mail);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].arguments, "{\"id\":\"3b37\"}");
+        assert!(!rest.contains('{') && rest.starts_with("Now"), "{rest}");
+        // A model that goes on to imagine more calls: only the first runs.
+        let two = vec!["email_search".to_string(), "email_send".to_string()];
+        let (calls, _) = salvage("<tool_call>{\"name\": \"email_search\", \"arguments\": {}}</tool_call>
+Found it.
+<tool_call>{\"name\": \"email_send\", \"arguments\": {\"to\": \"john@example.com\"}}</tool_call>", &two);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "email_search");
         assert!(salvage_tool_calls("```json
 {\"name\": \"Sam\", \"age\": 3}
 ```", &cal).is_empty(), "ordinary JSON is left alone");
@@ -612,15 +736,30 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_stuck_on_one_line_is_noticed() {
+        let line = "*(I'm here to help - just say the date and time!)*\n";
+        assert!(repeats_itself(&format!("Hello.\n{}", line.repeat(4))));
+        assert!(!repeats_itself(&format!("Hello.\n{}", line.repeat(3))));
+        assert!(!repeats_itself("1. a\n2. b\n3. c\n4. d\n5. e\n"));
+        assert!(!repeats_itself("---\n---\n---\n---\n"), "short lines like rules are fine");
+    }
+
+    #[test]
     fn notices_a_model_asking_instead_of_looking() {
         // What qwen2.5-coder said.
-        assert!(stalls("Summarize my most recent email from Google", "To summarize your most recent email from Google, I'll need to search your emails for the latest one from Google. Could you please confirm if you have any specific criteria or details you'd like me to look for in that email?"));
-        assert!(stalls("When is sam's party?", "To find out when Sam's party is, I'll need to search your calendar for any events related to Sam's party. Can you please provide me with the name of the event or any details that might help me locate it?"));
+        assert!(stalls("Summarize my most recent email from Google", "To summarize your most recent email from Google, I'll need to search your emails for the latest one from Google. Could you please confirm if you have any specific criteria or details you'd like me to look for in that email?", &[]));
+        assert!(stalls("When is sam's party?", "To find out when Sam's party is, I'll need to search your calendar for any events related to Sam's party. Can you please provide me with the name of the event or any details that might help me locate it?", &[]));
+        assert!(stalls("Summarize my most recent email from Google", "I don't have access to your email to read the most recent one. However, I can help you with other tasks or answer questions based on the information you provide. Let me know how I can assist you!", &[]));
         // Real answers, and questions that aren't about the user's things, are left alone.
-        assert!(!stalls("When is sam's party?", "Sam's party is today at 6:00 PM at Sam's house."));
-        assert!(!stalls("What's a closure in Rust?", "Could you mean closures as in Fn traits? A closure is..."));
-        assert!(!stalls("Write a note about my day", ""));
-        assert!(!stalls("Write a note about my day", "Here's a note:\n\nA calm day: coffee, a long walk and some reading.\n\nWant me to save it to your notes?"));
+        assert!(!stalls("When is sam's party?", "Sam's party is today at 6:00 PM at Sam's house.", &[]));
+        assert!(!stalls("What's a closure in Rust?", "Could you mean closures as in Fn traits? A closure is...", &[]));
+        assert!(!stalls("Write a note about my day", "", &[]));
+        assert!(stalls("What did my mom ask me?", "I don\u{2019}t have access to your email or any messages you\u{2019}ve sent or received unless you\u{2019}ve shared them.", &[]));
+        assert!(stalls("When is sam's party?", &format!("I don't have any information about Sam's party in my tools or memory. {}", "More options. ".repeat(100)), &[]), "a long ramble");
+        assert!(stalls("What did my mom ask me?", "I'm sorry, but I don't have any information about what your mom asked you. I don't have access to any personal communications or messages outside of our current conversation.", &[]));
+        assert!(!stalls("Write a note about my day", "Here's a note:\n\nA calm day: coffee, a long walk and some reading.\n\nWant me to save it to your notes?", &[]));
+        assert!(stalls("Summarize my most recent email from Google", "I don't have direct access to your email inbox. You can check your email by using the `email_search` tool.", &["email_search".to_string()]));
+        assert!(stalls("anything", "Use email_search with a query like from:google.", &["email_search".to_string()]), "naming a tool instead of calling it");
         assert_eq!(clean_title("\"Trip to Tokyo.\"").as_deref(), Some("Trip to Tokyo"));
         assert_eq!(clean_title("Title: Budget plan\nextra").as_deref(), Some("Budget plan"));
         assert_eq!(clean_title("   "), None);

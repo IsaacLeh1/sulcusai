@@ -1022,11 +1022,17 @@ pub async fn add_calendar_account(state: AppStateRef<'_>, account: CalAccount) -
 /// Connects Outlook or Google calendars by signing in in the browser.
 #[tauri::command]
 pub async fn add_calendar_account_oauth(state: AppStateRef<'_>, provider: crate::oauth::Provider, hint: Option<String>) -> Result<String, String> {
+    connect_oauth(&state, provider, hint).await.map(|(id, _)| id)
+}
+
+/// Signs in with Microsoft or Google and adds that account's calendars.
+/// Returns the account's id and name. The assistant uses this too.
+pub async fn connect_oauth(state: &AppState, provider: crate::oauth::Provider, hint: Option<String>) -> Result<(String, String), String> {
     use crate::oauth::Provider;
-    ensure_on(&state)?;
+    ensure_on(state)?;
     let c = state.cipher()?;
-    web_allowed(&state)?;
-    let tokens = crate::oauth::sign_in(&state, provider, crate::oauth::For::Calendar, hint.as_deref()).await?;
+    web_allowed(state)?;
+    let tokens = crate::oauth::sign_in(state, provider, crate::oauth::For::Calendar, hint.as_deref()).await?;
     let mut a = CalAccount { name: format!("{} ({})", if provider == Provider::Microsoft { "Outlook" } else { "Google" }, tokens.email), oauth: Some(tokens.clone()), ..Default::default() };
     a.calendars = match provider {
         Provider::Microsoft => {
@@ -1052,8 +1058,8 @@ pub async fn add_calendar_account_oauth(state: AppStateRef<'_>, provider: crate:
         store_account(&conn, &c, &id, &a)?;
         db::log_action(&conn, "calendar", &format!("Connected {} ({} calendars)", a.name, a.calendars.len()));
     }
-    sync_account(&state, &c, &id).await?;
-    Ok(id)
+    sync_account(state, &c, &id).await?;
+    Ok((id, a.name))
 }
 
 #[tauri::command(async)]

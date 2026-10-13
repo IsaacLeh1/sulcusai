@@ -883,6 +883,13 @@ export interface OAuthClients {
 }
 
 /** The person's own registrations, and which providers work without one. */
+export interface LiveReply {
+  message_id: string | null;
+  content: string;
+  thinking: string;
+  status: "loading" | "thinking" | "writing" | "working";
+}
+
 export interface OAuthClientsView {
   own: OAuthClients;
   built_in_microsoft: boolean;
@@ -1080,6 +1087,8 @@ export const api = {
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
   send: (chatId: string, text: string, images?: string[]) => invoke<Message | null>("send_message", { chatId, text, images: images ?? null }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
+  // The reply a chat is in the middle of (it keeps going while the user is elsewhere).
+  live: (chatId: string) => invoke<LiveReply | null>("chat_live", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
   unload: () => invoke<void>("unload_model"),
   /** Loads the default model now (it otherwise loads with the first message). */
@@ -1298,6 +1307,7 @@ export interface ChatEvents {
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
+  "app:navigate": { page: string };
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;

@@ -244,7 +244,14 @@ pub fn list(conn: &Connection, c: &Cipher, query: &str, limit: usize) -> Vec<Mai
     let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
     let all = stmt.query_map([], item_from_row(c)).map(|rows| rows.filter_map(Result::ok).collect::<Vec<_>>()).unwrap_or_default();
     let terms = search_terms(query);
-    all.into_iter().filter(|m| terms.iter().all(|t| t.matches(&m.data))).take(limit).collect()
+    let hits = |m: &MailItem| terms.iter().filter(|t| t.matches(&m.data)).count();
+    if all.iter().any(|m| hits(m) == terms.len()) {
+        return all.into_iter().filter(|m| hits(m) == terms.len()).take(limit).collect();
+    }
+    // Nothing has every word: the mail with the most of them, newest first among equals.
+    let mut some: Vec<(usize, MailItem)> = all.into_iter().map(|m| (hits(&m), m)).filter(|(n, _)| *n > 0).collect();
+    some.sort_by(|a, b| b.0.cmp(&a.0));
+    some.into_iter().map(|(_, m)| m).take(limit).collect()
 }
 
 /// One word of a mail search. Gmail-style `from:`, `to:` and `subject:`
@@ -268,10 +275,18 @@ impl Term {
     }
 }
 
+/// Words that say what to look for rather than being in it ("my most recent
+/// email from Google"): left out of a search.
+const FILLER: &[&str] = &[
+    "my", "the", "a", "an", "me", "i", "any", "all", "about", "from", "most", "recent", "latest", "newest", "last", "new", "email", "emails",
+    "e-mail", "mail", "mails", "message", "messages", "inbox", "did", "got", "get", "show", "find", "summarize",
+];
+
 fn search_terms(query: &str) -> Vec<Term> {
     query
         .to_lowercase()
         .split_whitespace()
+        .filter(|w| !FILLER.contains(&w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-')))
         .filter_map(|w| {
             let (kind, w) = match w.split_once(':') {
                 Some((k @ ("from" | "to" | "subject"), rest)) => (k, rest),
@@ -296,7 +311,7 @@ pub fn get(conn: &Connection, c: &Cipher, id: &str) -> Option<MailItem> {
     conn.query_row(&sql, [id], item_from_row(c)).optional().ok().flatten()
 }
 
-fn save_item(conn: &Connection, c: &Cipher, account_id: &str, folder: &str, uid: u32, date: i64, seen: bool, data: &MailData) -> Result<(), String> {
+pub(crate) fn save_item(conn: &Connection, c: &Cipher, account_id: &str, folder: &str, uid: u32, date: i64, seen: bool, data: &MailData) -> Result<(), String> {
     conn.execute(
         "INSERT OR IGNORE INTO mail_messages (id, account_id, folder, uid, date, seen, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
@@ -349,6 +364,10 @@ pub fn accounts(conn: &Connection, c: &Cipher) -> Vec<(String, AccountConfig, Op
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub fn message_count(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM mail_messages", [], |r| r.get(0)).unwrap_or(0)
 }
 
 pub fn count(conn: &Connection) -> i64 {
@@ -722,10 +741,16 @@ pub async fn add_mail_account(state: AppStateRef<'_>, config: AccountConfig) -> 
 /// Microsoft or Google in the browser (no password).
 #[tauri::command]
 pub async fn add_mail_account_oauth(state: AppStateRef<'_>, provider: crate::oauth::Provider, name: Option<String>, hint: Option<String>) -> Result<String, String> {
-    ensure_on(&state)?;
+    connect_oauth(&state, provider, name, hint).await.map(|(id, _)| id)
+}
+
+/// Signs in with Microsoft or Google, adds the account and copies its mail.
+/// Returns the account's id and address. The assistant uses this too.
+pub async fn connect_oauth(state: &AppState, provider: crate::oauth::Provider, name: Option<String>, hint: Option<String>) -> Result<(String, String), String> {
+    ensure_on(state)?;
     let c = state.cipher()?;
-    web_allowed(&state)?;
-    let tokens = crate::oauth::sign_in(&state, provider, crate::oauth::For::Mail, hint.as_deref()).await?;
+    web_allowed(state)?;
+    let tokens = crate::oauth::sign_in(state, provider, crate::oauth::For::Mail, hint.as_deref()).await?;
     let mut cfg = oauth_config(provider, &tokens.email);
     cfg.name = name.unwrap_or_default().trim().to_string();
     cfg.oauth = Some(tokens);
@@ -738,8 +763,8 @@ pub async fn add_mail_account_oauth(state: AppStateRef<'_>, provider: crate::oau
         store_account(&conn, &c, &id, &cfg)?;
         db::log_action(&conn, "email", &format!("Added the email account {} (signed in with {})", cfg.email, provider.name()));
     }
-    sync_account(&state, &c, &id).await?;
-    Ok(id)
+    sync_account(state, &c, &id).await?;
+    Ok((id, cfg.email))
 }
 
 #[tauri::command(async)]
@@ -806,6 +831,9 @@ mod tests {
         assert!(!hit("subject:ana"));
         assert!(hit(""));
         assert_eq!(search_terms("from: x"), vec![Term::Any("x".into())]);
+        // How models search: the whole request.
+        assert!(hit("my most recent email from Ana"));
+        assert_eq!(search_terms("Summarize my latest emails"), vec![]);
     }
 
     #[test]

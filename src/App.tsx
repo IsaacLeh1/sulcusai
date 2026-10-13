@@ -195,6 +195,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
+      // The assistant showing the user a page (open_page).
+      on("app:navigate", (p) => setView(p.page as View)),
       on("sync:changed", () => {
         refreshChats();
         refreshProjects();

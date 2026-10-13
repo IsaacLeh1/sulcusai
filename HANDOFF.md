@@ -142,6 +142,14 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
   - Line numbers copied from `read_file` are stripped from writes and edits (`strip_line_numbers`).
   - Edits written with LF line endings match CRLF files.
   - Short skills are inlined into the prompt instead of needing `load_skill`.
+- **Any-model safeguards** (2026-10-12, found testing qwen2.5-coder 14B/1.5B from Ollama; `e2e_mail_questions_on_ollama_model` runs them on any GGUF via `SULCUSAI_TEST_GGUF`/`_CTX`/`_LAYERS`, or on a running engine via `SULCUSAI_TEST_PORT`/`_KEY`):
+  - `chat::salvage` runs a tool call written as text: `<tool_call>`, `<tools>`, `<function_call>`, a json fence, or bare JSON anywhere. **Only the first**: models go on to "imagine" more calls with invented details (it once ran 48). Streaming stops as soon as such a call is complete, or the model writes minutes of thrown-away text.
+  - `chat::stalls`: a first reply that asks for details about the user's own things, or says "I don't have access", is dropped and retried once with `tool_choice: "required"` (local engines only; falls back to the first reply if the engine refuses).
+  - `agent::fit_result` cuts any tool result to a third of the context (a 60K-character newsletter overflowed an 8K model and it churned for 6 minutes).
+  - A repeated read-only call (same name and arguments) in one turn isn't run again; 3 repeats end the turn with a note.
+  - `email_search` drops filler words ("my most recent email from"), falls back to the best partial match, has `unread`, and returns the newest mail when nothing matches.
+- **The app itself:** `tools/app.rs` adds `app_status`, `connect_account` (Google/Microsoft sign-in for mail and/or calendar; asks first; `mail::connect_oauth` / `calendar::connect_oauth`) and `open_page` (`app:navigate` event). `app::note` puts what SulcusAI is and what's connected into the system prompt.
+- **Leaving a chat mid-reply:** the reply keeps running; `lib.rs` keeps what has streamed (`live_replies`, filled from the turn's events) and `chat_live` lets `ChatView` show it again when the chat is reopened.
 - **Context:** the launch context is the largest of 32K/16K/8K that keeps the same GPU placement (`catalog::launch_settings`).
   - History is trimmed by whole turns, then old tool output inside the current turn.
   - At 80% full, the next message triggers a handoff to a new chat.

@@ -1773,5 +1773,7 @@
  "Teaching a model isn't available on this system yet.": "L'apprentissage d'un modèle n'est pas encore disponible sur ce système.",
  "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "La capture d'écran n'a pas fonctionné. Autorisez SulcusAI dans Réglages Système → Confidentialité et sécurité → Enregistrement de l'écran, puis réessayez.",
  "Use my own registration": "Utiliser mon propre enregistrement",
- "Using your own registration.": "Utilise votre propre enregistrement."
+ "Using your own registration.": "Utilise votre propre enregistrement.",
+ "Small models like this one often miss questions about your email, calendar and notes. A model with 4B or more parameters works much better.": "Les petits modèles comme celui-ci ratent souvent les questions sur vos e-mails, votre agenda et vos notes. Un modèle de 4B paramètres ou plus fonctionne bien mieux.",
+ "Find one in Models": "En trouver un dans Modèles"
 }

@@ -12,7 +12,8 @@ use crate::AppState;
 
 pub fn email_search_params() -> Value {
     json!({ "type": "object", "properties": {
-        "query": { "type": "string", "description": "Words to look for in sender, subject and text. Empty for the newest mail." },
+        "query": { "type": "string", "description": "Who it is from or words in it, e.g. google or from:amazon. Leave it empty only to list the newest mail." },
+        "unread": { "type": "boolean", "description": "Only unread mail." },
         "limit": { "type": "integer", "description": "How many (default 10, at most 30)." } } })
 }
 
@@ -168,9 +169,25 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
             "email_search" => {
                 let q = args.get("query").and_then(Value::as_str).unwrap_or("");
                 let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(10).clamp(1, 30) as usize;
-                let found = mail::list(&state.db.lock().unwrap(), c, q, limit);
+                let unread = args.get("unread").and_then(Value::as_bool).unwrap_or(false);
+                let search = |q: &str| -> Vec<_> {
+                    if unread {
+                        mail::list(&state.db.lock().unwrap(), c, q, 2000).into_iter().filter(|m| !m.seen).take(limit).collect()
+                    } else {
+                        mail::list(&state.db.lock().unwrap(), c, q, limit)
+                    }
+                };
+                let mut found = search(q);
+                // Nothing matched (models often guess an address or a word):
+                // the newest mail instead, so the model can spot what was meant.
+                let mut heading = "Matching emails, newest first:";
+                if found.is_empty() && !q.trim().is_empty() {
+                    found = search("");
+                    heading = "Nothing matched that search. These are the newest emails instead; check whether one of them is what the user means (don't guess addresses):";
+                }
                 if found.is_empty() {
-                    return Ok(Outcome::ok("No matching email.", format!("Searched email for “{q}”"), "text", None));
+                    let what = if unread { "No unread email." } else { "No email has been copied to this PC yet." };
+                    return Ok(Outcome::ok(what, format!("Searched email for “{q}”"), "text", None));
                 }
                 let lines: Vec<String> = found
                     .iter()
@@ -180,7 +197,7 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
                     })
                     .collect();
                 let shown = found.iter().map(|m| format!("{} — {}", m.data.subject, m.data.from)).collect::<Vec<_>>().join("\n");
-                Ok(Outcome::ok(format!("Matching emails, newest first:\n{}\n\nRead one in full with email_read.\n{UNTRUSTED}", lines.join("\n")), format!("Searched email for “{q}” ({} found)", found.len()), "text", Some(shown)))
+                Ok(Outcome::ok(format!("{heading}\n{}\n\nTell the user what you found (who from, subject, when). If they asked what an email says, read it with email_read first.\n{UNTRUSTED}", lines.join("\n")), format!("Searched email for “{q}” ({} found)", found.len()), "text", Some(shown)))
             }
             "email_read" => {
                 let id = arg_str(args, "id")?;

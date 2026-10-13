@@ -149,6 +149,27 @@ fn now() -> i64 {
     db::now_ms()
 }
 
+/// A tool result cut to about a third of the model's memory, so one long
+/// email, page or file can't crowd out the conversation (small models have
+/// 8K tokens or less; about 3 characters a token, to be safe).
+fn fit_result(mut outcome: Outcome, ctx: u32) -> Outcome {
+    let max = (ctx as usize / 3) * 3;
+    let total = outcome.text.chars().count();
+    if max > 0 && total > max {
+        let kept: String = outcome.text.chars().take(max).collect();
+        outcome.text = format!("{kept}
+
+[Cut here: {} more characters weren't shown, to fit your memory. Answer from what's above.]", total - max);
+    }
+    outcome
+}
+
+/// A tool call's name and arguments, with the arguments' formatting evened out.
+fn call_key(call: &ToolCall) -> String {
+    let args = serde_json::from_str::<Value>(&call.arguments).map(|v| v.to_string()).unwrap_or_else(|_| call.arguments.clone());
+    format!("{}{}", call.name, args)
+}
+
 impl Turn {
     fn emit(&self, event: &str, payload: Value) {
         (self.emit)(event, payload);
@@ -205,7 +226,11 @@ impl Turn {
                 }
             }
         }
-        let mut extra: Vec<&str> = Vec::new();
+        // Knowing the app itself: what's connected, and connecting accounts.
+        let mut extra: Vec<&str> = if self.use_tools { vec!["app_status", "open_page"] } else { Vec::new() };
+        if self.use_tools && self.mode != tools::Mode::Plan && (features.contains(&Feature::Email) || features.contains(&Feature::Calendar)) {
+            extra.push("connect_account");
+        }
         if self.use_tools && features.contains(&Feature::Notes) {
             extra.extend(["create_note", "search_notes", "read_note"]);
             if self.mode != tools::Mode::Plan {
@@ -292,6 +317,7 @@ impl Turn {
             ));
         }
         if self.use_tools {
+            about.push_str(&tools::app_note(&self.state, &self.cipher));
             about.push_str(&tool_instructions(&sandbox, self.mode));
             about.push_str(&connectors::skills_prompt(&extras.skills));
             if !extras.problems.is_empty() {
@@ -307,6 +333,9 @@ impl Turn {
 
         let mut result = TurnResult { last: None, context: ContextInfo::default(), tps: None, cancelled: false };
         let max_steps = adv.max_steps();
+        // Calls already made this turn, to catch a model asking for the same thing again.
+        let mut done_calls: Vec<String> = Vec::new();
+        let mut repeats = 0;
         for step in 0..max_steps {
             self.rest_if_hot().await;
             let history = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
@@ -315,7 +344,8 @@ impl Turn {
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
 
             let mut message_id = uuid::Uuid::new_v4().to_string();
-            let mut forced: Option<Endpoint> = None;
+            // Set when the model stalled: one more try that can only be a lookup.
+            let mut forced: Option<(Endpoint, chat::ForcedLookup)> = None;
             let mut first = None;
             let finished = loop {
                 self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
@@ -323,10 +353,19 @@ impl Turn {
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
                 let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
                 chat::attach_images(&mut messages, &kept, see);
-                if forced.is_some() {
-                    messages.push(json!({ "role": "user", "content": chat::JUST_DO_IT }));
+                if let Some((_, f)) = &forced {
+                    messages.push(json!({ "role": "user", "content": f.nudge }));
                 }
-                let finished = chat::stream(forced.as_ref().unwrap_or(&self.ep), messages, tools.as_ref(), &self.cancel, |d| {
+                // The forced try writes JSON, not words for the user: don't show it.
+                let quiet = forced.is_some();
+                let (ep, offer) = match &forced {
+                    Some((ep, _)) => (ep, None),
+                    None => (&self.ep, tools.as_ref()),
+                };
+                let result = chat::stream(ep, messages, offer, &self.cancel, |d| {
+                    if quiet {
+                        return;
+                    }
                     let (content, thinking) = match d {
                         Delta::Content(t) => (Some(t), None),
                         Delta::Thinking(t) => (None, Some(t)),
@@ -334,24 +373,39 @@ impl Turn {
                     self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": content, "thinking": thinking }));
                 })
                 .await;
-                let finished = match (finished, first.take()) {
-                    (Ok(f), _) => f,
-                    // The engine wouldn't take the retry: keep the first answer.
-                    (Err(_), Some(f)) => break f,
-                    (Err(e), None) => return Err(e),
-                };
-                // A small model that asks the user for details about their own
-                // mail or calendar instead of looking gets one more try, made
-                // to use a tool (the engine enforces it). The question is dropped.
+                if let Some((_, f)) = &forced {
+                    // Its call, or (if the engine or model let us down) the first reply.
+                    let first = first.take().expect("the first reply is kept for a forced try");
+                    break match result {
+                        Ok(mut r) => match chat::forced_call(&r.content, &f.names) {
+                            Some(mut call) => {
+                                call.id = format!("call_{}", uuid::Uuid::new_v4().simple());
+                                r.tool_calls = vec![call];
+                                r.content.clear();
+                                r
+                            }
+                            None => first,
+                        },
+                        Err(_) => first,
+                    };
+                }
+                let finished = result?;
+                // A model that asks the user for details about their own mail
+                // or calendar, or says it can't access them, instead of looking
+                // gets one more try that can only be a lookup. The reply is dropped.
                 let asked = history.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
-                if step == 0 && forced.is_none() && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content) {
-                    let mut ep = self.ep.clone();
-                    ep.extra["tool_choice"] = json!("required");
-                    forced = Some(ep);
-                    first = Some(finished);
-                    message_id = uuid::Uuid::new_v4().to_string();
-                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
-                    continue;
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect::<Vec<_>>()) {
+                    let looks_only = |n: &str| n != "open_page" && tools::find(n).is_some_and(|t| t.risk == Risk::Read);
+                    if let Some(f) = tools.as_ref().and_then(|t| chat::forced_lookup(t, asked, looks_only)) {
+                        let mut ep = self.ep.clone();
+                        ep.extra["response_format"] = f.response_format.clone();
+                        ep.extra["max_tokens"] = json!(400);
+                        forced = Some((ep, f));
+                        first = Some(finished);
+                        message_id = uuid::Uuid::new_v4().to_string();
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
                 }
                 break finished;
             };
@@ -399,17 +453,43 @@ impl Turn {
             };
             let mut wait_for_user = false;
             for call in &calls {
+                let key = call_key(call);
+                let repeat = done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
                 let outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
+                } else if repeat {
+                    repeats += 1;
+                    Outcome::ok(
+                        format!("You already ran {} with these arguments; its result is above. Answer the user with it now, or try different arguments.", call.name),
+                        format!("Skipped a repeat of {}", call.name),
+                        "text",
+                        None,
+                    )
                 } else {
+                    done_calls.push(key);
                     self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await
                 };
                 // Asking to turn on web ends the turn; the card waits for the user.
                 wait_for_user |= outcome.meta["web_request"] == true;
+                let outcome = fit_result(outcome, self.ep.ctx);
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
             }
             if wait_for_user {
+                break;
+            }
+            // Going in circles: stop rather than spend minutes repeating itself.
+            if repeats >= 3 {
+                let note = Message {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    chat_id: self.chat_id.clone(),
+                    role: "assistant".into(),
+                    content: "I kept repeating the same lookup, so I stopped. Try asking in a different way, or pick a larger model in Models.".into(),
+                    created_at: now(),
+                    ..Default::default()
+                };
+                self.save(&note)?;
+                result.last = Some(note);
                 break;
             }
             if self.cancel.load(Ordering::Relaxed) {
@@ -701,6 +781,16 @@ impl Outcome {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_tool_results_are_cut_to_fit() {
+        let long = Outcome::ok("x".repeat(60_000), "Read an email", "text", None);
+        let cut = fit_result(long, 8192);
+        assert!(cut.text.chars().count() < 8_400, "{}", cut.text.len());
+        assert!(cut.text.contains("[Cut here: 51810 more characters"));
+        let short = fit_result(Outcome::ok("hello", "t", "text", None), 8192);
+        assert_eq!(short.text, "hello");
+    }
+
     use super::*;
 
     #[test]

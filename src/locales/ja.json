@@ -1773,5 +1773,7 @@
  "Teaching a model isn't available on this system yet.": "このシステムではまだモデルの学習を利用できません。",
  "The screenshot didn't work. Allow SulcusAI under System Settings → Privacy & Security → Screen Recording, then try again.": "スクリーンショットに失敗しました。システム設定 → プライバシーとセキュリティ → 画面収録で SulcusAI を許可してから、もう一度お試しください。",
  "Use my own registration": "自分の登録を使う",
- "Using your own registration.": "自分の登録を使用しています。"
+ "Using your own registration.": "自分の登録を使用しています。",
+ "Small models like this one often miss questions about your email, calendar and notes. A model with 4B or more parameters works much better.": "このような小さなモデルは、メール、カレンダー、メモについての質問によく失敗します。40億パラメーター以上のモデルの方がずっとうまく動きます。",
+ "Find one in Models": "モデルで探す"
 }

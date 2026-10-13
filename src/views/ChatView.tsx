@@ -94,7 +94,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [status, setStatus] = useState<Status>("idle");
@@ -165,6 +165,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     reload();
     api.context(chat.id).then(setContext);
     api.pendingApprovals(chat.id).then(setPending).catch(() => {});
+    // Back in a chat that's still answering: show where it is.
+    api.live(chat.id).then((r) => {
+      if (!r) return;
+      setStatus(r.status);
+      if (r.message_id) setStreaming({ id: r.message_id, content: r.content, thinking: r.thinking });
+    }).catch(() => {});
     inputRef.current?.focus();
   }, [chat.id, reload]);
 
@@ -418,6 +424,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 </>
               )}
             </p>
+            {!cloud && model && model.params_b > 0 && model.params_b < 3 && (
+              <p className="muted small">
+                {t("Small models like this one often miss questions about your email, calendar and notes. A model with 4B or more parameters works much better.")}{" "}
+                <button className="link" onClick={onGoModels}>{t("Find one in Models")}</button>
+              </p>
+            )}
             {canTools && features.has("files") && <p className="muted small">{t("Share a folder with 📁 and it can read and change files there, or run commands to build and test code.")}</p>}
             {!features.has("files") && features.size === 0 && (
               <p className="muted small">

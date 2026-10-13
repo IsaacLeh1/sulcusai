@@ -230,7 +230,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
             mode,
             use_tools: true,
             vision: false,
-            base: chat::system_prompt(&Profile::default(), "Tuesday, October 6, 2026").0,
+            base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
             about: String::new(),
             cancel: Arc::new(AtomicBool::new(false)),
         };
@@ -286,6 +286,12 @@ async fn e2e_agent_edits_files_and_undo_restores() {
 
 /// A real engine plus app state in a temporary data folder.
 async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, crate::crypto::Cipher) {
+    agent_harness_on(None, None).await
+}
+
+/// The harness on a given model file and context size (e.g. a model Ollama
+/// downloaded) instead of Qwen3 1.7B.
+async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, running: Option<engine::Endpoint>) -> (std::sync::Arc<crate::AppState>, engine::Endpoint, crate::crypto::Cipher) {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
     let real = Paths::new(app_data_dir()).unwrap();
@@ -319,9 +325,15 @@ async fn agent_harness() -> (std::sync::Arc<crate::AppState>, engine::Endpoint, 
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
         job: None,
     });
+    // An engine that is already running (the app's), rather than loading a second copy.
+    if let Some(ep) = running {
+        return (state, ep, cipher);
+    }
     let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
-    let model = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
-    let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
+    let (model, (ctx, layers)) = match model_file {
+        Some((file, ctx, layers)) => (file, (ctx, layers)),
+        None => (real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file), catalog::launch_settings(&spec, "Q4_K_M", &budget)),
+    };
     let ep = state
         .engine
         .lock()
@@ -353,7 +365,7 @@ async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cip
         mode: crate::tools::Mode::Auto,
         use_tools: true,
         vision: false,
-        base: chat::system_prompt(&Profile::default(), "Tuesday, October 6, 2026").0,
+        base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
     };
@@ -1041,6 +1053,104 @@ async fn e2e_email_and_calendar() {
     assert!(log.iter().any(|l| l.contains("Lunch")), "adding the event asked first");
     assert!(!log.iter().any(|l| l.contains("invite")), "no made-up invitations");
     state.engine.lock().await.stop().await;
+}
+
+/// Mail and calendar questions the way people ask them, on the model Ollama
+/// downloaded (qwen2.5-coder 14B, the one these went wrong on): every tool
+/// call is printed with how long each answer took.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_mail_questions_on_ollama_model() {
+    // The settings SulcusAI picked for it on his laptop (it doesn't all fit on the graphics card).
+    let ctx = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(8192);
+    let layers = std::env::var("SULCUSAI_TEST_LAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(47);
+    // SULCUSAI_TEST_PORT/KEY: use the engine the app already has loaded.
+    let running = std::env::var("SULCUSAI_TEST_PORT").ok().and_then(|p| p.parse().ok()).map(|port| engine::Endpoint { port, key: std::env::var("SULCUSAI_TEST_KEY").unwrap_or_default(), ctx, extra: serde_json::Value::Null, cloud: None });
+    let blob = std::env::var("SULCUSAI_TEST_GGUF").unwrap_or_default();
+    let stop_after = running.is_none();
+    let (state, ep, cipher) = agent_harness_on(Some((blob.into(), ctx, layers)), running).await;
+    // Approval cards are answered as a person would: yes, except opening a sign-in page.
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let (st, log) = (state.clone(), asked.clone());
+    let approver = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                log.lock().unwrap().push(p.preview.title.clone());
+                let yes = !p.preview.title.starts_with("Connect");
+                st.approvals.answer(&p.call_id, if yes { crate::agent::Decision::Allow } else { crate::agent::Decision::Deny });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    });
+    let now = crate::db::now_ms();
+    let hour = 3_600_000;
+    {
+        let conn = state.db.lock().unwrap();
+        let cfg = crate::mail::AccountConfig { name: "Isaac".into(), email: "isaac@example.org".into(), ..Default::default() };
+        crate::mail::store_account(&conn, &cipher, "acc", &cfg).unwrap();
+        let long = "Read more about this week's stories. ".repeat(600);
+        let mails: Vec<(&str, &str, &str, String, i64)> = vec![
+            ("deals@amazon.com", "Amazon", "Your package has shipped", "Your order of a USB-C cable has shipped and arrives Thursday.".into(), 1),
+            ("news@nytimes.com", "The New York Times", "The Morning: the week ahead", long.clone(), 2),
+            ("no-reply@accounts.google.com", "Google", "Security alert", "SulcusAI was granted access to your Google Account isaac@example.org. If you did not grant access, you should check this activity and secure your account. Check activity: https://myaccount.google.com/notifications".into(), 3),
+            ("sam@example.org", "Sam Rivera", "Party tonight!", "Hey! My birthday party is tonight at 6pm at my place, 42 Elm Street. Bring snacks.".into(), 5),
+            ("calendar-notification@google.com", "Google Calendar", "Reminder: Dentist @ Wed", "This is a reminder for Dentist on Wednesday at 9am.".into(), 26),
+            ("newsletter@medium.com", "Medium Daily Digest", "Stories for you", long.clone(), 30),
+            ("no-reply@accounts.google.com", "Google", "Your Google Account storage is almost full", "You've used 14 GB of your 15 GB of Google storage.".into(), 50),
+            ("mom@example.org", "Mom", "Sunday dinner", "Are you coming Sunday? Dad is making lasagna.".into(), 52),
+        ];
+        let mut all = mails;
+        for i in 0..22 {
+            all.push(("promo@store.example", "Store", "Weekly sale", format!("Sale number {i}: everything 20% off. {}", "Shop now. ".repeat(200)), 60 + i * 5));
+        }
+        for (uid, (from, name, subject, body, hours_ago)) in all.into_iter().enumerate() {
+            let data = crate::mail::MailData { from: from.into(), from_name: name.into(), to: vec!["isaac@example.org".into()], subject: subject.into(), snippet: body.chars().take(160).collect(), body, ..Default::default() };
+            crate::mail::save_item(&conn, &cipher, "acc", "INBOX", uid as u32 + 1, now - hours_ago * hour, hours_ago > 4, &data).unwrap();
+        }
+    }
+    let today6 = {
+        use chrono::{Local, TimeZone};
+        let d = Local::now().date_naive().and_hms_opt(18, 0, 0).unwrap();
+        Local.from_local_datetime(&d).earliest().unwrap().timestamp_millis()
+    };
+    crate::calendar::create(&state, &cipher, crate::calendar::NewEvent { title: "Sam's Birthday Party".into(), start: today6, end: today6 + 3 * hour, all_day: false, location: "42 Elm Street".into(), notes: String::new(), attendees: vec![], calendar: None }).await.unwrap();
+
+    let mut report = Vec::new();
+    let questions = ["Summarize my most recent email from Google", "When is sam's party?", "Do I have any unread email?", "What did my mom ask me?", "What email accounts do I have connected?", "Connect my Outlook email too"];
+    let only: Option<usize> = std::env::var("SULCUSAI_TEST_ONLY").ok().and_then(|v| v.parse().ok());
+    for (i, q) in questions.into_iter().enumerate() {
+        if only.is_some_and(|o| o != i) {
+            continue;
+        }
+        let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        let t = std::time::Instant::now();
+        let answer = say(&state, &ep, &cipher, &chat.id, q).await;
+        let secs = t.elapsed().as_secs_f32();
+        let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+        let calls: Vec<String> = msgs.iter().flat_map(|m| m.tool_calls.clone().unwrap_or_default()).map(|c| format!("{}({})", c.name, c.arguments)).collect();
+        println!("\n=== {q}\n{secs:.1} s, {} tool calls: {calls:?}\n{answer}", calls.len());
+        let used = state.contexts.lock().unwrap().get(&chat.id).map(|c| format!("system {} + tools {} tokens of {}", c.system_tokens + c.profile_tokens, c.tools_tokens, c.ctx)).unwrap_or_default();
+        println!("context: {used}");
+        report.push((q, secs, calls.len(), answer));
+    }
+    approver.abort();
+    println!("approval cards: {:?}", asked.lock().unwrap());
+    if stop_after {
+        state.engine.lock().await.stop().await;
+    }
+    for (q, secs, calls, _) in &report {
+        println!("{q}: {secs:.1} s, {calls} calls");
+    }
+    let low = |i: usize| report[i].3.to_lowercase();
+    let mut failed = Vec::new();
+    if !(low(0).contains("sulcusai") || low(0).contains("security")) { failed.push("summarize the Google email"); }
+    if !(low(1).contains("6") || low(1).contains("six")) { failed.push("find the party time"); }
+    if !(low(2).contains("amazon") || low(2).contains("security") || low(2).contains("times")) { failed.push("list unread email"); }
+    if !(low(3).contains("sunday") || low(3).contains("dinner") || low(3).contains("lasagna")) { failed.push("read mom's email"); }
+    if !low(4).contains("isaac@example.org") { failed.push("say which account is connected"); }
+    if !asked.lock().unwrap().iter().any(|t| t.contains("Microsoft")) && !low(5).contains("sign") { failed.push("offer the Outlook sign-in"); }
+    if report.iter().any(|r| r.2 > 5) { failed.push("stay under 6 tool calls"); }
+    assert!(failed.is_empty(), "didn't: {failed:?}");
 }
 
 /// The real model makes a spreadsheet with a formula, a Word document and a

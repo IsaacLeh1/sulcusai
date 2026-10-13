@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Tools the model can call, what each one risks, and how they run.
 
+mod app;
 pub mod browser;
 pub mod comms;
 mod documents;
@@ -101,11 +102,18 @@ fn group(name: &str) -> &'static str {
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
+        "app_status" | "connect_account" | "open_page" => "app",
         _ => "files",
     }
 }
 
 pub const TOOLS: &[ToolDef] = &[
+    ToolDef { name: "app_status", risk: Risk::Read, params: app::app_status_params,
+        description: "What's set up in SulcusAI: connected email and calendar accounts, how many emails are copied, the internet mode and which features are on." },
+    ToolDef { name: "connect_account", risk: Risk::Write, params: app::connect_account_params,
+        description: "Connect the user's Gmail/Google Calendar or Outlook/Microsoft 365 by opening that sign-in page in their browser. The user is asked first and signs in themselves; wait for the result." },
+    ToolDef { name: "open_page", risk: Risk::Read, params: app::open_page_params,
+        description: "Show the user a page of SulcusAI, e.g. mail to add another kind of email account, or models to install models." },
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
         description: "List a folder's contents. With no path, lists the shared folders." },
     ToolDef { name: "read_file", risk: Risk::Read, params: fs::read_file_params,
@@ -231,12 +239,17 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
         .collect();
     Value::Array(list)
+}
+
+/// What SulcusAI is and what's connected, for the system prompt.
+pub fn app_note(state: &crate::AppState, c: &Cipher) -> String {
+    app::note(state, c)
 }
 
 /// What the approval card shows before a risky tool runs.
@@ -309,6 +322,7 @@ pub fn notes_preview(name: &str, args: &Value, db: &Mutex<Connection>, cipher: &
 
 pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, String> {
     match name {
+        "connect_account" => app::preview(args),
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         _ => fs::preview(name, args, sandbox),
@@ -330,6 +344,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             tokio::task::block_in_place(|| documents::run(&name, &args, ctx))
         }
         n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
+        "app_status" | "connect_account" | "open_page" => app::run(name, args, ctx.state, ctx.memory.cipher).await,
         "create_image" | "edit_image" | "create_video" | "create_music" => media::run(name, args, ctx).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
@@ -408,8 +423,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document and media tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 31);
+        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media and app tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 34);
     }
 
     #[test]

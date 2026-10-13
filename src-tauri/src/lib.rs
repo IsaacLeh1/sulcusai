@@ -809,6 +809,60 @@ fn stop_generation(state: AppStateRef, chat_id: String) {
     }
 }
 
+/// Replies in progress, by chat: what has streamed so far, so a chat opened
+/// again mid-reply shows it (the reply keeps going when the user leaves).
+fn live_replies() -> &'static Mutex<HashMap<String, serde_json::Value>> {
+    static LIVE: std::sync::OnceLock<Mutex<HashMap<String, serde_json::Value>>> = std::sync::OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn track_live(event: &str, payload: &serde_json::Value) {
+    let Some(chat) = payload.get("chat_id").and_then(|c| c.as_str()) else { return };
+    let mut live = live_replies().lock().unwrap();
+    match event {
+        "chat:start" => {
+            live.insert(chat.to_string(), json!({ "message_id": payload["message_id"], "content": "", "thinking": "", "status": "thinking" }));
+        }
+        "chat:delta" => {
+            if let Some(r) = live.get_mut(chat) {
+                for key in ["content", "thinking"] {
+                    if let Some(add) = payload.get(key).and_then(|v| v.as_str()) {
+                        let joined = format!("{}{add}", r[key].as_str().unwrap_or(""));
+                        r[key] = json!(joined);
+                    }
+                }
+                if payload.get("content").is_some_and(|v| v.is_string()) {
+                    r["status"] = json!("writing");
+                }
+            }
+        }
+        "agent:step" => {
+            live.insert(chat.to_string(), json!({ "message_id": null, "content": "", "thinking": "", "status": "working" }));
+        }
+        "chat:status" if payload["status"] == "loading" => {
+            live.insert(chat.to_string(), json!({ "message_id": null, "content": "", "thinking": "", "status": "loading" }));
+        }
+        _ => {}
+    }
+}
+
+/// Clears a chat's live reply when its turn ends, however it ends.
+struct LiveGuard(String);
+impl Drop for LiveGuard {
+    fn drop(&mut self) {
+        live_replies().lock().unwrap().remove(&self.0);
+    }
+}
+
+/// The reply a chat is in the middle of, if any.
+#[tauri::command(async)]
+fn chat_live(state: AppStateRef, chat_id: String) -> Option<serde_json::Value> {
+    if !state.generations.lock().unwrap().contains_key(&chat_id) {
+        return None;
+    }
+    Some(live_replies().lock().unwrap().get(&chat_id).cloned().unwrap_or_else(|| json!({ "message_id": null, "content": "", "thinking": "", "status": "working" })))
+}
+
 #[tauri::command]
 async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<Option<Message>, String> {
     run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None).await
@@ -837,6 +891,7 @@ pub(crate) async fn run_turn(
     let Some((cancel, _guard)) = claim(&state.generations, &chat_id) else {
         return Err("Still answering the last message.".into());
     };
+    let _live = LiveGuard(chat_id.clone());
 
     let turn_id = uuid::Uuid::new_v4().to_string();
     let (chat, profile) = {
@@ -903,6 +958,7 @@ pub(crate) async fn run_turn(
             if let Some(t) = &tee {
                 t(event, &payload);
             }
+            track_live(event, &payload);
             emitter.emit(event, payload).ok();
         }),
         state: state.clone(),
@@ -1318,6 +1374,7 @@ pub fn run() {
             get_messages,
             get_context,
             stop_generation,
+            chat_live,
             send_message,
             engine_status,
             unload_model,
