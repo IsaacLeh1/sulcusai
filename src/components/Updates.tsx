@@ -126,13 +126,15 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
 }
 
 /** Status bar: "Update to x" when a check found one, else "Check for
- * updates", which first says what the check sends. */
+ * updates", which first says what the check sends. Results show as a short
+ * note next to the button, not a pop-up. */
 export function UpdatePill({ toast }: { toast: PushToast }) {
   const [found, setFound] = useState<UpdateAvailable | null>(null);
   const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState(false);
   const [checking, setChecking] = useState(false);
   const [current, setCurrent] = useState("");
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   useEffect(() => {
     api.updateView().then((v) => {
       setFound(v.available);
@@ -140,14 +142,21 @@ export function UpdatePill({ toast }: { toast: PushToast }) {
     }).catch(() => {});
     const subs = [
       on("update:available", (u) => setFound(u)),
-      on("update:installing", () => toast(t("Installing the update. SulcusAI will restart in a moment."), "info")),
+      on("update:installing", () => setNote({ text: t("Installing the update. SulcusAI will restart in a moment."), error: false })),
     ];
     return () => {
       subs.forEach((s) => s.then((un) => un()));
     };
-  }, [toast]);
+  }, []);
+  // The note clears itself (problems stay a little longer).
+  useEffect(() => {
+    if (!note) return;
+    const id = setTimeout(() => setNote(null), note.error ? 15_000 : 8_000);
+    return () => clearTimeout(id);
+  }, [note]);
   const check = async () => {
     setAsking(false);
+    setNote(null);
     setChecking(true);
     try {
       const u = await api.checkForUpdate();
@@ -155,20 +164,26 @@ export function UpdatePill({ toast }: { toast: PushToast }) {
         setFound(u);
         setOpen(true);
       } else {
-        toast(t("You have the latest version ({version}).", { version: current }), "success");
+        setNote({ text: t("You have the latest version ({version}).", { version: current }), error: false });
       }
     } catch (e) {
-      toast(errorText(e), "error");
+      setNote({ text: errorText(e), error: true });
     } finally {
       setChecking(false);
     }
   };
+  const noteEl = note && (
+    <span className={`status-item update-note ${note.error ? "warn-text" : "muted"}`} role="status" title={note.text}>
+      {note.error ? "⚠" : "✓"} {note.text}
+    </span>
+  );
   if (found) {
     return (
       <>
         <button className="status-item update-pill" onClick={() => setOpen(true)} title={t("A newer version of SulcusAI is ready")}>
           ⬆ {t("Update to {version}", { version: found.version })}
         </button>
+        {noteEl}
         {open && <InstallModal update={found} onClose={() => setOpen(false)} toast={toast} />}
       </>
     );
@@ -178,6 +193,7 @@ export function UpdatePill({ toast }: { toast: PushToast }) {
       <button className="status-item link-btn" onClick={() => setAsking(true)} disabled={checking} title={t("See if a newer version of SulcusAI is out")}>
         {checking ? t("Checking…") : `⟳ ${t("Check for updates")}`}
       </button>
+      {noteEl}
       {asking && (
         <Modal title={t("Check for updates?")} onClose={() => setAsking(false)}>
           <p>{t("This contacts GitHub, where SulcusAI's releases are published, to see if a version newer than {version} is out.", { version: current })}</p>

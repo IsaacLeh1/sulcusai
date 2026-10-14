@@ -1089,7 +1089,9 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .privacy-card .toggle-row + .progress { margin-top: 10px; }
 .privacy-route { align-items: flex-start !important; margin: 0 0 10px; }
 .privacy-route input { margin-top: 3px; flex: none; }
-.statusbar > .status-item { white-space: nowrap; flex: none; }
+.statusbar > .status-item, .statusbar > .conn { white-space: nowrap; flex: none; }
 /* The long note gives way first when the bar is crowded. */
-.statusbar > .status-item.muted:last-child { flex: 0 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; }
+.statusbar > .status-item.muted:last-child { flex: 0 100 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; }
 .status-item.privacy-pill.warn-text { color: var(--warn); }
+/* A check-for-updates result next to the button: shrinks before other items. */
+.statusbar > .status-item.update-note { flex: 0 1 auto; min-width: 0; max-width: 420px; display: block; overflow: hidden; text-overflow: ellipsis; }
