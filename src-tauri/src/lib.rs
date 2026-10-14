@@ -1427,6 +1427,7 @@ pub fn run() {
             updates::update_view,
             updates::check_for_update,
             updates::set_update_auto,
+            updates::set_update_install,
             updates::install_update,
             backup::backup_info,
             backup::restore_backup,

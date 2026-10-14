@@ -129,6 +129,8 @@ export interface UpdateAvailable {
 export interface UpdateView {
   current: string;
   auto: boolean;
+  /** Installs updates without asking, when nothing is running. */
+  install: boolean;
   last_check: number;
   available: UpdateAvailable | null;
 }
@@ -1064,6 +1066,7 @@ export const api = {
   updateView: () => invoke<UpdateView>("update_view"),
   checkForUpdate: () => invoke<UpdateAvailable | null>("check_for_update"),
   setUpdateAuto: (auto: boolean) => invoke<void>("set_update_auto", { auto }),
+  setUpdateInstall: (install: boolean) => invoke<void>("set_update_install", { install }),
   installUpdate: () => invoke<void>("install_update"),
   makeBackup: (path: string, password: string) => invoke<{ files: number; bytes: number }>("make_backup", { path, password }),
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
@@ -1374,6 +1377,7 @@ export interface ChatEvents {
   "models:speed": { model_id?: string; done: number; total: number; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
   "sync:changed": null;
   "update:progress": { received: number; total: number | null };
+  "update:installing": Record<string, never>;
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

@@ -1080,3 +1080,6 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .move-confirm { margin-top: 10px; }
 .move-confirm p { margin: 0 0 8px; }
 @media (max-width: 760px) { .speed-row { grid-template-columns: 1fr auto; } .speed-bar { grid-column: 1 / -1; } }
+.status-item.link-btn { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; padding: 1px 6px; border-radius: 6px; }
+.status-item.link-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.privacy-list { margin: 4px 0 10px; padding-left: 20px; line-height: 1.6; }

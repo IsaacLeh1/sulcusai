@@ -10,7 +10,7 @@ export const LEVELS: { id: Connectivity; icon: string; label: string; short: str
     icon: "🔒",
     label: tx("Offline"),
     short: tx("Offline"),
-    detail: tx("Nothing leaves this PC. Model downloads you start are the only exception."),
+    detail: tx("Nothing leaves this PC, except model downloads you start and the check for app updates (a switch in Settings)."),
   },
   {
     id: "web",

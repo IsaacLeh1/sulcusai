@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Signed updates from the project's GitHub Releases (the Tauri updater; an
 //! update only installs if its signature matches the key built into the
-//! app). Automatic checks run only when the app may go online; "Check for
-//! updates" in Settings always works, because the user asked. Installing is
-//! always the user's click.
+//! app). The automatic check runs at every level, Offline included: it only
+//! asks GitHub for the latest version number, and it's a switch in Settings.
+//! (It used to skip Offline, the default, so most copies never heard of an
+//! update.) Installing is the user's click, unless they turned on installing
+//! automatically: then it happens when nothing is running, and the app
+//! restarts.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -13,25 +16,36 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use crate::net::Connectivity;
 use crate::{db, AppState, AppStateRef};
 
 const KEY: &str = "updates";
 /// How often an automatic check may happen.
-const EVERY: i64 = 24 * 3600 * 1000;
+const EVERY: i64 = 6 * 3600 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateSettings {
-    /// Look for updates on its own (only when the app may go online).
+    /// Look for updates on its own.
     pub auto: bool,
+    /// Install what it finds without asking (when nothing is running).
+    pub install: bool,
     pub last_check: i64,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
-        UpdateSettings { auto: true, last_check: 0 }
+        UpdateSettings { auto: true, install: false, last_check: 0 }
     }
+}
+
+/// Nothing a restart would cut off: a reply, a meeting, a download, a
+/// picture or video being made, a model being taught, models being moved.
+fn idle(state: &AppState) -> bool {
+    state.generations.lock().unwrap().is_empty()
+        && state.installs.lock().unwrap().is_empty()
+        && crate::meeting::live_meeting().is_none()
+        && crate::media::list_jobs().is_empty()
+        && !crate::finetune::training()
 }
 
 fn settings(state: &AppState) -> UpdateSettings {
@@ -65,21 +79,36 @@ async fn check(app: &AppHandle, state: &AppState) -> Result<Option<Available>, S
     }))
 }
 
-/// Checks once a day in the background, when allowed.
+/// Checks soon after the app opens and every few hours after, unless the
+/// user turned automatic checks off.
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // Let the app settle first.
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
         loop {
             let state = app.state::<std::sync::Arc<AppState>>().inner().clone();
             let s = settings(&state);
-            let online = state.settings().connectivity != Connectivity::Offline;
-            if s.auto && online && db::now_ms() - s.last_check >= EVERY {
+            if s.auto && db::now_ms() - s.last_check >= EVERY {
                 if let Ok(Some(a)) = check(&app, &state).await {
                     app.emit("update:available", &a).ok();
                 }
             }
-            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+            // Installing on its own: once nothing is running (checked again
+            // every few minutes until then).
+            if s.install && PENDING.lock().unwrap().is_some() {
+                for _ in 0..12 {
+                    if idle(&state) {
+                        state.log("settings", "Installing an update automatically");
+                        app.emit("update:installing", json!({})).ok();
+                        if let Err(e) = install(&app, &state).await {
+                            state.log("settings", &format!("The automatic update didn't install: {e}"));
+                        }
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(300)).await;
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(3600)).await;
         }
     });
 }
@@ -88,6 +117,7 @@ pub fn start(app: AppHandle) {
 pub struct UpdateView {
     current: String,
     auto: bool,
+    install: bool,
     last_check: i64,
     available: Option<Available>,
 }
@@ -96,7 +126,7 @@ pub struct UpdateView {
 pub fn update_view(state: AppStateRef) -> UpdateView {
     let s = settings(&state);
     let available = PENDING.lock().unwrap().as_ref().map(|u| Available { version: u.version.clone(), notes: u.body.clone().unwrap_or_default(), date: u.date.map(|d| d.date().to_string()) });
-    UpdateView { current: env!("CARGO_PKG_VERSION").into(), auto: s.auto, last_check: s.last_check, available }
+    UpdateView { current: env!("CARGO_PKG_VERSION").into(), auto: s.auto, install: s.install, last_check: s.last_check, available }
 }
 
 /// Checks now (the user asked, so it works at every level).
@@ -113,9 +143,26 @@ pub fn set_update_auto(state: AppStateRef, auto: bool) -> Result<(), String> {
     db::set(&conn, KEY, &s)
 }
 
+/// Install updates without asking (checking turns on with it).
+#[tauri::command(async)]
+pub fn set_update_install(state: AppStateRef, install: bool) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();
+    s.install = install;
+    if install {
+        s.auto = true;
+    }
+    db::log_action(&conn, "settings", if install { "Turned on installing updates automatically" } else { "Turned off installing updates automatically" });
+    db::set(&conn, KEY, &s)
+}
+
 /// Downloads the update, checks its signature, installs it and restarts.
 #[tauri::command]
 pub async fn install_update(app: AppHandle, state: AppStateRef<'_>) -> Result<(), String> {
+    install(&app, &state).await
+}
+
+async fn install(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let update = match PENDING.lock().unwrap().take() {
         Some(u) => u,
         None => return Err("There's no update waiting. Check for updates first.".into()),

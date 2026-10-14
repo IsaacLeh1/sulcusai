@@ -97,8 +97,27 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
           }}
         />
         <span>
-          {t("Check for updates once a day")}
-          <span className="muted small block">{t("Only when SulcusAI may go online (Web or Cloud). Updates come from SulcusAI's GitHub releases and only install when you say so.")}</span>
+          {t("Check for updates automatically")}
+          <span className="muted small block">{t("A few times a day, even Offline: it only asks SulcusAI's GitHub releases for the latest version number. Updates install only when you say so.")}</span>
+        </span>
+      </label>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={v.install}
+          onChange={async (e) => {
+            const install = e.target.checked;
+            try {
+              await api.setUpdateInstall(install);
+              setV({ ...v, install, auto: install ? true : v.auto });
+            } catch (err) {
+              toast(errorText(err), "error");
+            }
+          }}
+        />
+        <span>
+          {t("Install updates automatically")}
+          <span className="muted small block">{t("New versions install on their own, checked against SulcusAI's signing key. It waits until nothing is running (a reply, a meeting, a download), then SulcusAI restarts.")}</span>
         </span>
       </label>
       {installing && <InstallModal update={installing} onClose={() => setInstalling(null)} toast={toast} />}
@@ -106,24 +125,75 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
   );
 }
 
-/** Status-bar button that appears when a background check found an update. */
+/** Status bar: "Update to x" when a check found one, else "Check for
+ * updates", which first says what the check sends. */
 export function UpdatePill({ toast }: { toast: PushToast }) {
   const [found, setFound] = useState<UpdateAvailable | null>(null);
   const [open, setOpen] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [current, setCurrent] = useState("");
   useEffect(() => {
-    api.updateView().then((v) => setFound(v.available)).catch(() => {});
-    const sub = on("update:available", (u) => setFound(u));
+    api.updateView().then((v) => {
+      setFound(v.available);
+      setCurrent(v.current);
+    }).catch(() => {});
+    const subs = [
+      on("update:available", (u) => setFound(u)),
+      on("update:installing", () => toast(t("Installing the update. SulcusAI will restart in a moment."), "info")),
+    ];
     return () => {
-      sub.then((un) => un());
+      subs.forEach((s) => s.then((un) => un()));
     };
-  }, []);
-  if (!found) return null;
+  }, [toast]);
+  const check = async () => {
+    setAsking(false);
+    setChecking(true);
+    try {
+      const u = await api.checkForUpdate();
+      if (u) {
+        setFound(u);
+        setOpen(true);
+      } else {
+        toast(t("You have the latest version ({version}).", { version: current }), "success");
+      }
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setChecking(false);
+    }
+  };
+  if (found) {
+    return (
+      <>
+        <button className="status-item update-pill" onClick={() => setOpen(true)} title={t("A newer version of SulcusAI is ready")}>
+          ⬆ {t("Update to {version}", { version: found.version })}
+        </button>
+        {open && <InstallModal update={found} onClose={() => setOpen(false)} toast={toast} />}
+      </>
+    );
+  }
   return (
     <>
-      <button className="status-item update-pill" onClick={() => setOpen(true)} title={t("A newer version of SulcusAI is ready")}>
-        ⬆ {t("Update to {version}", { version: found.version })}
+      <button className="status-item link-btn" onClick={() => setAsking(true)} disabled={checking} title={t("See if a newer version of SulcusAI is out")}>
+        {checking ? t("Checking…") : `⟳ ${t("Check for updates")}`}
       </button>
-      {open && <InstallModal update={found} onClose={() => setOpen(false)} toast={toast} />}
+      {asking && (
+        <Modal title={t("Check for updates?")} onClose={() => setAsking(false)}>
+          <p>{t("This contacts GitHub, where SulcusAI's releases are published, to see if a version newer than {version} is out.", { version: current })}</p>
+          <p className="small"><strong>{t("What GitHub receives:")}</strong></p>
+          <ul className="small privacy-list">
+            <li>{t("A request for SulcusAI's public release file (latest.json)")}</li>
+            <li>{t("Your IP address and the time, as with any website visit")}</li>
+            <li>{t("The name and version of the update tool (tauri-plugin-updater)")}</li>
+          </ul>
+          <p className="small">{t("Nothing else: no chats, files, accounts, settings or anything about you or this PC. Installing a new version is still up to you.")}</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setAsking(false)}>{t("Cancel")}</button>
+            <button className="btn primary" onClick={check}>{t("Check now")}</button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
