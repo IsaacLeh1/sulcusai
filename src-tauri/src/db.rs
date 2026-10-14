@@ -203,6 +203,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "incognito", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "parent_id", "TEXT"),
     ("meeting_segments", "voice", "INTEGER"),
+    ("installed_models", "prompt_tps", "REAL"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
@@ -351,12 +352,15 @@ pub struct InstalledModel {
     pub path: String,
     pub size: u64,
     pub installed_at: i64,
+    /// Writing speed measured on this PC (tokens a second).
     pub tps: Option<f64>,
+    /// Reading speed: how fast it takes in a prompt (tokens a second).
+    pub prompt_tps: Option<f64>,
 }
 
 pub fn installed_models(conn: &Connection) -> Vec<InstalledModel> {
     let Ok(mut stmt) = conn.prepare(
-        "SELECT model_id, quant, path, size, installed_at, tps FROM installed_models ORDER BY installed_at",
+        "SELECT model_id, quant, path, size, installed_at, tps, prompt_tps FROM installed_models ORDER BY installed_at",
     ) else {
         return Vec::new();
     };
@@ -368,6 +372,7 @@ pub fn installed_models(conn: &Connection) -> Vec<InstalledModel> {
             size: r.get::<_, i64>(3)? as u64,
             installed_at: r.get(4)?,
             tps: r.get(5)?,
+            prompt_tps: r.get(6)?,
         })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())
@@ -380,16 +385,17 @@ pub fn installed_model(conn: &Connection, model_id: &str) -> Option<InstalledMod
 
 pub fn save_installed(conn: &Connection, m: &InstalledModel) -> Result<(), String> {
     conn.execute(
-        "INSERT OR REPLACE INTO installed_models (model_id, quant, path, size, installed_at, tps)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![m.model_id, m.quant, m.path, m.size as i64, m.installed_at, m.tps],
+        "INSERT OR REPLACE INTO installed_models (model_id, quant, path, size, installed_at, tps, prompt_tps)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![m.model_id, m.quant, m.path, m.size as i64, m.installed_at, m.tps, m.prompt_tps],
     )
     .map_err(err)?;
     Ok(())
 }
 
-pub fn set_tps(conn: &Connection, model_id: &str, tps: f64) -> Result<(), String> {
-    conn.execute("UPDATE installed_models SET tps = ?2 WHERE model_id = ?1", params![model_id, tps]).map_err(err)?;
+/// Both speeds from a speed test.
+pub fn set_speed(conn: &Connection, model_id: &str, tps: f64, prompt_tps: Option<f64>) -> Result<(), String> {
+    conn.execute("UPDATE installed_models SET tps = ?2, prompt_tps = ?3 WHERE model_id = ?1", params![model_id, tps, prompt_tps]).map_err(err)?;
     Ok(())
 }
 

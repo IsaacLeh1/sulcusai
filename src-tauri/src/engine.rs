@@ -409,11 +409,35 @@ pub fn log_tail(path: &Path, lines: usize) -> String {
 }
 
 /// Measures generation speed (tokens/second) on this PC.
-pub async fn benchmark(ep: &Endpoint) -> Result<f64, String> {
+/// A model's speed on this PC: writing (tokens a second it produces) and
+/// reading (tokens a second it takes in, for long prompts and documents).
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct Speed {
+    pub tps: f64,
+    pub prompt_tps: Option<f64>,
+}
+
+/// About 600 tokens to read, so the reading speed means something.
+const READING: &str = "Notes from the planning meeting. The team reviewed the budget for the next quarter, the hiring plan, \
+    and the schedule for the product launch. Marketing asked for two more weeks to finish the campaign, and engineering \
+    agreed to move the release by one week to fix the remaining issues in the sync feature. Finance confirmed that travel \
+    costs were under budget and suggested moving the savings to the support team, which has been handling more requests \
+    since the last update. The design group showed new screens for the mail and calendar pages and asked for feedback by \
+    Friday. Everyone agreed to meet again next Tuesday at ten to confirm the launch date and the final budget numbers.";
+
+/// Writing and reading speed, with the same settings chats use. The prompt
+/// cache is off, so a second test reads the prompt again rather than reusing it.
+pub async fn measure(ep: &Endpoint) -> Result<Speed, String> {
+    // A short warm-up first: the graphics card's first answer after loading
+    // runs well below its usual speed (49 vs 72 tokens/sec on Qwen3-VL 4B).
+    let warm = serde_json::json!({ "messages": [{ "role": "user", "content": "Hi" }], "max_tokens": 16, "cache_prompt": false });
+    let _ = net::local_client().post(ep.url("/v1/chat/completions")).bearer_auth(&ep.key).json(&warm).timeout(Duration::from_secs(120)).send().await;
+    let prompt = format!("{}\n\n{}\n\n{}\n\nWrite three short sentences about the ocean.", READING, READING, READING);
     let body = serde_json::json!({
-        "messages": [{ "role": "user", "content": "Write three short sentences about the ocean." }],
+        "messages": [{ "role": "user", "content": prompt }],
         "max_tokens": 128,
         "temperature": 0.7,
+        "cache_prompt": false,
     });
     let started = Instant::now();
     let resp: serde_json::Value = net::local_client()
@@ -429,11 +453,13 @@ pub async fn benchmark(ep: &Endpoint) -> Result<f64, String> {
         .json()
         .await
         .map_err(|e| e.to_string())?;
+    let round = |v: f64| (v * 10.0).round() / 10.0;
+    let prompt_tps = resp.pointer("/timings/prompt_per_second").and_then(|v| v.as_f64()).filter(|v| v.is_finite() && *v > 0.0).map(round);
     if let Some(tps) = resp.pointer("/timings/predicted_per_second").and_then(|v| v.as_f64()) {
-        return Ok((tps * 10.0).round() / 10.0);
+        return Ok(Speed { tps: round(tps), prompt_tps });
     }
     let tokens = resp.pointer("/usage/completion_tokens").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    Ok((tokens / started.elapsed().as_secs_f64() * 10.0).round() / 10.0)
+    Ok(Speed { tps: round(tokens / started.elapsed().as_secs_f64()), prompt_tps })
 }
 
 #[cfg(test)]

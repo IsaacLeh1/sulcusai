@@ -6,6 +6,8 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
+import { ModelStorage } from "../components/ModelStorage";
+import { SpeedChart } from "../components/SpeedChart";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
 
@@ -74,9 +76,14 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
             {t("Engine: llama.cpp ({engine})", { engine: catalog.backend === "vulkan-x64" ? t("graphics card") : catalog.backend === "cpu-x64" ? t("processor") : t("unavailable on this system") })}
             {hw.on_battery ? ` · ${t("On battery: models run slower and drain power faster.")}` : ""}
           </span>
-          <button className="btn ghost small" onClick={recheck} disabled={checking}>
-            {checking ? t("Checking…") : t("Check again")}
-          </button>
+          <span className="row">
+            <button className="btn ghost small" onClick={() => document.querySelector(".storage-card")?.scrollIntoView({ behavior: "smooth" })}>
+              {t("Change where models are saved")}
+            </button>
+            <button className="btn ghost small" onClick={recheck} disabled={checking}>
+              {checking ? t("Checking…") : t("Check again")}
+            </button>
+          </span>
         </div>
       </section>
 
@@ -106,6 +113,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </div>
       )}
 
+      {tab === "chat" && <SpeedChart models={catalog.models} onRefresh={onRefresh} toast={toast} />}
+
       {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
 
       {tab === "chat" && installed.length > 0 && (
@@ -130,6 +139,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           </div>
         </>
       )}
+
+      <ModelStorage toast={toast} />
 
       {tab === "chat" && hints.hidden > 0 && (
         <section className="card hint">

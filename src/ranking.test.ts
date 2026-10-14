@@ -18,7 +18,7 @@ function m(id: string, overall: number, coding: number, tps: number, measured: n
     variants: [],
     ratings: { overall, coding, writing: 5, research: 5, agents: 5, languages: 5 },
     fit: { ctx: 8192, recommended: "Q4", variants: [{ quant: "Q4", placement: "gpu", needed_bytes: 0, est_tps: tps, gpu_layers: 0, disk_ok: true }] },
-    installed: measured === null ? null : { model_id: id, quant: "Q4", path: "", size: 0, installed_at: 0, tps: measured },
+    installed: measured === null ? null : { model_id: id, quant: "Q4", path: "", size: 0, installed_at: 0, tps: measured, prompt_tps: null },
   };
 }
 

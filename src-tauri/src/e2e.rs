@@ -111,7 +111,7 @@ async fn e2e_install_load_and_chat() {
     assert!(!done.content.trim().is_empty());
     assert!(deltas > 1, "reply did not stream");
 
-    let tps = engine::benchmark(&ep).await.unwrap();
+    let tps = engine::measure(&ep).await.unwrap().tps;
     println!("benchmark: {tps} tokens/sec (estimate was {})", vfit.est_tps);
     assert!(tps > 0.0);
 
@@ -653,7 +653,7 @@ async fn e2e_meeting_records_transcribes_and_writes_notes() {
         let path = state.paths.models.join(&spec.id).join(&v.file);
         let conn = state.db.lock().unwrap();
         crate::db::save_installed(&conn, &crate::db::InstalledModel {
-            model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None,
+            model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None, prompt_tps: None,
         }).unwrap();
         crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
     }
@@ -955,7 +955,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let prio = String::from_utf8_lossy(&prio.stdout).trim().to_string();
     println!("priority: {prio}");
     assert_eq!(prio, "BelowNormal");
-    assert!(engine::benchmark(&ep).await.unwrap() > 0.0);
+    assert!(engine::measure(&ep).await.unwrap().tps > 0.0);
 
     let hot = perf::scaled(cool, &HeatState { gpu_level: 3, cpu_level: 3, ..Default::default() });
     let (hctx, hlayers) = catalog::launch_within(&spec, "Q4_K_M", &full, &hot);
@@ -964,7 +964,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let spec_hot = launch(hctx, hlayers, &hot);
     assert!(!eng.matches(&spec_hot), "new limits mean a relaunch");
     let ep = eng.ensure(spec_hot, None).await.unwrap();
-    let tps = engine::benchmark(&ep).await.unwrap();
+    let tps = engine::measure(&ep).await.unwrap().tps;
     println!("hot speed: {tps} tokens/sec");
     assert!(tps > 0.0);
     eng.stop().await;
@@ -1092,6 +1092,25 @@ fn seed_test_mail(state: &std::sync::Arc<crate::AppState>, cipher: &crate::crypt
             crate::mail::save_item(&conn, cipher, "acc", "INBOX", uid as u32 + 1, now - hours_ago * hour, !all_unread && hours_ago > 4, &data).unwrap();
         }
     }
+}
+
+/// The speed test on a real model (SULCUSAI_TEST_GGUF and friends): writing
+/// and reading speed, and a second run isn't sped up by the prompt cache.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_speed_test() {
+    let ctx = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(8192);
+    let layers = std::env::var("SULCUSAI_TEST_LAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(99);
+    let blob = std::env::var("SULCUSAI_TEST_GGUF").unwrap_or_default();
+    let (state, ep, _) = agent_harness_on(Some((blob.into(), ctx, layers)), None).await;
+    let first = engine::measure(&ep).await.unwrap();
+    let second = engine::measure(&ep).await.unwrap();
+    println!("first: {first:?}
+second: {second:?}");
+    state.engine.lock().await.stop().await;
+    assert!(first.tps > 1.0 && second.tps > 1.0);
+    let (p1, p2) = (first.prompt_tps.unwrap(), second.prompt_tps.unwrap());
+    assert!(p2 < p1 * 3.0, "the second test reads the prompt again (cache off): {p1} vs {p2}");
 }
 
 /// Sorting unread mail with a real model (SULCUSAI_TEST_GGUF and friends, as
@@ -1744,7 +1763,7 @@ async fn e2e_local_models() {
         .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
         .await
         .unwrap();
-    let tps = engine::benchmark(&ep).await.unwrap();
+    let tps = engine::measure(&ep).await.unwrap().tps;
     println!("{} ran on the processor at {tps:.1} tokens/s", small.name);
     eng.stop().await;
     assert!(tps > 0.0);
@@ -1762,7 +1781,7 @@ async fn e2e_advanced() {
     let v = spec.variant("Q4_K_M").unwrap();
     {
         let conn = state.db.lock().unwrap();
-        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None }).unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None , prompt_tps: None}).unwrap();
         let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
         a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: Some(256) };
         a.sampling.temperature = Some(1.0);
@@ -1797,7 +1816,7 @@ async fn e2e_api_server() {
     let port = 17340;
     {
         let conn = state.db.lock().unwrap();
-        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None }).unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None , prompt_tps: None}).unwrap();
         crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
         let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
         a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: None };

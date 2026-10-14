@@ -267,7 +267,7 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
                   onClick={async () => {
                     setMeasuring(true);
                     try {
-                      const tps = await api.measureModelSpeed(speedModel);
+                      const { tps } = await api.measureModelSpeed(speedModel);
                       toast(t("{model}: {speed} tokens/sec on this PC.", { model: String(models.find((m) => m.id === speedModel)?.name), speed: tps.toFixed(1) }), "success");
                     } catch (e) {
                       toast(errorText(e), "error");

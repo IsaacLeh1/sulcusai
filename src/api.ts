@@ -65,7 +65,15 @@ export interface InstalledModel {
   path: string;
   size: number;
   installed_at: number;
+  /** Writing speed measured on this PC (tokens a second). */
   tps: number | null;
+  /** Reading speed (prompt tokens a second). */
+  prompt_tps: number | null;
+}
+
+export interface Speed {
+  tps: number;
+  prompt_tps: number | null;
 }
 
 export interface Ratings {
@@ -1088,7 +1096,9 @@ export const api = {
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
-  measureModelSpeed: (modelId: string) => invoke<number>("measure_model_speed", { modelId }),
+  measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
+  // Tests every installed chat model; progress comes as models:speed.
+  measureAllSpeeds: () => invoke<number>("measure_all_speeds"),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
   catalog: () => invoke<CatalogView>("catalog_view"),
   install: (modelId: string, quant: string) => invoke<void>("install_model", { modelId, quant }),
@@ -1361,6 +1371,7 @@ export interface ChatEvents {
   "finetune:progress": FinetuneJob;
   "sync:status": null;
   "models:moving": { done?: number; total?: number; finished?: boolean; error?: string };
+  "models:speed": { model_id?: string; done: number; total: number; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
   "sync:changed": null;
   "update:progress": { received: number; total: number | null };
   dictation: DictationEvent;

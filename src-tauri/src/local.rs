@@ -148,7 +148,7 @@ pub fn import(state: &AppState, path: &Path) -> Result<String, String> {
     let v = &spec.variants[0];
     {
         let conn = state.db.lock().unwrap();
-        db::save_installed(&conn, &InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: c.path.display().to_string(), size: v.size, installed_at: db::now_ms(), tps: None })?;
+        db::save_installed(&conn, &InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: c.path.display().to_string(), size: v.size, installed_at: db::now_ms(), tps: None , prompt_tps: None})?;
         let mut all = list(&conn);
         all.push(spec.clone());
         save(&conn, &all)?;
@@ -320,7 +320,7 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
                 path: spec.local.as_ref().map(|l| l.path.clone()).unwrap_or_default(),
                 size: v.size,
                 installed_at: db::now_ms(),
-                tps: None,
+                tps: None, prompt_tps: None,
             });
             if saved.is_ok() {
                 known.push(spec.clone());

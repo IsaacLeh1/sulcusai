@@ -1019,7 +1019,7 @@ mod tests {
         let file = a.paths.models.join(&spec.id).join(&v.file);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::File::create(&file).unwrap().set_len(v.size).unwrap();
-        db::save_installed(&a.db.lock().unwrap(), &db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: file.display().to_string(), size: v.size, installed_at: 1, tps: None }).unwrap();
+        db::save_installed(&a.db.lock().unwrap(), &db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: file.display().to_string(), size: v.size, installed_at: 1, tps: None , prompt_tps: None}).unwrap();
         let pa = peer(&b, &a_id).unwrap();
         let (mut r, _w, mut inn, _out) = request(&b, &pa, addr, "models", &serde_json::Value::Null).await.unwrap();
         let list: Vec<models::Offered> = serde_json::from_slice(&inn.open(&wire::read_frame(&mut r).await.unwrap()).unwrap()).unwrap();

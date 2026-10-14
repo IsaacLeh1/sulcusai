@@ -1054,3 +1054,29 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .model-menu button.active { background: var(--selected); font-weight: 600; }
 .model-check { width: 14px; color: var(--accent); font-weight: 700; }
 .model-menu-foot { border-top: 1px solid var(--border) !important; border-radius: 0 0 8px 8px !important; margin-top: 4px; }
+
+/* ---------- models: speed on this PC, where models are saved ---------- */
+.speed-rows { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 6px; }
+.speed-row { display: grid; grid-template-columns: minmax(140px, 220px) 1fr minmax(120px, 170px) 100px; align-items: center; gap: 12px; }
+.speed-row.other .speed-name { color: var(--muted); }
+.speed-name { font-weight: 550; }
+.speed-bar { height: 10px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
+.speed-bar span { display: block; height: 100%; border-radius: 99px; }
+.speed-bar .measured { background: var(--accent); }
+.speed-bar .estimated { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--accent) 45%, transparent) 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px); }
+.speed-action { text-align: right; }
+.speed-legend { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.legend-swatch { width: 18px; height: 8px; border-radius: 99px; display: inline-block; margin-left: 8px; }
+.legend-swatch.measured { background: var(--accent); margin-left: 0; }
+.legend-swatch.estimated { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--accent) 45%, transparent) 0 4px, color-mix(in srgb, var(--accent) 22%, transparent) 4px 8px); }
+.storage-now code { word-break: break-all; }
+.drive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
+.drive { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.drive.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.drive-name { font-size: 15px; }
+.drive-bar { height: 8px; background: var(--panel-2); border-radius: 99px; overflow: hidden; }
+.drive-bar span { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 70%, var(--muted)); }
+.drive .btn { align-self: flex-start; }
+.move-confirm { margin-top: 10px; }
+.move-confirm p { margin: 0 0 8px; }
+@media (max-width: 760px) { .speed-row { grid-template-columns: 1fr auto; } .speed-bar { grid-column: 1 / -1; } }

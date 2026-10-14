@@ -277,7 +277,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         vision: m.vision.then(|| VisionFile { file: String::new(), url: String::new(), size: 0, sha256: String::new() }),
         local: None,
     };
-    let installed = InstalledModel { model_id: id.to_string(), quant: "cloud".into(), path: String::new(), size: 0, installed_at: 0, tps: None };
+    let installed = InstalledModel { model_id: id.to_string(), quant: "cloud".into(), path: String::new(), size: 0, installed_at: 0, tps: None , prompt_tps: None};
     Ok((ep, spec, installed))
 }
 

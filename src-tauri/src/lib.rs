@@ -378,7 +378,7 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                     path: dest.display().to_string(),
                     size: variant.size,
                     installed_at: db::now_ms(),
-                    tps: None,
+                    tps: None, prompt_tps: None,
                 })?;
                 if db::settings(&conn).default_model.is_none() {
                     db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone()))?;
@@ -420,12 +420,12 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                         state.job(),
                     )
                     .await?;
-                engine::benchmark(&ep).await
+                engine::measure(&ep).await
             }
             .await;
             drop(engine);
             match measured {
-                Ok(tps) => db::set_tps(&state.db.lock().unwrap(), &spec.id, tps)?,
+                Ok(sp) => db::set_speed(&state.db.lock().unwrap(), &spec.id, sp.tps, sp.prompt_tps)?,
                 // The model is installed; only the speed test failed.
                 Err(e) => eprintln!("benchmark failed for {}: {e}", spec.id),
             }
@@ -543,7 +543,7 @@ fn adopt_found(state: &AppState, finder: &mut found::Finder) -> Vec<String> {
                 path: dest.display().to_string(),
                 size: variant.size,
                 installed_at: db::now_ms(),
-                tps: None,
+                tps: None, prompt_tps: None,
             });
             if saved.is_err() {
                 continue;
@@ -606,15 +606,79 @@ async fn import_model_file(app: AppHandle, state: AppStateRef<'_>, path: String)
     Ok(name)
 }
 
-/// Runs the speed test again for an installed chat model.
+static SPEED_TESTING: AtomicBool = AtomicBool::new(false);
+
+/// One model's speed test, loaded as chats load it.
+async fn test_speed(state: &Arc<AppState>, model_id: &str) -> Result<engine::Speed, String> {
+    let (ep, spec, _) = llm_endpoint(state, Some(model_id.to_string()), false, || {}).await?;
+    let sp = engine::measure(&ep).await?;
+    db::set_speed(&state.db.lock().unwrap(), model_id, sp.tps, sp.prompt_tps)?;
+    state.log("model", &format!("Measured {}: writes {:.1} tokens/sec, reads {} tokens/sec", spec.name, sp.tps, sp.prompt_tps.map(|p| format!("{p:.0}")).unwrap_or_else(|| "?".into())));
+    Ok(sp)
+}
+
+/// Swapping models mid-reply would cut a chat off.
+fn speed_test_allowed(state: &AppState) -> Result<(), String> {
+    if !state.generations.lock().unwrap().is_empty() {
+        return Err("Wait for the reply to finish, then test the speed.".into());
+    }
+    if finetune::training() {
+        return Err("A model is being taught right now and has the graphics card. Try again when it's done.".into());
+    }
+    Ok(())
+}
+
+/// Runs the speed test for an installed chat model.
 #[tauri::command]
-async fn measure_model_speed(state: AppStateRef<'_>, model_id: String) -> Result<f64, String> {
+async fn measure_model_speed(state: AppStateRef<'_>, model_id: String) -> Result<engine::Speed, String> {
     let state = state.inner().clone();
-    let (ep, spec, _) = llm_endpoint(&state, Some(model_id.clone()), false, || {}).await?;
-    let tps = engine::benchmark(&ep).await?;
-    db::set_tps(&state.db.lock().unwrap(), &model_id, tps)?;
-    state.log("model", &format!("Measured {}: {tps:.1} tokens/sec", spec.name));
-    Ok(tps)
+    speed_test_allowed(&state)?;
+    if SPEED_TESTING.swap(true, Ordering::SeqCst) {
+        return Err("A speed test is already running.".into());
+    }
+    let r = test_speed(&state, &model_id).await;
+    SPEED_TESTING.store(false, Ordering::SeqCst);
+    r
+}
+
+/// Tests every installed chat model on this PC, one after another, then
+/// unloads the last so the memory is free again. Progress arrives as
+/// `models:speed` events ({model_id, done, total, tps?, error?}).
+#[tauri::command]
+async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -> Result<usize, String> {
+    let state = state.inner().clone();
+    speed_test_allowed(&state)?;
+    if SPEED_TESTING.swap(true, Ordering::SeqCst) {
+        return Err("A speed test is already running.".into());
+    }
+    let ids: Vec<String> = db::installed_models(&state.db.lock().unwrap())
+        .into_iter()
+        .filter(|m| !cloud::is_cloud(&m.model_id) && state.model_spec(&m.model_id).is_some())
+        .map(|m| m.model_id)
+        .collect();
+    let total = ids.len();
+    let mut ok = 0;
+    for (i, id) in ids.iter().enumerate() {
+        app.emit("models:speed", json!({ "model_id": id, "done": i, "total": total })).ok();
+        if !state.generations.lock().unwrap().is_empty() {
+            break;
+        }
+        match test_speed(&state, id).await {
+            Ok(sp) => {
+                ok += 1;
+                app.emit("models:speed", json!({ "model_id": id, "done": i + 1, "total": total, "tps": sp.tps, "prompt_tps": sp.prompt_tps })).ok();
+            }
+            Err(e) => {
+                app.emit("models:speed", json!({ "model_id": id, "done": i + 1, "total": total, "error": e })).ok();
+            }
+        }
+    }
+    if state.generations.lock().unwrap().is_empty() {
+        state.engine.lock().await.stop().await;
+    }
+    SPEED_TESTING.store(false, Ordering::SeqCst);
+    app.emit("models:speed", json!({ "done": total, "total": total, "finished": true })).ok();
+    Ok(ok)
 }
 
 #[tauri::command(async)]
@@ -1322,6 +1386,7 @@ pub fn run() {
             load_default_model,
             import_model_file,
             measure_model_speed,
+            measure_all_speeds,
             advanced::advanced_view,
             advanced::set_advanced,
             advanced::set_advanced_pin,
