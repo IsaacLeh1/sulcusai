@@ -302,7 +302,10 @@ export interface FoundModels {
 
 export interface ModelCard {
   id: string;
+  /** As shown: the user's name for it when they renamed it. */
   name: string;
+  /** The model's own name, when the user renamed it. */
+  renamed_from: string | null;
   publisher: string;
   source: string;
   description: string;
@@ -1136,6 +1139,7 @@ export const api = {
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
+  renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   measureAllSpeeds: () => invoke<number>("measure_all_speeds"),

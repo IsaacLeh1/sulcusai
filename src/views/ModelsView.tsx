@@ -436,8 +436,52 @@ function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
   );
 }
 
+/** Shows a model under the user's own name (only the name in the app changes). */
+function RenameModel({ m, onClose, onRefresh }: { m: ModelCard; onClose: () => void; onRefresh: () => Promise<void> }) {
+  const [name, setName] = useState(m.name);
+  const [problem, setProblem] = useState<string | null>(null);
+  const save = async (value: string) => {
+    try {
+      await api.renameModel(m.id, value);
+      await onRefresh();
+      onClose();
+    } catch (e) {
+      setProblem(errorText(e));
+    }
+  };
+  return (
+    <Modal title={t("Rename {name}", { name: m.name })} onClose={onClose}>
+      <p className="small muted">{t("Only the name shown in SulcusAI changes; the model and its file stay as they are.")}</p>
+      <input
+        className="input"
+        value={name}
+        autoFocus
+        maxLength={60}
+        aria-label={t("Name")}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && name.trim() && save(name)}
+      />
+      {m.renamed_from && <p className="small muted">{t("Its own name: {name}", { name: m.renamed_from })}</p>}
+      {problem && <p className="small warn-text">{problem}</p>}
+      <div className="modal-actions">
+        {m.renamed_from && (
+          <button className="btn ghost" onClick={() => save("")}>
+            {t("Use its own name")}
+          </button>
+        )}
+        <span className="spacer" />
+        <button className="btn" onClick={onClose}>{t("Cancel")}</button>
+        <button className="btn primary" onClick={() => save(name)} disabled={!name.trim() || name.trim() === m.name}>
+          {t("Save")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m: ModelCard; rank: RankInfo; isDefault: boolean; onRefresh: () => Promise<void>; onSettings: (s: Settings) => void; toast: PushToast }) {
   const [confirm, setConfirm] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const inst = m.installed!;
   const variant = m.variants.find((v) => v.quant === inst.quant);
   const fit = m.fit.variants.find((v) => v.quant === inst.quant);
@@ -446,7 +490,7 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
     <article className="card model installed">
       <div className="model-head">
         <div>
-          <h3>{m.name}</h3>
+          <h3 title={m.renamed_from ? t("Its own name: {name}", { name: m.renamed_from }) : undefined}>{m.name}</h3>
           <span className="muted small">
             {m.local ? `${t("From {app}", { app: m.local.app })} · ` : ""}
             {t("{quality} quality", { quality: variant?.quality ?? inst.quant })} · {bytes(inst.size)}
@@ -478,11 +522,15 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
             {t("Make default")}
           </button>
         )}
+        <button className="btn ghost" onClick={() => setRenaming(true)}>
+          {t("Rename")}
+        </button>
         <span className="spacer" />
         <button className="btn ghost danger" onClick={() => setConfirm(true)}>
           {m.local ? t("Stop using") : t("Remove")}
         </button>
       </div>
+      {renaming && <RenameModel m={m} onClose={() => setRenaming(false)} onRefresh={onRefresh} />}
       {confirm && (
         <Modal title={m.local ? t("Stop using {name}?", { name: m.name }) : t("Remove {name}?", { name: m.name })} onClose={() => setConfirm(false)}>
           {m.local ? (

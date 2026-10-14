@@ -2012,5 +2012,10 @@
  "Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.": "把 SulcusAI 指向一个包含模型的文件夹，或一个 .gguf 文件。它会找到其中（包括子文件夹）的 .gguf 模型文件，并在原位置使用：不会复制或移动任何文件。",
  "There's no model file (.gguf) in this folder or its subfolders.": "此文件夹及其子文件夹中没有模型文件（.gguf）。",
  "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.": "此文件夹只有模型的原始权重（.safetensors），SulcusAI 的引擎无法运行。需要该模型的 GGUF 版本，模型页面通常会提供。",
- "e.g. D:\\Models\\gpt-oss-20b": "例如 D:\\Models\\gpt-oss-20b"
+ "e.g. D:\\Models\\gpt-oss-20b": "例如 D:\\Models\\gpt-oss-20b",
+ "Its own name: {name}": "原名：{name}",
+ "Keep the name under 60 characters.": "名称请少于 60 个字符。",
+ "Only the name shown in SulcusAI changes; the model and its file stay as they are.": "只更改 SulcusAI 中显示的名称；模型及其文件保持不变。",
+ "Rename {name}": "重命名 {name}",
+ "Use its own name": "恢复原名"
 }

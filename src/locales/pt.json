@@ -2012,5 +2012,10 @@
  "Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.": "Indique ao SulcusAI uma pasta com um modelo, ou um arquivo .gguf. Ele encontra os arquivos de modelo .gguf dentro dela (subpastas também) e os usa onde estão: nada é copiado nem movido.",
  "There's no model file (.gguf) in this folder or its subfolders.": "Não há nenhum arquivo de modelo (.gguf) nesta pasta nem nas subpastas.",
  "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.": "Esta pasta só tem os pesos originais do modelo (.safetensors), que o motor do SulcusAI não consegue executar. É preciso uma versão GGUF do modelo; a página do modelo costuma oferecer uma.",
- "e.g. D:\\Models\\gpt-oss-20b": "ex.: D:\\Modelos\\gpt-oss-20b"
+ "e.g. D:\\Models\\gpt-oss-20b": "ex.: D:\\Modelos\\gpt-oss-20b",
+ "Its own name: {name}": "Nome original: {name}",
+ "Keep the name under 60 characters.": "O nome deve ter menos de 60 caracteres.",
+ "Only the name shown in SulcusAI changes; the model and its file stay as they are.": "Só muda o nome mostrado no SulcusAI; o modelo e o arquivo continuam como estão.",
+ "Rename {name}": "Renomear {name}",
+ "Use its own name": "Usar o nome original"
 }

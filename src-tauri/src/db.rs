@@ -272,6 +272,24 @@ pub fn set<T: Serialize>(conn: &Connection, key: &str, value: &T) -> Result<(), 
     set_raw(conn, key, &serde_json::to_string(value).map_err(err)?)
 }
 
+const MODEL_NAMES: &str = "model_names";
+
+/// The names the user gave models (model id → name), shown in place of
+/// their own.
+pub fn model_names(conn: &Connection) -> std::collections::HashMap<String, String> {
+    get(conn, MODEL_NAMES).unwrap_or_default()
+}
+
+/// Sets a model's shown name, or clears it with None.
+pub fn set_model_name(conn: &Connection, id: &str, name: Option<&str>) -> Result<(), String> {
+    let mut names = model_names(conn);
+    match name {
+        Some(n) => names.insert(id.to_string(), n.to_string()),
+        None => names.remove(id),
+    };
+    set(conn, MODEL_NAMES, &names)
+}
+
 fn default_auto_lock() -> u32 {
     15
 }
@@ -831,6 +849,18 @@ mod tests {
         conn.execute_batch(SCHEMA).unwrap();
         migrate(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn a_model_can_be_shown_under_another_name_and_back() {
+        let conn = mem();
+        set_model_name(&conn, "local-abc", Some("GPT OSS")).unwrap();
+        set_model_name(&conn, "qwen3-8b", Some("Fast one")).unwrap();
+        assert_eq!(model_names(&conn).get("local-abc").map(String::as_str), Some("GPT OSS"));
+        set_model_name(&conn, "local-abc", None).unwrap();
+        let names = model_names(&conn);
+        assert!(!names.contains_key("local-abc"), "an empty name brings back its own");
+        assert_eq!(names.len(), 1);
     }
 
     fn msg(chat_id: &str, content: &str) -> Message {

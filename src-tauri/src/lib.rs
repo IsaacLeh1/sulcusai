@@ -126,10 +126,16 @@ impl AppState {
         return None;
     }
 
-    /// A chat model by id: from the catalog, or one another app downloaded.
+    /// A chat model by id: from the catalog, or one another app downloaded,
+    /// under the name the user gave it, if any.
     /// Don't call it while holding the database lock.
     fn model_spec(&self, id: &str) -> Option<ModelSpec> {
-        self.catalog.model(id).cloned().or_else(|| local::list(&self.db.lock().unwrap()).into_iter().find(|m| m.id == id))
+        let conn = self.db.lock().unwrap();
+        let mut spec = self.catalog.model(id).cloned().or_else(|| local::list(&conn).into_iter().find(|m| m.id == id))?;
+        if let Some(name) = db::model_names(&conn).remove(id) {
+            spec.name = name;
+        }
+        Some(spec)
     }
 
     fn budget(&self) -> Budget {
@@ -252,6 +258,8 @@ struct ModelCard {
     /// A version whose file is already on this PC, so installing it skips
     /// the download.
     on_disk: Option<String>,
+    /// The model's own name, when the user renamed it (`name` is theirs).
+    renamed_from: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -273,6 +281,7 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
 
     let mut all = state.catalog.models.clone();
     all.extend(local::list(&state.db.lock().unwrap()));
+    let names = db::model_names(&state.db.lock().unwrap());
     let models = all
         .iter()
         .filter_map(|spec| {
@@ -290,7 +299,9 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
                     .find(|v| state.paths.models.join(&spec.id).join(&v.file).metadata().is_ok_and(|m| m.len() == v.size))
                     .map(|v| v.quant.clone())
             };
-            (inst.is_some() || fit.visible()).then(|| ModelCard { spec: spec.clone(), fit, installed: inst, on_disk })
+            let mut spec = spec.clone();
+            let renamed_from = names.get(&spec.id).map(|name| std::mem::replace(&mut spec.name, name.clone()));
+            (inst.is_some() || fit.visible()).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from })
         })
         .collect();
 
@@ -774,6 +785,18 @@ fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> 
         db::log_action(&conn, "privacy", &format!("Connectivity set to {label}"));
     }
     Ok(s)
+}
+
+/// Shows a model under a name the user picked (only the name in the app
+/// changes; the file stays as it is). An empty name brings back its own.
+#[tauri::command(async)]
+fn rename_model(state: AppStateRef, model_id: String, name: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.chars().count() > 60 {
+        return Err("Keep the name under 60 characters.".into());
+    }
+    let conn = state.db.lock().unwrap();
+    db::set_model_name(&conn, &model_id, (!name.is_empty()).then_some(name))
 }
 
 #[tauri::command(async)]
@@ -1454,6 +1477,7 @@ pub fn run() {
             get_settings,
             set_connectivity,
             set_default_model,
+            rename_model,
             finish_onboarding,
             get_profile,
             set_profile,

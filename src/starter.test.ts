@@ -7,6 +7,7 @@ function card(id: string, params_b: number, tps: number, tags: string[] = [], in
   return {
     id,
     name: id,
+    renamed_from: null,
     publisher: "",
     source: "",
     description: "",
