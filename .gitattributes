@@ -2,3 +2,5 @@
 *.png binary
 *.ico binary
 *.icns binary
+# cmd.exe misreads batch files with bare LF line endings.
+*.cmd text eol=crlf
