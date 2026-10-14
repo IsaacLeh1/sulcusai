@@ -103,7 +103,10 @@ pub fn on_main_event(window: &tauri::Window, event: &WindowEvent) {
         return;
     }
     if let WindowEvent::CloseRequested { api, .. } = event {
-        if enabled(window.app_handle()) {
+        // Hide to the tray icon when there is one (it's there while quick ask
+        // is on). Asked of the tray, not the database: this runs on the
+        // window's own thread, which must never wait on a lock.
+        if window.app_handle().tray_by_id(TRAY).is_some() {
             api.prevent_close();
             let _ = window.hide();
         }

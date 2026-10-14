@@ -419,19 +419,26 @@ pub fn privacy_view(state: AppStateRef) -> PrivacyView {
     PrivacyView { settings, state, progress, problem }
 }
 
+/// Stores the settings, noting in Activity when it was turned on or off.
+/// The old settings are read before taking the lock: `settings()` takes it
+/// too, and the database lock isn't reentrant (taking it twice froze the
+/// whole app in 0.8.9).
+fn save(state: &AppState, settings: &PrivacySettings) -> Result<(), String> {
+    let before = self::settings(state);
+    let conn = state.db.lock().unwrap();
+    db::set(&conn, KEY, settings)?;
+    if before.enabled != settings.enabled {
+        db::log_action(&conn, "network", if settings.enabled { "Turned on the private connection" } else { "Turned off the private connection" });
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_privacy(app: AppHandle, state: AppStateRef<'_>, settings: PrivacySettings) -> Result<(), String> {
     if settings.enabled && settings.via == Via::Proxy {
         normalize(&settings.proxy)?;
     }
-    {
-        let conn = state.db.lock().unwrap();
-        let before = self::settings(&state);
-        db::set(&conn, KEY, &settings)?;
-        if before.enabled != settings.enabled {
-            db::log_action(&conn, "network", if settings.enabled { "Turned on the private connection" } else { "Turned off the private connection" });
-        }
-    }
+    save(&state, &settings)?;
     apply(state.inner().clone(), Some(app), true).await?;
     START_PROBLEM.write().unwrap().clear();
     Ok(())
@@ -485,6 +492,24 @@ mod tests {
         assert_eq!(normalize("http://proxy.example:3128").unwrap(), "http://proxy.example:3128");
         assert!(normalize("ftp://x:21").is_err());
         assert!(normalize("not a proxy").is_err());
+    }
+
+    /// Saving took the database lock twice and froze the app (0.8.9).
+    #[test]
+    fn saving_settings_does_not_freeze() {
+        let state = crate::e2e::scratch_state();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let s = state.clone();
+        std::thread::spawn(move || {
+            save(&s, &PrivacySettings { enabled: true, mail: true, ..Default::default() }).unwrap();
+            save(&s, &PrivacySettings::default()).unwrap();
+            tx.send(()).unwrap();
+        });
+        rx.recv_timeout(Duration::from_secs(10)).expect("saving the private connection settings froze");
+        assert!(!settings(&state).enabled);
+        let conn = state.db.lock().unwrap();
+        let logged: i64 = conn.query_row("SELECT COUNT(*) FROM action_log WHERE category = 'network'", [], |r| r.get(0)).unwrap_or(-1);
+        assert_eq!(logged, 2, "turning it on and off is noted in Activity");
     }
 
     #[test]
