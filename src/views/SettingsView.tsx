@@ -18,6 +18,7 @@ import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
+import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 
 const THIRD_PARTY = [
@@ -37,6 +38,7 @@ const THIRD_PARTY = [
   { name: tx("stable-diffusion.cpp (downloaded with a picture or video model)"), license: "MIT", url: "https://github.com/leejet/stable-diffusion.cpp" },
   { name: tx("acestep.cpp (downloaded with a music model)"), license: "MIT", url: "https://github.com/ServeurpersoCom/acestep.cpp" },
   { name: tx("image (pictures)"), license: "MIT / Apache-2.0", url: "https://github.com/image-rs/image" },
+  { name: tx("Arti (Tor, for the private connection)"), license: "MIT / Apache-2.0", url: "https://gitlab.torproject.org/tpo/core/arti" },
   { name: tx("Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)"), license: "MIT / Apache-2.0", url: "" },
 ];
 
@@ -289,6 +291,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <WebSearchSettings toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
+
+      <PrivacySettings toast={toast} />
 
       <SyncSettings toast={toast} />
 

@@ -135,6 +135,32 @@ export interface UpdateView {
   available: UpdateAvailable | null;
 }
 
+export interface PrivacySettings {
+  enabled: boolean;
+  via: "tor" | "proxy";
+  /** The user's own proxy (host:port, socks5://… or http://…). */
+  proxy: string;
+  web: boolean;
+  updates: boolean;
+  mail: boolean;
+  models: boolean;
+}
+
+export interface PrivacyView {
+  settings: PrivacySettings;
+  /** "waiting": Tor connects the first time something goes through it. */
+  state: "off" | "waiting" | "starting" | "ready" | "stuck";
+  /** Tor's start-up progress, 0-100. */
+  progress: number;
+  problem: string;
+}
+
+export interface PrivacyTest {
+  ip: string;
+  /** Where sites guess that address is ("Frankfurt, Hesse, DE"); may be empty. */
+  place: string;
+}
+
 export interface StorageView {
   models_dir: string;
   default_dir: string;
@@ -1068,6 +1094,9 @@ export const api = {
   setUpdateAuto: (auto: boolean) => invoke<void>("set_update_auto", { auto }),
   setUpdateInstall: (install: boolean) => invoke<void>("set_update_install", { install }),
   installUpdate: () => invoke<void>("install_update"),
+  privacyView: () => invoke<PrivacyView>("privacy_view"),
+  setPrivacy: (settings: PrivacySettings) => invoke<void>("set_privacy", { settings }),
+  testPrivacy: () => invoke<PrivacyTest>("test_privacy"),
   makeBackup: (path: string, password: string) => invoke<{ files: number; bytes: number }>("make_backup", { path, password }),
   backupInfo: (path: string) => invoke<BackupInfo>("backup_info", { path }),
   restoreBackup: (path: string, password: string) => invoke<void>("restore_backup", { path, password }),
@@ -1378,6 +1407,7 @@ export interface ChatEvents {
   "sync:changed": null;
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;
+  "privacy:status": null;
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;

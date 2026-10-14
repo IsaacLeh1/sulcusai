@@ -421,11 +421,8 @@ async fn imap_login(cfg: &AccountConfig) -> Result<Session, String> {
     if cfg.imap_security == Security::Plain && !local_host(&cfg.imap_host) {
         return Err("Unencrypted connections are only allowed to this PC.".into());
     }
-    let addr = format!("{}:{}", cfg.imap_host, cfg.imap_port);
-    let tcp = tokio::time::timeout(Duration::from_secs(20), tokio::net::TcpStream::connect(&addr))
-        .await
-        .map_err(|_| format!("{addr} didn't answer."))?
-        .map_err(|e| format!("Couldn't reach {addr}: {e}"))?;
+    // Directly, or the private way when that's on for mail.
+    let tcp = net::connect(&cfg.imap_host, cfg.imap_port, net::Route::Mail).await?;
     let stream: Box<dyn Io> = match cfg.imap_security {
         Security::Tls => tls_wrap(&cfg.imap_host, tcp).await?,
         Security::Plain => Box::new(tcp),
@@ -899,6 +896,9 @@ async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), Str
         None => (Credentials::new(user, cfg.password.clone()), vec![Mechanism::Plain, Mechanism::Login]),
     };
     let tls = || TlsParameters::new(cfg.smtp_host.clone()).map_err(|e| e.to_string());
+    if crate::privacy::proxy_for(net::Route::Mail).is_some() {
+        return smtp_send_private(cfg, msg, creds, mechanisms, tls).await;
+    }
     let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.smtp_host).port(cfg.smtp_port).timeout(Some(Duration::from_secs(30)));
     let builder = match cfg.smtp_security {
         Security::Tls => builder.tls(Tls::Wrapper(tls()?)),
@@ -907,6 +907,67 @@ async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), Str
     };
     let mailer = builder.credentials(creds).authentication(mechanisms).build();
     mailer.send(msg.clone()).await.map_err(friendly)?;
+    Ok(())
+}
+
+/// A connection made through a proxy, in the form the SMTP library takes.
+#[derive(Debug)]
+struct Through<S>(S);
+
+impl<S: AsyncRead + Unpin> AsyncRead for Through<S> {
+    fn poll_read(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &mut tokio::io::ReadBuf<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Through<S> {
+    fn poll_write(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>, buf: &[u8]) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+    fn poll_flush(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send + Sync + std::fmt::Debug> lettre::transport::smtp::client::AsyncTokioStream for Through<S> {
+    fn peer_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        Err(std::io::Error::other("connected through a proxy"))
+    }
+}
+
+/// Sending through the private connection: the SMTP conversation over a
+/// connection made through the proxy (TLS from the start, or STARTTLS).
+async fn smtp_send_private(
+    cfg: &AccountConfig,
+    msg: &lettre::Message,
+    creds: lettre::transport::smtp::authentication::Credentials,
+    mechanisms: Vec<lettre::transport::smtp::authentication::Mechanism>,
+    tls: impl Fn() -> Result<lettre::transport::smtp::client::TlsParameters, String>,
+) -> Result<(), String> {
+    use lettre::transport::smtp::client::AsyncSmtpConnection;
+    use lettre::transport::smtp::extension::ClientId;
+    let hello = ClientId::Domain("localhost".into());
+    let raw = net::connect(&cfg.smtp_host, cfg.smtp_port, net::Route::Mail).await?;
+    let mut conn = match cfg.smtp_security {
+        Security::Tls => {
+            let name = tokio_rustls::rustls::pki_types::ServerName::try_from(cfg.smtp_host.clone()).map_err(|e| e.to_string())?;
+            let tls_stream = tokio_rustls::TlsConnector::from(tls_config()).connect(name, raw).await.map_err(|e| format!("Secure connection to {} failed: {e}", cfg.smtp_host))?;
+            AsyncSmtpConnection::connect_with_transport(Box::new(Through(tls_stream)), &hello).await.map_err(friendly)?
+        }
+        Security::Starttls => {
+            let mut c = AsyncSmtpConnection::connect_with_transport(Box::new(Through(raw)), &hello).await.map_err(friendly)?;
+            c.starttls(tls()?, &hello).await.map_err(friendly)?;
+            c
+        }
+        Security::Plain => AsyncSmtpConnection::connect_with_transport(Box::new(Through(raw)), &hello).await.map_err(friendly)?,
+    };
+    conn.auth(&mechanisms, &creds).await.map_err(friendly)?;
+    let envelope = msg.envelope().clone();
+    conn.send(&envelope, &msg.formatted()).await.map_err(friendly)?;
+    conn.quit().await.ok();
     Ok(())
 }
 

@@ -90,6 +90,10 @@ sending (this is on by default). Local models never send anything.</p>
   <li>Online AI providers, if you turn them on.</li>
   <li>Sync between your own devices, if you set it up. It is end-to-end encrypted with a key only
       your devices share; an optional relay you choose passes along encrypted data it cannot read.</li>
+  <li>The Tor network or your own proxy, if you turn on the private connection: the traffic you pick
+      (web, update checks, and optionally mail and model downloads) goes through it, so the sites
+      SulcusAI contacts see another address instead of yours. Its "See what sites see" test asks
+      ipinfo.io (or ipify.org) which address it sees.</li>
 </ul>
 
 <h2>Removing your data</h2>

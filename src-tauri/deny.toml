@@ -22,6 +22,8 @@ allow = [
   "Unicode-DFS-2016",
   "CDLA-Permissive-2.0",
   "MPL-2.0",
+  # A public-domain dedication (async_executors, under Arti).
+  "Unlicense",
 ]
 # Our own crate is AGPL-3.0-only; that's the project license, not a dependency.
 private = { ignore = true }

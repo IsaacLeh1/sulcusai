@@ -62,8 +62,18 @@ pub struct Available {
     date: Option<String>,
 }
 
+/// The updater, through the private connection when that's on for updates.
+fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    let mut b = app.updater_builder();
+    crate::privacy::check(crate::privacy::Route::Updates)?;
+    if let Some(p) = crate::privacy::proxy_for(crate::privacy::Route::Updates) {
+        b = b.proxy(tauri::Url::parse(&p).map_err(|e| e.to_string())?).timeout(Duration::from_secs(120));
+    }
+    b.build().map_err(|e| e.to_string())
+}
+
 async fn check(app: &AppHandle, state: &AppState) -> Result<Option<Available>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
+    let updater = updater(app)?;
     state.log("network", "Checked GitHub for a newer version of SulcusAI");
     let found = updater.check().await.map_err(|e| format!("Couldn't check for updates: {e}"))?;
     {

@@ -49,6 +49,7 @@ mod notify;
 mod oauth;
 mod paths;
 mod perf;
+mod privacy;
 mod phone;
 mod projects;
 mod quick;
@@ -1313,6 +1314,7 @@ pub fn run() {
             bridge::apply(app.handle());
             calendar::start_sync(app.handle().clone());
             updates::start(app.handle().clone());
+            privacy::start(app.handle().clone(), app.state::<Arc<AppState>>().inner().clone());
             sync::start(app.handle().clone());
             phone::apply(app.state::<Arc<AppState>>().inner().clone());
             Ok(())
@@ -1428,6 +1430,9 @@ pub fn run() {
             updates::check_for_update,
             updates::set_update_auto,
             updates::set_update_install,
+            privacy::privacy_view,
+            privacy::set_privacy,
+            privacy::test_privacy,
             updates::install_update,
             backup::backup_info,
             backup::restore_backup,

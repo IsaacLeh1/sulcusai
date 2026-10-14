@@ -460,12 +460,11 @@ struct Dav {
 
 impl Dav {
     fn new(a: &CalAccount) -> Result<Dav, String> {
-        let client = reqwest::Client::builder()
+        let b = reqwest::Client::builder()
             .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| e.to_string())?;
+            .connect_timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120));
+        let client = crate::net::routed(b, crate::net::Route::Mail)?.build().map_err(|e| e.to_string())?;
         Ok(Dav { client, user: a.username.clone(), pass: a.password.clone(), bearer: a.oauth.as_ref().map(|t| t.access_token.clone()) })
     }
 
@@ -660,12 +659,11 @@ pub fn graph_event(v: &serde_json::Value) -> Option<(i64, i64, bool, EventData)>
 
 impl Graph {
     fn new(token: &str) -> Result<Graph, String> {
-        let client = reqwest::Client::builder()
+        let b = reqwest::Client::builder()
             .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(Duration::from_secs(20))
-            .timeout(Duration::from_secs(60))
-            .build()
-            .map_err(|e| e.to_string())?;
+            .connect_timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120));
+        let client = crate::net::routed(b, crate::net::Route::Mail)?.build().map_err(|e| e.to_string())?;
         Ok(Graph { client, token: token.to_string(), tz: windows_time_zone().unwrap_or_else(|| "UTC".into()) })
     }
 

@@ -27,6 +27,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 import { UpdatePill } from "./components/Updates";
+import { PrivacyPill } from "./components/PrivacySettings";
 
 // Pages load the first time they are opened, so the app starts faster.
 const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
@@ -640,6 +641,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         )}
         <PerfPill onOpen={() => setView("settings")} />
         <UpdatePill toast={toast} />
+        <PrivacyPill onOpen={() => setView("settings")} />
         <span className="spacer" />
         <span className="status-item muted">
           {t("🔐 Encrypted ·")}{" "}

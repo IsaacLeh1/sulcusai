@@ -44,6 +44,9 @@ pnpm licenses list --prod
 | PowerPoint template `assets/blank.pptx`, made from python-pptx's default template | MIT (python-pptx) |
 | image (pictures: sizes, masks, thumbnails, cut-outs) | MIT or Apache-2.0 |
 | axum (the opt-in local API server) | MIT |
+| Arti: arti-client and the tor-* crates (Tor for the private connection) | MIT or Apache-2.0 |
+| async_executors (under Arti) | Unlicense |
+| tokio-socks (mail through a proxy) | MIT |
 | React, react-dom | MIT |
 | react-markdown, remark-gfm and the unified ecosystem | MIT |
 
@@ -55,6 +58,8 @@ pnpm licenses list --prod
 | OpenStreetMap Nominatim (naming this PC's location, on request) | Data © OpenStreetMap contributors, ODbL; light use under the Nominatim usage policy |
 | Windows location services (this PC's position, when allowed in Windows) | Part of Windows |
 | DuckDuckGo, Brave Search, SearXNG (web search, chosen in Settings) | Each service's own terms |
+| The Tor network (private connection, only when turned on) | Run by volunteers; the Tor Project's guidelines |
+| ipinfo.io, ipify.org (the private connection's "See what sites see" test, on request) | Each service's own terms |
 
 ## Cloud providers (only at the Cloud level, with the user's own API key)
 

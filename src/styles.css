@@ -1083,3 +1083,13 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .status-item.link-btn { border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; padding: 1px 6px; border-radius: 6px; }
 .status-item.link-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .privacy-list { margin: 4px 0 10px; padding-left: 20px; line-height: 1.6; }
+
+/* Settings → Private connection */
+.privacy-card h3 { margin: 18px 0 8px; }
+.privacy-card .toggle-row + .progress { margin-top: 10px; }
+.privacy-route { align-items: flex-start !important; margin: 0 0 10px; }
+.privacy-route input { margin-top: 3px; flex: none; }
+.statusbar > .status-item { white-space: nowrap; flex: none; }
+/* The long note gives way first when the bar is crowded. */
+.statusbar > .status-item.muted:last-child { flex: 0 1 auto; min-width: 0; display: block; overflow: hidden; text-overflow: ellipsis; }
+.status-item.privacy-pill.warn-text { color: var(--warn); }

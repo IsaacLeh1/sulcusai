@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::privacy::Route;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Connectivity {
@@ -53,16 +55,127 @@ pub fn blocked_message(purpose: Purpose) -> &'static str {
     }
 }
 
+/// Which private-connection switch covers this purpose (none for cloud).
+fn route(purpose: Purpose) -> Option<Route> {
+    match purpose {
+        Purpose::Search => Some(Route::Web),
+        Purpose::Web => Some(Route::Mail),
+        Purpose::ModelDownload => Some(Route::Models),
+        Purpose::Cloud => None,
+    }
+}
+
+/// Sends a client the private way when the user turned that on for `route`.
+pub fn routed(b: reqwest::ClientBuilder, route: Route) -> Result<reqwest::ClientBuilder, String> {
+    crate::privacy::check(route)?;
+    Ok(match crate::privacy::proxy_for(route) {
+        Some(p) => b.proxy(reqwest::Proxy::all(&p).map_err(|e| e.to_string())?),
+        None => b,
+    })
+}
+
 /// Client for requests that leave the PC; refuses when the level forbids it.
 pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) -> Result<reqwest::Client, String> {
     if !allowed(level, purpose, chat_web) {
         return Err(blocked_message(purpose).to_string());
     }
-    reqwest::Client::builder()
+    let b = reqwest::Client::builder()
         .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|e| e.to_string())
+        .connect_timeout(Duration::from_secs(if route(purpose).and_then(crate::privacy::proxy_for).is_some() { 90 } else { 20 }));
+    let b = match route(purpose) {
+        Some(r) => routed(b, r)?,
+        None => b,
+    };
+    b.build().map_err(|e| e.to_string())
+}
+
+pub trait Stream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + std::fmt::Debug {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + std::fmt::Debug> Stream for T {}
+
+/// A TCP connection (mail servers), the private way when that's on for `route`.
+pub async fn connect(host: &str, port: u16, route: Route) -> Result<Box<dyn Stream>, String> {
+    crate::privacy::check(route)?;
+    connect_through(host, port, crate::privacy::proxy_for(route).as_deref()).await
+}
+
+/// A TCP connection directly, or through a SOCKS5 or HTTP (CONNECT) proxy.
+pub async fn connect_through(host: &str, port: u16, proxy: Option<&str>) -> Result<Box<dyn Stream>, String> {
+    let addr = format!("{host}:{port}");
+    let Some(p) = proxy else {
+        let tcp = tokio::time::timeout(Duration::from_secs(20), tokio::net::TcpStream::connect(&addr))
+            .await
+            .map_err(|_| format!("{addr} didn't answer."))?
+            .map_err(|e| format!("Couldn't reach {addr}: {e}"))?;
+        return Ok(Box::new(tcp));
+    };
+    let url = reqwest::Url::parse(p).map_err(|e| e.to_string())?;
+    let proxy = format!("{}:{}", url.host_str().unwrap_or("127.0.0.1"), url.port_or_known_default().unwrap_or(1080));
+    let user = percent_decode(url.username());
+    let pass = percent_decode(url.password().unwrap_or(""));
+    let fut = async {
+        if url.scheme().starts_with("socks5") {
+            let s = if user.is_empty() {
+                tokio_socks::tcp::Socks5Stream::connect(proxy.as_str(), (host, port)).await
+            } else {
+                tokio_socks::tcp::Socks5Stream::connect_with_password(proxy.as_str(), (host, port), &user, &pass).await
+            };
+            s.map(|s| Box::new(s) as Box<dyn Stream>).map_err(|e| e.to_string())
+        } else {
+            http_connect(&proxy, &addr, &user, &pass).await.map(|s| Box::new(s) as Box<dyn Stream>)
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(120), fut)
+        .await
+        .map_err(|_| format!("{addr} didn't answer through the private connection."))?
+        .map_err(|e| format!("Couldn't reach {addr} through the private connection: {e}"))
+}
+
+/// A user name or password as typed (URLs keep them %-encoded).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match (b[i], b.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A tunnel through an HTTP proxy (CONNECT), for mail through a proxy that
+/// only speaks HTTP.
+async fn http_connect(proxy: &str, addr: &str, user: &str, pass: &str) -> Result<tokio::net::TcpStream, String> {
+    use base64::Engine;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut s = tokio::net::TcpStream::connect(proxy).await.map_err(|e| format!("The proxy at {proxy} didn't answer: {e}"))?;
+    let mut req = format!("CONNECT {addr} HTTP/1.1\r\nHost: {addr}\r\n");
+    if !user.is_empty() {
+        req += &format!("Proxy-Authorization: Basic {}\r\n", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}")));
+    }
+    req += "\r\n";
+    s.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+    // The reply's head, one byte at a time so nothing after it is read.
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        if head.len() > 8192 || s.read(&mut b).await.map_err(|e| e.to_string())? == 0 {
+            return Err("the proxy closed the connection".into());
+        }
+        head.push(b[0]);
+    }
+    let status = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
+    if status.split_whitespace().nth(1) != Some("200") {
+        return Err(format!("the proxy said {status}"));
+    }
+    Ok(s)
 }
 
 /// Client for the app's own engines on 127.0.0.1. Ignores system proxies,

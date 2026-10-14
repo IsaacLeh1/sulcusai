@@ -20,8 +20,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["full"] }
 futures-util = "0.3"
 # rustls keeps TLS identical on every OS and avoids OpenSSL.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "multipart"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "multipart", "socks"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 sysinfo = "0.33"
 sha2 = "0.10"
 hex = "0.4"
@@ -76,6 +76,11 @@ pdf-extract = "0.12"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
 # Pictures: sizes, masks, thumbnails, cut-outs and screenshots.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Private connection: Tor built in (Arti); proxies for mail (tokio-socks) and the updater (reqwest 0.13).
+arti-client = { version = "0.47", default-features = false, features = ["tokio", "rustls", "compression", "static-sqlite"] }
+reqwest013 = { package = "reqwest", version = "0.13", default-features = false, features = ["socks"] }
+tokio-socks = "0.5"
+tor-rtcompat = { version = "0.47", default-features = false, features = ["tokio", "rustls"] }
 
 [target.'cfg(windows)'.dependencies]
 # The built-in browser's in-process DevTools channel (same version as wry's).

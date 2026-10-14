@@ -95,6 +95,9 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<IpAddr> = match host.trim_matches(['[', ']']).parse::<IpAddr>() {
         Ok(ip) => vec![ip],
+        // Going the private way, the name is looked up at the far end, not
+        // here (a lookup here would tell this network which sites you open).
+        Err(_) if crate::privacy::proxy_for(net::Route::Web).is_some() => return Ok(url),
         Err(_) => tokio::net::lookup_host((host.as_str(), port)).await.map_err(|_| format!("Couldn't find {host}."))?.map(|a| a.ip()).collect(),
     };
     if addrs.is_empty() || !addrs.iter().all(|ip| is_public(*ip)) {
@@ -105,11 +108,14 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
 
 fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String> {
     net::external_client(level, Purpose::Search, chat_web)?;
-    reqwest::Client::builder()
+    // Tor is slower to connect; give it longer.
+    let private = crate::privacy::proxy_for(net::Route::Web).is_some();
+    let b = reqwest::Client::builder()
         // A browser-like agent; some sites refuse unknown ones.
         .user_agent(concat!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SulcusAI/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(15))
-        .timeout(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(if private { 90 } else { 15 }))
+        .timeout(Duration::from_secs(if private { 120 } else { 30 }));
+    net::routed(b, net::Route::Web)?
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 6 {
                 return attempt.error("too many redirects");
