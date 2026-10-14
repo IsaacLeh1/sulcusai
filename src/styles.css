@@ -1038,3 +1038,19 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 }
 .theme-preview .tp-pill { background: #15131c; border: 1px solid #6447e8; }
 .look-dark .tp-pill, .look-oled .tp-pill { background: #000; border-color: #9d8cff; }
+.auto-sort { display: flex; align-items: flex-start; gap: 10px; text-align: left; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel-2); margin: 10px 0 4px; max-width: 520px; cursor: pointer; }
+.auto-sort input { margin-top: 3px; accent-color: var(--accent); }
+.triage-empty .auto-sort { margin-top: 18px; }
+
+/* ---------- status bar: the model menu ---------- */
+.model-picker { position: relative; display: inline-flex; }
+.model-picker-btn { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 1px 6px; border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; }
+.model-picker-btn:hover { background: var(--hover); }
+.model-picker-btn .chev { font-size: 9px; color: var(--muted); }
+.model-menu { position: absolute; bottom: calc(100% + 8px); left: 0; min-width: 280px; max-height: 360px; overflow-y: auto; z-index: 60; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 1px; }
+.model-menu-head { padding: 4px 10px 6px; }
+.model-menu button { display: flex; align-items: center; gap: 8px; text-align: left; border: 0; background: none; color: var(--text); font: inherit; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+.model-menu button:hover { background: var(--hover); }
+.model-menu button.active { background: var(--selected); font-weight: 600; }
+.model-check { width: 14px; color: var(--accent); font-weight: 700; }
+.model-menu-foot { border-top: 1px solid var(--border) !important; border-radius: 0 0 8px 8px !important; margin-top: 4px; }

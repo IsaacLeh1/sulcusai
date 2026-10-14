@@ -146,6 +146,13 @@ CREATE TABLE IF NOT EXISTS mail_messages (
   UNIQUE (account_id, folder, uid)
 );
 CREATE INDEX IF NOT EXISTS mail_by_date ON mail_messages(date DESC);
+CREATE TABLE IF NOT EXISTS mail_pending (
+  account_id TEXT NOT NULL,
+  folder     TEXT NOT NULL,
+  uid        INTEGER NOT NULL,
+  op         TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS mail_triage (
   id          TEXT PRIMARY KEY REFERENCES mail_messages(id) ON DELETE CASCADE,
   run_at      INTEGER NOT NULL,

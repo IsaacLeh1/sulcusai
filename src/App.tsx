@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   api,
   errorText,
@@ -21,6 +21,7 @@ import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { PerfPill } from "./components/Performance";
 import { SideMenu } from "./components/SideMenu";
+import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
@@ -328,6 +329,19 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
   const loadedName = catalog?.models.find((m) => m.id === engine?.model_id)?.name;
   const defaultName = catalog?.models.find((m) => m.installed && m.id === settings?.default_model)?.name ?? installed[0]?.name;
+  // Picking a model in the status bar makes it the default for new chats.
+  const pickDefault = async (id: string) => {
+    try {
+      setSettings(await api.setDefaultModel(id));
+      const name = installed.find((m) => m.id === id)?.name ?? id;
+      toast(t("{name} is now the default for new chats.", { name }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const picker = (label: ReactNode) => (
+    <ModelPicker label={label} installed={installed} current={settings?.default_model} onPick={pickDefault} onModels={() => setView("models")} />
+  );
 
   return (
     <div className="app">
@@ -586,14 +600,14 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </>
           ) : loadedName ? (
             <>
-              <span className="led on" /> {t("{name} loaded", { name: loadedName })}
+              <span className="led on" /> {picker(t("{name} loaded", { name: loadedName }))}
               <button className="link" onClick={async () => { await api.unload(); refreshEngine(); }}>
                 {t("Unload")}
               </button>
             </>
           ) : defaultName ? (
             <>
-              <span className="led" /> {loadingNow ? t("Loading {name}…", { name: defaultName }) : t("{name} · loads when you chat", { name: defaultName })}
+              <span className="led" /> {loadingNow ? t("Loading {name}…", { name: defaultName }) : picker(t("{name} · loads when you chat", { name: defaultName }))}
               {!loadingNow && (
                 <button
                   className="link"

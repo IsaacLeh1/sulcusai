@@ -44,7 +44,14 @@ for d, _, files in os.walk(os.path.join(root, 'src-tauri', 'src')):
             if '{' in lit or BS in lit or len(lit) < 12 or ' ' not in lit or not lit[0].isupper() or lit[-1] not in '.?!)':
                 continue
             keys.setdefault(lit, 'core:' + f)
-print(f'{ui} window texts, {len(keys) - ui} core messages')
+core = len(keys) - ui
+
+# Titles the agent's tools give their steps, as templates ({q}, {1}, …).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from i18n_titles import titles  # noqa: E402
+for tpl in titles(root):
+    keys.setdefault(tpl, 'core:tool title')
+print(f'{ui} window texts, {core} core messages, {len(keys) - ui - core} step titles')
 
 locales = os.path.join(src, 'locales')
 if os.path.isdir(locales):

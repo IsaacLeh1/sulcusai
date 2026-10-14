@@ -785,6 +785,8 @@ export interface TriageReport {
   model: string;
   looked_at: number;
   items: TriageItem[];
+  /** New mail is sorted as it arrives. */
+  auto: boolean;
 }
 
 export interface MailDraft {
@@ -1265,6 +1267,9 @@ export const api = {
   mailTriage: () => invoke<TriageReport>("mail_triage"),
   mailTriageReport: () => invoke<TriageReport>("mail_triage_report"),
   mailTriageUndo: (ids: string[]) => invoke<void>("mail_triage_undo", { ids }),
+  setMailAutoSort: (on: boolean) => invoke<void>("set_mail_auto_sort", { on }),
+  mailAction: (ids: string[], action: "seen" | "unseen" | "archive" | "trash") => invoke<void>("mail_action", { ids, action }),
+  setUiLanguage: (code: string) => invoke<void>("set_ui_language", { code }),
   sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
   calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
   calendarAccounts: () => invoke<CalAccount[]>("calendar_accounts"),
@@ -1335,6 +1340,7 @@ export interface ChatEvents {
   "chat:titled": { chat_id: string; title: string };
   "app:navigate": { page: string };
   "mail:triage": { done: number; total: number };
+  "mail:triaged": Record<string, never>;
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;

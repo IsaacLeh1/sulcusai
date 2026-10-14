@@ -1107,7 +1107,7 @@ async fn e2e_mail_triage_on_model() {
     let (state, ep, cipher) = agent_harness_on(Some((blob.into(), ctx, layers)), running).await;
     seed_test_mail(&state, &cipher, true);
     let t = std::time::Instant::now();
-    let report = crate::triage::run(&state, &cipher, &ep, "test model", |done, total| println!("sorted {done} of {total}")).await.unwrap();
+    let report = crate::triage::run(&state, &cipher, &ep, "test model", false, |done, total| println!("sorted {done} of {total}")).await.unwrap();
     println!("took {:.1} s", t.elapsed().as_secs_f32());
     if stop_after {
         state.engine.lock().await.stop().await;

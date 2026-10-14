@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
 import type { PushToast } from "./Toasts";
-import { t } from "../i18n";
+import { t, tf } from "../i18n";
 
 const TOOL_ICONS: Record<string, string> = {
   list_dir: "📂",
@@ -59,7 +59,7 @@ export function ToolCard({ call, meta, output, running, liveSteps }: { call: Too
   const [open, setOpen] = useState(false);
   const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
-  const title = meta?.title ?? describe(call);
+  const title = meta?.title ? tf(meta.title) : describe(call);
   const detail = meta?.detail ?? (meta?.kind === "text" ? output : null);
   const expandable = !!detail || (!!output && call.name !== "read_file");
   return (

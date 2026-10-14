@@ -48,7 +48,9 @@ const NEXT_LABEL: Record<TriageItem["next"], string> = {
   "read later": tx("Read later"),
   none: tx("Nothing to do"),
 };
-const isInbox = (m: MailItem) => m.folder.toUpperCase() === "INBOX";
+const isInbox = (m: { folder: string }) => m.folder.toUpperCase() === "INBOX";
+const isArchived = (m: { folder: string }) => m.folder === "Archive";
+const isSent = (m: { folder: string }) => !isInbox(m) && !isArchived(m);
 
 interface Compose {
   to: string;
@@ -91,7 +93,15 @@ export function MailView({ toast }: { toast: PushToast }) {
     loadAccounts();
     loadItems("");
     api.mailTriageReport().then(setReport).catch(() => {});
-    const subs = [on("mail:synced", () => loadItems()), on("mail:triage", (p) => setSorting(p))];
+    const subs = [
+      on("mail:synced", () => loadItems()),
+      on("mail:triage", (p) => setSorting(p)),
+      // New mail was sorted in the background.
+      on("mail:triaged", () => {
+        loadItems();
+        api.mailTriageReport().then(setReport).catch(() => {});
+      }),
+    ];
     return () => {
       subs.forEach((s) => s.then((u) => u()));
     };
@@ -149,6 +159,27 @@ export function MailView({ toast }: { toast: PushToast }) {
     }
   };
 
+  // Archive (out of the inbox) or Delete (to the trash), here and on the server.
+  const move = async (ids: string[], action: "archive" | "trash") => {
+    setItems((all) => (action === "trash" ? all.filter((x) => !ids.includes(x.id)) : all.map((x) => (ids.includes(x.id) ? { ...x, folder: "Archive", seen: true } : x))));
+    if (open && ids.includes(open.id)) setOpenId(null);
+    try {
+      await api.mailAction(ids, action);
+      toast(action === "trash" ? t("Moved to the trash.") : t("Archived."), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+      loadItems();
+    }
+  };
+  const setAuto = async (on: boolean) => {
+    setReport((r) => (r ? { ...r, auto: on } : r));
+    try {
+      await api.setMailAutoSort(on);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
   const setSeen = async (m: { id: string }, seen: boolean) => {
     setItems((all) => all.map((x) => (x.id === m.id ? { ...x, seen } : x)));
     setReport((r) => (r ? { ...r, items: r.items.map((x) => (x.id === m.id ? { ...x, seen } : x)) } : r));
@@ -161,7 +192,7 @@ export function MailView({ toast }: { toast: PushToast }) {
 
   const mine = useMemo(() => items.filter((m) => !account || m.account_id === account), [items, account]);
   const shown = useMemo(
-    () => mine.filter((m) => (folder === "inbox" ? isInbox(m) : folder === "unread" ? isInbox(m) && !m.seen : folder === "sent" ? !isInbox(m) : true)),
+    () => mine.filter((m) => (folder === "inbox" ? isInbox(m) : folder === "unread" ? isInbox(m) && !m.seen : folder === "sent" ? isSent(m) : true)),
     [mine, folder],
   );
   const unread = mine.filter((m) => isInbox(m) && !m.seen).length;
@@ -275,12 +306,14 @@ export function MailView({ toast }: { toast: PushToast }) {
         {sorting && sorting.total > 0 && <div className="sort-progress"><span style={{ width: `${(sorting.done / sorting.total) * 100}%` }} /></div>}
 
         {!open && folder === "report" ? (
-          <TriageView report={report} sorting={!!sorting} unread={unread} onSort={sortUnread} onOpen={setOpenId} onRead={(i) => setSeen(i, true)} onUndo={undo} />
+          <TriageView report={report} sorting={!!sorting} unread={unread} onSort={sortUnread} onOpen={setOpenId} onRead={(i) => setSeen(i, true)} onUndo={undo} onAuto={setAuto} />
         ) : open ? (
           <article className="message">
             <div className="message-bar">
               <button className="icon-btn round" onClick={() => setOpenId(null)} title={t("Back")} aria-label={t("Back")}>←</button>
               <span className="spacer" />
+              {!isArchived(open) && <button className="btn ghost small" onClick={() => move([open.id], "archive")} title={t("Take it out of the inbox (it stays in All mail)")}>🗄 {t("Archive")}</button>}
+              <button className="btn ghost small" onClick={() => move([open.id], "trash")} title={t("Move it to the trash")}>🗑 {t("Delete")}</button>
               <button className="btn ghost small" onClick={() => { setSeen(open, false); setOpenId(null); }}>{t("Mark as unread")}</button>
             </div>
             <h1 className="message-subject">{open.subject || t("(no subject)")}{isInbox(open) && <span className="badge subtle">{t("Inbox")}</span>}</h1>
@@ -315,10 +348,10 @@ export function MailView({ toast }: { toast: PushToast }) {
                 <p className="muted center pad-lg">{query ? t("Nothing matches.") : folder === "unread" ? t("You're all caught up.") : t("No mail copied yet. Click Sync.")}</p>
               )}
               {shown.map((m) => {
-                const who = isInbox(m) ? m.from_name || m.from : t("To: {names}", { names: m.to.join(", ") });
+                const who = !isSent(m) ? m.from_name || m.from : t("To: {names}", { names: m.to.join(", ") });
                 return (
                   <div key={m.id} role="listitem" className={`mail-row ${m.seen ? "read" : "unread"}`} onClick={() => setOpenId(m.id)} onKeyDown={(e) => e.key === "Enter" && setOpenId(m.id)} tabIndex={0}>
-                    <Avatar name={isInbox(m) ? m.from_name : m.to[0] ?? ""} email={isInbox(m) ? m.from : m.to[0] ?? ""} size={30} />
+                    <Avatar name={!isSent(m) ? m.from_name : m.to[0] ?? ""} email={!isSent(m) ? m.from : m.to[0] ?? ""} size={30} />
                     <span className="mail-from ellipsis">{who}</span>
                     <span className="mail-line ellipsis">
                       <span className="mail-subject">{m.subject || t("(no subject)")}</span>
@@ -327,6 +360,10 @@ export function MailView({ toast }: { toast: PushToast }) {
                     {m.attachments.length > 0 && <span className="mail-clip" title={m.attachments.join(", ")} aria-label={t("Has attachments")}>📎</span>}
                     <span className="mail-date">{when(m.date)}</span>
                     <span className="mail-hover" onClick={(e) => e.stopPropagation()}>
+                      {!isArchived(m) && (
+                        <button className="icon-btn" title={t("Archive")} aria-label={t("Archive")} onClick={() => move([m.id], "archive")}>🗄</button>
+                      )}
+                      <button className="icon-btn" title={t("Delete")} aria-label={t("Delete")} onClick={() => move([m.id], "trash")}>🗑</button>
                       <button className="icon-btn" title={m.seen ? t("Mark as unread") : t("Mark as read")} aria-label={m.seen ? t("Mark as unread") : t("Mark as read")} onClick={() => setSeen(m, !m.seen)}>
                         {m.seen ? "✉" : "✓"}
                       </button>
@@ -345,7 +382,7 @@ export function MailView({ toast }: { toast: PushToast }) {
 
 /** What the AI did with the unread mail: what it left for you and why, and
  * what it marked read (each can be put back). */
-function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo }: {
+function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo, onAuto }: {
   report: TriageReport | null;
   sorting: boolean;
   unread: number;
@@ -353,7 +390,17 @@ function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo }:
   onOpen: (id: string) => void;
   onRead: (item: TriageItem) => void;
   onUndo: (ids: string[]) => void;
+  onAuto: (on: boolean) => void;
 }) {
+  const auto = (
+    <label className="auto-sort small">
+      <input type="checkbox" checked={!!report?.auto} onChange={(e) => onAuto(e.target.checked)} />
+      <span>
+        <strong>{t("Sort new mail automatically")}</strong>
+        <span className="muted block">{t("When new mail arrives, your AI sorts it and lets you know if something needs you.")}</span>
+      </span>
+    </label>
+  );
   if (!report?.run_at) {
     return (
       <div className="triage-empty">
@@ -361,6 +408,7 @@ function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo }:
         <h2>{t("Let your AI sort your unread mail")}</h2>
         <p className="muted">{t("It reads each unread email, keeps the ones that need you, and marks newsletters, promotions and notices that need nothing as read. This report shows what it did and why, and anything can be put back.")}</p>
         <button className="btn primary" onClick={onSort} disabled={sorting || unread === 0}>{unread === 0 ? t("No unread mail") : t("Sort {n} unread emails", { n: unread })}</button>
+        {auto}
       </div>
     );
   }
@@ -389,11 +437,12 @@ function TriageView({ report, sorting, unread, onSort, onOpen, onRead, onUndo }:
         <div>
           <h2>{t("AI report")}</h2>
           <p className="muted small">
-            {t("Sorted {n} unread emails {time} with {model}.", { n: report.looked_at, time: new Date(report.run_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), model: report.model || t("your model") })}
+            {t("Last sorted {n} unread emails {time} with {model}. This shows the past week.", { n: report.looked_at, time: new Date(report.run_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), model: report.model || t("your model") })}
           </p>
         </div>
         <button className="btn" onClick={onSort} disabled={sorting || unread === 0}>{t("Sort again")}</button>
       </div>
+      {auto}
 
       <section className="triage-section">
         <h3>{t("Needs your attention")} <span className="muted">({attention.filter((i) => !i.seen).length})</span></h3>
