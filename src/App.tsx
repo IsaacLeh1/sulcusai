@@ -27,6 +27,7 @@ import { LockScreen } from "./components/Security";
 import { Toasts, useToasts, type PushToast } from "./components/Toasts";
 import { useIdleLock } from "./idle";
 import { UpdatePill } from "./components/Updates";
+import { SETTINGS_VIEWS, SettingsNav } from "./components/SettingsNav";
 import { PrivacyPill } from "./components/PrivacySettings";
 
 // Pages load the first time they are opened, so the app starts faster.
@@ -117,6 +118,16 @@ interface Nav {
 
 function Workspace({ security, onSecurityChanged, toast, nav }: { security: SecurityStatus; onSecurityChanged: () => void; toast: PushToast; nav: Nav }) {
   const { view, setView, activeChat, setActiveChat, activeProject, setActiveProject } = nav;
+  // Settings' sidebar: where Back returns to, a quick link to scroll to, and
+  // the section being read.
+  const backTo = useRef<View>("chat");
+  const [settingsJump, setSettingsJump] = useState<{ id: string; at: number } | null>(null);
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  const inSettings = SETTINGS_VIEWS.includes(view);
+  useEffect(() => {
+    if (!SETTINGS_VIEWS.includes(view)) backTo.current = view;
+    if (view !== "settings") setSettingsJump(null);
+  }, [view]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [newProject, setNewProject] = useState(false);
@@ -356,6 +367,19 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           )}
         </div>
+        {inSettings ? (
+          <SettingsNav
+            view={view}
+            features={features ?? new Set()}
+            section={settingsSection}
+            onBack={() => setView(backTo.current)}
+            onJump={(id) => {
+              setView("settings");
+              setSettingsJump({ id, at: Date.now() });
+            }}
+            onView={setView}
+          />
+        ) : (<>
         <div className="new-chat-row">
           <button className="btn primary block" onClick={() => newChat()}>
             {t("+ New chat")}
@@ -464,6 +488,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           ))}
         </div>
+        </>)}
         <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
       </aside>
       {chatMenu && (
@@ -587,6 +612,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             onSecurityChanged={onSecurityChanged}
             features={features ?? new Set()}
             toast={toast}
+            jump={settingsJump}
+            onSection={setSettingsSection}
           />
         )}
         </Suspense>

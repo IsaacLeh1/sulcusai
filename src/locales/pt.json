@@ -2001,5 +2001,7 @@
  "through Tor": "pelo Tor",
  "through your proxy": "pelo seu proxy",
  "Arti (Tor, for the private connection)": "Arti (Tor, para a conexão privada)",
- "On. Tor connects the first time something goes through it.": "Ligada. O Tor se conecta na primeira vez que algo passa por ele."
+ "On. Tor connects the first time something goes through it.": "Ligada. O Tor se conecta na primeira vez que algo passa por ele.",
+ "Cloud models": "Modelos na nuvem",
+ "More": "Mais"
 }

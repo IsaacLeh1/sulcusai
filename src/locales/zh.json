@@ -2001,5 +2001,7 @@
  "through Tor": "经由 Tor",
  "through your proxy": "经由你的代理",
  "Arti (Tor, for the private connection)": "Arti（Tor，用于私密连接）",
- "On. Tor connects the first time something goes through it.": "已开启。第一次有流量经过时，Tor 才会连接。"
+ "On. Tor connects the first time something goes through it.": "已开启。第一次有流量经过时，Tor 才会连接。",
+ "Cloud models": "云端模型",
+ "More": "更多"
 }

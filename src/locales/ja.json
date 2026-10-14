@@ -2001,5 +2001,7 @@
  "through Tor": "Tor 経由",
  "through your proxy": "あなたのプロキシ経由",
  "Arti (Tor, for the private connection)": "Arti（Tor、プライベート接続用）",
- "On. Tor connects the first time something goes through it.": "オン。初めて何かが通るときに Tor が接続します。"
+ "On. Tor connects the first time something goes through it.": "オン。初めて何かが通るときに Tor が接続します。",
+ "Cloud models": "クラウドモデル",
+ "More": "その他"
 }

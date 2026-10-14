@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser } from "../api";
 import { APP_NAME } from "../brand";
@@ -20,6 +20,7 @@ import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
+import { VOICE_FEATURES } from "../components/SettingsNav";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -142,9 +143,13 @@ interface Props {
   onSecurityChanged: () => void;
   features: Set<FeatureId>;
   toast: PushToast;
+  /** A quick link was picked: scroll to that section (`at` makes a repeat count). */
+  jump: { id: string; at: number } | null;
+  /** The section being read, for the sidebar's highlight. */
+  onSection: (id: string | null) => void;
 }
 
-export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast }: Props) {
+export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast, jump, onSection }: Props) {
   const [locating, setLocating] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<Profile | null>(null);
@@ -176,18 +181,66 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
     else onConnectivity(l);
   };
 
+  // The section at the top of the page (the last anchor scrolled past).
+  // After a quick link, the picked section stays marked until the person
+  // scrolls themselves (a section near the end can't reach the top).
+  const pageRef = useRef<HTMLDivElement>(null);
+  const held = useRef(false);
+  const release = () => {
+    held.current = false;
+  };
+  const spy = () => {
+    const page = pageRef.current;
+    if (!page || held.current) return;
+    const anchors = [...page.querySelectorAll<HTMLElement>(".settings-anchor")];
+    const top = page.getBoundingClientRect().top + 80;
+    let current = anchors[0];
+    for (const a of anchors) if (a.getBoundingClientRect().top <= top) current = a;
+    if (page.scrollTop + page.clientHeight >= page.scrollHeight - 4) current = anchors[anchors.length - 1];
+    onSection(current ? current.id.replace("settings-", "") : null);
+  };
+  useEffect(() => {
+    spy();
+    return () => onSection(null);
+  }, []);
+
+  // Quick links: smooth while the page is settled; on a fresh open, cards
+  // load and grow above the target, so it lands again a moment later.
+  const opened = useRef(Date.now());
+  useEffect(() => {
+    if (!jump) return;
+    held.current = true;
+    onSection(jump.id);
+    const go = (behavior: ScrollBehavior) => document.getElementById(`settings-${jump.id}`)?.scrollIntoView({ behavior, block: "start" });
+    if (Date.now() - opened.current > 1500) {
+      go("smooth");
+      // Lands anyway if the animation didn't run (a window not being drawn).
+      const id = setTimeout(() => {
+        const page = pageRef.current;
+        const el = document.getElementById(`settings-${jump.id}`);
+        if (page && el && Math.abs(el.getBoundingClientRect().top - page.getBoundingClientRect().top) > 40) go("auto");
+      }, 900);
+      return () => clearTimeout(id);
+    }
+    go("auto");
+    const timers = [250, 700].map((ms) => setTimeout(() => go("auto"), ms));
+    return () => timers.forEach(clearTimeout);
+  }, [jump]);
+
   return (
-    <div className="page">
+    <div className="page" ref={pageRef} onScroll={spy} onWheel={release} onPointerDown={release} onKeyDown={release} onTouchStart={release}>
       <div className="narrow">
       <header className="page-head">
         <h1>{t("Settings")}</h1>
       </header>
 
+      <span id="settings-appearance" className="settings-anchor" />
       <section className="card">
         <h2>{t("Appearance")}</h2>
         <ThemePicker />
       </section>
 
+      <span id="settings-language" className="settings-anchor" />
       <section className="card">
         <h2>{t("Language")}</h2>
         <label className="form small">
@@ -204,6 +257,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <p className="muted small">{t("The assistant answers in the language you write in, whatever this is set to.")}</p>
       </section>
 
+      <span id="settings-about-you" className="settings-anchor" />
       <section className="card">
         <h2>{t("About you")}</h2>
         <p className="muted small">{t("Every chat includes this, so you don't have to repeat yourself. It's encrypted on this PC.")}</p>
@@ -260,18 +314,25 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         )}
       </section>
 
+      <span id="settings-security" className="settings-anchor" />
       <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
 
+      <span id="settings-folders" className="settings-anchor" />
       {features.has("files") && <FoldersSection toast={toast} />}
 
-      {(["dictation", "voice_chat", "read_aloud", "meetings"] as FeatureId[]).some((f) => features.has(f)) && <VoiceSection toast={toast} />}
+      <span id="settings-voice" className="settings-anchor" />
+      {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}
 
+      <span id="settings-performance" className="settings-anchor" />
       <PerformanceSection toast={toast} />
 
+      <span id="settings-storage" className="settings-anchor" />
       <ModelStorage toast={toast} />
 
+      <span id="settings-sign-in" className="settings-anchor" />
       {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
 
+      <span id="settings-connectivity" className="settings-anchor" />
       <section className="card">
         <h2>{t("Connectivity")}</h2>
         <p className="muted small">{t("Controls what may leave this PC. You can also switch it from the status bar at the bottom.")}</p>
@@ -292,20 +353,28 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <BrowserChoice toast={toast} />
       </section>
 
+      <span id="settings-private" className="settings-anchor" />
       <PrivacySettings toast={toast} />
 
+      <span id="settings-devices" className="settings-anchor" />
       <SyncSettings toast={toast} />
 
+      <span id="settings-phone" className="settings-anchor" />
       <PhoneSettings toast={toast} />
 
+      <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
 
+      <span id="settings-cloud" className="settings-anchor" />
       <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />
 
+      <span id="settings-api" className="settings-anchor" />
       <ApiServerSettings toast={toast} />
 
+      <span id="settings-advanced" className="settings-anchor" />
       <AdvancedSettings toast={toast} />
 
+      <span id="settings-about" className="settings-anchor" />
       <section className="card">
         <h2>{t("About {app}", { app: APP_NAME })}</h2>
         <UpdateSettings toast={toast} />
