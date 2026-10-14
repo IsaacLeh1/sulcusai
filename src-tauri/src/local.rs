@@ -163,6 +163,89 @@ pub fn import(state: &AppState, path: &Path) -> Result<String, String> {
     Ok(spec.name)
 }
 
+/// What adding a folder did.
+#[derive(Debug, Default, Serialize)]
+pub struct FolderImport {
+    /// Names of the models added.
+    pub added: Vec<String>,
+    /// Model files that weren't added, with why (a whole sentence).
+    pub skipped: Vec<Skipped>,
+}
+
+/// Adds the chat models in a folder the user picked or typed (its
+/// subfolders too), or a single .gguf file; used where they are.
+pub fn import_folder(state: &AppState, path: &Path) -> Result<FolderImport, String> {
+    if path.is_file() {
+        return import(state, path).map(|name| FolderImport { added: vec![name], skipped: Vec::new() });
+    }
+    if !path.is_dir() {
+        return Err(format!("There's no folder or file at {}.", path.display()));
+    }
+    let files = gguf_files(path, MIN_SIZE);
+    if files.is_empty() {
+        return Err(if has_file(path, ".safetensors", 3) {
+            "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.".into()
+        } else {
+            "There's no model file (.gguf) in this folder or its subfolders.".into()
+        });
+    }
+    let mut r = FolderImport::default();
+    for f in files {
+        match import(state, &f) {
+            Ok(name) => r.added.push(name),
+            Err(reason) => r.skipped.push(Skipped { name: f.file_name().unwrap_or_default().to_string_lossy().into_owned(), reason }),
+        }
+    }
+    Ok(r)
+}
+
+/// The model files in a folder and its subfolders: .gguf files big enough to
+/// be models, leaving out picture encoders and the later parts of a split
+/// model (llama.cpp loads those from the first part). Download caches and
+/// other hidden folders are skipped.
+fn gguf_files(dir: &Path, min_size: u64) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, min: u64, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            let Ok(kind) = e.file_type() else { continue };
+            if kind.is_dir() {
+                if depth > 0 && !name.starts_with('.') {
+                    walk(&e.path(), depth - 1, min, out);
+                }
+            } else if name.ends_with(".gguf") && !name.starts_with("mmproj") && !later_part(&name) && e.metadata().is_ok_and(|m| m.len() >= min) && out.len() < 50 {
+                out.push(e.path());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, 4, min_size, &mut out);
+    out
+}
+
+/// "…-00002-of-00003.gguf": the second or a later part of a split model.
+fn later_part(name: &str) -> bool {
+    let stem = name.trim_end_matches(".gguf");
+    let mut it = stem.rsplit('-');
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    matches!((it.next(), it.next(), it.next()), (Some(total), Some("of"), Some(part)) if digits(total) && digits(part) && part.trim_start_matches('0') != "1")
+}
+
+/// A file ending in `ext` somewhere within `depth` levels of `dir`.
+fn has_file(dir: &Path, ext: &str, depth: usize) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries.flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        match e.file_type() {
+            Ok(t) if t.is_dir() => depth > 0 && !name.starts_with('.') && has_file(&e.path(), ext, depth - 1),
+            Ok(_) => name.ends_with(ext),
+            Err(_) => false,
+        }
+    })
+}
+
 /// "14B", "30B-A3B", "1.5B", "8x7B", "500M" as billions of parameters.
 fn size_label(label: &str) -> Option<f64> {
     let first = label.split(['-', '_']).next()?.to_uppercase();
@@ -215,7 +298,14 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         _ => 1.0,
     };
     let size = std::fs::metadata(&c.path).map_err(|e| e.to_string())?.len();
-    let quant = int("general.file_type").map_or("Unknown", gguf::quant_name).to_string();
+    let header = int("general.file_type").map_or("Unknown", gguf::quant_name);
+    // A header saying full precision over quantized weights is a converter's
+    // slip; the weights themselves say what they are.
+    let quant = match (header, int(gguf::MAIN_TYPE_KEY).and_then(gguf::tensor_quant_name)) {
+        ("F32" | "F16" | "BF16" | "Unknown", Some(real)) => real,
+        _ => header,
+    }
+    .to_string();
     let params_b = get("general.size_label")
         .and_then(Value::str)
         .and_then(size_label)
@@ -347,6 +437,43 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_offers_its_model_files_but_not_caches_encoders_or_later_parts() {
+        let dir = std::env::temp_dir().join(format!("sulcusai-folder-{}", uuid::Uuid::new_v4().simple()));
+        let write = |rel: &str, len: usize| {
+            let p = dir.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, vec![0u8; len]).unwrap();
+        };
+        write("model-00001-of-00003.safetensors", 10);
+        write("GGUF/Big-20b-mxfp4.gguf", 100);
+        write("GGUF/mmproj-Big-f16.gguf", 100);
+        write("split/Huge-Q4_K_M-00001-of-00002.gguf", 100);
+        write("split/Huge-Q4_K_M-00002-of-00002.gguf", 100);
+        write("tiny.gguf", 5);
+        write(".cache/huggingface/download/GGUF/Big-20b-mxfp4.gguf", 100);
+        let names: Vec<String> = gguf_files(&dir, 50).iter().map(|p| p.strip_prefix(&dir).unwrap().to_string_lossy().replace('\\', "/")).collect();
+        assert_eq!(names, ["GGUF/Big-20b-mxfp4.gguf", "split/Huge-Q4_K_M-00001-of-00002.gguf"]);
+        assert!(has_file(&dir, ".safetensors", 3));
+        assert!(!later_part("qwen3-8b-q4_k_m.gguf") && !later_part("a-00001-of-00002.gguf") && later_part("a-00010-of-00012.gguf"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A real model folder (SULCUSAI_TEST_MODEL_DIR), e.g. a Hugging Face
+    /// download with the .gguf in a GGUF subfolder.
+    #[test]
+    #[ignore]
+    fn adds_the_models_in_a_real_folder() {
+        let dir = std::env::var("SULCUSAI_TEST_MODEL_DIR").expect("SULCUSAI_TEST_MODEL_DIR");
+        let state = crate::e2e::scratch_state();
+        let r = import_folder(&state, Path::new(&dir)).unwrap();
+        println!("added {:?}, skipped {:?}", r.added, r.skipped);
+        assert!(!r.added.is_empty());
+        let spec = list(&state.db.lock().unwrap()).into_iter().find(|m| m.name == r.added[0]).unwrap();
+        println!("{} · {} · {}B · ctx {} · tools {} · {:?}", spec.name, spec.variants[0].quant, spec.params_b, spec.default_ctx, spec.tools, spec.arch);
+        assert!(import_folder(&state, Path::new(&dir)).unwrap().added.is_empty(), "adding it again changes nothing");
+    }
 
     #[test]
     fn reads_size_labels() {

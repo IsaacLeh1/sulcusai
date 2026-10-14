@@ -2003,5 +2003,14 @@
  "Arti (Tor, for the private connection)": "Arti (Tor, para la conexión privada)",
  "On. Tor connects the first time something goes through it.": "Activada. Tor se conecta la primera vez que algo pasa por él.",
  "Cloud models": "Modelos en la nube",
- "More": "Más"
+ "More": "Más",
+ "Add from a folder…": "Añadir desde una carpeta…",
+ "Add models from a folder": "Añadir modelos desde una carpeta",
+ "Adding…": "Añadiendo…",
+ "Browse…": "Examinar…",
+ "Folder or file": "Carpeta o archivo",
+ "Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.": "Indica a SulcusAI una carpeta que contenga un modelo, o un archivo .gguf. Encuentra los archivos de modelo .gguf que hay dentro (también en subcarpetas) y los usa donde están: no se copia ni se mueve nada.",
+ "There's no model file (.gguf) in this folder or its subfolders.": "No hay ningún archivo de modelo (.gguf) en esta carpeta ni en sus subcarpetas.",
+ "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.": "Esta carpeta solo tiene los pesos originales del modelo (.safetensors), que el motor de SulcusAI no puede ejecutar. Hace falta una versión GGUF del modelo; la página del modelo suele ofrecer una.",
+ "e.g. D:\\Models\\gpt-oss-20b": "p. ej. D:\\Modelos\\gpt-oss-20b"
 }

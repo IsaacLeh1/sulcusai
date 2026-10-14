@@ -598,6 +598,18 @@ async fn find_models(app: AppHandle, state: AppStateRef<'_>, again: Option<bool>
     Ok(found)
 }
 
+/// Adds the .gguf models in a folder (or one file) the user picked or typed;
+/// they're used where they are.
+#[tauri::command]
+async fn import_model_folder(app: AppHandle, state: AppStateRef<'_>, path: String) -> Result<local::FolderImport, String> {
+    let state = state.inner().clone();
+    // Windows' "Copy as path" adds quotes.
+    let path = std::path::PathBuf::from(path.trim().trim_matches('"'));
+    let r = tauri::async_runtime::spawn_blocking(move || local::import_folder(&state, &path)).await.map_err(|e| e.to_string())??;
+    announce_found(&app, &r.added);
+    Ok(r)
+}
+
 /// Adds a .gguf model file the user picked; it's used where it is.
 #[tauri::command]
 async fn import_model_file(app: AppHandle, state: AppStateRef<'_>, path: String) -> Result<String, String> {
@@ -1387,6 +1399,7 @@ pub fn run() {
             find_models,
             load_default_model,
             import_model_file,
+            import_model_folder,
             measure_model_speed,
             measure_all_speeds,
             advanced::advanced_view,

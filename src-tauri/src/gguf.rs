@@ -164,7 +164,7 @@ pub fn read(path: &Path) -> std::io::Result<Meta> {
     if !(2..=3).contains(&version) {
         return Err(bad("unsupported GGUF version"));
     }
-    let _tensors = u64_of(&mut r)?;
+    let tensors = u64_of(&mut r)?;
     let keys = u64_of(&mut r)?;
     if keys > MAX_KEYS {
         return Err(bad("too many keys"));
@@ -175,7 +175,62 @@ pub fn read(path: &Path) -> std::io::Result<Meta> {
         let t = u32_of(&mut r)?;
         meta.insert(key, value(&mut r, t)?);
     }
+    // The weights' own type, for files whose header names another (some
+    // conversions say F16 while most weights are MXFP4).
+    if tensors <= MAX_TENSORS {
+        if let Ok(Some(t)) = main_tensor_type(&mut r, tensors) {
+            meta.insert(MAIN_TYPE_KEY.into(), Value::Int(t as i64));
+        }
+    }
     Ok(meta)
+}
+
+/// Where `read` puts the type most of the weights have (ggml's number).
+pub const MAIN_TYPE_KEY: &str = "sulcusai.main_tensor_type";
+const MAX_TENSORS: u64 = 100_000;
+
+/// The tensor type covering the most weights, from the tensor list that
+/// follows the keys (name, dimensions, type, offset for each).
+fn main_tensor_type(r: &mut Reader, n: u64) -> std::io::Result<Option<u32>> {
+    let mut by_type: HashMap<u32, u128> = HashMap::new();
+    for _ in 0..n {
+        string(r)?;
+        let dims = u32_of(r)?;
+        if dims > 8 {
+            return Err(bad("too many dimensions"));
+        }
+        let mut count: u128 = 1;
+        for _ in 0..dims {
+            count = count.saturating_mul(u64_of(r)? as u128);
+        }
+        let t = u32_of(r)?;
+        u64_of(r)?;
+        *by_type.entry(t).or_default() += count;
+    }
+    Ok(by_type.into_iter().max_by_key(|&(_, c)| c).map(|(t, _)| t))
+}
+
+/// A quantized ggml tensor type as the closest name the app uses (None for
+/// full-precision types, where the header's own name is right).
+pub fn tensor_quant_name(t: i64) -> Option<&'static str> {
+    Some(match t {
+        2 => "Q4_0",
+        3 => "Q4_1",
+        6 => "Q5_0",
+        7 => "Q5_1",
+        8 => "Q8_0",
+        10 => "Q2_K",
+        11 => "Q3_K_M",
+        12 => "Q4_K_M",
+        13 => "Q5_K_M",
+        14 => "Q6_K",
+        18 => "IQ3_XXS",
+        20 => "IQ4_NL",
+        21 => "IQ3_S",
+        23 => "IQ4_XS",
+        39 => "MXFP4",
+        _ => return None,
+    })
 }
 
 /// llama.cpp's file type numbers, as the quantization names the app uses.
@@ -290,6 +345,36 @@ mod tests {
         assert_eq!(m["tokenizer.ggml.tokens"], Value::Array(2));
         assert_eq!(m["per_layer"].int(), Some(8));
         assert_eq!(quant_name(m["general.file_type"].int().unwrap()), "Q4_K_M");
+        assert!(!m.contains_key(MAIN_TYPE_KEY), "no tensors listed");
+    }
+
+    /// A header that says F16 over weights that are mostly MXFP4 (a
+    /// gpt-oss conversion did this): the tensor list tells the truth.
+    #[test]
+    fn finds_the_type_most_weights_have() {
+        let mut f = b"GGUF".to_vec();
+        f.extend(3u32.to_le_bytes());
+        f.extend(2u64.to_le_bytes());
+        f.extend(1u64.to_le_bytes());
+        s(&mut f, "general.file_type");
+        f.extend(4u32.to_le_bytes());
+        f.extend(1u32.to_le_bytes());
+        // (name, dimensions, ggml type, offset)
+        for (name, dims, t) in [("token_embd.weight", vec![64u64, 32], 1u32), ("blk.0.ffn_down_exps.weight", vec![64, 32, 8], 39)] {
+            s(&mut f, name);
+            f.extend((dims.len() as u32).to_le_bytes());
+            for d in dims {
+                f.extend(d.to_le_bytes());
+            }
+            f.extend(t.to_le_bytes());
+            f.extend(0u64.to_le_bytes());
+        }
+        let path = std::env::temp_dir().join(format!("sulcusai-gguf-{}.gguf", uuid::Uuid::new_v4()));
+        std::fs::File::create(&path).unwrap().write_all(&f).unwrap();
+        let m = read(&path).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(quant_name(m["general.file_type"].int().unwrap()), "F16");
+        assert_eq!(m[MAIN_TYPE_KEY].int().and_then(tensor_quant_name), Some("MXFP4"));
     }
 
     #[test]

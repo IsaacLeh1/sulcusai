@@ -284,6 +284,13 @@ export interface Advanced {
   processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; helper_steps: number | null };
 }
 
+export interface FolderImport {
+  /** Names of the models added. */
+  added: string[];
+  /** Model files that weren't added; `reason` is a whole sentence. */
+  skipped: { name: string; reason: string }[];
+}
+
 export interface FoundModels {
   /** Names of the models added. */
   added: string[];
@@ -1128,6 +1135,7 @@ export const api = {
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
+  importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   measureAllSpeeds: () => invoke<number>("measure_all_speeds"),

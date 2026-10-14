@@ -2003,5 +2003,14 @@
  "Arti (Tor, for the private connection)": "Arti（Tor，用于私密连接）",
  "On. Tor connects the first time something goes through it.": "已开启。第一次有流量经过时，Tor 才会连接。",
  "Cloud models": "云端模型",
- "More": "更多"
+ "More": "更多",
+ "Add from a folder…": "从文件夹添加…",
+ "Add models from a folder": "从文件夹添加模型",
+ "Adding…": "正在添加…",
+ "Browse…": "浏览…",
+ "Folder or file": "文件夹或文件",
+ "Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.": "把 SulcusAI 指向一个包含模型的文件夹，或一个 .gguf 文件。它会找到其中（包括子文件夹）的 .gguf 模型文件，并在原位置使用：不会复制或移动任何文件。",
+ "There's no model file (.gguf) in this folder or its subfolders.": "此文件夹及其子文件夹中没有模型文件（.gguf）。",
+ "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.": "此文件夹只有模型的原始权重（.safetensors），SulcusAI 的引擎无法运行。需要该模型的 GGUF 版本，模型页面通常会提供。",
+ "e.g. D:\\Models\\gpt-oss-20b": "例如 D:\\Models\\gpt-oss-20b"
 }

@@ -2003,5 +2003,14 @@
  "Arti (Tor, for the private connection)": "Arti（Tor、プライベート接続用）",
  "On. Tor connects the first time something goes through it.": "オン。初めて何かが通るときに Tor が接続します。",
  "Cloud models": "クラウドモデル",
- "More": "その他"
+ "More": "その他",
+ "Add from a folder…": "フォルダーから追加…",
+ "Add models from a folder": "フォルダーからモデルを追加",
+ "Adding…": "追加しています…",
+ "Browse…": "参照…",
+ "Folder or file": "フォルダーまたはファイル",
+ "Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.": "モデルが入ったフォルダー、または .gguf ファイルを指定してください。SulcusAI は中の .gguf モデルファイル（サブフォルダーも含む）を見つけ、その場所のまま使います。コピーや移動はしません。",
+ "There's no model file (.gguf) in this folder or its subfolders.": "このフォルダーとサブフォルダーにはモデルファイル（.gguf）がありません。",
+ "This folder only has the model's original weights (.safetensors), which SulcusAI's engine can't run. It needs a GGUF version of the model; the model's page often offers one.": "このフォルダーにはモデルの元の重み（.safetensors）しかなく、SulcusAI のエンジンでは実行できません。GGUF 版のモデルが必要です。モデルのページで提供されていることがよくあります。",
+ "e.g. D:\\Models\\gpt-oss-20b": "例: D:\\Models\\gpt-oss-20b"
 }

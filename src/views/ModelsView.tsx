@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
-import { api, errorText, type FoundModels, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { api, errorText, type FolderImport, type FoundModels, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -174,6 +175,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 export function LookForModels({ onRefresh, toast, compact }: { onRefresh: () => Promise<void>; toast: PushToast; compact?: boolean }) {
   const [looking, setLooking] = useState(false);
   const [result, setResult] = useState<FoundModels | null>(null);
+  const [adding, setAdding] = useState(false);
   const look = async () => {
     setLooking(true);
     try {
@@ -193,10 +195,16 @@ export function LookForModels({ onRefresh, toast, compact }: { onRefresh: () => 
           {!compact && <strong>{t("Models from other apps")}</strong>}
           <p className="muted small">{t("Models you downloaded with Ollama, LM Studio, Jan, GPT4All or Hugging Face can be used here without downloading them again.")}</p>
         </div>
-        <button className="btn" onClick={look} disabled={looking}>
-          {looking ? t("Looking…") : t("Look for models on this PC")}
-        </button>
+        <div className="row wrap look-buttons">
+          <button className="btn" onClick={look} disabled={looking}>
+            {looking ? t("Looking…") : t("Look for models on this PC")}
+          </button>
+          <button className="btn" onClick={() => setAdding(true)}>
+            {t("Add from a folder…")}
+          </button>
+        </div>
       </div>
+      {adding && <AddFromFolder onClose={() => setAdding(false)} onRefresh={onRefresh} />}
       {result && (
         <div className="small look-result" role="status">
           {result.added.length > 0 ? (
@@ -217,6 +225,78 @@ export function LookForModels({ onRefresh, toast, compact }: { onRefresh: () => 
         </div>
       )}
     </section>
+  );
+}
+
+/** Adds the .gguf models in a folder (or a single file) by its path. */
+function AddFromFolder({ onClose, onRefresh }: { onClose: () => void; onRefresh: () => Promise<void> }) {
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<FolderImport | string | null>(null);
+  const add = async () => {
+    if (!path.trim()) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const r = await api.importModelFolder(path);
+      setResult(r);
+      if (r.added.length > 0) await onRefresh();
+    } catch (e) {
+      setResult(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title={t("Add models from a folder")} onClose={onClose}>
+      <p className="small">{t("Point SulcusAI at a folder with a model in it, or at a .gguf file. It finds the .gguf model files inside (subfolders too) and uses them where they are: nothing is copied or moved.")}</p>
+      <div className="row wrap">
+        <input
+          className="input"
+          style={{ flex: 1, minWidth: 240 }}
+          value={path}
+          autoFocus
+          placeholder={t("e.g. D:\\Models\\gpt-oss-20b")}
+          aria-label={t("Folder or file")}
+          onChange={(e) => setPath(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && !busy && add()}
+        />
+        <button
+          className="btn"
+          disabled={busy}
+          onClick={async () => {
+            const picked = await openDialog({ directory: true, multiple: false });
+            if (typeof picked === "string") setPath(picked);
+          }}
+        >
+          {t("Browse…")}
+        </button>
+      </div>
+      {result && (
+        <div className="small look-result" role="status">
+          {typeof result === "string" ? (
+            <p className="warn-text">{result}</p>
+          ) : (
+            <>
+              {result.added.length > 0 ? <p>{t("Added {names}.", { names: result.added.join(", ") })}</p> : <p>{t("Nothing new to add.")}</p>}
+              {result.skipped.length > 0 && (
+                <ul className="muted">
+                  {result.skipped.map((s) => (
+                    <li key={s.name}>{s.name}: {t(s.reason)}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      <div className="modal-actions">
+        <button className="btn" onClick={onClose}>{result && typeof result !== "string" && result.added.length > 0 ? t("Done") : t("Cancel")}</button>
+        <button className="btn primary" onClick={add} disabled={busy || !path.trim()}>
+          {busy ? t("Adding…") : t("Add")}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
