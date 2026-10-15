@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState } from "react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
+import { useEffect, useState } from "react";
+import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
+import { api, errorText, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type Settings, type VariantFit } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -9,6 +9,7 @@ import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
 import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
+import { Downloads } from "../components/Downloads";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
 
@@ -26,6 +27,14 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   const [tab, setTab] = useState<"chat" | "speech" | "create">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
+  // "Show models this PC can't run": every model, fetched when switched on
+  // (and again when the list changes, e.g. after an install).
+  const [showAll, setShowAll] = useState(false);
+  const [everything, setEverything] = useState<ModelCard[] | null>(null);
+  useEffect(() => {
+    if (!showAll) return;
+    api.catalog(true).then((v) => setEverything(v.models)).catch(() => {});
+  }, [showAll, catalog]);
   if (!catalog) return <div className="page"><p className="muted">{t("Checking this PC…")}</p></div>;
 
   const { hardware: hw, hints } = catalog;
@@ -35,9 +44,13 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   const byCapability = catalog.models.filter((m) => !m.local).sort((a, b) => a.ratings.overall - b.ratings.overall);
   const rankOf = (m: ModelCard) => byCapability.indexOf(m) + 1;
   const arranged = arrange(catalog.models, filter, mostFirst);
+  const pool = showAll && everything ? everything : catalog.models;
+  const arrangedPool = showAll ? arrange(pool, filter, mostFirst) : arranged;
   const best = filter !== "all" ? arranged.reduce<ModelCard | null>((top, m) => (!top || (filter === "fastest" ? speedOf(m) > speedOf(top) : m.ratings[filter] > top.ratings[filter]) ? m : top), null) : null;
   const installed = arranged.filter((m) => m.installed);
-  const available = arranged.filter((m) => !m.installed);
+  const available = arrangedPool.filter((m) => !m.installed);
+  // Chat model downloads (speech and picture models have their own pages).
+  const chatProgress = Object.fromEntries(Object.entries(progress).filter(([id]) => pool.some((m) => m.id === id)));
   const cardRank = { rankOf, total: byCapability.length, filter, best: best?.id ?? null };
   const busy = Object.keys(progress).length > 0;
 
@@ -64,6 +77,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>{t("Pictures, video, music")}</button>
         </div>
       </header>
+
+      {tab === "chat" && <Downloads progress={chatProgress} models={pool} onRefresh={onRefresh} toast={toast} />}
 
       <section className="card hw">
         <div className="hw-grid">
@@ -112,6 +127,10 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
             {t(FILTERS.find((f) => f.id === filter)!.hint)}{" "}
             {filter === "fastest" ? t("Measured once installed; estimated before.") : t("Scores are rough guides from public benchmarks; bigger models also need more of the PC.")}
           </p>
+          <label className="check small">
+            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+            <span>{t("Show models this PC can't run")}</span>
+          </label>
           {arranged.length === 0 && <p className="muted">{t("None of the models this PC can run stand out here yet. Try All.")}</p>}
         </div>
       )}
@@ -129,11 +148,11 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "chat" && (
         <>
-          <h2>{t("Available for this PC")}</h2>
+          <h2>{showAll ? t("Available") : t("Available for this PC")}</h2>
           {available.length === 0 && filter === "all" && <p className="muted">{t("Every model that fits this PC is installed.")}</p>}
           <div className="model-grid">
             {available.map((m) => (
-              <AvailableCard key={m.id} m={m} rank={cardRank} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
+              <AvailableCard key={m.id} m={m} rank={cardRank} budget={catalog.budget} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
             ))}
           </div>
         </>
@@ -141,7 +160,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
 
-      {tab === "chat" && <HubBrowser models={catalog.models} progress={progress} onRefresh={onRefresh} toast={toast} />}
+      {tab === "chat" && <HubBrowser models={pool} budget={catalog.budget} showAll={showAll} progress={progress} onRefresh={onRefresh} toast={toast} />}
 
       <ModelStorage toast={toast} />
 
@@ -307,7 +326,7 @@ const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
 /** Hugging Face's GGUF chat models, showing only the versions this PC can
  * run; installing one works like a model from the list. Nothing is asked of
  * huggingface.co until the person searches. */
-function HubBrowser({ models, progress, onRefresh, toast }: { models: ModelCard[]; progress: Record<string, InstallProgress>; onRefresh: () => Promise<void>; toast: PushToast }) {
+function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { models: ModelCard[]; budget: Budget; showAll: boolean; progress: Record<string, InstallProgress>; onRefresh: () => Promise<void>; toast: PushToast }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"downloads" | "trending" | "newest">("downloads");
   const [results, setResults] = useState<HubResults | null>(null);
@@ -316,20 +335,29 @@ function HubBrowser({ models, progress, onRefresh, toast }: { models: ModelCard[
   const [allOf, setAllOf] = useState<string | null>(null);
   const busy = Object.keys(progress).length > 0;
 
-  const search = async (by = sort) => {
+  const search = async (by = sort, all = showAll) => {
     setSearching(true);
     setProblem(null);
     try {
-      setResults(await api.hubSearch(query, by));
+      setResults(await api.hubSearch(query, by, all));
     } catch (e) {
       setProblem(errorText(e));
     } finally {
       setSearching(false);
     }
   };
+  // Switching "show what this PC can't run" redoes a search already made.
+  useEffect(() => {
+    if (results) search(sort, showAll);
+  }, [showAll]);
   const install = async (m: HubModel, f: HubFile) => {
     try {
-      await api.hubInstall(m.id, f.file);
+      const runs = f.placement !== null;
+      if (!runs) {
+        const fit = { quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk };
+        if (!(await confirmAnyway(`${m.name} ${f.quant}`, cantRun(fit, budget)))) return;
+      }
+      await api.hubInstall(m.id, f.file, !runs);
       await onRefresh();
     } catch (e) {
       toast(errorText(e), "error");
@@ -344,9 +372,15 @@ function HubBrowser({ models, progress, onRefresh, toast }: { models: ModelCard[
         <div className="hub-file-what">
           <strong>{f.quant}</strong>
           {f.file === m.recommended && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
-          <span className="muted small">
-            {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} tokens/sec", { n: Math.round(f.est_tps) })}
-          </span>
+          {f.placement ? (
+            <span className="muted small">
+              {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} tokens/sec", { n: Math.round(f.est_tps) })}
+            </span>
+          ) : (
+            <span className="warn-text small" title={cantRun({ quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk }, budget)}>
+              {t(f.quality)} · {bytes(f.size)} · ⚠ {t("too much for this PC")}
+            </span>
+          )}
         </div>
         {p ? (
           <InstallBar modelId={f.model_id} p={p} />
@@ -354,7 +388,7 @@ function HubBrowser({ models, progress, onRefresh, toast }: { models: ModelCard[
           <span className="badge subtle">{t("Installed")}</span>
         ) : (
           <button className="btn small" onClick={() => install(m, f)} disabled={busy} title={busy ? t("One install at a time") : undefined}>
-            {t("Install")}
+            {f.placement ? t("Install") : t("Install anyway")}
           </button>
         )}
       </div>
@@ -463,8 +497,14 @@ function Capability({ m, rank }: { m: ModelCard; rank: RankInfo }) {
     <div className="capability">
       <div className="cap-head small">
         <span>
-          {t("Capability")} <strong>{rank.rankOf(m)}</strong> {t("of {total}", { total: rank.total })}
-          <span className="muted"> {t("(1 = lightest)")}</span>
+          {rank.rankOf(m) > 0 ? (
+            <>
+              {t("Capability")} <strong>{rank.rankOf(m)}</strong> {t("of {total}", { total: rank.total })}
+              <span className="muted"> {t("(1 = lightest)")}</span>
+            </>
+          ) : (
+            t("Capability")
+          )}
         </span>
         {rank.best === m.id && rank.filter !== "all" && <span className="badge">{rank.filter === "fastest" ? t("Fastest here") : t("Best for {area}", { area: t(AREA_LABEL[rank.filter as Area]).toLowerCase() })}</span>}
       </div>
@@ -490,16 +530,41 @@ function Tags({ m }: { m: ModelCard }) {
   );
 }
 
-function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; rank: RankInfo; progress?: InstallProgress; otherBusy: boolean; toast: PushToast }) {
-  const options = m.fit.variants.filter((v) => v.placement && v.disk_ok);
+/** Why this PC can't run a version: too little memory, too slow, or no disk space. */
+function cantRun(f: VariantFit | undefined, b: Budget): string {
+  if (!f) return t("This PC can't run it.");
+  if (!f.disk_ok) return t("There isn't enough free disk space for it.");
+  if (f.needed_bytes > Math.max(b.vram + b.ram, b.ram)) {
+    return t("It needs about {needed} of memory; this PC has {vram} on the graphics card and {ram} for models.", { needed: bytes(f.needed_bytes), vram: bytes(b.vram), ram: bytes(b.ram) });
+  }
+  return t("It would run too slowly here (about {n} tokens/sec).", { n: Math.max(0.1, f.est_tps).toFixed(1) });
+}
+
+/** Installing something this PC probably can't run: say so first. */
+async function confirmAnyway(name: string, reason: string): Promise<boolean> {
+  return ask(t("{reason} It may not load, or be very slow. Download {name} anyway?", { reason, name }), {
+    title: t("This PC probably can't run it"),
+    kind: "warning",
+    okLabel: t("Download anyway"),
+    cancelLabel: t("Cancel"),
+  });
+}
+
+function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: ModelCard; rank: RankInfo; budget: Budget; progress?: InstallProgress; otherBusy: boolean; toast: PushToast }) {
+  // Models this PC can't run (shown on request) offer every version.
+  const options = m.runnable ? m.fit.variants.filter((v) => v.placement && v.disk_ok) : m.fit.variants;
   const onDisk = options.find((v) => v.quant === m.on_disk)?.quant;
   const [quant, setQuant] = useState(onDisk ?? m.fit.recommended ?? options[0]?.quant ?? "");
   const fit = m.fit.variants.find((v) => v.quant === quant);
   const variant = m.variants.find((v) => v.quant === quant);
 
+  const runs = !!fit?.placement && fit.disk_ok;
   const install = async () => {
     try {
-      await api.install(m.id, quant);
+      if (!runs) {
+        if (!(await confirmAnyway(m.name, cantRun(fit, budget)))) return;
+      }
+      await api.install(m.id, quant, !runs);
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -532,16 +597,18 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
               );
             })}
           </select>
-          <button className="btn primary" onClick={install} disabled={otherBusy || !quant} title={otherBusy ? t("One install at a time") : undefined}>
-            {quant === onDisk ? t("Set up (no download)") : t("Install")}
+          <button className={`btn ${runs ? "primary" : ""}`} onClick={install} disabled={otherBusy || !quant || (fit !== undefined && !fit.disk_ok)} title={otherBusy ? t("One install at a time") : undefined}>
+            {quant === onDisk ? t("Set up (no download)") : runs ? t("Install") : t("Install anyway")}
           </button>
         </div>
       )}
-      {fit && variant && !progress && (
+      {fit && variant && !progress && (runs ? (
         <p className="muted small fit-line">
           {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} tokens/sec, estimated)", { n: Math.round(fit.est_tps) })}
         </p>
-      )}
+      ) : (
+        <p className="warn-text small fit-line" role="note">⚠ {t("This PC probably can't run this version.")} {cantRun(fit, budget)}</p>
+      ))}
     </article>
   );
 }
@@ -560,9 +627,16 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
         {p.phase !== "benchmark" && (
-          <button className="link" onClick={() => api.cancelInstall(modelId)}>
-            {t("Cancel")}
-          </button>
+          <span className="row">
+            {(p.phase === "download" || p.phase === "vision" || p.phase === "engine") && (
+              <button className="link" onClick={() => api.pauseInstall(modelId)}>
+                {t("Pause")}
+              </button>
+            )}
+            <button className="link" onClick={() => api.cancelInstall(modelId)}>
+              {t("Cancel")}
+            </button>
+          </span>
         )}
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>

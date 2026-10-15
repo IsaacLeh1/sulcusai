@@ -50,6 +50,8 @@ pub fn forget(conn: &Connection, id: &str) -> Result<(), String> {
 pub struct HubFile {
     /// The file's path in the repository.
     pub file: String,
+    /// Memory it needs while running (estimated), for a warning.
+    pub needed: u64,
     /// The id it installs as (to show its progress, or that it's installed).
     pub model_id: String,
     pub quant: String,
@@ -264,8 +266,9 @@ fn spec_for(repo_id: &str, info: &Value, variants: Vec<Variant>, vision: Option<
     }
 }
 
-/// What a search shows for one repository: the files this PC can run.
-fn describe(m: &Value, repo: &Repo, budget: &Budget) -> HubModel {
+/// What a search shows for one repository: the files this PC can run (or,
+/// with `all`, every file, the ones it can't run without a placement).
+fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> HubModel {
     let id = m["id"].as_str().unwrap_or_default().to_string();
     let mut files: Vec<&RemoteFile> = model_files(repo).filter(|f| f.size <= budget.disk).collect();
     files.sort_by_key(|f| f.size);
@@ -278,10 +281,10 @@ fn describe(m: &Value, repo: &Repo, budget: &Budget) -> HubModel {
     let files: Vec<HubFile> = files
         .iter()
         .zip(&fit.variants)
-        .filter(|(_, v)| v.runnable())
+        .filter(|(_, v)| all || v.runnable())
         .map(|(f, v)| {
             let quant = quant_of(&f.path);
-            HubFile { file: f.path.clone(), model_id: model_id(&id, &f.path), quality: quality_of(&quant), quant, size: f.size, placement: v.placement, est_tps: v.est_tps }
+            HubFile { file: f.path.clone(), needed: v.needed_bytes, model_id: model_id(&id, &f.path), quality: quality_of(&quant), quant, size: f.size, placement: v.placement, est_tps: v.est_tps }
         })
         .collect();
     HubModel {
@@ -310,7 +313,7 @@ fn client(state: &AppState) -> Result<reqwest::Client, String> {
 
 /// Searches Hugging Face's GGUF chat models (`sort`: "downloads", "trending"
 /// or "newest"); an empty query lists the most popular.
-pub async fn search(state: &Arc<AppState>, query: &str, sort: &str) -> Result<HubResults, String> {
+pub async fn search(state: &Arc<AppState>, query: &str, sort: &str, all: bool) -> Result<HubResults, String> {
     let client = client(state)?;
     let mut url = reqwest::Url::parse(API).map_err(|e| e.to_string())?;
     {
@@ -361,7 +364,7 @@ pub async fn search(state: &Arc<AppState>, query: &str, sort: &str) -> Result<Hu
     let mut out = HubResults { models: Vec::new(), hidden: 0 };
     for (m, r) in details {
         let Ok(r) = r else { continue };
-        let model = describe(&m, &r, &budget);
+        let model = describe(&m, &r, &budget, all);
         if model.files.is_empty() {
             out.hidden += 1;
         } else {
@@ -461,14 +464,19 @@ mod tests {
         let repo = Repo { info: info.clone(), files: vec![f("m-Q4_K_M.gguf", 5 * GIB), f("m-Q8_0.gguf", 9 * GIB), f("m-F16.gguf", 16 * GIB), f("m-Q4_K_M-00001-of-00002.gguf", 3 * GIB), f("mmproj-F16.gguf", GIB), f("eagle3-m-BF16.gguf", GIB), f("m-tiny.gguf", GIB / 2)] };
         let m = serde_json::json!({ "id": "someone/m-GGUF", "downloads": 10, "likes": 2, "gguf": info["gguf"] });
         let budget = Budget { vram: 8 * GIB, ram: 4 * GIB, disk: 500 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 60.0 };
-        let shown = describe(&m, &repo, &budget);
+        let shown = describe(&m, &repo, &budget, false);
         let files: Vec<&str> = shown.files.iter().map(|f| f.file.as_str()).collect();
         assert_eq!(files, ["m-Q4_K_M.gguf", "m-Q8_0.gguf"], "F16 is too big; split parts, picture readers, helpers and too-small files aren't models");
         assert_eq!(shown.files[0].placement, Some(Placement::Gpu));
         assert!(shown.vision);
         assert_eq!(shown.recommended.as_deref(), Some("m-Q4_K_M.gguf"));
         let tiny = Budget { vram: 0, ram: 2 * GIB, disk: 500 * GIB, gpu_bw_gbs: 0.0, cpu_bw_gbs: 30.0 };
-        assert!(describe(&m, &repo, &tiny).files.is_empty(), "nothing fits: the model is hidden");
+        assert!(describe(&m, &repo, &tiny, false).files.is_empty(), "nothing fits: the model is hidden");
+        // Browsing everything: the files it can't run come too, without a placement.
+        let every = describe(&m, &repo, &tiny, true);
+        assert_eq!(every.files.len(), 3, "Q4_K_M, Q8_0 and F16; still no split part, picture reader or helper");
+        assert!(every.files.iter().all(|f| f.placement.is_none() && f.needed > f.size));
+        assert_eq!(every.recommended, None);
     }
 }
 
@@ -484,7 +492,7 @@ mod live {
         let state = crate::e2e::scratch_state();
         println!("budget: {:?}", state.budget());
         for (q, sort) in [("gpt-oss", "downloads"), ("", "trending"), ("qwen3", "downloads")] {
-            let r = search(&state, q, sort).await.unwrap();
+            let r = search(&state, q, sort, false).await.unwrap();
             println!("\n“{q}” ({sort}): {} shown, {} hidden", r.models.len(), r.hidden);
             for m in r.models.iter().take(4) {
                 let files: Vec<String> = m.files.iter().map(|f| format!("{} {:.1}GB {:?}", f.quant, f.size as f64 / 1e9, f.placement)).collect();

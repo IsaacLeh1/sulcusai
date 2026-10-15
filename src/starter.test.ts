@@ -8,6 +8,7 @@ function card(id: string, params_b: number, tps: number, tags: string[] = [], in
     id,
     name: id,
     renamed_from: null,
+    runnable: true,
     publisher: "",
     source: "",
     description: "",

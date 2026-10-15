@@ -30,6 +30,7 @@ import { UpdatePill } from "./components/Updates";
 import { SETTINGS_VIEWS, SettingsNav } from "./components/SettingsNav";
 import { PrivacyPill } from "./components/PrivacySettings";
 import { WebPermission } from "./components/WebPermission";
+import { DownloadsPill } from "./components/Downloads";
 
 // Pages load the first time they are opened, so the app starts faster.
 const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
@@ -195,6 +196,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         api.settings().then(setSettings);
         const name = f.name ?? catalog?.models.find((m) => m.id === f.model_id)?.name ?? t("The model");
         if (f.ok) toast(t("{name} is installed and ready.", { name }), "success");
+        else if (f.paused) toast(t("Paused {name}. Resume it under Downloads on the Models page.", { name }), "info");
         else if (!f.cancelled) toast(t("{name} didn't install: {error}", { name, error: String(f.error) }), "error");
       }),
       on("chat:done", (p) => {
@@ -670,6 +672,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         )}
         <PerfPill onOpen={() => setView("settings")} />
+        <DownloadsPill progress={progress} models={catalog?.models ?? []} onOpen={() => setView("models")} />
         <UpdatePill toast={toast} />
         <PrivacyPill onOpen={() => setView("settings")} />
         <span className="spacer" />

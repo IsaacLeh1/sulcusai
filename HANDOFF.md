@@ -490,6 +490,9 @@ His brief: nothing hosted by us; sites SulcusAI contacts shouldn't learn the use
 - **Web permission:** with web off, `request_web` pauses the reply on an approval shown as a popup anywhere in the app (`components/WebPermission.tsx`); a yes turns web on for that chat (`chat:web` event) and adds the web tools for the rest of the same reply. Test `asking_for_the_web_carries_on_in_the_same_reply` (stand-in engine).
 - **System folders:** a folder inside Windows, Program Files or ProgramData can be shared after a Windows Yes/No warning (`folder_warning`, `src/folders.ts`, capability `dialog:allow-ask`); those folders themselves, drives, the whole user folder and the app's data stay refused.
 - **Translations:** `i18n_extract.py` also reads `Some("…")` reasons and `pub const` messages from the core (that's how the folder and mail sign-in messages got translated).
+- **Speed test status** (`SPEED_STATUS` in `lib.rs`, `speed_test_status`): the core keeps whether a test runs, the model being tested, done/total and per-model errors; `models:speed` events carry that status (plus `tested`/`tps`/`error`, and `finished`). `SpeedChart` reads it when it mounts (leaving the page mid-test no longer loses it) and refreshes the catalog after each measured model. The Models page order is hardware → speed → filters → Installed → Available → other apps → Hugging Face → storage.
+- **Calendar chips** are `.cal-chip` now: the month view's `.chip` rules had restyled every `.chip` in the app (Models filters, Activity, Notes, Quick ask) since 0.8.7.
+- **0.9.0** (2026-10-15) carries all of this plus the Private connection; 0.8.9 was never published.
 
 ## Website (2026-10-12)
 

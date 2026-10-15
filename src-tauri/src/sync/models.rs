@@ -184,5 +184,5 @@ pub async fn copy_model_from(app: AppHandle, state: AppStateRef<'_>, peer_id: St
     }
     // The usual install: it finds the files, checks their hashes, and measures speed.
     let st = app.state::<Arc<AppState>>();
-    crate::install_model(app.clone(), st, model_id, offer.quant)
+    crate::install_model(app.clone(), st, model_id, offer.quant, None)
 }

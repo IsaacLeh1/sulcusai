@@ -23,6 +23,7 @@ mod db;
 mod docs;
 mod diarize;
 mod download;
+mod downloads;
 #[cfg(all(test, windows))]
 mod e2e;
 mod engine;
@@ -266,6 +267,8 @@ struct ModelCard {
     on_disk: Option<String>,
     /// The model's own name, when the user renamed it (`name` is theirs).
     renamed_from: Option<String>,
+    /// Some version runs on this PC (fits its memory, fast enough, and on disk).
+    runnable: bool,
 }
 
 #[derive(Serialize)]
@@ -278,8 +281,11 @@ struct CatalogView {
     installing: Vec<String>,
 }
 
+/// The models for this PC: the ones it can run, or with `all` every one
+/// (the Models page's "Show models this PC can't run").
 #[tauri::command(async)]
-fn catalog_view(state: AppStateRef) -> CatalogView {
+fn catalog_view(state: AppStateRef, all: Option<bool>) -> CatalogView {
+    let show_all = all.unwrap_or(false);
     let hardware = state.hardware.read().unwrap().clone();
     let budget = Budget::from_hardware(&hardware);
     let installed = db::installed_models(&state.db.lock().unwrap());
@@ -308,7 +314,8 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
             };
             let mut spec = spec.clone();
             let renamed_from = names.get(&spec.id).map(|name| std::mem::replace(&mut spec.name, name.clone()));
-            (inst.is_some() || fit.visible()).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from })
+            let runnable = fit.visible();
+            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable })
         })
         .collect();
 
@@ -331,24 +338,53 @@ struct InstallProgress<'a> {
 }
 
 #[tauri::command(async)]
-fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: String) -> Result<(), String> {
+fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: String, force: Option<bool>) -> Result<(), String> {
     let spec = state.catalog.model(&model_id).cloned().or_else(|| hub::list(&state.db.lock().unwrap()).into_iter().find(|m| m.id == model_id)).ok_or("Unknown model")?;
-    start_install(app, state.inner().clone(), spec, quant)
+    start_install(app, state.inner().clone(), spec, quant, force.unwrap_or(false))
+}
+
+/// Stops a download but keeps what's downloaded, to resume later.
+#[tauri::command(async)]
+fn pause_install(state: AppStateRef, model_id: String) {
+    if let Some(flag) = state.installs.lock().unwrap().get(&model_id) {
+        downloads::mark_pausing(&model_id);
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Continues a paused download from where it stopped.
+#[tauri::command(async)]
+fn resume_install(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
+    let paused = downloads::list(&state.db.lock().unwrap()).into_iter().find(|p| p.model_id == model_id).ok_or("That download isn't paused anymore.")?;
+    let spec = state.model_spec(&model_id).ok_or("That model isn't available anymore.")?;
+    // It was started knowingly, so a warning it got then doesn't stop it now.
+    start_install(app, state.inner().clone(), spec, paused.quant, true)
+}
+
+#[derive(Serialize)]
+struct DownloadsView {
+    paused: Vec<downloads::Paused>,
+}
+
+/// Paused downloads (the running one comes as `install:progress` events).
+#[tauri::command(async)]
+fn downloads_view(state: AppStateRef) -> DownloadsView {
+    DownloadsView { paused: downloads::list(&state.db.lock().unwrap()) }
 }
 
 /// Searches Hugging Face for GGUF chat models; only files this PC can run.
 #[tauri::command]
-async fn hub_search(state: AppStateRef<'_>, query: String, sort: String) -> Result<hub::HubResults, String> {
-    hub::search(state.inner(), &query, &sort).await
+async fn hub_search(state: AppStateRef<'_>, query: String, sort: String, all: Option<bool>) -> Result<hub::HubResults, String> {
+    hub::search(state.inner(), &query, &sort, all.unwrap_or(false)).await
 }
 
 /// Installs one file of a Hugging Face model, like a catalog model.
 /// Returns the model's id, whose card shows the progress.
 #[tauri::command]
-async fn hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String) -> Result<String, String> {
+async fn hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String, force: Option<bool>) -> Result<String, String> {
     let spec = hub::prepare(state.inner(), &repo, &file).await?;
     let (id, quant) = (spec.id.clone(), spec.variants[0].quant.clone());
-    if let Err(e) = start_install(app, state.inner().clone(), spec, quant) {
+    if let Err(e) = start_install(app, state.inner().clone(), spec, quant, force.unwrap_or(false)) {
         hub::forget(&state.db.lock().unwrap(), &id).ok();
         return Err(e);
     }
@@ -356,13 +392,14 @@ async fn hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file:
 }
 
 /// Downloads, checks and speed-tests a model in the background, reporting
-/// progress to its card.
-fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quant: String) -> Result<(), String> {
+/// progress to its card. `force`: the person was warned this PC probably
+/// can't run it and chose to go ahead.
+fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quant: String, force: bool) -> Result<(), String> {
     let mut variant = spec.variant(&quant).ok_or("Unknown model version")?.clone();
     let model_id = spec.id.clone();
     let fit = catalog::fit_model(&spec, &state.budget());
     let vfit = fit.variant(&quant).ok_or("Unknown model version")?;
-    if !vfit.runnable() {
+    if !vfit.runnable() && !force {
         return Err("This PC can't run that version of the model.".into());
     }
     if !vfit.disk_ok {
@@ -372,10 +409,16 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
     if !state.installs.lock().unwrap().is_empty() {
         return Err("Another install is in progress. Wait for it to finish first.".into());
     }
+    // Resumed (or started over): no longer paused.
+    downloads::forget(&state.db.lock().unwrap(), &model_id)?;
+    app.emit("downloads:changed", json!({})).ok();
 
     tauri::async_runtime::spawn(async move {
         let Some((cancel, _guard)) = claim(&state.installs, &model_id) else { return };
+        // The last progress, for a pause to remember.
+        let last = std::sync::Mutex::new((0u64, 0u64));
         let emit = |phase: &str, received: u64, total: u64| {
+            *last.lock().unwrap() = (received, total);
             app.emit("install:progress", InstallProgress { model_id: &model_id, phase, received, total }).ok();
         };
         state.log("model", &format!("Started installing {} ({} quality)", spec.name, variant.quality));
@@ -487,7 +530,18 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 state.log("model", &format!("Installed {} ({} quality)", spec.name, variant.quality));
                 json!({ "model_id": model_id, "ok": true })
             }
+            Err(e) if e == download::CANCELLED && downloads::take_pausing(&model_id) => {
+                let (received, total) = *last.lock().unwrap();
+                let paused = downloads::Paused { model_id: model_id.clone(), quant: variant.quant.clone(), name: spec.name.clone(), received, total, at: db::now_ms() };
+                downloads::remember(&state.db.lock().unwrap(), paused).ok();
+                state.log("model", &format!("Paused downloading {}", spec.name));
+                json!({ "model_id": model_id, "ok": false, "paused": true })
+            }
             Err(e) if e == download::CANCELLED => {
+                downloads::delete_parts(&state.paths, &spec);
+                if spec.id.starts_with("hf-") {
+                    hub::forget(&state.db.lock().unwrap(), &spec.id).ok();
+                }
                 state.log("model", &format!("Cancelled installing {}", spec.name));
                 json!({ "model_id": model_id, "ok": false, "cancelled": true })
             }
@@ -496,6 +550,7 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 json!({ "model_id": model_id, "ok": false, "error": e })
             }
         };
+        app.emit("downloads:changed", json!({})).ok();
         app.emit("install:finished", payload).ok();
     });
     Ok(())
@@ -807,10 +862,20 @@ async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -> Result<us
 }
 
 #[tauri::command(async)]
-fn cancel_install(state: AppStateRef, model_id: String) {
+fn cancel_install(app: AppHandle, state: AppStateRef, model_id: String) {
     if let Some(flag) = state.installs.lock().unwrap().get(&model_id) {
         flag.store(true, Ordering::Relaxed);
+        return;
     }
+    // A paused one: drop what was downloaded.
+    if let Some(spec) = state.model_spec(&model_id) {
+        downloads::delete_parts(&state.paths, &spec);
+        if spec.id.starts_with("hf-") && db::installed_model(&state.db.lock().unwrap(), &spec.id).is_none() {
+            hub::forget(&state.db.lock().unwrap(), &spec.id).ok();
+        }
+    }
+    downloads::forget(&state.db.lock().unwrap(), &model_id).ok();
+    app.emit("downloads:changed", json!({})).ok();
 }
 
 #[tauri::command]
@@ -1520,6 +1585,9 @@ pub fn run() {
             refresh_hardware,
             catalog_view,
             install_model,
+            pause_install,
+            resume_install,
+            downloads_view,
             hub_search,
             hub_install,
             cancel_install,

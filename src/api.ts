@@ -287,6 +287,8 @@ export interface Advanced {
 export interface HubFile {
   /** The file's path in the repository. */
   file: string;
+  /** Memory it needs while running (estimated). */
+  needed: number;
   /** The id it installs as. */
   model_id: string;
   quant: string;
@@ -330,6 +332,16 @@ export interface SpeedStatus {
   errors: Record<string, string>;
 }
 
+/** A download that was paused. */
+export interface PausedDownload {
+  model_id: string;
+  quant: string;
+  name: string;
+  received: number;
+  total: number;
+  at: number;
+}
+
 export interface FolderImport {
   /** Names of the models added. */
   added: string[];
@@ -352,6 +364,8 @@ export interface ModelCard {
   name: string;
   /** The model's own name, when the user renamed it. */
   renamed_from: string | null;
+  /** Some version runs on this PC (memory, speed and disk). */
+  runnable: boolean;
   publisher: string;
   source: string;
   description: string;
@@ -1186,16 +1200,21 @@ export const api = {
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),
-  hubSearch: (query: string, sort: "downloads" | "trending" | "newest") => invoke<HubResults>("hub_search", { query, sort }),
+  hubSearch: (query: string, sort: "downloads" | "trending" | "newest", all = false) => invoke<HubResults>("hub_search", { query, sort, all }),
   /** Starts installing one file; returns the model id its progress is reported under. */
-  hubInstall: (repo: string, file: string) => invoke<string>("hub_install", { repo, file }),
+  hubInstall: (repo: string, file: string, force = false) => invoke<string>("hub_install", { repo, file, force }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   speedTestStatus: () => invoke<SpeedStatus>("speed_test_status"),
   measureAllSpeeds: () => invoke<number>("measure_all_speeds"),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
-  catalog: () => invoke<CatalogView>("catalog_view"),
-  install: (modelId: string, quant: string) => invoke<void>("install_model", { modelId, quant }),
+  /** The models this PC can run, or with `all` every one. */
+  catalog: (all = false) => invoke<CatalogView>("catalog_view", { all }),
+  /** `force`: install even though this PC probably can't run it (the person was warned). */
+  install: (modelId: string, quant: string, force = false) => invoke<void>("install_model", { modelId, quant, force }),
+  pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
+  resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
+  downloadsView: () => invoke<{ paused: PausedDownload[] }>("downloads_view"),
   /** Adds models already on this PC (an earlier install or another app). `again` also brings back ones removed earlier. */
   findModels: (again = false) => invoke<FoundModels>("find_models", { again }),
   cancelInstall: (modelId: string) => invoke<void>("cancel_install", { modelId }),
@@ -1426,6 +1445,8 @@ export interface InstallFinished {
   name?: string;
   ok: boolean;
   cancelled?: boolean;
+  /** Paused: what's downloaded is kept, to resume. */
+  paused?: boolean;
   error?: string;
 }
 
@@ -1451,6 +1472,7 @@ export interface ChatEvents {
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
   "install:finished": InstallFinished;
+  "downloads:changed": Record<string, never>;
   "security:locked": null;
   "features:changed": Record<string, never>;
   "models:found": { names: string[] };
