@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type FolderImport, type FoundModels, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
+import { api, errorText, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type Settings } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -117,6 +117,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
       {tab === "chat" && <SpeedChart models={catalog.models} onRefresh={onRefresh} toast={toast} />}
 
       {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
+
+      {tab === "chat" && <HubBrowser models={catalog.models} progress={progress} onRefresh={onRefresh} toast={toast} />}
 
       {tab === "chat" && installed.length > 0 && (
         <>
@@ -300,6 +302,140 @@ function AddFromFolder({ onClose, onRefresh }: { onClose: () => void; onRefresh:
   );
 }
 
+const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
+
+/** Hugging Face's GGUF chat models, showing only the versions this PC can
+ * run; installing one works like a model from the list. Nothing is asked of
+ * huggingface.co until the person searches. */
+function HubBrowser({ models, progress, onRefresh, toast }: { models: ModelCard[]; progress: Record<string, InstallProgress>; onRefresh: () => Promise<void>; toast: PushToast }) {
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"downloads" | "trending" | "newest">("downloads");
+  const [results, setResults] = useState<HubResults | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [allOf, setAllOf] = useState<string | null>(null);
+  const busy = Object.keys(progress).length > 0;
+
+  const search = async (by = sort) => {
+    setSearching(true);
+    setProblem(null);
+    try {
+      setResults(await api.hubSearch(query, by));
+    } catch (e) {
+      setProblem(errorText(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+  const install = async (m: HubModel, f: HubFile) => {
+    try {
+      await api.hubInstall(m.id, f.file);
+      await onRefresh();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
+  const row = (m: HubModel, f: HubFile) => {
+    const installed = models.some((c) => c.id === f.model_id && c.installed);
+    const p = progress[f.model_id];
+    return (
+      <div key={f.file} className="hub-file">
+        <div className="hub-file-what">
+          <strong>{f.quant}</strong>
+          {f.file === m.recommended && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
+          <span className="muted small">
+            {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} tokens/sec", { n: Math.round(f.est_tps) })}
+          </span>
+        </div>
+        {p ? (
+          <InstallBar modelId={f.model_id} p={p} />
+        ) : installed ? (
+          <span className="badge subtle">{t("Installed")}</span>
+        ) : (
+          <button className="btn small" onClick={() => install(m, f)} disabled={busy} title={busy ? t("One install at a time") : undefined}>
+            {t("Install")}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <section className="card hub">
+      <div className="look-row">
+        <div>
+          <strong>{t("Hugging Face")}</strong>
+          <p className="muted small">{t("Thousands of models people share. Only the versions this PC can run are shown. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}</p>
+        </div>
+      </div>
+      <form
+        className="row wrap hub-search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          search();
+        }}
+      >
+        <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search, e.g. qwen3, gemma, coder")} aria-label={t("Search Hugging Face")} />
+        <select
+          className="input"
+          value={sort}
+          aria-label={t("Order")}
+          onChange={(e) => {
+            const by = e.target.value as typeof sort;
+            setSort(by);
+            if (results) search(by);
+          }}
+        >
+          <option value="downloads">{t("Most downloaded")}</option>
+          <option value="trending">{t("Trending")}</option>
+          <option value="newest">{t("Recently updated")}</option>
+        </select>
+        <button className="btn" type="submit" disabled={searching}>
+          {searching ? t("Searching…") : query.trim() ? t("Search") : t("Show popular models")}
+        </button>
+      </form>
+      {problem && <p className="warn-text small">{problem}</p>}
+      {results && (
+        <>
+          <p className="muted small" role="status">
+            {results.models.length === 0
+              ? t("Nothing found that this PC can run. Try another search.")
+              : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
+            {results.hidden > 0 && t("{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.", { n: results.hidden })}
+          </p>
+          <div className="hub-list">
+            {results.models.map((m) => {
+              const best = m.files.find((f) => f.file === m.recommended) ?? m.files[m.files.length - 1];
+              const shown = allOf === m.id ? m.files : [best];
+              return (
+                <article key={m.id} className="hub-model">
+                  <div className="hub-head">
+                    <div>
+                      <strong>{m.name}</strong> <span className="muted small">{t("by {author}", { author: m.author })}</span>
+                    </div>
+                    <span className="muted small">
+                      {m.params_b !== null && `${t("{n}B parameters", { n: m.params_b })} · `}
+                      ⬇ {compact.format(m.downloads)} · ♥ {compact.format(m.likes)}
+                      {m.vision && ` · ${t("sees pictures")}`}
+                    </span>
+                  </div>
+                  {shown.map((f) => row(m, f))}
+                  {m.files.length > 1 && (
+                    <button className="link small" onClick={() => setAllOf(allOf === m.id ? null : m.id)}>
+                      {allOf === m.id ? t("Show only the best fit") : t("All {n} versions", { n: m.files.length })}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Spec({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="spec">
@@ -382,7 +518,7 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
       <Capability m={m} rank={rank} />
       <Tags m={m} />
       {progress ? (
-        <InstallBar m={m} p={progress} />
+        <InstallBar modelId={m.id} p={progress} />
       ) : (
         <div className="install-row">
           <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={t("Quality for {name}", { name: m.name })} title={t("Quality and download size. ★ is the best fit for this PC.")}>
@@ -410,7 +546,7 @@ function AvailableCard({ m, rank, progress, otherBusy, toast }: { m: ModelCard; 
   );
 }
 
-function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
+function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
   const label = {
     engine: t("Setting up the engine"),
     verify: t("Checking the downloaded file"),
@@ -424,7 +560,7 @@ function InstallBar({ m, p }: { m: ModelCard; p: InstallProgress }) {
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
         {p.phase !== "benchmark" && (
-          <button className="link" onClick={() => api.cancelInstall(m.id)}>
+          <button className="link" onClick={() => api.cancelInstall(modelId)}>
             {t("Cancel")}
           </button>
         )}

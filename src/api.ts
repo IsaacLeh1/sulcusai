@@ -284,6 +284,40 @@ export interface Advanced {
   processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; helper_steps: number | null };
 }
 
+export interface HubFile {
+  /** The file's path in the repository. */
+  file: string;
+  /** The id it installs as. */
+  model_id: string;
+  quant: string;
+  quality: string;
+  size: number;
+  placement: Placement | null;
+  est_tps: number;
+}
+
+export interface HubModel {
+  /** "owner/name" on Hugging Face. */
+  id: string;
+  name: string;
+  author: string;
+  downloads: number;
+  likes: number;
+  params_b: number | null;
+  updated: string | null;
+  vision: boolean;
+  url: string;
+  /** Only the files this PC can run, smallest first. */
+  files: HubFile[];
+  recommended: string | null;
+}
+
+export interface HubResults {
+  models: HubModel[];
+  /** Results left out because no file of theirs runs on this PC. */
+  hidden: number;
+}
+
 export interface FolderImport {
   /** Names of the models added. */
   added: string[];
@@ -1140,6 +1174,9 @@ export const api = {
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),
+  hubSearch: (query: string, sort: "downloads" | "trending" | "newest") => invoke<HubResults>("hub_search", { query, sort }),
+  /** Starts installing one file; returns the model id its progress is reported under. */
+  hubInstall: (repo: string, file: string) => invoke<string>("hub_install", { repo, file }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   measureAllSpeeds: () => invoke<number>("measure_all_speeds"),

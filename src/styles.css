@@ -1106,3 +1106,16 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .jump-latest:hover { background: var(--hover); }
 /* The assistant asking to use the web: what it wants to look up. */
 .web-ask-reason { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-weight: 500; }
+/* Models → Hugging Face */
+.hub-search { margin: 8px 0; }
+.hub-search { flex-wrap: nowrap; }
+.hub-search .input { width: auto; }
+.hub-search .input:first-child { flex: 1; min-width: 160px; }
+.hub-search select.input { flex: none; }
+.hub-model > .link { align-self: flex-start; }
+.hub-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.hub-model { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.hub-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hub-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hub-file-what { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.hub-file .install-progress { flex: 0 1 320px; }

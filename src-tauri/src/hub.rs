@@ -50,6 +50,8 @@ pub fn forget(conn: &Connection, id: &str) -> Result<(), String> {
 pub struct HubFile {
     /// The file's path in the repository.
     pub file: String,
+    /// The id it installs as (to show its progress, or that it's installed).
+    pub model_id: String,
     pub quant: String,
     pub quality: String,
     pub size: u64,
@@ -279,7 +281,7 @@ fn describe(m: &Value, repo: &Repo, budget: &Budget) -> HubModel {
         .filter(|(_, v)| v.runnable())
         .map(|(f, v)| {
             let quant = quant_of(&f.path);
-            HubFile { file: f.path.clone(), quality: quality_of(&quant), quant, size: f.size, placement: v.placement, est_tps: v.est_tps }
+            HubFile { file: f.path.clone(), model_id: model_id(&id, &f.path), quality: quality_of(&quant), quant, size: f.size, placement: v.placement, est_tps: v.est_tps }
         })
         .collect();
     HubModel {
@@ -295,6 +297,11 @@ fn describe(m: &Value, repo: &Repo, budget: &Budget) -> HubModel {
         files,
         id,
     }
+}
+
+/// The id a file installs as: the same for the same file, every time.
+fn model_id(repo_id: &str, file: &str) -> String {
+    format!("hf-{}", &hex::encode(Sha256::digest(format!("{repo_id}/{file}").as_bytes()))[..12])
 }
 
 fn client(state: &AppState) -> Result<reqwest::Client, String> {
@@ -387,8 +394,7 @@ pub async fn prepare(state: &Arc<AppState>, repo_id: &str, file: &str) -> Result
         Some(p) => Some(VisionFile { file: base_name(&p.path).to_string(), url: url(&p.path)?, size: p.size, sha256: p.sha256.clone() }),
         None => None,
     };
-    let id = format!("hf-{}", &hex::encode(Sha256::digest(format!("{repo_id}/{file}").as_bytes()))[..12]);
-    let spec = spec_for(repo_id, &r.info, vec![variant], vision, id);
+    let spec = spec_for(repo_id, &r.info, vec![variant], vision, model_id(repo_id, file));
     remember(&state.db.lock().unwrap(), &spec)?;
     Ok(spec)
 }
