@@ -8,7 +8,7 @@ import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
-import { t } from "../i18n";
+import { t, tx } from "../i18n";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -684,10 +684,10 @@ function SharedPanel({ contact: c, onOpen, toast }: { contact: PersonContact; on
 }
 
 const LIVE_STATUS: Record<string, string> = {
-  loading: "Loading the model…",
-  thinking: "Thinking…",
-  writing: "Writing…",
-  working: "Using a tool…",
+  loading: tx("Loading the model…"),
+  thinking: tx("Thinking…"),
+  writing: tx("Writing…"),
+  working: tx("Using a tool…"),
 };
 
 /** A chat someone shares, live and read-only. */

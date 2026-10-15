@@ -36,10 +36,11 @@ rpat = re.compile(r'(?:Err\(|Some\(|ok_or\(|ok_or_else\(\|\|\s*|map_err\(\|_\|\s
 rinto = re.compile(r'"((?:[^"\\]|\\.)*)"\.(?:into|to_string)\(\)')
 for d, _, files in os.walk(os.path.join(root, 'src-tauri', 'src')):
     for f in files:
-        if not f.endswith('.rs') or f == 'e2e.rs':
+        if not f.endswith('.rs') or f in ('e2e.rs', 'tests.rs'):
             continue
-        text = open(os.path.join(d, f), encoding='utf-8').read()
-        text = text.split('#[cfg(test)]\nmod tests')[0]
+        text = open(os.path.join(d, f), encoding='utf-8').read().replace('\r\n', '\n')
+        # Up to an inline test module (`mod tests;` only names one in its own file).
+        text = text.split('#[cfg(test)]\nmod tests {')[0]
         for m in list(rpat.finditer(text)) + list(rinto.finditer(text)):
             lit = m.group(1)
             if '{' in lit or BS in lit or len(lit) < 12 or ' ' not in lit or not lit[0].isupper() or lit[-1] not in '.?!)':

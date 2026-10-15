@@ -223,8 +223,10 @@ fits   = needed <= VRAM                          (full GPU)
 
 - Link with someone else's SulcusAI with a code (the same pairing as sync, but the other side becomes a contact, not a paired PC: it can never sync or reach models).
 - The apps connect directly, like Radmin: on the same network, or across the internet over a virtual network (Radmin VPN, Tailscale, ZeroTier) by the address the other side shows. Nothing is hosted by SulcusAI.
-- Phase 1: a chat between the people (text and files up to 16 MB), stored encrypted on each PC, never sent to a model. Messages wait until either app reaches the other.
-- Later phases: share a chat live, let each other's agents ask each other things (with permissions and approval), and work on a task together.
+- A chat between the people (text and files up to 16 MB), stored encrypted on each PC, never sent to a model. The apps stay connected while both run, so messages arrive at once; otherwise they wait.
+- Share a chat with someone: they watch it live and read-only (replies as they're written, the steps taken but not what tools found). Nothing is kept on their PC.
+- Assistants can ask each other things, and work something out together (taking turns until they agree, such as a meeting time). Each side answers with its own model and only what its user allows (shared chats; notes; calendar, email and chosen folders if turned on), read-only, after the user approves (or automatically, if they choose). Answers are treated as information, never instructions.
+- Without a virtual network, either person can let the other use their own relay (Cloud level): messages and the assistants' questions go through it, sealed so the relay can't read them. Watching chats live needs a direct connection.
 
 ---
 
