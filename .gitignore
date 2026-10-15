@@ -6,3 +6,4 @@ src-tauri/gen/schemas/
 .DS_Store
 .vscode/
 .idea/
+__pycache__/
