@@ -29,6 +29,7 @@ import { useIdleLock } from "./idle";
 import { UpdatePill } from "./components/Updates";
 import { SETTINGS_VIEWS, SettingsNav } from "./components/SettingsNav";
 import { PrivacyPill } from "./components/PrivacySettings";
+import { WebPermission } from "./components/WebPermission";
 
 // Pages load the first time they are opened, so the app starts faster.
 const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
@@ -208,6 +209,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
+      // The assistant asked for the web and got a yes: the 🌐 button shows it.
+      on("chat:web", () => refreshChats()),
       // The assistant showing the user a page (open_page).
       on("app:navigate", (p) => setView(p.page as View)),
       on("sync:changed", () => {
@@ -675,6 +678,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           {settings.connectivity === "cloud" ? t("AI runs on this PC unless you pick a cloud model") : t("AI runs only on this PC")}
         </span>
       </footer>
+      <WebPermission chats={chats} onOpenChat={openChat} />
       {newProject && (
         <NewProjectDialog
           onClose={() => setNewProject(false)}

@@ -1104,3 +1104,5 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 /* Chat: back to the newest text after scrolling up while a reply streams. */
 .jump-latest { position: sticky; bottom: 8px; align-self: center; z-index: 2; border: 1px solid var(--accent); background: var(--panel); color: var(--text); border-radius: 99px; padding: 4px 14px; font-size: 12.5px; cursor: pointer; box-shadow: var(--shadow); }
 .jump-latest:hover { background: var(--hover); }
+/* The assistant asking to use the web: what it wants to look up. */
+.web-ask-reason { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-weight: 500; }

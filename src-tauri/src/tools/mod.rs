@@ -167,7 +167,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
-        description: "Web access is off in this chat. If answering needs current information from the internet, call this to ask the user to turn it on, then stop." },
+        description: "Web access is off in this chat. If the task needs current information from the internet, call this: the user is asked in a popup. If they allow it, web_search, fetch_page and weather are available right away to finish the task; if not, answer without the web." },
     ToolDef { name: "browser_open", risk: Risk::Read, params: browser::browser_open_params,
         description: "Open a website in the built-in browser, which the user can watch. Use it to use a site (fill in a search, click through pages); for just reading, web_search and fetch_page are quicker. Returns the page's text and its links, buttons and fields, numbered." },
     ToolDef { name: "browser_read", risk: Risk::Read, params: browser::browser_read_params,

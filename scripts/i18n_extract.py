@@ -30,8 +30,9 @@ for d, _, files in os.walk(src):
             keys.setdefault(text, os.path.relpath(p, src))
 ui = len(keys)
 
-# The core's fixed messages (errors the window shows as they come).
-rpat = re.compile(r'(?:Err\(|ok_or\(|ok_or_else\(\|\|\s*|map_err\(\|_\|\s*)"((?:[^"\\]|\\.)*)"')
+# The core's fixed messages (errors the window shows as they come), also
+# reasons returned as Some("…") and public message constants.
+rpat = re.compile(r'(?:Err\(|Some\(|ok_or\(|ok_or_else\(\|\|\s*|map_err\(\|_\|\s*|pub const [A-Z_]+: &str = )"((?:[^"\\]|\\.)*)"')
 rinto = re.compile(r'"((?:[^"\\]|\\.)*)"\.(?:into|to_string)\(\)')
 for d, _, files in os.walk(os.path.join(root, 'src-tauri', 'src')):
     for f in files:

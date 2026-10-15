@@ -235,22 +235,32 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
   // Keep the newest text in view while it streams, unless the person
   // scrolled up to read.
+  // Where the view was last put or seen: only moving up from there means the
+  // person scrolled (scroll events arrive late, after more text may have
+  // landed, so a gap at the bottom alone proves nothing).
+  const lastTop = useRef(0);
   const toEnd = () => {
     const el = scroller.current;
     if (!el) return;
     following.current = true;
     setAwayFromEnd(false);
     el.scrollTop = el.scrollHeight;
+    lastTop.current = el.scrollTop;
   };
   const onScroll = () => {
     const el = scroller.current;
     if (!el) return;
-    following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 24) following.current = true;
+    else if (el.scrollTop < lastTop.current - 2) following.current = false;
+    lastTop.current = el.scrollTop;
     setAwayFromEnd(!following.current);
   };
   useEffect(() => {
     const el = scroller.current;
-    if (el && following.current) el.scrollTop = el.scrollHeight;
+    if (el && following.current) {
+      el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+    }
   }, [messages, streaming, pending]);
   // A newly opened chat starts at its end.
   useEffect(() => {
@@ -477,7 +487,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             live={status}
           />
         )}
-        {pending.map((p) => (
+        {/* Asking for the web is a popup (WebPermission), wherever the person is. */}
+        {pending.filter((p) => p.tool !== "request_web").map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
         {jobs.map((j) => (

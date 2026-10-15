@@ -884,6 +884,82 @@ async fn e2e_notes_and_tasks() {
     state.engine.lock().await.stop().await;
 }
 
+/// Web off: the model asks for the web, the user answers the popup, and the
+/// same reply carries on with the web tools (a yes) or without them (a no).
+/// Against a stand-in engine that streams like llama.cpp.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asking_for_the_web_carries_on_in_the_same_reply() {
+    use axum::{routing::post, Json, Router};
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>;
+    let seen: Seen = Default::default();
+    let s = seen.clone();
+    let app = Router::new()
+        .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+            let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+            Json(serde_json::json!({ "tokens": vec![1; n] }))
+        }))
+        .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+            let s = s.clone();
+            async move {
+                let names: Vec<String> = b["tools"].as_array().into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(|n| n.as_str()).map(str::to_string)).collect();
+                let answered = b["messages"].as_array().is_some_and(|m| m.iter().any(|m| m["role"] == "tool"));
+                s.lock().unwrap().push(names);
+                let chunk = |v: serde_json::Value| format!("data: {v}\n\n");
+                let body = if answered {
+                    chunk(serde_json::json!({ "choices": [{ "delta": { "content": "Done." }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }))
+                } else {
+                    let call = serde_json::json!({ "index": 0, "id": "call_web", "type": "function", "function": { "name": "request_web", "arguments": "{\"reason\": \"who maintains curl\"}" } });
+                    chunk(serde_json::json!({ "choices": [{ "delta": { "tool_calls": [call] }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }))
+                } + "data: [DONE]\n\n";
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    let state = scratch_state();
+    let cipher = state.cipher().unwrap();
+    // Offline with the Web search feature off: no web in any chat.
+    {
+        let conn = state.db.lock().unwrap();
+        crate::features::set(&conn, crate::features::Feature::WebSearch, false).unwrap();
+        crate::db::update_settings(&conn, |s| s.connectivity = crate::net::Connectivity::Offline).unwrap();
+    }
+
+    for allow in [true, false] {
+        seen.lock().unwrap().clear();
+        let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        // The person, answering the popup.
+        let st = state.clone();
+        let answering = tokio::spawn(async move {
+            loop {
+                if let Some(p) = st.approvals.waiting().into_iter().find(|p| p.tool == "request_web") {
+                    st.approvals.answer(&p.call_id, if allow { crate::agent::Decision::Allow } else { crate::agent::Decision::Deny });
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+        let reply = say(&state, &ep, &cipher, &chat.id, "Who maintains the curl project?").await;
+        answering.await.unwrap();
+        assert_eq!(reply, "Done.", "the same reply went on after the answer");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert!(seen[0].contains(&"request_web".to_string()) && !seen[0].contains(&"web_search".to_string()), "web off: only a way to ask: {:?}", seen[0]);
+        let on = crate::db::list_chats(&state.db.lock().unwrap(), &cipher).into_iter().find(|c| c.id == chat.id).unwrap().web;
+        if allow {
+            assert!(on, "a yes turns web on for the chat");
+            assert!(seen[1].contains(&"web_search".to_string()) && !seen[1].contains(&"request_web".to_string()), "the web tools, right away");
+        } else {
+            assert!(!on);
+            assert!(!seen[1].contains(&"web_search".to_string()), "a no keeps the web tools away");
+        }
+    }
+}
+
 /// Web search for real (DuckDuckGo, no key), reading a page, and the model
 /// using both in a chat with web turned on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -891,12 +967,25 @@ async fn e2e_notes_and_tasks() {
 async fn e2e_web_search_and_read() {
     let (state, ep, cipher) = agent_harness().await;
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
-    // Offline and no 🌐: the model can only ask for web access.
+    // Offline and no 🌐: the model can only ask for web access (the popup
+    // is answered no here; the stand-in test covers a yes).
+    let st = state.clone();
+    let answering = tokio::spawn(async move {
+        for _ in 0..3000 {
+            if let Some(p) = st.approvals.waiting().into_iter().find(|p| p.tool == "request_web") {
+                st.approvals.answer(&p.call_id, crate::agent::Decision::Deny);
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        false
+    });
     let reply = say(&state, &ep, &cipher, &chat.id, "Search the web: who maintains the curl project? /no_think").await;
+    answering.abort();
     println!("offline reply: {reply}");
     let asked = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)
         .iter()
-        .any(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|x| x["web_request"] == true));
+        .any(|m| m.role == "tool" && m.meta.as_ref().is_some_and(|x| x["tool"] == "request_web"));
     println!("asked for web: {asked}");
 
     crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();

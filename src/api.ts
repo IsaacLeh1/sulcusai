@@ -1394,6 +1394,7 @@ export interface ChatEvents {
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
+  "chat:web": { chat_id: string; web: boolean };
   "app:navigate": { page: string };
   "mail:triage": { done: number; total: number };
   "mail:triaged": Record<string, never>;

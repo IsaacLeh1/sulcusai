@@ -299,7 +299,7 @@ impl Turn {
             let name = d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default();
             !adv.forbids(tools::find(name).map_or(Risk::Connector, |t| t.risk))
         });
-        let tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
+        let mut tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();
         if let Some(p) = &project {
@@ -451,7 +451,6 @@ impl Turn {
                 chat_id: &self.chat_id,
                 turn_id: &self.turn_id,
             };
-            let mut wait_for_user = false;
             for call in &calls {
                 let key = call_key(call);
                 let repeat = done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
@@ -469,14 +468,20 @@ impl Turn {
                     done_calls.push(key);
                     self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await
                 };
-                // Asking to turn on web ends the turn; the card waits for the user.
-                wait_for_user |= outcome.meta["web_request"] == true;
+                // The user let it use the web: the web tools, from the next step on.
+                if outcome.meta["web_granted"] == true {
+                    if let Some(Value::Array(defs)) = tools.as_mut() {
+                        defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str) != Some("request_web"));
+                        for name in ["weather", "web_search", "fetch_page"] {
+                            if let Some(d) = tools::find(name) {
+                                defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
+                            }
+                        }
+                    }
+                }
                 let outcome = fit_result(outcome, self.ep.ctx);
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
-            }
-            if wait_for_user {
-                break;
             }
             // Going in circles: stop rather than spend minutes repeating itself.
             if repeats >= 3 {
@@ -530,6 +535,9 @@ impl Turn {
     async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>, project_id: Option<&str>, extras: &Extras) -> Outcome {
         if let Some(t) = extras.mcp.get(&call.name) {
             return self.execute_connector(call, t).await;
+        }
+        if call.name == "request_web" {
+            return self.request_web(call).await;
         }
         if call.name == "load_skill" {
             let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
@@ -736,6 +744,45 @@ impl Turn {
             Ok((true, text)) => Outcome::error(format!("{title} reported a problem"), text),
             Err(e) => Outcome::error(format!("Couldn't use {title}"), e),
         }
+    }
+
+    /// Web access is off and the model needs it: the user is asked in a
+    /// popup. A yes turns web on for this chat and the turn carries on with
+    /// the web tools; a no lets the model answer without them.
+    async fn request_web(&self, call: &ToolCall) -> Outcome {
+        let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+        let reason = args.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()).unwrap_or("this request").to_string();
+        let preview = Preview {
+            title: format!("Use the web for: {reason}"),
+            kind: "text",
+            detail: Some(reason.clone()),
+            note: Some("Turns on web access for this chat only. Searches and pages go out from this PC.".into()),
+        };
+        if self.ask(call, Risk::Read, preview).await == Decision::Deny {
+            self.log(&format!("Kept the web off (asked for: {reason})"));
+            return Outcome::ok(
+                "The user kept web access off. Answer as well as you can without it, and say in a sentence what you couldn't check.",
+                format!("Web stayed off: {reason}"),
+                "text",
+                None,
+            );
+        }
+        {
+            let conn = self.state.db.lock().unwrap();
+            if let Err(e) = db::set_chat_web(&conn, &self.chat_id, true) {
+                return Outcome::error("Couldn't turn on web access", e);
+            }
+            db::log_action(&conn, "privacy", "Turned on web access for one chat (the assistant asked)");
+        }
+        self.emit("chat:web", json!({ "chat_id": self.chat_id, "web": true }));
+        let mut o = Outcome::ok(
+            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page or weather to finish what they asked.",
+            format!("Web turned on: {reason}"),
+            "text",
+            None,
+        );
+        o.meta["web_granted"] = json!(true);
+        o
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {
