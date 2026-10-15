@@ -88,6 +88,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </div>
       </section>
 
+      {tab === "chat" && <SpeedChart models={catalog.models} onRefresh={onRefresh} toast={toast} />}
+
       {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
       {tab === "create" && <MediaModels progress={progress} toast={toast} />}
 
@@ -114,12 +116,6 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </div>
       )}
 
-      {tab === "chat" && <SpeedChart models={catalog.models} onRefresh={onRefresh} toast={toast} />}
-
-      {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
-
-      {tab === "chat" && <HubBrowser models={catalog.models} progress={progress} onRefresh={onRefresh} toast={toast} />}
-
       {tab === "chat" && installed.length > 0 && (
         <>
           <h2>{t("Installed")}</h2>
@@ -142,6 +138,10 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           </div>
         </>
       )}
+
+      {tab === "chat" && <LookForModels onRefresh={onRefresh} toast={toast} />}
+
+      {tab === "chat" && <HubBrowser models={catalog.models} progress={progress} onRefresh={onRefresh} toast={toast} />}
 
       <ModelStorage toast={toast} />
 

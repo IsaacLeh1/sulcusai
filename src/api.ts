@@ -318,6 +318,18 @@ export interface HubResults {
   hidden: number;
 }
 
+/** What the speed test is doing (or what the last one left). */
+export interface SpeedStatus {
+  running: boolean;
+  /** Testing every installed model. */
+  all: boolean;
+  model_id: string | null;
+  done: number;
+  total: number;
+  /** Models whose test didn't finish, with why. */
+  errors: Record<string, string>;
+}
+
 export interface FolderImport {
   /** Names of the models added. */
   added: string[];
@@ -1179,6 +1191,7 @@ export const api = {
   hubInstall: (repo: string, file: string) => invoke<string>("hub_install", { repo, file }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
+  speedTestStatus: () => invoke<SpeedStatus>("speed_test_status"),
   measureAllSpeeds: () => invoke<number>("measure_all_speeds"),
   refreshHardware: () => invoke<Hardware>("refresh_hardware"),
   catalog: () => invoke<CatalogView>("catalog_view"),
@@ -1455,7 +1468,8 @@ export interface ChatEvents {
   "finetune:progress": FinetuneJob;
   "sync:status": null;
   "models:moving": { done?: number; total?: number; finished?: boolean; error?: string };
-  "models:speed": { model_id?: string; done: number; total: number; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
+  /** The speed test's status, plus the model just tested (tps or error), and finished at the end. */
+  "models:speed": SpeedStatus & { tested?: string; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
   "sync:changed": null;
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;

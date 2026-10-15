@@ -391,15 +391,15 @@ function MonthGrid({ from, at, today, events, tasks, chipStyle, onDay, onCreate,
               </button>
               {items.slice(0, more > 0 ? MAX - 1 : MAX).map((it) =>
                 "e" in it ? (
-                  <button key={it.e.id} className={`chip ${it.e.all_day ? "all-day" : ""}`} style={chipStyle(it.e)} onClick={(ev) => { ev.stopPropagation(); onEvent(it.e); }} title={it.e.title}>
-                    {!it.e.all_day && <><i className="chip-dot" /><span className="chip-time">{shortTime(it.e.start)}</span></>}
+                  <button key={it.e.id} className={`cal-chip ${it.e.all_day ? "all-day" : ""}`} style={chipStyle(it.e)} onClick={(ev) => { ev.stopPropagation(); onEvent(it.e); }} title={it.e.title}>
+                    {!it.e.all_day && <><i className="cal-chip-dot" /><span className="cal-chip-time">{shortTime(it.e.start)}</span></>}
                     <span className="ellipsis">{it.e.title}</span>
                   </button>
                 ) : (
-                  <span key={it.task.id} className="chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                  <span key={it.task.id} className="cal-chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
                 ),
               )}
-              {more > 0 && <button className="chip more" onClick={(ev) => { ev.stopPropagation(); onDay(day); }}>{t("{n} more", { n: more + 1 })}</button>}
+              {more > 0 && <button className="cal-chip more" onClick={(ev) => { ev.stopPropagation(); onDay(day); }}>{t("{n} more", { n: more + 1 })}</button>}
             </div>
           );
         })}
@@ -443,9 +443,9 @@ function TimeGrid({ days, today, events, tasks, chipStyle, onDay, onCreate, onEv
             <div key={d} className="tg-allday-cell">
               {allDay(d).map((it) =>
                 "e" in it ? (
-                  <button key={it.e.id} className="chip all-day" style={chipStyle(it.e)} onClick={() => onEvent(it.e)} title={it.e.title}><span className="ellipsis">{it.e.title}</span></button>
+                  <button key={it.e.id} className="cal-chip all-day" style={chipStyle(it.e)} onClick={() => onEvent(it.e)} title={it.e.title}><span className="ellipsis">{it.e.title}</span></button>
                 ) : (
-                  <span key={it.task.id} className="chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                  <span key={it.task.id} className="cal-chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
                 ),
               )}
             </div>

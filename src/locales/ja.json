@@ -2067,5 +2067,7 @@
  "about {n} tokens/sec": "約 {n} トークン/秒",
  "by {author}": "{author} 提供",
  "{n} models with versions this PC can run.": "この PC で動かせるバージョンがあるモデル: {n} 件。",
- "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "ほかに {n} 件を除外しました。この PC には大きすぎるか、SulcusAI で使えない形式しかありません。"
+ "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "ほかに {n} 件を除外しました。この PC には大きすぎるか、SulcusAI で使えない形式しかありません。",
+ "Getting ready… {done} of {total} done": "準備中… {total} 件中 {done} 件完了",
+ "Testing {name} · {done} of {total} done": "{name} をテスト中 · {total} 件中 {done} 件完了"
 }

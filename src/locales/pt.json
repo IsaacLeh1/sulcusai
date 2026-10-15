@@ -2067,5 +2067,7 @@
  "about {n} tokens/sec": "cerca de {n} tokens/s",
  "by {author}": "por {author}",
  "{n} models with versions this PC can run.": "{n} modelos com versões que este PC consegue executar.",
- "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "Mais {n} ficaram de fora: grandes demais para este PC ou só em formatos que o SulcusAI não usa."
+ "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "Mais {n} ficaram de fora: grandes demais para este PC ou só em formatos que o SulcusAI não usa.",
+ "Getting ready… {done} of {total} done": "Preparando… {done} de {total} prontos",
+ "Testing {name} · {done} of {total} done": "Testando {name} · {done} de {total} prontos"
 }

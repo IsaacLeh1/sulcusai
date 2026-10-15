@@ -2,8 +2,8 @@
 // Models page › Speed on this PC: the installed chat models' measured speed
 // next to the estimated speed of models that could be installed, with a
 // speed test for each installed one (or all of them).
-import { useEffect, useState } from "react";
-import { api, errorText, on, type ModelCard } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { api, errorText, on, type ModelCard, type SpeedStatus } from "../api";
 import { speedLabel } from "../format";
 import { speedOf } from "../ranking";
 import { t } from "../i18n";
@@ -13,19 +13,24 @@ import type { PushToast } from "./Toasts";
 const COMPARE = 6;
 
 export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; onRefresh: () => Promise<void>; toast: PushToast }) {
-  const [testing, setTesting] = useState<{ id: string | null; done: number; total: number; all: boolean } | null>(null);
-  const [failed, setFailed] = useState<Record<string, string>>({});
-
+  // The core keeps the test's status, so leaving the page and coming back
+  // (or opening it mid-test) shows where it is.
+  const [status, setStatus] = useState<SpeedStatus | null>(null);
+  const refresh = useRef(onRefresh);
+  refresh.current = onRefresh;
   useEffect(() => {
+    api.speedTestStatus().then(setStatus).catch(() => {});
     const sub = on("models:speed", (p) => {
-      if (p.finished) return;
-      setTesting((now) => ({ id: p.done < p.total ? p.model_id ?? null : null, done: p.done, total: p.total, all: now?.all ?? true }));
-      if (p.error && p.model_id) setFailed((f) => ({ ...f, [p.model_id!]: p.error! }));
+      setStatus({ running: p.running, all: p.all, model_id: p.model_id, done: p.done, total: p.total, errors: p.errors });
+      // A model just measured: its bar shows the measured speed now, not at the end.
+      if (p.tps !== undefined || p.finished) refresh.current();
     });
     return () => {
       sub.then((u) => u());
     };
   }, []);
+  const running = !!status?.running;
+  const failed = status?.errors ?? {};
 
   const installed = models.filter((m) => m.installed);
   const others = models
@@ -36,34 +41,29 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
   const max = Math.max(1, ...rows.map(speedOf));
 
   const testOne = async (m: ModelCard) => {
-    setTesting({ id: m.id, done: 0, total: 1, all: false });
-    setFailed(({ [m.id]: _, ...rest }) => rest);
+    setStatus((s) => ({ running: true, all: false, model_id: m.id, done: 0, total: 1, errors: s?.errors ?? {} }));
     try {
       const sp = await api.measureModelSpeed(m.id);
       toast(t("{model}: writes {speed} tokens/sec on this PC.", { model: m.name, speed: sp.tps.toFixed(1) }), "success");
-      await onRefresh();
     } catch (e) {
       toast(errorText(e), "error");
-    } finally {
-      setTesting(null);
+      api.speedTestStatus().then(setStatus).catch(() => {});
     }
   };
   const testAll = async () => {
-    setTesting({ id: null, done: 0, total: installed.length, all: true });
-    setFailed({});
+    setStatus({ running: true, all: true, model_id: null, done: 0, total: installed.length, errors: {} });
     try {
       const n = await api.measureAllSpeeds();
-      await onRefresh();
       toast(t("Tested {n} of {total} models.", { n, total: installed.length }), n === installed.length ? "success" : "info");
     } catch (e) {
       toast(errorText(e), "error");
-    } finally {
-      setTesting(null);
+      api.speedTestStatus().then(setStatus).catch(() => {});
     }
   };
 
   if (installed.length === 0) return null;
-  const busyName = testing?.id ? models.find((m) => m.id === testing.id)?.name : null;
+  const busyName = status?.running && status.model_id ? models.find((m) => m.id === status.model_id)?.name ?? null : null;
+  const pct = status?.running && status.all && status.total > 0 ? Math.max(4, (status.done / status.total) * 100) : null;
 
   return (
     <section className="card speed-card">
@@ -72,17 +72,30 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
           <h2>{t("Speed on this PC")}</h2>
           <p className="muted small">{t("How fast each model writes, measured with the same settings your chats use. Models you could install are shown with their estimated speed.")}</p>
         </div>
-        <button className="btn" onClick={testAll} disabled={!!testing}>
-          {testing?.all ? t("Testing {done} of {total}…", { done: Math.min(testing.done + 1, testing.total), total: testing.total }) : t("Test all installed")}
+        <button className="btn" onClick={testAll} disabled={running}>
+          {running && status?.all ? t("Testing {done} of {total}…", { done: Math.min(status.done + 1, status.total), total: status.total }) : t("Test all installed")}
         </button>
       </div>
-      {testing && busyName && <p className="small muted">{t("Loading and testing {name}…", { name: busyName })}</p>}
+      {running && (
+        <div className="speed-progress" role="status">
+          <span className="small">
+            {status?.all
+              ? busyName
+                ? t("Testing {name} · {done} of {total} done", { name: busyName, done: status.done, total: status.total })
+                : t("Getting ready… {done} of {total} done", { done: status.done, total: status.total })
+              : t("Loading and testing {name}…", { name: busyName ?? t("the model") })}
+          </span>
+          <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
+            <span style={{ width: pct === null ? undefined : `${pct}%` }} />
+          </div>
+        </div>
+      )}
       <div className="speed-rows">
         {rows.map((m) => {
           const measured = m.installed?.tps ?? null;
           const value = speedOf(m);
           const isInstalled = !!m.installed;
-          const busy = testing?.id === m.id;
+          const busy = running && status?.model_id === m.id;
           return (
             <div key={m.id} className={`speed-row ${isInstalled ? "mine" : "other"}`}>
               <div className="speed-name ellipsis" title={m.name}>
@@ -106,7 +119,7 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
               </div>
               <div className="speed-action">
                 {isInstalled && (
-                  <button className="btn ghost small" onClick={() => testOne(m)} disabled={!!testing}>
+                  <button className="btn ghost small" onClick={() => testOne(m)} disabled={running}>
                     {busy ? t("Testing…") : measured !== null ? t("Test again") : t("Test speed")}
                   </button>
                 )}

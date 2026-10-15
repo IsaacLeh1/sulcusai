@@ -669,6 +669,36 @@ async fn import_model_file(app: AppHandle, state: AppStateRef<'_>, path: String)
 
 static SPEED_TESTING: AtomicBool = AtomicBool::new(false);
 
+/// What the speed test is doing, so a Models page opened mid-test (or after)
+/// shows it: the model being tested, how far along, and what didn't finish.
+#[derive(Clone, Serialize)]
+struct SpeedStatus {
+    running: bool,
+    /// Testing every installed model (not just one).
+    all: bool,
+    model_id: Option<String>,
+    done: usize,
+    total: usize,
+    /// Models whose test didn't finish, with why (kept until the next test).
+    errors: std::collections::BTreeMap<String, String>,
+}
+
+static SPEED_STATUS: std::sync::Mutex<SpeedStatus> =
+    std::sync::Mutex::new(SpeedStatus { running: false, all: false, model_id: None, done: 0, total: 0, errors: std::collections::BTreeMap::new() });
+
+/// Updates the status and tells the window (`models:speed`).
+fn speed_progress(app: &AppHandle, update: impl FnOnce(&mut SpeedStatus), extra: serde_json::Value) {
+    let mut payload = {
+        let mut s = SPEED_STATUS.lock().unwrap();
+        update(&mut s);
+        serde_json::to_value(&*s).unwrap_or_default()
+    };
+    if let (Some(p), Some(e)) = (payload.as_object_mut(), extra.as_object()) {
+        p.extend(e.clone());
+    }
+    app.emit("models:speed", payload).ok();
+}
+
 /// One model's speed test, loaded as chats load it.
 async fn test_speed(state: &Arc<AppState>, model_id: &str) -> Result<engine::Speed, String> {
     let (ep, spec, _) = llm_endpoint(state, Some(model_id.to_string()), false, || {}).await?;
@@ -689,22 +719,46 @@ fn speed_test_allowed(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+/// Where the speed test is (or what the last one left).
+#[tauri::command(async)]
+fn speed_test_status() -> SpeedStatus {
+    SPEED_STATUS.lock().unwrap().clone()
+}
+
 /// Runs the speed test for an installed chat model.
 #[tauri::command]
-async fn measure_model_speed(state: AppStateRef<'_>, model_id: String) -> Result<engine::Speed, String> {
+async fn measure_model_speed(app: AppHandle, state: AppStateRef<'_>, model_id: String) -> Result<engine::Speed, String> {
     let state = state.inner().clone();
     speed_test_allowed(&state)?;
     if SPEED_TESTING.swap(true, Ordering::SeqCst) {
         return Err("A speed test is already running.".into());
     }
+    let id = model_id.clone();
+    speed_progress(&app, |s| {
+        s.errors.remove(&id);
+        *s = SpeedStatus { running: true, all: false, model_id: Some(id), done: 0, total: 1, errors: std::mem::take(&mut s.errors) };
+    }, json!({}));
     let r = test_speed(&state, &model_id).await;
     SPEED_TESTING.store(false, Ordering::SeqCst);
+    let extra = match &r {
+        Ok(sp) => json!({ "tps": sp.tps, "prompt_tps": sp.prompt_tps, "finished": true }),
+        Err(e) => json!({ "error": e, "finished": true }),
+    };
+    let err = r.as_ref().err().cloned();
+    speed_progress(&app, |s| {
+        s.running = false;
+        s.done = 1;
+        if let Some(e) = err {
+            s.errors.insert(model_id.clone(), e);
+        }
+    }, extra);
     r
 }
 
 /// Tests every installed chat model on this PC, one after another, then
 /// unloads the last so the memory is free again. Progress arrives as
-/// `models:speed` events ({model_id, done, total, tps?, error?}).
+/// `models:speed` events (the status, plus tps or error for a model just
+/// tested, and finished at the end).
 #[tauri::command]
 async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -> Result<usize, String> {
     let state = state.inner().clone();
@@ -720,17 +774,24 @@ async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -> Result<us
     let total = ids.len();
     let mut ok = 0;
     for (i, id) in ids.iter().enumerate() {
-        app.emit("models:speed", json!({ "model_id": id, "done": i, "total": total })).ok();
+        let now = id.clone();
+        speed_progress(&app, |s| {
+            *s = SpeedStatus { running: true, all: true, model_id: Some(now), done: i, total, errors: if i == 0 { Default::default() } else { std::mem::take(&mut s.errors) } };
+        }, json!({}));
         if !state.generations.lock().unwrap().is_empty() {
             break;
         }
         match test_speed(&state, id).await {
             Ok(sp) => {
                 ok += 1;
-                app.emit("models:speed", json!({ "model_id": id, "done": i + 1, "total": total, "tps": sp.tps, "prompt_tps": sp.prompt_tps })).ok();
+                speed_progress(&app, |s| s.done = i + 1, json!({ "tested": id, "tps": sp.tps, "prompt_tps": sp.prompt_tps }));
             }
             Err(e) => {
-                app.emit("models:speed", json!({ "model_id": id, "done": i + 1, "total": total, "error": e })).ok();
+                let (key, msg) = (id.clone(), e.clone());
+                speed_progress(&app, |s| {
+                    s.done = i + 1;
+                    s.errors.insert(key, msg);
+                }, json!({ "tested": id, "error": e }));
             }
         }
     }
@@ -738,7 +799,10 @@ async fn measure_all_speeds(app: AppHandle, state: AppStateRef<'_>) -> Result<us
         state.engine.lock().await.stop().await;
     }
     SPEED_TESTING.store(false, Ordering::SeqCst);
-    app.emit("models:speed", json!({ "done": total, "total": total, "finished": true })).ok();
+    speed_progress(&app, |s| {
+        s.running = false;
+        s.model_id = None;
+    }, json!({ "finished": true }));
     Ok(ok)
 }
 
@@ -1465,6 +1529,7 @@ pub fn run() {
             import_model_folder,
             measure_model_speed,
             measure_all_speeds,
+            speed_test_status,
             advanced::advanced_view,
             advanced::set_advanced,
             advanced::set_advanced_pin,

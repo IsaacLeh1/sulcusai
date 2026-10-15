@@ -2067,5 +2067,7 @@
  "about {n} tokens/sec": "约 {n} 词元/秒",
  "by {author}": "作者：{author}",
  "{n} models with versions this PC can run.": "{n} 个模型有本机能运行的版本。",
- "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "另有 {n} 个未列出：对本机来说太大，或只有 SulcusAI 无法使用的格式。"
+ "{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.": "另有 {n} 个未列出：对本机来说太大，或只有 SulcusAI 无法使用的格式。",
+ "Getting ready… {done} of {total} done": "正在准备… 已完成 {done}/{total}",
+ "Testing {name} · {done} of {total} done": "正在测试 {name} · 已完成 {done}/{total}"
 }

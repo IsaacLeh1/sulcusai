@@ -930,18 +930,18 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .seg button:hover { background: var(--hover); }
 .seg button.active { background: var(--selected); color: var(--accent); }
 
-.chip {
+.cal-chip {
   --ev: var(--accent);
   display: flex; align-items: center; gap: 5px; width: 100%; min-width: 0; text-align: left; border: 0; cursor: pointer;
   background: none; color: var(--text); font: inherit; font-size: 12px; padding: 1px 6px; border-radius: 5px; line-height: 1.6;
 }
-.chip:hover { background: var(--hover); }
-.chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ev); flex: none; }
-.chip-time { color: var(--muted); flex: none; }
-.chip.all-day { background: var(--ev); color: #fff; font-weight: 550; }
-.chip.all-day:hover { filter: brightness(1.1); }
-.chip.task { cursor: default; color: var(--muted); }
-.chip.more { color: var(--muted); font-weight: 600; }
+.cal-chip:hover { background: var(--hover); }
+.cal-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ev); flex: none; }
+.cal-chip-time { color: var(--muted); flex: none; }
+.cal-chip.all-day { background: var(--ev); color: #fff; font-weight: 550; }
+.cal-chip.all-day:hover { filter: brightness(1.1); }
+.cal-chip.task { cursor: default; color: var(--muted); }
+.cal-chip.more { color: var(--muted); font-weight: 600; }
 
 .month { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .month-head { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); text-align: center; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); padding: 6px 0 2px; }
@@ -1119,3 +1119,5 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .hub-file { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .hub-file-what { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .hub-file .install-progress { flex: 0 1 320px; }
+/* Speed test in progress: which model, how far. */
+.speed-progress { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 4px; }
