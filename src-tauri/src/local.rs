@@ -129,6 +129,11 @@ fn projector_beside(model: &Path) -> Option<PathBuf> {
     })
 }
 
+/// What a model file is, from its header (for a download, once it's here).
+pub fn read_spec(path: &Path) -> Result<ModelSpec, String> {
+    spec_for(&Candidate { app: "Hugging Face", path: path.to_path_buf(), name: None, projector: projector_beside(path) })
+}
+
 /// Adds a model file the user picked (Settings → Advanced). Returns its name.
 pub fn import(state: &AppState, path: &Path) -> Result<String, String> {
     let k = key(path);

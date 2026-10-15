@@ -33,6 +33,7 @@ mod gguf;
 mod handoff;
 mod hardware;
 mod hello;
+mod hub;
 mod local;
 mod location;
 #[cfg(test)]
@@ -131,7 +132,12 @@ impl AppState {
     /// Don't call it while holding the database lock.
     fn model_spec(&self, id: &str) -> Option<ModelSpec> {
         let conn = self.db.lock().unwrap();
-        let mut spec = self.catalog.model(id).cloned().or_else(|| local::list(&conn).into_iter().find(|m| m.id == id))?;
+        let mut spec = self
+            .catalog
+            .model(id)
+            .cloned()
+            .or_else(|| local::list(&conn).into_iter().find(|m| m.id == id))
+            .or_else(|| hub::list(&conn).into_iter().find(|m| m.id == id))?;
         if let Some(name) = db::model_names(&conn).remove(id) {
             spec.name = name;
         }
@@ -281,6 +287,7 @@ fn catalog_view(state: AppStateRef) -> CatalogView {
 
     let mut all = state.catalog.models.clone();
     all.extend(local::list(&state.db.lock().unwrap()));
+    all.extend(hub::list(&state.db.lock().unwrap()));
     let names = db::model_names(&state.db.lock().unwrap());
     let models = all
         .iter()
@@ -325,8 +332,34 @@ struct InstallProgress<'a> {
 
 #[tauri::command(async)]
 fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: String) -> Result<(), String> {
-    let spec = state.catalog.model(&model_id).ok_or("Unknown model")?.clone();
-    let variant = spec.variant(&quant).ok_or("Unknown model version")?.clone();
+    let spec = state.catalog.model(&model_id).cloned().or_else(|| hub::list(&state.db.lock().unwrap()).into_iter().find(|m| m.id == model_id)).ok_or("Unknown model")?;
+    start_install(app, state.inner().clone(), spec, quant)
+}
+
+/// Searches Hugging Face for GGUF chat models; only files this PC can run.
+#[tauri::command]
+async fn hub_search(state: AppStateRef<'_>, query: String, sort: String) -> Result<hub::HubResults, String> {
+    hub::search(state.inner(), &query, &sort).await
+}
+
+/// Installs one file of a Hugging Face model, like a catalog model.
+/// Returns the model's id, whose card shows the progress.
+#[tauri::command]
+async fn hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String) -> Result<String, String> {
+    let spec = hub::prepare(state.inner(), &repo, &file).await?;
+    let (id, quant) = (spec.id.clone(), spec.variants[0].quant.clone());
+    if let Err(e) = start_install(app, state.inner().clone(), spec, quant) {
+        hub::forget(&state.db.lock().unwrap(), &id).ok();
+        return Err(e);
+    }
+    Ok(id)
+}
+
+/// Downloads, checks and speed-tests a model in the background, reporting
+/// progress to its card.
+fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quant: String) -> Result<(), String> {
+    let mut variant = spec.variant(&quant).ok_or("Unknown model version")?.clone();
+    let model_id = spec.id.clone();
     let fit = catalog::fit_model(&spec, &state.budget());
     let vfit = fit.variant(&quant).ok_or("Unknown model version")?;
     if !vfit.runnable() {
@@ -340,7 +373,6 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
         return Err("Another install is in progress. Wait for it to finish first.".into());
     }
 
-    let state = state.inner().clone();
     tauri::async_runtime::spawn(async move {
         let Some((cancel, _guard)) = claim(&state.installs, &model_id) else { return };
         let emit = |phase: &str, received: u64, total: u64| {
@@ -379,6 +411,11 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
                     state.log("network", &format!("Downloading {}'s picture reader ({}) from {}", spec.name, size_label(v.size), host_of(&v.url)));
                 }
                 download::fetch_verified(&client, &v.url, &vdest, v.size, &v.sha256, &cancel, |r, t| emit("vision", r, t)).await?;
+            }
+            // From Hugging Face: the file's header replaces the estimates.
+            if spec.id.starts_with("hf-") {
+                hub::refine(&state, &mut spec, &dest);
+                variant = spec.variants[0].clone();
             }
 
             let previous = db::installed_model(&state.db.lock().unwrap(), &spec.id);
@@ -731,6 +768,7 @@ async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), St
     let conn = state.db.lock().unwrap();
     db::remove_installed(&conn, &model_id)?;
     local::forget(&conn, &model_id)?;
+    hub::forget(&conn, &model_id)?;
     if db::settings(&conn).default_model.as_deref() == Some(&model_id) {
         let next = db::installed_models(&conn).first().map(|m| m.model_id.clone());
         db::update_settings(&conn, |s| s.default_model = next)?;
@@ -1418,6 +1456,8 @@ pub fn run() {
             refresh_hardware,
             catalog_view,
             install_model,
+            hub_search,
+            hub_install,
             cancel_install,
             find_models,
             load_default_model,
