@@ -430,3 +430,138 @@ async fn two_assistants_work_something_out() {
     .await;
     link::hang_up(&id_b);
 }
+
+/// A relay like relay/worker.js, in this process: mailboxes guarded by the
+/// token of their first write. Returns its address.
+#[cfg(windows)]
+async fn mock_relay() -> String {
+    use axum::body::Bytes;
+    use axum::http::{HeaderMap, Method, StatusCode, Uri};
+    type Boxes = Arc<Mutex<HashMap<String, (String, Vec<(u64, String)>)>>>;
+    let boxes: Boxes = Default::default();
+    let handler = move |method: Method, uri: Uri, headers: HeaderMap, body: Bytes| {
+        let boxes = boxes.clone();
+        async move {
+            let token = headers.get("authorization").and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).unwrap_or("").to_string();
+            let parts: Vec<&str> = uri.path().trim_start_matches("/v1/box/").split('/').collect();
+            let query = uri.query().unwrap_or("");
+            let num = |k: &str| query.strip_prefix(&format!("{k}=")).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            let mut all = boxes.lock().unwrap();
+            let json = |v: serde_json::Value| (StatusCode::OK, v.to_string());
+            match (method, parts.as_slice()) {
+                (Method::PUT, [b, seq]) => {
+                    let entry = all.entry(b.to_string()).or_insert_with(|| (token.clone(), vec![]));
+                    if entry.0 != token {
+                        return (StatusCode::UNAUTHORIZED, String::new());
+                    }
+                    entry.1.push((seq.parse().unwrap_or(0), B64.encode(&body)));
+                    json(serde_json::json!({ "ok": true }))
+                }
+                (Method::GET, [b]) => match all.get(*b) {
+                    Some((t, msgs)) if *t == token => {
+                        let after = num("after");
+                        let list: Vec<serde_json::Value> = msgs.iter().filter(|m| m.0 > after).take(20).map(|m| serde_json::json!({ "seq": m.0, "data": m.1 })).collect();
+                        json(serde_json::Value::Array(list))
+                    }
+                    _ => (StatusCode::NOT_FOUND, String::new()),
+                },
+                (Method::DELETE, [b]) => {
+                    let through = num("through");
+                    if let Some((t, msgs)) = all.get_mut(*b) {
+                        if *t == token {
+                            msgs.retain(|m| m.0 > through);
+                        }
+                    }
+                    json(serde_json::json!({ "ok": true }))
+                }
+                _ => (StatusCode::NOT_FOUND, String::new()),
+            }
+        }
+    };
+    let app = axum::Router::new().fallback(handler);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    url
+}
+
+/// Ana and Ben never connect directly: Ana lets Ben use her relay, and
+/// messages, a confirmation and an assistant's question cross through it.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn people_reach_each_other_through_a_relay() {
+    through_relay(mock_relay().await).await;
+}
+
+/// The same through the real relay (relay/worker.js, run by relay/local.mjs in Node).
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn people_through_the_real_relay() {
+    let port = crate::engine::free_port().unwrap();
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../relay/local.mjs");
+    let _node = tokio::process::Command::new("node").arg(&script).arg(port.to_string()).kill_on_drop(true).spawn().unwrap();
+    let url = format!("http://127.0.0.1:{port}");
+    for _ in 0..50 {
+        if reqwest::get(format!("{url}/v1/box/{}", "0".repeat(64))).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    through_relay(url).await;
+}
+
+#[cfg(windows)]
+async fn through_relay(url: String) {
+    let _seen = stand_in();
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    for s in [&a, &b] {
+        crate::db::update_settings(&s.db.lock().unwrap(), |x| x.connectivity = crate::net::Connectivity::Cloud).unwrap();
+    }
+    // Ana sets her relay and lets Ben use it; Ben's app hears about it
+    // (normally over a direct connection, once).
+    super::super::update(&a, |cfg| cfg.relay_url = Some(url.clone())).unwrap();
+    update(&a, |x| x.contacts[0].offer_relay = true).unwrap();
+    mailbox::offered(&b, &id_a, Some(url.clone()));
+    let (ben, ana) = (contact(&a, &id_b).unwrap(), contact(&b, &id_a).unwrap());
+    let (ca, cb) = (a.cipher().unwrap(), b.cipher().unwrap());
+    assert_eq!(mailbox::pick(&a, &ca, &ben).map(|r| r.1), Some("mine"));
+    assert_eq!(mailbox::pick(&b, &cb, &ana).map(|r| r.1), Some("theirs"));
+    mailbox::open_now(&id_b);
+    mailbox::open_now(&id_a);
+    assert!(link::reachable(&id_b) && link::reachable(&id_a), "reachable by mail");
+    assert!(!link::connected(&id_b));
+
+    // Keep both mailboxes moving, as the background tick does.
+    let (pa, pb) = (a.clone(), b.clone());
+    let (ia, ib, u) = (id_a.clone(), id_b.clone(), url.clone());
+    let pump = tokio::spawn(async move {
+        loop {
+            let ben = contact(&pa, &ib).unwrap();
+            let ana = contact(&pb, &ia).unwrap();
+            let _ = mailbox::exchange(&pa, &ben, &u).await;
+            let _ = mailbox::exchange(&pb, &ana, &u).await;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    queue(&a, &ca, &id_b, "Hi Ben, by mail", None).unwrap();
+    until("Ana's message at Ben's", || texts(&b, &id_a).contains(&"Hi Ben, by mail".to_string())).await;
+    until("confirmed back at Ana's", || messages(&a.db.lock().unwrap(), &ca, &id_b).unwrap().iter().all(|m| m.delivered)).await;
+    queue(&b, &cb, &id_a, "Got it", None).unwrap();
+    until("Ben's reply at Ana's", || texts(&a, &id_b).contains(&"Got it".to_string())).await;
+
+    // An assistant's question by mail (Ben lets Ana's ask freely).
+    ask::set_allow(&b, &id_a, ask::Allow { mode: "auto".into(), ..Default::default() }).unwrap();
+    let out = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": "When is Ben free?" })).await;
+    assert!(out.text.contains("Ben is free Tuesday after 2 pm."), "{}", out.text);
+
+    // The relay holds nothing readable, and a wrong token gets nothing.
+    let key = link_key(&ca, &contact(&a, &id_b).unwrap()).unwrap();
+    let outbox = super::super::relay::box_id(&key, &id_a);
+    let wrong = reqwest::Client::new().get(format!("{url}/v1/box/{outbox}?after=0")).bearer_auth("0".repeat(64)).send().await.unwrap();
+    assert_eq!(wrong.status().as_u16(), 404);
+    pump.abort();
+}

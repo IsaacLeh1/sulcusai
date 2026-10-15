@@ -52,6 +52,8 @@ pub(super) enum Frame {
     Task { id: String, goal: String },
     Turn { id: String, text: String, done: bool },
     End { id: String, reason: String },
+    /// The relay they may use to reach this app (None: not anymore).
+    Relay { url: Option<String> },
     #[serde(other)]
     Unknown,
 }
@@ -85,9 +87,22 @@ pub(super) fn connected(id: &str) -> bool {
     CONNS.lock().unwrap().contains_key(id)
 }
 
-/// Sends a frame if they're connected.
+/// Sends a frame: directly if they're connected, else by mail when they're
+/// reached that way (and it isn't a live view).
 pub(super) fn send(id: &str, f: Frame) -> bool {
-    CONNS.lock().unwrap().get(id).is_some_and(|c| c.tx.send(f).is_ok())
+    if let Some(c) = CONNS.lock().unwrap().get(id) {
+        return c.tx.send(f).is_ok();
+    }
+    if mailbox::open_for(id) && mailbox::relayable(&f) {
+        mailbox::queue(id, f);
+        return true;
+    }
+    false
+}
+
+/// They can be reached now: connected directly, or by mail.
+pub(super) fn reachable(id: &str) -> bool {
+    connected(id) || mailbox::open_for(id)
 }
 
 /// Why the last call to them didn't get through.
@@ -218,6 +233,8 @@ async fn run(state: Arc<AppState>, p: Contact, stream: TcpStream, mut out: wire:
     drop(busy);
     let addr = called.or_else(|| from.filter(|_| port != 0).map(|a| SocketAddr::new(a.ip(), port)));
     heard_from(&state, &p, addr, &name);
+    mailbox::direct(&p.id);
+    let _ = tx.send(Frame::Relay { url: mailbox::offer(&state, &p) });
     flush(&state, &p.id);
     share::connected(&state, &p.id);
     ask::connected(&state, &p.id);
@@ -263,7 +280,7 @@ async fn run(state: Arc<AppState>, p: Contact, stream: TcpStream, mut out: wire:
     changed(&state);
 }
 
-fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
+pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
     match f {
         Frame::Hello { name, .. } => {
             let name = clean_name(&name);
@@ -295,6 +312,7 @@ fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
                 }
             }
             let _ = mark_delivered(state, &p.id, &ids);
+            mailbox::confirmed(&p.id, &ids);
             changed(state);
             flush(state, &p.id);
         }
@@ -320,6 +338,7 @@ fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         }
         Frame::Turn { id, text, done } => together::turn(state, &p.id, &id, &text, done),
         Frame::End { id, reason } => together::ended(state, &p.id, &id, &reason),
+        Frame::Relay { url } => mailbox::offered(state, &p.id, url),
     }
 }
 
@@ -370,6 +389,9 @@ pub(in crate::sync) async fn answer(state: &Arc<AppState>, mut stream: TcpStream
 fn tick(state: &Arc<AppState>) {
     if state.work_cipher().is_err() {
         return;
+    }
+    if features::is_on(&state.db.lock().unwrap(), Feature::People) {
+        mailbox::tick(state);
     }
     let (on, contacts) = {
         let conn = state.db.lock().unwrap();

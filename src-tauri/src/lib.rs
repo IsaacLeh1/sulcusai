@@ -1790,6 +1790,7 @@ pub fn run() {
             sync::people::ask::people_stop,
             sync::people::ask::people_set_allow,
             sync::people::ask::people_asks,
+            sync::people::mailbox::people_set_relay_offer,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,

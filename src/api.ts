@@ -325,6 +325,12 @@ export interface PersonContact {
   sharing: { chat_id: string; title: string }[];
   /** What their assistant may do here. */
   allow: PersonAllow;
+  /** Not connected directly but reachable through a relay: whose. */
+  relay: "mine" | "theirs" | null;
+  /** The last exchange through the relay worked. */
+  via_relay: boolean;
+  /** This user lets them use their relay. */
+  offer_relay: boolean;
 }
 
 export interface PeopleView {
@@ -341,6 +347,10 @@ export interface PeopleView {
   /** Apps on this network showing a code. */
   nearby: { id: string; name: string }[];
   unread: number;
+  /** A relay is set (Settings → Your devices). */
+  relay_set: boolean;
+  /** The app is at the Cloud level (needed for relays). */
+  cloud: boolean;
 }
 
 export interface BackupInfo {
@@ -1359,6 +1369,8 @@ export const api = {
   peopleStop: (id: string) => invoke<void>("people_stop", { id }),
   peopleSetAllow: (id: string, allow: PersonAllow) => invoke<void>("people_set_allow", { id, allow }),
   peopleAsks: (id: string) => invoke<PersonAsk[]>("people_asks", { id }),
+  /** Lets someone reach this app through this user's relay. */
+  peopleSetRelayOffer: (id: string, on: boolean) => invoke<void>("people_set_relay_offer", { id, on }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),

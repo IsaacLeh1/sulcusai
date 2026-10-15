@@ -130,7 +130,7 @@ pub async fn tool(args: &Value, ctx: &tools::Ctx<'_>) -> Outcome {
         Err(e) => return Outcome::error(title, e),
     };
     let title = format!("Worked with {}'s assistant", p.name);
-    if !link::connected(&p.id) {
+    if !link::reachable(&p.id) {
         return Outcome::error(title, format!("{} isn't connected right now (both apps need to be open). Tell the user.", p.name));
     }
     let id = uuid::Uuid::new_v4().simple().to_string();

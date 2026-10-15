@@ -96,7 +96,7 @@ export function PeopleView({ toast }: { toast: PushToast }) {
                 )}
               </span>
               <span className="small muted ellipsis">
-                {c.last ? (c.last.from_me ? t("You: {text}", { text: preview(c.last) }) : preview(c.last)) : c.online ? t("Online") : seen(c.last_seen)}
+                {c.last ? (c.last.from_me ? t("You: {text}", { text: preview(c.last) }) : preview(c.last)) : c.online ? t("Online") : c.via_relay ? t("Through the relay") : seen(c.last_seen)}
               </span>
             </span>
           </button>
@@ -128,7 +128,7 @@ export function PeopleView({ toast }: { toast: PushToast }) {
       </aside>
       <section className="people-chat">
         {current ? (
-          <Conversation key={current.id} contact={current} onChanged={load} toast={toast} />
+          <Conversation key={current.id} contact={current} relaySet={v.relay_set} cloud={v.cloud} onChanged={load} toast={toast} />
         ) : (
           <div className="people-empty">
             <h2>{t("Chat with people directly")}</h2>
@@ -164,7 +164,7 @@ function preview(m: PersonMessage): string {
 }
 
 /** One conversation: messages, and the box to write in. */
-function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact; onChanged: () => void; toast: PushToast }) {
+function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { contact: PersonContact; relaySet: boolean; cloud: boolean; onChanged: () => void; toast: PushToast }) {
   const [messages, setMessages] = useState<PersonMessage[] | null>(null);
   const [text, setText] = useState("");
   const [file, setFile] = useState<string | null>(null);
@@ -269,8 +269,8 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
         <div className="person-text">
           <strong>{c.name}</strong>
           <span className="small muted">
-            {c.online ? t("Online") : seen(c.last_seen)}
-            {!c.online && c.error && <span className="warn-text"> · {t("Can't reach them right now.")}</span>}
+            {c.online ? t("Online") : c.via_relay ? t("Through the relay") : seen(c.last_seen)}
+            {!c.online && !c.via_relay && c.error && <span className="warn-text"> · {t("Can't reach them right now.")}</span>}
           </span>
         </div>
         <div className="seg people-tabs" role="tablist">
@@ -305,6 +305,24 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
                 }}
               >
                 {t("Change their address")}
+              </button>
+              <button
+                role="menuitem"
+                disabled={!relaySet && !c.offer_relay}
+                title={!relaySet ? t("Set your relay first, in Settings → Your devices.") : !cloud ? t("Relays work at the Cloud level.") : undefined}
+                onClick={async () => {
+                  setMenu(false);
+                  try {
+                    await api.peopleSetRelayOffer(c.id, !c.offer_relay);
+                    toast(c.offer_relay ? t("{name} can't use your relay anymore.", { name: c.name }) : t("{name} can now reach you through your relay when you're not connected directly.", { name: c.name }), "success");
+                    onChanged();
+                  } catch (e) {
+                    toast(errorText(e), "error");
+                  }
+                }}
+              >
+                {c.offer_relay ? "✓ " : ""}
+                {t("Let {name} reach me through my relay", { name: c.name })}
               </button>
               <button role="menuitem" className="danger" onClick={remove}>
                 {t("Remove {name}", { name: c.name })}
@@ -371,10 +389,13 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
         })}
         <div ref={end} />
       </div>
-      {waiting > 0 && !c.online && (
+      {waiting > 0 && !c.online && !c.via_relay && (
         <p className="small muted people-note">
           {t("{name} isn't reachable right now. Your messages wait here and go as soon as either of your apps reaches the other.", { name: c.name })}
         </p>
+      )}
+      {c.via_relay && (messages ?? []).some((m) => m.from_me && !m.delivered && (m.file?.size ?? 0) > 1_000_000) && (
+        <p className="small muted people-note">{t("Files over 1 MB don't go through the relay; they wait until you're connected directly.")}</p>
       )}
       <div className="composer-wrap">
         <div className="composer">
@@ -599,6 +620,9 @@ function Help() {
       </p>
       <p>
         {t("The first time, Windows may ask whether SulcusAI may use the network: allow it, or they can't reach you. It's enough that one of you can be reached. SulcusAI needs to be open (and unlocked) on both PCs for messages to arrive.")}
+      </p>
+      <p>
+        {t("No virtual network? Once you're linked, either of you can let the other use your own relay (Settings → Your devices, at the Cloud level): messages and the assistants' questions then go through it, sealed so the relay can't read them. Watching shared chats live still needs a direct connection.")}
       </p>
     </details>
   );

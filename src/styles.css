@@ -1209,3 +1209,4 @@ button.ctx:hover { background: var(--hover); }
 .ask-thread { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .ask-thread li { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); max-width: 85%; }
 .ask-thread li.mine { align-self: flex-end; background: var(--bubble); border-color: transparent; }
+.people-menu .menu-pop button:disabled { opacity: 0.5; cursor: default; }

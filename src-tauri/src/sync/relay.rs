@@ -41,7 +41,7 @@ pub fn box_id(pair: &[u8], from: &str) -> String {
     hex::encode(*derive(pair, from.as_bytes(), b"sulcusai relay box v1"))
 }
 
-fn token(pair: &[u8], box_id: &str) -> String {
+pub(super) fn token(pair: &[u8], box_id: &str) -> String {
     hex::encode(*derive(pair, box_id.as_bytes(), b"sulcusai relay token v1"))
 }
 
@@ -50,7 +50,7 @@ pub fn token_for_test(pair: &[u8], box_id: &str) -> String {
     token(pair, box_id)
 }
 
-fn seal(pair: &[u8], box_id: &str, seq: u64, plain: &[u8]) -> Vec<u8> {
+pub(super) fn seal(pair: &[u8], box_id: &str, seq: u64, plain: &[u8]) -> Vec<u8> {
     let key = derive(pair, box_id.as_bytes(), b"sulcusai relay seal v1");
     let nonce: [u8; 12] = super::wire::random();
     let aad = format!("{box_id}/{seq}");
@@ -58,7 +58,7 @@ fn seal(pair: &[u8], box_id: &str, seq: u64, plain: &[u8]) -> Vec<u8> {
     [nonce.as_slice(), &ct].concat()
 }
 
-fn open(pair: &[u8], box_id: &str, seq: u64, sealed: &[u8]) -> Result<Vec<u8>, String> {
+pub(super) fn open(pair: &[u8], box_id: &str, seq: u64, sealed: &[u8]) -> Result<Vec<u8>, String> {
     if sealed.len() < 12 + 16 {
         return Err("A relay message was damaged.".into());
     }

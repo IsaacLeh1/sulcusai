@@ -198,7 +198,7 @@ pub async fn tool(args: &Value, ctx: &tools::Ctx<'_>) -> Outcome {
         Err(e) => return Outcome::error(title, e),
     };
     let title = format!("Asked {}'s assistant", p.name);
-    if !link::connected(&p.id) {
+    if !link::reachable(&p.id) {
         return Outcome::error(
             title,
             format!("{} isn't connected right now (both apps need to be open). Tell the user; they can message {} in People instead.", p.name, p.name),

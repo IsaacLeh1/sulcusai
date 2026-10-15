@@ -18,6 +18,7 @@
 
 pub mod ask;
 mod link;
+pub mod mailbox;
 pub mod share;
 pub mod together;
 #[cfg(test)]
@@ -82,6 +83,13 @@ struct Contact {
     last_seen: Option<i64>,
     /// What their assistant may do here.
     allow: ask::Allow,
+    /// Let them reach this app through this user's relay.
+    offer_relay: bool,
+    /// The relay they let this app use (sealed: its address can hold a secret).
+    their_relay: Option<String>,
+    /// Mailbox positions: the last letter written to them, and read from them.
+    box_next: u64,
+    box_got: u64,
 }
 
 fn book(conn: &Connection) -> Book {
@@ -433,7 +441,12 @@ fn keep(state: &AppState, c: &Cipher, id: &str, name: &str, key: &[u8], addr: Op
             addr: addr.map(|a| a.to_string()).or(before.as_ref().and_then(|p| p.addr.clone())),
             added_at: before.as_ref().map_or(now, |p| p.added_at),
             last_seen: Some(now),
+            offer_relay: before.as_ref().is_some_and(|p| p.offer_relay),
+            their_relay: before.as_ref().and_then(|p| p.their_relay.clone()),
             allow: before.map(|p| p.allow).unwrap_or_default(),
+            // A new key means new mailboxes.
+            box_next: 0,
+            box_got: 0,
         });
     })?;
     // A new key: any connection on the old one goes, and the app calls now.
@@ -636,6 +649,12 @@ pub struct ContactView {
     sharing: Vec<share::Sharing>,
     /// What their assistant may do here.
     allow: ask::Allow,
+    /// Not connected directly, but reachable through a relay ("mine" or "theirs").
+    relay: Option<&'static str>,
+    /// The last mail exchange worked.
+    via_relay: bool,
+    /// This user lets them use their relay.
+    offer_relay: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -657,6 +676,9 @@ pub struct PeopleView {
     /// Apps on this network showing a code.
     nearby: Vec<NearbyPerson>,
     unread: i64,
+    /// A relay is set (Settings → Your devices), and the app is at the Cloud level.
+    relay_set: bool,
+    cloud: bool,
 }
 
 fn view(state: &AppState, c: &Cipher) -> PeopleView {
@@ -675,6 +697,7 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
         .zip(lasts)
         .map(|(p, last)| {
             let online = link::connected(&p.id);
+            let relay = if online { None } else { mailbox::pick(state, c, p).map(|r| r.1) };
             ContactView {
                 id: p.id.clone(),
                 name: p.name.clone(),
@@ -683,7 +706,7 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                 address: p.addr.clone(),
                 unread: counts.get(&p.id).copied().unwrap_or(0),
                 last,
-                error: if online { None } else { link::error(&p.id) },
+                error: if online || mailbox::via(&p.id) { None } else { mailbox::error(&p.id).filter(|_| relay.is_some()).or_else(|| link::error(&p.id)) },
                 shared: if online { share::theirs(&p.id) } else { vec![] },
                 sharing: b
                     .shares
@@ -692,6 +715,9 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                     .filter_map(|s| chats.get(&s.chat_id).map(|t| share::Sharing { chat_id: s.chat_id.clone(), title: t.clone() }))
                     .collect(),
                 allow: p.allow.clone(),
+                relay,
+                via_relay: !online && mailbox::via(&p.id),
+                offer_relay: p.offer_relay,
             }
         })
         .collect();
@@ -707,6 +733,8 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
         code: code.map(|p| format!("{}-{}", &p.code[..4], &p.code[4..])),
         code_left: code.map_or(0, |p| p.until.saturating_duration_since(Instant::now()).as_secs()),
         unread: contacts.iter().map(|p| p.unread).sum(),
+        relay_set: mailbox::mine(state).is_some(),
+        cloud: state.settings().connectivity == crate::net::Connectivity::Cloud,
         contacts,
         nearby: NEARBY
             .lock()
@@ -875,8 +903,9 @@ fn queue(state: &AppState, c: &Cipher, contact: &str, text: &str, file: Option<(
     if link::connected(contact) {
         link::flush(state, contact);
     } else {
-        // Try right away, even after failed tries.
+        // Try right away, even after failed tries (by mail too, if that's how they're reached).
         link::reset(contact);
+        mailbox::nudge(contact);
         link::wake();
     }
     Ok(MessageView {
