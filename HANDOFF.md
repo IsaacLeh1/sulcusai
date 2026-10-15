@@ -514,6 +514,14 @@ His brief: link with someone else's SulcusAI by a code, Radmin-style direct conn
 - **Tests** (`sync/people/tests.rs`, all Windows-only, over loopback with two scratch states): `a_code_links_two_apps_once`, `messages_cross_on_a_live_link`, `crossed_calls_settle_on_one_link`, `a_shared_chat_is_watched_live`, `assistants_ask_each_other_with_permission` and `two_assistants_work_something_out` (one shared stand-in model server on its own thread, `ask::TEST_ENDPOINT`), `people_reach_each_other_through_a_relay` (an in-process relay with the worker's API) and the ignored `people_through_the_real_relay` (relay/local.mjs in Node; passes). The lock lint flags two databases locked in one statement even in tests: split them. **Not verified between two real PCs yet.**
 - **Translations:** `i18n_extract.py` now skips `tests.rs` files and only stops at an inline `mod tests {` (people/mod.rs declares `mod tests;` at the top, which used to hide the whole file), and reads files with Windows line endings too.
 
+## After 0.9.1 (2026-10-15, not built)
+
+0.9.1 (People, compaction, downloads) is published. Since then, on phase7:
+- **Suggestion per PC** (`catalog::best_for`, `ModelCard.best`, badge "Best for this PC", `starter.ts`): the highest-rated chat model with tools whose best version runs at 15+ tokens/sec, entirely on the graphics card when there is one (else anywhere; on a slow PC the fastest). The catalog's fixed "recommended" tag is gone. Test `the_suggestion_grows_with_the_graphics_card`: 8 GB → Qwen3 8B, 12 GB (his RTX 5070 Ti laptop) → Qwen3 14B, 16 GB (his friend's) → gpt-oss 20B, 24 GB → Qwen3 32B; never the coder.
+- **Five bigger catalog models** (sizes and SHA-256 from Hugging Face's API, architecture from each model's config.json): Mistral Small 3.2 24B (vision), Qwen3 30B-A3B Instruct 2507, Gemma 3 27B (vision), Qwen3 32B, Qwen3 Coder 30B-A3B. Before this, a 12 GB card could already run every catalog model, so a 16 GB card saw nothing more.
+- **Trying a model out** (after an install, and the speed test): install progress now has phases `loading` then `benchmark`; `components/Testing.tsx` shows a ticking "0:12 so far" and says it may take a minute and stops by itself. With Windows' animations off (`prefers-reduced-motion`) the indeterminate bar used to vanish, so it looked frozen; it now stays visible.
+- **Model cards** wrap their rows and let the quality menu shrink, so nothing spills past the card (the installed card's "Stop using" did by ~25 px).
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
