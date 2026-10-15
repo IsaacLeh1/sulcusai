@@ -9,8 +9,9 @@ export function starterModel(models: ModelCard[]): ModelCard | null {
   // One that's already on this PC needs no download.
   const onDisk = available.find((m) => m.on_disk);
   if (onDisk) return onDisk;
-  const recommended = available.find((m) => m.tags.includes("recommended"));
-  if (recommended) return recommended;
+  // The best for this PC, worked out from its hardware.
+  const best = available.find((m) => m.best);
+  if (best) return best;
   const speedOf = (m: ModelCard) => m.fit.variants.find((v) => v.quant === m.fit.recommended)?.est_tps ?? 0;
   // Otherwise the most capable model that still runs comfortably…
   const comfortable = available.filter((m) => speedOf(m) >= COMFORTABLE_TPS).sort((a, b) => b.params_b - a.params_b);

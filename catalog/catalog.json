@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-09",
+  "updated": "2026-10-15",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
@@ -200,8 +200,7 @@
       },
       "tags": [
         "chat",
-        "tool-calling",
-        "recommended"
+        "tool-calling"
       ],
       "params_b": 4.0,
       "arch": {
@@ -808,6 +807,364 @@
         "url": "https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-F16.gguf",
         "size": 1159030336,
         "sha256": "d406d03ebabefdef86a2c86bf0c1b65f9e046f7a81c218f25de4931b46a07fc4"
+      }
+    },
+    {
+      "id": "mistral-small-3.2-24b",
+      "name": "Mistral Small 3.2 24B",
+      "publisher": "Mistral AI",
+      "source": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "description": "A strong all-rounder that follows instructions closely and uses tools well, and it sees pictures. For graphics cards with 16 GB or more.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "tool-calling",
+        "vision"
+      ],
+      "params_b": 24.0,
+      "arch": {
+        "n_layer": 40,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 131072,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+          "size": 14333922848,
+          "sha256": "a3cc56310807ed0d145eaf9f018ccda9ae7ad8edb41ec870aa2454b0d4700b3c"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Mistral-Small-3.2-24B-Instruct-2506-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q5_K_M.gguf",
+          "size": 16763997728,
+          "sha256": "423446013d1d9a63eb09d84f9d4fe0a1a81b57b6530260afd07a070b4e74845a"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Mistral-Small-3.2-24B-Instruct-2506-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q6_K.gguf",
+          "size": 19345952288,
+          "sha256": "e92f341791f7da41021d9ae7fac00a1c02aa007a09cb2ecabea748f73a206217"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q8_0.gguf",
+          "size": 25054793248,
+          "sha256": "b2a40e5ef4eab8837d0462c303e8147ec754e2963e41916b551107d2b0ca6527"
+        }
+      ],
+      "ratings": {
+        "overall": 72,
+        "coding": 8,
+        "writing": 8,
+        "research": 7,
+        "agents": 8,
+        "languages": 8
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 878053568,
+        "sha256": "d6af684ae9136398eaa0b59ea9e0b0b850bb6ac5084f1e8c5cb8f85251825eaf"
+      }
+    },
+    {
+      "id": "qwen3-30b-a3b-2507",
+      "name": "Qwen3 30B-A3B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "description": "Mixture-of-experts model with the knowledge of a 30B model: only a tenth of it runs for each word, so it stays fast even when it doesn't all fit on the graphics card.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "tool-calling",
+        "multilingual"
+      ],
+      "params_b": 30.5,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 4,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.11
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/main/Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+          "size": 18556686752,
+          "sha256": "6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-30B-A3B-Instruct-2507-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/main/Qwen3-30B-A3B-Instruct-2507-Q5_K_M.gguf",
+          "size": 21725581728,
+          "sha256": "74cf6e525344a184e59f8dbd1d18e59587f1a03eaff66f6b1fbd0ee3a53a3d68"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-30B-A3B-Instruct-2507-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/main/Qwen3-30B-A3B-Instruct-2507-Q6_K.gguf",
+          "size": 25092532640,
+          "sha256": "b1a3ed3bc584d58d25253c408cbbf894f974dffa2df74e016469289e686ef701"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-30B-A3B-Instruct-2507-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF/resolve/main/Qwen3-30B-A3B-Instruct-2507-Q8_0.gguf",
+          "size": 32483932576,
+          "sha256": "47514861adaa7ae7f32818fe54595c7cbed2753417ba78df53054fcf7b9dcd88"
+        }
+      ],
+      "ratings": {
+        "overall": 76,
+        "coding": 8,
+        "writing": 8,
+        "research": 8,
+        "agents": 9,
+        "languages": 7
+      }
+    },
+    {
+      "id": "gemma-3-27b",
+      "name": "Gemma 3 27B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF",
+      "description": "Google's largest Gemma: excellent writing in over 140 languages, and it sees pictures. For graphics cards with 16 GB or more.",
+      "license": {
+        "name": "Gemma Terms of Use",
+        "url": "https://ai.google.dev/gemma/terms",
+        "commercial": true,
+        "note": "Commercial use allowed, subject to Google's Gemma Prohibited Use Policy."
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual",
+        "vision"
+      ],
+      "params_b": 27.0,
+      "arch": {
+        "n_layer": 62,
+        "n_kv_heads": 16,
+        "head_dim": 128,
+        "max_ctx": 131072,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "tools": false,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-3-27b-it-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q4_K_M.gguf",
+          "size": 16546688736,
+          "sha256": "f1b699659942c777bd3ec0bcb527d6ebf34ae14ca76e3af103d58d0c9cbdadee"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-3-27b-it-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q5_K_M.gguf",
+          "size": 19271675616,
+          "sha256": "f63ac2bd81ce436aa780e400c22cb8510820991606613aa8d97afb2bb3c862e4"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-3-27b-it-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q6_K.gguf",
+          "size": 22166974176,
+          "sha256": "844f0142c76a14a035fa38b802525c4eef447e25efb66eeabc9212a8d019900b"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-3-27b-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/resolve/main/gemma-3-27b-it-Q8_0.gguf",
+          "size": 28707972192,
+          "sha256": "4f8cb99283aa9ed7926280a372e0b04224d2be0b790a03b5ad85d25a18906499"
+        }
+      ],
+      "ratings": {
+        "overall": 70,
+        "coding": 6,
+        "writing": 9,
+        "research": 7,
+        "agents": 0,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-3-27b-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 857739392,
+        "sha256": "debe2545831a2566dcec81992b9aa8fa8381c5a0a3588c0b59a41cc9c610cfe7"
+      }
+    },
+    {
+      "id": "qwen3-32b",
+      "name": "Qwen3 32B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-32B-GGUF",
+      "description": "The most capable Qwen3 for one graphics card: deep reasoning and dependable tool use. Best with 24 GB of graphics memory.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 32.8,
+      "arch": {
+        "n_layer": 64,
+        "n_kv_heads": 8,
+        "head_dim": 128,
+        "max_ctx": 40960,
+        "active_fraction": 1.0
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-32B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-32B-GGUF/resolve/main/Qwen3-32B-Q4_K_M.gguf",
+          "size": 19762150048,
+          "sha256": "8df67573b2c23484e02ec7af295e39bed7ee774f3771d5fda2978265b59370e7"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-32B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-32B-GGUF/resolve/main/Qwen3-32B-Q5_K_M.gguf",
+          "size": 23214832288,
+          "sha256": "bc96ba6bc5ed7d78540d2ca7fe66234c71b821480496c6ac8d12d8c406429446"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-32B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-32B-GGUF/resolve/main/Qwen3-32B-Q6_K.gguf",
+          "size": 26883307168,
+          "sha256": "47eb3b57d774b7c4f730d3ca1d63c987e03a4c19c925145b777fdd530da4c447"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-32B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-32B-GGUF/resolve/main/Qwen3-32B-Q8_0.gguf",
+          "size": 34817719968,
+          "sha256": "893a858c12e891a53219e59dab3238de0db61567e2fbd0487d2c6348572d78ff"
+        }
+      ],
+      "ratings": {
+        "overall": 80,
+        "coding": 9,
+        "writing": 8,
+        "research": 9,
+        "agents": 9,
+        "languages": 8
+      }
+    },
+    {
+      "id": "qwen3-coder-30b-a3b",
+      "name": "Qwen3 Coder 30B-A3B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "description": "Coding specialist: writes, fixes and explains code, and works well with files and tools. Fast for its size (mixture of experts).",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "tool-calling"
+      ],
+      "params_b": 30.5,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 4,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.11
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+          "size": 18556689568,
+          "sha256": "fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf",
+          "size": 21725584544,
+          "sha256": "4b78837bbec5ee248e4a5642bf608b6793721af41b92589e40c8da0bce58b907"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q6_K.gguf",
+          "size": 25092535456,
+          "sha256": "100b5121d09553fb1af3b873b21fb3ec3da5c306fc5cb09bd338c48e21b10875"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q8_0.gguf",
+          "size": 32483935392,
+          "sha256": "4ff1cff607804037bf6d2168249c570baa4e1621292b159c0e06591e0d7c3066"
+        }
+      ],
+      "ratings": {
+        "overall": 66,
+        "coding": 10,
+        "writing": 4,
+        "research": 5,
+        "agents": 8,
+        "languages": 4
       }
     }
   ],

@@ -307,6 +307,8 @@ select, .input {
 @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  /* Still visibly working when nothing may move. */
+  .progress.indeterminate span { width: 100%; transform: none; opacity: 0.45; }
 }
 
 /* ---------- security, lock screen ---------- */
@@ -1210,3 +1212,14 @@ button.ctx:hover { background: var(--hover); }
 .ask-thread li { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); max-width: 85%; }
 .ask-thread li.mine { align-self: flex-end; background: var(--bubble); border-color: transparent; }
 .people-menu .menu-pop button:disabled { opacity: 0.5; cursor: default; }
+/* A model being tried out: how long so far, and that it ends by itself. */
+.testing-note { margin: 6px 0 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.testing-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.spinner { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
+/* Model cards: nothing spills out, however narrow the card, long the name or large the text. */
+.card.model { min-width: 0; overflow-wrap: anywhere; }
+.model-head > div { min-width: 0; }
+.model-head .badge { flex: none; }
+.install-row { flex-wrap: wrap; row-gap: 6px; }
+.install-row select { min-width: 0; max-width: 100%; }
+.hub-file { flex-wrap: wrap; }

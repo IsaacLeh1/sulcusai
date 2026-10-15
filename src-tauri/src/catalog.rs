@@ -370,6 +370,34 @@ fn recommend(variants: &[VariantFit]) -> Option<&VariantFit> {
         .max_by(|a, b| a.est_tps.partial_cmp(&b.est_tps).unwrap_or(std::cmp::Ordering::Equal))
 }
 
+/// The model to suggest on this PC: the most capable general assistant
+/// (chat and tools, by its overall rating) whose best version runs
+/// comfortably here. With a graphics card it must fit on the card entirely:
+/// a split model can be quick to write but is slow to read long prompts and
+/// keeps the processor busy. Without one (or when nothing fits), the most
+/// capable that's comfortable anywhere; on a slow PC, the fastest.
+pub fn best_for(models: &[ModelSpec], b: &Budget) -> Option<String> {
+    let picks: Vec<(&ModelSpec, VariantFit)> = models
+        .iter()
+        .filter(|m| m.tools && m.tags.iter().any(|t| t == "chat"))
+        .filter_map(|m| {
+            let fit = fit_model(m, b);
+            let v = fit.variant(fit.recommended.as_deref()?)?.clone();
+            (v.runnable() && v.disk_ok).then_some((m, v))
+        })
+        .collect();
+    let best = |on_gpu: bool| {
+        picks
+            .iter()
+            .filter(|(_, v)| v.est_tps >= COMFORTABLE_TPS && (!on_gpu || v.placement == Some(Placement::Gpu)))
+            .max_by_key(|(m, _)| m.ratings.overall)
+            .map(|(m, _)| m.id.clone())
+    };
+    (if b.vram > 0 { best(true) } else { None })
+        .or_else(|| best(false))
+        .or_else(|| picks.iter().max_by(|a, b| a.1.est_tps.partial_cmp(&b.1.est_tps).unwrap_or(std::cmp::Ordering::Equal)).map(|(m, _)| m.id.clone()))
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UpgradeHint {
     pub extra_ram_gb: u64,
@@ -451,6 +479,38 @@ mod tests {
 
     fn catalog() -> Catalog {
         Catalog::bundled()
+    }
+
+    /// What a PC with this much graphics memory (0: none) and system memory gets.
+    fn pc(vram_gb: u64, ram_gb: u64) -> Budget {
+        let hw = Hardware {
+            ram_total: ram_gb * GIB,
+            disk_free: 2_000 * GIB,
+            gpus: if vram_gb > 0 { vec![crate::hardware::Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: vram_gb * GIB, integrated: false }] } else { vec![] },
+            ..Default::default()
+        };
+        Budget::from_hardware(&hw)
+    }
+
+    /// A bigger graphics card gets a more capable suggestion: a 12 GB laptop
+    /// (his) and a 16 GB card (his friend's) differ, and 24 GB gets the most.
+    #[test]
+    fn the_suggestion_grows_with_the_graphics_card() {
+        let c = catalog();
+        let best = |vram, ram| best_for(&c.models, &pc(vram, ram)).unwrap();
+        assert_eq!(best(12, 32), "qwen3-14b");
+        assert_eq!(best(16, 32), "gpt-oss-20b");
+        assert_eq!(best(24, 64), "qwen3-32b");
+        assert_eq!(best(8, 16), "qwen3-8b");
+        // No graphics card: something comfortable on the processor, never a big model.
+        let cpu = best(0, 16);
+        let spec = c.model(&cpu).unwrap();
+        assert!(spec.params_b <= 8.0, "{cpu}");
+        // Coding-only and picture-only models aren't suggested as the assistant.
+        for vram in [8, 12, 16, 24, 48] {
+            let id = best(vram, 64);
+            assert!(!id.contains("coder"), "{vram} GB: {id}");
+        }
     }
 
     /// A bigger window chosen by the person: as big as still runs, layers

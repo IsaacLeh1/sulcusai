@@ -8,6 +8,7 @@ import { speedLabel } from "../format";
 import { speedOf } from "../ranking";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { TestingNote, useTestStart } from "./Testing";
 
 /** Available models shown for comparison, besides every installed one. */
 const COMPARE = 6;
@@ -30,6 +31,7 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
     };
   }, []);
   const running = !!status?.running;
+  const since = useTestStart(running);
   const failed = status?.errors ?? {};
 
   const installed = models.filter((m) => m.installed);
@@ -90,6 +92,7 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
           </div>
         </div>
       )}
+      {running && <TestingNote since={since} />}
       <div className="speed-rows">
         {rows.map((m) => {
           const measured = m.installed?.tps ?? null;

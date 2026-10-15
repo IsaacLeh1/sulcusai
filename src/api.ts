@@ -516,6 +516,8 @@ export interface ModelCard {
   renamed_from: string | null;
   /** Some version runs on this PC (memory, speed and disk). */
   runnable: boolean;
+  /** The best model for this PC: the most capable one that runs comfortably (on the graphics card, when there is one). */
+  best: boolean;
   publisher: string;
   source: string;
   description: string;
@@ -1623,7 +1625,8 @@ export type MeetingEvent =
 
 export interface InstallProgress {
   model_id: string;
-  phase: "engine" | "verify" | "download" | "benchmark" | "vision";
+  /** "loading" and "benchmark": the model is tried out on this PC (its speed is measured). */
+  phase: "engine" | "verify" | "download" | "loading" | "benchmark" | "vision";
   received: number;
   total: number;
 }

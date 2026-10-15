@@ -7,11 +7,13 @@ import { api, errorText, on, type InstallProgress, type ModelCard, type PausedDo
 import { bytes, percent } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { TESTING, TestingNote, useTestStart } from "./Testing";
 
 const PHASE: Record<string, string> = {
   engine: "Setting up the engine",
   verify: "Checking the downloaded file",
   download: "Downloading",
+  loading: "Loading the model to test it",
   benchmark: "Testing speed on this PC",
   vision: "Downloading the picture reader",
 };
@@ -46,6 +48,8 @@ function Active({ id, p, name }: { id: string; p: InstallProgress; name: string 
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   const pausable = p.phase === "download" || p.phase === "vision" || p.phase === "engine";
   const left = rate && rate > 0 && p.total > p.received ? (p.total - p.received) / rate : null;
+  const testing = TESTING.has(p.phase);
+  const since = useTestStart(testing);
   return (
     <div className="dl-row">
       <div className="dl-what">
@@ -53,16 +57,17 @@ function Active({ id, p, name }: { id: string; p: InstallProgress; name: string 
         <span className="muted small">
           {t(PHASE[p.phase] ?? "Working")}
           {pct !== null && ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}`}
-          {rate !== null && p.phase !== "benchmark" && ` · ${bytes(rate)}/s`}
+          {rate !== null && !testing && ` · ${bytes(rate)}/s`}
           {left !== null && ` · ${duration(left)}`}
         </span>
         <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
           <span style={{ width: pct === null ? undefined : `${pct}%` }} />
         </div>
+        {testing && <TestingNote since={since} />}
       </div>
       <div className="dl-actions">
         {pausable && <button className="btn small" onClick={() => api.pauseInstall(id)}>{t("Pause")}</button>}
-        {p.phase !== "benchmark" && <button className="btn ghost small" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
+        {!testing && <button className="btn ghost small" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
       </div>
     </div>
   );

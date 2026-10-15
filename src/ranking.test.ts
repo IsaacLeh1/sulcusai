@@ -9,6 +9,7 @@ function m(id: string, overall: number, coding: number, tps: number, measured: n
     name: id,
     renamed_from: null,
     runnable: true,
+    best: false,
     publisher: "",
     source: "",
     description: "",

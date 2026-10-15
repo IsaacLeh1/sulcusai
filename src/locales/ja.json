@@ -882,7 +882,6 @@
  "Reading aloud": "読み上げ中",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "DuckDuckGoのシンプルな検索結果ページを読み取ります。検索が制限される場合は、BraveまたはSearXNGに切り替えてください。",
  "Reads freely; asks before changing files or running commands.": "自由に読み取り、ファイルの変更やコマンドの実行前には確認します。",
- "Recommended": "おすすめ",
  "Recording": "録音中",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "録音に関する法律は地域によって異なり、全員の同意が必要な場合もあります。",
  "Recording meeting": "会議を録音中",
@@ -2270,5 +2269,13 @@
  "← Shared chats": "← 共有チャット",
  "Loading the model…": "モデルを読み込んでいます…",
  "Using a tool…": "ツールを使っています…",
- "Writing…": "書いています…"
+ "Writing…": "書いています…",
+ "Best for this PC": "この PC に最適",
+ "Loading it to test it": "テストのために読み込んでいます",
+ "Loading the model to test it": "テストのためにモデルを読み込んでいます",
+ "Testing it on this PC…": "この PC でテストしています…",
+ "The most capable model that runs comfortably on this PC": "この PC で快適に動く最も高性能なモデル",
+ "This may take a minute. SulcusAI runs the model once to see how fast it is on this PC, so the graphics card works hard for a moment. It stops by itself.": "1 分ほどかかることがあります。SulcusAI はこの PC での速度を測るためにモデルを一度実行するので、グラフィックカードが一時的にフル稼働します。終わると自動で止まります。",
+ "This may take a minute; it stops by itself.": "1 分ほどかかることがあります。終わると自動で止まります。",
+ "{time} so far": "経過 {time}"
 }

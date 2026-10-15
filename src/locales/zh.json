@@ -882,7 +882,6 @@
  "Reading aloud": "正在朗读",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "读取 DuckDuckGo 的纯文本结果页面。如果搜索受到限制，请切换到 Brave 或 SearXNG。",
  "Reads freely; asks before changing files or running commands.": "可自由读取；更改文件或运行命令前会先询问。",
- "Recommended": "推荐",
  "Recording": "正在录制",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "各地关于录音的法律不同，在某些地方必须所有人都同意才能录音。",
  "Recording meeting": "正在录制会议",
@@ -2270,5 +2269,13 @@
  "← Shared chats": "← 共享的聊天",
  "Loading the model…": "正在加载模型…",
  "Using a tool…": "正在使用工具…",
- "Writing…": "正在写…"
+ "Writing…": "正在写…",
+ "Best for this PC": "最适合这台电脑",
+ "Loading it to test it": "正在加载以进行测试",
+ "Loading the model to test it": "正在加载模型以进行测试",
+ "Testing it on this PC…": "正在这台电脑上测试…",
+ "The most capable model that runs comfortably on this PC": "能在这台电脑上流畅运行的最强模型",
+ "This may take a minute. SulcusAI runs the model once to see how fast it is on this PC, so the graphics card works hard for a moment. It stops by itself.": "这可能需要一分钟。SulcusAI 会运行一次模型，测出它在这台电脑上的速度，所以显卡会短暂地高负荷工作。完成后会自动停止。",
+ "This may take a minute; it stops by itself.": "这可能需要一分钟，完成后会自动停止。",
+ "{time} so far": "已用 {time}"
 }

@@ -3,17 +3,18 @@ import { describe, expect, it } from "vitest";
 import type { ModelCard } from "./api";
 import { starterModel } from "./starter";
 
-function card(id: string, params_b: number, tps: number, tags: string[] = [], installed = false): ModelCard {
+function card(id: string, params_b: number, tps: number, best = false, installed = false): ModelCard {
   return {
     id,
     name: id,
     renamed_from: null,
     runnable: true,
+    best,
     publisher: "",
     source: "",
     description: "",
     license: { name: "MIT", url: "", commercial: true },
-    tags,
+    tags: [],
     params_b,
     default_ctx: 8192,
     tools: true,
@@ -25,8 +26,8 @@ function card(id: string, params_b: number, tps: number, tags: string[] = [], in
 }
 
 describe("starterModel", () => {
-  it("prefers the catalog's recommended pick", () => {
-    expect(starterModel([card("big", 14, 40), card("rec", 4, 60, ["recommended"])])?.id).toBe("rec");
+  it("prefers the best pick for this PC", () => {
+    expect(starterModel([card("big", 14, 40), card("best", 8, 60, true)])?.id).toBe("best");
   });
 
   it("otherwise picks the largest model that runs comfortably", () => {
@@ -38,7 +39,7 @@ describe("starterModel", () => {
   });
 
   it("skips installed models and handles an empty list", () => {
-    expect(starterModel([card("rec", 4, 60, ["recommended"], true), card("x", 2, 50)])?.id).toBe("x");
+    expect(starterModel([card("best", 4, 60, true, true), card("x", 2, 50)])?.id).toBe("x");
     expect(starterModel([])).toBeNull();
   });
 });

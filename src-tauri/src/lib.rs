@@ -270,6 +270,8 @@ struct ModelCard {
     renamed_from: Option<String>,
     /// Some version runs on this PC (fits its memory, fast enough, and on disk).
     runnable: bool,
+    /// The one to suggest on this PC (`catalog::best_for`).
+    best: bool,
 }
 
 #[derive(Serialize)]
@@ -296,6 +298,7 @@ fn catalog_view(state: AppStateRef, all: Option<bool>) -> CatalogView {
     all.extend(local::list(&state.db.lock().unwrap()));
     all.extend(hub::list(&state.db.lock().unwrap()));
     let names = db::model_names(&state.db.lock().unwrap());
+    let best = catalog::best_for(&state.catalog.models, &budget);
     let models = all
         .iter()
         .filter_map(|spec| {
@@ -316,7 +319,8 @@ fn catalog_view(state: AppStateRef, all: Option<bool>) -> CatalogView {
             let mut spec = spec.clone();
             let renamed_from = names.get(&spec.id).map(|name| std::mem::replace(&mut spec.name, name.clone()));
             let runnable = fit.visible();
-            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable })
+            let best = best.as_deref() == Some(spec.id.as_str());
+            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable, best })
         })
         .collect();
 
@@ -486,7 +490,8 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 std::fs::remove_file(&old.path).ok();
             }
 
-            emit("benchmark", 0, 0);
+            // Trying it out: loading it (the longest part for a big model), then timing a short reply.
+            emit("loading", 0, 0);
             let log = state.paths.engine_log();
             // Same settings a chat will use, so the first chat doesn't reload the model.
             let limits = state.limits();
@@ -513,6 +518,7 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                         state.job(),
                     )
                     .await?;
+                emit("benchmark", 0, 0);
                 engine::measure(&ep).await
             }
             .await;

@@ -5,6 +5,7 @@ import { api, errorText, on, type InstallProgress, type SpeakerModel, type Speec
 import { bytes, percent } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { t, tx } from "../i18n";
 
 function speedText(speed: number): string {
@@ -137,17 +138,20 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
 }
 
 function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
-  const label = { engine: t("Setting up the speech engine"), verify: t("Checking the file"), download: t("Downloading"), benchmark: t("Testing it"), vision: t("Downloading") }[p.phase];
+  const label = { engine: t("Setting up the speech engine"), verify: t("Checking the file"), download: t("Downloading"), loading: t("Loading it to test it"), benchmark: t("Testing it"), vision: t("Downloading") }[p.phase];
+  const testing = TESTING.has(p.phase);
+  const since = useTestStart(testing);
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
-        {p.phase !== "benchmark" && <button className="link" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
+        {!testing && <button className="link" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />
       </div>
+      {testing && <TestingNote since={since} short />}
     </div>
   );
 }

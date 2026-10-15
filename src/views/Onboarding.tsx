@@ -6,6 +6,7 @@ import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { NewPinForm, RecoveryCode } from "../components/Security";
 import type { PushToast } from "../components/Toasts";
 import { starterModel } from "../starter";
+import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { t, tx } from "../i18n";
 
 const STEPS = [tx("Welcome"), tx("Your PC"), tx("First model"), tx("About you"), tx("Protect"), tx("Done")] as const;
@@ -141,13 +142,7 @@ function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: Cat
           <p className="desc">{pick.description}</p>
           <p className="muted small">{placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} · {pick.license.name}</p>
           {p ? (
-            <div className="install-progress">
-              <div className="progress-label">
-                <span>{p.phase === "download" && p.total ? t("Downloading · {received} of {total}", { received: bytes(p.received), total: bytes(p.total) }) : t("Setting up…")}</span>
-              </div>
-              <div className={`progress ${p.total ? "" : "indeterminate"}`}><span style={{ width: p.total ? `${percent(p.received, p.total)}%` : undefined }} /></div>
-              <p className="muted small">{t("You can keep going while it downloads.")}</p>
-            </div>
+            <FirstInstall p={p} />
           ) : (
             <button
               className="btn primary"
@@ -268,5 +263,28 @@ function Finished({ onFinish, installing }: { onFinish: () => void; installing: 
         <button className="btn primary" onClick={onFinish}>{t("Start using {app}", { app: APP_NAME })}</button>
       </div>
     </>
+  );
+}
+
+/** The first model's install: downloading, then trying it out on this PC. */
+function FirstInstall({ p }: { p: InstallProgress }) {
+  const testing = TESTING.has(p.phase);
+  const since = useTestStart(testing);
+  const label =
+    p.phase === "download" && p.total
+      ? t("Downloading · {received} of {total}", { received: bytes(p.received), total: bytes(p.total) })
+      : testing
+        ? t("Testing it on this PC…")
+        : t("Setting up…");
+  return (
+    <div className="install-progress">
+      <div className="progress-label">
+        <span>{label}</span>
+      </div>
+      <div className={`progress ${p.total ? "" : "indeterminate"}`}>
+        <span style={{ width: p.total ? `${percent(p.received, p.total)}%` : undefined }} />
+      </div>
+      {testing ? <TestingNote since={since} /> : <p className="muted small">{t("You can keep going while it downloads.")}</p>}
+    </div>
   );
 }

@@ -9,6 +9,7 @@ import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
 import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
+import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { Downloads } from "../components/Downloads";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
@@ -577,7 +578,15 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
           <h3>{m.name}</h3>
           <span className="muted small">{m.publisher} · {t("{n}B parameters", { n: m.params_b })}</span>
         </div>
-        {onDisk ? <span className="badge">{t("Already on this PC")}</span> : m.tags.includes("recommended") && <span className="badge">{t("Recommended")}</span>}
+        {onDisk ? (
+          <span className="badge">{t("Already on this PC")}</span>
+        ) : (
+          m.best && (
+            <span className="badge" title={t("The most capable model that runs comfortably on this PC")}>
+              {t("Best for this PC")}
+            </span>
+          )
+        )}
       </div>
       <p className="desc">{m.description}</p>
       <Capability m={m} rank={rank} />
@@ -618,15 +627,18 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
     engine: t("Setting up the engine"),
     verify: t("Checking the downloaded file"),
     download: t("Downloading"),
+    loading: t("Loading the model to test it"),
     benchmark: t("Testing speed on this PC"),
     vision: t("Downloading the picture reader"),
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
+  const testing = TESTING.has(p.phase);
+  const since = useTestStart(testing);
   return (
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
-        {p.phase !== "benchmark" && (
+        {!testing && (
           <span className="row">
             {(p.phase === "download" || p.phase === "vision" || p.phase === "engine") && (
               <button className="link" onClick={() => api.pauseInstall(modelId)}>
@@ -642,6 +654,7 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />
       </div>
+      {testing && <TestingNote since={since} />}
     </div>
   );
 }

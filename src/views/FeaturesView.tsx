@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, on, type BridgeStatus, type FeatureId, type FeatureView, type InstallProgress, type SpeakerModel, type VoicePack } from "../api";
 import { bytes, percent } from "../format";
 import type { PushToast } from "../components/Toasts";
+import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { t, tx } from "../i18n";
 
 interface Info {
@@ -205,17 +206,20 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
 }
 
 function Progress({ p }: { p: InstallProgress }) {
-  const label = { engine: t("Setting up"), verify: t("Checking the file"), download: t("Downloading"), benchmark: t("Testing it"), vision: t("Adding the picture reader") }[p.phase];
+  const label = { engine: t("Setting up"), verify: t("Checking the file"), download: t("Downloading"), loading: t("Loading it to test it"), benchmark: t("Testing it"), vision: t("Adding the picture reader") }[p.phase];
+  const testing = TESTING.has(p.phase);
+  const since = useTestStart(testing);
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
-        {p.phase !== "benchmark" && <button className="link" onClick={() => api.cancelInstall(p.model_id)}>{t("Cancel")}</button>}
+        {!testing && <button className="link" onClick={() => api.cancelInstall(p.model_id)}>{t("Cancel")}</button>}
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />
       </div>
+      {testing && <TestingNote since={since} short />}
     </div>
   );
 }

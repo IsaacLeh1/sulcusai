@@ -882,7 +882,6 @@
  "Reading aloud": "Lendo em voz alta",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "Lê a página de resultados simples do DuckDuckGo. Se as pesquisas forem limitadas, mude para Brave ou SearXNG.",
  "Reads freely; asks before changing files or running commands.": "Lê livremente; pergunta antes de alterar arquivos ou executar comandos.",
- "Recommended": "Recomendado",
  "Recording": "Gravando",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "As leis sobre gravação variam, e em alguns lugares todos precisam concordar em ser gravados.",
  "Recording meeting": "Gravando reunião",
@@ -2270,5 +2269,13 @@
  "← Shared chats": "← Chats compartilhados",
  "Loading the model…": "Carregando o modelo…",
  "Using a tool…": "Usando uma ferramenta…",
- "Writing…": "Escrevendo…"
+ "Writing…": "Escrevendo…",
+ "Best for this PC": "O melhor para este PC",
+ "Loading it to test it": "Carregando para testar",
+ "Loading the model to test it": "Carregando o modelo para testar",
+ "Testing it on this PC…": "Testando neste PC…",
+ "The most capable model that runs comfortably on this PC": "O modelo mais capaz que roda com folga neste PC",
+ "This may take a minute. SulcusAI runs the model once to see how fast it is on this PC, so the graphics card works hard for a moment. It stops by itself.": "Pode levar um minuto. O SulcusAI roda o modelo uma vez para ver a velocidade dele neste PC, então a placa de vídeo trabalha bastante por um momento. Ele para sozinho.",
+ "This may take a minute; it stops by itself.": "Pode levar um minuto; ele para sozinho.",
+ "{time} so far": "{time} até agora"
 }
