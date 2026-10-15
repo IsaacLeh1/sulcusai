@@ -565,3 +565,42 @@ async fn through_relay(url: String) {
     assert_eq!(wrong.status().as_u16(), 404);
     pump.abort();
 }
+
+/// 0.9.1 froze: the People page held CODE while it read settings, and the
+/// sync loop held the database while it asked whether a code was showing.
+/// Both at once, over and over, must finish.
+#[cfg(windows)]
+#[test]
+fn the_people_page_and_the_listener_never_deadlock() {
+    let s = crate::e2e::scratch_state();
+    *CODE.lock().unwrap() = Some(Pairing { code: "K7Q29XMB".into(), until: Instant::now() + CODE_FOR, tries: 0 });
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let page = {
+        let (s, done) = (s.clone(), done_tx.clone());
+        std::thread::spawn(move || {
+            let c = s.cipher().unwrap();
+            for _ in 0..300 {
+                let _ = view(&s, &c);
+            }
+            done.send("page").unwrap();
+        })
+    };
+    let listener = {
+        let (s, done) = (s.clone(), done_tx);
+        std::thread::spawn(move || {
+            for _ in 0..3000 {
+                // What the sync loop does each round.
+                let showing = showing_code();
+                let conn = s.db.lock().unwrap();
+                let _ = wants_calls(&conn, showing);
+            }
+            done.send("listener").unwrap();
+        })
+    };
+    for _ in 0..2 {
+        done_rx.recv_timeout(Duration::from_secs(60)).expect("the People page and the listener deadlocked");
+    }
+    page.join().unwrap();
+    listener.join().unwrap();
+    *CODE.lock().unwrap() = None;
+}

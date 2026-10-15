@@ -185,9 +185,10 @@ pub(super) fn showing_code() -> bool {
 }
 
 /// Whether People needs this PC to take calls: it's on, and someone is
-/// linked or a code is showing.
-pub(super) fn wants_calls(conn: &Connection) -> bool {
-    features::is_on(conn, Feature::People) && (code_showing() || !book(conn).contacts.is_empty())
+/// linked or a code is showing (`showing`, read before the database was
+/// locked: CODE is never taken while the database is held).
+pub(super) fn wants_calls(conn: &Connection, showing: bool) -> bool {
+    features::is_on(conn, Feature::People) && (showing || !book(conn).contacts.is_empty())
 }
 
 pub(super) fn stopped() {
@@ -724,25 +725,35 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
     // Latest conversation first.
     contacts.sort_by_key(|p| std::cmp::Reverse(p.last.as_ref().map_or(p.last_seen.unwrap_or(0), |m| m.at)));
     let linked: HashSet<&str> = b.contacts.iter().map(|p| p.id.as_str()).collect();
-    let code = CODE.lock().unwrap();
-    let code = code.as_ref().filter(|p| p.until > Instant::now());
+    // One lock at a time, and never the database while another is held: the
+    // sync loop holds the database while it asks whether a code is showing,
+    // so holding CODE here while reading settings froze the app (0.9.1).
+    let relay_set = mailbox::mine(state).is_some();
+    let cloud = state.settings().connectivity == crate::net::Connectivity::Cloud;
+    let code: Option<(String, u64)> = CODE
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|p| p.until > Instant::now())
+        .map(|p| (format!("{}-{}", &p.code[..4], &p.code[4..]), p.until.saturating_duration_since(Instant::now()).as_secs()));
+    let nearby: Vec<NearbyPerson> = NEARBY
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(id, s)| s.person && s.at.elapsed() < AWAY && !linked.contains(id.as_str()))
+        .map(|(id, s)| NearbyPerson { id: id.clone(), name: s.name.clone() })
+        .collect();
     PeopleView {
         name: b.name.clone(),
         listening: port != 0,
         addresses: if port != 0 { addresses(port) } else { vec![] },
-        code: code.map(|p| format!("{}-{}", &p.code[..4], &p.code[4..])),
-        code_left: code.map_or(0, |p| p.until.saturating_duration_since(Instant::now()).as_secs()),
+        code_left: code.as_ref().map_or(0, |c| c.1),
+        code: code.map(|c| c.0),
         unread: contacts.iter().map(|p| p.unread).sum(),
-        relay_set: mailbox::mine(state).is_some(),
-        cloud: state.settings().connectivity == crate::net::Connectivity::Cloud,
+        relay_set,
+        cloud,
         contacts,
-        nearby: NEARBY
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(id, s)| s.person && s.at.elapsed() < AWAY && !linked.contains(id.as_str()))
-            .map(|(id, s)| NearbyPerson { id: id.clone(), name: s.name.clone() })
-            .collect(),
+        nearby,
     }
 }
 

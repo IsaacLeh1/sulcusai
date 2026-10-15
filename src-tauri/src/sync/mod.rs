@@ -255,10 +255,13 @@ pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<Arc<AppState>>().inner().clone();
         loop {
+            // Read before locking the database: the People page takes CODE
+            // first, so taking it while holding the database could deadlock.
+            let showing = people::showing_code();
             let (enabled, wanted) = {
                 let conn = state.db.lock().unwrap();
                 let enabled = config(&conn).enabled;
-                (enabled, enabled || people::wants_calls(&conn))
+                (enabled, enabled || people::wants_calls(&conn, showing))
             };
             let live = LIVE.lock().unwrap().is_some();
             if wanted && !live {
@@ -830,6 +833,9 @@ fn local_ip() -> Option<IpAddr> {
 
 fn view(state: &AppState) -> SyncView {
     let cfg = config(&state.db.lock().unwrap());
+    // The database first and on its own: `tick` holds it while it reads
+    // NEARBY and ERRORS, so taking it while holding those could deadlock.
+    let cloud = db::settings(&state.db.lock().unwrap()).connectivity == crate::net::Connectivity::Cloud;
     let live = LIVE.lock().unwrap().as_ref().map(|l| l.port);
     let busy = BUSY.lock().unwrap().clone();
     let errors = ERRORS.lock().unwrap();
@@ -862,7 +868,7 @@ fn view(state: &AppState) -> SyncView {
             .collect(),
         code: pairing.map(|p| format!("{}-{}", &p.code[..4], &p.code[4..])),
         code_left: pairing.map_or(0, |p| p.until.saturating_duration_since(Instant::now()).as_secs()),
-        relay_active: cfg.relay_url.is_some() && db::settings(&state.db.lock().unwrap()).connectivity == crate::net::Connectivity::Cloud,
+        relay_active: cfg.relay_url.is_some() && cloud,
         relay_url: cfg.relay_url.clone(),
     }
 }
