@@ -3,7 +3,7 @@
 // directly. Messages go app to app; they never go to a model.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type PeopleView as View, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
+import { api, errorText, on, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -172,6 +172,8 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
   const [menu, setMenu] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [tab, setTab] = useState<"messages" | "shared">("messages");
+  const [asks, setAsks] = useState<PersonAsk[]>([]);
+  const [allowing, setAllowing] = useState(false);
   const [watching, setWatching] = useState<SharedChat | null>(null);
   // A chat they stopped sharing (or that went with the connection) closes.
   useEffect(() => {
@@ -182,10 +184,15 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
 
   const load = useCallback(() => {
     api.peopleMessages(c.id).then(setMessages).catch(() => {});
+    api.peopleAsks(c.id).then(setAsks).catch(() => {});
   }, [c.id]);
   useEffect(() => {
     load();
-    const subs = [on("people:message", (p) => p.contact_id === c.id && load()), on("people:changed", load)];
+    const subs = [
+      on("people:message", (p) => p.contact_id === c.id && load()),
+      on("people:changed", load),
+      on("people:ask", (p) => p.contact_id === c.id && api.peopleAsks(c.id).then(setAsks).catch(() => {})),
+    ];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [load, c.id]);
   // Reading them here clears the unread count.
@@ -193,7 +200,7 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
     if (messages) onChanged();
   }, [messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
   // New messages scroll into view (unless the user scrolled up to read).
-  const count = messages?.length ?? 0;
+  const count = (messages?.length ?? 0) + asks.length + asks.reduce((n, a) => n + a.thread.length + (a.answer ? 1 : 0), 0);
   const atBottom = useRef(true);
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
@@ -285,6 +292,15 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
                 role="menuitem"
                 onClick={() => {
                   setMenu(false);
+                  setAllowing(true);
+                }}
+              >
+                {t("What {name}'s assistant can use", { name: c.name })}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenu(false);
                   setAddress(c.address?.replace(/:47816$/, "") ?? "");
                 }}
               >
@@ -316,9 +332,18 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
         {messages && messages.length === 0 && (
           <p className="muted small people-note">{t("Say hello. Messages go straight to {name}'s SulcusAI and never to a model.", { name: c.name })}</p>
         )}
-        {(messages ?? []).map((m, i) => {
-          const prev = messages![i - 1];
-          const newDay = !prev || day(prev.at) !== day(m.at);
+        {timeline(messages ?? [], asks).map((item, i, all) => {
+          const prev = all[i - 1];
+          const newDay = !prev || day(prev.at) !== day(item.at);
+          if (item.kind === "ask") {
+            return (
+              <div key={item.a.id}>
+                {newDay && <div className="people-day small muted">{day(item.at)}</div>}
+                <AskCard a={item.a} contact={c} toast={toast} />
+              </div>
+            );
+          }
+          const m = item.m;
           return (
             <div key={m.id}>
               {newDay && <div className="people-day small muted">{day(m.at)}</div>}
@@ -387,6 +412,7 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
       </div>
       </>
       )}
+      {allowing && <AllowModal contact={c} onClose={() => setAllowing(false)} toast={toast} />}
       {address !== null && (
         <Modal title={t("Where to reach {name}", { name: c.name })} onClose={() => setAddress(null)}>
           <p className="muted small">{t("If their address changed, ask them for the one shown under Connect → Show my code, and type it here.")}</p>
@@ -721,5 +747,179 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
         <div ref={end} />
       </div>
     </>
+  );
+}
+
+type Item = { kind: "message"; at: number; m: PersonMessage } | { kind: "ask"; at: number; a: PersonAsk };
+
+/** Messages and the assistants' questions and tasks, in time order. */
+function timeline(messages: PersonMessage[], asks: PersonAsk[]): Item[] {
+  const items: Item[] = [...messages.map((m) => ({ kind: "message" as const, at: m.at, m })), ...asks.map((a) => ({ kind: "ask" as const, at: a.at, a }))];
+  return items.sort((x, y) => x.at - y.at);
+}
+
+/** A question between the two assistants, or a task they work out together. */
+function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContact; toast: PushToast }) {
+  const act = async (f: () => Promise<void>) => {
+    try {
+      await f();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const task = a.kind === "task";
+  const head = a.from_me
+    ? task
+      ? t("Your assistant is working something out with {name}'s", { name: c.name })
+      : t("Your assistant asked {name}'s", { name: c.name })
+    : task
+      ? t("{name}'s assistant wants to work something out with yours", { name: c.name })
+      : t("{name}'s assistant asked yours", { name: c.name });
+  const status: Record<string, string> = {
+    sent: t("Sent"),
+    approval: a.from_me ? t("Waiting for {name} to allow it", { name: c.name }) : t("Waiting for you to allow it"),
+    working: a.from_me && !task ? t("{name}'s assistant is working on it", { name: c.name }) : task ? t("The assistants are talking…") : t("Your assistant is working on it…"),
+    declined: t("Declined"),
+    failed: t("Didn't finish"),
+  };
+  const open = !["answered", "declined", "failed"].includes(a.status);
+  return (
+    <div className={`ask-card ${a.from_me ? "mine" : ""}`}>
+      <div className="small muted">
+        🤖 {head} · {time(a.at)}
+      </div>
+      <div className="ask-q">{a.question}</div>
+      {task && a.thread.length > 0 && (
+        <ol className="ask-thread">
+          {a.thread.map((turn, i) => (
+            <li key={i} className={turn.from_me ? "mine" : ""}>
+              <span className="small muted">{turn.from_me ? t("Your assistant") : t("{name}'s assistant", { name: c.name })}</span>
+              <span className="ptext">{turn.text.replace(/^\s*(\*\*)?DONE:(\*\*)?\s*/i, "✅ ")}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {a.answer && (
+        <div className={`ask-a ${a.status}`}>
+          {a.status === "answered" ? (
+            <>
+              <span className="small muted">{task ? t("Outcome") : a.from_me ? t("Their answer") : t("Your assistant's answer")}</span>
+              <Markdown text={a.answer} />
+            </>
+          ) : (
+            <span className="small">{a.answer}</span>
+          )}
+        </div>
+      )}
+      {open && status[a.status] && <div className="small muted live-dot">{status[a.status]}</div>}
+      {a.steps.length > 0 && (
+        <details className="small muted">
+          <summary>{t("What your assistant looked at")}</summary>
+          <ul>
+            {a.steps.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {!a.from_me && a.status === "approval" && (
+        <div className="row">
+          <button className="btn primary small" onClick={() => act(() => api.peopleReply(a.id, "assistant", null, false))}>
+            {task ? t("Let my assistant work on it") : t("Let my assistant answer")}
+          </button>
+          <button className="btn ghost small" onClick={() => act(() => api.peopleReply(a.id, "decline", null, false))}>
+            {t("Decline")}
+          </button>
+        </div>
+      )}
+      {a.status === "working" && (!a.from_me || task) && (
+        <button className="btn ghost small" onClick={() => act(() => api.peopleStop(a.id))}>
+          {t("Stop")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** What someone's assistant may do here. */
+function AllowModal({ contact: c, onClose, toast }: { contact: PersonContact; onClose: () => void; toast: PushToast }) {
+  const [a, setA] = useState<PersonAllow>(c.allow);
+  const save = async () => {
+    try {
+      await api.peopleSetAllow(c.id, a);
+      toast(t("Saved."), "success");
+      onClose();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const addFolder = async () => {
+    const dir = await openFile({ directory: true, multiple: false });
+    if (typeof dir === "string" && !a.folders.includes(dir)) setA({ ...a, folders: [...a.folders, dir] });
+  };
+  const modes: { id: PersonAllow["mode"]; label: string }[] = [
+    { id: "ask", label: t("Ask me each time") },
+    { id: "auto", label: t("Let my assistant answer on its own") },
+    { id: "off", label: t("Don't take questions from {name}'s assistant", { name: c.name }) },
+  ];
+  return (
+    <Modal title={t("What {name}'s assistant can use", { name: c.name })} onClose={onClose}>
+      <p className="muted small">
+        {t("When {name}'s assistant asks yours something, or wants to work something out with it, your assistant answers on this PC with your model. It can only look, never change anything, and every request shows in Activity.", { name: c.name })}
+      </p>
+      <div className="share-list" role="radiogroup">
+        {modes.map((m) => (
+          <label key={m.id} className="check">
+            <input type="radio" name="allow-mode" checked={a.mode === m.id} onChange={() => setA({ ...a, mode: m.id })} />
+            {m.label}
+          </label>
+        ))}
+      </div>
+      <strong className="small">{t("Your assistant may use")}</strong>
+      <div className="share-list">
+        <label className="check">
+          <input type="checkbox" checked disabled />
+          {t("Chats you share with {name}", { name: c.name })}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={a.notes} onChange={(e) => setA({ ...a, notes: e.target.checked })} />
+          {t("Your notes")}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={a.calendar} onChange={(e) => setA({ ...a, calendar: e.target.checked })} />
+          {t("Your calendar")}
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={a.mail} onChange={(e) => setA({ ...a, mail: e.target.checked })} />
+          {t("Your email")}
+        </label>
+        <div>
+          <span className="small">{t("These folders (read-only):")}</span>
+          {a.folders.length === 0 && <span className="small muted"> {t("none")}</span>}
+          <ul className="people-addresses small">
+            {a.folders.map((f) => (
+              <li key={f} className="row">
+                <code className="ellipsis">{f}</code>
+                <button className="link small" onClick={() => setA({ ...a, folders: a.folders.filter((x) => x !== f) })}>
+                  {t("Remove")}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button className="btn ghost small" onClick={addFolder}>
+            {t("Add a folder…")}
+          </button>
+        </div>
+      </div>
+      <p className="muted small">{t("Calendar, email and folders also need their feature turned on in Features.")}</p>
+      <div className="adv-actions">
+        <button className="btn primary" onClick={save}>
+          {t("Save")}
+        </button>
+        <button className="btn ghost" onClick={onClose}>
+          {t("Cancel")}
+        </button>
+      </div>
+    </Modal>
   );
 }

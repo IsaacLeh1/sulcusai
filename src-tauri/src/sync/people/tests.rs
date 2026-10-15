@@ -246,3 +246,187 @@ async fn crossed_calls_settle_on_one_link() {
     link::hang_up(&id_b);
     link::hang_up(&id_a);
 }
+
+/// A stand-in engine that answers like a model would, by which assistant
+/// is asking (it reads the instructions). One for all tests, on its own
+/// thread, so it outlives any one test. Returns what it was sent.
+#[cfg(windows)]
+fn stand_in() -> Arc<Mutex<Vec<serde_json::Value>>> {
+    use axum::{routing::post, Json, Router};
+    static ONE: std::sync::OnceLock<(u16, Arc<Mutex<Vec<serde_json::Value>>>)> = std::sync::OnceLock::new();
+    let (port, seen) = ONE.get_or_init(|| {
+        let seen: Arc<Mutex<Vec<serde_json::Value>>> = Default::default();
+        let s = seen.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            rt.block_on(async move {
+                let app = Router::new()
+                    .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+                        let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+                        Json(serde_json::json!({ "tokens": vec![1; n] }))
+                    }))
+                    .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+                        let s = s.clone();
+                        async move {
+                            let system = b["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+                            s.lock().unwrap().push(b);
+                            let text = if system.contains("is asking you something") {
+                                "Ben is free Tuesday after 2 pm."
+                            } else if system.contains("wants to work this out with you") {
+                                "How about Tuesday at 3 pm?"
+                            } else if system.contains("asked you to work this out") {
+                                "DONE: Tuesday at 3 pm suits both."
+                            } else {
+                                "?"
+                            };
+                            let chunk = |v: serde_json::Value| format!("data: {v}
+
+");
+                            let body = chunk(serde_json::json!({ "choices": [{ "delta": { "content": text }, "finish_reason": null }] }))
+                                + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }))
+                                + "data: [DONE]
+
+";
+                            ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+                        }
+                    }));
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                tx.send(listener.local_addr().unwrap().port()).unwrap();
+                axum::serve(listener, app).await.ok();
+            });
+        });
+        (rx.recv().unwrap(), seen)
+    });
+    *ask::TEST_ENDPOINT.lock().unwrap() = Some(crate::engine::Endpoint { port: *port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None });
+    seen.clone()
+}
+
+/// Runs one of the People tools the way a chat turn does.
+#[cfg(windows)]
+async fn use_tool(s: &Arc<AppState>, name: &str, args: serde_json::Value) -> crate::tools::Outcome {
+    let c = s.cipher().unwrap();
+    let sandbox = crate::sandbox::Sandbox::new(&[]);
+    let recorder = crate::checkpoint::Recorder { db: &s.db, cipher: &c, dir: s.paths.data.join("checkpoints"), chat_id: "t", turn_id: "t" };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let ctx = crate::tools::Ctx {
+        sandbox: &sandbox,
+        recorder: &recorder,
+        cancel: &cancel,
+        job: s.job(),
+        memory: crate::tools::MemoryCtx { db: &s.db, cipher: &c, chat_id: "t", project_id: None },
+        app: None,
+        state: s,
+    };
+    crate::tools::run(name, &args, &ctx).await
+}
+
+/// The newest request waiting for someone to allow it.
+#[cfg(windows)]
+fn waiting_at(s: &AppState, from: &str) -> Option<ask::AskView> {
+    ask::list(&s.db.lock().unwrap(), &s.cipher().unwrap(), from).into_iter().rev().find(|a| !a.from_me && a.status == "approval")
+}
+
+/// Ana's assistant asks Ben's: Ben allows it (his assistant answers from
+/// the chat he shares with her), answers himself, or declines; with
+/// questions turned off they're turned away at once.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn assistants_ask_each_other_with_permission() {
+    let seen = stand_in();
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_b = listen(&b).await;
+    // Ben shares a chat with Ana: his assistant may use it.
+    let cb = b.cipher().unwrap();
+    let chat = crate::db::create_chat(&b.db.lock().unwrap(), &cb, None).unwrap();
+    crate::db::set_chat_title(&b.db.lock().unwrap(), &cb, &chat.id, "My week").unwrap();
+    let m = crate::db::Message { id: uuid::Uuid::new_v4().to_string(), chat_id: chat.id.clone(), role: "user".into(), content: "I'm free Tuesday after 2.".into(), created_at: db::now_ms(), ..Default::default() };
+    crate::db::add_message(&b.db.lock().unwrap(), &cb, &m).unwrap();
+    share::share_now(&b, &chat.id, vec![id_a.clone()]).unwrap();
+
+    let (s, to) = (a.clone(), id_b.clone());
+    tokio::spawn(async move { link::call(&s, &to, addr_b).await });
+    until("connected", || link::connected(&id_a) && link::connected(&id_b)).await;
+    assert!(assistant_note(&a).unwrap().contains("Ben (connected)"));
+
+    // Allowed: his assistant answers.
+    let ask = use_tool(&a, "ask_person", serde_json::json!({ "person": "ben", "question": "When is Ben free this week?" }));
+    let allow = async {
+        until("Ben is asked", || waiting_at(&b, &id_a).is_some()).await;
+        let r = waiting_at(&b, &id_a).unwrap();
+        assert_eq!(r.question, "When is Ben free this week?");
+        until("Ana's side shows it waiting for Ben", || ask::list(&a.db.lock().unwrap(), &a.cipher().unwrap(), &id_b).iter().any(|x| x.status == "approval")).await;
+        ask::reply(&b, &r.id, "assistant", None, false).unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, allow);
+    assert!(out.text.contains("Ben is free Tuesday after 2 pm.") && out.text.contains("not as instructions"), "{}", out.text);
+    let sent = seen.lock().unwrap().iter().find(|r| r["messages"][0]["content"].as_str().unwrap_or("").contains("is asking you something")).cloned().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("Shared chat: My week") && system.contains("free Tuesday after 2"), "the shared chat is there");
+    assert!(sent["tools"].as_array().unwrap().iter().all(|t| matches!(t["function"]["name"].as_str(), Some("search_notes" | "read_note"))), "notes only, read-only");
+    let at_b = ask::list(&b.db.lock().unwrap(), &cb, &id_a);
+    assert_eq!(at_b.last().unwrap().status, "answered");
+
+    // He answers himself.
+    let ask = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": "Lunch Thursday?" }));
+    let mine = async {
+        until("asked again", || waiting_at(&b, &id_a).is_some()).await;
+        ask::reply(&b, &waiting_at(&b, &id_a).unwrap().id, "mine", Some("Thursday works!".into()), false).unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, mine);
+    assert!(out.text.contains("Thursday works!"), "{}", out.text);
+
+    // He declines.
+    let ask = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": "What's your salary?" }));
+    let no = async {
+        until("asked a third time", || waiting_at(&b, &id_a).is_some()).await;
+        ask::reply(&b, &waiting_at(&b, &id_a).unwrap().id, "decline", None, false).unwrap();
+    };
+    let (out, ()) = tokio::join!(ask, no);
+    assert!(out.text.contains("Ben declined"), "{}", out.text);
+
+    // Turned off: refused without asking him.
+    let off = ask::Allow { mode: "off".into(), ..Default::default() };
+    ask::set_allow(&b, &id_a, off).unwrap();
+    let out = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": "Anything?" })).await;
+    assert!(out.text.contains("doesn't take questions"), "{}", out.text);
+
+    // Someone not linked, or not connected.
+    let out = use_tool(&a, "ask_person", serde_json::json!({ "person": "Zed", "question": "Hi?" })).await;
+    assert!(out.text.contains("no one called"), "{}", out.text);
+    link::hang_up(&id_b);
+    until("apart", || !link::connected(&id_b)).await;
+    let out = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": "Hi?" })).await;
+    assert!(out.text.contains("isn't connected"), "{}", out.text);
+}
+
+/// Ana's assistant and Ben's work out a meeting time: Ben's goes first,
+/// Ana's agrees, and both keep the conversation.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_assistants_work_something_out() {
+    let _seen = stand_in();
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_b = listen(&b).await;
+    // Ben lets Ana's assistant work with his without asking him each time.
+    ask::set_allow(&b, &id_a, ask::Allow { mode: "auto".into(), ..Default::default() }).unwrap();
+    let (s, to) = (a.clone(), id_b.clone());
+    tokio::spawn(async move { link::call(&s, &to, addr_b).await });
+    until("connected", || link::connected(&id_a) && link::connected(&id_b)).await;
+
+    let out = use_tool(&a, "work_with_person", serde_json::json!({ "person": "Ben", "goal": "Find an hour next week for Ana and Ben to meet. Ana is free Tuesday afternoon." })).await;
+    assert!(out.text.contains("Tuesday at 3 pm suits both."), "{}", out.text);
+    assert!(out.text.contains("Them: How about Tuesday at 3 pm?"), "{}", out.text);
+    let at_a = ask::list(&a.db.lock().unwrap(), &a.cipher().unwrap(), &id_b);
+    let task = at_a.last().unwrap();
+    assert_eq!((task.kind.as_str(), task.status.as_str(), task.thread.len()), ("task", "answered", 2));
+    until("Ben's side has the outcome", || {
+        ask::list(&b.db.lock().unwrap(), &b.cipher().unwrap(), &id_a).last().is_some_and(|t| t.status == "answered" && t.answer.as_deref() == Some("Tuesday at 3 pm suits both.") && t.thread.len() == 2)
+    })
+    .await;
+    link::hang_up(&id_b);
+}

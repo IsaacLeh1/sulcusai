@@ -43,6 +43,15 @@ pub(super) enum Frame {
     Live { chat_id: String, live: share::Live },
     /// Not shared (anymore).
     Gone { chat_id: String },
+    /// A question from their assistant to this one, and what became of it.
+    Ask { id: String, question: String },
+    Status { id: String, status: String },
+    Answer { id: String, text: Option<String>, error: Option<String> },
+    Answered { id: String },
+    /// Working something out together: the goal, each turn, or the end.
+    Task { id: String, goal: String },
+    Turn { id: String, text: String, done: bool },
+    End { id: String, reason: String },
     #[serde(other)]
     Unknown,
 }
@@ -211,6 +220,7 @@ async fn run(state: Arc<AppState>, p: Contact, stream: TcpStream, mut out: wire:
     heard_from(&state, &p, addr, &name);
     flush(&state, &p.id);
     share::connected(&state, &p.id);
+    ask::connected(&state, &p.id);
     changed(&state);
 
     // Pings keep it open through routers and VPNs, and show when it's gone.
@@ -294,6 +304,22 @@ fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         Frame::Snapshot { chat, messages } => share::snapshot(state, &p.id, chat, messages),
         Frame::Live { chat_id, live } => share::live(state, &p.id, &chat_id, live),
         Frame::Gone { chat_id } => share::gone(state, &p.id, &chat_id),
+        Frame::Ask { id, question } => {
+            // The latest settings for what their assistant may do.
+            if let Some(p) = contact(state, &p.id) {
+                ask::incoming(state, &p, &id, &question);
+            }
+        }
+        Frame::Status { id, status } => ask::status(state, &p.id, &id, &status),
+        Frame::Answer { id, text, error } => ask::answered(state, &p.id, &id, text, error),
+        Frame::Answered { id } => ask::delivered(state, &p.id, &id),
+        Frame::Task { id, goal } => {
+            if let Some(p) = contact(state, &p.id) {
+                together::incoming(state, &p, &id, &goal);
+            }
+        }
+        Frame::Turn { id, text, done } => together::turn(state, &p.id, &id, &text, done),
+        Frame::End { id, reason } => together::ended(state, &p.id, &id, &reason),
     }
 }
 

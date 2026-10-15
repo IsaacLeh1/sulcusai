@@ -279,6 +279,15 @@ impl Turn {
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
         }
+        // Asking (and working with) the assistants of people linked in People.
+        let people_note = if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::People) {
+            crate::sync::people::assistant_note(&self.state)
+        } else {
+            None
+        };
+        if people_note.is_some() {
+            extra.extend(["ask_person", "work_with_person"]);
+        }
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
@@ -316,6 +325,9 @@ impl Turn {
                  so don't paste links or ids; say in a sentence what you made.",
                 media_note.join(", ")
             ));
+        }
+        if let Some(note) = &people_note {
+            about.push_str(note);
         }
         if self.use_tools {
             about.push_str(&tools::app_note(&self.state, &self.cipher));

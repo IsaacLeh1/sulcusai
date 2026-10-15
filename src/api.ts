@@ -263,6 +263,44 @@ export interface SharedView {
   live: SharedLive | null;
 }
 
+/** What someone's assistant may do here. */
+export interface PersonAllow {
+  /** "ask": approve each request; "auto": answer on its own; "off": turn them away. */
+  mode: "ask" | "auto" | "off";
+  notes: boolean;
+  calendar: boolean;
+  mail: boolean;
+  folders: string[];
+}
+
+/** A question between assistants, or a task they work out together. */
+export interface PersonAsk {
+  id: string;
+  contact_id: string;
+  /** This user's assistant asked theirs. */
+  from_me: boolean;
+  kind: "ask" | "task";
+  at: number;
+  /** The question, or the task's goal. */
+  question: string;
+  answer: string | null;
+  status: "sent" | "approval" | "working" | "answered" | "declined" | "failed";
+  steps: string[];
+  thread: { from_me: boolean; text: string; at: number }[];
+}
+
+/** A request waiting for this user to allow it. */
+export interface PersonRequest {
+  id: string;
+  contact_id: string;
+  name: string;
+  kind: "ask" | "task";
+  question: string;
+  at: number;
+  /** What their assistant would be able to use here. */
+  uses: string[];
+}
+
 export interface SharingChoice {
   id: string;
   name: string;
@@ -285,6 +323,8 @@ export interface PersonContact {
   shared: SharedChat[];
   /** Chats this user shares with them. */
   sharing: { chat_id: string; title: string }[];
+  /** What their assistant may do here. */
+  allow: PersonAllow;
 }
 
 export interface PeopleView {
@@ -1312,6 +1352,13 @@ export const api = {
   /** Opens a chat someone shares; changes follow as people:snapshot and people:live. */
   peopleWatch: (contactId: string, chatId: string) => invoke<SharedView>("people_watch", { contactId, chatId }),
   peopleUnwatch: (contactId: string, chatId: string) => invoke<void>("people_unwatch", { contactId, chatId }),
+  peopleRequests: () => invoke<PersonRequest[]>("people_requests"),
+  /** "assistant": let this user's assistant answer; "mine": answer with `text`; "decline". */
+  peopleReply: (id: string, choice: "assistant" | "mine" | "decline", text: string | null, always: boolean) =>
+    invoke<void>("people_reply", { id, choice, text, always }),
+  peopleStop: (id: string) => invoke<void>("people_stop", { id }),
+  peopleSetAllow: (id: string, allow: PersonAllow) => invoke<void>("people_set_allow", { id, allow }),
+  peopleAsks: (id: string) => invoke<PersonAsk[]>("people_asks", { id }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -1627,6 +1674,7 @@ export interface ChatEvents {
   "people:changed": null;
   "people:message": { contact_id: string };
   "people:shared": { contact_id: string };
+  "people:ask": { contact_id: string; id: string };
   "people:snapshot": { contact_id: string; chat_id: string; view: SharedView };
   "people:live": { contact_id: string; chat_id: string; live: SharedLive | null };
   "update:progress": { received: number; total: number | null };

@@ -205,6 +205,22 @@ CREATE TABLE IF NOT EXISTS people_messages (
   PRIMARY KEY (contact_id, id)
 );
 CREATE INDEX IF NOT EXISTS people_messages_by_time ON people_messages(contact_id, at);
+-- Assistants asking each other, and working on a task together (People).
+CREATE TABLE IF NOT EXISTS people_asks (
+  id         TEXT PRIMARY KEY,
+  contact_id TEXT NOT NULL,
+  from_me    INTEGER NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'ask',
+  at         INTEGER NOT NULL,
+  question   TEXT NOT NULL,
+  answer     TEXT,
+  status     TEXT NOT NULL,
+  steps      TEXT,
+  thread     TEXT,
+  sent       INTEGER NOT NULL DEFAULT 0,
+  done_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS people_asks_by_contact ON people_asks(contact_id, at);
 ";
 
 /// Columns added after the first release, created on older databases.

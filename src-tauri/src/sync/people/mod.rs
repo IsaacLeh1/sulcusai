@@ -16,8 +16,10 @@
 //! - Off means off: with the feature off this PC doesn't take calls from
 //!   people, doesn't call them, and its commands refuse.
 
+pub mod ask;
 mod link;
 pub mod share;
+pub mod together;
 #[cfg(test)]
 mod tests;
 
@@ -78,6 +80,8 @@ struct Contact {
     addr: Option<String>,
     added_at: i64,
     last_seen: Option<i64>,
+    /// What their assistant may do here.
+    allow: ask::Allow,
 }
 
 fn book(conn: &Connection) -> Book {
@@ -429,6 +433,7 @@ fn keep(state: &AppState, c: &Cipher, id: &str, name: &str, key: &[u8], addr: Op
             addr: addr.map(|a| a.to_string()).or(before.as_ref().and_then(|p| p.addr.clone())),
             added_at: before.as_ref().map_or(now, |p| p.added_at),
             last_seen: Some(now),
+            allow: before.map(|p| p.allow).unwrap_or_default(),
         });
     })?;
     // A new key: any connection on the old one goes, and the app calls now.
@@ -591,6 +596,26 @@ async fn resolve(target: &str) -> Result<SocketAddr, String> {
     addrs.find(|a| a.is_ipv4()).ok_or_else(|| help.to_string())
 }
 
+/// For the assistant's instructions: who the user is linked with, when
+/// anyone is (None hides the People tools).
+pub fn assistant_note(state: &AppState) -> Option<String> {
+    let b = book(&state.db.lock().unwrap());
+    if b.contacts.is_empty() {
+        return None;
+    }
+    let people: Vec<String> = b
+        .contacts
+        .iter()
+        .map(|p| format!("{} ({})", p.name, if link::connected(&p.id) { "connected" } else { "not connected" }))
+        .collect();
+    Some(format!(
+        "
+
+The user is linked in People with: {}. With ask_person you can ask a connected person's assistant something only they would know;          with work_with_person your assistants can work something out together, like a time to meet. Only use these when the user's request needs the other person.",
+        people.join(", ")
+    ))
+}
+
 // ---------- commands ----------
 
 #[derive(Debug, Serialize)]
@@ -609,6 +634,8 @@ pub struct ContactView {
     shared: Vec<share::SharedChat>,
     /// Chats this user shares with them.
     sharing: Vec<share::Sharing>,
+    /// What their assistant may do here.
+    allow: ask::Allow,
 }
 
 #[derive(Debug, Serialize)]
@@ -664,6 +691,7 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                     .filter(|s| s.with.contains(&p.id))
                     .filter_map(|s| chats.get(&s.chat_id).map(|t| share::Sharing { chat_id: s.chat_id.clone(), title: t.clone() }))
                     .collect(),
+                allow: p.allow.clone(),
             }
         })
         .collect();

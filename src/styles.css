@@ -1200,3 +1200,12 @@ button.ctx:hover { background: var(--hover); }
 .shared-messages .pmsg .pbubble { max-width: 85%; }
 .share-list { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
 .btn.shared-on { color: var(--accent); }
+/* People: questions and tasks between assistants. */
+.ask-card { border: 1px dashed var(--border); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; margin: 4px 0; background: color-mix(in srgb, var(--panel) 60%, transparent); }
+.ask-card.mine { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.ask-q { font-weight: 550; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ask-a { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; }
+.ask-a.declined, .ask-a.failed { border-left-color: var(--muted); }
+.ask-thread { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.ask-thread li { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); max-width: 85%; }
+.ask-thread li.mine { align-self: flex-end; background: var(--bubble); border-color: transparent; }

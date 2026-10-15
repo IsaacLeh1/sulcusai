@@ -103,6 +103,7 @@ fn group(name: &str) -> &'static str {
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         "app_status" | "connect_account" | "open_page" => "app",
+        "ask_person" | "work_with_person" => "people",
         _ => "files",
     }
 }
@@ -204,6 +205,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Make a song (with lyrics and vocals, or instrumental) or a sound effect on this PC from a description." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
+    ToolDef { name: "ask_person", risk: Risk::Submit, params: crate::sync::people::ask::ask_params,
+        description: "Ask the assistant of someone the user is linked with in People. It answers on their PC, with their model and only what they allow, and they may need to approve first. Use it for what only they would know, like details from chats they share or their plans. The question goes to them, so include only what's needed. Waits up to 3 minutes." },
+    ToolDef { name: "work_with_person", risk: Risk::Submit, params: crate::sync::people::together::work_params,
+        description: "Work something out together with the assistant of someone the user is linked with in People, such as a time to meet: the two assistants take turns, each with its own user's information, until they agree (up to 8 turns). Give the goal and what you already know. Both people can watch it in People." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
         description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
@@ -239,7 +244,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -325,12 +330,28 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "connect_account" => app::preview(args),
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
+        "ask_person" | "work_with_person" => Ok(people_preview(name, args)),
         _ => fs::preview(name, args, sandbox),
+    }
+}
+
+/// What the approval card shows before something goes to another person's assistant.
+fn people_preview(name: &str, args: &Value) -> Preview {
+    let person = args.get("person").and_then(Value::as_str).unwrap_or("them");
+    let (title, field) = if name == "ask_person" { (format!("Ask {person}'s assistant"), "question") } else { (format!("Work this out with {person}'s assistant"), "goal") };
+    Preview {
+        title,
+        kind: "text",
+        detail: args.get(field).and_then(Value::as_str).map(str::to_string),
+        note: Some(format!("This goes to {person}'s SulcusAI, and {person} can read it. Their assistant answers with their own model and only what they allow.")),
     }
 }
 
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     match name {
+        "ask_person" => crate::sync::people::ask::tool(args, ctx).await,
+        // Its assistant runs tools too, so the call is boxed.
+        "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
         "remember" | "search_memory" => memory::run(name, args, &ctx.memory),
         "search_meetings" | "read_meeting" => meetings::run(name, args, &ctx.memory),
@@ -423,8 +444,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media and app tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 34);
+        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 36);
     }
 
     #[test]
