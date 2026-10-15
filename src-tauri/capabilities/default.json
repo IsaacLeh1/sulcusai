@@ -9,6 +9,7 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",
+    "dialog:allow-ask",
     "dialog:allow-open",
     "dialog:allow-save"
   ]

@@ -1508,6 +1508,7 @@ pub fn run() {
             security::clear_actions,
             workspace::list_folders,
             workspace::add_folder,
+            workspace::folder_warning,
             workspace::remove_folder,
             workspace::set_chat_mode,
             workspace::answer_approval,

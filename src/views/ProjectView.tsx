@@ -5,6 +5,7 @@ import { api, errorText, type Chat, type Memory, type Project } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
+import { confirmFolder } from "../folders";
 
 interface Props {
   projectId: string;
@@ -55,7 +56,9 @@ export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged
     const picked = await open({ directory: true, multiple: false, title: t("Add a folder to {name}", { name: project.name }) });
     if (typeof picked !== "string") return;
     try {
-      await api.addProjectFolder(projectId, picked);
+      const ok = await confirmFolder(picked);
+      if (!ok.go) return;
+      await api.addProjectFolder(projectId, picked, ok.system);
       load();
     } catch (e) {
       toast(errorText(e), "error");

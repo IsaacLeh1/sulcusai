@@ -27,8 +27,24 @@ fn is_inside(path: &Path, root: &Path) -> bool {
     p == r || p.starts_with(&format!("{r}/"))
 }
 
-/// Folders that must never be granted: drive roots and system locations.
-pub fn refuse_reason(path: &Path, app_data: &Path) -> Option<&'static str> {
+/// Windows, Program Files and ProgramData.
+fn system_dirs() -> Vec<PathBuf> {
+    ["WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"].iter().filter_map(|var| std::env::var_os(var).map(PathBuf::from).and_then(|d| canonical(&d))).collect()
+}
+
+/// What sharing a folder inside a system folder risks; it's shared only
+/// after the person says yes to this.
+pub const SYSTEM_WARNING: &str = "This folder is inside a Windows system folder (Windows, Program Files or ProgramData). The assistant could change or delete files there, which can break Windows or your apps. Share it only if you trust what you'll ask it to do.";
+
+/// A folder inside Windows, Program Files or ProgramData (not one of them).
+pub fn inside_system(path: &Path) -> bool {
+    canonical(path).is_some_and(|c| system_dirs().iter().any(|dir| is_inside(&c, dir) && key(&c) != key(dir)))
+}
+
+/// Folders that must never be granted: drive roots, system locations
+/// themselves, the whole user folder and the app's own data. A folder inside
+/// a system location needs `allow_system` (the person confirmed it).
+pub fn refuse_reason(path: &Path, app_data: &Path, allow_system: bool) -> Option<&'static str> {
     let Some(c) = canonical(path) else { return Some("That folder doesn't exist.") };
     if !c.is_dir() {
         return Some("That isn't a folder.");
@@ -36,12 +52,12 @@ pub fn refuse_reason(path: &Path, app_data: &Path) -> Option<&'static str> {
     if c.parent().is_none() || c.components().count() <= 1 {
         return Some("A whole drive can't be granted. Pick a folder inside it.");
     }
-    let env_dirs = ["WINDIR", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"];
-    for var in env_dirs {
-        if let Some(dir) = std::env::var_os(var).map(PathBuf::from).and_then(|d| canonical(&d)) {
-            if is_inside(&c, &dir) || is_inside(&dir, &c) {
-                return Some("System folders can't be granted.");
-            }
+    for dir in system_dirs() {
+        if is_inside(&dir, &c) {
+            return Some("Windows, Program Files and ProgramData can't be shared whole. Pick a folder inside one; you'll be asked to confirm.");
+        }
+        if is_inside(&c, &dir) && !allow_system {
+            return Some(SYSTEM_WARNING);
         }
     }
     if let Some(home) = std::env::var_os("USERPROFILE").map(PathBuf::from).and_then(|d| canonical(&d)) {
@@ -206,13 +222,23 @@ mod tests {
         let d = temp();
         let app_data = d.join("appdata");
         std::fs::create_dir_all(&app_data).unwrap();
-        assert!(refuse_reason(Path::new("C:\\"), &app_data).is_some());
+        assert!(refuse_reason(Path::new("C:\\"), &app_data, true).is_some());
         if let Some(win) = std::env::var_os("WINDIR") {
-            assert!(refuse_reason(Path::new(&win), &app_data).is_some());
+            let win = PathBuf::from(win);
+            assert!(refuse_reason(&win, &app_data, true).is_some(), "Windows itself, even confirmed");
+            // A folder inside Windows: only once the person confirms.
+            let inside = win.join("System32").join("drivers");
+            if inside.is_dir() {
+                assert!(inside_system(&inside));
+                assert_eq!(refuse_reason(&inside, &app_data, false), Some(SYSTEM_WARNING));
+                assert_eq!(refuse_reason(&inside, &app_data, true), None);
+                assert!(!inside_system(&win), "Windows itself isn't 'inside' one");
+            }
         }
-        assert!(refuse_reason(&app_data, &app_data).is_some());
-        assert!(refuse_reason(&d.join("proj"), &app_data).is_none());
-        assert!(refuse_reason(&d.join("missing"), &app_data).is_some());
+        assert!(refuse_reason(&app_data, &app_data, true).is_some());
+        assert!(refuse_reason(&d.join("proj"), &app_data, false).is_none());
+        assert!(!inside_system(&d.join("proj")));
+        assert!(refuse_reason(&d.join("missing"), &app_data, false).is_some());
     }
 
     #[test]

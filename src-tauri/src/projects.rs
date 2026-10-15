@@ -144,9 +144,9 @@ pub fn delete_project(state: AppStateRef, id: String) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-pub fn add_project_folder(state: AppStateRef, id: String, path: String) -> Result<(), String> {
+pub fn add_project_folder(state: AppStateRef, id: String, path: String, allow_system: Option<bool>) -> Result<(), String> {
     state.cipher()?;
-    if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data) {
+    if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data, allow_system.unwrap_or(false)) {
         return Err(reason.into());
     }
     let canonical = dunce::canonicalize(&path).map_err(|e| e.to_string())?.display().to_string();

@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
 import type { PushToast } from "./Toasts";
 import { t, tf } from "../i18n";
+import { confirmFolder } from "../folders";
 
 const TOOL_ICONS: Record<string, string> = {
   list_dir: "📂",
@@ -166,7 +167,9 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
     const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });
     if (typeof picked !== "string") return;
     try {
-      await api.addFolder(picked);
+      const ok = await confirmFolder(picked);
+      if (!ok.go) return;
+      await api.addFolder(picked, ok.system);
       await load();
       toast(t("Folder shared. The assistant can now work in it."), "success");
     } catch (e) {
@@ -221,7 +224,9 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
     const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });
     if (typeof picked !== "string") return;
     try {
-      await api.addFolder(picked);
+      const ok = await confirmFolder(picked);
+      if (!ok.go) return;
+      await api.addFolder(picked, ok.system);
       load();
     } catch (e) {
       toast(errorText(e), "error");

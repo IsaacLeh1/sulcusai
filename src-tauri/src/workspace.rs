@@ -31,11 +31,20 @@ pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
         .collect())
 }
 
+/// The warning to confirm before sharing this folder (one inside Windows,
+/// Program Files or ProgramData), if it needs one.
 #[tauri::command(async)]
-pub fn add_folder(state: AppStateRef, path: String) -> Result<(), String> {
+pub fn folder_warning(state: AppStateRef, path: String) -> Option<String> {
+    let p = Path::new(&path);
+    (sandbox::refuse_reason(p, &state.paths.data, true).is_none() && sandbox::inside_system(p)).then(|| sandbox::SYSTEM_WARNING.to_string())
+}
+
+/// Shares a folder; `allow_system` once the person confirmed the warning.
+#[tauri::command(async)]
+pub fn add_folder(state: AppStateRef, path: String, allow_system: Option<bool>) -> Result<(), String> {
     crate::features::require(&state, crate::features::Feature::Files)?;
     state.cipher()?;
-    if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data) {
+    if let Some(reason) = sandbox::refuse_reason(Path::new(&path), &state.paths.data, allow_system.unwrap_or(false)) {
         return Err(reason.into());
     }
     let canonical = dunce::canonicalize(&path).map_err(|e| e.to_string())?;
