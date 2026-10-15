@@ -44,6 +44,7 @@ pub enum Feature {
     Projects,
     Scheduled,
     Connectors,
+    People,
 }
 
 pub const ALL: &[Feature] = &[
@@ -69,6 +70,7 @@ pub const ALL: &[Feature] = &[
     Feature::Projects,
     Feature::Scheduled,
     Feature::Connectors,
+    Feature::People,
 ];
 
 impl Feature {
@@ -96,6 +98,7 @@ impl Feature {
             Feature::Projects => "Projects",
             Feature::Scheduled => "Scheduled tasks",
             Feature::Connectors => "Connectors and plugins",
+            Feature::People => "People",
         }
     }
 
@@ -295,6 +298,9 @@ pub fn set_feature(app: AppHandle, state: AppStateRef, feature: Feature, on: boo
     }
     if feature == Feature::BrowserControl {
         crate::bridge::apply(&app);
+    }
+    if feature == Feature::People {
+        crate::sync::wake();
     }
     app.emit("features:changed", json!({})).ok();
     Ok(set.into_iter().collect())

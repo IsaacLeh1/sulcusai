@@ -15,6 +15,7 @@
 //!   is sealed again with the receiving PC's own data key.
 
 pub mod models;
+pub mod people;
 pub mod relay;
 pub mod track;
 mod wire;
@@ -139,6 +140,8 @@ struct Seen {
     addr: SocketAddr,
     at: Instant,
     pairing: bool,
+    /// Showing a code for someone to link with (People).
+    person: bool,
 }
 
 struct Pairing {
@@ -200,6 +203,8 @@ struct Announce {
     port: u16,
     #[serde(default)]
     pairing: bool,
+    #[serde(default)]
+    person: bool,
 }
 
 /// The first frame on a connection (plain): who's calling, and either a
@@ -243,17 +248,23 @@ enum Msg {
 }
 
 /// Runs sync in the background: listens and announces while it's on, and
-/// starts a session with a paired PC when either side has news.
+/// starts a session with a paired PC when either side has news. People
+/// (linked with someone else's app) uses the same listener.
 pub fn start(app: AppHandle) {
+    people::start(app.clone());
     tauri::async_runtime::spawn(async move {
         let state = app.state::<Arc<AppState>>().inner().clone();
         loop {
-            let enabled = config(&state.db.lock().unwrap()).enabled;
+            let (enabled, wanted) = {
+                let conn = state.db.lock().unwrap();
+                let enabled = config(&conn).enabled;
+                (enabled, enabled || people::wants_calls(&conn))
+            };
             let live = LIVE.lock().unwrap().is_some();
-            if enabled && !live {
+            if wanted && !live {
                 go_live(&state).await;
                 emit(&state, "sync:status");
-            } else if !enabled && live {
+            } else if !wanted && live {
                 stop();
                 emit(&state, "sync:status");
             }
@@ -276,6 +287,12 @@ fn stop() {
     }
     NEARBY.lock().unwrap().clear();
     *PAIRING.lock().unwrap() = None;
+    people::stopped();
+}
+
+/// Checks right away whether to listen (People was turned on or off).
+pub fn wake() {
+    WAKE.notify_one();
 }
 
 async fn go_live(state: &Arc<AppState>) {
@@ -320,14 +337,18 @@ async fn go_live(state: &Arc<AppState>) {
         let tx = sock.clone();
         tasks.push(tauri::async_runtime::spawn(async move {
             loop {
-                let (me, name) = {
+                let (me, cfg) = {
                     let conn = s.db.lock().unwrap();
-                    (device_id(&s.paths.data), config(&conn).name)
+                    (device_id(&s.paths.data), config(&conn))
                 };
                 let pairing = PAIRING.lock().unwrap().as_ref().is_some_and(|p| p.until > Instant::now());
-                let msg = Announce { app: "sulcusai".into(), v: 1, id: me, name, port, pairing };
-                if let Ok(bytes) = serde_json::to_vec(&msg) {
-                    let _ = tx.send_to(&bytes, (Ipv4Addr::BROADCAST, DISCOVERY_PORT)).await;
+                let person = people::showing_code();
+                // Listening only for people: say nothing on this network unless a code is showing.
+                if cfg.enabled || person {
+                    let msg = Announce { app: "sulcusai".into(), v: 1, id: me, name: cfg.name, port, pairing, person };
+                    if let Ok(bytes) = serde_json::to_vec(&msg) {
+                        let _ = tx.send_to(&bytes, (Ipv4Addr::BROADCAST, DISCOVERY_PORT)).await;
+                    }
                 }
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(30)) => {}
@@ -346,12 +367,14 @@ async fn go_live(state: &Arc<AppState>) {
                 }
                 let new = {
                     let mut near = NEARBY.lock().unwrap();
-                    let new = near.get(&a.id).is_none_or(|x| x.pairing != a.pairing || x.at.elapsed() > AWAY);
-                    near.insert(a.id, Seen { name: a.name.chars().take(60).collect(), addr: SocketAddr::new(from.ip(), a.port), at: Instant::now(), pairing: a.pairing });
+                    let new = near.get(&a.id).is_none_or(|x| x.pairing != a.pairing || x.person != a.person || x.at.elapsed() > AWAY);
+                    let seen = Seen { name: a.name.chars().take(60).collect(), addr: SocketAddr::new(from.ip(), a.port), at: Instant::now(), pairing: a.pairing, person: a.person };
+                    near.insert(a.id, seen);
                     new
                 };
                 if new {
                     emit(&s, "sync:status");
+                    emit(&s, "people:changed");
                     WAKE.notify_one();
                 }
             }
@@ -531,7 +554,14 @@ async fn answer(state: &Arc<AppState>, mut stream: TcpStream) -> Result<(), Stri
         return Err("another version".into());
     }
     if let Some(theirs) = &open.pair {
+        if open.want.as_deref() == Some(people::LINK) {
+            return people::pair_answer(state, stream, &open, theirs).await;
+        }
         return pair_answer(state, stream, &open, theirs).await;
+    }
+    // Someone linked in People: messages only, never a sync or a model.
+    if open.want.as_deref() == Some(people::CHAT) {
+        return people::answer(state, stream, &open).await;
     }
     // Unknown PCs, and anything while this PC is locked, get no answer.
     let c = state.work_cipher()?;

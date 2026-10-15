@@ -75,6 +75,11 @@ export const FEATURES: Record<FeatureId, Info> = {
   projects: { icon: "📚", name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
   scheduled: { icon: "⏰", name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },
   connectors: { icon: "🔌", name: tx("Connectors and plugins"), detail: tx("Add tools from MCP servers and plugins on this PC.") },
+  people: {
+    icon: "👥",
+    name: tx("People"),
+    detail: tx("Connect with someone else's SulcusAI by a code and chat with them directly: messages and files go straight between your PCs, encrypted, and never to a model. Works on the same network, or across the internet through a virtual network like Radmin VPN or Tailscale."),
+  },
 };
 
 const GROUPS: { title: string; ids: FeatureId[] }[] = [
@@ -83,6 +88,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
   { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
+  { title: tx("With other people"), ids: ["people"] },
 ];
 
 export function FeaturesView({ progress, toast }: { progress: Record<string, InstallProgress>; toast: PushToast }) {

@@ -12,6 +12,7 @@ const CATEGORIES: { id: string; label: string; icon: string }[] = [
   { id: "privacy", label: tx("Privacy"), icon: "🛡" },
   { id: "security", label: tx("Security"), icon: "🔐" },
   { id: "chat", label: tx("Chats"), icon: "💬" },
+  { id: "people", label: tx("People"), icon: "👥" },
 ];
 
 function icon(category: string) {

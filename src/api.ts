@@ -221,6 +221,46 @@ export interface SyncView {
   relay_active: boolean;
 }
 
+/** A message in People (between people; never sent to a model). */
+export interface PersonMessage {
+  id: string;
+  from_me: boolean;
+  at: number;
+  text: string;
+  file: { name: string; size: number } | null;
+  /** For messages from here: they have it. */
+  delivered: boolean;
+}
+
+export interface PersonContact {
+  id: string;
+  name: string;
+  /** A call either way got through in the last few minutes. */
+  online: boolean;
+  last_seen: number | null;
+  address: string | null;
+  unread: number;
+  last: PersonMessage | null;
+  /** Why the last call from here didn't get through. */
+  error: string | null;
+}
+
+export interface PeopleView {
+  /** How others see this user. */
+  name: string;
+  /** This PC takes calls (others can reach it). */
+  listening: boolean;
+  /** Where others can reach this PC, by network ("Wi-Fi", "Radmin VPN"). */
+  addresses: { address: string; network: string }[];
+  /** The code this PC is showing, like "K7Q2-9XMB", and its seconds left. */
+  code: string | null;
+  code_left: number;
+  contacts: PersonContact[];
+  /** Apps on this network showing a code. */
+  nearby: { id: string; name: string }[];
+  unread: number;
+}
+
 export interface BackupInfo {
   created: number;
   app_version: string;
@@ -802,7 +842,8 @@ export type FeatureId =
   | "memory"
   | "projects"
   | "scheduled"
-  | "connectors";
+  | "connectors"
+  | "people";
 
 export interface FeatureView {
   id: FeatureId;
@@ -1210,6 +1251,19 @@ export const api = {
   setRelay: (url: string | null) => invoke<SyncView>("set_relay", { url }),
   peerModels: () => invoke<PeerModels[]>("peer_models"),
   copyModelFrom: (peerId: string, modelId: string) => invoke<void>("copy_model_from", { peerId, modelId }),
+  peopleView: () => invoke<PeopleView>("people_view"),
+  peopleUnread: () => invoke<number>("people_unread"),
+  setPeopleName: (name: string) => invoke<PeopleView>("set_people_name", { name }),
+  peopleShowCode: () => invoke<PeopleView>("people_show_code"),
+  peopleCancelCode: () => invoke<PeopleView>("people_cancel_code"),
+  /** Links with whoever shows `code`; returns their name. */
+  peopleConnect: (code: string, target: string | null) => invoke<string>("people_connect", { code, target }),
+  peopleRemove: (id: string) => invoke<PeopleView>("people_remove", { id }),
+  peopleSetAddress: (id: string, address: string) => invoke<void>("people_set_address", { id, address }),
+  /** A conversation; marks what they sent as read. */
+  peopleMessages: (id: string) => invoke<PersonMessage[]>("people_messages", { id }),
+  peopleSend: (id: string, text: string, file: string | null) => invoke<PersonMessage>("people_send", { id, text, file }),
+  peopleSaveFile: (id: string, message: string, to: string) => invoke<void>("people_save_file", { id, message, to }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -1522,6 +1576,8 @@ export interface ChatEvents {
   /** The speed test's status, plus the model just tested (tps or error), and finished at the end. */
   "models:speed": SpeedStatus & { tested?: string; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
   "sync:changed": null;
+  "people:changed": null;
+  "people:message": { contact_id: string };
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;
   "privacy:status": null;

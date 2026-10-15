@@ -48,9 +48,10 @@ const TasksView = lazy(() => import("./views/TasksView").then((m) => ({ default:
 const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m.MailView })));
 const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
 const StudioView = lazy(() => import("./views/StudioView").then((m) => ({ default: m.StudioView })));
+const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "project" | "activity" | "settings";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -63,6 +64,7 @@ const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   memory: "memory",
   scheduled: "scheduled",
   connectors: "connectors",
+  people: "people",
   project: "projects",
 };
 
@@ -154,6 +156,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   }, [refreshFeatures]);
   const has = (f: FeatureId) => features?.has(f) ?? false;
   const creates = has("images") || has("video") || has("music");
+  // Unread messages from people, for the badge on People.
+  const [peopleUnread, setPeopleUnread] = useState(0);
+  const peopleOn = has("people");
+  useEffect(() => {
+    if (!peopleOn) return setPeopleUnread(0);
+    const count = () => api.peopleUnread().then(setPeopleUnread).catch(() => {});
+    count();
+    const subs = [on("people:message", count), on("people:changed", count)];
+    return () => subs.forEach((s) => s.then((un) => un()));
+  }, [peopleOn]);
   // Leave a page whose feature was just turned off.
   useEffect(() => {
     const f = VIEW_FEATURE[view];
@@ -451,6 +463,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {t("Connectors")}
             </button>
           )}
+          {has("people") && (
+            <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}>
+              {t("People")}
+              {peopleUnread > 0 && (
+                <span className="badge push-right" aria-label={t("{n} unread", { n: peopleUnread })}>
+                  {peopleUnread}
+                </span>
+              )}
+            </button>
+          )}
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
@@ -590,6 +612,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "translate" && <TranslateView hasModel={installed.length > 0} onGoModels={() => setView("models")} toast={toast} />}
         {view === "activity" && <ActivityView toast={toast} />}
         {view === "connectors" && <ConnectorsView toast={toast} />}
+        {view === "people" && <PeopleView toast={toast} />}
         {view === "scheduled" && <ScheduledView installed={installed} onOpenChat={openChat} toast={toast} />}
         {view === "memory" && <MemoryView settings={settings} onSettings={setSettings} toast={toast} />}
         {view === "project" && activeProject && (

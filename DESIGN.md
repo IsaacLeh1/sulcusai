@@ -219,6 +219,13 @@ fits   = needed <= VRAM                          (full GPU)
 - Unloads idle models from memory automatically.
 - Choice of which drive models are stored on.
 
+### 4.11 People
+
+- Link with someone else's SulcusAI with a code (the same pairing as sync, but the other side becomes a contact, not a paired PC: it can never sync or reach models).
+- The apps connect directly, like Radmin: on the same network, or across the internet over a virtual network (Radmin VPN, Tailscale, ZeroTier) by the address the other side shows. Nothing is hosted by SulcusAI.
+- Phase 1: a chat between the people (text and files up to 16 MB), stored encrypted on each PC, never sent to a model. Messages wait until either app reaches the other.
+- Later phases: share a chat live, let each other's agents ask each other things (with permissions and approval), and work on a task together.
+
 ---
 
 ## 5. Advanced mode (off by default)

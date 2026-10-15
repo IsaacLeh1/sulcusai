@@ -191,6 +191,20 @@ CREATE TABLE IF NOT EXISTS project_folders (
   path       TEXT NOT NULL,
   PRIMARY KEY (project_id, path)
 );
+-- People: chats with someone linked by a code. Each PC keeps its own.
+CREATE TABLE IF NOT EXISTS people_messages (
+  contact_id TEXT NOT NULL,
+  id         TEXT NOT NULL,
+  from_me    INTEGER NOT NULL,
+  at         INTEGER NOT NULL,
+  body       TEXT NOT NULL,
+  file_name  TEXT,
+  file_size  INTEGER,
+  sent       INTEGER NOT NULL DEFAULT 0,
+  read       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (contact_id, id)
+);
+CREATE INDEX IF NOT EXISTS people_messages_by_time ON people_messages(contact_id, at);
 ";
 
 /// Columns added after the first release, created on older databases.
