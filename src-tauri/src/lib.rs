@@ -1227,6 +1227,19 @@ impl Drop for LiveGuard {
     }
 }
 
+/// What a chat's reply in progress has written so far (for people watching it).
+pub(crate) fn live_reply(chat_id: &str) -> Option<serde_json::Value> {
+    live_replies().lock().unwrap().get(chat_id).cloned()
+}
+
+/// While a turn runs, the people a chat is shared with see it busy.
+struct SharedTurn(Arc<AppState>, String);
+impl Drop for SharedTurn {
+    fn drop(&mut self) {
+        sync::people::turn_changed(&self.0, &self.1, false);
+    }
+}
+
 /// The reply a chat is in the middle of, if any.
 #[tauri::command(async)]
 fn chat_live(state: AppStateRef, chat_id: String) -> Option<serde_json::Value> {
@@ -1265,6 +1278,8 @@ pub(crate) async fn run_turn(
         return Err("Still answering the last message.".into());
     };
     let _live = LiveGuard(chat_id.clone());
+    sync::people::turn_changed(state, &chat_id, true);
+    let _shared = SharedTurn(state.clone(), chat_id.clone());
 
     let turn_id = uuid::Uuid::new_v4().to_string();
     let (chat, profile) = {
@@ -1343,12 +1358,14 @@ pub(crate) async fn run_turn(
     // After the first reply, the model names the chat from the request.
     let name_it = (first_message && !chat.incognito).then(|| (ep.clone(), text.clone()));
     let emitter = app.clone();
+    let watched = state.clone();
     let turn = agent::Turn {
         emit: Arc::new(move |event: &str, payload: serde_json::Value| {
             if let Some(t) = &tee {
                 t(event, &payload);
             }
             track_live(event, &payload);
+            sync::people::chat_event(&watched, event, &payload);
             emitter.emit(event, payload).ok();
         }),
         state: state.clone(),
@@ -1764,6 +1781,10 @@ pub fn run() {
             sync::people::people_messages,
             sync::people::people_send,
             sync::people::people_save_file,
+            sync::people::share::people_chat_sharing,
+            sync::people::share::people_share_chat,
+            sync::people::share::people_watch,
+            sync::people::share::people_unwatch,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,

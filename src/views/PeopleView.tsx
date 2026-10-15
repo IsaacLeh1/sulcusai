@@ -3,7 +3,8 @@
 // directly. Messages go app to app; they never go to a model.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type PeopleView as View, type PersonContact, type PersonMessage } from "../api";
+import { api, errorText, on, type PeopleView as View, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
+import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
@@ -41,8 +42,8 @@ export function PeopleView({ toast }: { toast: PushToast }) {
   }, [toast]);
   useEffect(() => {
     load();
-    const subs = [on("people:changed", load), on("people:message", load)];
-    // Keeps "online", the code's countdown and the check-ins current.
+    const subs = [on("people:changed", load), on("people:message", load), on("people:shared", load)];
+    // Keeps "online" and the code's countdown current.
     const timer = window.setInterval(load, 5000);
     return () => {
       window.clearInterval(timer);
@@ -170,6 +171,12 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
+  const [tab, setTab] = useState<"messages" | "shared">("messages");
+  const [watching, setWatching] = useState<SharedChat | null>(null);
+  // A chat they stopped sharing (or that went with the connection) closes.
+  useEffect(() => {
+    if (watching && !c.shared.some((x) => x.id === watching.id)) setWatching(null);
+  }, [c.shared, watching]);
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
 
@@ -259,6 +266,15 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
             {!c.online && c.error && <span className="warn-text"> · {t("Can't reach them right now.")}</span>}
           </span>
         </div>
+        <div className="seg people-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "messages"} className={tab === "messages" ? "active" : ""} onClick={() => setTab("messages")}>
+            {t("Messages")}
+          </button>
+          <button role="tab" aria-selected={tab === "shared"} className={tab === "shared" ? "active" : ""} onClick={() => setTab("shared")}>
+            {t("Shared chats")}
+            {c.shared.length > 0 && <span className="badge subtle">{c.shared.length}</span>}
+          </button>
+        </div>
         <div className="people-menu">
           <button className="icon-btn" aria-label={t("More")} aria-expanded={menu} onClick={() => setMenu((m) => !m)}>
             ⋯
@@ -281,6 +297,14 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
           )}
         </div>
       </header>
+      {tab === "shared" ? (
+        watching ? (
+          <SharedChatView key={watching.id} contact={c} chat={watching} onBack={() => setWatching(null)} toast={toast} />
+        ) : (
+          <SharedPanel contact={c} onOpen={setWatching} toast={toast} />
+        )
+      ) : (
+      <>
       <div
         className="people-messages"
         ref={box}
@@ -361,6 +385,8 @@ function Conversation({ contact: c, onChanged, toast }: { contact: PersonContact
           </div>
         </div>
       </div>
+      </>
+      )}
       {address !== null && (
         <Modal title={t("Where to reach {name}", { name: c.name })} onClose={() => setAddress(null)}>
           <p className="muted small">{t("If their address changed, ask them for the one shown under Connect → Show my code, and type it here.")}</p>
@@ -549,5 +575,151 @@ function Help() {
         {t("The first time, Windows may ask whether SulcusAI may use the network: allow it, or they can't reach you. It's enough that one of you can be reached. SulcusAI needs to be open (and unlocked) on both PCs for messages to arrive.")}
       </p>
     </details>
+  );
+}
+
+/** What they share with this user (while connected), and what this user shares with them. */
+function SharedPanel({ contact: c, onOpen, toast }: { contact: PersonContact; onOpen: (chat: SharedChat) => void; toast: PushToast }) {
+  const stop = async (chatId: string) => {
+    try {
+      const choices = await api.peopleChatSharing(chatId);
+      await api.peopleShareChat(chatId, choices.filter((p) => p.shared && p.id !== c.id).map((p) => p.id));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="people-shared">
+      <section>
+        <h3>{t("{name} shares with you", { name: c.name })}</h3>
+        {!c.online ? (
+          <p className="muted small">{t("{name} isn't connected right now. Chats they share show here while you're both connected.", { name: c.name })}</p>
+        ) : c.shared.length === 0 ? (
+          <p className="muted small">{t("Nothing yet. When {name} shares a chat with you, it shows here and you can watch it live.", { name: c.name })}</p>
+        ) : (
+          <ul className="shared-list">
+            {c.shared.map((s) => (
+              <li key={s.id}>
+                <button className="shared-item" onClick={() => onOpen(s)}>
+                  <strong className="ellipsis">{s.title}</strong>
+                  <span className="small muted">
+                    {s.busy ? <span className="live-dot">{t("Working now")}</span> : t("Updated {time}", { time: new Date(s.updated_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) })}
+                    {s.model && " · " + t("by {model}", { model: s.model })}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section>
+        <h3>{t("You share with {name}", { name: c.name })}</h3>
+        {c.sharing.length === 0 ? (
+          <p className="muted small">{t("Nothing. To share a chat, open it and click 👥 Share at the top.")}</p>
+        ) : (
+          <ul className="shared-list">
+            {c.sharing.map((s) => (
+              <li key={s.chat_id} className="row">
+                <span className="ellipsis">{s.title}</span>
+                <button className="btn ghost small push-right" onClick={() => stop(s.chat_id)}>
+                  {t("Stop sharing")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
+const LIVE_STATUS: Record<string, string> = {
+  loading: "Loading the model…",
+  thinking: "Thinking…",
+  writing: "Writing…",
+  working: "Using a tool…",
+};
+
+/** A chat someone shares, live and read-only. */
+function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonContact; chat: SharedChat; onBack: () => void; toast: PushToast }) {
+  const [v, setV] = useState<SharedView | null>(null);
+  const end = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true);
+  useEffect(() => {
+    let alive = true;
+    api
+      .peopleWatch(c.id, chat.id)
+      .then((x) => alive && setV(x))
+      .catch((e) => {
+        if (!alive) return;
+        toast(errorText(e), "error");
+        onBack();
+      });
+    const mine = (p: { contact_id: string; chat_id: string }) => p.contact_id === c.id && p.chat_id === chat.id;
+    const subs = [
+      on("people:snapshot", (p) => mine(p) && setV(p.view)),
+      on("people:live", (p) => mine(p) && setV((x) => (x ? { ...x, live: p.live } : x))),
+    ];
+    return () => {
+      alive = false;
+      subs.forEach((s) => s.then((un) => un()));
+      api.peopleUnwatch(c.id, chat.id).catch(() => {});
+    };
+  }, [c.id, chat.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const size = (v?.messages.length ?? 0) + (v?.live?.content.length ?? 0);
+  useEffect(() => {
+    if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
+  }, [size]);
+
+  const info = v?.chat ?? chat;
+  return (
+    <>
+      <div className="shared-head">
+        <button className="link small" onClick={onBack}>
+          {t("← Shared chats")}
+        </button>
+        <strong className="ellipsis">{info.title}</strong>
+        <span className="small muted">
+          {t("{name}'s chat, read-only", { name: c.name })}
+          {info.model && " · " + t("replies by {model} on their PC", { model: info.model })}
+        </span>
+      </div>
+      <div
+        className="people-messages shared-messages"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+        }}
+      >
+        {!v && <p className="muted small people-note">{t("Opening…")}</p>}
+        {v?.messages.map((m) =>
+          m.role === "step" ? (
+            <div key={m.id} className="shared-step small muted">
+              🔧 {m.text}
+            </div>
+          ) : m.role === "note" ? (
+            <div key={m.id} className="people-day small muted">
+              {t("The earlier part of this chat was summarized here.")}
+            </div>
+          ) : (
+            <div key={m.id} className={`pmsg ${m.role === "user" ? "mine" : ""}`}>
+              <span className="small muted pmeta">{m.role === "user" ? c.name : info.model || t("Assistant")}</span>
+              <div className="pbubble">{m.role === "user" ? <span className="ptext">{m.text}</span> : <Markdown text={m.text} />}</div>
+            </div>
+          ),
+        )}
+        {v?.live && (
+          <div className="pmsg">
+            <span className="small muted pmeta live-dot">{t(LIVE_STATUS[v.live.status] ?? "Working…")}</span>
+            {v.live.content && (
+              <div className="pbubble">
+                <Markdown text={v.live.content} />
+              </div>
+            )}
+          </div>
+        )}
+        <div ref={end} />
+      </div>
+    </>
   );
 }

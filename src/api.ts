@@ -232,10 +232,48 @@ export interface PersonMessage {
   delivered: boolean;
 }
 
+/** A chat someone shares with this user (seen live while connected). */
+export interface SharedChat {
+  id: string;
+  title: string;
+  /** The model that writes its replies (on their PC). */
+  model: string;
+  /** A reply is being written. */
+  busy: boolean;
+  updated_at: number;
+}
+
+export interface SharedMsg {
+  id: string;
+  /** A tool the assistant used shows as "step", with its title only. */
+  role: "user" | "assistant" | "step" | "note";
+  text: string;
+  at: number;
+}
+
+export interface SharedLive {
+  status: "loading" | "thinking" | "writing" | "working" | string;
+  content: string;
+}
+
+export interface SharedView {
+  contact_id: string;
+  chat: SharedChat;
+  messages: SharedMsg[];
+  live: SharedLive | null;
+}
+
+export interface SharingChoice {
+  id: string;
+  name: string;
+  shared: boolean;
+  online: boolean;
+}
+
 export interface PersonContact {
   id: string;
   name: string;
-  /** A call either way got through in the last few minutes. */
+  /** Connected right now. */
   online: boolean;
   last_seen: number | null;
   address: string | null;
@@ -243,6 +281,10 @@ export interface PersonContact {
   last: PersonMessage | null;
   /** Why the last call from here didn't get through. */
   error: string | null;
+  /** Chats they share with this user (while connected). */
+  shared: SharedChat[];
+  /** Chats this user shares with them. */
+  sharing: { chat_id: string; title: string }[];
 }
 
 export interface PeopleView {
@@ -1264,6 +1306,12 @@ export const api = {
   peopleMessages: (id: string) => invoke<PersonMessage[]>("people_messages", { id }),
   peopleSend: (id: string, text: string, file: string | null) => invoke<PersonMessage>("people_send", { id, text, file }),
   peopleSaveFile: (id: string, message: string, to: string) => invoke<void>("people_save_file", { id, message, to }),
+  peopleChatSharing: (chatId: string) => invoke<SharingChoice[]>("people_chat_sharing", { chatId }),
+  /** Who may watch a chat (an empty list stops sharing it). */
+  peopleShareChat: (chatId: string, withIds: string[]) => invoke<SharingChoice[]>("people_share_chat", { chatId, with: withIds }),
+  /** Opens a chat someone shares; changes follow as people:snapshot and people:live. */
+  peopleWatch: (contactId: string, chatId: string) => invoke<SharedView>("people_watch", { contactId, chatId }),
+  peopleUnwatch: (contactId: string, chatId: string) => invoke<void>("people_unwatch", { contactId, chatId }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -1578,6 +1626,9 @@ export interface ChatEvents {
   "sync:changed": null;
   "people:changed": null;
   "people:message": { contact_id: string };
+  "people:shared": { contact_id: string };
+  "people:snapshot": { contact_id: string; chat_id: string; view: SharedView };
+  "people:live": { contact_id: string; chat_id: string; live: SharedLive | null };
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;
   "privacy:status": null;

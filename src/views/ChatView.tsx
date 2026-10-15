@@ -22,6 +22,7 @@ import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
+import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
@@ -459,6 +460,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
+          {features.has("people") && !chat.incognito && <ShareChat chatId={chat.id} toast={toast} />}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
           <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>{t("Delete")}</button>
         </div>
