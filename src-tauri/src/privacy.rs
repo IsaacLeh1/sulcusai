@@ -495,6 +495,7 @@ mod tests {
     }
 
     /// Saving took the database lock twice and froze the app (0.8.9).
+    #[cfg(windows)]
     #[test]
     fn saving_settings_does_not_freeze() {
         let state = crate::e2e::scratch_state();
@@ -619,6 +620,7 @@ mod tests {
 
     /// Through the real Tor network: the check service sees a Tor exit,
     /// not this PC, and mail servers answer through it (greeting only).
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn tor_hides_the_address() {

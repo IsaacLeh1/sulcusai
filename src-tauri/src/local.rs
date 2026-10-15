@@ -467,6 +467,7 @@ mod tests {
 
     /// A real model folder (SULCUSAI_TEST_MODEL_DIR), e.g. a Hugging Face
     /// download with the .gguf in a GGUF subfolder.
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn adds_the_models_in_a_real_folder() {

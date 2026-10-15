@@ -480,12 +480,13 @@ mod tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod live {
     use super::*;
 
     /// Against huggingface.co with this PC's hardware: a search shows only
     /// runnable files, and a small model downloads, checks out and is read.
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn search_and_fetch_from_hugging_face() {
