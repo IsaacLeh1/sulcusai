@@ -592,19 +592,37 @@ pub async fn complete(ep: &Endpoint, messages: Vec<Value>, extra: Value, max_tok
         "messages": messages,
         "temperature": 0.3,
         "max_tokens": max_tokens,
-        // Background work doesn't need step-by-step thinking (models
-        // without this switch ignore it).
-        "chat_template_kwargs": { "enable_thinking": false },
+        // Background work doesn't need step-by-step thinking: Qwen-style
+        // models turn it off, gpt-oss keeps it short (models without these
+        // switches ignore them).
+        "chat_template_kwargs": { "enable_thinking": false, "reasoning_effort": "low" },
     });
     if let (Some(b), Some(e)) = (body.as_object_mut(), extra.as_object()) {
         for (k, v) in e {
             b.insert(k.clone(), v.clone());
         }
     }
+    let v = complete_once(ep, &body).await?;
+    let content = v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or_default();
+    let answer = strip_thinking(content).trim();
+    // A model that thinks anyway can spend the whole allowance thinking and
+    // never answer; once, give it room to finish.
+    let thought = v.pointer("/choices/0/message/reasoning_content").and_then(Value::as_str).is_some_and(|r| !r.trim().is_empty())
+        || content.trim_start().starts_with("<think>");
+    if answer.is_empty() && thought && v.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
+        body["max_tokens"] = json!(max_tokens + 768);
+        let v = complete_once(ep, &body).await?;
+        let content = v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or_default();
+        return Ok(strip_thinking(content).trim().to_string());
+    }
+    Ok(answer.to_string())
+}
+
+async fn complete_once(ep: &Endpoint, body: &Value) -> Result<Value, String> {
     let resp = net::local_client()
         .post(ep.url("/v1/chat/completions"))
         .bearer_auth(&ep.key)
-        .json(&body)
+        .json(body)
         .timeout(Duration::from_secs(900))
         .send()
         .await
@@ -615,8 +633,7 @@ pub async fn complete(ep: &Endpoint, messages: Vec<Value>, extra: Value, max_tok
         let detail = v.pointer("/error/message").and_then(Value::as_str).unwrap_or("unknown error");
         return Err(format!("The engine returned {status}: {detail}"));
     }
-    let content = v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or_default();
-    Ok(strip_thinking(content).trim().to_string())
+    Ok(v)
 }
 
 /// Removes a <think>…</think> block some models write before the answer.
@@ -657,7 +674,7 @@ pub async fn summary_title(ep: &Endpoint, request: &str) -> Option<String> {
         json!({ "role": "system", "content": "You name chats. Reply with a short title of 2 to 6 words that sums up what the user wants. Title only: no quotes, no ending period, no emoji." }),
         json!({ "role": "user", "content": request }),
     ];
-    let raw = complete(ep, messages, json!({}), 24).await.ok()?;
+    let raw = complete(ep, messages, json!({}), 48).await.ok()?;
     clean_title(&raw)
 }
 
@@ -669,13 +686,49 @@ fn clean_title(raw: &str) -> Option<String> {
     (!t.is_empty() && t.split_whitespace().count() <= 10).then_some(t)
 }
 
+/// The chat's name until the model names it (or if it can't): the first
+/// sentence of the request, without greetings and "can you", cut at a word.
 pub fn title_from(text: &str) -> String {
     let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("New chat");
-    let mut title: String = line.chars().take(48).collect();
-    if line.chars().count() > 48 {
-        title = title.trim_end().to_string() + "…";
+    // The first sentence.
+    let mut s = line;
+    if let Some(i) = s.char_indices().find(|&(i, c)| matches!(c, '.' | '?' | '!') && s[i + c.len_utf8()..].starts_with(' ')).map(|(i, _)| i) {
+        s = &s[..i];
     }
-    title
+    // Greetings and polite openers say nothing about the chat.
+    const OPENERS: [&str; 16] = [
+        "hey", "hi", "hello", "ok", "okay", "so", "please", "can you", "could you", "would you", "will you", "i want you to", "i need you to", "i'd like you to", "help me", "i need help",
+    ];
+    let skip = |t: &str| t.trim_start_matches(|c: char| c == ',' || c.is_whitespace()).to_string();
+    let mut rest = skip(s);
+    while let Some(o) = OPENERS.iter().find(|o| {
+        let lower = rest.to_lowercase();
+        lower.starts_with(*o) && lower[o.len()..].chars().next().is_none_or(|c| c == ' ' || c == ',')
+    }) {
+        rest = skip(&rest[o.len()..]);
+    }
+    let s = if rest.split_whitespace().count() >= 2 { rest.as_str() } else { s };
+    // Up to 48 characters, ending at a whole word.
+    let mut title = String::new();
+    for w in s.split_whitespace() {
+        if title.chars().count() + w.chars().count() + 1 > 48 {
+            if title.is_empty() {
+                title = w.chars().take(48).collect();
+            }
+            title.push('…');
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(w);
+    }
+    let title = title.trim_end_matches([',', ':', ';']).to_string();
+    let mut chars = title.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "New chat".into(),
+    }
 }
 
 #[cfg(test)]
@@ -686,9 +739,37 @@ mod tests {
         Message { id: id.into(), role: role.into(), content: id.into(), ..Default::default() }
     }
 
+    /// gpt-oss thinks even when asked not to: with a small allowance it ran
+    /// out before answering, so chats kept the raw request as their name.
+    #[tokio::test]
+    async fn a_model_that_spends_its_allowance_thinking_gets_room_to_answer() {
+        use axum::{routing::post, Json, Router};
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static LAST_MAX: AtomicU64 = AtomicU64::new(0);
+        async fn reply(Json(body): Json<Value>) -> Json<Value> {
+            let max = body["max_tokens"].as_u64().unwrap_or(0);
+            LAST_MAX.store(max, Ordering::SeqCst);
+            assert_eq!(body["chat_template_kwargs"]["reasoning_effort"], "low");
+            Json(if max < 100 {
+                json!({ "choices": [{ "finish_reason": "length", "message": { "content": "", "reasoning_content": "The user wants a title. Let me think about" } }] })
+            } else {
+                json!({ "choices": [{ "finish_reason": "stop", "message": { "content": "Summarize Latest Google Email", "reasoning_content": "Short title." } }] })
+            })
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, Router::new().route("/v1/chat/completions", post(reply))).await.unwrap() });
+        let ep = Endpoint { port, key: "k".into(), ctx: 8192, extra: json!({}), cloud: None };
+        assert_eq!(summary_title(&ep, "Summarize my most recent email from Google").await.as_deref(), Some("Summarize Latest Google Email"));
+        assert_eq!(LAST_MAX.load(Ordering::SeqCst), 48 + 768, "asked again with room");
+    }
+
     #[test]
     fn title_uses_first_nonempty_line_and_truncates() {
-        assert_eq!(title_from("\n  hello there \nmore"), "hello there");
+        assert_eq!(title_from("\n  hello there \nmore"), "Hello there");
+        assert_eq!(title_from("Hey, can you summarize my most recent email from Google? Thanks"), "Summarize my most recent email from Google");
+        assert_eq!(title_from("please help me plan a three day trip to Zion National Park with my family in November"), "Plan a three day trip to Zion National Park with…");
+        assert_eq!(title_from("what's the weather in Orem"), "What's the weather in Orem");
         let offered = vec!["web_search".to_string()];
         let calls = salvage_tool_calls("\n<tool_call>\n{\"name\": \"web_search\", \"arguments\": {\"query\": \"Mount Timpanogos height\"}}\n</tool_call>", &offered);
         assert_eq!(calls.len(), 1);

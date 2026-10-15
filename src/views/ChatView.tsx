@@ -130,6 +130,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [lightbox, setLightbox] = useState<MediaItem | null>(null);
   const jobs = useMediaJobs().filter((j) => j.chat_id === chat.id);
   const scroller = useRef<HTMLDivElement>(null);
+  // Whether the view follows new text: only while the person is at the
+  // bottom. Scrolling up while a reply streams leaves them where they are.
+  const following = useRef(true);
+  const [awayFromEnd, setAwayFromEnd] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const modelId = chat.model_id ?? defaultModel;
@@ -229,14 +233,34 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [chat.id, reload]);
 
-  // Keep the newest text in view while it streams.
+  // Keep the newest text in view while it streams, unless the person
+  // scrolled up to read.
+  const toEnd = () => {
+    const el = scroller.current;
+    if (!el) return;
+    following.current = true;
+    setAwayFromEnd(false);
+    el.scrollTop = el.scrollHeight;
+  };
+  const onScroll = () => {
+    const el = scroller.current;
+    if (!el) return;
+    following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    setAwayFromEnd(!following.current);
+  };
   useEffect(() => {
     const el = scroller.current;
-    if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight;
+    if (el && following.current) el.scrollTop = el.scrollHeight;
   }, [messages, streaming, pending]);
+  // A newly opened chat starts at its end.
+  useEffect(() => {
+    following.current = true;
+    setAwayFromEnd(false);
+  }, [chat.id]);
 
   const sendText = async (text: string, images: string[] = []) => {
     if ((!text && images.length === 0) || busy) return;
+    toEnd();
     setError(null);
     setStatus("loading");
     const meta = images.length ? ({ images } as Message["meta"]) : undefined;
@@ -408,7 +432,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           )}
         </div>
       )}
-      <div className="messages" ref={scroller}>
+      <div
+        className="messages"
+        ref={scroller}
+        onScroll={onScroll}
+        onWheel={(e) => {
+          // Stop following at once, before the next bit of text arrives.
+          if (e.deltaY < 0) following.current = false;
+        }}
+      >
         {messages.length === 0 && !streaming && (
           <div className="hello">
             <p className="muted">
@@ -465,6 +497,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           </div>
         )}
         {error && <div className="error-box">{error}</div>}
+        {awayFromEnd && (
+          <button className="jump-latest" onClick={toEnd} title={t("Back to the newest text")}>
+            ↓ {streaming ? t("New text") : t("Latest")}
+          </button>
+        )}
       </div>
 
       <div className="composer-wrap">
