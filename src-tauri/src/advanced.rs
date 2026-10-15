@@ -85,6 +85,8 @@ pub struct Processing {
     /// (0.5–0.95). Off: the oldest messages are left out instead.
     pub handoff_at: Option<f64>,
     pub handoff_off: bool,
+    /// Continue in a new chat instead of compacting this one.
+    pub new_chat: bool,
     /// Most replies a helper agent gets for its task.
     pub helper_steps: Option<u32>,
 }
@@ -92,6 +94,17 @@ pub struct Processing {
 pub const DEFAULT_MAX_STEPS: usize = 30;
 pub const DEFAULT_HELPER_STEPS: usize = 12;
 pub const DEFAULT_HANDOFF_AT: f64 = 0.8;
+
+/// What a chat does once its window is nearly full.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LongChat {
+    /// Summarize the earlier part and keep going in the same chat.
+    Compact(f64),
+    /// Continue in a new chat that starts from a summary.
+    NewChat(f64),
+    /// Leave out the oldest messages.
+    DropOldest,
+}
 
 /// The stored settings, as the Settings page edits them.
 pub fn stored(conn: &Connection) -> Advanced {
@@ -163,6 +176,15 @@ impl Advanced {
 
     pub fn helper_steps(&self) -> usize {
         self.processing.helper_steps.map_or(DEFAULT_HELPER_STEPS, |n| n.clamp(1, 100) as usize)
+    }
+
+    /// What a nearly full chat does, and from how full.
+    pub fn long_chat(&self) -> LongChat {
+        match self.handoff_at() {
+            None => LongChat::DropOldest,
+            Some(at) if self.processing.new_chat => LongChat::NewChat(at),
+            Some(at) => LongChat::Compact(at),
+        }
     }
 
     /// How full the window gets before a handoff, or None for never.

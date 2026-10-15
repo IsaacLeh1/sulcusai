@@ -15,6 +15,7 @@ mod browsers;
 mod calendar;
 mod catalog;
 mod chat;
+mod compact;
 mod cloud;
 mod checkpoint;
 mod connectors;
@@ -592,9 +593,19 @@ pub(crate) fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBu
 
 /// Context, GPU layers, threads and batch size to start a model with:
 /// worked out for this PC, unless advanced mode says otherwise.
+/// The context window the person chose (None: automatic).
+fn chosen_window(state: &AppState) -> Option<u32> {
+    db::get::<u32>(&state.db.lock().unwrap(), "context_window").filter(|n| *n >= 2048)
+}
+
 fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str) -> (u32, u32, usize, u32) {
     let limits = state.limits();
     let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &state.budget(), &limits);
+    // A bigger window, as far as this PC still runs the model (layers move
+    // off the graphics card to make room).
+    if let Some(want) = chosen_window(state) {
+        (ctx, layers) = catalog::launch_at(spec, quant, &state.budget().with_limits(&limits), want, (ctx, layers));
+    }
     let e = advanced::get(state).engine;
     if let Some(c) = e.ctx {
         ctx = c.clamp(512, spec.arch.max_ctx.max(512));
@@ -966,6 +977,100 @@ fn rename_model(state: AppStateRef, model_id: String, name: String) -> Result<()
     db::set_model_name(&conn, &model_id, (!name.is_empty()).then_some(name))
 }
 
+#[derive(Serialize)]
+struct WindowOption {
+    ctx: u32,
+    placement: Option<catalog::Placement>,
+    est_tps: f64,
+    needed: u64,
+}
+
+#[derive(Serialize)]
+struct ContextOptions {
+    /// What the person chose (None: automatic).
+    chosen: Option<u32>,
+    /// The automatic size for this model on this PC.
+    auto: u32,
+    /// The largest the model supports.
+    max: u32,
+    options: Vec<WindowOption>,
+}
+
+/// Window sizes for a model (or the default one) and how each would run.
+#[tauri::command(async)]
+fn context_options(state: AppStateRef, model_id: Option<String>) -> Result<ContextOptions, String> {
+    let id = model_id.or_else(|| state.settings().default_model).ok_or("Pick a model first.")?;
+    let spec = state.model_spec(&id).ok_or("That model isn't available.")?;
+    let quant = db::installed_model(&state.db.lock().unwrap(), &id).map(|m| m.quant).unwrap_or_else(|| spec.variants[0].quant.clone());
+    let variant = spec.variant(&quant).ok_or("Unknown model version")?;
+    let budget = state.budget().with_limits(&state.limits());
+    let (auto, _) = catalog::launch_within(&spec, &quant, &state.budget(), &state.limits());
+    let options = [8_192u32, 16_384, 32_768, 65_536, 131_072]
+        .into_iter()
+        .filter(|c| *c <= spec.arch.max_ctx)
+        .map(|ctx| {
+            let f = catalog::fit_variant(&spec, variant, ctx, &budget);
+            WindowOption { ctx, placement: f.placement, est_tps: f.est_tps, needed: f.needed_bytes }
+        })
+        .collect();
+    Ok(ContextOptions { chosen: chosen_window(&state), auto, max: spec.arch.max_ctx, options })
+}
+
+/// Sets the context window for chats (None: automatic). Models reload with
+/// it on the next message.
+#[tauri::command(async)]
+fn set_context_window(state: AppStateRef, size: Option<u32>) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    match size {
+        Some(n) => db::set(&conn, "context_window", &n.clamp(2048, 1_048_576))?,
+        None => db::set(&conn, "context_window", &0u32)?,
+    }
+    db::log_action(&conn, "settings", "Changed the context window size");
+    Ok(())
+}
+
+/// Compacts a chat now: the model summarizes it, and from here on it works
+/// from the summary and the messages after it.
+#[tauri::command]
+async fn compact_chat(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -> Result<(), String> {
+    let state = state.inner().clone();
+    let cipher = state.cipher()?;
+    let Some((_cancel, _guard)) = claim(&state.generations, &chat_id) else {
+        return Err("Wait for the reply to finish, then compact.".into());
+    };
+    let (chat, profile) = {
+        let conn = state.db.lock().unwrap();
+        (db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?, db::profile(&conn, &cipher))
+    };
+    let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
+    let covered = compact::pending(&history);
+    if covered == 0 {
+        return Err("There's nothing new to compact yet.".into());
+    }
+    let (ep, _, _) = llm_endpoint(&state, chat.model_id.clone(), false, || {
+        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
+    })
+    .await?;
+    app.emit("chat:status", json!({ "chat_id": chat_id, "status": "compacting" })).ok();
+    let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
+    let (base, about) = chat::system_prompt(&profile, &today);
+    let base = advanced::get(&state).base_prompt(base);
+    let result = async {
+        let summary = compact::summarize(&ep, &base, history).await?;
+        compact::save(&state.db.lock().unwrap(), &cipher, &chat_id, &summary, covered, false)?;
+        if let Ok(info) = compact::fresh_context(&ep, &base, &about, &summary).await {
+            state.contexts.lock().unwrap().insert(chat_id.clone(), info.clone());
+            app.emit("chat:context", json!({ "chat_id": chat_id, "context": info })).ok();
+        }
+        state.log("chat", "Compacted a chat");
+        Ok::<(), String>(())
+    }
+    .await;
+    app.emit("chat:compacted", json!({ "chat_id": chat_id, "auto": false })).ok();
+    app.emit("chat:status", json!({ "chat_id": chat_id, "status": "idle" })).ok();
+    result
+}
+
 #[tauri::command(async)]
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
@@ -1186,17 +1291,34 @@ pub(crate) async fn run_turn(
     let (base, about) = chat::system_prompt(&profile, &today);
     let base = advanced::get(state).base_prompt(base);
 
-    // Nearly full: summarize and continue in a fresh chat.
+    // Nearly full: compact it (summarize the earlier part and keep going
+    // here), or continue in a fresh chat, as set in Advanced.
     let last_context = state.contexts.lock().unwrap().get(&chat_id).cloned();
     let mut chat_id = chat_id;
-    if !chat.incognito && handoff::needed(last_context.as_ref(), advanced::get(state).handoff_at()) {
-        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "handoff" })).ok();
-        let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
-        let summary = handoff::summarize(&ep, &base, &history).await?;
-        let new = handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &chat, &summary)?;
-        state.log("chat", "A long chat continued in a new chat with a summary");
-        app.emit("chat:handoff", json!({ "from": chat_id, "to": new.id })).ok();
-        chat_id = new.id;
+    let long = advanced::get(state).long_chat();
+    if let advanced::LongChat::Compact(at) = long {
+        if !chat.incognito && handoff::needed(last_context.as_ref(), Some(at)) {
+            app.emit("chat:status", json!({ "chat_id": chat_id, "status": "compacting" })).ok();
+            let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
+            let covered = compact::pending(&history);
+            if let Ok(summary) = compact::summarize(&ep, &base, history).await {
+                compact::save(&state.db.lock().unwrap(), &cipher, &chat_id, &summary, covered, true)?;
+                state.contexts.lock().unwrap().remove(&chat_id);
+                state.log("chat", "Compacted a long chat (it was nearly full)");
+                app.emit("chat:compacted", json!({ "chat_id": chat_id, "auto": true })).ok();
+            }
+        }
+    }
+    if let advanced::LongChat::NewChat(at) = long {
+        if !chat.incognito && handoff::needed(last_context.as_ref(), Some(at)) {
+            app.emit("chat:status", json!({ "chat_id": chat_id, "status": "handoff" })).ok();
+            let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
+            let summary = handoff::summarize(&ep, &base, &history).await?;
+            let new = handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &chat, &summary)?;
+            state.log("chat", "A long chat continued in a new chat with a summary");
+            app.emit("chat:handoff", json!({ "from": chat_id, "to": new.id })).ok();
+            chat_id = new.id;
+        }
     }
 
     let first_message;
@@ -1650,6 +1772,9 @@ pub fn run() {
             get_settings,
             set_connectivity,
             set_default_model,
+            context_options,
+            set_context_window,
+            compact_chat,
             rename_model,
             finish_onboarding,
             get_profile,

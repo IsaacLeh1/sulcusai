@@ -207,6 +207,21 @@ pub fn launch_within(model: &ModelSpec, quant: &str, full: &Budget, l: &crate::p
     (ctx.min(l.max_ctx), layers)
 }
 
+/// Context and GPU layers for a window the person chose: the largest up to
+/// `want` (halving) that this PC still runs, never less than `auto`.
+pub fn launch_at(model: &ModelSpec, quant: &str, b: &Budget, want: u32, auto: (u32, u32)) -> (u32, u32) {
+    let Some(v) = model.variant(quant) else { return auto };
+    let mut ctx = want.min(model.arch.max_ctx);
+    while ctx > auto.0 {
+        let f = fit_variant(model, v, ctx, b);
+        if f.placement.is_some() {
+            return (ctx, f.gpu_layers);
+        }
+        ctx /= 2;
+    }
+    auto
+}
+
 /// Rough memory bandwidth by VRAM tier, replaced by a measured benchmark
 /// after install.
 fn gpu_bandwidth_guess(vram: u64) -> f64 {
@@ -436,6 +451,28 @@ mod tests {
 
     fn catalog() -> Catalog {
         Catalog::bundled()
+    }
+
+    /// A bigger window chosen by the person: as big as still runs, layers
+    /// moving off the graphics card for the room; never below automatic.
+    #[test]
+    fn a_chosen_window_is_as_big_as_still_runs() {
+        let c = catalog();
+        let m = c.model("qwen3-8b").unwrap();
+        let q = "Q4_K_M";
+        let b = budget(12, 24);
+        let auto = launch_settings(m, q, &b);
+        let (ctx, layers) = launch_at(m, q, &b, 32_768, auto);
+        assert_eq!(ctx, 32_768.min(m.arch.max_ctx));
+        assert!(layers > 0);
+        let (huge, _) = launch_at(m, q, &b, 1 << 20, auto);
+        assert!(huge <= m.arch.max_ctx, "never past what the model supports");
+        // Little memory: the request shrinks until it runs, never below automatic.
+        let small = budget(0, 8);
+        let auto_small = launch_settings(m, q, &small);
+        let (ctx_small, _) = launch_at(m, q, &small, 131_072, auto_small);
+        assert!(ctx_small >= auto_small.0);
+        assert!(ctx_small == auto_small.0 || fit_variant(m, m.variant(q).unwrap(), ctx_small, &small).placement.is_some());
     }
 
     #[test]

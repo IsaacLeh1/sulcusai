@@ -20,6 +20,7 @@ use crate::features::Feature;
 use crate::sandbox::Sandbox;
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
 use crate::connectors::{self, OfferedTool, Skill, ToolMode};
+use crate::compact;
 use crate::{memory, projects, AppState};
 
 
@@ -327,6 +328,10 @@ impl Turn {
                 ));
             }
         }
+        // A compacted chat: the latest summary stands in for what came before it.
+        if let (_, Some(summary)) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id)) {
+            about.push_str(&compact::prompt_section(&summary));
+        }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let system = if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
         let checkpoint_dir = self.state.paths.data.join("checkpoints");
@@ -338,7 +343,7 @@ impl Turn {
         let mut repeats = 0;
         for step in 0..max_steps {
             self.rest_if_hot().await;
-            let history = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
+            let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
             let (kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));

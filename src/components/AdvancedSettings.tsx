@@ -11,7 +11,7 @@ const DEFAULTS: Advanced = {
   sampling: { temperature: null, top_p: null, top_k: null, min_p: null, repeat_penalty: null, presence_penalty: null, frequency_penalty: null, seed: null },
   engine: { ctx: null, gpu_layers: null, threads: null, batch: null },
   guardrails: { instructions: null, extra: "", never: [], always_ask: false, max_steps: null },
-  processing: { thinking: "auto", handoff_at: null, handoff_off: false, helper_steps: null },
+  processing: { thinking: "auto", handoff_at: null, handoff_off: false, new_chat: false, helper_steps: null },
 };
 
 /** A number field where empty means "the app decides". */
@@ -204,22 +204,27 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
               </select>
               <span className="muted small">{t("Only for models that can switch it, such as Qwen3.")}</span>
             </label>
-            <span className="small">{t("When a chat gets long:")}</span>
+            <span className="small">
+              {t("When a chat is")}{" "}
+              <input
+                className="input inline-num"
+                type="number"
+                min={50}
+                max={95}
+                value={Math.round((p.handoff_at ?? 0.8) * 100)}
+                onChange={(e) => set("processing", { ...p, handoff_at: Number(e.target.value) / 100 })}
+                aria-label={t("Percent full")}
+                disabled={p.handoff_off}
+              />
+              {t("% full:")}
+            </span>
             <label className="check">
-              <input type="radio" name="long" checked={!p.handoff_off} onChange={() => set("processing", { ...p, handoff_off: false })} />
-              <span>
-                {t("Continue in a new chat with a summary when it's")}{" "}
-                <input
-                  className="input inline-num"
-                  type="number"
-                  min={50}
-                  max={95}
-                  value={Math.round((p.handoff_at ?? 0.8) * 100)}
-                  onChange={(e) => set("processing", { ...p, handoff_at: Number(e.target.value) / 100 })}
-                  aria-label={t("Percent full")}
-                />
-                {t("% full")}
-              </span>
+              <input type="radio" name="long" checked={!p.handoff_off && !p.new_chat} onChange={() => set("processing", { ...p, handoff_off: false, new_chat: false })} />
+              <span>{t("Compact it: summarize the earlier part and keep going in the same chat")}</span>
+            </label>
+            <label className="check">
+              <input type="radio" name="long" checked={!p.handoff_off && !!p.new_chat} onChange={() => set("processing", { ...p, handoff_off: false, new_chat: true })} />
+              <span>{t("Continue in a new chat that starts from a summary")}</span>
             </label>
             <label className="check">
               <input type="radio" name="long" checked={p.handoff_off} onChange={() => set("processing", { ...p, handoff_off: true })} />

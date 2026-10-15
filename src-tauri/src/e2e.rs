@@ -884,6 +884,64 @@ async fn e2e_notes_and_tasks() {
     state.engine.lock().await.stop().await;
 }
 
+/// Compacting, against a stand-in engine: the model writes a summary, the
+/// chat keeps going, and the next reply gets the summary (in its
+/// instructions) instead of the older messages.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_compacted_chat_carries_on_from_its_summary() {
+    use axum::{routing::post, Json, Router};
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>;
+    let seen: Seen = Default::default();
+    let s = seen.clone();
+    let app = Router::new()
+        .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+            let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+            Json(serde_json::json!({ "tokens": vec![1; n] }))
+        }))
+        .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+            let s = s.clone();
+            async move {
+                let asked_summary = b["messages"].as_array().and_then(|m| m.last()).and_then(|m| m["content"].as_str()).is_some_and(|c| c.contains("replaced by your summary"));
+                s.lock().unwrap().push(b);
+                let text = if asked_summary { "- Goal: a three-day trip to Zion in November" } else { "Done." };
+                let chunk = |v: serde_json::Value| format!("data: {v}\n\n");
+                let body = chunk(serde_json::json!({ "choices": [{ "delta": { "content": text }, "finish_reason": null }] }))
+                    + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }))
+                    + "data: [DONE]\n\n";
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    let state = scratch_state();
+    let cipher = state.cipher().unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    for (role, text) in [("user", "Help me plan a trip to Zion."), ("assistant", "Sure, when?"), ("user", "November, three days."), ("assistant", "Great, here's a plan…")] {
+        crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message { id: uuid::Uuid::new_v4().to_string(), chat_id: chat.id.clone(), role: role.into(), content: text.into(), created_at: crate::db::now_ms(), ..Default::default() }).unwrap();
+    }
+    let history = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    assert_eq!(crate::compact::pending(&history), 4);
+    let summary = crate::compact::summarize(&ep, "You are a helpful assistant.", history).await.unwrap();
+    crate::compact::save(&state.db.lock().unwrap(), &cipher, &chat.id, &summary, 4, false).unwrap();
+    assert_eq!(crate::compact::pending(&crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)), 0, "nothing new to compact");
+
+    seen.lock().unwrap().clear();
+    let reply = say(&state, &ep, &cipher, &chat.id, "What should I pack?").await;
+    assert_eq!(reply, "Done.");
+    let req = seen.lock().unwrap().last().cloned().unwrap();
+    let msgs = req["messages"].as_array().unwrap();
+    let system = msgs[0]["content"].as_str().unwrap();
+    assert!(system.contains("Earlier in this conversation") && system.contains("trip to Zion in November"), "the summary is in the instructions");
+    let said: Vec<&str> = msgs[1..].iter().filter_map(|m| m["content"].as_str()).collect();
+    assert!(said.len() == 1 && said[0].ends_with("What should I pack?"), "the older messages are left to the summary: {said:?}");
+    // The person still sees everything, with the summary marked.
+    let all = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    assert!(all.iter().any(|m| m.content == "Help me plan a trip to Zion."));
+    assert!(all.iter().any(crate::compact::is_marker));
+}
+
 /// Web off: the model asks for the web, the user answers the popup, and the
 /// same reply carries on with the web tools (a yes) or without them (a no).
 /// Against a stand-in engine that streams like llama.cpp.

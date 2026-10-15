@@ -281,7 +281,7 @@ export interface Advanced {
   sampling: { temperature: number | null; top_p: number | null; top_k: number | null; min_p: number | null; repeat_penalty: number | null; presence_penalty: number | null; frequency_penalty: number | null; seed: number | null };
   engine: { ctx: number | null; gpu_layers: number | null; threads: number | null; batch: number | null };
   guardrails: { instructions: string | null; extra: string; never: string[]; always_ask: boolean; max_steps: number | null };
-  processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; helper_steps: number | null };
+  processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; new_chat?: boolean; helper_steps: number | null };
 }
 
 export interface HubFile {
@@ -340,6 +340,24 @@ export interface PausedDownload {
   received: number;
   total: number;
   at: number;
+}
+
+/** A context window size and how the model would run with it. */
+export interface WindowOption {
+  ctx: number;
+  placement: Placement | null;
+  est_tps: number;
+  needed: number;
+}
+
+export interface ContextOptions {
+  /** What the person chose (null: automatic). */
+  chosen: number | null;
+  /** The automatic size for this model on this PC. */
+  auto: number;
+  /** The largest the model supports. */
+  max: number;
+  options: WindowOption[];
 }
 
 export interface FolderImport {
@@ -533,6 +551,11 @@ export interface ToolMeta {
   handoff_to?: string;
   /** On the first message of a continued chat. */
   handoff_from?: string;
+  /** A summary left by compacting; the model works from it instead of the messages before it. */
+  compacted?: boolean;
+  /** How many messages the summary covers, and whether the chat compacted itself. */
+  messages?: number;
+  auto?: boolean;
   /** A document the assistant made (it can be opened). */
   file?: string;
   /** The assistant asked the user to turn on web access. */
@@ -1200,6 +1223,11 @@ export const api = {
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),
+  /** Summarizes the chat so far; the model continues from the summary. */
+  compactChat: (chatId: string) => invoke<void>("compact_chat", { chatId }),
+  contextOptions: (modelId: string | null) => invoke<ContextOptions>("context_options", { modelId }),
+  /** null: automatic. */
+  setContextWindow: (size: number | null) => invoke<void>("set_context_window", { size }),
   hubSearch: (query: string, sort: "downloads" | "trending" | "newest", all = false) => invoke<HubResults>("hub_search", { query, sort, all }),
   /** Starts installing one file; returns the model id its progress is reported under. */
   hubInstall: (repo: string, file: string, force = false) => invoke<string>("hub_install", { repo, file, force }),
@@ -1451,7 +1479,8 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling"; detail?: string };
+  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "idle"; detail?: string };
+  "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
   "chat:context": { chat_id: string; context: ContextInfo };

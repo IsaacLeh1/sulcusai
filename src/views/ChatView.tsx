@@ -114,6 +114,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [cooling, setCooling] = useState<string | null>(null);
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
   const [handingOff, setHandingOff] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const [context, setContext] = useState<ContextInfo | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -158,7 +159,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const webOn = connectivity !== "offline" || chat.web;
   // The Web search feature: search and reading pages in every chat, even Offline.
   const searchOn = webOn || features.has("web_search");
-  const busy = status !== "idle";
+  const busy = status !== "idle" || compacting;
+  // Messages since the last summary: what Compact now would cover.
+  const lastSummary = messages.map((m) => !!m.meta?.compacted).lastIndexOf(true);
+  const canCompact = !busy && messages.slice(lastSummary + 1).some((m) => m.role === "user");
 
   const reload = useCallback(() => {
     api.messages(chat.id).then(setMessages);
@@ -192,12 +196,19 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const subs = [
       on("chat:status", mine((p) => {
         if (p.status === "handoff") setHandingOff(true);
+        else if (p.status === "compacting") setCompacting(true);
+        else if (p.status === "idle") setCompacting(false);
         else if (p.status === "cooling") {
           setCooling(p.detail ?? t("the PC"));
           setStatus("working");
         } else setStatus("loading");
       })),
       on("agent:helper", mine((p) => setHelperSteps((all) => ({ ...all, [p.call_id]: [...(all[p.call_id] ?? []), p.step] })))),
+      on("chat:compacted", mine(() => {
+        setCompacting(false);
+        reload();
+        api.context(chat.id).then(setContext).catch(() => {});
+      })),
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:start", mine((p) => {
         setCooling(null);
@@ -317,9 +328,30 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now() }]);
   }, [chat.id]);
 
+  // Compact now: the model summarizes the chat so far and works from that.
+  const compactNow = async () => {
+    setCompacting(true);
+    setError(null);
+    try {
+      await api.compactChat(chat.id);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setCompacting(false);
+      reload();
+      api.context(chat.id).then(setContext).catch(() => {});
+    }
+  };
+
   const send = () => {
     const text = input.trim();
     if ((!text && attached.length === 0) || busy) return;
+    // Like Claude: /compact compacts instead of sending.
+    if (text.toLowerCase() === "/compact") {
+      setInput("");
+      compactNow();
+      return;
+    }
     const images = attached.map((a) => a.id);
     setInput("");
     setAttached([]);
@@ -424,7 +456,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </button>
           ))}
         </div>
-        <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} />
+        <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
@@ -497,6 +529,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           </div>
         ))}
         {handingOff && <p className="muted small pad">{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
+        {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
         {status === "loading" && !streaming && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
           <p className="muted small pad">{cooling ? t("Letting the PC cool down before the next step ({what})…", { what: cooling }) : t("Working…")}</p>
@@ -722,6 +755,8 @@ function renderItems(
       closeTurn(m.id, false);
       turnId = m.id;
       out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
+    } else if (m.role === "assistant" && m.meta?.compacted) {
+      out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
       out.push(
         <Fragment key={m.id}>
@@ -749,6 +784,30 @@ function renderItems(
     if (i === messages.length - 1) closeTurn("end", true);
   });
   return out;
+}
+
+/** Where a chat was compacted: the model works from this summary instead
+ * of the messages above it (they're still here to read). */
+function CompactedNote({ m }: { m: Message }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="compacted-note">
+      <div className="compacted-line">
+        <span>
+          {m.meta?.auto ? t("This chat was getting full, so it compacted itself.") : t("Compacted.")}{" "}
+          {t("The model now works from a summary of the messages above.")}
+        </span>
+        <button className="link small" onClick={() => setOpen((o) => !o)}>
+          {open ? t("Hide the summary") : t("Show the summary")}
+        </button>
+      </div>
+      {open && (
+        <div className="compacted-summary">
+          <Markdown text={m.content} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void }) {

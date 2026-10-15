@@ -1128,3 +1128,21 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .dl-what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .dl-actions { display: flex; gap: 6px; flex: none; }
 .progress.paused span { background: var(--muted); }
+/* Context meter: a button now, warning colors as it fills. */
+button.ctx { border: 0; background: none; padding: 2px 4px; border-radius: 6px; cursor: pointer; color: inherit; font: inherit; }
+button.ctx:hover { background: var(--hover); }
+.ctx.high .ctx-label { color: var(--warn); }
+.ctx.full .ctx-label { color: var(--danger, #e5484d); font-weight: 600; }
+.ctx-legend { list-style: none; padding: 0; margin: 6px 0 10px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.ctx-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+.ctx-dot.sys { background: var(--muted); }
+.ctx-dot.profile { background: var(--teal); }
+.ctx-dot.history { background: var(--accent); }
+.ctx-dot.reserve { background: repeating-linear-gradient(45deg, var(--accent-soft) 0 3px, transparent 3px 6px); border: 1px solid var(--accent-soft); }
+.ctx-sizes { display: flex; flex-direction: column; gap: 6px; }
+.ctx-sizes .check { align-items: flex-start !important; }
+.ctx-sizes .check input { margin-top: 3px; }
+/* Where a chat was compacted. */
+.compacted-note { border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); padding: 8px 0; }
+.compacted-line { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; color: var(--muted); font-size: 12.5px; }
+.compacted-summary { margin-top: 8px; padding: 8px 12px; background: var(--panel); border-radius: 8px; font-size: 13px; }
