@@ -64,15 +64,47 @@ fn size_of(dir: &Path) -> u64 {
         .sum()
 }
 
-fn files_in(dir: &Path, out: &mut Vec<PathBuf>) {
+/// A file to move, and whether it was reached through a link (a symbolic
+/// link or junction to somewhere else): those are copied, never renamed or
+/// deleted, since the files they point at belong to that other place.
+struct Item {
+    path: PathBuf,
+    linked: bool,
+}
+
+/// Every file under `dir`, following links; the links themselves go in `links`.
+fn files_in(dir: &Path, linked: bool, depth: usize, out: &mut Vec<Item>, links: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for e in entries.flatten() {
-        match e.file_type() {
-            Ok(t) if t.is_dir() => files_in(&e.path(), out),
-            Ok(t) if t.is_file() => out.push(e.path()),
-            _ => {}
+        let path = e.path();
+        let Ok(t) = e.file_type() else { continue };
+        let is_link = t.is_symlink() || is_junction(&path);
+        if is_link && !linked {
+            links.push(path.clone());
+        }
+        // Following a link: what it points at (a file or a folder).
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        if meta.is_dir() {
+            if depth < 32 {
+                files_in(&path, linked || is_link, depth + 1, out, links);
+            }
+        } else if meta.is_file() {
+            out.push(Item { path, linked: linked || is_link });
         }
     }
+}
+
+/// A Windows junction (a folder link that isn't a symbolic link).
+#[cfg(windows)]
+fn is_junction(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+#[cfg(not(windows))]
+fn is_junction(_path: &Path) -> bool {
+    false
 }
 
 /// Writes a file so a crash or power cut leaves the old contents or the new,
@@ -125,45 +157,114 @@ pub fn storage_view(state: AppStateRef) -> StorageView {
     }
 }
 
-/// Copies (or renames) everything from `from` into `to`, reporting bytes.
-fn copy_all(from: &Path, to: &Path, progress: &dyn Fn(u64, u64)) -> Result<Vec<PathBuf>, String> {
-    let mut files = Vec::new();
-    files_in(from, &mut files);
-    let total: u64 = files.iter().filter_map(|f| f.metadata().ok()).map(|m| m.len()).sum();
-    let mut done = 0u64;
-    let mut copied = Vec::new();
-    for f in &files {
-        let rel = f.strip_prefix(from).map_err(|e| e.to_string())?;
-        let dest = to.join(rel);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
+/// What a move did so far: enough to finish it, or to undo it.
+#[derive(Default)]
+struct Moved {
+    /// Renamed on the same drive (from, to).
+    renamed: Vec<(PathBuf, PathBuf)>,
+    /// Copied to another drive (from, to): the old copy goes once the move is done.
+    copied: Vec<(PathBuf, PathBuf)>,
+    /// Already at the destination, the same size: the old copy just goes.
+    reused: Vec<PathBuf>,
+    /// Links in the old folder (removed at the end; what they point at stays).
+    links: Vec<PathBuf>,
+}
+
+impl Moved {
+    /// Puts everything back the way it was (a later file failed).
+    fn undo(&self) {
+        for (from, to) in self.renamed.iter().rev() {
+            std::fs::rename(to, from).ok();
         }
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        // Same drive: a rename is instant and leaves nothing to clean up.
-        if std::fs::rename(f, &dest).is_ok() {
-            done += len;
-            progress(done, total);
-            continue;
+        for (_, to) in &self.copied {
+            std::fs::remove_file(to).ok();
         }
-        let mut src = std::fs::File::open(f).map_err(|e| format!("Couldn't read {}: {e}", f.display()))?;
-        let mut out = std::fs::File::create(&dest).map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
-        let mut buf = vec![0u8; 8 << 20];
-        loop {
-            let n = std::io::Read::read(&mut src, &mut buf).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            std::io::Write::write_all(&mut out, &buf[..n]).map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
-            done += n as u64;
-            progress(done, total);
-        }
-        out.sync_all().map_err(|e| e.to_string())?;
-        if dest.metadata().map(|m| m.len()).unwrap_or(0) != len {
-            return Err(format!("{} didn't copy completely.", f.display()));
-        }
-        copied.push(f.clone());
     }
-    Ok(copied)
+
+    /// Removes the old copies, once the app looks in the new folder.
+    fn finish(&self) {
+        for f in self.copied.iter().map(|(from, _)| from).chain(&self.reused) {
+            std::fs::remove_file(f).ok();
+        }
+        for l in &self.links {
+            // A link to a folder is removed as a folder, one to a file as a file; neither touches its target.
+            if std::fs::remove_dir(l).is_err() {
+                std::fs::remove_file(l).ok();
+            }
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.renamed.len() + self.copied.len() + self.reused.len()
+    }
+}
+
+/// Moves everything from `from` into `to`, reporting bytes: renamed on the
+/// same drive, copied (and checked) to another. Files already in `to` with
+/// the same size are kept. If any file fails, what was done is undone, so a
+/// failed move leaves the models where they were.
+fn copy_all(from: &Path, to: &Path, progress: &dyn Fn(u64, u64)) -> Result<Moved, String> {
+    let mut items = Vec::new();
+    let mut moved = Moved::default();
+    files_in(from, false, 0, &mut items, &mut moved.links);
+    let total: u64 = items.iter().filter_map(|i| i.path.metadata().ok()).map(|m| m.len()).sum();
+    let mut done = 0u64;
+    for item in &items {
+        if let Err(e) = move_one(item, from, to, &mut moved, &mut done, total, progress) {
+            moved.undo();
+            return Err(e);
+        }
+    }
+    Ok(moved)
+}
+
+fn move_one(item: &Item, from: &Path, to: &Path, moved: &mut Moved, done: &mut u64, total: u64, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
+    let f = &item.path;
+    let rel = f.strip_prefix(from).map_err(|e| e.to_string())?;
+    let dest = to.join(rel);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Couldn't create {}: {e}", parent.display()))?;
+    }
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    // Already there (an earlier, stopped move, or the same model downloaded twice).
+    if dest.metadata().is_ok_and(|m| m.is_file() && m.len() == len) {
+        if !item.linked {
+            moved.reused.push(f.clone());
+        }
+        *done += len;
+        progress(*done, total);
+        return Ok(());
+    }
+    // Same drive: a rename is instant. Never for a linked file, whose target isn't the app's.
+    if !item.linked && std::fs::rename(f, &dest).is_ok() {
+        moved.renamed.push((f.clone(), dest));
+        *done += len;
+        progress(*done, total);
+        return Ok(());
+    }
+    let mut src = std::fs::File::open(f).map_err(|e| format!("Couldn't read {}: {e}", f.display()))?;
+    let mut out = std::fs::File::create(&dest).map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
+    // Recorded now, so a failure below removes the partial copy.
+    if item.linked {
+        moved.copied.push((PathBuf::new(), dest.clone()));
+    } else {
+        moved.copied.push((f.clone(), dest.clone()));
+    }
+    let mut buf = vec![0u8; 8 << 20];
+    loop {
+        let n = std::io::Read::read(&mut src, &mut buf).map_err(|e| format!("Couldn't read {}: {e}", f.display()))?;
+        if n == 0 {
+            break;
+        }
+        std::io::Write::write_all(&mut out, &buf[..n]).map_err(|e| format!("Couldn't write {}: {e}", dest.display()))?;
+        *done += n as u64;
+        progress(*done, total);
+    }
+    out.sync_all().map_err(|e| e.to_string())?;
+    if dest.metadata().map(|m| m.len()).unwrap_or(0) != len {
+        return Err(format!("{} didn't copy completely.", f.display()));
+    }
+    Ok(())
 }
 
 /// Moves the models folder to `dest` (a folder; "SulcusAI models" is made
@@ -210,18 +311,21 @@ pub async fn move_models(app: AppHandle, state: AppStateRef<'_>, dest: String) -
         let progress = |done: u64, total: u64| {
             let _ = app.emit("models:moving", json!({ "done": done, "total": total }));
         };
-        let result = copy_all(&current, &target, &progress).and_then(|copied| {
+        let result = copy_all(&current, &target, &progress).and_then(|moved| {
             let location = st.paths.data.join(LOCATION_FILE);
-            if target == st.paths.data.join("models") {
-                std::fs::remove_file(&location).ok();
+            let switched = if target == st.paths.data.join("models") {
+                std::fs::remove_file(&location).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
             } else {
-                write_safely(&location, target.display().to_string()).map_err(|e| e.to_string())?;
+                write_safely(&location, target.display().to_string())
+            };
+            if let Err(e) = switched {
+                moved.undo();
+                return Err(format!("Couldn't switch to the new folder: {e}"));
             }
-            for f in copied {
-                std::fs::remove_file(f).ok();
-            }
+            moved.finish();
             // Empty folders left behind (the default one stays).
             remove_empty(&current, current == st.paths.data.join("models"));
+            st.log("settings", &format!("Moved {} model files", moved.count()));
             Ok(())
         });
         match result {
@@ -282,10 +386,62 @@ mod tests {
         std::fs::write(a.join("qwen/model.gguf"), vec![7u8; 3 << 20]).unwrap();
         std::fs::write(a.join("top.bin"), b"x").unwrap();
         let seen = std::sync::Mutex::new(0u64);
-        copy_all(&a, &b, &|done, _| *seen.lock().unwrap() = done).unwrap();
+        let moved = copy_all(&a, &b, &|done, _| *seen.lock().unwrap() = done).unwrap();
+        moved.finish();
         assert_eq!(std::fs::read(b.join("qwen/model.gguf")).unwrap().len(), 3 << 20);
         assert_eq!(std::fs::read(b.join("top.bin")).unwrap(), b"x");
         assert_eq!(*seen.lock().unwrap(), (3 << 20) + 1);
+        assert!(!a.join("top.bin").exists(), "nothing is left behind");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_failed_move_puts_everything_back() {
+        let d = std::env::temp_dir().join(format!("sulcus-storage-{}", uuid::Uuid::new_v4()));
+        let (a, b) = (d.join("a"), d.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("1.gguf"), b"first").unwrap();
+        std::fs::write(a.join("2.gguf"), b"second").unwrap();
+        // Something in the way of the second file: it can't be renamed or written there.
+        std::fs::create_dir_all(b.join("2.gguf")).unwrap();
+        assert!(copy_all(&a, &b, &|_, _| {}).is_err());
+        assert_eq!(std::fs::read(a.join("1.gguf")).unwrap(), b"first", "the file moved first came back");
+        assert!(!b.join("1.gguf").exists());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn files_already_there_are_kept_not_copied_again() {
+        let d = std::env::temp_dir().join(format!("sulcus-storage-{}", uuid::Uuid::new_v4()));
+        let (a, b) = (d.join("a"), d.join("b"));
+        std::fs::create_dir_all(a.join("media")).unwrap();
+        std::fs::create_dir_all(b.join("media")).unwrap();
+        std::fs::write(a.join("media/flux.gguf"), b"weights").unwrap();
+        std::fs::write(b.join("media/flux.gguf"), b"weights").unwrap();
+        let moved = copy_all(&a, &b, &|_, _| {}).unwrap();
+        assert_eq!((moved.reused.len(), moved.renamed.len(), moved.copied.len()), (1, 0, 0));
+        moved.finish();
+        assert!(!a.join("media/flux.gguf").exists() && b.join("media/flux.gguf").exists());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A folder linked in from elsewhere: its files are copied, the link
+    /// removed, and the files it points at stay where they are.
+    #[cfg(windows)]
+    #[test]
+    fn linked_folders_are_copied_not_emptied() {
+        let d = std::env::temp_dir().join(format!("sulcus-storage-{}", uuid::Uuid::new_v4()));
+        let (a, b, elsewhere) = (d.join("a"), d.join("b"), d.join("ollama"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join("blob.gguf"), b"theirs").unwrap();
+        let made = std::process::Command::new("cmd").args(["/C", "mklink", "/J"]).arg(a.join("linked")).arg(&elsewhere).output().unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stdout));
+        let moved = copy_all(&a, &b, &|_, _| {}).unwrap();
+        moved.finish();
+        assert_eq!(std::fs::read(b.join("linked/blob.gguf")).unwrap(), b"theirs");
+        assert_eq!(std::fs::read(elsewhere.join("blob.gguf")).unwrap(), b"theirs", "the other app's file stays");
+        assert!(!a.join("linked").exists(), "the link itself is gone");
         std::fs::remove_dir_all(&d).ok();
     }
 }

@@ -713,6 +713,12 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - With ChatTeam off, `Turn::handoff_gate` puts a card in front of `read_file` on another chat's note, or a `run_command` naming one. The card shows in every mode, Bypass too, unless the user's newest message asks to pick up another chat's work (`asked_to_pick_up` needs both a continue-verb and an other-chat/handoff word).
   - `search_files` skips such notes, and the system prompt tells the chat not to pick them up.
   - Allowed chats are listed in the manager (Take back / Forget). With ChatTeam on, nothing changes.
+- **Moving the models folder** (`storage.rs`, after 0.9.4):
+  - `copy_all` now returns `Moved`. A failed file undoes the move: renamed files go back, partial copies are removed, and the location stays. Before, files renamed on the same drive stayed in the new folder while the app still looked in the old one.
+  - Files already at the target with the same size are kept, not copied again.
+  - Links and junctions are followed and copied, never renamed or emptied (what they point at stays). The link itself is removed at the end.
+  - Tested in `a_failed_move_puts_everything_back`, `files_already_there_are_kept_not_copied_again` and `linked_folders_are_copied_not_emptied`.
+  - His "move didn't happen" (2026-10-14, to D:) wasn't this bug. His real app's models folder was empty. The 27 GB under `app.sulcusai.desktop\models` existed only in Claude's MSIX container (`Packages\Claude_*\LocalCache`), downloaded by session-launched runs. It was moved to `D:\SulcusAI models` on 2026-10-16 with robocopy run through WMI, and the duplicates were hash-checked first.
 - **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
 ## Website (2026-10-12)
