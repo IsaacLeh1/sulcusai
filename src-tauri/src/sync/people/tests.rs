@@ -73,25 +73,54 @@ fn texts(s: &AppState, contact: &str) -> Vec<String> {
     messages(&s.db.lock().unwrap(), &s.cipher().unwrap(), contact).unwrap().into_iter().map(|m| m.text).collect()
 }
 
-/// A code links two apps once, and a wrong code doesn't; a linked person
-/// is a contact, never a paired PC.
+/// Codes don't expire: one links as many people as it allows, then stops;
+/// a wrong code is refused (and counted), a blocked app can't link again,
+/// and the first characters pick which code is meant. A linked person is a
+/// contact, never a paired PC.
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_code_links_two_apps_once() {
+async fn codes_link_people_up_to_their_limit() {
     let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let (b, c, d) = (crate::e2e::scratch_state(), crate::e2e::scratch_state(), crate::e2e::scratch_state());
     update(&a, |x| x.name = "Ana".into()).unwrap();
     let addr_a = listen(&a).await;
-    *CODE.lock().unwrap() = Some(Pairing { code: "K7Q29XMB".into(), until: Instant::now() + CODE_FOR, tries: 0 });
-    let wrong = pair_call(&b, "K7Q29XMC", addr_a).await.unwrap_err();
-    assert!(wrong.contains("didn't match"), "{wrong}");
+    let none = |_: &str| {};
+    let (two, code) = codes::code_for_test(&a, 2);
+    assert!(showing_code(&a));
+
+    // Right first characters, wrong rest: refused and counted. Unknown first characters: refused.
+    let wrong = format!("{}ZZZZZZ", &code[..2]);
+    let e = codes::pair_call(&b, if wrong == code { "ZZZZZZZZ" } else { &wrong }, addr_a, &none).await.unwrap_err();
+    assert!(e.contains("didn't match") || e.contains("isn't taking"), "{e}");
+    let other = if code.starts_with("ZZ") { "YYYYYYYY" } else { "ZZZZZZZZ" };
+    assert!(codes::pair_call(&b, other, addr_a, &none).await.unwrap_err().contains("isn't taking"));
     assert!(book(&a.db.lock().unwrap()).contacts.is_empty());
-    assert_eq!(pair_call(&b, "K7Q29XMB", addr_a).await.unwrap(), "Ana");
-    assert!(CODE.lock().unwrap().is_none(), "a code works once");
-    let again = pair_call(&b, "K7Q29XMB", addr_a).await.unwrap_err();
-    assert!(again.contains("aren't showing a code"), "{again}");
-    assert_eq!(book(&a.db.lock().unwrap()).contacts.len(), 1);
-    assert_eq!(book(&b.db.lock().unwrap()).contacts[0].id, device_id(&a.paths.data));
+
+    // Two people link with the same code; then it's used up.
+    assert_eq!(codes::pair_call(&b, &code, addr_a, &none).await.unwrap(), "Ana");
+    assert!(codes::invite(&a, &two).open(), "one of two");
+    assert_eq!(codes::pair_call(&c, &code, addr_a, &none).await.unwrap(), "Ana");
+    assert_eq!(codes::invite(&a, &two).why_closed(), Some("Used up."));
+    assert_eq!(codes::invite(&a, &two).used.len(), 2);
+    assert!(codes::pair_call(&d, &code, addr_a, &none).await.unwrap_err().contains("isn't taking"));
+    assert!(!showing_code(&a), "nothing open, nothing announced");
+
+    // Two open codes: each works on its own.
+    let (_, first) = codes::code_for_test(&a, 1);
+    let (second_id, second) = codes::code_for_test(&a, 1);
+    assert_ne!(&first[..2], &second[..2]);
+    assert_eq!(codes::pair_call(&d, &second, addr_a, &none).await.unwrap(), "Ana");
+    assert_eq!(codes::invite(&a, &second_id).used[0].id, device_id(&d.paths.data));
+
+    // Blocked: removed, and can't link again with any code.
+    let id_b = device_id(&b.paths.data);
+    codes::block_now(&a, &id_b, true);
+    assert!(contact(&a, &id_b).is_none());
+    assert!(codes::pair_call(&b, &first, addr_a, &none).await.unwrap_err().contains("isn't taking"));
+    codes::block_now(&a, &id_b, false);
+    assert_eq!(codes::pair_call(&b, &first, addr_a, &none).await.unwrap(), "Ana");
+
+    assert_eq!(book(&a.db.lock().unwrap()).contacts.len(), 3);
     assert!(super::super::config(&a.db.lock().unwrap()).peers.is_empty());
     assert!(super::super::config(&b.db.lock().unwrap()).peers.is_empty());
 }
@@ -573,7 +602,7 @@ async fn through_relay(url: String) {
 #[test]
 fn the_people_page_and_the_listener_never_deadlock() {
     let s = crate::e2e::scratch_state();
-    *CODE.lock().unwrap() = Some(Pairing { code: "K7Q29XMB".into(), until: Instant::now() + CODE_FOR, tries: 0 });
+    codes::code_for_test(&s, 1);
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let page = {
         let (s, done) = (s.clone(), done_tx.clone());
@@ -590,7 +619,7 @@ fn the_people_page_and_the_listener_never_deadlock() {
         std::thread::spawn(move || {
             for _ in 0..3000 {
                 // What the sync loop does each round.
-                let showing = showing_code();
+                let showing = showing_code(&s);
                 let conn = s.db.lock().unwrap();
                 let _ = wants_calls(&conn, showing);
             }
@@ -602,5 +631,4 @@ fn the_people_page_and_the_listener_never_deadlock() {
     }
     page.join().unwrap();
     listener.join().unwrap();
-    *CODE.lock().unwrap() = None;
 }

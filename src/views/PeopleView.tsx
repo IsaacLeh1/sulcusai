@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
 import { Markdown } from "../components/Markdown";
+import { PeopleConnect } from "../components/PeopleConnect";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
@@ -36,14 +37,27 @@ export function PeopleView({ toast }: { toast: PushToast }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [naming, setNaming] = useState<string | null>(null);
+  // Answers are numbered in the order they were asked for: one that comes
+  // back after a newer one (a slow refresh finishing after a change) is
+  // dropped, so it can't undo what was just saved.
+  const asked = useRef(0);
+  const shown = useRef(0);
+  const savingName = useRef(false);
+  const take = useCallback((n: number, x: View) => {
+    if (n < shown.current) return;
+    shown.current = n;
+    setV(x);
+  }, []);
+  const apply = useCallback((x: View) => take(++asked.current, x), [take]);
 
   const load = useCallback(() => {
-    api.peopleView().then(setV).catch((e) => toast(errorText(e), "error"));
-  }, [toast]);
+    const n = ++asked.current;
+    api.peopleView().then((x) => take(n, x)).catch((e) => toast(errorText(e), "error"));
+  }, [toast, take]);
   useEffect(() => {
     load();
     const subs = [on("people:changed", load), on("people:message", load), on("people:shared", load)];
-    // Keeps "online" and the code's countdown current.
+    // Keeps "online" and who's using the codes current.
     const timer = window.setInterval(load, 5000);
     return () => {
       window.clearInterval(timer);
@@ -60,14 +74,22 @@ export function PeopleView({ toast }: { toast: PushToast }) {
   if (!v) return null;
   const current = v.contacts.find((c) => c.id === openId) ?? null;
 
+  // Enter saves, and so does leaving the box: only once.
   const saveName = async () => {
+    if (savingName.current) return;
     const name = naming?.trim();
     setNaming(null);
     if (!name || name === v.name) return;
+    savingName.current = true;
+    // Shown at once; refreshes asked for before this can't put the old name back.
+    take(++asked.current, { ...v, name });
     try {
-      setV(await api.setPeopleName(name));
+      apply(await api.setPeopleName(name));
     } catch (e) {
       toast(errorText(e), "error");
+      load();
+    } finally {
+      savingName.current = false;
     }
   };
 
@@ -142,9 +164,9 @@ export function PeopleView({ toast }: { toast: PushToast }) {
         )}
       </section>
       {connecting && (
-        <Connect
+        <PeopleConnect
           v={v}
-          onView={setV}
+          onView={apply}
           onClose={() => setConnecting(false)}
           onLinked={(id) => {
             setConnecting(false);
@@ -456,175 +478,6 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
         </Modal>
       )}
     </>
-  );
-}
-
-/** Connect with someone: show a code here, or type the one they show. */
-function Connect({
-  v,
-  onView,
-  onClose,
-  onLinked,
-  toast,
-}: {
-  v: View;
-  onView: (v: View) => void;
-  onClose: () => void;
-  onLinked: (id: string | null) => void;
-  toast: PushToast;
-}) {
-  const [mode, setMode] = useState<"show" | "enter">("show");
-  const [code, setCode] = useState("");
-  const [target, setTarget] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Someone typed this code: they show up as a new contact.
-  const before = useRef(new Set(v.contacts.map((c) => c.id)));
-  useEffect(() => {
-    const added = v.contacts.find((c) => !before.current.has(c.id));
-    if (added) {
-      toast(t("{name} connected with you.", { name: added.name }), "success");
-      onLinked(added.id);
-    }
-  }, [v.contacts]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const run = async (f: () => Promise<View>) => {
-    try {
-      onView(await f());
-    } catch (e) {
-      toast(errorText(e), "error");
-    }
-  };
-  // Showing a code is the first choice, so show one right away.
-  useEffect(() => {
-    if (mode === "show" && !v.code) run(() => api.peopleShowCode());
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
-  const close = () => {
-    if (v.code) api.peopleCancelCode().then(onView).catch(() => {});
-    onClose();
-  };
-
-  const connect = async () => {
-    setBusy(true);
-    try {
-      const pick = target.trim() || (v.nearby.length === 1 ? v.nearby[0].id : "");
-      const name = await api.peopleConnect(code, pick || null);
-      toast(t("Connected with {name}.", { name }), "success");
-      const fresh = await api.peopleView();
-      onView(fresh);
-      onLinked(fresh.contacts.find((c) => !before.current.has(c.id))?.id ?? null);
-    } catch (e) {
-      toast(errorText(e), "error");
-      setBusy(false);
-    }
-  };
-  const ready = code.replace(/[^0-9A-Za-z]/g, "").length === 8;
-  const left = `${Math.floor(v.code_left / 60)}:${String(v.code_left % 60).padStart(2, "0")}`;
-
-  return (
-    <Modal title={t("Connect with someone")} onClose={close}>
-      <div className="seg" role="tablist">
-        <button role="tab" aria-selected={mode === "show"} className={mode === "show" ? "active" : ""} onClick={() => setMode("show")}>
-          {t("Show my code")}
-        </button>
-        <button
-          role="tab"
-          aria-selected={mode === "enter"}
-          className={mode === "enter" ? "active" : ""}
-          onClick={() => {
-            if (v.code) run(() => api.peopleCancelCode());
-            setMode("enter");
-          }}
-        >
-          {t("Enter their code")}
-        </button>
-      </div>
-
-      {mode === "show" ? (
-        <div className="form">
-          {v.code ? (
-            <div className="pair-code" role="status">
-              <span className="small">{t("Ask them to open People → Connect → Enter their code, and type:")}</span>
-              <strong className="code">{v.code}</strong>
-              <span className="muted small">{t("Good for {time} more. Waiting for them…", { time: left })}</span>
-            </div>
-          ) : (
-            <button className="btn" onClick={() => run(() => api.peopleShowCode())}>
-              {t("Show a new code")}
-            </button>
-          )}
-          {v.addresses.length > 0 && (
-            <div>
-              <strong className="small">{t("If they're not on your network, they also type your address:")}</strong>
-              <ul className="people-addresses small">
-                {v.addresses.map((a) => (
-                  <li key={a.address}>
-                    <code>{a.address}</code> <span className="muted">{a.network}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {!v.listening && <p className="warn-text small">{t("This PC isn't taking calls yet. Wait a moment, or restart SulcusAI if it stays like this.")}</p>}
-          <Help />
-        </div>
-      ) : (
-        <div className="form">
-          <label>
-            {t("The code they see")}
-            <input
-              className="input code-input"
-              value={code}
-              autoFocus
-              placeholder="K7Q2-9XMB"
-              maxLength={12}
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === "Enter" && ready && connect()}
-            />
-          </label>
-          {v.nearby.length > 1 && (
-            <label>
-              {t("Who")}
-              <select className="input" value={target} onChange={(e) => setTarget(e.target.value)}>
-                <option value="">{t("Choose…")}</option>
-                {v.nearby.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {v.nearby.length === 1 && !target && <p className="muted small">{t("Connecting with {name}, found on this network.", { name: v.nearby[0].name })}</p>}
-          <label>
-            {v.nearby.length > 0 ? t("Or their address") : t("Their address (shown under their code)")}
-            <input className="input" value={target} placeholder="26.10.4.7" onChange={(e) => setTarget(e.target.value)} />
-          </label>
-          <div className="adv-actions">
-            <button className="btn primary" disabled={busy || !ready} onClick={connect}>
-              {busy ? t("Connecting…") : t("Connect")}
-            </button>
-          </div>
-          <Help />
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-function Help() {
-  return (
-    <details className="small muted">
-      <summary>{t("Not on the same network?")}</summary>
-      <p>
-        {t("Join the same virtual network first, like Radmin VPN, Tailscale or ZeroTier (each of you installs it and joins the same network). Then use the address listed under that network's name. Your apps talk directly, encrypted; nothing goes through SulcusAI's servers, because there aren't any.")}
-      </p>
-      <p>
-        {t("The first time, Windows may ask whether SulcusAI may use the network: allow it, or they can't reach you. It's enough that one of you can be reached. SulcusAI needs to be open (and unlocked) on both PCs for messages to arrive.")}
-      </p>
-      <p>
-        {t("No virtual network? Once you're linked, either of you can let the other use your own relay (Settings → Your devices, at the Cloud level): messages and the assistants' questions then go through it, sealed so the relay can't read them. Watching shared chats live still needs a direct connection.")}
-      </p>
-    </details>
   );
 }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, on, type HeatState, type PerfMode, type PerfSettings, type PerfView } from "../api";
+import { api, errorText, on, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView } from "../api";
+import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 
@@ -209,6 +210,42 @@ export function PerfPill({ onOpen }: { onOpen: () => void }) {
     <button className={`status-item perf-pill ${level > 0 ? "hot" : ""}`} onClick={onOpen} title={level > 0 ? t("Running cooler to keep the PC's temperature down (level {n} of 3)", { n: level }) : t("Performance mode")}>
       <span aria-hidden>{level > 0 ? "🌡️" : icon}</span> {t(MODE_LABEL[mode])}
       {level > 0 && ` · ${t("cooling {n}/3", { n: level })}`}
+    </button>
+  );
+}
+
+/** Bottom bar: how busy and hot the graphics card is, every few seconds
+ * (not while the window is hidden). Amber from 80°C. */
+export function GpuPill({ onOpen }: { onOpen: () => void }) {
+  const [g, setG] = useState<GpuNow | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      if (document.hidden) return;
+      api
+        .gpuNow()
+        .then((x) => alive && setG(x))
+        .catch(() => {});
+    };
+    load();
+    const timer = setInterval(load, 3000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, []);
+  if (!g || (g.usage === null && g.temp === null)) return null;
+  const hot = (g.temp ?? 0) >= 80;
+  const parts = [
+    g.usage !== null ? t("{n}% busy", { n: Math.round(g.usage) }) : null,
+    g.temp !== null ? `${Math.round(g.temp)}°C` : null,
+    g.mem_used !== null && g.mem_total ? t("{used} of {total} memory in use", { used: bytes(g.mem_used), total: bytes(g.mem_total) }) : null,
+  ].filter(Boolean);
+  return (
+    <button className={`status-item perf-pill gpu-pill ${hot ? "hot" : ""}`} onClick={onOpen} title={`${g.name ?? t("Graphics card")}: ${parts.join(" · ")}`}>
+      <span aria-hidden>▦</span> {t("GPU")}
+      {g.usage !== null && <span className="gpu-num">{Math.round(g.usage)}%</span>}
+      {g.temp !== null && <span className="gpu-num">{Math.round(g.temp)}°C</span>}
     </button>
   );
 }

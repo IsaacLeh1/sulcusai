@@ -19,7 +19,7 @@ import { APP_NAME } from "./brand";
 import { t } from "./i18n";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
-import { PerfPill } from "./components/Performance";
+import { GpuPill, PerfPill } from "./components/Performance";
 import { SideMenu } from "./components/SideMenu";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
@@ -696,6 +696,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         )}
         <PerfPill onOpen={() => setView("settings")} />
+        <GpuPill onOpen={() => setView("settings")} />
         <DownloadsPill progress={progress} models={catalog?.models ?? []} onOpen={() => setView("models")} />
         <UpdatePill toast={toast} />
         <PrivacyPill onOpen={() => setView("settings")} />

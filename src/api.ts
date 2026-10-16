@@ -333,16 +333,41 @@ export interface PersonContact {
   offer_relay: boolean;
 }
 
+/** A code for linking: it doesn't expire; it works for up to `max` people. */
+export interface PersonCode {
+  id: string;
+  /** "K7Q2-9XMB". */
+  code: string;
+  label: string;
+  max: number;
+  /** Who linked with it. */
+  used: { id: string; name: string; at: number; linked: boolean; blocked: boolean }[];
+  /** Wrong codes tried against it (it stops after 10). */
+  wrong: number;
+  /** Taking links now. */
+  open: boolean;
+  /** Why not: used up, turned off, or too many wrong tries. */
+  why: string | null;
+  created_at: number;
+}
+
+/** Whether people can reach SulcusAI on each network (Windows Firewall). */
+export interface PeopleFirewall {
+  checked: boolean;
+  networks: { name: string; kind: string; allowed: boolean }[];
+}
+
 export interface PeopleView {
   /** How others see this user. */
   name: string;
   /** This PC takes calls (others can reach it). */
   listening: boolean;
-  /** Where others can reach this PC, by network ("Wi-Fi", "Radmin VPN"). */
-  addresses: { address: string; network: string }[];
-  /** The code this PC is showing, like "K7Q2-9XMB", and its seconds left. */
-  code: string | null;
-  code_left: number;
+  /** Where others can reach this PC, by network ("Wi-Fi", "Radmin VPN"); `adapter` is Windows' name for it. */
+  addresses: { address: string; network: string; adapter: string }[];
+  /** This user's codes for linking, and who linked with each. */
+  codes: PersonCode[];
+  /** People who can't link again. */
+  blocked: { id: string; name: string; at: number }[];
   contacts: PersonContact[];
   /** Apps on this network showing a code. */
   nearby: { id: string; name: string }[];
@@ -1348,8 +1373,16 @@ export const api = {
   peopleView: () => invoke<PeopleView>("people_view"),
   peopleUnread: () => invoke<number>("people_unread"),
   setPeopleName: (name: string) => invoke<PeopleView>("set_people_name", { name }),
-  peopleShowCode: () => invoke<PeopleView>("people_show_code"),
-  peopleCancelCode: () => invoke<PeopleView>("people_cancel_code"),
+  /** A new code, good for `max` people. */
+  peopleNewCode: (max: number, label: string | null) => invoke<PeopleView>("people_new_code", { max, label }),
+  peopleSetCode: (id: string, change: { max?: number; label?: string; on?: boolean }) =>
+    invoke<PeopleView>("people_set_code", { id, max: change.max ?? null, label: change.label ?? null, on: change.on ?? null }),
+  peopleDeleteCode: (id: string) => invoke<PeopleView>("people_delete_code", { id }),
+  /** Blocks someone (removing them), or unblocks them. */
+  peopleBlock: (id: string, name: string | null, block: boolean) => invoke<PeopleView>("people_block", { id, name, block }),
+  peopleFirewall: () => invoke<PeopleFirewall>("people_firewall"),
+  /** Lets people reach SulcusAI on every network; Windows asks for permission. */
+  peopleAllowFirewall: () => invoke<PeopleFirewall>("people_allow_firewall"),
   /** Links with whoever shows `code`; returns their name. */
   peopleConnect: (code: string, target: string | null) => invoke<string>("people_connect", { code, target }),
   peopleRemove: (id: string) => invoke<PeopleView>("people_remove", { id }),
@@ -1596,6 +1629,7 @@ export const api = {
   createEvent: (event: NewEvent) => invoke<CalEvent>("create_event", { event }),
   deleteEvent: (id: string) => invoke<void>("delete_event", { id }),
   perfView: () => invoke<PerfView>("perf_view"),
+  gpuNow: () => invoke<GpuNow>("gpu_now"),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
@@ -1622,6 +1656,17 @@ export type MeetingEvent =
   | { meeting_id: string; kind: "relabeled" }
   | { meeting_id: string; kind: "done" }
   | { meeting_id: string; kind: "error"; error: string };
+
+/** The graphics card right now (bottom bar). */
+export interface GpuNow {
+  name: string | null;
+  /** Percent busy. */
+  usage: number | null;
+  /** °C; only NVIDIA cards report it. */
+  temp: number | null;
+  mem_used: number | null;
+  mem_total: number | null;
+}
 
 export interface InstallProgress {
   model_id: string;
@@ -1690,6 +1735,10 @@ export interface ChatEvents {
   "people:message": { contact_id: string };
   "people:shared": { contact_id: string };
   "people:ask": { contact_id: string; id: string };
+  /** Linking, step by step: find, reach, check, save. */
+  "people:connecting": { step: "find" | "reach" | "check" | "save" };
+  /** Someone tried one of this user's codes. */
+  "people:attempt": { invite_id: string; name: string; result: "checking" | "wrong" | "linked" | "refused"; at: number };
   "people:snapshot": { contact_id: string; chat_id: string; view: SharedView };
   "people:live": { contact_id: string; chat_id: string; live: SharedLive | null };
   "update:progress": { received: number; total: number | null };

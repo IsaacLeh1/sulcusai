@@ -222,6 +222,10 @@ struct Open {
     /// "models" (what can be copied) or "file" (copy one), instead of syncing.
     #[serde(default)]
     want: Option<String>,
+    /// People: the first characters of the code typed, saying which of the
+    /// other app's codes is meant.
+    #[serde(default)]
+    tag: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -257,7 +261,7 @@ pub fn start(app: AppHandle) {
         loop {
             // Read before locking the database: the People page takes CODE
             // first, so taking it while holding the database could deadlock.
-            let showing = people::showing_code();
+            let showing = people::showing_code(&state);
             let (enabled, wanted) = {
                 let conn = state.db.lock().unwrap();
                 let enabled = config(&conn).enabled;
@@ -290,7 +294,6 @@ fn stop() {
     }
     NEARBY.lock().unwrap().clear();
     *PAIRING.lock().unwrap() = None;
-    people::stopped();
 }
 
 /// Checks right away whether to listen (People was turned on or off).
@@ -345,7 +348,7 @@ async fn go_live(state: &Arc<AppState>) {
                     (device_id(&s.paths.data), config(&conn))
                 };
                 let pairing = PAIRING.lock().unwrap().as_ref().is_some_and(|p| p.until > Instant::now());
-                let person = people::showing_code();
+                let person = people::showing_code(&s);
                 // Listening only for people: say nothing on this network unless a code is showing.
                 if cfg.enabled || person {
                     let msg = Announce { app: "sulcusai".into(), v: 1, id: me, name: cfg.name, port, pairing, person };
@@ -508,7 +511,7 @@ async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> Result<usize
         .map_err(|_| format!("{} didn't answer. Is SulcusAI open there, with sync on?", p.name))?
         .map_err(|_| format!("Couldn't reach {}. Is SulcusAI open there, with sync on?", p.name))?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: None, tag: None }).await?;
     let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC. If it was unpaired or reset there, pair them again.", p.name))?;
     if accept.id != p.id {
         return Err("A different PC answered at that address.".into());
@@ -535,7 +538,7 @@ async fn request(
         .map_err(|_| format!("{} didn't answer.", p.name))?
         .map_err(|_| format!("Couldn't reach {}.", p.name))?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(want.into()) }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(want.into()), tag: None }).await?;
     let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC.", p.name))?;
     if accept.id != p.id {
         return Err("A different PC answered at that address.".into());
@@ -750,7 +753,7 @@ async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAddr) -> Resul
         .map_err(|_| "That PC didn't answer. Is SulcusAI open there?".to_string())?
         .map_err(|_| "Couldn't reach that PC. Is SulcusAI open there, and is it on this network?".to_string())?;
     let (spake, mine) = wire::pair_start(code);
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)), want: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)), want: None, tag: None }).await?;
     let reply: PairReply = recv_plain(&mut stream).await?;
     if let Some(e) = reply.error {
         return Err(e);

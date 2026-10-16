@@ -17,6 +17,7 @@
 //!   people, doesn't call them, and its commands refuse.
 
 pub mod ask;
+pub mod codes;
 mod link;
 pub mod mailbox;
 pub mod share;
@@ -38,12 +39,13 @@ use tauri::{Emitter, Manager};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
-use super::{clean_code, device_id, lost, new_code, recv_plain, send_plain, transcript, wire, Accept, Busy, Open, PairReply, Pairing};
-use super::{ANNOUNCE, AWAY, CODE_FOR, CODE_TRIES, HANDSHAKE, LIVE, NEARBY, PORT};
+use super::{clean_code, device_id, lost, new_code, recv_plain, send_plain, transcript, wire, Accept, Busy, Open, PairReply};
+use super::{ANNOUNCE, AWAY, HANDSHAKE, LIVE, NEARBY, PORT};
 use crate::crypto::Cipher;
 use crate::features::{self, Feature};
 use crate::{db, AppState, AppStateRef};
 
+pub(super) use codes::{pair_answer, showing_code};
 pub(super) use link::{answer, start};
 pub use share::{chat_event, turn_changed};
 
@@ -67,6 +69,10 @@ struct Book {
     contacts: Vec<Contact>,
     /// Chats this user shares, and with whom.
     shares: Vec<share::Share>,
+    /// Codes for linking, and who linked with each.
+    invites: Vec<codes::Invite>,
+    /// People who can't link with this app again.
+    blocked: Vec<codes::Blocked>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -172,27 +178,11 @@ fn spawn<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
 
 // ---------- what's happening now ----------
 
-/// The code this PC is showing for someone to link with.
-static CODE: Mutex<Option<Pairing>> = Mutex::new(None);
-
-fn code_showing() -> bool {
-    CODE.lock().unwrap().as_ref().is_some_and(|p| p.until > Instant::now())
-}
-
-/// Whether to announce on this network that a code is showing.
-pub(super) fn showing_code() -> bool {
-    code_showing()
-}
-
 /// Whether People needs this PC to take calls: it's on, and someone is
 /// linked or a code is showing (`showing`, read before the database was
 /// locked: CODE is never taken while the database is held).
 pub(super) fn wants_calls(conn: &Connection, showing: bool) -> bool {
     features::is_on(conn, Feature::People) && (showing || !book(conn).contacts.is_empty())
-}
-
-pub(super) fn stopped() {
-    *CODE.lock().unwrap() = None;
 }
 
 fn listening_port() -> u16 {
@@ -418,12 +408,24 @@ fn tell(state: &AppState, title: &str, text: &str) {
     crate::notify::show(app, title, text);
 }
 
+/// Calls an app at `addr`; when that fails, says why in plain words.
 async fn connect(addr: SocketAddr) -> Result<TcpStream, String> {
-    let them = "Is SulcusAI open there, with People turned on?";
-    timeout(Duration::from_secs(5), TcpStream::connect(addr))
-        .await
-        .map_err(|_| format!("They didn't answer. {them}"))?
-        .map_err(|_| format!("Couldn't reach them at {addr}. {them}"))
+    use std::io::ErrorKind;
+    match timeout(Duration::from_secs(8), TcpStream::connect(addr)).await {
+        Ok(Ok(s)) => Ok(s),
+        // Nothing came back at all: a firewall dropping the call, or nobody at that address.
+        Err(_) => Err(format!(
+            "Nothing answered at {addr}. Their Windows Firewall is probably blocking SulcusAI on this network (Windows counts Radmin VPN and other virtual networks as Public). On their PC, People → Connect checks this and can fix it. Or try the other way round: you show a code and they type it."
+        )),
+        Ok(Err(e)) => Err(match e.kind() {
+            ErrorKind::ConnectionRefused => format!("{addr} answered, but SulcusAI isn't taking connections there. Is it open there, with People turned on and a code showing?"),
+            ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable => {
+                format!("This PC can't reach {addr}. Check the address, and that you're both online in the same Radmin VPN, Tailscale or ZeroTier network.")
+            }
+            ErrorKind::TimedOut => format!("Nothing answered at {addr}. Their firewall may be blocking SulcusAI; on their PC, People → Connect checks this and can fix it."),
+            _ => format!("Couldn't reach {addr} ({e})."),
+        }),
+    }
 }
 
 // ---------- linking ----------
@@ -459,76 +461,6 @@ fn keep(state: &AppState, c: &Cipher, id: &str, name: &str, key: &[u8], addr: Op
     Ok(name)
 }
 
-/// The app showing the code: answers one attempt to link.
-pub(super) async fn pair_answer(state: &Arc<AppState>, mut stream: TcpStream, open: &Open, theirs: &str) -> Result<(), String> {
-    let on = features::is_on(&state.db.lock().unwrap(), Feature::People);
-    let code = {
-        let mut p = CODE.lock().unwrap();
-        match p.as_mut() {
-            Some(x) if on && x.until > Instant::now() && x.tries < CODE_TRIES => {
-                x.tries += 1;
-                Some(x.code.clone())
-            }
-            _ => None,
-        }
-    };
-    let Some(code) = code else {
-        let reply = PairReply { error: Some("They aren't showing a code right now. Ask them for a new one.".into()), ..Default::default() };
-        return send_plain(&mut stream, &reply).await;
-    };
-    if !safe_id(&open.id) {
-        return Err("bad id".into());
-    }
-    let c = state.work_cipher()?;
-    let theirs = B64.decode(theirs).map_err(err)?;
-    let me = device_id(&state.paths.data);
-    let (spake, mine) = wire::pair_start(&code);
-    send_plain(&mut stream, &PairReply { id: me.clone(), name: my_name(state), spake: B64.encode(&mine), error: None }).await?;
-    let shared = wire::pair_finish(spake, &theirs)?;
-    let t = transcript(&open.id, &me, &theirs, &mine);
-    let proof = timeout(Duration::from_secs(30), wire::read_frame(&mut stream)).await.map_err(|_| "no proof".to_string())?.map_err(lost)?;
-    if !wire::confirm_ok(&shared, "client", &t, &proof) {
-        changed(state);
-        return Err("wrong code".into());
-    }
-    wire::write_frame(&mut stream, &wire::confirm(&shared, "server", &t)).await.map_err(lost)?;
-    // Their call right after says which port they take calls on.
-    let name = keep(state, &c, &open.id, &open.name, &*wire::pair_key(&shared, &t), None)?;
-    *CODE.lock().unwrap() = None;
-    ANNOUNCE.notify_one();
-    changed(state);
-    if let Some(app) = state.app.get() {
-        crate::notify::show(app, "SulcusAI", &format!("{name} linked with you. You can chat in People."));
-    }
-    Ok(())
-}
-
-/// The app where the code is typed: links with the one showing it.
-async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAddr) -> Result<String, String> {
-    let c = state.work_cipher()?;
-    let me = device_id(&state.paths.data);
-    let mut stream = connect(addr).await?;
-    let (spake, mine) = wire::pair_start(code);
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name: my_name(state), nonce: None, pair: Some(B64.encode(&mine)), want: Some(LINK.into()) }).await?;
-    let reply: PairReply = recv_plain(&mut stream).await?;
-    if let Some(e) = reply.error {
-        return Err(e);
-    }
-    if !safe_id(&reply.id) || reply.id == me {
-        return Err(UNEXPECTED.into());
-    }
-    let theirs = B64.decode(&reply.spake).map_err(|_| UNEXPECTED.to_string())?;
-    let shared = wire::pair_finish(spake, &theirs)?;
-    let t = transcript(&me, &reply.id, &mine, &theirs);
-    wire::write_frame(&mut stream, &wire::confirm(&shared, "client", &t)).await.map_err(lost)?;
-    let wrong = "That code didn't match. Check the code they're showing and try again.";
-    let proof = timeout(HANDSHAKE, wire::read_frame(&mut stream)).await.map_err(|_| wrong.to_string())?.map_err(|_| wrong.to_string())?;
-    if !wire::confirm_ok(&shared, "server", &t, &proof) {
-        return Err(wrong.into());
-    }
-    keep(state, &c, &reply.id, &reply.name, &*wire::pair_key(&shared, &t), Some(addr))
-}
-
 // ---------- addresses ----------
 
 #[derive(Debug, Serialize)]
@@ -537,6 +469,8 @@ pub struct AddressView {
     address: String,
     /// The network it's on ("Wi-Fi", "Radmin VPN").
     network: String,
+    /// Windows' name for the adapter (what the firewall check lists).
+    adapter: String,
 }
 
 /// Virtual networks people use to connect PCs, by adapter name or address range.
@@ -580,7 +514,7 @@ fn addresses(port: u16) -> Vec<AddressView> {
             if found.iter().any(|(_, a)| a.address == address) {
                 continue;
             }
-            found.push((Some(IpAddr::V4(ip)) == main, AddressView { address, network: network_label(adapter, ip) }));
+            found.push((Some(IpAddr::V4(ip)) == main, AddressView { address, network: network_label(adapter, ip), adapter: adapter.to_string() }));
         }
     }
     found.sort_by_key(|(first, a)| (!first, a.network.clone()));
@@ -670,9 +604,10 @@ pub struct PeopleView {
     /// Taking calls (this PC can be reached).
     listening: bool,
     addresses: Vec<AddressView>,
-    /// The code this PC is showing ("K7Q2-9XMB") and its seconds left.
-    code: Option<String>,
-    code_left: u64,
+    /// This user's codes for linking, and who linked with each.
+    codes: Vec<codes::InviteView>,
+    /// People who can't link again.
+    blocked: Vec<codes::BlockedView>,
     contacts: Vec<ContactView>,
     /// Apps on this network showing a code.
     nearby: Vec<NearbyPerson>,
@@ -725,17 +660,11 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
     // Latest conversation first.
     contacts.sort_by_key(|p| std::cmp::Reverse(p.last.as_ref().map_or(p.last_seen.unwrap_or(0), |m| m.at)));
     let linked: HashSet<&str> = b.contacts.iter().map(|p| p.id.as_str()).collect();
-    // One lock at a time, and never the database while another is held: the
-    // sync loop holds the database while it asks whether a code is showing,
-    // so holding CODE here while reading settings froze the app (0.9.1).
+    // One lock at a time, and never the database while another is held:
+    // holding a lock here while reading settings froze the app in 0.9.1.
     let relay_set = mailbox::mine(state).is_some();
     let cloud = state.settings().connectivity == crate::net::Connectivity::Cloud;
-    let code: Option<(String, u64)> = CODE
-        .lock()
-        .unwrap()
-        .as_ref()
-        .filter(|p| p.until > Instant::now())
-        .map(|p| (format!("{}-{}", &p.code[..4], &p.code[4..]), p.until.saturating_duration_since(Instant::now()).as_secs()));
+    let (codes, blocked) = codes::views(&b, c);
     let nearby: Vec<NearbyPerson> = NEARBY
         .lock()
         .unwrap()
@@ -747,8 +676,8 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
         name: b.name.clone(),
         listening: port != 0,
         addresses: if port != 0 { addresses(port) } else { vec![] },
-        code_left: code.as_ref().map_or(0, |c| c.1),
-        code: code.map(|c| c.0),
+        codes,
+        blocked,
         unread: contacts.iter().map(|p| p.unread).sum(),
         relay_set,
         cloud,
@@ -789,55 +718,18 @@ pub fn set_people_name(state: AppStateRef, name: String) -> Result<PeopleView, S
     Ok(view(&state, &c))
 }
 
-/// Shows a code for five minutes for someone to link with this app.
-#[tauri::command(async)]
-pub fn people_show_code(state: AppStateRef) -> Result<PeopleView, String> {
-    features::require(&state, Feature::People)?;
-    let c = state.cipher()?;
-    *CODE.lock().unwrap() = Some(Pairing { code: new_code(), until: Instant::now() + CODE_FOR, tries: 0 });
-    listen_again();
-    Ok(view(&state, &c))
-}
-
-#[tauri::command(async)]
-pub fn people_cancel_code(state: AppStateRef) -> Result<PeopleView, String> {
-    let c = state.cipher()?;
-    *CODE.lock().unwrap() = None;
-    listen_again();
-    Ok(view(&state, &c))
-}
-
-/// Links with whoever is showing `code`: at the address typed (or a nearby
-/// app's id), or the only app nearby showing a code. Returns their name.
-#[tauri::command]
-pub async fn people_connect(state: AppStateRef<'_>, code: String, target: Option<String>) -> Result<String, String> {
-    features::require(&state, Feature::People)?;
-    state.cipher()?;
-    let code = clean_code(&code).ok_or("A code is 8 letters and numbers, like K7Q2-9XMB.")?;
-    let target = target.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
-    let addr = match target {
-        Some(t) => resolve(&t).await?,
-        None => {
-            let near = NEARBY.lock().unwrap();
-            let showing: Vec<SocketAddr> = near.values().filter(|s| s.person && s.at.elapsed() < AWAY).map(|s| s.addr).collect();
-            match showing.as_slice() {
-                [one] => *one,
-                [] => return Err("No one on this network is showing a code. Type the address they see in People.".into()),
-                _ => return Err("More than one person here is showing a code. Pick which one.".into()),
-            }
-        }
-    };
-    let state = state.inner().clone();
-    let name = pair_call(&state, &code, addr).await?;
-    changed(&state);
-    Ok(name)
-}
-
 /// Removes someone, with your messages with them, on this PC.
 #[tauri::command(async)]
 pub fn people_remove(state: AppStateRef, id: String) -> Result<PeopleView, String> {
     let c = state.cipher()?;
-    let name = update(&state, |b| {
+    forget_contact(&state, &id)?;
+    Ok(view(&state, &c))
+}
+
+/// Removes a contact and everything kept about them here.
+fn forget_contact(state: &AppState, id: &str) -> Result<(), String> {
+    let id = id.to_string();
+    let name = update(state, |b| {
         let name = b.contacts.iter().find(|p| p.id == id).map(|p| p.name.clone());
         b.contacts.retain(|p| p.id != id);
         for s in &mut b.shares {
@@ -847,8 +739,9 @@ pub fn people_remove(state: AppStateRef, id: String) -> Result<PeopleView, Strin
         name
     })?;
     state.db.lock().unwrap().execute("DELETE FROM people_messages WHERE contact_id = ?1", [&id]).map_err(err)?;
+    state.db.lock().unwrap().execute("DELETE FROM people_asks WHERE contact_id = ?1", [&id]).map_err(err)?;
     if safe_id(&id) {
-        let _ = std::fs::remove_dir_all(files_dir(&state, &id));
+        let _ = std::fs::remove_dir_all(files_dir(state, &id));
     }
     link::hang_up(&id);
     link::forget(&id);
@@ -856,8 +749,8 @@ pub fn people_remove(state: AppStateRef, id: String) -> Result<PeopleView, Strin
         state.log("people", &format!("Removed {n} from People"));
     }
     listen_again();
-    changed(&state);
-    Ok(view(&state, &c))
+    changed(state);
+    Ok(())
 }
 
 /// Where to reach someone, when their address changed.

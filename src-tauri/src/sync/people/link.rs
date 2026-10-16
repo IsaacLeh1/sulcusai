@@ -351,7 +351,7 @@ pub(super) async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> R
     let me = device_id(&state.paths.data);
     let mut stream = connect(addr).await?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(CHAT.into()) }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(CHAT.into()), tag: None }).await?;
     let accept: Accept = recv_plain(&mut stream)
         .await
         .map_err(|_| format!("{} didn't take the call. If they removed you, link again.", p.name))?;
@@ -372,6 +372,9 @@ pub(in crate::sync) async fn answer(state: &Arc<AppState>, mut stream: TcpStream
         return Err("People is off".into());
     }
     let c = state.work_cipher()?;
+    if codes::is_blocked(&book(&state.db.lock().unwrap()), &open.id) {
+        return Err("blocked".into());
+    }
     let p = contact(state, &open.id).ok_or("not linked")?;
     let key = link_key(&c, &p)?;
     let theirs = hex::decode(open.nonce.as_deref().unwrap_or_default()).map_err(err)?;

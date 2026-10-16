@@ -361,6 +361,149 @@ pub async fn temps() -> Temps {
     t
 }
 
+// ---------- the graphics card right now (status bar) ----------
+
+/// How busy and hot the graphics card is right now.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct GpuNow {
+    pub name: Option<String>,
+    /// Percent busy.
+    pub usage: Option<f32>,
+    /// °C (NVIDIA cards; Windows has no general way to read others').
+    pub temp: Option<f32>,
+    pub mem_used: Option<u64>,
+    pub mem_total: Option<u64>,
+}
+
+/// nvidia-smi isn't there (no NVIDIA card): don't keep trying it.
+static NO_NVIDIA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// NVIDIA cards: busy, temperature and memory from nvidia-smi (the card
+/// with the most memory, when there are several).
+async fn nvidia_now() -> Option<GpuNow> {
+    use std::sync::atomic::Ordering;
+    if NO_NVIDIA.load(Ordering::Relaxed) {
+        return None;
+    }
+    let mut cmd = tokio::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"]).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let out = match tokio::time::timeout(Duration::from_secs(3), cmd.output()).await {
+        Ok(Ok(o)) if o.status.success() => o,
+        Ok(Err(_)) => {
+            NO_NVIDIA.store(true, Ordering::Relaxed);
+            return None;
+        }
+        _ => return None,
+    };
+    let mib = 1024.0 * 1024.0;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(',').map(str::trim).collect();
+            let num = |i: usize| f.get(i).and_then(|s| s.parse::<f64>().ok());
+            Some(GpuNow {
+                name: Some(f.first()?.to_string()),
+                usage: num(1).map(|x| x as f32),
+                temp: num(2).map(|x| x as f32),
+                mem_used: num(3).map(|m| (m * mib) as u64),
+                mem_total: num(4).map(|m| (m * mib) as u64),
+            })
+        })
+        .max_by_key(|g| g.mem_total.unwrap_or(0))
+}
+
+/// Any card on Windows: how busy it is, the way Task Manager counts it
+/// (the busiest kind of engine on the busiest card). The query stays open,
+/// since a rate needs two readings.
+#[cfg(windows)]
+fn windows_gpu_usage() -> Option<f32> {
+    use std::collections::HashMap;
+    use windows::Win32::System::Performance::*;
+    static QUERY: Mutex<Option<(isize, isize)>> = Mutex::new(None);
+    let mut q = QUERY.lock().unwrap();
+    // SAFETY: PDH calls on handles this function owns; the item array is read
+    // only within the buffer PDH filled, which is 8-byte aligned.
+    unsafe {
+        if q.is_none() {
+            let (mut query, mut counter) = (0isize, 0isize);
+            if PdhOpenQueryW(windows::core::PCWSTR::null(), 0, &mut query) != 0 {
+                return None;
+            }
+            if PdhAddEnglishCounterW(query, windows::core::w!("\\GPU Engine(*)\\Utilization Percentage"), 0, &mut counter) != 0 {
+                PdhCloseQuery(query);
+                return None;
+            }
+            PdhCollectQueryData(query);
+            *q = Some((query, counter));
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        let (query, counter) = (*q)?;
+        if PdhCollectQueryData(query) != 0 {
+            return None;
+        }
+        let (mut size, mut count) = (0u32, 0u32);
+        if PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, None) != PDH_MORE_DATA || size == 0 {
+            return None;
+        }
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+        if PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, Some(items)) != 0 {
+            return None;
+        }
+        // Instances look like "pid_1234_luid_0x0_0x1A2B_phys_0_eng_3_engtype_3D".
+        let mut sums: HashMap<String, f64> = HashMap::new();
+        for i in 0..count as usize {
+            let item = &*items.add(i);
+            if item.FmtValue.CStatus != 0 {
+                continue;
+            }
+            let name = item.szName.to_string().unwrap_or_default();
+            let card = name.split("luid_").nth(1).and_then(|r| r.split("_phys").next()).unwrap_or("");
+            let kind = name.rsplit("engtype_").next().unwrap_or("");
+            *sums.entry(format!("{card}/{kind}")).or_default() += item.FmtValue.Anonymous.doubleValue;
+        }
+        sums.into_values().reduce(f64::max).map(|v| v.clamp(0.0, 100.0) as f32)
+    }
+}
+
+#[cfg(not(windows))]
+fn windows_gpu_usage() -> Option<f32> {
+    None
+}
+
+fn gpu_cache() -> &'static Mutex<Option<(Instant, GpuNow)>> {
+    static C: std::sync::OnceLock<Mutex<Option<(Instant, GpuNow)>>> = std::sync::OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
+/// The graphics card right now, read at most every 2 seconds.
+#[tauri::command]
+pub async fn gpu_now(state: AppStateRef<'_>) -> Result<GpuNow, String> {
+    if let Some((at, g)) = gpu_cache().lock().unwrap().clone() {
+        if at.elapsed() < Duration::from_secs(2) {
+            return Ok(g);
+        }
+    }
+    let g = match nvidia_now().await {
+        Some(g) => g,
+        None => {
+            let best = state.hardware.read().unwrap().best_gpu().cloned();
+            let Some(card) = best else { return Ok(GpuNow::default()) };
+            GpuNow {
+                name: Some(card.name.clone()),
+                usage: tokio::task::spawn_blocking(windows_gpu_usage).await.ok().flatten(),
+                temp: None,
+                mem_used: None,
+                mem_total: Some(card.vram_bytes),
+            }
+        }
+    };
+    *gpu_cache().lock().unwrap() = Some((Instant::now(), g.clone()));
+    Ok(g)
+}
+
 fn too_hot(t: Temps, l: &Limits, margin: f32) -> Option<String> {
     if let Some(g) = t.gpu.filter(|g| *g >= l.gpu_temp_limit - margin) {
         return Some(format!("graphics card {g:.0}°C"));
@@ -583,5 +726,17 @@ mod tests {
         assert_eq!(l.gpu_temp_limit, CRITICAL_GPU);
         assert!(too_hot(Temps { gpu: Some(95.0), cpu: None }, &l, 0.0).is_some());
         assert!(too_hot(Temps { gpu: Some(80.0), cpu: Some(70.0) }, &l, 0.0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod gpu_tests {
+    /// Reads this PC's graphics card: `cargo test --lib reads_the_gpu -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore]
+    async fn reads_the_gpu() {
+        eprintln!("nvidia-smi: {:?}", super::nvidia_now().await);
+        eprintln!("Windows counters: {:?}", tokio::task::spawn_blocking(super::windows_gpu_usage).await.unwrap());
+        eprintln!("again: {:?}", tokio::task::spawn_blocking(super::windows_gpu_usage).await.unwrap());
     }
 }
