@@ -345,8 +345,10 @@ impl Turn {
         if !media_note.is_empty() {
             about.push_str(&format!(
                 "\n\nYou can make {} on this PC. When the user asks for one, call the tool with a vivid, specific description \
-                 (subject, setting, lighting) instead of describing it in words. Pictures come out as realistic photos unless \
-                 they ask for another look (cartoon, anime, painting, watercolor, sketch, 3D, pixel art): then set style. \
+                 (who and what, where, what's happening, what's around, the light) instead of describing it in words; a fuller \
+                 description makes a better picture. Pictures come out as realistic photos unless they ask for another look \
+                 (cartoon, anime, painting, watercolor, sketch, 3D, pixel art): then set style. When they want it to look real, \
+                 like a photo someone took, or it shows people or an everyday scene, use style phone_photo. \
                  To change a picture they attached or one made here (add a hat, change the background, make it night), \
                  call edit_image with what to change. The result appears in the chat by itself, with a button to save it, \
                  so don't paste links or ids; say in a sentence what you made. If making it fails, say so in a sentence and \
@@ -365,6 +367,13 @@ impl Turn {
                  chat's assistant a piece of work or a question with message_chat (or start a new chat for it). It works there with \
                  the same model, one at a time, and its reply comes back to you. Use it when the user asks, or to split up a big job."
             });
+        } else if self.use_tools && !incognito {
+            // Chats don't work together: other chats' notes aren't this chat's work.
+            about.push_str(
+                "\n\nThis chat works on its own. Notes other chats left for picking up their work (HANDOFF.md, next steps, \
+                 session notes) aren't for you: don't open or continue them unless the user asks you to pick up where another \
+                 chat left off.",
+            );
         }
         if self.use_tools {
             about.push_str(&tools::app_note(&self.state, &self.cipher));
@@ -421,7 +430,8 @@ impl Turn {
                 let mut messages = chat::api_messages(&system, &kept);
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
                 let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
-                chat::attach_images(&mut messages, &kept, see);
+                let can_edit = tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("edit_image")));
+                chat::attach_images(&mut messages, &kept, see, can_edit);
                 if let Some((_, f)) = &forced {
                     messages.push(json!({ "role": "user", "content": f.nudge }));
                 }
@@ -751,6 +761,10 @@ impl Turn {
                 }
             }
             Permission::Run => {}
+        }
+        // Chats not working together: another chat's handoff note needs the person's word.
+        if let Some(refused) = self.handoff_gate(call, &args, sandbox).await {
+            return refused;
         }
         let ctx = tools::Ctx {
             sandbox,
@@ -1100,6 +1114,53 @@ impl Turn {
         };
         self.emit("agent:approval_done", json!({ "chat_id": self.chat_id, "call_id": call.id }));
         decision
+    }
+
+    /// Reading another chat's handoff note (read_file, or a command naming
+    /// one) while chats don't work together: allowed when the person's own
+    /// message asks to pick up where another chat left off, else only from a
+    /// card they answer (in every mode, Bypass too).
+    async fn handoff_gate(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox) -> Option<Outcome> {
+        let (path, from) = match call.name.as_str() {
+            "read_file" => {
+                let path = sandbox.resolve(args.get("path")?.as_str()?).ok()?;
+                let from = crate::handoff_guard::guarded(&self.state, &self.cipher, &self.chat_id, &path)?;
+                (Some(path), from)
+            }
+            "run_command" => {
+                let command = args.get("command")?.as_str()?;
+                if !crate::handoff_guard::command_names_one(command) || crate::features::is_on(&self.state.db.lock().unwrap(), Feature::ChatTeam) {
+                    return None;
+                }
+                (None, "another chat".to_string())
+            }
+            _ => return None,
+        };
+        let asked = {
+            let conn = self.state.db.lock().unwrap();
+            db::messages(&conn, &self.cipher, &self.chat_id).into_iter().rev().find(|m| m.role == "user").map(|m| m.content).unwrap_or_default()
+        };
+        let name = path.as_ref().map_or_else(|| "a handoff note".to_string(), |p| p.file_name().unwrap_or_default().to_string_lossy().into_owned());
+        if !crate::handoff_guard::asked_to_pick_up(&asked) {
+            let preview = Preview {
+                title: format!("Let this chat read {name}, a handoff from {from}?"),
+                kind: "handoff",
+                detail: Some(format!(
+                    "{name} is a note {from} left for picking up its work. Chats don't share work while “Chats work together” is off. Allow it only if you want this chat to continue where that one left off."
+                )),
+                note: None,
+            };
+            if self.ask(call, Risk::Read, preview).await == Decision::Deny {
+                self.log(&format!("Kept {name} (another chat's handoff) from this chat"));
+                return Some(Outcome::denied(format!("Read {name}")).with_text(
+                    "That's a handoff note another chat left, and the user didn't let this chat pick it up. Don't read it another way (search, commands); carry on with what they asked here.",
+                ));
+            }
+        }
+        if let Some(p) = &path {
+            crate::handoff_guard::allow(&self.state, &self.cipher, &self.chat_id, p);
+        }
+        None
     }
 
     /// Agent actions go in the activity log, encrypted (they name files).

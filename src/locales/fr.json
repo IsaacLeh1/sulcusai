@@ -2566,5 +2566,18 @@
  "Windows didn't let SulcusAI stop it (it may belong to another user or need administrator rights).": "Windows n'a pas laissé SulcusAI l'arrêter (il appartient peut-être à un autre utilisateur ou demande des droits d'administrateur).",
  "Your network too": "Votre réseau aussi",
  "started by the assistant": "lancé par l'assistant",
- "📱 Phone photo (most lifelike)": "📱 Photo de téléphone (la plus réaliste)"
+ "📱 Phone photo (most lifelike)": "📱 Photo de téléphone (la plus réaliste)",
+ "A chat sometimes leaves a note for picking up its work later (like HANDOFF.md). While “Chats work together” is off, other chats don't read it unless you say so: ask in your message (“pick up where the other chat left off”) or allow it on the card that comes up.": "Une discussion laisse parfois une note pour reprendre son travail plus tard (comme HANDOFF.md). Tant que « Les discussions travaillent ensemble » est désactivé, les autres discussions ne la lisent pas sauf si vous le dites : demandez-le dans votre message (« reprends là où l'autre discussion s'est arrêtée ») ou autorisez-le sur la carte qui s'affiche.",
+ "Also allowed: {chats}": "Aussi autorisé : {chats}",
+ "For the most lifelike photos, add {name}: it makes pictures that look like real photographs.": "Pour les photos les plus réalistes, ajoutez {name} : il crée des images qui ressemblent à de vraies photographies.",
+ "Forget": "Oublier",
+ "Handoffs between chats": "Passations entre discussions",
+ "No handoff notes yet.": "Pas encore de notes de passation.",
+ "No other chat may read it.": "Aucune autre discussion ne peut la lire.",
+ "Open Models": "Ouvrir Modèles",
+ "Read {name}": "Lire {name}",
+ "Take back": "Retirer",
+ "left before this was kept": "laissée avant que ce suivi existe",
+ "left by “{chat}”": "laissée par « {chat} »",
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "« Les discussions travaillent ensemble » est activé (Fonctionnalités) : les discussions peuvent lire librement les notes et passations des autres."
 }

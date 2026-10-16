@@ -268,8 +268,10 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
 /// Puts attached pictures into the user messages of `out` (as built by
 /// `api_messages`: the system message, then one per history message).
 /// Only the newest few are sent, which keeps long chats affordable. With no
-/// `see`, the model is told it can't see them, so it can say so.
-pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>) {
+/// `see`, the model is told it can't see them, so it can say so; with
+/// `can_edit`, that it can still change them with edit_image (a model
+/// that can't see a photo told to say so refused "add a top hat to me").
+pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>, can_edit: bool) {
     let mut left = 4usize;
     for (i, m) in history.iter().enumerate().rev() {
         if m.role != "user" {
@@ -295,6 +297,13 @@ pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn
                 Value::Array(parts)
             }
             Some(_) => json!(format!("{text}\n[{n} picture(s) were attached here earlier.]")),
+            None if can_edit => json!(format!(
+                "{text}\n[The user attached {n} picture(s) (id: {}). You can't see them, but you can still change them: for an edit \
+                 (add or remove something, change the background, the look or the time of day) call edit_image with their \
+                 instruction and that id. Only if they ask what's in it, say you can't see pictures and suggest a model that \
+                 can, such as Qwen3 VL or Gemma 3.]",
+                ids.join(", ")
+            )),
             None => json!(format!(
                 "{text}\n[The user attached {n} picture(s), but the model in use can't see pictures. Tell them, and suggest picking a model that can, \
                  such as Qwen3 VL or Gemma 3, from the model menu.]"

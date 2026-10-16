@@ -1620,11 +1620,16 @@ async fn e2e_builds_a_live_site_and_serves_it() {
         Ok(r) => r.text().await.unwrap_or_default(),
         Err(e) => e.to_string(),
     };
-    println!("GET :{port} -> {ok}, {} bytes; previewable: {}", body.len(), crate::ports::previewable(port));
+    let previewable = crate::ports::previewable(port);
+    println!("GET :{port} -> {ok}, {} bytes; previewable: {previewable}", body.len());
+    // The server holds its output pipe open: stop it, or the test can't end.
+    for s in crate::tools::shell::servers().into_iter().filter(|s| s.running) {
+        crate::tools::shell::stop_server(&s.id).ok();
+    }
     approver.abort();
     state.engine.lock().await.stop().await;
     assert!(ok && body.to_lowercase().contains("<html"), "the site is served");
-    assert!(crate::ports::previewable(port), "SulcusAI's browser may show the assistant's own server");
+    assert!(previewable, "SulcusAI's browser may show the assistant's own server");
     assert!(!crate::ports::previewable(1), "but not any port on this PC");
 }
 
@@ -2183,7 +2188,7 @@ async fn e2e_vision() {
     }];
     let mut messages = chat::api_messages("You are a helpful assistant.", &history);
     let see = |_: &str| Some(url.clone());
-    chat::attach_images(&mut messages, &history, Some(&see));
+    chat::attach_images(&mut messages, &history, Some(&see), false);
     assert!(messages[1]["content"].is_array(), "the picture went in as a content part");
     let started = std::time::Instant::now();
     let answer = chat::complete(&ep, messages, serde_json::json!({}), 120).await.unwrap();
@@ -2193,8 +2198,12 @@ async fn e2e_vision() {
 
     // Without its encoder the model is told it can't see, so it can say so.
     let mut blind = chat::api_messages("You are a helpful assistant.", &history);
-    chat::attach_images(&mut blind, &history, None);
+    chat::attach_images(&mut blind, &history, None, false);
     assert!(blind[1]["content"].as_str().unwrap().contains("can't see pictures"));
+    // With picture editing at hand, it's told it can still change them.
+    let mut editing = chat::api_messages("You are a helpful assistant.", &history);
+    chat::attach_images(&mut editing, &history, None, true);
+    assert!(editing[1]["content"].as_str().unwrap().contains("edit_image"));
     eng.stop().await;
 }
 
@@ -2243,6 +2252,84 @@ async fn e2e_chat_makes_pictures() {
     assert_eq!(latest.op, "edit");
     assert!(latest.parent.is_some());
     state.engine.lock().await.stop().await;
+}
+
+/// Pictures from a chat: a realistic photo asked for in words, then a photo
+/// the person attached, edited by instruction (the uploaded one, not a new
+/// picture). SULCUSAI_TEST_GGUF: the chat model (one that sees pictures);
+/// SULCUSAI_TEST_PHOTO: the photo to attach; SULCUSAI_MEDIA_OUT: results.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_chat_real_photo_and_uploaded_edit() {
+    let state = media_state();
+    for id in ["flux2-klein-4b", "z-image-turbo"] {
+        crate::media::install_for_test(&state, id).await.unwrap();
+    }
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").expect("SULCUSAI_MEDIA_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let cipher = state.cipher().unwrap();
+    let model = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
+    let exe = engine::installed_server(&state.paths, &state.catalog.engine, engine::backend_for(&state.budget()).unwrap()).unwrap();
+    let ep = state
+        .engine
+        .lock()
+        .await
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: "test-chat", quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .await
+        .unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let report = |label: &str| {
+        let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+        for c in msgs.iter().filter_map(|m| m.tool_calls.as_ref()).flatten() {
+            println!("  {label} call {}: {}", c.name, c.arguments);
+        }
+        msgs
+    };
+    let keep = |item: &crate::media::MediaItem, name: &str| {
+        std::fs::write(out.join(format!("{name}.png")), crate::media::store::read(&state.paths, &cipher, &item.id).unwrap()).unwrap();
+    };
+
+    let reply = say(&state, &ep, &cipher, &chat.id, "Make me a realistic photo of a man playing frisbee with his dog in a park.").await;
+    println!("A: {reply}");
+    report("1");
+    let made = crate::media::store::latest_in_chat(&state.db.lock().unwrap(), &cipher, &chat.id, "image").expect("a picture was made");
+    keep(&made, "chat-1-frisbee");
+
+    // The person attaches a photo, as the 📎 button does.
+    let bytes = std::fs::read(std::env::var("SULCUSAI_TEST_PHOTO").expect("SULCUSAI_TEST_PHOTO")).unwrap();
+    let photo = crate::media::add(&state, &cipher, bytes, "image", "image/png", "attach", "photo", None, Some(chat.id.clone()), true).unwrap();
+    crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message {
+        id: uuid::Uuid::new_v4().to_string(),
+        chat_id: chat.id.clone(),
+        role: "user".into(),
+        content: "Here's a photo of me. Add a black top hat on my head and keep everything else the same.".into(),
+        created_at: crate::db::now_ms(),
+        meta: Some(serde_json::json!({ "images": [photo.id] })),
+        ..Default::default()
+    })
+    .unwrap();
+    let turn = crate::agent::Turn {
+        emit: std::sync::Arc::new(|_: &str, _| {}),
+        state: state.clone(),
+        chat_id: chat.id.clone(),
+        turn_id: uuid::Uuid::new_v4().to_string(),
+        cipher: cipher.clone(),
+        ep: ep.clone(),
+        mode: crate::tools::Mode::Auto,
+        use_tools: true,
+        vision: false,
+        base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
+        about: String::new(),
+        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+    };
+    let reply = turn.run().await.unwrap().last.map(|m| m.content).unwrap_or_default();
+    println!("A: {reply}");
+    report("2");
+    let edited = crate::media::store::latest_in_chat(&state.db.lock().unwrap(), &cipher, &chat.id, "image").unwrap();
+    keep(&edited, "chat-2-uploaded-with-hat");
+    state.engine.lock().await.stop().await;
+    assert_eq!(edited.op, "edit", "the attached photo was edited");
+    assert_eq!(edited.parent.as_deref(), Some(photo.id.as_str()), "from the uploaded photo");
 }
 
 /// Models other apps downloaded are found, checked and added without a

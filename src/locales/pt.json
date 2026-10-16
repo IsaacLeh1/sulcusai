@@ -2566,5 +2566,18 @@
  "Windows didn't let SulcusAI stop it (it may belong to another user or need administrator rights).": "O Windows não deixou o SulcusAI parar (pode ser de outro usuário ou precisar de direitos de administrador).",
  "Your network too": "Sua rede também",
  "started by the assistant": "iniciado pelo assistente",
- "📱 Phone photo (most lifelike)": "📱 Foto de celular (a mais realista)"
+ "📱 Phone photo (most lifelike)": "📱 Foto de celular (a mais realista)",
+ "A chat sometimes leaves a note for picking up its work later (like HANDOFF.md). While “Chats work together” is off, other chats don't read it unless you say so: ask in your message (“pick up where the other chat left off”) or allow it on the card that comes up.": "Às vezes um chat deixa uma nota para retomar o trabalho depois (como HANDOFF.md). Enquanto “Os chats trabalham juntos” estiver desligado, os outros chats não a leem, a menos que você diga: peça na sua mensagem (“continue de onde o outro chat parou”) ou permita no cartão que aparece.",
+ "Also allowed: {chats}": "Também permitido: {chats}",
+ "For the most lifelike photos, add {name}: it makes pictures that look like real photographs.": "Para as fotos mais realistas, adicione {name}: ele cria imagens que parecem fotografias reais.",
+ "Forget": "Esquecer",
+ "Handoffs between chats": "Passagens entre chats",
+ "No handoff notes yet.": "Ainda não há notas de passagem.",
+ "No other chat may read it.": "Nenhum outro chat pode lê-la.",
+ "Open Models": "Abrir Modelos",
+ "Read {name}": "Ler {name}",
+ "Take back": "Revogar",
+ "left before this was kept": "deixada antes de isso ser registrado",
+ "left by “{chat}”": "deixada por “{chat}”",
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "“Os chats trabalham juntos” está ligado (Recursos), então os chats podem ler livremente as notas e passagens uns dos outros."
 }

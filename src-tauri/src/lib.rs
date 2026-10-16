@@ -35,6 +35,7 @@ mod finetune;
 mod found;
 mod gguf;
 mod handoff;
+mod handoff_guard;
 mod hardware;
 mod hello;
 mod hub;
@@ -1792,6 +1793,9 @@ pub fn run() {
             ports::server_stop,
             ports::server_start,
             ports::preview_port,
+            handoff_guard::handoffs_view,
+            handoff_guard::handoff_revoke,
+            handoff_guard::handoff_forget,
             media::media_get,
             media::media_file,
             media::media_thumb,

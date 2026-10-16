@@ -178,7 +178,13 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             <MediaModels progress={progress} toast={toast} only={[kind!]} />
           </>
         ) : tab === "pictures" ? (
-          <PictureComposer models={installedOf("image")} onStart={start} onEditPhoto={importFile} />
+          <PictureComposer
+            models={installedOf("image")}
+            onStart={start}
+            onEditPhoto={importFile}
+            lifelike={view?.models.find((m) => m.id === "z-image-turbo" && !m.installed && m.fit.runnable) ?? null}
+            onModels={() => setModels(["image"])}
+          />
         ) : tab === "video" ? (
           <VideoComposer models={installedOf("video")} source={source} onPickSource={setSource} gallery={items} onStart={start} />
         ) : tab === "music" ? (
@@ -360,7 +366,20 @@ function ImproveButton({ prompt, kind, onDone }: { prompt: string; kind: string;
   );
 }
 
-function PictureComposer({ models, onStart, onEditPhoto }: { models: MediaModelCard[]; onStart: (r: MediaRequest) => Promise<boolean>; onEditPhoto: () => void }) {
+function PictureComposer({
+  models,
+  onStart,
+  onEditPhoto,
+  lifelike,
+  onModels,
+}: {
+  models: MediaModelCard[];
+  onStart: (r: MediaRequest) => Promise<boolean>;
+  onEditPhoto: () => void;
+  /** A model that makes more lifelike photos, not installed yet. */
+  lifelike: MediaModelCard | null;
+  onModels: () => void;
+}) {
   const [prompt, setPrompt] = useState("");
   const [shape, setShape] = useState<Shape>("square");
   const [count, setCount] = useState(1);
@@ -406,6 +425,12 @@ function PictureComposer({ models, onStart, onEditPhoto }: { models: MediaModelC
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
         <button className="btn primary" disabled={!prompt.trim()} onClick={go}>{t("Create")}</button>
       </div>
+      {lifelike && (style === "auto" || style === "photo" || style === "phone_photo") && (
+        <p className="small callout">
+          {t("For the most lifelike photos, add {name}: it makes pictures that look like real photographs.", { name: lifelike.name })}{" "}
+          <button className="link" onClick={onModels}>{t("Open Models")}</button>
+        </p>
+      )}
       <p className="small muted">
         {canEdit ? (
           <>

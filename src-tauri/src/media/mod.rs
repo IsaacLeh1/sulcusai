@@ -479,7 +479,8 @@ pub struct Request {
 pub const STYLES: &[(&str, &str)] = &[
     ("photo", "realistic photograph, natural lighting, true-to-life colors and skin texture, fine detail, sharp focus, shot on a full-frame camera"),
     // A snapshot from someone's phone: what makes a picture pass for real.
-    ("phone_photo", "candid photo taken with a smartphone camera, everyday snapshot, unposed, natural available light, true-to-life colors, real skin texture with pores and small imperfections, slight sensor noise, ordinary unedited phone photo, slightly imperfect framing, no studio lighting, no filter"),
+    // Naming the phone puts a hand holding one in the picture, so it's described by its look instead.
+    ("phone_photo", "candid amateur snapshot of the whole scene, real everyday place, natural available light, true-to-life colors and textures, unedited, slightly imperfect framing, shot from eye level"),
     ("cinematic", "cinematic film still, realistic, dramatic lighting, shallow depth of field, film grain"),
     ("cartoon", "cartoon illustration, bold outlines, flat bright colors"),
     ("anime", "anime style, cel shading, clean line art"),
@@ -1635,7 +1636,7 @@ pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -
     add(&state, &c, bytes, kind, mime, if hidden { "attach" } else { "import" }, &name, None, chat_id, hidden)
 }
 
-fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, mime: &str, op: &str, prompt: &str, parent: Option<String>, chat_id: Option<String>, hidden: bool) -> Result<MediaItem, String> {
+pub(crate) fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, mime: &str, op: &str, prompt: &str, parent: Option<String>, chat_id: Option<String>, hidden: bool) -> Result<MediaItem, String> {
     let mut item = MediaItem { kind: kind.into(), op: op.into(), prompt: prompt.into(), mime: mime.into(), parent, chat_id, hidden, ..Default::default() };
     let mut thumb = None;
     let mut bytes = bytes;

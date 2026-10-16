@@ -19,6 +19,7 @@ import { BackupSettings } from "../components/BackupSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { PortsSettings } from "../components/PortsSettings";
+import { HandoffSettings } from "../components/HandoffSettings";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
@@ -323,6 +324,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-folders" className="settings-anchor" />
       {features.has("files") && <FoldersSection toast={toast} />}
+
+      <span id="settings-handoffs" className="settings-anchor" />
+      {features.has("files") && <HandoffSettings toast={toast} />}
 
       <span id="settings-voice" className="settings-anchor" />
       {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}

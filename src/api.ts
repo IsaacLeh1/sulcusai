@@ -1365,6 +1365,12 @@ export interface MediaView {
 
 export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
 
+export interface HandoffsView {
+  /** "Chats work together" is on: chats share freely. */
+  together: boolean;
+  notes: { key: string; path: string; by: string | null; at: number; allowed: string[] }[];
+}
+
 export interface PortRow {
   port: number;
   addresses: string[];
@@ -1705,6 +1711,10 @@ export const api = {
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
+  /** Handoff notes chats left, and which chats may read them. */
+  handoffsView: () => invoke<HandoffsView>("handoffs_view"),
+  handoffRevoke: (key: string) => invoke<HandoffsView>("handoff_revoke", { key }),
+  handoffForget: (key: string) => invoke<HandoffsView>("handoff_forget", { key }),
   /** Servers and ports: what's listening on this PC. */
   portsView: () => invoke<PortsView>("ports_view"),
   stopPortProgram: (pid: number) => invoke<PortsView>("stop_port_program", { pid }),

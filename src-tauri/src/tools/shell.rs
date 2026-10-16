@@ -320,6 +320,10 @@ async fn keep_running(mut child: tokio::process::Child, command: String, dir: st
             tokio::time::sleep(Duration::from_millis(500)).await;
             break;
         }
+        // Or one that opened a port without saying so.
+        if started.elapsed() > Duration::from_secs(3) && started.elapsed().as_millis() % 1000 < 250 && child.id().is_some_and(|p| !crate::ports::ports_of(p).is_empty()) {
+            break;
+        }
     }
     let so_far = clip(output.lock().unwrap().text().trim_end());
     if let Some(s) = ended {
@@ -332,7 +336,8 @@ async fn keep_running(mut child: tokio::process::Child, command: String, dir: st
         return o;
     }
     let id = format!("bg{}", &uuid::Uuid::new_v4().simple().to_string()[..6]);
-    let url = first_url(&so_far);
+    // The address it printed, else the port it opened.
+    let url = first_url(&so_far).or_else(|| child.id().and_then(|p| crate::ports::ports_of(p).first().map(|port| format!("http://localhost:{port}"))));
     let text = format!(
         "Running in the background as {id} (it keeps going after this).{}\nOutput so far:\n{}\nCheck on it with command_output, stop it with stop_command.",
         url.as_ref().map(|u| format!(" It's at {u}: the user can preview it in SulcusAI's browser from this step (or you can open it there with browser_open).")).unwrap_or_default(),
@@ -434,7 +439,9 @@ fn spawn_shell(command: &str, dir: &std::path::Path, fallback_job: Option<&crate
         c.arg("-c").arg(&command).env("LC_ALL", "C.UTF-8");
         c
     };
-    cmd.current_dir(&dir)
+    cmd.current_dir(dir)
+        // Python holds back what it prints into a pipe; servers' addresses should show at once.
+        .env("PYTHONUNBUFFERED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

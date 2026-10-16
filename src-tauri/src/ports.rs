@@ -47,6 +47,20 @@ fn ours(port: u16) -> Option<String> {
     pids.iter().find_map(|pid| server_of(*pid, &servers, &parents))
 }
 
+/// Ports that a process or anything it started listens on (a server that
+/// didn't print its address).
+pub fn ports_of(pid: u32) -> Vec<u16> {
+    let parents = parents();
+    let mut ports: Vec<u16> = listening()
+        .into_iter()
+        .filter(|l| server_of(l.pid, &[(String::new(), pid)], &parents).is_some())
+        .map(|l| l.port)
+        .collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
 /// Which of the assistant's servers a process belongs to (it or a parent is the server's shell).
 fn server_of(pid: u32, servers: &[(String, u32)], parents: &HashMap<u32, (String, Option<u32>)>) -> Option<String> {
     let mut at = Some(pid);

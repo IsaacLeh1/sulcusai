@@ -232,7 +232,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 Ok(Outcome::ok(out, format!("Read {label}"), "text", None))
             }
             "find_files" => find_files(sb, arg_str(args, "pattern")?, args.get("path").and_then(Value::as_str)),
-            "search_files" => search_files(sb, args),
+            "search_files" => search_files(sb, args, ctx),
             "write_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
                 refuse_binary(&path)?;
@@ -247,6 +247,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 }
                 crate::storage::write_safely(&path, content).map_err(|e| format!("Couldn't write {label}: {e}"))?;
+                crate::handoff_guard::wrote(ctx.state, ctx.memory.cipher, ctx.memory.chat_id, &path, content);
                 let verb = if existed { "Replaced" } else { "Created" };
                 let mut o = Outcome::ok(
                     format!("{verb} {label} ({} lines).", line_count(content)),
@@ -418,7 +419,9 @@ fn find_files(sb: &Sandbox, pattern: &str, path: Option<&str>) -> Result<Outcome
     Ok(Outcome::ok(text, format!("Found {} file{} matching {pattern}", found.len(), if found.len() == 1 { "" } else { "s" }), "text", None))
 }
 
-fn search_files(sb: &Sandbox, args: &Value) -> Result<Outcome, String> {
+fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, String> {
+    // Chats not working together: other chats' handoff notes stay out of the results.
+    let together = crate::features::is_on(&ctx.state.db.lock().unwrap(), crate::features::Feature::ChatTeam);
     let pattern = arg_str(args, "pattern")?;
     let ignore_case = args.get("ignore_case").and_then(Value::as_bool).unwrap_or(false);
     let re = regex::RegexBuilder::new(pattern)
@@ -434,6 +437,9 @@ fn search_files(sb: &Sandbox, args: &Value) -> Result<Outcome, String> {
     let files: Vec<std::path::PathBuf> = if single_file { roots.clone() } else { walk_files(&roots, glob, 20_000)? };
     'files: for file in files {
         let Ok(text) = read_text(&file) else { continue };
+        if !together && crate::handoff_guard::looks_like_handoff(&file, &text) && crate::handoff_guard::guarded(ctx.state, ctx.memory.cipher, ctx.memory.chat_id, &file).is_some() {
+            continue;
+        }
         for (i, line) in text.lines().enumerate() {
             if re.is_match(line) {
                 let shown: String = line.trim().chars().take(240).collect();

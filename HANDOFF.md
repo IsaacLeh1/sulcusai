@@ -703,6 +703,17 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - There's a Files panel per chat (top right: pictures made or attached, files written). `write_file` results carry `meta.file`. `open_document` allows pages and pictures (never scripts); `show_in_folder` uses `explorer /select`.
   - Save buttons under pictures in chats. Badges for what media models make. "✨ Improve" in the Studio rewrites the idea with the chat model; "✏ Edit a photo…" imports and opens the editor.
 - Not done: a model or engine to make the brother's card work (no logs from his PC). The fallback should get him a picture either way.
+- **Servers and ports** (`ports.rs`, Settings → Servers and ports):
+  - Lists listening TCP ports from `GetExtendedTcpTable` (v4+v6) with each owner's program (sysinfo). Windows' own (`SYSTEM`, pid ≤ 4) are hidden by default and never stopped.
+  - The assistant's background commands (`shell::servers()`; `STOPPED` keeps the last 10) can be stopped and started again (`start_server` re-runs the same command in the same folder via `spawn_shell`).
+  - **Preview:** the browser still refuses local addresses, except ports in `CHOSEN` (picked with View) and ports owned by a process under one of the assistant's server shells (`previewable`, checked in `navigable_with` and `browser_open`).
+  - `keep_running` puts `preview_port` in the step's meta, so the card shows "Preview in SulcusAI's browser".
+- **Handoff guard** (`handoff_guard.rs`, Settings → Handoffs between chats). The brother's chats read another chat's HANDOFF.md although "Chats work together" was off.
+  - `write_file` records handoff-like notes (by name or opening, `looks_like_handoff`) with the writing chat; the path is encrypted, keyed by a hash.
+  - With ChatTeam off, `Turn::handoff_gate` puts a card in front of `read_file` on another chat's note, or a `run_command` naming one. The card shows in every mode, Bypass too, unless the user's newest message asks to pick up another chat's work (`asked_to_pick_up` needs both a continue-verb and an other-chat/handoff word).
+  - `search_files` skips such notes, and the system prompt tells the chat not to pick them up.
+  - Allowed chats are listed in the manager (Take back / Forget). With ChatTeam on, nothing changes.
+- **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
 ## Website (2026-10-12)
 
