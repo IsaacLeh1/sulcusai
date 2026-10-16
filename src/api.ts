@@ -177,6 +177,10 @@ export interface PhoneView {
   address: string | null;
   problem: string | null;
   phones: { id: string; name: string; added: number; last_seen: number | null }[];
+  /** Paired phones keep working while SulcusAI is locked. */
+  while_locked: boolean;
+  /** "Keep working while locked" (Settings → Security), which that needs. */
+  keep_working: boolean;
 }
 
 export interface NewPhone {
@@ -1383,6 +1387,7 @@ export const api = {
   setPhone: (enabled: boolean) => invoke<PhoneView>("set_phone", { enabled }),
   addPhone: (name: string) => invoke<NewPhone>("add_phone", { name }),
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
+  setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   syncView: () => invoke<SyncView>("sync_view"),
   setSync: (enabled: boolean, name: string | null) => invoke<SyncView>("set_sync", { enabled, name }),
   startPairing: () => invoke<SyncView>("start_pairing"),

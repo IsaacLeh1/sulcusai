@@ -929,7 +929,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
         Some(id) => presets().into_iter().find(|p| p.id == id).ok_or("Unknown provider")?,
         None => {
             let url = base_url.unwrap_or_default().trim().trim_end_matches('/').to_string();
-            if !url.starts_with("https://") && !url.starts_with("http://127.0.0.1") && !url.starts_with("http://localhost") {
+            if !net::private_ok(&url) {
                 return Err("Use an https:// address (or a local one).".into());
             }
             let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Custom provider".into());

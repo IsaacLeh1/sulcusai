@@ -966,8 +966,7 @@ pub fn remove_device(state: AppStateRef, id: String) -> Result<SyncView, String>
 pub fn set_relay(state: AppStateRef, url: Option<String>) -> Result<SyncView, String> {
     let url = url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| !u.is_empty());
     if let Some(u) = &url {
-        let local = u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost");
-        if !(u.starts_with("https://") || local) || u.contains(char::is_whitespace) {
+        if !crate::net::private_ok(u) || u.contains(char::is_whitespace) {
             return Err("The relay's address starts with https://".into());
         }
     }

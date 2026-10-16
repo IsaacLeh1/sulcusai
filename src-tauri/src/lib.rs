@@ -1824,6 +1824,7 @@ pub fn run() {
             phone::set_phone,
             phone::add_phone,
             phone::remove_phone,
+            phone::set_phone_while_locked,
             storage::storage_view,
             storage::move_models,
             sync::sync_view,

@@ -143,7 +143,7 @@ pub(super) fn offer(state: &AppState, p: &Contact) -> Option<String> {
 /// Their relay (or that they withdrew it).
 pub(super) fn offered(state: &AppState, contact: &str, url: Option<String>) {
     let Ok(c) = state.work_cipher() else { return };
-    let url = url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| u.starts_with("https://") || u.starts_with("http://127.0.0.1") || u.starts_with("http://localhost"));
+    let url = url.map(|u| u.trim().trim_end_matches('/').to_string()).filter(|u| crate::net::private_ok(u));
     let _ = update(state, |b| {
         if let Some(x) = b.contacts.iter_mut().find(|x| x.id == contact) {
             x.their_relay = url.as_deref().map(|u| c.encrypt(u));

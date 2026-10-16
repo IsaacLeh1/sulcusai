@@ -34,11 +34,35 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
         <div>
           <strong>{t("Phone page")}</strong>
           <span className="small muted block">
-            {v.enabled ? (v.running ? (v.address ? t("On at {address}. SulcusAI needs to stay open (and unlocked) here.", { address: v.address }) : t("On. SulcusAI needs to stay open (and unlocked) here.")) : v.problem ?? t("Starting…")) : t("Off.")}
+            {v.enabled
+              ? v.running
+                ? v.while_locked && v.keep_working
+                  ? v.address
+                    ? t("On at {address}. SulcusAI needs to stay open here.", { address: v.address })
+                    : t("On. SulcusAI needs to stay open here.")
+                  : v.address
+                    ? t("On at {address}. SulcusAI needs to stay open (and unlocked) here.", { address: v.address })
+                    : t("On. SulcusAI needs to stay open (and unlocked) here.")
+                : v.problem ?? t("Starting…")
+              : t("Off.")}
           </span>
         </div>
         <label className="switch" title={v.enabled ? t("On") : t("Off")}>
           <input type="checkbox" checked={v.enabled} onChange={(e) => run(() => api.setPhone(e.target.checked))} aria-label={t("Phone page")} />
+          <span />
+        </label>
+      </div>
+      <div className="toggle-row">
+        <div>
+          <strong>{t("Paired phones work while it's locked")}</strong>
+          <span className="small muted block">
+            {v.keep_working
+              ? t("Phones you've paired can still read and send chats, tasks and notes while SulcusAI is locked on this PC. Other phones and browsers still can't.")
+              : t("Phones you've paired can still read and send chats, tasks and notes while SulcusAI is locked on this PC. This needs Keep working while locked (Settings → Security); with a full lock, nothing can be read until you unlock.")}
+          </span>
+        </div>
+        <label className="switch" title={v.while_locked ? t("On") : t("Off")}>
+          <input type="checkbox" checked={v.while_locked} onChange={(e) => run(() => api.setPhoneWhileLocked(e.target.checked))} aria-label={t("Paired phones work while it's locked")} />
           <span />
         </label>
       </div>

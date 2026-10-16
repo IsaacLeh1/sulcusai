@@ -61,7 +61,7 @@ pub async fn security_status(state: AppStateRef<'_>) -> Result<SecurityStatus, S
 
 const KEEP_WORKING: &str = "keep_working_locked";
 
-fn keep_working(state: &crate::AppState) -> bool {
+pub(crate) fn keep_working(state: &crate::AppState) -> bool {
     crate::db::get::<bool>(&state.db.lock().unwrap(), KEEP_WORKING).unwrap_or(false)
 }
 

@@ -74,14 +74,39 @@ pub fn routed(b: reqwest::ClientBuilder, route: Route) -> Result<reqwest::Client
     })
 }
 
+/// Whether an address may be sent keys or private data: https, or plain
+/// http only to this PC itself (exactly `localhost`, or a loopback address).
+/// "http://localhost.example.com" is somewhere else entirely.
+pub fn private_ok(url: &str) -> bool {
+    let Ok(u) = reqwest::Url::parse(url) else { return false };
+    let Some(host) = u.host_str() else { return false };
+    match u.scheme() {
+        "https" => true,
+        "http" => host.eq_ignore_ascii_case("localhost") || host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()),
+        _ => false,
+    }
+}
+
 /// Client for requests that leave the PC; refuses when the level forbids it.
 pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) -> Result<reqwest::Client, String> {
     if !allowed(level, purpose, chat_web) {
         return Err(blocked_message(purpose).to_string());
     }
-    let b = reqwest::Client::builder()
+    let mut b = reqwest::Client::builder()
         .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(if route(purpose).and_then(crate::privacy::proxy_for).is_some() { 90 } else { 20 }));
+    // Cloud providers and relays get keys: never follow them to another
+    // host, or down to plain http (a key header would go along).
+    if purpose == Purpose::Cloud {
+        b = b.redirect(reqwest::redirect::Policy::custom(|a| {
+            let same_host = a.previous().last().is_some_and(|p| p.host_str() == a.url().host_str());
+            if a.previous().len() < 5 && same_host && private_ok(a.url().as_str()) {
+                a.follow()
+            } else {
+                a.stop()
+            }
+        }));
+    }
     let b = match route(purpose) {
         Some(r) => routed(b, r)?,
         None => b,
@@ -191,6 +216,26 @@ pub fn local_client() -> reqwest::Client {
 mod tests {
     use super::*;
     use Connectivity::*;
+
+    /// Keys only go over https, or to this PC itself.
+    #[test]
+    fn only_this_pc_may_be_plain_http() {
+        for ok in ["https://api.openai.com/v1", "http://localhost:11434/v1", "http://LOCALHOST/v1", "http://127.0.0.1:1234", "http://127.5.0.1", "http://[::1]:8080/v1"] {
+            assert!(private_ok(ok), "{ok}");
+        }
+        for bad in [
+            "http://localhost.attacker.example/v1",
+            "http://127.0.0.1.attacker.example",
+            "http://localhost@evil.example/",
+            "http://192.168.1.5:11434",
+            "http://api.openai.com/v1",
+            "ftp://localhost",
+            "localhost:11434",
+            "",
+        ] {
+            assert!(!private_ok(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn offline_blocks_web_and_cloud() {

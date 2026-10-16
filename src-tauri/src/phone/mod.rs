@@ -46,6 +46,9 @@ const NACL: &str = include_str!("nacl-fast.min.js");
 pub struct Settings {
     pub enabled: bool,
     pub phones: Vec<Phone>,
+    /// Paired phones keep working while SulcusAI is locked on the PC (with
+    /// "Keep working while locked" on; a full lock removes the key anyway).
+    pub while_locked: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -155,11 +158,14 @@ struct Call {
 async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
     let bad = || (StatusCode::UNAUTHORIZED, "This phone isn't paired. Scan a new code from SulcusAI on your PC.").into_response();
     let Some(id) = headers.get("x-phone").and_then(|h| h.to_str().ok()).map(String::from) else { return bad() };
-    // While the app is locked, nothing can be read or written.
-    let Ok(c) = state.work_cipher() else {
+    let s = settings(&state.db.lock().unwrap());
+    // While the app is locked, nothing can be read or written, unless the
+    // person let paired phones keep working then (and work goes on locked).
+    let c = if s.while_locked { state.work_cipher() } else { state.cipher() };
+    let Ok(c) = c else {
         return (StatusCode::SERVICE_UNAVAILABLE, "SulcusAI is locked on your PC. Unlock it there first.").into_response();
     };
-    let Some(phone) = settings(&state.db.lock().unwrap()).phones.into_iter().find(|p| p.id == id) else { return bad() };
+    let Some(phone) = s.phones.into_iter().find(|p| p.id == id) else { return bad() };
     let Some(key) = phone_key(&c, &phone) else { return bad() };
     let Some(plain) = open(&key, std::str::from_utf8(&body).unwrap_or_default()) else { return bad() };
     let Ok(call) = serde_json::from_slice::<Call>(&plain) else { return (StatusCode::BAD_REQUEST, "Unreadable request.").into_response() };
@@ -349,6 +355,9 @@ pub struct PhoneView {
     address: Option<String>,
     problem: Option<String>,
     phones: Vec<PhoneRow>,
+    while_locked: bool,
+    /// "Keep working while locked" (Settings → Security), which it needs.
+    keep_working: bool,
 }
 
 #[derive(Serialize)]
@@ -368,7 +377,23 @@ fn view(state: &AppState) -> PhoneView {
         address: port.and_then(|p| local_ip().map(|ip| format!("http://{}", SocketAddr::new(ip, p)))),
         problem: PROBLEM.lock().unwrap().clone(),
         phones: s.phones.iter().map(|p| PhoneRow { id: p.id.clone(), name: p.name.clone(), added: p.added, last_seen: p.last_seen }).collect(),
+        while_locked: s.while_locked,
+        keep_working: crate::security::keep_working(state),
     }
+}
+
+/// Whether paired phones keep working while SulcusAI is locked on the PC.
+#[tauri::command(async)]
+pub fn set_phone_while_locked(state: AppStateRef, on: bool) -> Result<PhoneView, String> {
+    state.cipher()?;
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        s.while_locked = on;
+        db::set(&conn, KEY, &s)?;
+        db::log_action(&conn, "security", if on { "Paired phones now keep working while SulcusAI is locked" } else { "Paired phones now stop while SulcusAI is locked" });
+    }
+    Ok(view(&state))
 }
 
 #[tauri::command(async)]
@@ -456,7 +481,7 @@ mod tests {
         {
             let conn = state.db.lock().unwrap();
             let p = Phone { id: "ph1".into(), name: "Test phone".into(), key: c.encrypt(&hex::encode(key)), added: 1, last_seen: None, last_ts: 0 };
-            db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p] }).unwrap();
+            db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p], ..Default::default() }).unwrap();
             notes::save_note(&conn, &c, None, notes::NoteBody { title: "Groceries".into(), body: "eggs, milk".into(), folder: String::new(), tags: vec![] }).unwrap();
         }
         apply(state.clone());
@@ -493,6 +518,10 @@ async function raw(op, args, ts, k = key) {
 }
 const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last + 1)));
 (async () => {
+  if (process.argv[5] === "hello") {
+    console.log(JSON.stringify(await call("hello")));
+    return;
+  }
   const out = {};
   out.hello = await call("hello");
   out.added = await call("add_task", { title: "Call Sam tomorrow" });
@@ -528,6 +557,28 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         assert_eq!(v["replay"]["status"], 409);
         assert_eq!(v["wrongKey"]["status"], 401);
         assert!(settings(&state.db.lock().unwrap()).phones[0].last_seen.is_some());
+
+        // Locked on the PC (work carrying on): the phone is refused, unless
+        // paired phones may keep working then.
+        let hello = || async {
+            let out = tokio::process::Command::new("node")
+                .current_dir(&dir)
+                .args(["client.js", &format!("http://127.0.0.1:{port}"), "ph1", &B64.encode(key), "hello"])
+                .output()
+                .await
+                .unwrap();
+            serde_json::from_str::<Value>(String::from_utf8_lossy(&out.stdout).trim()).unwrap()
+        };
+        state.vault.lock().unwrap().enable_lock("2468").unwrap();
+        state.vault.lock().unwrap().lock_screen();
+        assert_eq!(hello().await["status"], 503, "locked: nothing can be read");
+        {
+            let conn = state.db.lock().unwrap();
+            let mut s = settings(&conn);
+            s.while_locked = true;
+            db::set(&conn, KEY, &s).unwrap();
+        }
+        assert_eq!(hello().await["ok"], true, "a paired phone keeps working when allowed");
         std::fs::remove_dir_all(&dir).ok();
         SERVER.lock().unwrap().take().map(|r| r.stop.send(()));
     }
@@ -544,7 +595,7 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         {
             let conn = state.db.lock().unwrap();
             let p = Phone { id: "demo".into(), name: "Demo phone".into(), key: c.encrypt(&hex::encode(key)), added: 1, last_seen: None, last_ts: 0 };
-            db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p] }).unwrap();
+            db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p], ..Default::default() }).unwrap();
             notes::save_note(&conn, &c, None, notes::NoteBody { title: "Groceries".into(), body: "eggs, milk, **coffee**".into(), folder: String::new(), tags: vec![] }).unwrap();
             notes::save_task(&conn, &c, notes::new_task("Call Sam")).unwrap();
             let chat = db::create_chat(&conn, &c, None).unwrap();
