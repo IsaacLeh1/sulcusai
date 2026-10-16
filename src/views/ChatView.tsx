@@ -14,6 +14,7 @@ import {
   type Message,
   type ModelCard,
   type PendingApproval,
+  type QueueItem,
   type RunMode,
   type CloudChoice,
   type TaughtAdapter,
@@ -121,6 +122,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [error, setError] = useState<string | null>(null);
   const [tps, setTps] = useState<number | null>(null);
   const [pending, setPending] = useState<PendingApproval[]>([]);
+  /** Messages waiting for the reply to finish (Ctrl+Enter). */
+  const [queue, setQueue] = useState<QueueItem[]>([]);
   const [runningCall, setRunningCall] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
@@ -161,6 +164,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // The Web search feature: search and reading pages in every chat, even Offline.
   const searchOn = webOn || features.has("web_search");
   const busy = status !== "idle" || compacting;
+  // A reply is being written: what's typed now is added to it or queued.
+  const replying = status !== "idle";
   // Messages since the last summary: what Compact now would cover.
   const lastSummary = messages.map((m) => !!m.meta?.compacted).lastIndexOf(true);
   const canCompact = !busy && messages.slice(lastSummary + 1).some((m) => m.role === "user");
@@ -174,6 +179,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     reload();
     api.context(chat.id).then(setContext);
     api.pendingApprovals(chat.id).then(setPending).catch(() => {});
+    api.chatQueue(chat.id).then(setQueue).catch(() => {});
     // Back in a chat that's still answering: show where it is.
     api.live(chat.id).then((r) => {
       if (!r) return;
@@ -211,6 +217,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         api.context(chat.id).then(setContext).catch(() => {});
       })),
       on("chat:context", mine((p) => setContext(p.context))),
+      on("chat:queue", mine((p) => setQueue(p.queue))),
       on("chat:start", mine((p) => {
         setCooling(null);
         setStatus("thinking");
@@ -280,8 +287,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     setAwayFromEnd(false);
   }, [chat.id]);
 
-  const sendText = async (text: string, images: string[] = []) => {
-    if ((!text && images.length === 0) || busy) return;
+  const sendText = async (text: string, images: string[] = [], force = false) => {
+    if ((!text && images.length === 0) || (busy && !force)) return;
     toEnd();
     setError(null);
     setStatus("loading");
@@ -359,6 +366,33 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     sendText(text, images);
   };
 
+  // While it writes: Enter adds the message to what it's working on (it
+  // reads it at its next step); Ctrl+Enter sends it once the reply is done.
+  const addWhileReplying = async (later: boolean) => {
+    const text = input.trim();
+    if (!text && attached.length === 0) return;
+    const images = attached.map((a) => a.id);
+    setInput("");
+    setAttached([]);
+    try {
+      if (later) {
+        setQueue(await api.chatQueueAdd(chat.id, text, images));
+        return;
+      }
+      if ((await api.chatAdd(chat.id, text, images)) === "idle") {
+        // It finished just now: an ordinary message.
+        setTimeout(() => sendText(text, images, true), 300);
+        return;
+      }
+      const meta = { added: true, ...(images.length ? { images } : {}) } as Message["meta"];
+      setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now(), meta }]);
+      toEnd();
+    } catch (e) {
+      setInput(text);
+      toast(errorText(e), "error");
+    }
+  };
+
   const attachFile = async () => {
     const picked = await openFile({ multiple: true, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] }] });
     const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
@@ -391,7 +425,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      send();
+      if (replying) addWhileReplying(e.ctrlKey || e.metaKey);
+      else send();
     }
   };
 
@@ -553,6 +588,24 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       <div className="composer-wrap">
         {voice && features.has("voice_chat") && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
         <div className="composer">
+          {queue.length > 0 && (
+            <div className="queue-chips" role="group" aria-label={t("Queued messages")}>
+              <span className="muted small">{replying ? t("Sends when the reply is done:") : t("Waiting to send:")}</span>
+              {queue.map((q) => (
+                <span key={q.id} className="queue-chip" title={q.text}>
+                  <span className="ellipsis">{q.text || t("(a picture)")}</span>
+                  <button className="link" aria-label={t("Remove")} onClick={() => api.chatQueueRemove(chat.id, q.id).then(setQueue).catch(() => {})}>
+                    ×
+                  </button>
+                </span>
+              ))}
+              {!replying && (
+                <button className="btn small" onClick={() => api.chatQueueSend(chat.id).catch((e) => toast(errorText(e), "error"))}>
+                  {t("Send now")}
+                </button>
+              )}
+            </div>
+          )}
           {attached.length > 0 && (
             <div className="attach-chips">
               {attached.map((a) => (
@@ -566,7 +619,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKey}
             onPaste={onPaste}
-            placeholder={chat.mode === "plan" ? t("Describe what you want; it will propose a plan first…") : t("Message {name}…", { name: modelName ?? APP_NAME })}
+            placeholder={
+              replying
+                ? t("Add to what it's working on…")
+                : chat.mode === "plan"
+                  ? t("Describe what you want; it will propose a plan first…")
+                  : t("Message {name}…", { name: modelName ?? APP_NAME })
+            }
             rows={Math.min(8, Math.max(1, input.split("\n").length))}
             aria-label={t("Message")}
           />
@@ -642,6 +701,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 🗣
               </button>
             )}
+            {replying && (input.trim() || attached.length > 0) && (
+              <>
+                <button className="btn small" onClick={() => addWhileReplying(false)} title={t("It reads this at its next step (Enter)")}>
+                  {t("Add now")}
+                </button>
+                <button className="btn small" onClick={() => addWhileReplying(true)} title={t("Sends this when the reply is done (Ctrl+Enter)")}>
+                  {t("Queue")}
+                </button>
+              </>
+            )}
             {busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 {t("Stop")}
@@ -659,6 +728,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {model && !model.tools && !cloud && (
           <p className="muted small center">{t("{name} can chat but can't use files or commands. Qwen3 models can.", { name: model.name })}</p>
         )}
+        {replying && <p className="muted small center">{t("While it works, Enter adds your message to what it's doing; Ctrl+Enter sends it when it's done.")}</p>}
         {webOn && <p className="muted small center">{t("Web access is on for this chat: it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
         {!webOn && searchOn && <p className="muted small center">{t("Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
       </div>
@@ -753,7 +823,10 @@ function renderItems(
     }
   };
   messages.forEach((m, i) => {
-    if (m.role === "user") {
+    if (m.role === "user" && m.meta?.added) {
+      // Added mid-reply: still the same turn (and the same Undo).
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
+    } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
       out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
@@ -830,6 +903,7 @@ function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status;
         </details>
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
+      {m.role === "user" && m.meta?.added && <span className="added-note">{t("Added while it worked")}</span>}
       {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
       {toast && m.role === "assistant" && m.content && (
         <div className="msg-tools">

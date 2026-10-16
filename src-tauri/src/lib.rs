@@ -36,6 +36,7 @@ mod handoff;
 mod hardware;
 mod hello;
 mod hub;
+mod inbox;
 mod local;
 mod location;
 #[cfg(test)]
@@ -1286,6 +1287,8 @@ pub(crate) async fn run_turn(
     let _live = LiveGuard(chat_id.clone());
     sync::people::turn_changed(state, &chat_id, true);
     let _shared = SharedTurn(state.clone(), chat_id.clone());
+    // Messages typed meanwhile: added to this reply, or queued for after it.
+    let inbox = inbox::Opened::new(app, &chat_id);
 
     let turn_id = uuid::Uuid::new_v4().to_string();
     let (chat, profile) = {
@@ -1409,6 +1412,7 @@ pub(crate) async fn run_turn(
     }
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
+    inbox.finish(state, cancelled);
     Ok(last)
 }
 
@@ -1856,6 +1860,11 @@ pub fn run() {
             workspace::list_folders,
             workspace::add_folder,
             workspace::choose_folder,
+            inbox::chat_add,
+            inbox::chat_queue_add,
+            inbox::chat_queue,
+            inbox::chat_queue_remove,
+            inbox::chat_queue_send,
             workspace::desktop_access,
             workspace::set_desktop_access,
             workspace::folder_warning,

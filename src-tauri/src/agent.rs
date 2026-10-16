@@ -370,6 +370,19 @@ impl Turn {
         let mut done_calls: Vec<String> = Vec::new();
         let mut repeats = 0;
         for step in 0..max_steps {
+            // What the person added while it worked: part of the conversation from here.
+            let added = crate::inbox::take(&self.chat_id);
+            if !added.is_empty() {
+                for a in added {
+                    let mut meta = json!({ "added": true });
+                    if !a.images.is_empty() {
+                        meta["images"] = json!(a.images);
+                    }
+                    let text = if a.text.is_empty() { "(See the picture.)".to_string() } else { a.text };
+                    self.save(&Message { id: uuid::Uuid::new_v4().to_string(), chat_id: self.chat_id.clone(), role: "user".into(), content: text, created_at: now(), meta: Some(meta), ..Default::default() })?;
+                }
+                self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+            }
             self.rest_if_hot().await;
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
             let (kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
@@ -473,6 +486,11 @@ impl Turn {
                 break;
             }
             if calls.is_empty() {
+                // Something was added while it wrote this: it answers that too.
+                if crate::inbox::waiting(&self.chat_id) && step < max_steps - 1 {
+                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                    continue;
+                }
                 break;
             }
             self.emit("agent:step", json!({ "chat_id": self.chat_id }));

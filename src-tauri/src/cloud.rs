@@ -470,7 +470,8 @@ fn to_anthropic(messages: &[Value], tools: Option<&Value>) -> (String, Vec<Value
     let mut out: Vec<Value> = Vec::new();
     // Thinking blocks are replayed only for the turn in progress (a run of
     // tool calls); earlier turns keep their text and tool calls.
-    let last_user = messages.iter().rposition(|m| m["role"] == "user").unwrap_or(0);
+    // A message added mid-reply follows a tool result; the turn goes on, so it doesn't count.
+    let last_user = (0..messages.len()).rev().find(|&i| messages[i]["role"] == "user" && (i == 0 || messages[i - 1]["role"] != "tool")).unwrap_or(0);
     let push = |out: &mut Vec<Value>, role: &str, blocks: Vec<Value>| {
         if blocks.is_empty() {
             return;

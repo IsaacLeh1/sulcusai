@@ -712,6 +712,8 @@ export interface ToolMeta {
   handoff_from?: string;
   /** A summary left by compacting; the model works from it instead of the messages before it. */
   compacted?: boolean;
+  /** A user message added while the reply was being written. */
+  added?: boolean;
   /** How many messages the summary covers, and whether the chat compacted itself. */
   messages?: number;
   auto?: boolean;
@@ -723,6 +725,14 @@ export interface ToolMeta {
   media?: MediaItem[];
   /** User messages: attached pictures (gallery ids). */
   images?: string[];
+}
+
+/** A message waiting for a reply to finish. */
+export interface QueueItem {
+  id: string;
+  text: string;
+  images: string[];
+  at: number;
 }
 
 export interface Preview {
@@ -1463,6 +1473,13 @@ export const api = {
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
   send: (chatId: string, text: string, images?: string[]) => invoke<Message | null>("send_message", { chatId, text, images: images ?? null }),
+  /** While a reply is written: the assistant reads it at its next step ("idle": no reply running, send it). */
+  chatAdd: (chatId: string, text: string, images?: string[]) => invoke<"added" | "idle">("chat_add", { chatId, text, images: images ?? null }),
+  /** While a reply is written: sends it when the reply is done. */
+  chatQueueAdd: (chatId: string, text: string, images?: string[]) => invoke<QueueItem[]>("chat_queue_add", { chatId, text, images: images ?? null }),
+  chatQueue: (chatId: string) => invoke<QueueItem[]>("chat_queue", { chatId }),
+  chatQueueRemove: (chatId: string, id: string) => invoke<QueueItem[]>("chat_queue_remove", { chatId, id }),
+  chatQueueSend: (chatId: string) => invoke<void>("chat_queue_send", { chatId }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
   // The reply a chat is in the middle of (it keeps going while the user is elsewhere).
   live: (chatId: string) => invoke<LiveReply | null>("chat_live", { chatId }),
@@ -1713,6 +1730,7 @@ export interface ChatEvents {
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
+  "chat:queue": { chat_id: string; queue: QueueItem[] };
   "chat:web": { chat_id: string; web: boolean };
   "app:navigate": { page: string };
   "mail:triage": { done: number; total: number };

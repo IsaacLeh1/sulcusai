@@ -1121,6 +1121,59 @@ async fn asking_for_a_folder_carries_on_in_the_same_reply() {
     std::fs::remove_dir_all(&base).ok();
 }
 
+/// A message added while the reply is written reaches the model at its next
+/// step, even when that reply was about to end (it carries on to answer).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_message_added_mid_reply_is_read_and_answered() {
+    use axum::{routing::post, Json, Router};
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<Vec<String>>>>;
+    let seen: Seen = Default::default();
+    let chat_slot: std::sync::Arc<std::sync::Mutex<String>> = Default::default();
+    let (s, slot) = (seen.clone(), chat_slot.clone());
+    let app = Router::new()
+        .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+            let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+            Json(serde_json::json!({ "tokens": vec![1; n] }))
+        }))
+        .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+            let (s, slot) = (s.clone(), slot.clone());
+            async move {
+                let users: Vec<String> = b["messages"].as_array().into_iter().flatten().filter(|m| m["role"] == "user").filter_map(|m| m["content"].as_str().map(str::to_string)).collect();
+                let first = s.lock().unwrap().is_empty();
+                s.lock().unwrap().push(users);
+                // The person types while the first answer streams.
+                if first {
+                    assert!(crate::inbox::add(&slot.lock().unwrap(), "Also: what about Friday?", vec![]));
+                }
+                let say = if first { "Thursday is free." } else { "Friday works too." };
+                let chunk = |v: serde_json::Value| format!("data: {v}\n\n");
+                let body = chunk(serde_json::json!({ "choices": [{ "delta": { "content": say }, "finish_reason": null }] }))
+                    + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }))
+                    + "data: [DONE]\n\n";
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    let state = scratch_state();
+    let cipher = state.cipher().unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    *chat_slot.lock().unwrap() = chat.id.clone();
+    crate::inbox::open(&chat.id);
+    let reply = say(&state, &ep, &cipher, &chat.id, "When am I free?").await;
+    assert_eq!(reply, "Friday works too.", "it carried on to answer what was added");
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[1].last().is_some_and(|m| m.ends_with("Also: what about Friday?")), "the model read it: {:?}", seen[1]);
+    let all = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    let roles: Vec<&str> = all.iter().map(|m| m.role.as_str()).collect();
+    assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+    assert_eq!(all[2].meta.as_ref().and_then(|m| m.get("added")), Some(&serde_json::json!(true)), "marked as added mid-reply");
+    assert!(!crate::inbox::waiting(&chat.id), "read once");
+}
+
 /// Web search for real (DuckDuckGo, no key), reading a page, and the model
 /// using both in a chat with web turned on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
