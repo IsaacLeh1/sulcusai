@@ -125,6 +125,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [pending, setPending] = useState<PendingApproval[]>([]);
   /** Messages waiting for the reply to finish (Ctrl+Enter). */
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  // Sent while it worked, not read by the model yet: shown in the chat meanwhile.
+  const [waiting, setWaiting] = useState<QueueItem[]>([]);
   /** The model has read the messages sent up to then (it started answering). */
   const [readUpTo, setReadUpTo] = useState(0);
   const [runningCall, setRunningCall] = useState<string | null>(null);
@@ -183,6 +185,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     api.context(chat.id).then(setContext);
     api.pendingApprovals(chat.id).then(setPending).catch(() => {});
     api.chatQueue(chat.id).then(setQueue).catch(() => {});
+    api.chatInbox(chat.id).then(setWaiting).catch(() => setWaiting([]));
     // Back in a chat that's still answering: show where it is.
     api.live(chat.id).then((r) => {
       if (!r) return;
@@ -221,6 +224,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       })),
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:queue", mine((p) => setQueue(p.queue))),
+      on("chat:inbox", mine((p) => setWaiting(p.waiting))),
       on("chat:read", mine((p) => setReadUpTo((r) => Math.max(r, p.up_to)))),
       // Someone this chat is shared with wrote in it (or their model did).
       on("chat:changed", mine(() => reload())),
@@ -385,14 +389,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         setQueue(await api.chatQueueAdd(chat.id, text, images));
         return;
       }
+      // In the chat at once; the backend's list replaces this one.
+      const mine = { id: `pending-${Date.now()}`, text, images, at: Date.now() };
+      setWaiting((w) => [...w, mine]);
+      toEnd();
       if ((await api.chatAdd(chat.id, text, images)) === "idle") {
         // It finished just now: an ordinary message.
+        setWaiting((w) => w.filter((x) => x.id !== mine.id));
         setTimeout(() => sendText(text, images, true), 300);
-        return;
       }
-      const meta = { added: true, ...(images.length ? { images } : {}) } as Message["meta"];
-      setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now(), meta }]);
-      toEnd();
     } catch (e) {
       setInput(text);
       toast(errorText(e), "error");
@@ -563,6 +568,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             live={status}
           />
         )}
+        {waiting.map((w) => (
+          <MessageView
+            key={w.id}
+            m={{ id: w.id, chat_id: chat.id, role: "user", content: w.text || t("(a picture)"), thinking: null, created_at: w.at, meta: w.images.length ? ({ images: w.images } as Message["meta"]) : undefined }}
+            waiting
+          />
+        ))}
         {/* Asking for the web or a folder is a popup (WebPermission, FolderPermission), wherever the person is. */}
         {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder").map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
@@ -901,10 +913,10 @@ function CompactedNote({ m }: { m: Message }) {
   );
 }
 
-function MessageView({ m, live, toast, onPicture, onOpenChat, receipt }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void; receipt?: "sent" | "read" }) {
+function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void; receipt?: "sent" | "read"; waiting?: boolean }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
-    <div className={`msg ${m.role}`}>
+    <div className={`msg ${m.role}${waiting ? " waiting" : ""}`}>
       {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
         <div className="msg-images">
           {m.meta.images.map((id) => (
@@ -919,6 +931,11 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt }: { m: Me
         </details>
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
+      {waiting && (
+        <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>
+          ⏳ {t("Sent while it worked · waiting for the model to read it")}
+        </span>
+      )}
       {m.role === "user" && (m.meta?.added || receipt) && (
         <span className={`added-note ${receipt === "read" ? "read" : ""}`} title={receipt === "read" ? t("The model has read this") : t("The model hasn't read this yet")}>
           {[m.meta?.added ? t("Added while it worked") : null, receipt === "read" ? "✓✓ " + t("Read") : receipt === "sent" ? "✓ " + t("Sent") : null].filter(Boolean).join(" · ")}

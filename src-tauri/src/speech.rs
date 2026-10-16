@@ -275,6 +275,7 @@ impl Server {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
         crate::engine::tie_to_app(&mut cmd);
+        crate::engine::prefer_dedicated(&mut cmd);
         let child = cmd.spawn().map_err(|e| format!("Couldn't start speech recognition: {e}"))?;
         #[cfg(windows)]
         if let (Some(job), Some(pid)) = (job, child.id()) {

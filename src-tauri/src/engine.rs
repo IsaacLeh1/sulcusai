@@ -104,6 +104,76 @@ pub fn tie_to_app(cmd: &mut Command) {
     let _ = cmd;
 }
 
+/// The graphics devices an engine sees, as `--list-devices` prints them:
+/// ("Vulkan0", "NVIDIA GeForce RTX 4070"), in the engine's own order.
+static DEVICES: std::sync::Mutex<Option<(PathBuf, Vec<(String, String)>)>> = std::sync::Mutex::new(None);
+
+fn parse_devices(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|l| {
+            let (id, rest) = l.trim().split_once(": ")?;
+            let id_ok = id.chars().last().is_some_and(|c| c.is_ascii_digit()) && id.chars().all(|c| c.is_ascii_alphanumeric());
+            let name = rest.rsplit_once(" (").map_or(rest, |(n, _)| n).trim();
+            (id_ok && !name.is_empty()).then(|| (id.to_string(), name.to_string()))
+        })
+        .collect()
+}
+
+/// Of the devices an engine sees, the dedicated graphics cards, when the PC
+/// also has integrated graphics the engine could otherwise use. Matched by
+/// name against the cards Windows reports.
+fn dedicated_of(devices: &[(String, String)], cards: &[crate::hardware::Gpu]) -> Vec<String> {
+    let same = |a: &str, b: &str| {
+        let (a, b) = (a.to_lowercase(), b.to_lowercase());
+        a == b || a.contains(&b) || b.contains(&a)
+    };
+    let is_integrated = |name: &str| cards.iter().any(|c| c.integrated && same(name, &c.name));
+    let is_dedicated = |name: &str| cards.iter().any(|c| !c.integrated && same(name, &c.name));
+    let dedicated: Vec<String> = devices.iter().filter(|(_, n)| is_dedicated(n) && !is_integrated(n)).map(|(id, _)| id.clone()).collect();
+    if dedicated.is_empty() || dedicated.len() == devices.len() {
+        return Vec::new();
+    }
+    dedicated
+}
+
+/// The dedicated cards for `exe` (a llama.cpp program), asked once per engine.
+async fn dedicated_devices(exe: &Path) -> Vec<String> {
+    let known = DEVICES.lock().unwrap().as_ref().filter(|(p, _)| p == exe).map(|(_, d)| d.clone());
+    let devices = match known {
+        Some(d) => d,
+        None => {
+            let mut cmd = Command::new(exe);
+            cmd.arg("--list-devices").stdin(Stdio::null()).kill_on_drop(true);
+            #[cfg(windows)]
+            cmd.creation_flags(0x0800_0000);
+            let out = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
+                Ok(Ok(o)) => format!("{}\n{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
+                _ => String::new(),
+            };
+            let d = parse_devices(&out);
+            *DEVICES.lock().unwrap() = Some((exe.to_path_buf(), d.clone()));
+            d
+        }
+    };
+    dedicated_of(&devices, &crate::hardware::cards())
+}
+
+/// Keeps a graphics engine (pictures, speech, training) on the dedicated
+/// card, the way the chat engine is: Vulkan engines otherwise may also pick
+/// the integrated one. Uses what the chat engine found; its numbers match
+/// the engine's only when it saw every card, so nothing is set otherwise.
+pub fn prefer_dedicated(cmd: &mut Command) {
+    let Some((_, devices)) = DEVICES.lock().unwrap().clone() else { return };
+    let cards = crate::hardware::cards();
+    if devices.len() != cards.len() || std::env::var_os("GGML_VK_VISIBLE_DEVICES").is_some() {
+        return;
+    }
+    let picked: Vec<String> = dedicated_of(&devices, &cards).iter().filter_map(|id| id.strip_prefix("Vulkan").map(str::to_string)).collect();
+    if !picked.is_empty() {
+        cmd.env("GGML_VK_VISIBLE_DEVICES", picked.join(","));
+    }
+}
+
 /// Finds a program by file name anywhere under `dir`.
 pub fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(dir).ok()?;
@@ -356,7 +426,10 @@ impl Engine {
         let key = uuid::Uuid::new_v4().simple().to_string();
         let (log, log_err) = capped_log(spec.log).map_err(|e| e.to_string())?;
 
+        // On a PC with integrated graphics too, the model goes on the dedicated card.
+        let devices = if spec.gpu_layers > 0 { dedicated_devices(spec.exe).await } else { Vec::new() };
         let mut cmd = Command::new(spec.exe);
+        cmd.args(if devices.is_empty() { vec![] } else { vec!["--device".to_string(), devices.join(",")] });
         cmd.arg("-m").arg(spec.model_path)
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
             .args(["-c", &spec.ctx.to_string(), "-ngl", &spec.gpu_layers.to_string()])
@@ -506,6 +579,25 @@ pub async fn measure(ep: &Endpoint) -> Result<Speed, String> {
 #[cfg(test)]
 mod platform_tests {
     use super::*;
+
+    #[test]
+    fn the_model_goes_on_the_dedicated_card() {
+        use crate::hardware::Gpu;
+        let listed = parse_devices("Available devices:
+  Vulkan0: NVIDIA GeForce RTX 5070 Ti Laptop GPU (11944 MiB, 11176 MiB free)
+  Vulkan1: Intel(R) Graphics (18347 MiB, 17579 MiB free)
+");
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[1], ("Vulkan1".to_string(), "Intel(R) Graphics".to_string()));
+        let card = |name: &str, integrated: bool| Gpu { name: name.into(), integrated, ..Default::default() };
+        let laptop = [card("NVIDIA GeForce RTX 5070 Ti Laptop GPU", false), card("Intel(R) Graphics", true)];
+        assert_eq!(dedicated_of(&listed, &laptop), vec!["Vulkan0"]);
+        // Only a dedicated card, or only integrated graphics: nothing to choose.
+        assert!(dedicated_of(&listed[..1], &laptop[..1]).is_empty());
+        assert!(dedicated_of(&listed[1..], &laptop[1..]).is_empty());
+        // Names that don't match what Windows reports: the engine decides.
+        assert!(dedicated_of(&listed, &[card("Some other card", false)]).is_empty());
+    }
 
     /// On any system: downloads this system's engine build into
     /// SULCUSAI_DATA (a scratch folder), loads SULCUSAI_MODEL (a Qwen3 GGUF)

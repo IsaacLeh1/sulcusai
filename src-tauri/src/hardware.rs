@@ -13,6 +13,9 @@ pub struct Gpu {
     pub vram_bytes: u64,
     /// Integrated graphics share system memory and aren't used for models yet.
     pub integrated: bool,
+    /// Windows' id for the card (DXGI adapter LUID), to read its usage and temperature.
+    #[serde(skip)]
+    pub luid: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -30,6 +33,20 @@ pub struct Hardware {
     pub disk_free: u64,
     pub disk_total: u64,
     pub on_battery: Option<bool>,
+}
+
+/// The cards found last, for code that runs without the app state (engine
+/// launches, the temperature watch).
+static CARDS: std::sync::Mutex<Vec<Gpu>> = std::sync::Mutex::new(Vec::new());
+
+/// The graphics cards found when the PC was last checked.
+pub fn cards() -> Vec<Gpu> {
+    CARDS.lock().unwrap().clone()
+}
+
+/// The dedicated card with the most memory, if there is one.
+pub fn dedicated() -> Option<Gpu> {
+    cards().into_iter().filter(|g| !g.integrated).max_by_key(|g| g.vram_bytes)
 }
 
 impl Hardware {
@@ -55,7 +72,11 @@ pub fn detect(models_dir: &Path) -> Hardware {
         avx512: cpu_feature("avx512f"),
         ram_total: sys.total_memory(),
         ram_available: sys.available_memory(),
-        gpus: gpus(sys.total_memory()),
+        gpus: {
+            let found = gpus(sys.total_memory());
+            *CARDS.lock().unwrap() = found.clone();
+            found
+        },
         models_drive,
         disk_free,
         disk_total,
@@ -120,6 +141,7 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
                 integrated: vram < crate::catalog::GIB,
                 vram_bytes: vram,
                 name,
+                luid: Some(((desc.AdapterLuid.HighPart as i64) << 32) | desc.AdapterLuid.LowPart as i64),
             });
         }
     }
@@ -135,7 +157,7 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
             if let Some((name, mib)) = line.rsplit_once(',') {
                 if let Ok(mib) = mib.trim().parse::<u64>() {
-                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false });
+                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false, luid: None });
                 }
             }
         }
@@ -158,9 +180,10 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
                     vendor: "AMD".into(),
                     integrated: vram < crate::catalog::GIB,
                     vram_bytes: vram,
+                    luid: None,
                 });
             }
-            0x8086 => out.push(Gpu { name: "Intel graphics".into(), vendor: "Intel".into(), vram_bytes: 0, integrated: true }),
+            0x8086 => out.push(Gpu { name: "Intel graphics".into(), vendor: "Intel".into(), vram_bytes: 0, integrated: true, luid: None }),
             _ => {}
         }
     }
@@ -172,7 +195,7 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
 #[cfg(target_os = "macos")]
 fn gpus(ram: u64) -> Vec<Gpu> {
     if cfg!(target_arch = "aarch64") {
-        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false }]
+        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false, luid: None }]
     } else {
         Vec::new()
     }

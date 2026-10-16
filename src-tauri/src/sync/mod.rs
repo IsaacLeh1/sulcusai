@@ -984,11 +984,73 @@ pub fn set_relay(state: AppStateRef, url: Option<String>) -> Result<SyncView, St
 }
 
 #[tauri::command(async)]
-pub fn sync_now(state: AppStateRef) -> SyncView {
+pub async fn sync_now(state: AppStateRef<'_>) -> Result<SyncReport, String> {
+    crate::offline::check(crate::offline::Keep::LocalNetwork)?;
+    state.cipher()?;
+    let st = state.inner().clone();
+    let (peers, relay) = {
+        let conn = st.db.lock().unwrap();
+        let cfg = config(&conn);
+        if !cfg.enabled {
+            return Err("Turn on sync first.".into());
+        }
+        let relay = (db::settings(&conn).connectivity == crate::net::Connectivity::Cloud).then(|| cfg.relay_url.clone()).flatten().filter(|u| !u.is_empty());
+        (cfg.peers, relay)
+    };
+    if peers.is_empty() {
+        return Err("No PCs are paired yet.".into());
+    }
     ERRORS.lock().unwrap().clear();
-    FORCE.store(true, Ordering::SeqCst);
-    WAKE.notify_one();
-    view(&state)
+    let jobs = peers.into_iter().map(|p| {
+        let (st, relay) = (st.clone(), relay.clone());
+        async move {
+            let addr = seen_addr(&p.id).or_else(|| p.addr.as_deref()?.parse().ok());
+            let result = match (addr, relay) {
+                (Some(addr), _) => timeout(Duration::from_secs(120), call(&st, &p.id, addr)).await.unwrap_or(Err("The sync took too long.".into())),
+                (None, Some(url)) => match Busy::take(&p.id) {
+                    Some(_busy) => timeout(Duration::from_secs(120), relay::exchange(&st, &url, &p)).await.unwrap_or(Err("The relay took too long.".into())),
+                    None => Err(BUSY_TEXT.into()),
+                },
+                (None, None) => Err(NOT_HERE.into()),
+            };
+            match result {
+                Ok(n) => {
+                    ERRORS.lock().unwrap().remove(&p.id);
+                    SyncOutcome { name: p.name.clone(), ok: true, text: String::new(), changes: n }
+                }
+                Err(e) if e == BUSY_TEXT => SyncOutcome { name: p.name.clone(), ok: true, text: ALREADY_SYNCING.into(), changes: 0 },
+                Err(e) => {
+                    ERRORS.lock().unwrap().insert(p.id.clone(), (e.clone(), Instant::now()));
+                    SyncOutcome { name: p.name.clone(), ok: false, text: e, changes: 0 }
+                }
+            }
+        }
+    });
+    let results = futures_util::future::join_all(jobs).await;
+    if results.iter().any(|r| r.changes > 0) {
+        emit(&st, "sync:changed");
+    }
+    emit(&st, "sync:status");
+    Ok(SyncReport { view: view(&st), results })
+}
+
+pub const NOT_HERE: &str = "Not on this network right now. Both PCs need SulcusAI open with sync on, on the same network (or a virtual one like Radmin VPN). For when they're apart, set a relay below.";
+pub const ALREADY_SYNCING: &str = "Already syncing with it right now.";
+
+/// How syncing with one paired PC went, for "Sync now". `text` is empty
+/// when it worked; the window words it from `changes`.
+#[derive(Serialize)]
+pub struct SyncOutcome {
+    name: String,
+    ok: bool,
+    text: String,
+    changes: usize,
+}
+
+#[derive(Serialize)]
+pub struct SyncReport {
+    view: SyncView,
+    results: Vec<SyncOutcome>,
 }
 
 #[cfg(test)]

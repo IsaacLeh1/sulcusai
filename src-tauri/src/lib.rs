@@ -1329,6 +1329,7 @@ async fn run_turn_with(
     let _shared = SharedTurn(state.clone(), chat_id.clone());
     // Messages typed meanwhile: added to this reply, or queued for after it.
     let inbox = inbox::Opened::new(app, &chat_id);
+    let asked_in = chat_id.clone();
     let _asked = asking.as_ref().map(|_| tools::chats::Asked::new(&chat_id));
 
     let turn_id = uuid::Uuid::new_v4().to_string();
@@ -1414,6 +1415,10 @@ async fn run_turn_with(
             db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
         }
     }
+    // Shows at once in a window on this chat, even when the message came
+    // from the queue, another chat or the phone rather than that window.
+    app.emit("chat:changed", json!({ "chat_id": chat_id })).ok();
+    inbox::sent(app, &asked_in);
 
     // After the first reply, the model names the chat from the request.
     let name_it = (first_message && !chat.incognito && asking.is_none()).then(|| (ep.clone(), text.clone()));
@@ -1952,6 +1957,7 @@ pub fn run() {
             inbox::chat_add,
             inbox::chat_queue_add,
             inbox::chat_queue,
+            inbox::chat_inbox,
             inbox::chat_queue_remove,
             inbox::chat_queue_send,
             workspace::desktop_access,

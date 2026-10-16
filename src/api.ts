@@ -207,6 +207,20 @@ export interface SyncPeer {
   error: string | null;
 }
 
+/** How syncing with one paired PC went, from "Sync now". */
+export interface SyncOutcome {
+  name: string;
+  ok: boolean;
+  /** Empty when it worked. */
+  text: string;
+  changes: number;
+}
+
+export interface SyncReport {
+  view: SyncView;
+  results: SyncOutcome[];
+}
+
 export interface SyncView {
   enabled: boolean;
   name: string;
@@ -1417,7 +1431,7 @@ export const api = {
   cancelPairing: () => invoke<SyncView>("cancel_pairing"),
   pairDevice: (code: string, target: string | null) => invoke<SyncView>("pair_device", { code, target }),
   removeDevice: (id: string) => invoke<SyncView>("remove_device", { id }),
-  syncNow: () => invoke<SyncView>("sync_now"),
+  syncNow: () => invoke<SyncReport>("sync_now"),
   setRelay: (url: string | null) => invoke<SyncView>("set_relay", { url }),
   peerModels: () => invoke<PeerModels[]>("peer_models"),
   copyModelFrom: (peerId: string, modelId: string) => invoke<void>("copy_model_from", { peerId, modelId }),
@@ -1530,6 +1544,8 @@ export const api = {
   /** While a reply is written: sends it when the reply is done. */
   chatQueueAdd: (chatId: string, text: string, images?: string[]) => invoke<QueueItem[]>("chat_queue_add", { chatId, text, images: images ?? null }),
   chatQueue: (chatId: string) => invoke<QueueItem[]>("chat_queue", { chatId }),
+  /** Messages the running reply hasn't read yet. */
+  chatInbox: (chatId: string) => invoke<QueueItem[]>("chat_inbox", { chatId }),
   chatQueueRemove: (chatId: string, id: string) => invoke<QueueItem[]>("chat_queue_remove", { chatId, id }),
   chatQueueSend: (chatId: string) => invoke<void>("chat_queue_send", { chatId }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
@@ -1828,6 +1844,7 @@ export interface ChatEvents {
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
+  "chat:inbox": { chat_id: string; waiting: QueueItem[] };
   /** The model has read this chat's messages up to then (it started answering). */
   "chat:read": { chat_id: string; up_to: number };
   "gpu:limit": { percent: number };

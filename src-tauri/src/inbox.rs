@@ -28,6 +28,8 @@ pub struct Item {
 static OPEN: LazyLock<Mutex<HashMap<String, Vec<Item>>>> = LazyLock::new(Default::default);
 /// What waits for each chat's reply to finish.
 static QUEUED: LazyLock<Mutex<HashMap<String, Vec<Item>>>> = LazyLock::new(Default::default);
+/// Going out as the chat's next message, until that message is saved.
+static SENDING: LazyLock<Mutex<HashMap<String, Vec<Item>>>> = LazyLock::new(Default::default);
 
 fn item(text: &str, images: Vec<String>) -> Item {
     Item { id: uuid::Uuid::new_v4().simple().to_string()[..10].to_string(), text: text.trim().to_string(), images, at: crate::db::now_ms() }
@@ -55,6 +57,26 @@ fn close(chat_id: &str) -> Vec<Item> {
 
 pub fn queue(chat_id: &str) -> Vec<Item> {
     QUEUED.lock().unwrap().get(chat_id).cloned().unwrap_or_default()
+}
+
+/// Messages added to a running reply that it hasn't read yet, and those
+/// about to go out as the next message.
+pub fn unread(chat_id: &str) -> Vec<Item> {
+    let mut all = SENDING.lock().unwrap().get(chat_id).cloned().unwrap_or_default();
+    all.extend(OPEN.lock().unwrap().get(chat_id).cloned().unwrap_or_default());
+    all
+}
+
+/// The next message is saved in the chat: it no longer waits.
+pub fn sent(app: &AppHandle, chat_id: &str) {
+    if SENDING.lock().unwrap().remove(chat_id).is_some() {
+        told(app, chat_id);
+    }
+}
+
+/// Tells the window what's waiting for the model to read, so it shows in the chat.
+pub fn told(app: &AppHandle, chat_id: &str) {
+    app.emit("chat:inbox", json!({ "chat_id": chat_id, "waiting": unread(chat_id) })).ok();
 }
 
 fn changed(app: &AppHandle, chat_id: &str) {
@@ -87,10 +109,11 @@ impl Opened {
             list.splice(0..0, unread);
             if stopped || list.is_empty() { Vec::new() } else { std::mem::take(list) }
         };
-        changed(&self.app, &self.chat_id);
         if !next.is_empty() {
             send_later(self.app.clone(), state.clone(), self.chat_id.clone(), next);
         }
+        changed(&self.app, &self.chat_id);
+        told(&self.app, &self.chat_id);
     }
 }
 
@@ -103,6 +126,7 @@ impl Drop for Opened {
         if !unread.is_empty() {
             QUEUED.lock().unwrap().entry(self.chat_id.clone()).or_default().splice(0..0, unread);
             changed(&self.app, &self.chat_id);
+            told(&self.app, &self.chat_id);
         }
     }
 }
@@ -115,6 +139,7 @@ fn joined(items: Vec<Item>) -> (String, Vec<String>) {
 
 /// Sends `items` as the chat's next message once its reply has let go.
 fn send_later(app: AppHandle, state: Arc<AppState>, chat_id: String, items: Vec<Item>) {
+    SENDING.lock().unwrap().insert(chat_id.clone(), items.clone());
     tauri::async_runtime::spawn(async move {
         for _ in 0..100 {
             if !state.generations.lock().unwrap().contains_key(&chat_id) {
@@ -123,9 +148,16 @@ fn send_later(app: AppHandle, state: Arc<AppState>, chat_id: String, items: Vec<
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         let (text, images) = joined(items.clone());
-        if let Err(e) = crate::run_turn(&app, &state, chat_id.clone(), text, images, None).await {
+        let result = crate::run_turn(&app, &state, chat_id.clone(), text, images, None).await;
+        let unsent = SENDING.lock().unwrap().remove(&chat_id).is_some();
+        if unsent {
+            told(&app, &chat_id);
+        }
+        if let Err(e) = result {
             // Couldn't start (say, the app got locked): back in the queue.
-            QUEUED.lock().unwrap().entry(chat_id.clone()).or_default().splice(0..0, items);
+            if unsent {
+                QUEUED.lock().unwrap().entry(chat_id.clone()).or_default().splice(0..0, items);
+            }
             changed(&app, &chat_id);
             app.emit("chat:done", json!({ "chat_id": chat_id, "error": e })).ok();
         }
@@ -135,12 +167,22 @@ fn send_later(app: AppHandle, state: Arc<AppState>, chat_id: String, items: Vec<
 /// Enter while a reply is written: "added" (it reads it at its next step),
 /// or "idle" when no reply is running any more (send it normally).
 #[tauri::command(async)]
-pub fn chat_add(state: AppStateRef, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<&'static str, String> {
+pub fn chat_add(app: AppHandle, state: AppStateRef, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<&'static str, String> {
     state.cipher()?;
     if text.trim().is_empty() && images.as_ref().is_none_or(|i| i.is_empty()) {
         return Err("Type a message first.".into());
     }
-    Ok(if add(&chat_id, &text, images.unwrap_or_default()) { "added" } else { "idle" })
+    if !add(&chat_id, &text, images.unwrap_or_default()) {
+        return Ok("idle");
+    }
+    told(&app, &chat_id);
+    Ok("added")
+}
+
+/// What's waiting for the running reply to read, for a window opening the chat.
+#[tauri::command]
+pub fn chat_inbox(chat_id: String) -> Vec<Item> {
+    unread(&chat_id)
 }
 
 /// Adds a message to a running reply; false when none is running.
@@ -188,10 +230,11 @@ pub fn chat_queue_send(app: AppHandle, state: AppStateRef, chat_id: String) -> R
         return Err("Still answering; it goes out when the reply is done.".into());
     }
     let items = QUEUED.lock().unwrap().remove(&chat_id).unwrap_or_default();
-    changed(&app, &chat_id);
     if !items.is_empty() {
-        send_later(app, state.inner().clone(), chat_id, items);
+        send_later(app.clone(), state.inner().clone(), chat_id.clone(), items);
+        told(&app, &chat_id);
     }
+    changed(&app, &chat_id);
     Ok(())
 }
 

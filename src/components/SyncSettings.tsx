@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type PeerModels, type SyncView } from "../api";
+import { api, errorText, on, type PeerModels, type SyncOutcome, type SyncView } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -19,6 +19,8 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<SyncView | null>(null);
   const [entering, setEntering] = useState<{ code: string; target: string; busy: boolean } | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [results, setResults] = useState<SyncOutcome[] | null>(null);
 
   const load = useCallback(() => {
     api.syncView().then(setV).catch(() => {});
@@ -40,6 +42,22 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
       setV(await f());
     } catch (e) {
       toast(errorText(e), "error");
+    }
+  };
+  const syncNow = async () => {
+    setSyncing(true);
+    setResults(null);
+    try {
+      const r = await api.syncNow();
+      setV(r.view);
+      setResults(r.results);
+      const failed = r.results.filter((x) => !x.ok).length;
+      if (failed === 0) toast(t("Sync finished."), "success");
+      else toast(failed === r.results.length ? t("Couldn't sync. See the details under Your devices.") : t("Synced with some PCs. See the details under Your devices."), "error");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setSyncing(false);
     }
   };
   const showing = v.nearby.filter((n) => n.pairing);
@@ -179,11 +197,34 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
             {t("Enter a code")}
           </button>
           {v.peers.length > 0 && v.enabled && (
-            <button className="btn ghost" onClick={() => run(() => api.syncNow())}>
-              {t("Sync now")}
+            <button className="btn ghost" disabled={syncing} onClick={syncNow}>
+              {syncing ? t("Syncing…") : t("Sync now")}
             </button>
           )}
         </div>
+      )}
+      {syncing && (
+        <p className="muted small" role="status">
+          {t("Reaching your other PCs… This can take up to a minute the first time.")}
+        </p>
+      )}
+      {results && !syncing && (
+        <ul className="sync-results small" role="status">
+          {results.map((r, i) => (
+            <li key={i} className={r.ok ? "ok" : "bad"}>
+              <span aria-hidden="true">{r.ok ? "✓" : "✕"}</span>
+              <span>
+                <strong>{r.name}</strong>:{" "}
+                {r.text ? t(r.text) : r.changes === 0 ? t("Up to date.") : r.changes === 1 ? t("Synced: 1 change came in.") : t("Synced: {n} changes came in.", { n: r.changes })}
+              </span>
+            </li>
+          ))}
+          <li>
+            <button className="btn ghost small" onClick={() => setResults(null)}>
+              {t("Dismiss")}
+            </button>
+          </li>
+        </ul>
       )}
       {v.enabled && v.peers.some((p) => p.online) && <CopyModels toast={toast} />}
       {v.enabled && v.peers.length > 0 && <RelaySetting v={v} run={run} />}

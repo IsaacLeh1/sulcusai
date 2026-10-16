@@ -400,6 +400,7 @@ impl Turn {
                     self.save(&Message { id: uuid::Uuid::new_v4().to_string(), chat_id: self.chat_id.clone(), role: "user".into(), content: text, created_at: now(), meta: Some(meta), ..Default::default() })?;
                 }
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                self.emit("chat:inbox", json!({ "chat_id": self.chat_id, "waiting": crate::inbox::unread(&self.chat_id) }));
             }
             self.rest_if_hot().await;
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));

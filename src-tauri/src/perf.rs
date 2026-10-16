@@ -305,8 +305,51 @@ async fn gpu_temp() -> Option<f32> {
     cmd.args(["--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"]).kill_on_drop(true);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000);
-    let out = tokio::time::timeout(Duration::from_secs(3), cmd.output()).await.ok()?.ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse::<f32>().ok()).fold(None, |m: Option<f32>, t| Some(m.map_or(t, |m| m.max(t))))
+    let nvidia = match tokio::time::timeout(Duration::from_secs(3), cmd.output()).await {
+        Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.trim().parse::<f32>().ok()).fold(None, |m: Option<f32>, t| Some(m.map_or(t, |m| m.max(t)))),
+        _ => None,
+    };
+    // Other dedicated cards (AMD, Intel Arc): the sensor Task Manager reads.
+    match nvidia {
+        Some(t) => Some(t),
+        None => {
+            let luid = crate::hardware::dedicated()?.luid?;
+            tokio::task::spawn_blocking(move || card_temp(luid)).await.ok().flatten()
+        }
+    }
+}
+
+/// A card's temperature from its driver (what Task Manager shows), by its
+/// Windows id. Not every driver reports one.
+#[cfg(windows)]
+fn card_temp(luid: i64) -> Option<f32> {
+    use windows::Wdk::Graphics::Direct3D::*;
+    use windows::Win32::Foundation::LUID;
+    // SAFETY: the adapter handle is opened and closed here; the query writes
+    // only into `perf`, whose size it is given.
+    unsafe {
+        let mut open = D3DKMT_OPENADAPTERFROMLUID { AdapterLuid: LUID { LowPart: luid as u32, HighPart: (luid >> 32) as i32 }, hAdapter: 0 };
+        if D3DKMTOpenAdapterFromLuid(&mut open).is_err() {
+            return None;
+        }
+        let mut perf = D3DKMT_ADAPTER_PERFDATA::default();
+        let mut query = D3DKMT_QUERYADAPTERINFO {
+            hAdapter: open.hAdapter,
+            Type: KMTQAITYPE_ADAPTERPERFDATA,
+            pPrivateDriverData: &mut perf as *mut _ as *mut core::ffi::c_void,
+            PrivateDriverDataSize: std::mem::size_of::<D3DKMT_ADAPTER_PERFDATA>() as u32,
+        };
+        let ok = D3DKMTQueryAdapterInfo(&mut query).is_ok();
+        let _ = D3DKMTCloseAdapter(&D3DKMT_CLOSEADAPTER { hAdapter: open.hAdapter });
+        // Tenths of a degree.
+        let c = perf.Temperature as f32 / 10.0;
+        (ok && (1.0..130.0).contains(&c)).then_some(c)
+    }
+}
+
+#[cfg(not(windows))]
+fn card_temp(_luid: i64) -> Option<f32> {
+    None
 }
 
 #[cfg(windows)]
@@ -436,11 +479,11 @@ pub(crate) async fn nvidia_now() -> Option<GpuNow> {
         .max_by_key(|g| g.mem_total.unwrap_or(0))
 }
 
-/// Any card on Windows: how busy it is, the way Task Manager counts it
-/// (the busiest kind of engine on the busiest card). The query stays open,
-/// since a rate needs two readings.
+/// A card on Windows: how busy it is, the way Task Manager counts it (its
+/// busiest kind of engine). `card` is its Windows id; without one, the
+/// busiest card. The query stays open, since a rate needs two readings.
 #[cfg(windows)]
-fn windows_gpu_usage() -> Option<f32> {
+fn windows_gpu_usage(card: Option<i64>) -> Option<f32> {
     use std::collections::HashMap;
     use windows::Win32::System::Performance::*;
     static QUERY: Mutex<Option<(isize, isize)>> = Mutex::new(None);
@@ -474,15 +517,19 @@ fn windows_gpu_usage() -> Option<f32> {
         if PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut size, &mut count, Some(items)) != 0 {
             return None;
         }
-        // Instances look like "pid_1234_luid_0x0_0x1A2B_phys_0_eng_3_engtype_3D".
+        // Instances look like "pid_1234_luid_0x00000000_0x0001A2B8_phys_0_eng_3_engtype_3D".
+        let wanted = card.map(|l| format!("0x{:08x}_0x{:08x}", (l >> 32) as u32, l as u32));
         let mut sums: HashMap<String, f64> = HashMap::new();
         for i in 0..count as usize {
             let item = &*items.add(i);
             if item.FmtValue.CStatus != 0 {
                 continue;
             }
-            let name = item.szName.to_string().unwrap_or_default();
+            let name = item.szName.to_string().unwrap_or_default().to_lowercase();
             let card = name.split("luid_").nth(1).and_then(|r| r.split("_phys").next()).unwrap_or("");
+            if wanted.as_deref().is_some_and(|w| w != card) {
+                continue;
+            }
             let kind = name.rsplit("engtype_").next().unwrap_or("");
             *sums.entry(format!("{card}/{kind}")).or_default() += item.FmtValue.Anonymous.doubleValue;
         }
@@ -491,7 +538,7 @@ fn windows_gpu_usage() -> Option<f32> {
 }
 
 #[cfg(not(windows))]
-fn windows_gpu_usage() -> Option<f32> {
+fn windows_gpu_usage(_card: Option<i64>) -> Option<f32> {
     None
 }
 
@@ -508,15 +555,24 @@ pub async fn gpu_now(state: AppStateRef<'_>) -> Result<GpuNow, String> {
             return Ok(g);
         }
     }
-    let g = match nvidia_now().await {
+    // The dedicated card (the one models run on), never the integrated one.
+    let best = state.hardware.read().unwrap().best_gpu().cloned();
+    let nvidia = match &best {
+        Some(card) if card.vendor != "NVIDIA" => None,
+        _ => nvidia_now().await,
+    };
+    let g = match nvidia {
         Some(g) => g,
         None => {
-            let best = state.hardware.read().unwrap().best_gpu().cloned();
             let Some(card) = best else { return Ok(GpuNow::default()) };
+            let luid = card.luid;
             GpuNow {
                 name: Some(card.name.clone()),
-                usage: tokio::task::spawn_blocking(windows_gpu_usage).await.ok().flatten(),
-                temp: None,
+                usage: tokio::task::spawn_blocking(move || windows_gpu_usage(luid)).await.ok().flatten(),
+                temp: match luid {
+                    Some(l) => tokio::task::spawn_blocking(move || card_temp(l)).await.ok().flatten(),
+                    None => None,
+                },
                 mem_used: None,
                 mem_total: Some(card.vram_bytes),
             }
@@ -711,7 +767,7 @@ mod tests {
             cpu_cores: Some(8),
             cpu_threads: 16,
             ram_total: 16 * GIB,
-            gpus: vec![Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: 8 * GIB, integrated: false }],
+            gpus: vec![Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: 8 * GIB, integrated: false, luid: None }],
             ..Default::default()
         }
     }
@@ -823,7 +879,12 @@ mod gpu_tests {
     #[ignore]
     async fn reads_the_gpu() {
         eprintln!("nvidia-smi: {:?}", super::nvidia_now().await);
-        eprintln!("Windows counters: {:?}", tokio::task::spawn_blocking(super::windows_gpu_usage).await.unwrap());
-        eprintln!("again: {:?}", tokio::task::spawn_blocking(super::windows_gpu_usage).await.unwrap());
+        crate::hardware::detect(&std::env::temp_dir());
+        let card = crate::hardware::dedicated();
+        eprintln!("dedicated card: {:?}", card.as_ref().map(|c| &c.name));
+        let luid = card.and_then(|c| c.luid);
+        eprintln!("Windows counters, that card: {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid)).await.unwrap());
+        eprintln!("again: {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid)).await.unwrap());
+        eprintln!("its temperature: {:?}", luid.and_then(super::card_temp));
     }
 }
