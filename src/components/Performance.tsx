@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, on, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView } from "../api";
+import { api, errorText, on, type GpuLimit, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -211,6 +211,51 @@ export function PerfPill({ onOpen }: { onOpen: () => void }) {
       <span aria-hidden>{level > 0 ? "🌡️" : icon}</span> {t(MODE_LABEL[mode])}
       {level > 0 && ` · ${t("cooling {n}/3", { n: level })}`}
     </button>
+  );
+}
+
+const GPU_STEPS = [100, 75, 50, 25, 0];
+
+/** Top of a chat: how much of the model may run on the graphics card. The
+ * rest runs on the processor: less load and memory on the card (for a game,
+ * or to keep it cool), slower replies. Applies from the next reply. */
+export function GpuLimitMenu({ toast }: { toast: PushToast }) {
+  const [limit, setLimit] = useState<GpuLimit | null>(null);
+  useEffect(() => {
+    api.gpuLimit().then(setLimit).catch(() => {});
+    const sub = on("gpu:limit", (p) => setLimit((l) => (l ? { ...l, percent: p.percent } : l)));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
+  if (!limit?.has_gpu) return null;
+  const steps = GPU_STEPS.includes(limit.percent) ? GPU_STEPS : [...GPU_STEPS, limit.percent].sort((a, b) => b - a);
+  return (
+    <label
+      className="gpu-limit"
+      title={t("How much of the model runs on the graphics card. Lower leaves the card freer and cooler (for a game, say), but replies are slower, since the rest runs on the processor. Applies from the next reply.")}
+    >
+      <span>{t("GPU")}</span>
+      <select
+        value={limit.percent}
+        aria-label={t("How much of the model runs on the graphics card")}
+        onChange={async (e) => {
+          const percent = Number(e.target.value);
+          try {
+            setLimit(await api.setGpuLimit(percent));
+            toast(percent === 0 ? t("The model will run on the processor only, from the next reply.") : t("Up to {n}% of the model on the graphics card, from the next reply.", { n: percent }), "success");
+          } catch (err) {
+            toast(errorText(err), "error");
+          }
+        }}
+      >
+        {steps.map((p) => (
+          <option key={p} value={p}>
+            {p === 0 ? t("Off") : `${p}%`}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

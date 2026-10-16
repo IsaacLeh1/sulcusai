@@ -52,11 +52,15 @@ pub struct PerfSettings {
     pub cool_on_battery: bool,
     pub heat_guard: bool,
     pub adaptive: bool,
+    /// How much of the model may run on the graphics card, percent (the
+    /// rest runs on the processor; 0 = processor only). Set at the top of
+    /// a chat.
+    pub gpu_limit: u8,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true }
+        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100 }
     }
 }
 
@@ -165,6 +169,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     // Never past the ceilings, whatever was stored.
     l.vram_bytes = l.vram_bytes.min((vram as f64 * c.gpu_percent as f64 / 100.0) as u64);
     l.ram_bytes = l.ram_bytes.min(ceiling_ram);
+    l.gpu_share = s.gpu_limit.min(100) as f64 / 100.0;
     l
 }
 
@@ -251,7 +256,7 @@ const GPU_SCALE: [f64; 4] = [1.0, 0.85, 0.7, 0.55];
 /// The limits stepped down for heat.
 pub fn scaled(mut l: Limits, h: &HeatState) -> Limits {
     l.threads = ((l.threads as f64 * THREAD_SCALE[h.cpu_level.min(3) as usize]).round() as usize).max(1);
-    l.gpu_share = GPU_SCALE[h.gpu_level.min(3) as usize];
+    l.gpu_share = l.gpu_share.min(GPU_SCALE[h.gpu_level.min(3) as usize]);
     l.heat_level = h.level();
     l
 }
@@ -380,7 +385,7 @@ static NO_NVIDIA: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 /// NVIDIA cards: busy, temperature and memory from nvidia-smi (the card
 /// with the most memory, when there are several).
-async fn nvidia_now() -> Option<GpuNow> {
+pub(crate) async fn nvidia_now() -> Option<GpuNow> {
     use std::sync::atomic::Ordering;
     if NO_NVIDIA.load(Ordering::Relaxed) {
         return None;
@@ -627,6 +632,8 @@ pub async fn set_perf(state: AppStateRef<'_>, settings: PerfSettings) -> Result<
     }
     {
         let conn = state.db.lock().unwrap();
+        // The graphics card limit is set at the top of a chat, not here.
+        s.gpu_limit = self::settings(&conn).gpu_limit;
         db::set(&conn, "perf", &s)?;
         let label = match s.mode {
             Mode::Cool => "Cool & quiet",
@@ -640,6 +647,41 @@ pub async fn set_perf(state: AppStateRef<'_>, settings: PerfSettings) -> Result<
     }
     // The running model restarts with the new limits on its next use.
     Ok(state.limits())
+}
+
+#[derive(Serialize)]
+pub struct GpuLimit {
+    percent: u8,
+    has_gpu: bool,
+}
+
+fn gpu_limit_of(state: &crate::AppState) -> GpuLimit {
+    GpuLimit {
+        percent: settings(&state.db.lock().unwrap()).gpu_limit,
+        has_gpu: state.hardware.read().unwrap().best_gpu().is_some_and(|g| g.vram_bytes > 0),
+    }
+}
+
+/// How much of the model may run on the graphics card (top of a chat).
+#[tauri::command(async)]
+pub fn gpu_limit(state: AppStateRef) -> GpuLimit {
+    gpu_limit_of(&state)
+}
+
+/// Sets it; the model reloads with it on its next reply.
+#[tauri::command(async)]
+pub fn set_gpu_limit(app: tauri::AppHandle, state: AppStateRef, percent: u8) -> Result<GpuLimit, String> {
+    use tauri::Emitter;
+    let percent = percent.min(100);
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        s.gpu_limit = percent;
+        db::set(&conn, "perf", &s)?;
+        db::log_action(&conn, "performance", &format!("Graphics card limit set to {percent}%"));
+    }
+    app.emit("gpu:limit", serde_json::json!({ "percent": percent })).ok();
+    Ok(gpu_limit_of(&state))
 }
 
 #[cfg(test)]
@@ -726,6 +768,27 @@ mod tests {
         assert_eq!(l.gpu_temp_limit, CRITICAL_GPU);
         assert!(too_hot(Temps { gpu: Some(95.0), cpu: None }, &l, 0.0).is_some());
         assert!(too_hot(Temps { gpu: Some(80.0), cpu: Some(70.0) }, &l, 0.0).is_none());
+    }
+
+    /// The limit set at the top of a chat: that share of the layers on the
+    /// card, and a hot card never puts more back.
+    #[test]
+    fn the_gpu_limit_keeps_part_of_the_model_off_the_card() {
+        let full = limits(&PerfSettings::default(), &laptop(), false);
+        assert_eq!(full.gpu_share, 1.0);
+        let half = limits(&PerfSettings { gpu_limit: 50, ..Default::default() }, &laptop(), false);
+        assert_eq!(half.gpu_share, 0.5);
+        let warm = HeatState { gpu_level: 1, cpu_level: 0, temps: Temps::default(), changed: None };
+        assert_eq!(scaled(half, &warm).gpu_share, 0.5, "the lower of the two");
+        assert_eq!(scaled(full, &warm).gpu_share, GPU_SCALE[1]);
+        let off = limits(&PerfSettings { gpu_limit: 0, ..Default::default() }, &laptop(), false);
+        let m = crate::catalog::Catalog::bundled().model("qwen3-8b").cloned().unwrap();
+        let quant = m.variants[0].quant.clone();
+        let b = crate::catalog::Budget { vram: 8 * GIB, ram: 12 * GIB, disk: 100 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 50.0 };
+        let (_, all) = crate::catalog::launch_within(&m, &quant, &b, &full);
+        let (_, some) = crate::catalog::launch_within(&m, &quant, &b, &half);
+        let (_, none) = crate::catalog::launch_within(&m, &quant, &b, &off);
+        assert!(all > 0 && some == all / 2 && none == 0, "{all} {some} {none}");
     }
 }
 

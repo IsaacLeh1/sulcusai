@@ -23,6 +23,7 @@ import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
+import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
 import { useMediaUrl } from "../media";
@@ -492,6 +493,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </button>
           ))}
         </div>
+        {!cloudId && <GpuLimitMenu toast={toast} />}
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">

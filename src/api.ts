@@ -1657,6 +1657,10 @@ export const api = {
   deleteEvent: (id: string) => invoke<void>("delete_event", { id }),
   perfView: () => invoke<PerfView>("perf_view"),
   gpuNow: () => invoke<GpuNow>("gpu_now"),
+  /** How much of the model may run on the graphics card (percent). */
+  gpuLimit: () => invoke<GpuLimit>("gpu_limit"),
+  setGpuLimit: (percent: number) => invoke<GpuLimit>("set_gpu_limit", { percent }),
+  answerMemoryWarning: (id: string, go: boolean) => invoke<void>("answer_memory_warning", { id, go }),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
@@ -1685,6 +1689,26 @@ export type MeetingEvent =
   | { meeting_id: string; kind: "error"; error: string };
 
 /** The graphics card right now (bottom bar). */
+export interface GpuLimit {
+  percent: number;
+  has_gpu: boolean;
+}
+
+/** Before loading a model: the PC is short of memory right now. */
+export interface MemoryWarning {
+  id: string;
+  model: string;
+  ram_need: number;
+  ram_free: number;
+  ram_total: number;
+  vram_need: number;
+  vram_free: number | null;
+  vram_total: number | null;
+  short_ram: boolean;
+  short_vram: boolean;
+  apps: { name: string; bytes: number }[];
+}
+
 export interface GpuNow {
   name: string | null;
   /** Percent busy. */
@@ -1731,6 +1755,9 @@ export interface ChatEvents {
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
+  "gpu:limit": { percent: number };
+  "engine:memory": MemoryWarning;
+  "engine:memory_done": { id: string };
   "chat:web": { chat_id: string; web: boolean };
   "app:navigate": { page: string };
   "mail:triage": { done: number; total: number };

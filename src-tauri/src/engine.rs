@@ -271,6 +271,16 @@ impl Engine {
         }
     }
 
+    /// The model running now, as launched: (process id, model, quantization,
+    /// context, GPU layers). Loading another one frees what it holds.
+    pub fn loaded(&mut self) -> Option<(Option<u32>, String, String, u32, u32)> {
+        if !self.alive() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        Some((r.child.id(), r.model_id.clone(), r.quant.clone(), r.ctx, r.gpu_layers))
+    }
+
     /// The running endpoint, if it is already serving this model.
     pub fn endpoint_for(&mut self, model_id: &str) -> Option<Endpoint> {
         if !self.alive() {

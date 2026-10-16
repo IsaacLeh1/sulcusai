@@ -12,7 +12,7 @@ const MIB: u64 = 1024 * 1024;
 
 /// Compute buffers, CUDA/Vulkan context and other runtime memory on top of
 /// weights and KV cache.
-const RUNTIME_OVERHEAD: u64 = 700 * MIB;
+pub const RUNTIME_OVERHEAD: u64 = 700 * MIB;
 /// Slowest generation speed (tokens/second) we still call usable.
 pub const MIN_TPS: f64 = 4.0;
 /// A GPU variant at or above this speed counts as comfortable.

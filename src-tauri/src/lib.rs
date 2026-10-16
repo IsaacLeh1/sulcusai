@@ -45,6 +45,7 @@ mod mail;
 mod mcp;
 mod media;
 mod meeting;
+mod memcheck;
 mod memory;
 mod natural;
 mod net;
@@ -1491,11 +1492,25 @@ pub(crate) async fn llm_endpoint(
         batch,
         lora: lora.as_deref(),
     };
-    let mut ep = match engine.endpoint_for(&installed.model_id) {
+    let reuse = match engine.endpoint_for(&installed.model_id) {
         // Same model: new limits (mode, heat) apply between replies, and only
         // when no other chat is mid-reply on it.
-        Some(ep) if engine.matches(&launch) || state.generations.lock().unwrap().len() > 1 => ep,
-        _ => {
+        Some(ep) if engine.matches(&launch) || state.generations.lock().unwrap().len() > 1 => Some(ep),
+        _ => None,
+    };
+    let mut ep = match reuse {
+        Some(ep) => ep,
+        None => {
+            // Room for it right now (a game may be holding the memory)? The
+            // engine isn't held while the person decides.
+            let replacing = engine.loaded().map(|(pid, id, quant, ctx, layers)| {
+                (pid, state.model_spec(&id).map(|s| memcheck::need(&s, &quant, ctx, layers, 0)).unwrap_or_default())
+            });
+            drop(engine);
+            let encoder_size = launch.mmproj.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
+            let want = memcheck::need(&spec, &installed.quant, ctx, gpu_layers, encoder_size);
+            memcheck::before_loading(state, &spec, want, replacing).await?;
+            let mut engine = state.engine.lock().await;
             on_loading();
             engine.ensure(launch, state.job()).await?
         }
@@ -1673,6 +1688,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
             perf::gpu_now,
+            perf::gpu_limit,
+            perf::set_gpu_limit,
+            memcheck::answer_memory_warning,
             security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,

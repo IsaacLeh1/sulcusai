@@ -1256,3 +1256,14 @@ button.ctx:hover { background: var(--hover); }
 .queue-chip > .ellipsis { min-width: 0; }
 .queue-chip .link { font-size: 15px; line-height: 1; padding: 0 2px; }
 .msg.user .added-note { display: block; text-align: right; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+/* Top of a chat: how much of the model runs on the graphics card */
+.gpu-limit { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.gpu-limit select { font-size: 12.5px; padding: 2px 6px; }
+/* Before loading a model: short of memory */
+.memory-bars { display: grid; gap: 10px; margin: 10px 0; }
+.memory-bar .label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+.memory-bar .track { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; display: flex; }
+.memory-bar .used { background: var(--muted); }
+.memory-bar .model { background: var(--accent); }
+.memory-bar.short .model { background: var(--danger); }
+.memory-apps { margin: 6px 0 10px; padding-left: 18px; font-size: 13px; }
