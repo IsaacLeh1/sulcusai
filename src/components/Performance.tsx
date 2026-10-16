@@ -233,7 +233,7 @@ export function GpuLimitMenu({ toast }: { toast: PushToast }) {
   return (
     <label
       className="gpu-limit"
-      title={t("How much of the model runs on the graphics card. Lower leaves the card freer and cooler (for a game, say), but replies are slower, since the rest runs on the processor. Applies from the next reply.")}
+      title={t("How much of the model runs on the graphics card. Lower leaves the card freer and cooler (for a game, say). The processor is held back to match, so it doesn't run hot instead, and replies are slower. Applies from the next reply.")}
     >
       <span>{t("GPU")}</span>
       <select
@@ -243,7 +243,7 @@ export function GpuLimitMenu({ toast }: { toast: PushToast }) {
           const percent = Number(e.target.value);
           try {
             setLimit(await api.setGpuLimit(percent));
-            toast(percent === 0 ? t("The model will run on the processor only, from the next reply.") : t("Up to {n}% of the model on the graphics card, from the next reply.", { n: percent }), "success");
+            toast(percent === 0 ? t("From the next reply, the model runs on the processor only, on a quarter of it so it stays cool (slowly).") : t("From the next reply: up to {n}% of the model on the graphics card, and the processor held back to match.", { n: percent }), "success");
           } catch (err) {
             toast(errorText(err), "error");
           }

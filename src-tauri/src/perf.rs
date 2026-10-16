@@ -170,8 +170,18 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     l.vram_bytes = l.vram_bytes.min((vram as f64 * c.gpu_percent as f64 / 100.0) as u64);
     l.ram_bytes = l.ram_bytes.min(ceiling_ram);
     l.gpu_share = s.gpu_limit.min(100) as f64 / 100.0;
+    // A lower GPU limit moves work to the processor: hold it to the same
+    // share (a quarter of its cores at least, so the model still runs), at
+    // below-normal priority, so it doesn't run hot instead. Slower, as asked.
+    if s.gpu_limit < 100 {
+        l.threads = ((l.threads as f64 * CPU_FLOOR.max(l.gpu_share)).round() as usize).max(1);
+        l.low_priority = true;
+    }
     l
 }
+
+/// The least share of the processor the GPU limit leaves the model.
+const CPU_FLOOR: f64 = 0.25;
 
 pub fn settings(conn: &rusqlite::Connection) -> PerfSettings {
     db::get(conn, "perf").unwrap_or_default()
@@ -781,7 +791,13 @@ mod tests {
         let warm = HeatState { gpu_level: 1, cpu_level: 0, temps: Temps::default(), changed: None };
         assert_eq!(scaled(half, &warm).gpu_share, 0.5, "the lower of the two");
         assert_eq!(scaled(full, &warm).gpu_share, GPU_SCALE[1]);
+        // The processor is held back to match, so it doesn't run hot instead.
+        assert!(!full.low_priority);
+        assert_eq!(half.threads, ((full.threads as f64) * 0.5).round() as usize);
+        assert!(half.low_priority);
         let off = limits(&PerfSettings { gpu_limit: 0, ..Default::default() }, &laptop(), false);
+        assert_eq!(off.threads, ((full.threads as f64) * 0.25).round().max(1.0) as usize, "a quarter of the cores at least");
+        assert!(scaled(half, &HeatState { gpu_level: 0, cpu_level: 2, temps: Temps::default(), changed: None }).threads <= half.threads, "a hot processor only lowers it");
         let m = crate::catalog::Catalog::bundled().model("qwen3-8b").cloned().unwrap();
         let quant = m.variants[0].quant.clone();
         let b = crate::catalog::Budget { vram: 8 * GIB, ram: 12 * GIB, disk: 100 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 50.0 };

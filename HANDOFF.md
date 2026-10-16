@@ -619,7 +619,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Ctrl+Enter / Queue → `QUEUED`. When the reply finishes, the unread inbox plus the queue go out as one message (`send_later`). Stopping keeps them (`chat_queue_send`).
   - UI: chips above the box; Add now / Queue buttons and a hint while replying. Test `a_message_added_mid_reply_is_read_and_answered`.
 - **GPU limit:**
-  - `PerfSettings.gpu_limit` (percent) → `Limits.gpu_share`, which `launch_within` uses for the layers on the card. A hot card can only lower it further.
+  - `PerfSettings.gpu_limit` (percent) → `Limits.gpu_share`, which `launch_within` uses for the layers on the card. A hot card can only lower it further. Under 100%, the processor is held to the same share too (`Limits.threads`, at least a quarter of the cores via `CPU_FLOOR`) and runs at below-normal priority, so the work moved off the card doesn't overheat the CPU instead. Adaptive cooling can lower the threads further.
   - `GpuLimitMenu` sits in the chat header (hidden for cloud models and PCs without a GPU). `set_perf` keeps the stored `gpu_limit`.
   - llama.cpp has no way to cap utilisation, so this is the closest real control.
 - **Memory check** (`memcheck.rs`):
