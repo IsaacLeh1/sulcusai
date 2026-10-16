@@ -672,6 +672,38 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - `chat::api_messages` gives the owner's model both as user-role notes ("[Ben's assistant (model, on Ben's PC) answered Ben:]"). `SharedMsg.mine` (id prefix = own device id) puts one's own messages on the right.
   - Test: the participation part of `a_shared_chat_is_watched_live`.
 
+## Batch for 0.9.4 (2026-10-16, not built)
+- **Sync now** (`sync::sync_now`, now async) runs the round itself and returns `SyncReport {view, results}`: per paired PC, ok with `changes` (the window words it), "Already syncing", or why not (`NOT_HERE`, relay/timeout errors). SyncSettings shows a spinner, then the list.
+- **Messages sent mid-reply stay in the chat:**
+  - `inbox::SENDING` holds what goes out as the next message; `unread()` is SENDING + OPEN.
+  - `told()` emits `chat:inbox {waiting}`. It fires on add, take (agent step), finish/drop and `send_later`. `inbox::sent()` clears SENDING once `run_turn_with` saved the message, which also emits `chat:changed` (so turns started from the queue, another chat or the phone show at once).
+  - ChatView renders `waiting` as dashed bubbles: "⏳ Sent while it worked · waiting for the model to read it".
+- **Dedicated GPU:**
+  - `engine::dedicated_devices` runs `llama-server --list-devices` once per engine and matches names against `hardware::cards()`. It passes `--device VulkanN` only when an integrated chip is also listed. Your laptop: Vulkan0 = RTX 5070 Ti, Vulkan1 = Intel.
+  - `prefer_dedicated` sets `GGML_VK_VISIBLE_DEVICES` for media/speech engines, only when the engine saw every card (so the indices line up).
+  - Status bar (`perf::gpu_now`) reads only the dedicated card: nvidia-smi for NVIDIA; otherwise PDH counters filtered by the card's LUID (`Gpu.luid` from DXGI) plus `card_temp` (D3DKMT adapter perf data, the Task Manager sensor). `gpu_temp` falls back to that too.
+- **Making files instead of pasting code:**
+  - His qwen2.5-coder:14b (Ollama) ignored tools entirely: 0 tool calls in 18 messages.
+  - `chat::builds_in_chat` catches a request to make something answered with code or steps. `forced_build` retries once with a JSON schema allowing only `write_file`/`make_folder` (or `request_folder`), the same way `forced_lookup` works.
+  - `e2e_makes_files_on_ollama_model` (SULCUSAI_TEST_GGUF = the blob) passes. It approves the folder request into its own temp folder and denies open_path/open_page. An earlier version put two folders on his Desktop (`sweetcrumbs-website`, `SweetCrumbsWebsite`); he can delete them.
+  - Imported models get catalog ratings by family (`local::known_ratings`).
+- **Activity:** Today / Past week / Past month / All time (`list_actions` takes `since`).
+- **Settings search** (`SettingsSearch.tsx` + `fuzzy.ts`, tested in `fuzzy.test.ts`): indexes the page's headings, labels, callouts and aria-labelled inputs. Handles typos (Damerau distance), prefixes and a synonym map, and shows "Showing results for …". Picking a result scrolls there and highlights it.
+- **Cloud keys:** Open WebUI (`…/api`) and LiteLLM (`…/v1`) buttons in Cloud models, a "Cloud models and API keys…" link in the connectivity menu (`openSettings` → `open-settings` event), and `not_an_api` explains a sign-in page (his aigateway is behind Entra App Proxy) instead of a JSON error.
+- **Phone: one phone, with a password:**
+  - `add_phone(name, password)` replaces any paired phone.
+  - The password is Argon2id (19 MiB, t=2), stored as `pass_hash`/`pass_salt`.
+  - The page asks for it each time it opens (`login` op, sealed); the session token lives in sessionStorage and in `SESSIONS` (12 h idle, gone on restart).
+  - Wrong tries: waits from the 4th, unpaired at 10.
+  - Phones paired before have no hash and must pair again.
+  - The settings now say plainly that a tampered page on an untrusted network could still catch the password.
+- **Pictures:**
+  - `media::styled` adds a look; `auto` is a realistic photo unless the description names one. The chat tool and the Studio have `style`. Tested on FLUX.2 klein: portrait → top hat → party.
+  - When the card fails twice (`card_trouble`), a picture is made with the processor build (`cpu_engine` downloads ~18 MB once). The half-VRAM retry now adds `--vae-tiling`.
+  - There's a Files panel per chat (top right: pictures made or attached, files written). `write_file` results carry `meta.file`. `open_document` allows pages and pictures (never scripts); `show_in_folder` uses `explorer /select`.
+  - Save buttons under pictures in chats. Badges for what media models make. "✨ Improve" in the Studio rewrites the idea with the chat model; "✏ Edit a photo…" imports and opens the editor.
+- Not done: a model or engine to make the brother's card work (no logs from his PC). The fallback should get him a picture either way.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
