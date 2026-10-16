@@ -749,6 +749,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {attached.length > 0 && model && !model.vision && !cloud && (
           <p className="small warn-text center">{t("{name} can't see pictures. Pick Qwen3 VL or Gemma 3 from the model menu (install them from Models).", { name: model.name })}</p>
         )}
+        {model && model.tools && !cloud && features.has("files") && model.params_b > 0 && model.params_b < 3 && (
+          <p className="muted small center">{t("{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.", { name: model.name })}</p>
+        )}
         {model && !model.tools && !cloud && (
           <p className="muted small center">{t("{name} can chat but can't use files or commands. Qwen3 models can.", { name: model.name })}</p>
         )}

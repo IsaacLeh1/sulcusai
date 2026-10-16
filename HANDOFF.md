@@ -719,6 +719,20 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Links and junctions are followed and copied, never renamed or emptied (what they point at stays). The link itself is removed at the end.
   - Tested in `a_failed_move_puts_everything_back`, `files_already_there_are_kept_not_copied_again` and `linked_folders_are_copied_not_emptied`.
   - His "move didn't happen" (2026-10-14, to D:) wasn't this bug. His real app's models folder was empty. The 27 GB under `app.sulcusai.desktop\models` existed only in Claude's MSIX container (`Packages\Claude_*\LocalCache`), downloaded by session-launched runs. It was moved to `D:\SulcusAI models` on 2026-10-16 with robocopy run through WMI, and the duplicates were hash-checked first.
+- **Making files with small models** (after 0.9.4). His real app (qwen2.5-coder 1.5B by default) still didn't make files.
+  - **What his real chats showed** (decrypted from a copy with `inspect_a_chat_copy`):
+    - The 1.5B called `create_document` with "stock-exchange-site" four times, getting the same error each time.
+    - The 14B, after pasting instructions, answered "try again to do it for me" with "As an AI, I can't…".
+  - **Fixes:**
+    - `is_build_ask` looks at the last 3 user messages ("do it for me" after a build ask counts), and `wants_a_document` decides whether `create_document` is offered at all.
+    - `builds_in_chat` also catches "I can't" (`CANT_DO`) and question-only replies (`only_asks`).
+    - The forced retry allows only `write_file`, and suggests a single self-contained index.html.
+    - When the model stops, `Turn` follows through: `missing_pieces` finds css/js files a written page uses but which don't exist, and `forced_write` writes each with the path fixed in the schema. A build ask with nothing written yet gets `forced_build`. Up to 4 follow-ups.
+    - A call that failed isn't run again unchanged, and two identical failing repeats end the turn with the error spelled out.
+    - The `create_document` error points to `write_file`. ChatView warns under the composer when a model is under 3B.
+  - Verified with his models through `e2e_makes_files_on_ollama_model`, using `SULCUSAI_TEST_ASKS` and `SULCUSAI_TEST_BEFORE` for the follow-up case:
+    - The 1.5B now writes index.html, styles.css and script.js. They're very basic, which is the model's limit.
+    - The 14B now writes a working index.html after "try again to do it for me".
 - **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
 ## Website (2026-10-12)

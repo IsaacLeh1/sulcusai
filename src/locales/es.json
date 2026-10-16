@@ -2579,5 +2579,6 @@
  "Take back": "Retirar",
  "left before this was kept": "dejada antes de que esto se registrara",
  "left by “{chat}”": "dejada por “{chat}”",
- "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "“Los chats trabajan juntos” está activado (Funciones), así que los chats pueden leer libremente las notas y traspasos de los demás."
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "“Los chats trabajan juntos” está activado (Funciones), así que los chats pueden leer libremente las notas y traspasos de los demás.",
+ "{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.": "{name} es muy pequeño: a menudo elige la herramienta equivocada o explica en lugar de hacer. Para crear cosas, elige en el menú un modelo de 7B o más."
 }

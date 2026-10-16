@@ -2579,5 +2579,6 @@
  "Take back": "Zurücknehmen",
  "left before this was kept": "hinterlassen, bevor das erfasst wurde",
  "left by “{chat}”": "hinterlassen von „{chat}“",
- "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "„Chats arbeiten zusammen“ ist an (Funktionen), daher können Chats Notizen und Übergaben der anderen frei lesen."
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "„Chats arbeiten zusammen“ ist an (Funktionen), daher können Chats Notizen und Übergaben der anderen frei lesen.",
+ "{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.": "{name} ist sehr klein: Es wählt oft das falsche Werkzeug oder erklärt, statt es zu tun. Wähle zum Erstellen im Menü ein Modell mit 7B oder mehr."
 }

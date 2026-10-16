@@ -2579,5 +2579,6 @@
  "Take back": "取り消す",
  "left before this was kept": "記録を始める前に残されたもの",
  "left by “{chat}”": "「{chat}」が残したもの",
- "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "「チャットの連携」がオン（機能）なので、チャット同士でメモや引き継ぎを自由に読めます。"
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "「チャットの連携」がオン（機能）なので、チャット同士でメモや引き継ぎを自由に読めます。",
+ "{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.": "{name} はとても小さいモデルです。間違ったツールを選んだり、実行せずに説明だけしたりしがちです。何かを作るときは、メニューから 7B 以上のモデルを選んでください。"
 }

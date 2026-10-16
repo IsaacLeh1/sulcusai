@@ -214,14 +214,17 @@ impl Turn {
             let on = crate::features::enabled(&conn);
             let memory_on = on.contains(&Feature::Memory) && db::settings(&conn).memory_enabled && !chat.incognito;
             let memories = if memory_on { memory::list(&conn, &self.cipher, chat.project_id.as_deref()) } else { Vec::new() };
-            let request = db::messages(&conn, &self.cipher, &self.chat_id)
-                .into_iter()
-                .find(|m| m.id == self.turn_id)
-                .map(|m| m.content)
-                .unwrap_or_default();
+            let msgs = db::messages(&conn, &self.cipher, &self.chat_id);
+            let request = msgs.iter().find(|m| m.id == self.turn_id).map(|m| m.content.clone()).unwrap_or_default();
+            // Their last few messages, newest first: "do it for me" refers back to the ask.
+            let recent: Vec<String> = msgs.iter().rev().filter(|m| m.role == "user").take(3).map(|m| m.content.clone()).collect();
             let folders = if on.contains(&Feature::Files) { projects::chat_folders(&conn, &chat) } else { Vec::new() };
-            (folders, project, memories, memory_on, request, on, chat.incognito)
+            (folders, project, memories, memory_on, (request, recent), on, chat.incognito)
         };
+        let (request, recent_asks) = request;
+        // Asked to make a site, an app or code (not a document): the document
+        // tool stays out, or small models reach for it and fail.
+        let build_ask = chat::is_build_ask(&recent_asks.iter().map(String::as_str).collect::<Vec<_>>()) && !chat::wants_a_document(&request);
         let mut sandbox = Sandbox::new(&folders);
         let files = self.use_tools && !sandbox.is_empty();
         let memory_tools = self.use_tools && memory_on;
@@ -261,7 +264,7 @@ impl Turn {
         }
         if files && features.contains(&Feature::Documents) {
             extra.push("read_document");
-            if self.mode != tools::Mode::Plan {
+            if self.mode != tools::Mode::Plan && !build_ask {
                 extra.push("create_document");
             }
         }
@@ -400,6 +403,13 @@ impl Turn {
         // Calls already made this turn, to catch a model asking for the same thing again.
         let mut done_calls: Vec<String> = Vec::new();
         let mut repeats = 0;
+        // Files written this turn, and the follow-ups asked for the pieces they need.
+        let mut written: Vec<std::path::PathBuf> = Vec::new();
+        let mut follow_up: Option<chat::ForcedLookup> = None;
+        let mut follow_ups = 0;
+        // Calls that failed this turn and why: the same call again won't do better.
+        let mut failed_calls: Vec<(String, String)> = Vec::new();
+        let mut failed_repeats = 0;
         for step in 0..max_steps {
             // What the person added while it worked: part of the conversation from here.
             let added = crate::inbox::take(&self.chat_id);
@@ -425,6 +435,14 @@ impl Turn {
             // Set when the model stalled: one more try that can only be a lookup.
             let mut forced: Option<(Endpoint, chat::ForcedLookup)> = None;
             let mut first = None;
+            // A page it wrote needs a file it didn't write: this step writes it.
+            if let Some(f) = follow_up.take() {
+                let mut ep = self.ep.clone();
+                ep.extra["response_format"] = f.response_format.clone();
+                ep.extra["max_tokens"] = json!((self.ep.ctx / 2).clamp(1024, 8192));
+                forced = Some((ep, f));
+                first = Some(chat::Finished { content: String::new(), thinking: String::new(), tool_calls: Vec::new(), prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None });
+            }
             let finished = loop {
                 self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
                 let mut messages = chat::api_messages(&system, &kept);
@@ -486,10 +504,11 @@ impl Turn {
                 // or calendar, or says it can't access them, instead of looking
                 // gets one more try that can only be a lookup. The reply is dropped.
                 let asked = history.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
+                let recent: Vec<&str> = history.iter().rev().filter(|m| m.role == "user").take(3).map(|m| m.content.as_str()).collect();
                 let offered: Vec<String> = tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
                 // Asked to make something and pasted it (or steps) instead: one
                 // more try that can only make it on the PC. The pasted reply is dropped.
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(asked, &finished.content, &offered) {
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(&recent, &finished.content, &offered) {
                     if let Some(f) = tools.as_ref().and_then(chat::forced_build) {
                         let mut ep = self.ep.clone();
                         ep.extra["response_format"] = f.response_format.clone();
@@ -547,6 +566,26 @@ impl Turn {
                 break;
             }
             if calls.is_empty() {
+                // It stopped, but a page it wrote uses files it didn't write
+                // (small models write index.html and leave out styles.css):
+                // one more step writes each, up to a few.
+                if follow_ups < 4 && self.ep.cloud.is_none() && step < max_steps - 1 {
+                    let can_write = tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("write_file")));
+                    let next = chat::missing_pieces(&written)
+                        .into_iter()
+                        .next()
+                        .and_then(|(page, missing)| tools.as_ref().and_then(|t| chat::forced_write(t, &page, &missing)))
+                        // Asked to make something, a folder to make it in, and
+                        // it stopped without writing anything ("Great, let's
+                        // proceed"): the next step writes the first file.
+                        .or_else(|| (build_ask && can_write && written.is_empty()).then(|| tools.as_ref().and_then(chat::forced_build)).flatten());
+                    if let Some(f) = next {
+                        follow_ups += 1;
+                        follow_up = Some(f);
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
+                }
                 // Something was added while it wrote this: it answers that too.
                 if crate::inbox::waiting(&self.chat_id) && step < max_steps - 1 {
                     self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -566,8 +605,15 @@ impl Turn {
             for call in &calls {
                 let key = call_key(call);
                 let repeat = done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
+                let failed_before = failed_calls.iter().find(|(k, _)| *k == key).map(|(_, why)| why.clone());
                 let outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
+                } else if let Some(why) = failed_before {
+                    failed_repeats += 1;
+                    Outcome::error(
+                        tools::failed_title(&call.name, &args_of(call)),
+                        format!("This exact call already failed: {why} Don't send it again unchanged: fix what the error says, or use another tool."),
+                    )
                 } else if repeat {
                     repeats += 1;
                     Outcome::ok(
@@ -577,8 +623,18 @@ impl Turn {
                         None,
                     )
                 } else {
-                    done_calls.push(key);
-                    self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await
+                    done_calls.push(key.clone());
+                    let o = self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await;
+                    if call.name == "write_file" && o.meta["status"] != "error" {
+                        if let Some(f) = o.meta["file"].as_str() {
+                            written.push(std::path::PathBuf::from(f));
+                        }
+                    }
+                    if o.meta["status"] == "error" {
+                        let why = o.meta["detail"].as_str().map(str::to_string).unwrap_or_else(|| o.text.clone());
+                        failed_calls.push((key, why));
+                    }
+                    o
                 };
                 // The user let it use the web: the web tools, from the next step on.
                 if outcome.meta["web_granted"] == true {
@@ -622,6 +678,23 @@ impl Turn {
                 let outcome = fit_result(outcome, self.ep.ctx);
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+            }
+            // The same failing call again and again: stop, and say what went wrong.
+            if failed_repeats >= 2 {
+                let why = failed_calls.last().map(|(_, w)| w.clone()).unwrap_or_default();
+                let note = Message {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    chat_id: self.chat_id.clone(),
+                    role: "assistant".into(),
+                    content: format!(
+                        "I kept trying the same thing and it kept failing, so I stopped. The error was: {why}\n\nA larger model usually gets this right: pick one from the model menu (one with 7B or more), then ask again."
+                    ),
+                    created_at: now(),
+                    ..Default::default()
+                };
+                self.save(&note)?;
+                result.last = Some(note);
+                break;
             }
             // Going in circles: stop rather than spend minutes repeating itself.
             if repeats >= 3 {
@@ -1167,6 +1240,11 @@ impl Turn {
     fn log(&self, summary: &str) {
         db::log_action_enc(&self.state.db.lock().unwrap(), &self.cipher, "agent", summary);
     }
+}
+
+/// A call's arguments as JSON (empty when they don't parse).
+fn args_of(call: &ToolCall) -> Value {
+    serde_json::from_str(&call.arguments).unwrap_or_default()
 }
 
 /// Tools that come from outside the built-in set, for one turn.

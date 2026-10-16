@@ -2579,5 +2579,6 @@
  "Take back": "Retirer",
  "left before this was kept": "laissée avant que ce suivi existe",
  "left by “{chat}”": "laissée par « {chat} »",
- "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "« Les discussions travaillent ensemble » est activé (Fonctionnalités) : les discussions peuvent lire librement les notes et passations des autres."
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "« Les discussions travaillent ensemble » est activé (Fonctionnalités) : les discussions peuvent lire librement les notes et passations des autres.",
+ "{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.": "{name} est très petit : il choisit souvent le mauvais outil ou explique au lieu de faire. Pour créer des choses, choisissez dans le menu un modèle de 7B ou plus."
 }

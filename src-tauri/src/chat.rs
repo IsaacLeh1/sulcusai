@@ -538,12 +538,87 @@ static HANDS_OVER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
     regex::Regex::new(r"(?i)\b(create (a|an|the) (new )?(file|folder|directory)|save (this|it|the (code|file)) as|copy (and paste |the following|this)|paste (this|it|the following)|open (your|a) (terminal|editor|text editor|command prompt)|step 1\b|here'?s (the|a|some) (code|html|script))").unwrap()
 });
 
-/// A request to make something answered with code or steps in the chat,
-/// though tools to make it on the PC were offered.
-pub fn builds_in_chat(user: &str, reply: &str, offered: &[String]) -> bool {
+// "Do it for me" after asking for something to be made.
+static DO_IT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(do (it|this|that|it all|all (of )?(it|this|that))|try again|go ahead|build it|make it|run it|for me|yourself|on my (pc|computer|laptop))\b").unwrap()
+});
+// Saying it can't make or run things, which it can here.
+static CANT_DO: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\bas an ai\b|\bi (can't|cannot|can not|am unable to|'m unable to|am not able to|don't have the ability to|do not have the ability to) (directly )?(execute|run|create|make|build|access|write|set up|save)\b|\b(can't|cannot) (create|write|save) files\b").unwrap()
+});
+// Asking for a document (Word, PDF, Excel, PowerPoint, Markdown), which create_document makes.
+static DOCUMENT_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(docx?|word (doc|document|file)|pdf|excel|spreadsheet|xlsx|powerpoint|slides?|deck|pptx|report|resume|cv|letter|memo|markdown)\b|\.md\b").unwrap()
+});
+
+/// The person asked for something to be made: in their newest message, or
+/// earlier with the newest saying "do it" ("do it for me", "try again").
+/// `recent_user` is their last few messages, newest first.
+pub fn is_build_ask(recent_user: &[&str]) -> bool {
+    let Some((newest, earlier)) = recent_user.split_first() else { return false };
+    BUILD_ASK.is_match(newest) || (DO_IT.is_match(newest) && earlier.iter().any(|m| BUILD_ASK.is_match(m)))
+}
+
+/// Asking for a document rather than a site, an app or code.
+pub fn wants_a_document(text: &str) -> bool {
+    DOCUMENT_ASK.is_match(text)
+}
+
+/// A short reply that only asks for details ("What kind of features do you
+/// need?") instead of making a first version.
+fn only_asks(reply: &str) -> bool {
+    static ASKS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(what (kind|sort|type)s? of|which (features|kind|type|style|framework|language|pages)|what (features|would you like|do you (want|need|have in mind))|do you (want|need|have|prefer)|would you like|(could|can) you (tell|share|provide|describe|give)|let me know)\b").unwrap()
+    });
+    let r = reply.trim();
+    r.chars().count() < 600 && r.contains('?') && (ASKS.is_match(r) || STALLING.is_match(r))
+}
+
+/// A request to make something answered with code, steps, "I can't" or
+/// questions in the chat, though tools to make it on the PC were offered.
+pub fn builds_in_chat(recent_user: &[&str], reply: &str, offered: &[String]) -> bool {
     let can_make = offered.iter().any(|n| n == "write_file" || n == "request_folder");
     let code_lines = reply.split("```").skip(1).step_by(2).map(|block| block.lines().count()).sum::<usize>();
-    can_make && BUILD_ASK.is_match(user) && (code_lines >= 4 || HANDS_OVER.is_match(reply))
+    can_make && is_build_ask(recent_user) && (code_lines >= 4 || HANDS_OVER.is_match(reply) || CANT_DO.is_match(reply) || only_asks(reply))
+}
+
+/// Files a page it wrote uses but that aren't there yet: (the page, the
+/// missing file's full path). Only stylesheets and scripts, which it can write.
+pub fn missing_pieces(written: &[std::path::PathBuf]) -> Vec<(String, std::path::PathBuf)> {
+    static REF: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r#"(?i)(?:href|src)\s*=\s*["']([^"'#?]+\.(?:css|js|mjs))["']"#).unwrap());
+    let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
+    for page in written.iter().filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm"))) {
+        let Ok(text) = std::fs::read_to_string(page) else { continue };
+        let Some(dir) = page.parent() else { continue };
+        for c in REF.captures_iter(&text) {
+            let r = &c[1];
+            if r.contains("://") || r.starts_with("//") || r.starts_with('/') || r.contains("..") {
+                continue;
+            }
+            let full = dir.join(r);
+            if !full.exists() && !out.iter().any(|(_, p)| *p == full) {
+                out.push((page.file_name().unwrap_or_default().to_string_lossy().into_owned(), full));
+            }
+        }
+    }
+    out
+}
+
+/// One call that writes a file a page needs (its path fixed in the schema).
+pub fn forced_write(tools: &Value, page: &str, missing: &std::path::Path) -> Option<ForcedLookup> {
+    let def = tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some("write_file"))?;
+    let path = missing.display().to_string();
+    let mut params = def["function"]["parameters"].clone();
+    params["properties"]["path"] = json!({ "type": "string", "const": path });
+    let schema = json!({ "type": "object", "properties": { "name": { "const": "write_file" }, "arguments": params }, "required": ["name", "arguments"] });
+    let name = missing.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    Some(ForcedLookup {
+        names: vec!["write_file".into()],
+        nudge: format!(
+            "({page} uses {name}, which doesn't exist yet, so the page won't work. Write it now with write_file (path {path:?}): its full, working contents to go with {page}. Reply with only one tool call as JSON, {{\"name\": \"write_file\", \"arguments\": {{...}}}}.)"
+        ),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
 }
 
 /// For a model that pasted what it was asked to make: one call that makes it
@@ -552,7 +627,8 @@ pub fn forced_build(tools: &Value) -> Option<ForcedLookup> {
     let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
     let all = tools.as_array()?;
     let has = |n: &str| all.iter().any(|t| name_of(t) == n);
-    let pick: &[&str] = if has("write_file") { &["write_file", "make_folder"] } else if has("request_folder") { &["request_folder"] } else { return None };
+    // A file, not just a folder (a small model would stop there).
+    let pick: &[&str] = if has("write_file") { &["write_file"] } else if has("request_folder") { &["request_folder"] } else { return None };
     let list: Vec<&Value> = all.iter().filter(|t| pick.contains(&name_of(t).as_str())).collect();
     let names: Vec<String> = list.iter().map(|t| name_of(t)).collect();
     let schema = json!({ "oneOf": list.iter().map(|t| json!({
@@ -561,7 +637,9 @@ pub fn forced_build(tools: &Value) -> Option<ForcedLookup> {
         "required": ["name", "arguments"],
     })).collect::<Vec<_>>() });
     let what = if names[0] == "write_file" {
-        "Make it on my PC now: write the first file with write_file (its full contents, not a sketch). You'll write the rest next."
+        "Make a sensible first version on my PC now, choosing the details yourself: write the first file with write_file \
+         (its full, working contents, not a sketch; for a website, one index.html with its CSS and JavaScript inside is fine). \
+         You'll write any other files next."
     } else {
         "Make it on my PC: first ask for a folder to work in with request_folder."
     };
@@ -922,15 +1000,36 @@ Found it.
     fn notices_a_model_pasting_what_it_was_asked_to_make() {
         let files = vec!["read_file".to_string(), "write_file".to_string()];
         let code = "Sure! Here's a simple site.\n\n```html\n<!doctype html>\n<html>\n<body>\n<h1>Hi</h1>\n</body>\n</html>\n```\nSave it as index.html and open it.";
-        assert!(builds_in_chat("Make me a website for my bakery", code, &files));
-        assert!(builds_in_chat("can you create a python script that renames my photos", "Step 1: open your terminal. Step 2: ...", &files));
-        assert!(builds_in_chat("put this in notes.txt", "Create a new file called notes.txt and paste this in.", &files));
+        assert!(builds_in_chat(&["Make me a website for my bakery"], code, &files));
+        assert!(builds_in_chat(&["can you create a python script that renames my photos"], "Step 1: open your terminal. Step 2: ...", &files));
+        assert!(builds_in_chat(&["put this in notes.txt"], "Create a new file called notes.txt and paste this in.", &files));
         // No folder yet: asking for one still counts as making it.
-        assert!(builds_in_chat("Build a todo app", code, &["request_folder".to_string()]));
+        assert!(builds_in_chat(&["Build a todo app"], code, &["request_folder".to_string()]));
         // Nothing to make it with, a question, or a short snippet in an explanation: left alone.
-        assert!(!builds_in_chat("Make me a website", code, &["read_file".to_string()]));
-        assert!(!builds_in_chat("What's a closure in Rust?", "```rust\nlet f = |x| x + 1;\nprintln!(\"{}\", f(1));\nlet g = f;\n```", &files));
-        assert!(!builds_in_chat("How do I write a for loop in Python?", "Like this: `for x in xs:`", &files));
+        assert!(!builds_in_chat(&["Make me a website"], code, &["read_file".to_string()]));
+        assert!(!builds_in_chat(&["What's a closure in Rust?"], "```rust\nlet f = |x| x + 1;\nprintln!(\"{}\", f(1));\nlet g = f;\n```", &files));
+        assert!(!builds_in_chat(&["How do I write a for loop in Python?"], "Like this: `for x in xs:`", &files));
+        // What his qwen2.5-coder said after "try again to do it for me" (the build ask came earlier).
+        let refusal = "I'm sorry for the confusion. As an AI, I can't directly execute commands on your computer to build a website. However, I can guide you through the process step-by-step.";
+        assert!(builds_in_chat(&["try again to do it for me", "Do all this for me", "Build the website and run it"], refusal, &files));
+        assert!(!builds_in_chat(&["try again to do it for me", "What's the weather like?"], refusal, &files), "nothing was asked to be made");
+        // A page that uses files it didn't write: they're named for writing next.
+        let dir = std::env::temp_dir().join(format!("sulcus-pieces-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("index.html");
+        std::fs::write(&page, r#"<link rel="stylesheet" href="styles.css"><script src="script.js"></script><script src="https://cdn.example.com/x.js"></script>"#).unwrap();
+        std::fs::write(dir.join("script.js"), "1").unwrap();
+        let missing = missing_pieces(&[page.clone()]);
+        assert_eq!(missing, vec![("index.html".to_string(), dir.join("styles.css"))], "styles.css is missing; script.js is there; the CDN one isn't ours");
+        let tools = json!([{ "type": "function", "function": { "name": "write_file", "description": "", "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } } } } }]);
+        let f = forced_write(&tools, "index.html", &dir.join("styles.css")).unwrap();
+        assert!(f.nudge.contains("styles.css") && f.response_format.to_string().contains("const"));
+        std::fs::remove_dir_all(&dir).ok();
+        // What his qwen2.5-coder 1.5B said to "Build me a live stock exchange website".
+        assert!(builds_in_chat(&["Build me a live stock exchange website"], "Sure, I can help you build a live stock exchange website. What kind of features do you need?", &files));
+        assert!(!builds_in_chat(&["What's a good name for a bakery?"], "How about Sweet Crumbs? Would you like more ideas?", &files));
+        // Documents go to create_document; sites and code don't.
+        assert!(wants_a_document("Write a report as a Word doc") && wants_a_document("make slides about Q3") && !wants_a_document("Build me a live stock exchange website"));
         let forced = forced_build(&json!([{ "type": "function", "function": { "name": "write_file", "description": "", "parameters": { "type": "object" } } }, { "type": "function", "function": { "name": "read_file", "description": "", "parameters": { "type": "object" } } }])).unwrap();
         assert_eq!(forced.names, vec!["write_file"]);
     }

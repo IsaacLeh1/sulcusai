@@ -30,7 +30,10 @@ fn kind(path: &str) -> Result<&'static str, String> {
         "md" | "markdown" => Ok("Markdown file"),
         "xlsx" => Ok("Excel spreadsheet"),
         "pptx" => Ok("PowerPoint deck"),
-        other => Err(format!("I can make .docx, .pdf, .md, .xlsx and .pptx files, not .{other}.")),
+        _ => Err(format!(
+            "create_document makes Word, PDF, Markdown, Excel and PowerPoint files (.docx, .pdf, .md, .xlsx, .pptx), and “{path}” isn't one. \
+             For a website, an app or code (.html, .css, .js, .py…), use write_file instead, one file at a time (for example site/index.html)."
+        )),
     }
 }
 

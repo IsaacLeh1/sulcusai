@@ -2579,5 +2579,6 @@
  "Take back": "Revogar",
  "left before this was kept": "deixada antes de isso ser registrado",
  "left by “{chat}”": "deixada por “{chat}”",
- "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "“Os chats trabalham juntos” está ligado (Recursos), então os chats podem ler livremente as notas e passagens uns dos outros."
+ "“Chats work together” is on (Features), so chats can read each other's notes and handoffs freely.": "“Os chats trabalham juntos” está ligado (Recursos), então os chats podem ler livremente as notas e passagens uns dos outros.",
+ "{name} is very small: it often picks the wrong tool or explains instead of doing. For building things, pick a model with 7B or more from the menu.": "{name} é muito pequeno: muitas vezes escolhe a ferramenta errada ou explica em vez de fazer. Para criar coisas, escolha no menu um modelo de 7B ou mais."
 }

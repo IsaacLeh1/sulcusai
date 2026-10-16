@@ -1556,10 +1556,24 @@ async fn e2e_makes_files_on_ollama_model() {
         }
     });
     crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&work).unwrap().display().to_string()).unwrap();
-    let asks = ["Make me a simple website for my bakery called Sweet Crumbs", "Create a python script that prints the first 20 prime numbers"];
+    // SULCUSAI_TEST_ASKS: other requests, ";;" between them (each must make files).
+    let custom = std::env::var("SULCUSAI_TEST_ASKS").ok();
+    let asks: Vec<String> = match &custom {
+        Some(list) => list.split(";;").map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).collect(),
+        None => vec!["Make me a simple website for my bakery called Sweet Crumbs".into(), "Create a python script that prints the first 20 prime numbers".into()],
+    };
+    // SULCUSAI_TEST_BEFORE: an earlier ask the model answered with instructions,
+    // so the ask is a follow-up like "try again to do it for me".
+    let before = std::env::var("SULCUSAI_TEST_BEFORE").ok();
     let mut made = Vec::new();
-    for q in asks {
+    for q in asks.iter().map(String::as_str) {
         let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        if let Some(b) = &before {
+            let at = crate::db::now_ms() - 60_000;
+            for (role, text) in [("user", b.as_str()), ("assistant", "Sure! I'll guide you through setting up a simple website.\n\n### Step 1: Set Up the Project\n\n1. Create a new folder for your project.\n2. Run these commands:\n\n```bash\nmkdir site\ncd site\nnpm init -y\n```\n\nThen create index.html and paste the code below.")] {
+                crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message { id: uuid::Uuid::new_v4().to_string(), chat_id: chat.id.clone(), role: role.into(), content: text.into(), created_at: at, ..Default::default() }).unwrap();
+            }
+        }
         let t = std::time::Instant::now();
         let answer = say(&state, &ep, &cipher, &chat.id, q).await;
         let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
@@ -1570,6 +1584,11 @@ async fn e2e_makes_files_on_ollama_model() {
     }
     approver.abort();
     state.engine.lock().await.stop().await;
+    if custom.is_some() {
+        // Each request made at least one more file.
+        assert!(made.windows(2).all(|w| w[1] > w[0]) && made[0] > 0, "files made after each request: {made:?}");
+        return;
+    }
     assert!(made[0] > 0, "the website was made as files");
     assert!(made[1] > made[0], "the script was made as a file");
 }
@@ -2836,4 +2855,30 @@ async fn e2e_cloud_media() {
     let mut r = req("generate", "Another");
     r.model_id = Some("cloud:openai:gpt-image-1".into());
     assert!(crate::media::run(&state, "j5".into(), r).await.is_err());
+}
+
+/// Reads a chat from a COPY of a real data folder, to see what went wrong:
+/// SULCUSAI_INSPECT = the folder holding copies of sulcusai.db and keys.json;
+/// SULCUSAI_INSPECT_CHAT = the start of the chat's id. Prints its steps.
+#[test]
+#[ignore]
+fn inspect_a_chat_copy() {
+    let dir = std::path::PathBuf::from(std::env::var("SULCUSAI_INSPECT").expect("SULCUSAI_INSPECT"));
+    let want = std::env::var("SULCUSAI_INSPECT_CHAT").expect("SULCUSAI_INSPECT_CHAT");
+    let vault = crate::crypto::Vault::open(&dir.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
+    let c = vault.cipher().expect("unlocked");
+    let conn = crate::db::open(&dir.join("sulcusai.db")).unwrap();
+    let id: String = conn.query_row("SELECT id FROM chats WHERE id LIKE ?1", [format!("{want}%")], |r| r.get(0)).unwrap();
+    let chat = crate::db::chat(&conn, &c, &id).unwrap();
+    println!("chat {} | model {:?} | mode {} | folders {:?}", chat.title, chat.model_id, chat.mode, crate::db::folders(&conn));
+    for m in crate::db::messages(&conn, &c, &id) {
+        let text: String = m.content.chars().take(400).collect();
+        println!("\n[{}] {}", m.role, text.replace('\n', " / "));
+        for t in m.tool_calls.unwrap_or_default() {
+            println!("  CALL {} {:.300}", t.name, t.arguments);
+        }
+        if let Some(meta) = m.meta {
+            println!("  META {:.400}", meta.to_string());
+        }
+    }
 }
