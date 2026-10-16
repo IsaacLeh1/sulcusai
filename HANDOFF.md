@@ -428,7 +428,7 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 - Quick-ask screenshots: `screencapture` on macOS (asks for Screen Recording permission); on Linux the first of grim, gnome-screenshot, spectacle, scrot or ImageMagick `import`.
 - Engines and tools started by the app die with it on Linux even after a crash (`engine::tie_to_app`: `PR_SET_PDEATHSIG`); on macOS a normal quit stops them (Exit handler), a crash may leave one running.
 - Browser control: on macOS and Linux the connector's manifest is copied into each present Chromium browser's `NativeMessagingHosts` folder (Chrome, Edge, Chromium, Brave), and the app listens on a Unix socket with a random name in a folder only the user can open (`$XDG_RUNTIME_DIR/SulcusAI-bridge` on Linux, `~/Library/Application Support/SulcusAI-bridge` on macOS), with the same per-run token. Registration is unit-tested on Linux; the full extension round trip has only been run on Windows.
-- Music on Linux: `C:\dev\sulcusai-distcestep-d881ad2-linux-x64.tar.gz` (22,490,295 bytes, sha256 6ef9ce24…f3cc; built in WSL Ubuntu 26.04 with gcc, `-DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON`, RUNPATH `$ORIGIN`, symlinks kept), uploaded to the `engines` release. A 10-second song took 34 s on the processor in WSL (no Vulkan device there).
+- Music on Linux: `C:\dev\sulcusai-dist\acestep-d881ad2-linux-x64.tar.gz` (22,490,295 bytes, sha256 6ef9ce24…f3cc; built in WSL Ubuntu 26.04 with gcc, `-DGGML_VULKAN=ON -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON`, RUNPATH `$ORIGIN`, symlinks kept), uploaded to the `engines` release. A 10-second song took 34 s on the processor in WSL (no Vulkan device there).
 - Outlook calendars on macOS/Linux ask Graph for the system's IANA zone name.
 - Release workflow `.github/workflows/release-unix.yml` (+ `scripts/release_unix.py`): on a published `v*` release, builds the Linux .deb/AppImage (ubuntu-22.04) and macOS .dmg/.app (macos-latest) and attaches them; with the `TAURI_SIGNING_PRIVATE_KEY` repository secret they're signed and merged into latest.json (`linux-x86_64`, `darwin-aarch64`), otherwise they ship without updates. AppImage bundling checked in WSL.
 - Still Windows-only: Windows Hello (no Touch ID yet), geolocation, music on Macs (no macOS acestep build yet).
@@ -650,7 +650,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
     - text up to 8,000 characters
     - 8 an hour per sender, counted under an hourly hash of the address and key (deleted after the hour)
     - 400 a day
-  - `/feedback/inbox?key=` is his page (with delete); the key is the `FEEDBACK_KEY` secret. The link is ONLY in `C:\dev\sulcusai-disteedback-inbox.txt`, never in the repo.
+  - `/feedback/inbox?key=` is his page (with delete); the key is the `FEEDBACK_KEY` secret. The link is ONLY in `C:\dev\sulcusai-dist\feedback-inbox.txt`, never in the repo.
   - Deployed with `cd relay && npx -y wrangler@4.149.0 deploy`. A Durable Object stub's `fetch` takes no extra argument, so the object reads the secret from its own `env` (`local.mjs` mirrors that).
   - App side: `feedback.rs` sends at every level, except Fully offline unless Web is kept.
   - `FeedbackButton` sits in the top bar (`TopBar` in App.tsx). It sends only the text, plus a reply address and the version if the person chooses.
