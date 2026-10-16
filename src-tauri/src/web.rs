@@ -106,8 +106,40 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
     Ok(url)
 }
 
+/// Name lookups for the web tools that leave out addresses on this PC or the
+/// local network, at the moment of connecting: a page that redirects to a
+/// name pointing inside the network, or a name whose answer changes after
+/// the first check, can't steer a fetch there.
+struct PublicOnly;
+
+impl reqwest::dns::Resolve for PublicOnly {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.filter(|a| is_public(a.ip())).collect();
+            if addrs.is_empty() {
+                return Err(format!("{host} is on this PC or the local network").into());
+            }
+            Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
 fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String> {
     net::external_client(level, Purpose::Search, chat_web)?;
+    // The private way, names are looked up at the far end, not here.
+    let b = builder()?;
+    let b = if crate::privacy::proxy_for(net::Route::Web).is_some() { b } else { b.dns_resolver(std::sync::Arc::new(PublicOnly)) };
+    b.build().map_err(|e| e.to_string())
+}
+
+/// The user's own SearXNG may be on this PC or their network: its searches
+/// use the plain lookup (the pages it finds still go through `client`).
+fn searxng_client() -> Result<reqwest::Client, String> {
+    builder()?.build().map_err(|e| e.to_string())
+}
+
+fn builder() -> Result<reqwest::ClientBuilder, String> {
     // Tor is slower to connect; give it longer.
     let private = crate::privacy::proxy_for(net::Route::Web).is_some();
     let b = reqwest::Client::builder()
@@ -115,7 +147,7 @@ fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String
         .user_agent(concat!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SulcusAI/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(if private { 90 } else { 15 }))
         .timeout(Duration::from_secs(if private { 120 } else { 30 }));
-    net::routed(b, net::Route::Web)?
+    Ok(net::routed(b, net::Route::Web)?
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 6 {
                 return attempt.error("too many redirects");
@@ -124,9 +156,7 @@ fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String
                 h == "localhost" || h.ends_with(".local") || h.trim_matches(['[', ']']).parse::<IpAddr>().is_ok_and(|ip| !is_public(ip))
             });
             if local { attempt.error("redirect to a local address") } else { attempt.follow() }
-        }))
-        .build()
-        .map_err(|e| e.to_string())
+        })))
 }
 
 // ---------- search ----------
@@ -213,7 +243,7 @@ pub async fn search(conn_settings: &WebSettings, key: Option<String>, client: &r
             if base.is_empty() {
                 return Err("Add your SearXNG address in Settings › Connectivity.".into());
             }
-            let v: Value = client
+            let v: Value = searxng_client()?
                 .get(format!("{base}/search"))
                 .query(&[("q", query), ("format", "json")])
                 .send()
@@ -554,6 +584,21 @@ pub fn set_web_settings(state: AppStateRef, settings: WebSettings, brave_key: Op
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name that leads to this PC (or the local network) is refused when
+    /// connecting, not only when first checked; the user's own SearXNG on
+    /// this PC still answers.
+    #[tokio::test]
+    async fn names_inside_the_network_are_refused_when_connecting() {
+        use axum::{routing::get, Router};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, Router::new().route("/", get(|| async { "inside" }))).await.ok() });
+        let pages = client(Connectivity::Cloud, true).unwrap();
+        assert!(pages.get(format!("http://localhost:{port}/")).send().await.is_err(), "a page can't reach this PC by name");
+        let searx = searxng_client().unwrap();
+        assert_eq!(searx.get(format!("http://localhost:{port}/")).send().await.unwrap().text().await.unwrap(), "inside");
+    }
 
     #[test]
     fn private_and_local_addresses_are_refused() {

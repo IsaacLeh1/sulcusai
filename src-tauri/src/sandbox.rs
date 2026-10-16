@@ -13,9 +13,13 @@ fn canonical(p: &Path) -> Option<PathBuf> {
     dunce::canonicalize(p).ok()
 }
 
-/// Lowercased with `/` separators, for case-insensitive prefix checks.
+/// With `/` separators, for prefix checks; lowercased on Windows, whose
+/// folders ignore capitalization. Elsewhere "Project" and "project" can be
+/// two folders, so they never match (a case-insensitive Mac volume just
+/// refuses a path typed in the wrong case).
 fn key(p: &Path) -> String {
-    let mut s = p.to_string_lossy().replace('\\', "/").to_lowercase();
+    let s = p.to_string_lossy().replace('\\', "/");
+    let mut s = if cfg!(windows) { s.to_lowercase() } else { s };
     while s.ends_with('/') && s.len() > 1 {
         s.pop();
     }
@@ -183,6 +187,30 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Capitalization: one folder on Windows, two folders elsewhere.
+    #[test]
+    fn folder_names_differing_in_case_follow_the_system() {
+        let root = Path::new("/home/alice/Project");
+        let other = Path::new("/home/alice/project/secret.txt");
+        assert_eq!(is_inside(other, root), cfg!(windows));
+        assert!(is_inside(Path::new("/home/alice/Project/notes.md"), root));
+    }
+
+    /// Linux: a folder next to the shared one, differing only in case, stays out.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_folder_differing_only_in_case_is_not_shared() {
+        let d = std::env::temp_dir().join(format!("sulcusai-case-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(d.join("Project")).unwrap();
+        if std::fs::create_dir(d.join("project")).is_err() {
+            return; // a case-insensitive volume: they're the same folder
+        }
+        std::fs::write(d.join("project").join("secret.txt"), "x").unwrap();
+        let sb = Sandbox::new(&[d.join("Project").display().to_string()]);
+        assert!(sb.resolve(&d.join("project").join("secret.txt").display().to_string()).is_err());
+        assert!(!sb.holds(&d.join("project").join("secret.txt")));
+    }
 
     fn temp() -> PathBuf {
         let d = std::env::temp_dir().join(format!("sulcusai-sb-{}", uuid::Uuid::new_v4()));
