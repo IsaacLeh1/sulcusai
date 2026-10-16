@@ -808,6 +808,14 @@ pub fn old_checkpoints(conn: &Connection, days: i64) -> Vec<(i64, Option<String>
         .unwrap_or_default()
 }
 
+/// Every checkpoint that kept a copy of a file, newest first.
+pub fn checkpoint_backups(conn: &Connection) -> Vec<(i64, String)> {
+    let Ok(mut stmt) = conn.prepare("SELECT id, backup FROM checkpoints WHERE backup IS NOT NULL ORDER BY created_at DESC, id DESC") else { return Vec::new() };
+    stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
 pub fn delete_checkpoint(conn: &Connection, id: i64) -> Result<(), String> {
     conn.execute("DELETE FROM checkpoints WHERE id = ?1", [id]).map_err(err)?;
     Ok(())

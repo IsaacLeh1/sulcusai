@@ -57,6 +57,38 @@ fn backend_named(os: &str, arch: &str, gpu: bool) -> Result<&'static str, String
     })
 }
 
+/// Past this, a running server's log starts over (a model chatting all day
+/// mustn't fill the disk with its log).
+const LOG_CAP: u64 = 64 * 1024 * 1024;
+
+/// A fresh log for a server: its output and errors, appended (so it can be
+/// cut while the server runs), and kept under `LOG_CAP`.
+pub fn capped_log(path: &Path) -> std::io::Result<(std::fs::File, std::fs::File)> {
+    std::fs::File::create(path)?;
+    let out = std::fs::OpenOptions::new().append(true).open(path)?;
+    let err = out.try_clone()?;
+    static WATCHED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = std::sync::LazyLock::new(Default::default);
+    let first = {
+        let mut w = WATCHED.lock().unwrap();
+        let first = w.is_empty();
+        w.insert(path.to_path_buf());
+        first
+    };
+    if first {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            for p in WATCHED.lock().unwrap().iter() {
+                if std::fs::metadata(p).is_ok_and(|m| m.len() > LOG_CAP) {
+                    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(p) {
+                        let _ = f.set_len(0);
+                    }
+                }
+            }
+        });
+    }
+    Ok((out, err))
+}
+
 /// Linux: the kernel stops the program if the app dies, even in a crash
 /// (Windows uses a job object; on macOS a normal quit stops it).
 pub fn tie_to_app(cmd: &mut Command) {
@@ -322,8 +354,7 @@ impl Engine {
 
         let port = free_port()?;
         let key = uuid::Uuid::new_v4().simple().to_string();
-        let log = std::fs::File::create(spec.log).map_err(|e| e.to_string())?;
-        let log_err = log.try_clone().map_err(|e| e.to_string())?;
+        let (log, log_err) = capped_log(spec.log).map_err(|e| e.to_string())?;
 
         let mut cmd = Command::new(spec.exe);
         cmd.arg("-m").arg(spec.model_path)

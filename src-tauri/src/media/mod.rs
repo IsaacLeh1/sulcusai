@@ -718,6 +718,15 @@ impl Drop for Work {
     }
 }
 
+/// At startup: work folders a crash left behind (nothing is being made yet).
+pub fn clean_work(paths: &Paths) {
+    if let Ok(entries) = std::fs::read_dir(store::dir(paths).join("work")) {
+        for e in entries.flatten() {
+            std::fs::remove_dir_all(e.path()).ok();
+        }
+    }
+}
+
 fn work_dir(paths: &Paths, id: &str) -> Result<Work, String> {
     let dir = store::dir(paths).join("work").join(id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

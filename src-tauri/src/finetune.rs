@@ -26,6 +26,34 @@ use crate::media::proc::{self, Run};
 use crate::{engine, AppState, AppStateRef};
 
 const KEY: &str = "adapters";
+/// At startup: what an interrupted teaching run left behind, above all its
+/// training data (plain text from the person's chats). A finished model
+/// keeps only its adapter; logs go after 30 days.
+pub fn clean_leftovers(paths: &crate::paths::Paths) {
+    if let Ok(entries) = std::fs::read_dir(paths.data.join("adapters")) {
+        for e in entries.flatten() {
+            let dir = e.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            if dir.join("adapter.gguf").exists() {
+                std::fs::remove_file(dir.join("training-data")).ok();
+            } else {
+                std::fs::remove_dir_all(&dir).ok();
+            }
+        }
+    }
+    let month = std::time::Duration::from_secs(30 * 86_400);
+    if let Ok(entries) = std::fs::read_dir(&paths.logs) {
+        for e in entries.flatten() {
+            let old = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > month);
+            if old && e.file_name().to_string_lossy().starts_with("finetune-") {
+                std::fs::remove_file(e.path()).ok();
+            }
+        }
+    }
+}
+
 const TRAINER_EXE: &str = if cfg!(windows) { "llama-finetune-lora.exe" } else { "llama-finetune-lora" };
 /// Fewer examples than this don't teach anything useful.
 const MIN_EXAMPLES: usize = 10;
@@ -417,6 +445,23 @@ pub fn remove_adapter(state: AppStateRef, id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// After a crash mid-teaching: its plain-text training data is gone at
+    /// the next start; a finished model keeps its adapter.
+    #[test]
+    fn an_interrupted_teaching_run_leaves_nothing_behind() {
+        let paths = crate::paths::Paths::new(std::env::temp_dir().join(format!("sulcusai-ft-{}", uuid::Uuid::new_v4()))).unwrap();
+        let (cut, done) = (paths.data.join("adapters").join("cut"), paths.data.join("adapters").join("done"));
+        std::fs::create_dir_all(&cut).unwrap();
+        std::fs::create_dir_all(&done).unwrap();
+        std::fs::write(cut.join("training-data"), "my private chats").unwrap();
+        std::fs::write(done.join("adapter.gguf"), "weights").unwrap();
+        std::fs::write(done.join("training-data"), "my private chats").unwrap();
+        clean_leftovers(&paths);
+        assert!(!cut.exists(), "an unfinished run goes entirely");
+        assert!(done.join("adapter.gguf").exists() && !done.join("training-data").exists());
+        std::fs::remove_dir_all(&paths.data).ok();
+    }
 
     #[test]
     fn reads_trainer_progress() {

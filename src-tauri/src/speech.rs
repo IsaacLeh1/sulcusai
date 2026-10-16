@@ -257,8 +257,7 @@ impl Server {
         let port = engine::free_port()?;
         let prefix = format!("/{}", uuid::Uuid::new_v4().simple());
         std::fs::create_dir_all(l.public).map_err(|e| e.to_string())?;
-        let log = std::fs::File::create(l.log).map_err(|e| e.to_string())?;
-        let log_err = log.try_clone().map_err(|e| e.to_string())?;
+        let (log, log_err) = engine::capped_log(l.log).map_err(|e| e.to_string())?;
         let mut cmd = Command::new(l.exe);
         cmd.arg("-m").arg(l.model)
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--request-path", &prefix])

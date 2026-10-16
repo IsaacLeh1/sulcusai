@@ -404,6 +404,10 @@ async fn hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file:
 fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quant: String, force: bool) -> Result<(), String> {
     let mut variant = spec.variant(&quant).ok_or("Unknown model version")?.clone();
     let model_id = spec.id.clone();
+    // Free space as it is now, not as it was when the app started.
+    if let Some(free) = storage::free_on(&state.paths.models) {
+        state.hardware.write().unwrap().disk_free = free;
+    }
     let fit = catalog::fit_model(&spec, &state.budget());
     let vfit = fit.variant(&quant).ok_or("Unknown model version")?;
     if !vfit.runnable() && !force {
@@ -1696,6 +1700,9 @@ pub fn run() {
                 state.migrate_plaintext(&c);
             }
             checkpoint::prune(&state.db.lock().unwrap());
+            // What a crash may have left: picture/video work, teaching data.
+            media::clean_work(&state.paths);
+            finetune::clean_leftovers(&state.paths);
             let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);

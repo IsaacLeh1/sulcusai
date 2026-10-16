@@ -130,13 +130,26 @@ pub fn undo_turn(conn: &Connection, cipher: &Cipher, turn_id: &str) -> Vec<Strin
     notes
 }
 
-/// Removes backups past the retention period.
+/// All the backups together are kept under this; past it, the oldest go
+/// (Undo then leaves those files as they are).
+const MAX_TOTAL: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Removes backups past the retention period, then the oldest ones while
+/// all of them together take more than `MAX_TOTAL`.
 pub fn prune(conn: &Connection) {
     for (id, backup) in db::old_checkpoints(conn, KEEP_DAYS) {
         if let Some(b) = backup {
             let _ = std::fs::remove_file(b);
         }
         let _ = db::delete_checkpoint(conn, id);
+    }
+    let mut total = 0u64;
+    for (id, backup) in db::checkpoint_backups(conn) {
+        total += std::fs::metadata(&backup).map_or(0, |m| m.len());
+        if total > MAX_TOTAL {
+            let _ = std::fs::remove_file(&backup);
+            let _ = db::delete_checkpoint(conn, id);
+        }
     }
 }
 
