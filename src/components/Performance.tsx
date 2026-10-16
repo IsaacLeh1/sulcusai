@@ -273,7 +273,9 @@ export function GpuPill({ onOpen }: { onOpen: () => void }) {
         .catch(() => {});
     };
     load();
-    const timer = setInterval(load, 3000);
+    // Each reading starts nvidia-smi: not too often (it costs some processor
+    // time and can keep a laptop's graphics card from idling).
+    const timer = setInterval(load, 5000);
     return () => {
       alive = false;
       clearInterval(timer);

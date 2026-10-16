@@ -176,6 +176,13 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     if s.gpu_limit < 100 {
         l.threads = ((l.threads as f64 * CPU_FLOOR.max(l.gpu_share)).round() as usize).max(1);
         l.low_priority = true;
+        // And a smaller window, so that slower processor isn't asked to read
+        // a 32K-token prompt (a window the person chose still applies).
+        l.max_ctx = l.max_ctx.min(match s.gpu_limit {
+            0 => 8192,
+            1..=49 => 16_384,
+            _ => 32_768,
+        });
     }
     l
 }
@@ -797,6 +804,7 @@ mod tests {
         assert!(half.low_priority);
         let off = limits(&PerfSettings { gpu_limit: 0, ..Default::default() }, &laptop(), false);
         assert_eq!(off.threads, ((full.threads as f64) * 0.25).round().max(1.0) as usize, "a quarter of the cores at least");
+        assert!(off.max_ctx <= 8192 && half.max_ctx <= 32_768 && limits(&PerfSettings { gpu_limit: 25, ..Default::default() }, &laptop(), false).max_ctx <= 16_384, "a smaller window for a slower processor");
         assert!(scaled(half, &HeatState { gpu_level: 0, cpu_level: 2, temps: Temps::default(), changed: None }).threads <= half.threads, "a hot processor only lowers it");
         let m = crate::catalog::Catalog::bundled().model("qwen3-8b").cloned().unwrap();
         let quant = m.variants[0].quant.clone();

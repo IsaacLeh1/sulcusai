@@ -79,6 +79,25 @@ pub async fn count_tokens(ep: &Endpoint, text: &str) -> Result<u32, String> {
     if ep.cloud.is_some() {
         return Ok(crate::cloud::estimate_tokens(text));
     }
+    // The instructions and the tool list come back every step, unchanged:
+    // counted once per engine run.
+    let key = (text.len() > 400).then(|| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut h);
+        format!("{}:text:{:x}", ep.port, h.finish())
+    });
+    if let Some(n) = key.as_ref().and_then(|k| cache().lock().unwrap().get(k).copied()) {
+        return Ok(n);
+    }
+    let n = tokenize(ep, text).await?;
+    if let Some(k) = key {
+        cache().lock().unwrap().insert(k, n);
+    }
+    Ok(n)
+}
+
+async fn tokenize(ep: &Endpoint, text: &str) -> Result<u32, String> {
     let resp: Value = net::local_client()
         .post(ep.url("/tokenize"))
         .bearer_auth(&ep.key)
@@ -631,7 +650,8 @@ async fn complete_once(ep: &Endpoint, body: &Value) -> Result<Value, String> {
         .post(ep.url("/v1/chat/completions"))
         .bearer_auth(&ep.key)
         .json(body)
-        .timeout(Duration::from_secs(900))
+        // A model held to part of the processor (GPU limit) is slow.
+        .timeout(Duration::from_secs(1800))
         .send()
         .await
         .map_err(|e| format!("Couldn't reach the engine: {e}"))?;
