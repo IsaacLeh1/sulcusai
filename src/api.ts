@@ -1381,6 +1381,8 @@ export interface MediaRequest {
   voice?: string | null;
   language?: string | null;
   chat_id?: string | null;
+  /** New pictures: a look from the Studio's list ("auto" by default). */
+  style?: string | null;
 }
 
 /** Base64 of bytes (for sending files to the core). */
@@ -1675,6 +1677,8 @@ export const api = {
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
+  /** Shows a file the assistant made in File Explorer (nothing is run). */
+  showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),
   quickHide: () => invoke<void>("quick_hide"),
   quickResize: (height: number) => invoke<void>("quick_resize", { height }),
@@ -1687,6 +1691,10 @@ export const api = {
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
   mediaJobs: () => invoke<MediaJob[]>("media_jobs"),
   mediaList: (kind: string | null, before: number | null = null, limit = 60) => invoke<MediaItem[]>("media_list", { kind, before, limit }),
+  /** A chat's pictures, video and music: made there or attached. */
+  mediaInChat: (chatId: string) => invoke<MediaItem[]>("media_in_chat", { chatId }),
+  /** A fuller description from a short idea, written by the chat model. */
+  improveMediaPrompt: (prompt: string, kind: string) => invoke<string>("improve_media_prompt", { prompt, kind }),
   mediaGet: (id: string) => invoke<MediaItem>("media_get", { id }),
   mediaFile: (id: string) => invoke<ArrayBuffer>("media_file", { id }),
   mediaThumb: (id: string) => invoke<ArrayBuffer>("media_thumb", { id }),

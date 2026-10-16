@@ -178,7 +178,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             <MediaModels progress={progress} toast={toast} only={[kind!]} />
           </>
         ) : tab === "pictures" ? (
-          <PictureComposer models={installedOf("image")} onStart={start} />
+          <PictureComposer models={installedOf("image")} onStart={start} onEditPhoto={importFile} />
         ) : tab === "video" ? (
           <VideoComposer models={installedOf("video")} source={source} onPickSource={setSource} gallery={items} onStart={start} />
         ) : tab === "music" ? (
@@ -295,12 +295,15 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
 }
 
 function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void }) {
+  // Models on this PC are marked as such; cloud ones carry ☁ in their names.
+  const label = (m: MediaModelCard) => (m.name.startsWith("☁") ? m.name : t("{name} (this PC)", { name: m.name }));
+  if (models.length === 1) return <span className="small muted" title={t("Model")}>{label(models[0])}</span>;
   if (models.length < 2) return null;
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} title={t("Model")}>
       {models.map((m) => (
         <option key={m.id} value={m.id}>
-          {m.name}
+          {label(m)}
         </option>
       ))}
     </select>
@@ -311,14 +314,61 @@ function best(models: MediaModelCard[], can?: string): string {
   return [...models].filter((m) => !can || m.can.includes(can)).sort((a, b) => b.quality - a.quality)[0]?.id ?? "";
 }
 
-function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStart: (r: MediaRequest) => Promise<boolean> }) {
+/** Looks for new pictures (ids match the core's STYLES). Auto: a realistic
+ * photo unless the description names another look. */
+const LOOKS: { id: string; label: string }[] = [
+  { id: "auto", label: tx("Auto (realistic unless you say)") },
+  { id: "photo", label: tx("Realistic photo") },
+  { id: "cinematic", label: tx("Cinematic") },
+  { id: "cartoon", label: tx("Cartoon") },
+  { id: "anime", label: tx("Anime") },
+  { id: "digital_art", label: tx("Digital art") },
+  { id: "oil_painting", label: tx("Oil painting") },
+  { id: "watercolor", label: tx("Watercolor") },
+  { id: "sketch", label: tx("Pencil sketch") },
+  { id: "3d", label: tx("3D render") },
+  { id: "pixel_art", label: tx("Pixel art") },
+];
+
+/** "✨ Improve": the chat model turns a short idea into a fuller description. */
+function ImproveButton({ prompt, kind, onDone }: { prompt: string; kind: string; onDone: (p: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [why, setWhy] = useState<string | null>(null);
+  return (
+    <>
+      <button
+        className="btn ghost small"
+        disabled={!prompt.trim() || busy}
+        title={t("Your chat model writes a fuller description from your idea. You can edit it before making anything.")}
+        onClick={async () => {
+          setBusy(true);
+          setWhy(null);
+          try {
+            onDone(await api.improveMediaPrompt(prompt, kind));
+          } catch (e) {
+            setWhy(errorText(e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? t("Improving…") : t("✨ Improve")}
+      </button>
+      {why && <span className="small warn-text">{why}</span>}
+    </>
+  );
+}
+
+function PictureComposer({ models, onStart, onEditPhoto }: { models: MediaModelCard[]; onStart: (r: MediaRequest) => Promise<boolean>; onEditPhoto: () => void }) {
   const [prompt, setPrompt] = useState("");
   const [shape, setShape] = useState<Shape>("square");
   const [count, setCount] = useState(1);
+  const [style, setStyle] = useState("auto");
   const [model, setModel] = useState(best(models));
   const m = models.find((x) => x.id === model) ?? models[0];
+  const canEdit = models.some((x) => x.can.includes("edit"));
   const go = async () => {
-    if (await onStart({ op: "generate", prompt, shape, count, model_id: m?.id })) setPrompt("");
+    if (await onStart({ op: "generate", prompt, shape, count, style, model_id: m?.id })) setPrompt("");
   };
   return (
     <div className="form">
@@ -326,7 +376,7 @@ function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStar
         className="input"
         rows={3}
         value={prompt}
-        placeholder={t("Describe the picture: the subject, the setting, a style (photo, watercolor, 3D…), the light and mood.")}
+        placeholder={t("Describe the picture: the subject, the setting, the light and mood. Pick a look below.")}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && prompt.trim() && go()}
         autoFocus
@@ -339,6 +389,11 @@ function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStar
             </button>
           ))}
         </div>
+        <select value={style} onChange={(e) => setStyle(e.target.value)} title={t("Look")} aria-label={t("Look")}>
+          {LOOKS.map((l) => (
+            <option key={l.id} value={l.id}>{t(l.label)}</option>
+          ))}
+        </select>
         <select value={count} onChange={(e) => setCount(+e.target.value)} title={t("How many")}>
           {[1, 2, 3, 4].map((n) => (
             <option key={n} value={n}>{n === 1 ? t("1 picture") : t("{n} versions", { n })}</option>
@@ -346,9 +401,21 @@ function PictureComposer({ models, onStart }: { models: MediaModelCard[]; onStar
         </select>
         <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
         <span className="spacer" />
+        <ImproveButton prompt={prompt} kind="image" onDone={setPrompt} />
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
         <button className="btn primary" disabled={!prompt.trim()} onClick={go}>{t("Create")}</button>
       </div>
+      <p className="small muted">
+        {canEdit ? (
+          <>
+            {t("Have a photo to change? ")}
+            <button className="link" onClick={onEditPhoto}>{t("✏ Edit a photo…")}</button>{" "}
+            {t("Open it, then describe the change, like “add a top hat” or “put us at a party”.")}
+          </>
+        ) : (
+          t("To edit your own photos (add a hat, change the background), install a picture model that edits, such as FLUX.2 klein, from Models.")
+        )}
+      </p>
     </div>
   );
 }

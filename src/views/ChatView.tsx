@@ -26,6 +26,7 @@ import { ContextMeter } from "../components/ContextMeter";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
+import { ChatFilesPanel } from "../components/ChatFiles";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
@@ -125,6 +126,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [pending, setPending] = useState<PendingApproval[]>([]);
   /** Messages waiting for the reply to finish (Ctrl+Enter). */
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [showFiles, setShowFiles] = useState(false);
   // Sent while it worked, not read by the model yet: shown in the chat meanwhile.
   const [waiting, setWaiting] = useState<QueueItem[]>([]);
   /** The model has read the messages sent up to then (it started answering). */
@@ -507,6 +509,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
+          <button className={`btn ghost small ${showFiles ? "active" : ""}`} aria-pressed={showFiles} onClick={() => setShowFiles((v) => !v)} title={t("Pictures and files made in this chat")}>
+            🗂 {t("Files")}
+          </button>
           {features.has("people") && !chat.incognito && <ShareChat chatId={chat.id} toast={toast} />}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
           <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>{t("Delete")}</button>
@@ -752,6 +757,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {!webOn && searchOn && <p className="muted small center">{t("Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
       </div>
 
+      {showFiles && <ChatFilesPanel chatId={chat.id} messages={messages} onOpenPicture={setLightbox} onClose={() => setShowFiles(false)} toast={toast} />}
       {lightbox && <Lightbox item={lightbox} toast={toast} onClose={() => setLightbox(null)} />}
       {confirmBypass && (
         <Modal title={t("Switch to Bypass mode?")} onClose={() => setConfirmBypass(false)}>
@@ -877,7 +883,7 @@ function renderItems(
             return (
               <Fragment key={c.id}>
                 <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} />
-                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} />}
+                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={toast} />}
               </Fragment>
             );
           })}

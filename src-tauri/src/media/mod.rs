@@ -470,6 +470,50 @@ pub struct Request {
     pub voice: Option<String>,
     pub language: Option<String>,
     pub chat_id: Option<String>,
+    /// How a new picture looks (see `STYLES`); none or "auto": a realistic
+    /// photo, unless the description itself names a look.
+    pub style: Option<String>,
+}
+
+/// Looks a new picture can have: id and the words added to its description.
+pub const STYLES: &[(&str, &str)] = &[
+    ("photo", "realistic photograph, natural lighting, true-to-life colors and skin texture, fine detail, sharp focus, shot on a full-frame camera"),
+    ("cinematic", "cinematic film still, realistic, dramatic lighting, shallow depth of field, film grain"),
+    ("cartoon", "cartoon illustration, bold outlines, flat bright colors"),
+    ("anime", "anime style, cel shading, clean line art"),
+    ("digital_art", "digital art, detailed digital painting, vibrant colors"),
+    ("oil_painting", "oil painting on canvas, visible brush strokes, rich colors"),
+    ("watercolor", "watercolor painting, soft washes of color, paper texture"),
+    ("sketch", "pencil sketch, graphite shading, hand-drawn on paper"),
+    ("3d", "3D render, soft studio lighting, smooth materials"),
+    ("pixel_art", "pixel art, 16-bit video game style, crisp pixels"),
+];
+
+/// Words in a description that already ask for a look other than a photo.
+const LOOK_WORDS: &[&str] = &[
+    "cartoon", "anime", "manga", "illustration", "illustrated", "drawing", "drawn", "sketch", "painting", "painted", "watercolor", "watercolour",
+    "oil paint", "3d", "render", "pixel", "comic", "clipart", "clip art", "vector", "logo", "icon", "chibi", "low poly", "claymation", "storybook",
+    "pastel", "digital art", "concept art", "photo", "photograph", "realistic", "cinematic", "film still",
+];
+
+/// The description with its style's words added. Auto adds the photo look
+/// unless the description already names one.
+pub fn styled(prompt: &str, style: Option<&str>) -> String {
+    let prompt = prompt.trim();
+    let style = style.unwrap_or("auto");
+    let id = if style == "auto" {
+        let low = prompt.to_lowercase();
+        if LOOK_WORDS.iter().any(|w| low.contains(w)) {
+            return prompt.to_string();
+        }
+        "photo"
+    } else {
+        style
+    };
+    match STYLES.iter().find(|(s, _)| *s == id) {
+        Some((_, words)) => format!("{}, {words}", prompt.trim_end_matches(['.', ','])),
+        None => prompt.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -763,6 +807,29 @@ async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
     ((v.size + kv) as f64 * share) as u64 + encoder + 700 * 1024 * 1024
 }
 
+/// The graphics card ran short or its driver failed (as opposed to, say, a
+/// broken model file, which another try wouldn't fix).
+fn card_trouble(e: &str) -> bool {
+    let l = e.to_lowercase();
+    ["make enough memory", "compute failed", "out of memory", "vulkan", "device lost", "vk_error", "ggml_backend"].iter().any(|w| l.contains(w))
+}
+
+/// The argument list without a graphics-memory budget (for the processor build).
+fn without_vram(args: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut skip = false;
+    for a in args {
+        if skip {
+            skip = false;
+        } else if a == "--max-vram" {
+            skip = true;
+        } else {
+            out.push(a.clone());
+        }
+    }
+    out
+}
+
 /// The argument list with its graphics-memory budget replaced.
 fn with_vram(args: &[std::ffi::OsString], gib: f64) -> Vec<std::ffi::OsString> {
     let mut out = Vec::with_capacity(args.len() + 2);
@@ -801,21 +868,59 @@ impl RunCtx<'_> {
     }
 
     async fn run_sd(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
-        let first = self.run_sd_once(args.clone(), work).await;
-        match first {
-            // Short of graphics memory (other programs use the card too):
-            // once more with half the budget, which streams more weights.
-            Err(e) if e.contains("make enough memory") || e.contains("compute failed") || e.to_lowercase().contains("out of memory") => {
+        let first = self.run_sd_once(args.clone(), work, None).await;
+        let on_card = self.state.budget().vram > 0;
+        let second = match first {
+            // Short of graphics memory (other programs use the card too), or
+            // the card's driver gave up: once more with half the budget,
+            // which streams more weights, and the picture decoded in tiles.
+            Err(e) if on_card && card_trouble(&e) => {
                 let had = self.limits().max_vram_gib.unwrap_or(self.state.budget().vram as f64 / GIB as f64);
                 eprintln!("media: retrying with less graphics memory ({:.1} GiB): {}", had / 2.0, e.lines().next().unwrap_or(""));
-                self.run_sd_once(with_vram(&args, had / 2.0), work).await
+                let mut lighter = with_vram(&args, had / 2.0);
+                if !lighter.iter().any(|a| a == "--vae-tiling") {
+                    let at = lighter.len().saturating_sub(2);
+                    lighter.insert(at, "--vae-tiling".into());
+                }
+                (self.run_sd_once(lighter, work, None).await, e)
             }
-            other => other,
+            other => return other,
+        };
+        match second {
+            (Ok(()), _) => Ok(()),
+            // Still failing on the card: a picture is made on the processor
+            // instead (slower, but it doesn't depend on the card's driver).
+            // Not videos, which would take hours there.
+            (Err(e), first) if e != download::CANCELLED && !self.cancel.load(Ordering::Relaxed) && args.iter().any(|a| a == "img_gen") => {
+                eprintln!("media: the graphics card failed twice, using the processor: {}", first.lines().next().unwrap_or(""));
+                (self.progress)("The graphics card couldn't make it, so it's being made on the processor (slower)", 0.0);
+                let cpu = self.cpu_engine().await.map_err(|why| format!("{e}\n\nCouldn't switch to the processor: {why}"))?;
+                self.run_sd_once(without_vram(&args), work, Some(cpu)).await.map_err(|on_cpu| format!("{e}\n\nOn the processor too: {on_cpu}"))
+            }
+            (Err(e), _) => Err(e),
         }
     }
 
-    async fn run_sd_once(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
-        let exe = sd_exe(self.state)?;
+    /// The processor build of the picture engine, downloaded the first time it's needed (about 18 MB).
+    async fn cpu_engine(&self) -> Result<PathBuf, String> {
+        let c = &self.state.catalog.media;
+        let (key, asset) = [engine::cpu_key(), "cpu-x64", "linux-cpu-x64"]
+            .into_iter()
+            .find_map(|k| c.engine.assets.get(k).map(|a| (k, a)))
+            .ok_or("There's no processor build of the picture engine for this system.")?;
+        let dir = sd_dir(c, key);
+        if let Some(exe) = engine::find_exe(&self.state.paths.engines.join(&dir), SD_EXE) {
+            return Ok(exe);
+        }
+        self.state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({key}) from {}", crate::host_of(&asset.url)));
+        engine::ensure_unpacked(&self.state.paths, &dir, asset, SD_EXE, self.cancel, |_, _| {}).await
+    }
+
+    async fn run_sd_once(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path, exe: Option<PathBuf>) -> Result<(), String> {
+        let exe = match exe {
+            Some(e) => e,
+            None => sd_exe(self.state)?,
+        };
         let mut t = sd::Tracker::default();
         (self.progress)(t.stage.label(), t.fraction());
         proc::run(
@@ -930,7 +1035,7 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
                 (Some(w), Some(h)) => (imaging::round16(w.clamp(256, 2048) as f64), imaging::round16(h.clamp(256, 2048) as f64)),
                 _ => imaging::shape_size(req.shape.as_deref().unwrap_or("square"), side),
             };
-            (req.prompt.trim().to_string(), w, h, None, None, vec![])
+            (styled(&req.prompt, req.style.as_deref()), w, h, None, None, vec![])
         }
         "edit" | "restyle" => {
             let s = ctx.source()?;
@@ -1392,6 +1497,41 @@ pub fn media_list(state: AppStateRef, kind: Option<String>, before: Option<i64>,
     Ok(store::list(&state.db.lock().unwrap(), &c, kind.as_deref(), limit.unwrap_or(60).min(500), before))
 }
 
+/// The Studio's "Improve": the chat model (on this PC unless the default is
+/// a cloud one) turns a short idea into a fuller description.
+#[tauri::command]
+pub async fn improve_media_prompt(state: AppStateRef<'_>, prompt: String, kind: String) -> Result<String, String> {
+    state.cipher()?;
+    let idea = prompt.trim();
+    if idea.is_empty() {
+        return Err("Write an idea first.".into());
+    }
+    let guide = match kind.as_str() {
+        "video" => "a short video clip: the subject, what happens, how the camera moves, the light and mood",
+        "music" => "a piece of music: the genre, mood, instruments, tempo and voice (if any)",
+        _ => "a picture: the subject, setting, composition, light and mood",
+    };
+    let (ep, _, _) = crate::llm_endpoint(state.inner(), None, false, || {}).await?;
+    let messages = vec![
+        json!({ "role": "system", "content": format!(
+            "You write descriptions for a model that makes media. Rewrite the person's idea as one vivid, specific description of {guide}. \
+             Keep everything they asked for and add nothing that changes it. If they named a style, keep it. Write it in English, under 70 words, \
+             as plain text with no quotes, lists or explanations."
+        ) }),
+        json!({ "role": "user", "content": idea }),
+    ];
+    let better = crate::chat::complete(&ep, messages, json!({}), 220).await?;
+    let better = better.trim().trim_matches('"').trim();
+    Ok(if better.is_empty() { idea.to_string() } else { better.to_string() })
+}
+
+/// A chat's pictures, video and music: made there or attached.
+#[tauri::command(async)]
+pub fn media_in_chat(state: AppStateRef, chat_id: String) -> Result<Vec<MediaItem>, String> {
+    let c = state.cipher()?;
+    Ok(store::in_chat(&state.db.lock().unwrap(), &c, &chat_id))
+}
+
 #[tauri::command(async)]
 pub fn media_get(state: AppStateRef, id: String) -> Result<MediaItem, String> {
     let c = state.cipher()?;
@@ -1574,6 +1714,21 @@ pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pictures_look_real_unless_another_look_is_asked_for() {
+        assert!(styled("A red fox in a snowy forest", None).contains("realistic photograph"));
+        assert!(styled("A red fox in a snowy forest.", Some("auto")).starts_with("A red fox in a snowy forest, realistic"));
+        assert_eq!(styled("A red fox in a snowy forest, watercolor style", None), "A red fox in a snowy forest, watercolor style");
+        assert!(styled("A cute robot", Some("cartoon")).contains("cartoon illustration"));
+        assert!(styled("A castle", Some("oil_painting")).contains("oil painting"));
+        assert_eq!(styled("A castle", Some("nonsense")), "A castle");
+        assert!(!card_trouble("failed to load model"), "a broken file isn't the card's fault");
+        assert!(card_trouble("ggml_vulkan: Device memory allocation failed: ErrorOutOfDeviceMemory"));
+        assert!(card_trouble("diffusion model compute failed"));
+        let args: Vec<std::ffi::OsString> = ["-M", "img_gen", "--max-vram", "3.0", "-o", "x.png"].iter().map(Into::into).collect();
+        assert_eq!(without_vram(&args), ["-M", "img_gen", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
+    }
 
     fn hw(vram_gb: u64, cores: usize) -> (Hardware, Budget) {
         let mut h = Hardware { cpu_cores: Some(cores), cpu_threads: cores * 2, avx2: true, ram_total: 32 * GIB, disk_free: 500 * GIB, ..Default::default() };

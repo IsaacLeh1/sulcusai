@@ -221,11 +221,18 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
 }
 
 /** What the assistant made, shown in its tool card. */
-export function MediaInline({ items, onOpen }: { items: MediaItem[]; onOpen?: (i: MediaItem) => void }) {
+export function MediaInline({ items, onOpen, toast }: { items: MediaItem[]; onOpen?: (i: MediaItem) => void; toast?: PushToast }) {
   return (
     <div className="media-inline">
       {items.map((i) => (
-        <InlineOne key={i.id} item={i} onOpen={onOpen} />
+        <div key={i.id} className="media-inline-one">
+          <InlineOne item={i} onOpen={onOpen} />
+          {toast && (
+            <button className="btn ghost small" onClick={() => saveAs(i, toast)}>
+              ⬇ {t("Save…")}
+            </button>
+          )}
+        </div>
       ))}
     </div>
   );

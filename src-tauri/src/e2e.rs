@@ -1829,6 +1829,35 @@ async fn e2e_weather_question() {
 
 /// App state with the real engines and models but a throwaway database and
 /// gallery (so test pictures never land in the real app's gallery).
+/// Pictures look real by default, and a picture can be edited from an
+/// instruction: a portrait, then a top hat added, then a party behind him.
+/// SULCUSAI_MEDIA_OUT: where the three pictures are written to look at.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_realistic_picture_and_edits() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").expect("SULCUSAI_MEDIA_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let c = state.cipher().unwrap();
+    media::install_for_test(&state, "flux2-klein-4b").await.unwrap();
+    let mut source: Option<String> = None;
+    let steps = [
+        ("1-portrait", "generate", "a portrait of a smiling man in his twenties with short brown hair and a denim jacket, standing outdoors in a park"),
+        ("2-top-hat", "edit", "add a tall black top hat on his head; keep his face, clothes and the background the same"),
+        ("3-party", "edit", "put him at a lively house party at night with friends laughing and string lights behind him; keep his face and the top hat, and keep it a realistic photo"),
+    ];
+    for (name, op, prompt) in steps {
+        let started = std::time::Instant::now();
+        let req = Request { op: op.into(), prompt: prompt.into(), source: source.clone(), shape: Some("portrait".into()), ..Default::default() };
+        let made = media::run(&state, store::new_id(), req).await.unwrap_or_else(|e| panic!("{name}: {e}"));
+        let item = &made[0];
+        std::fs::write(out.join(format!("{name}.png")), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+        println!("{name}: {:.1}s, {}x{}", started.elapsed().as_secs_f64(), item.width, item.height);
+        source = Some(item.id.clone());
+    }
+}
+
 fn media_state() -> std::sync::Arc<crate::AppState> {
     temp_state(None)
 }

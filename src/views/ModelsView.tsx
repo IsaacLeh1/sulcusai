@@ -79,6 +79,12 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </div>
       </header>
 
+      {tab === "chat" && (
+        <p className="small callout">
+          {t("Chat models write, answer and use tools. Pictures, video and music are made by separate models, which chats use too:")}{" "}
+          <button className="link" onClick={() => setTab("create")}>{t("Pictures, video, music")}</button>
+        </p>
+      )}
       {tab === "chat" && <Downloads progress={chatProgress} models={pool} onRefresh={onRefresh} toast={toast} />}
 
       <section className="card hw">

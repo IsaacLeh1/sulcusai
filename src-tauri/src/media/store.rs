@@ -174,6 +174,14 @@ pub fn delete_attachments(conn: &Connection, paths: &Paths, chat_id: &str) {
     }
 }
 
+/// Everything made in a chat or attached to it, newest first.
+pub fn in_chat(conn: &Connection, cipher: &Cipher, chat_id: &str) -> Vec<MediaItem> {
+    let Ok(mut stmt) = conn.prepare("SELECT data FROM media WHERE chat_id = ?1 ORDER BY created_at DESC LIMIT 200") else { return Vec::new() };
+    stmt.query_map([chat_id], |r| r.get::<_, String>(0))
+        .map(|rows| rows.filter_map(Result::ok).filter_map(|d| row(cipher, d)).collect())
+        .unwrap_or_default()
+}
+
 /// The newest picture made in or attached to a chat ("edit it" means this one).
 pub fn latest_in_chat(conn: &Connection, cipher: &Cipher, chat_id: &str, kind: &str) -> Option<MediaItem> {
     let data: String = conn

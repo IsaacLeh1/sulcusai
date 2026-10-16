@@ -11,7 +11,8 @@ use crate::media::{self, MediaItem, Request};
 
 pub fn create_image_params() -> Value {
     json!({ "type": "object", "required": ["prompt"], "properties": {
-        "prompt": { "type": "string", "description": "A vivid description: subject, setting, style (photo, watercolor, 3D…), lighting and mood. Write it in English." },
+        "prompt": { "type": "string", "description": "A vivid description: subject, setting, lighting and mood. Write it in English." },
+        "style": { "type": "string", "enum": ["auto", "photo", "cinematic", "cartoon", "anime", "digital_art", "oil_painting", "watercolor", "sketch", "3d", "pixel_art"], "description": "The look. Default auto: a realistic photo unless they asked for another look." },
         "shape": { "type": "string", "enum": ["square", "portrait", "landscape", "wide", "tall"], "description": "Default square." },
         "count": { "type": "integer", "description": "How many versions (1-4, default 1)." } } })
 }
@@ -59,6 +60,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "create_image" => Request {
             op: "generate".into(),
             prompt: s("prompt").unwrap_or_default(),
+            style: s("style"),
             shape: s("shape"),
             count: args.get("count").and_then(Value::as_u64).map(|n| n as u32),
             chat_id,

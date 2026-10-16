@@ -345,8 +345,12 @@ impl Turn {
         if !media_note.is_empty() {
             about.push_str(&format!(
                 "\n\nYou can make {} on this PC. When the user asks for one, call the tool with a vivid, specific description \
-                 (subject, setting, style, lighting) instead of describing it in words. The result appears in the chat by itself, \
-                 so don't paste links or ids; say in a sentence what you made.",
+                 (subject, setting, lighting) instead of describing it in words. Pictures come out as realistic photos unless \
+                 they ask for another look (cartoon, anime, painting, watercolor, sketch, 3D, pixel art): then set style. \
+                 To change a picture they attached or one made here (add a hat, change the background, make it night), \
+                 call edit_image with what to change. The result appears in the chat by itself, with a button to save it, \
+                 so don't paste links or ids; say in a sentence what you made. If making it fails, say so in a sentence and \
+                 don't guess at causes or send them to other pages.",
                 media_note.join(", ")
             ));
         }

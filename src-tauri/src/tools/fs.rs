@@ -248,12 +248,15 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 }
                 crate::storage::write_safely(&path, content).map_err(|e| format!("Couldn't write {label}: {e}"))?;
                 let verb = if existed { "Replaced" } else { "Created" };
-                Ok(Outcome::ok(
+                let mut o = Outcome::ok(
                     format!("{verb} {label} ({} lines).", line_count(content)),
                     format!("{verb} {label}"),
                     "diff",
                     Some(diff(&label, &old, content)),
-                ))
+                );
+                // Listed in the chat's Files, with Open and Show in folder.
+                o.meta["file"] = serde_json::json!(path.display().to_string());
+                Ok(o)
             }
             "edit_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;

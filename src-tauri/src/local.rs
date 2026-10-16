@@ -275,6 +275,34 @@ fn describe(c: &Candidate) -> String {
 }
 
 /// What the model is, from its file. An error says why it can't be used.
+/// A model another app downloaded rates like the same model in SulcusAI's
+/// catalog: "qwen2.5-coder:14b" like qwen2.5-coder-7b (the same family), and
+/// "gpt-oss:20b" like gpt-oss-20b. Unknown families get no ratings.
+fn known_ratings(name: &str, params_b: f64) -> Ratings {
+    static CATALOG: std::sync::LazyLock<crate::catalog::Catalog> = std::sync::LazyLock::new(crate::catalog::Catalog::bundled);
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name).to_lowercase().replace(':', "-");
+    let base = base.trim_end_matches(".gguf").trim_end_matches("-latest").replace("-instruct", "");
+    let size = |id: &str| id.rsplit('-').find_map(|p| p.strip_suffix('b')?.parse::<f64>().ok());
+    let family = |id: &str| id.split('-').take_while(|p| !(p.ends_with('b') && p[..p.len() - 1].parse::<f64>().is_ok())).collect::<Vec<_>>().join("-");
+    let models = &CATALOG.models;
+    if let Some(m) = models.iter().find(|m| m.id == base || m.id.starts_with(&format!("{base}-"))) {
+        return m.ratings.clone();
+    }
+    let fam = family(&base);
+    if fam.is_empty() {
+        return Ratings::default();
+    }
+    models
+        .iter()
+        .filter(|m| family(&m.id) == fam)
+        .min_by(|a, b| {
+            let gap = |m: &&crate::catalog::ModelSpec| (size(&m.id).unwrap_or(m.params_b) - params_b).abs();
+            gap(a).total_cmp(&gap(b))
+        })
+        .map(|m| m.ratings.clone())
+        .unwrap_or_default()
+}
+
 fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
     let meta = gguf::read(&c.path).map_err(|_| "isn't a model file SulcusAI can read".to_string())?;
     let get = |k: &str| meta.get(k);
@@ -347,7 +375,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
             size,
             sha256: String::new(),
         }],
-        ratings: Ratings::default(),
+        ratings: known_ratings(c.name.as_deref().unwrap_or(&c.path.display().to_string()), params_b),
         vision,
         local: Some(LocalSource { app: c.app.to_string(), path: c.path.display().to_string() }),
     })
@@ -442,6 +470,16 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn models_from_other_apps_rate_like_their_catalog_twins() {
+        assert_eq!(known_ratings("gpt-oss:20b", 20.9).agents, 9);
+        assert_eq!(known_ratings("qwen3-coder:30b", 30.5).agents, 8);
+        assert_eq!(known_ratings("qwen2.5-coder:14b", 14.8).agents, 4, "same family, nearest size");
+        assert_eq!(known_ratings("qwen3:8b", 8.2).agents, 7);
+        assert_eq!(known_ratings(r"C:\models\qwen3-14b-Q4_K_M.gguf", 14.8).agents, 8);
+        assert_eq!(known_ratings("some-new-model:7b", 7.0).agents, 0, "unknown: no ratings");
+    }
 
     #[test]
     fn a_folder_offers_its_model_files_but_not_caches_encoders_or_later_parts() {

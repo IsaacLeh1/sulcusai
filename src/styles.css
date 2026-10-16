@@ -210,7 +210,22 @@ select, .input {
 .empty img { border-radius: 16px; }
 
 /* ---------- chat ---------- */
-.conversation { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.conversation { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+.chat-files { position: absolute; top: 52px; right: 0; bottom: 0; width: min(340px, 92%); background: var(--panel); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12); padding: 10px 14px; overflow-y: auto; z-index: 15; }
+.chat-files-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.chat-files h4 { margin: 12px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.files-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.files-media { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.files-thumb { aspect-ratio: 1; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; padding: 0; background: var(--panel-2); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+.files-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.files-meta { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.files-meta .ellipsis { flex: 1; min-width: 0; }
+.files-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.files-list li { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.files-list li > .ellipsis { min-width: 0; flex: 1; }
+.media-inline-one { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.cap-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.chat-actions .btn.active { background: var(--accent-soft); color: var(--accent); }
 .chat-header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
 .chat-header h1 { font-size: 16px; flex: 1; }
 .chat-actions { display: flex; gap: 4px; }

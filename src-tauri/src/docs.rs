@@ -941,11 +941,39 @@ pub fn write_pdf(path: &Path, md: &str) -> Result<(), String> {
 #[tauri::command(async)]
 pub fn open_document(state: crate::AppStateRef, path: String) -> Result<(), String> {
     state.cipher()?;
-    let p = std::path::PathBuf::from(&path).canonicalize().map_err(|_| "That file isn't there anymore.".to_string())?;
+    let p = shared_file(&state, &path)?;
+    // Documents, pages and pictures only: never anything Windows would run
+    // (scripts, programs, shortcuts).
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    if !matches!(ext.as_str(), "docx" | "xlsx" | "pptx" | "pdf" | "md" | "csv" | "txt") {
-        return Err("Only documents can be opened from here.".into());
+    if !OPENABLE.contains(&ext.as_str()) {
+        return Err("Only documents, web pages and pictures can be opened from here. Use Show in folder for the rest.".into());
     }
+    crate::open_with_system(p.as_os_str())
+}
+
+/// Kinds of files Open hands to their app.
+pub const OPENABLE: &[&str] = &["docx", "xlsx", "pptx", "pdf", "md", "csv", "txt", "html", "htm", "svg", "png", "jpg", "jpeg", "gif", "webp", "json"];
+
+/// Shows a file the assistant made in File Explorer, selected (nothing is run).
+#[tauri::command(async)]
+pub fn show_in_folder(state: crate::AppStateRef, path: String) -> Result<(), String> {
+    state.cipher()?;
+    let p = shared_file(&state, &path)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut arg = std::ffi::OsString::from("/select,");
+        arg.push(p.as_os_str());
+        std::process::Command::new("explorer.exe").raw_arg(arg).spawn().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    crate::open_with_system(p.parent().unwrap_or(&p).as_os_str())
+}
+
+/// A file inside a shared folder (or a project's), resolved; refused otherwise.
+fn shared_file(state: &crate::AppState, path: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::PathBuf::from(path).canonicalize().map_err(|_| "That file isn't there anymore.".to_string())?;
     let shared: Vec<std::path::PathBuf> = {
         let conn = state.db.lock().unwrap();
         let mut all = crate::db::folders(&conn);
@@ -957,7 +985,7 @@ pub fn open_document(state: crate::AppStateRef, path: String) -> Result<(), Stri
     if !shared.iter().any(|root| p.starts_with(root)) {
         return Err("That file isn't in a shared folder.".into());
     }
-    crate::open_with_system(p.as_os_str())
+    Ok(p)
 }
 
 // ---------- reading ----------

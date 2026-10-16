@@ -59,6 +59,30 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
   );
 }
 
+/** What a model can make, as badges: pictures, edits, video, music… */
+function abilities(m: MediaModelCard): string[] {
+  const can = (op: string) => m.can.includes(op);
+  switch (m.kind) {
+    case "image":
+      return [
+        can("generate") ? tx("🖼 Makes pictures") : null,
+        can("edit") ? tx("✏ Edits pictures") : null,
+        can("restyle") ? tx("🎨 Restyles pictures") : null,
+        can("fill") || can("extend") ? tx("🧩 Fills in and extends") : null,
+      ].filter((x): x is string => !!x);
+    case "video":
+      return [tx("🎬 Makes video"), ...(can("image") ? [tx("🖼→🎬 Brings a picture to life")] : [])];
+    case "music":
+      return [tx("🎵 Makes music and sound")];
+    case "upscale":
+      return [tx("🔍 Makes pictures bigger and sharper")];
+    case "background":
+      return [tx("✂ Removes backgrounds")];
+    default:
+      return [];
+  }
+}
+
 function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaModelCard; per: string; progress?: InstallProgress; busy: boolean; toast: PushToast; onChanged: () => void }) {
   const [removing, setRemoving] = useState(false);
   const size = m.files.reduce((s, f) => s + f.size, 0);
@@ -67,6 +91,11 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
       <div className="row">
         <div className="grow">
           <strong>{m.name}</strong> <span className="muted small">· {m.publisher}</span>
+          <span className="cap-badges">
+            {abilities(m).map((a) => (
+              <span key={a} className="badge subtle">{t(a)}</span>
+            ))}
+          </span>
           <span className="small block">{m.description}</span>
           <span className="small muted block">
             {m.fit.on_gpu ? t("Runs on your graphics card") : t("Runs on your processor")} · {t("{time} for {what}", { time: waitLabel(m.fit.est_secs), what: t(per) })} ·{" "}
