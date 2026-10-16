@@ -15,6 +15,9 @@
 param(
     [switch]$Publish,
     [string]$Notes = "",
+    # The notes from a file. Passing them with -Notes from another PowerShell
+    # cuts them at the first double quote (Windows PowerShell 5.1 argument quoting).
+    [string]$NotesFile = "",
     [switch]$SkipBuild
 )
 
@@ -54,6 +57,8 @@ if (-not $SkipBuild) {
 }
 if (-not (Test-Path $sig)) { throw "No signature next to $exeName; was it built with the signing key?" }
 
+if ($NotesFile) { $Notes = [System.IO.File]::ReadAllText((Resolve-Path $NotesFile), [System.Text.Encoding]::UTF8).Trim() }
+
 $latest = [ordered]@{
     version   = $version
     notes     = $Notes
@@ -73,7 +78,11 @@ Write-Host "Built and signed $exeName; wrote latest.json"
 if ($Publish) {
     $title = "SulcusAI $version"
     $body = if ($Notes) { $Notes } else { "SulcusAI $version" }
-    gh release create $tag $exe $latestPath --repo IsaacLeh1/sulcusai --target main --title $title --notes $body
+    # From a file, so quotes in the notes reach GitHub intact.
+    $bodyFile = Join-Path $env:TEMP "sulcusai-notes-$version.md"
+    [System.IO.File]::WriteAllText($bodyFile, $body, (New-Object System.Text.UTF8Encoding $false))
+    gh release create $tag $exe $latestPath --repo IsaacLeh1/sulcusai --target main --title $title --notes-file $bodyFile
+    Remove-Item $bodyFile -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { throw "Publishing the release failed." }
     Write-Host "Published $tag. Installed copies will find it on their next check."
 }
