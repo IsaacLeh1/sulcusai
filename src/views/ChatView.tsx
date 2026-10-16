@@ -827,11 +827,11 @@ function renderItems(
   messages.forEach((m, i) => {
     if (m.role === "user" && m.meta?.added) {
       // Added mid-reply: still the same turn (and the same Undo).
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} />);
     } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} />);
     } else if (m.role === "assistant" && m.meta?.compacted) {
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
@@ -850,7 +850,7 @@ function renderItems(
             }
             return (
               <Fragment key={c.id}>
-                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} />
+                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} />
                 {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} />}
               </Fragment>
             );
@@ -887,7 +887,7 @@ function CompactedNote({ m }: { m: Message }) {
   );
 }
 
-function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void }) {
+function MessageView({ m, live, toast, onPicture, onOpenChat }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
     <div className={`msg ${m.role}`}>
@@ -906,6 +906,14 @@ function MessageView({ m, live, toast, onPicture }: { m: Message; live?: Status;
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
       {m.role === "user" && m.meta?.added && <span className="added-note">{t("Added while it worked")}</span>}
+      {m.role === "user" && m.meta?.from_chat && (
+        <span className="added-note">
+          {t("From the assistant in")}{" "}
+          <button className="link" onClick={() => onOpenChat?.(m.meta!.from_chat!)}>
+            “{m.meta.from_title ?? t("another chat")}”
+          </button>
+        </span>
+      )}
       {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
       {toast && m.role === "assistant" && m.content && (
         <div className="msg-tools">

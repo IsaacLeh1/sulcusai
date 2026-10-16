@@ -32,6 +32,7 @@ import { PrivacyPill } from "./components/PrivacySettings";
 import { WebPermission } from "./components/WebPermission";
 import { FolderPermission } from "./components/FolderPermission";
 import { MemoryWarningPopup } from "./components/MemoryWarning";
+import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 
@@ -711,6 +712,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       <WebPermission chats={chats} onOpenChat={openChat} />
       <FolderPermission chats={chats} onOpenChat={openChat} />
       <MemoryWarningPopup />
+      <ElsewhereApprovals chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} />
       <PeopleRequests enabled={has("people")} onOpenPeople={() => setView("people")} toast={toast} />
       {newProject && (
         <NewProjectDialog

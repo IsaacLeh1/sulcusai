@@ -714,6 +714,12 @@ export interface ToolMeta {
   compacted?: boolean;
   /** A user message added while the reply was being written. */
   added?: boolean;
+  /** A message from the assistant of another chat (it asked this one). */
+  from_chat?: string;
+  from_title?: string;
+  /** A step about another chat: open it from the step. */
+  open_chat?: string;
+  open_title?: string;
   /** How many messages the summary covers, and whether the chat compacted itself. */
   messages?: number;
   auto?: boolean;
@@ -978,7 +984,8 @@ export type FeatureId =
   | "projects"
   | "scheduled"
   | "connectors"
-  | "people";
+  | "people"
+  | "chat_team";
 
 export interface FeatureView {
   id: FeatureId;

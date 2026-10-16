@@ -7,6 +7,9 @@ import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
 
 const TOOL_ICONS: Record<string, string> = {
+  search_chats: "💬",
+  read_chat: "💬",
+  message_chat: "💬",
   list_dir: "📂",
   read_file: "📄",
   find_files: "🔎",
@@ -56,7 +59,7 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
 }
 
 /** One tool call and (once it has run) its result. */
-export function ToolCard({ call, meta, output, running, liveSteps }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[] }) {
+export function ToolCard({ call, meta, output, running, liveSteps, onOpenChat }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[]; onOpenChat?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
   const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
@@ -79,6 +82,13 @@ export function ToolCard({ call, meta, output, running, liveSteps }: { call: Too
             <li key={i}>{st}</li>
           ))}
         </ul>
+      )}
+      {meta?.open_chat && onOpenChat && (
+        <div className="tool-actions">
+          <button className="btn small" onClick={() => onOpenChat(meta.open_chat!)}>
+            {meta.open_title ? t("Open “{title}”", { title: meta.open_title }) : t("Open the chat")}
+          </button>
+        </div>
       )}
       {meta?.file && status === "ok" && (
         <div className="tool-actions">

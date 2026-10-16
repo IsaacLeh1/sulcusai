@@ -1174,6 +1174,81 @@ async fn a_message_added_mid_reply_is_read_and_answered() {
     assert!(!crate::inbox::waiting(&chat.id), "read once");
 }
 
+/// Chats working together: with the feature on, the model finds another
+/// chat, reads it and uses what it says; a chat answering for another can
+/// look but not ask on; incognito chats are never found.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_chat_finds_and_reads_another_chat() {
+    use axum::{routing::post, Json, Router};
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, Vec<String>)>>>;
+    let seen: Seen = Default::default();
+    let s = seen.clone();
+    let app = Router::new()
+        .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+            let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+            Json(serde_json::json!({ "tokens": vec![1; n] }))
+        }))
+        .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+            let s = s.clone();
+            async move {
+                let names: Vec<String> = b["tools"].as_array().into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(|n| n.as_str()).map(str::to_string)).collect();
+                let results: Vec<String> = b["messages"].as_array().into_iter().flatten().filter(|m| m["role"] == "tool").filter_map(|m| m["content"].as_str().map(str::to_string)).collect();
+                s.lock().unwrap().push((names, results.clone()));
+                let chunk = |v: serde_json::Value| format!("data: {v}\n\n");
+                let call = |name: &str, args: serde_json::Value| {
+                    let c = serde_json::json!({ "index": 0, "id": format!("call_{}", results.len()), "type": "function", "function": { "name": name, "arguments": args.to_string() } });
+                    chunk(serde_json::json!({ "choices": [{ "delta": { "tool_calls": [c] }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }))
+                };
+                let body = match results.len() {
+                    0 => call("search_chats", serde_json::json!({ "query": "budget" })),
+                    1 => call("read_chat", serde_json::json!({ "chat": "Trip budget" })),
+                    _ => chunk(serde_json::json!({ "choices": [{ "delta": { "content": "The budget is $500." }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] })),
+                } + "data: [DONE]\n\n";
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    let state = scratch_state();
+    let cipher = state.cipher().unwrap();
+    let (planning, secret, here) = {
+        let conn = state.db.lock().unwrap();
+        crate::features::set(&conn, crate::features::Feature::ChatTeam, true).unwrap();
+        let mk = |title: &str, incognito: bool, said: &[(&str, &str)]| {
+            let c = crate::db::create_chat_in(&conn, &cipher, None, None, incognito).unwrap();
+            crate::db::set_chat_title(&conn, &cipher, &c.id, title).unwrap();
+            for (i, (role, text)) in said.iter().enumerate() {
+                crate::db::add_message(&conn, &cipher, &Message { id: format!("{}-{i}", c.id), chat_id: c.id.clone(), role: (*role).into(), content: (*text).into(), created_at: crate::db::now_ms() + i as i64, ..Default::default() }).unwrap();
+            }
+            c
+        };
+        let planning = mk("Trip budget", false, &[("user", "Our budget for Lisbon is $500, flights included."), ("assistant", "Got it: $500 total.")]);
+        let secret = mk("Secret budget", true, &[("user", "The surprise party budget is $90.")]);
+        let here = mk("Packing", false, &[]);
+        (planning, secret, here)
+    };
+    let reply = say(&state, &ep, &cipher, &here.id, "What's my budget? Check my other chats.").await;
+    assert_eq!(reply, "The budget is $500.");
+    let first = seen.lock().unwrap().clone();
+    assert!(["search_chats", "read_chat", "message_chat"].iter().all(|t| first[0].0.contains(&t.to_string())), "offered: {:?}", first[0].0);
+    let found = &first[1].1[0];
+    assert!(found.contains("Trip budget") && found.contains(&planning.id) && found.contains("$500"), "found it: {found}");
+    assert!(!found.contains("Secret") && !found.contains(&secret.id), "never an incognito chat: {found}");
+    let read = &first[2].1[1];
+    assert!(read.contains("Our budget for Lisbon is $500") && read.contains("Got it: $500 total."), "read it: {read}");
+
+    // Answering for another chat: it can look, but not ask on.
+    let _asked = crate::tools::chats::Asked::new(&planning.id);
+    say(&state, &ep, &cipher, &planning.id, "And the hotel?").await;
+    let all = seen.lock().unwrap().clone();
+    let offered = &all[first.len()].0;
+    assert!(offered.contains(&"search_chats".to_string()) && !offered.contains(&"message_chat".to_string()), "{offered:?}");
+}
+
 /// Web search for real (DuckDuckGo, no key), reading a page, and the model
 /// using both in a chat with web turned on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

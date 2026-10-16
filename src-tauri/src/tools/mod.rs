@@ -3,6 +3,7 @@
 
 mod app;
 pub mod browser;
+pub mod chats;
 pub mod comms;
 mod documents;
 mod fs;
@@ -105,6 +106,7 @@ fn group(name: &str) -> &'static str {
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" => "app",
         "ask_person" | "work_with_person" => "people",
+        "search_chats" | "read_chat" | "message_chat" => "chats",
         _ => "files",
     }
 }
@@ -218,6 +220,12 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Ask the assistant of someone the user is linked with in People. It answers on their PC, with their model and only what they allow, and they may need to approve first. Use it for what only they would know, like details from chats they share or their plans. The question goes to them, so include only what's needed. Waits up to 3 minutes." },
     ToolDef { name: "work_with_person", risk: Risk::Submit, params: crate::sync::people::together::work_params,
         description: "Work something out together with the assistant of someone the user is linked with in People, such as a time to meet: the two assistants take turns, each with its own user's information, until they agree (up to 8 turns). Give the goal and what you already know. Both people can watch it in People." },
+    ToolDef { name: "search_chats", risk: Risk::Read, params: chats::search_chats_params,
+        description: "Look through the user's other chats on this PC: titles and what was said. Leave the query out to list the latest ones." },
+    ToolDef { name: "read_chat", risk: Risk::Read, params: chats::read_chat_params,
+        description: "Read the latest messages of another of the user's chats." },
+    ToolDef { name: "message_chat", risk: Risk::Read, params: chats::message_chat_params,
+        description: "Ask or tell the assistant in another of the user's chats (or a new chat) something: it works on it there, with its own conversation and tools, and its reply comes back to you. Use it to split work or to use what that chat knows. One at a time; give it everything it needs." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
         description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
@@ -300,7 +308,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -421,6 +429,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "command_output" => shell::output(args),
         "stop_command" => shell::stop(args),
         "open_path" => open_path(args, ctx),
+        "search_chats" => chats::search(args, ctx),
+        "read_chat" => chats::read(args, ctx),
+        // Run by the agent itself (it needs the model that's loaded).
+        "message_chat" => Outcome::error("Ask another chat", "Other chats are asked from the chat itself."),
         // Asked of the user by the agent itself.
         "request_folder" => Outcome::error("Ask for a folder", "Folders are asked for in the chat."),
         // Its assistant runs tools too, so the call is boxed.

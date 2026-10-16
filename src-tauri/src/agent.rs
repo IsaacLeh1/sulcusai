@@ -207,7 +207,7 @@ impl Turn {
     }
 
     pub async fn run(self) -> Result<TurnResult, String> {
-        let (folders, project, memories, memory_on, request, features) = {
+        let (folders, project, memories, memory_on, request, features, incognito) = {
             let conn = self.state.db.lock().unwrap();
             let chat = db::chat(&conn, &self.cipher, &self.chat_id).ok_or("That chat no longer exists.")?;
             let project = chat.project_id.as_deref().and_then(|p| projects::get(&conn, &self.cipher, p));
@@ -220,7 +220,7 @@ impl Turn {
                 .map(|m| m.content)
                 .unwrap_or_default();
             let folders = if on.contains(&Feature::Files) { projects::chat_folders(&conn, &chat) } else { Vec::new() };
-            (folders, project, memories, memory_on, request, on)
+            (folders, project, memories, memory_on, request, on, chat.incognito)
         };
         let mut sandbox = Sandbox::new(&folders);
         let files = self.use_tools && !sandbox.is_empty();
@@ -303,6 +303,14 @@ impl Turn {
         if people_note.is_some() {
             extra.extend(["ask_person", "work_with_person"]);
         }
+        // The user's other chats: searching, reading, and asking their assistants.
+        let chats_note = self.use_tools && features.contains(&Feature::ChatTeam) && !incognito;
+        if chats_note {
+            extra.extend(["search_chats", "read_chat"]);
+            if self.mode != tools::Mode::Plan && !tools::chats::is_asked(&self.chat_id) {
+                extra.push("message_chat");
+            }
+        }
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
@@ -343,6 +351,15 @@ impl Turn {
         }
         if let Some(note) = &people_note {
             about.push_str(note);
+        }
+        if chats_note {
+            about.push_str(if tools::chats::is_asked(&self.chat_id) {
+                "\n\nYou can look through the user's other chats with search_chats and read_chat."
+            } else {
+                "\n\nThe user's other chats on this PC work with you: look through them with search_chats and read_chat, and give another \
+                 chat's assistant a piece of work or a question with message_chat (or start a new chat for it). It works there with \
+                 the same model, one at a time, and its reply comes back to you. Use it when the user asks, or to split up a big job."
+            });
         }
         if self.use_tools {
             about.push_str(&tools::app_note(&self.state, &self.cipher));
@@ -621,6 +638,9 @@ impl Turn {
         if call.name == "request_folder" {
             return self.request_folder(call, sandbox).await;
         }
+        if call.name == "message_chat" {
+            return self.message_chat(call).await;
+        }
         if call.name == "load_skill" {
             let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
             let wanted = args.get("name").and_then(Value::as_str).unwrap_or("");
@@ -864,6 +884,87 @@ impl Turn {
             None,
         );
         o.meta["web_granted"] = json!(true);
+        o
+    }
+
+    /// Asks another of the user's chats (or a new one): it works on it there
+    /// with the model that's loaded, and its reply comes back. Stopping this
+    /// reply stops that one too. (Boxed, with its type spelled out: that
+    /// chat's turn runs this same agent.)
+    fn message_chat<'a>(&'a self, call: &'a ToolCall) -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome> + Send + 'a>> {
+        Box::pin(self.ask_chat(call))
+    }
+
+    async fn ask_chat(&self, call: &ToolCall) -> Outcome {
+        let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+        let text = args.get("message").and_then(Value::as_str).map(str::trim).unwrap_or("").to_string();
+        if text.is_empty() {
+            return Outcome::error("Ask another chat", "Say what to ask or tell it (message).");
+        }
+        let Some(app) = self.state.app.get().cloned() else {
+            return Outcome::error("Ask another chat", "Other chats can't be reached right now.");
+        };
+        let new_title = args.get("new_chat_title").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
+        let wanted = args.get("chat").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty());
+        let (target, from_title) = {
+            let conn = self.state.db.lock().unwrap();
+            let here = db::chat(&conn, &self.cipher, &self.chat_id);
+            let from_title = here.as_ref().map_or_else(|| "another chat".to_string(), |c| c.title.clone());
+            let target = match (wanted, new_title) {
+                (Some(w), _) => tools::chats::find(&conn, &self.cipher, &self.chat_id, w),
+                (None, Some(title)) => {
+                    let model = here.as_ref().and_then(|c| c.model_id.clone());
+                    let project = here.as_ref().and_then(|c| c.project_id.clone());
+                    db::create_chat_in(&conn, &self.cipher, model, project, false).and_then(|c| {
+                        db::set_chat_title(&conn, &self.cipher, &c.id, title)?;
+                        Ok(db::Chat { title: title.to_string(), ..c })
+                    })
+                }
+                (None, None) => Err("Name the chat to ask (chat), or give a title for a new one (new_chat_title).".to_string()),
+            };
+            (target, from_title)
+        };
+        let target = match target {
+            Ok(t) => t,
+            Err(e) => return Outcome::error("Ask another chat", e),
+        };
+        if new_title.is_some() {
+            use tauri::Emitter;
+            app.emit("chat:titled", json!({ "chat_id": target.id, "title": target.title })).ok();
+        }
+        if self.state.generations.lock().unwrap().contains_key(&target.id) {
+            return Outcome::error(
+                format!("Ask \"{}\"", target.title),
+                format!("\"{}\" is busy answering something else. Try again in a moment, or ask another chat.", target.title),
+            );
+        }
+        self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
+        let asking = crate::Asking { ep: self.ep.clone(), tools: self.use_tools, vision: self.vision, from: (self.chat_id.clone(), from_title) };
+        let reply = crate::run_asked(&app, &self.state, target.id.clone(), text, asking);
+        tokio::pin!(reply);
+        let reply = loop {
+            tokio::select! {
+                r = &mut reply => break r,
+                _ = tokio::time::sleep(Duration::from_millis(250)) => {
+                    if self.cancel.load(Ordering::Relaxed) {
+                        if let Some(flag) = self.state.generations.lock().unwrap().get(&target.id) {
+                            flag.store(true, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        };
+        let title = format!("Asked \"{}\"", target.title);
+        self.log(&title);
+        let mut o = match reply {
+            Ok(Some(m)) if !m.content.trim().is_empty() => {
+                Outcome::ok(format!("\"{}\" answered:\n{}", target.title, m.content.trim()), title, "text", Some(m.content.trim().to_string()))
+            }
+            Ok(_) => Outcome::error(title, format!("\"{}\" stopped without an answer.", target.title)),
+            Err(e) => Outcome::error(title, e),
+        };
+        o.meta["open_chat"] = json!(target.id);
+        o.meta["open_title"] = json!(target.title);
         o
     }
 

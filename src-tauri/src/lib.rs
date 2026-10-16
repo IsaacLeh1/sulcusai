@@ -1274,6 +1274,32 @@ pub(crate) async fn run_turn(
     images: Vec<String>,
     tee: Option<Tee>,
 ) -> Result<Option<Message>, String> {
+    run_turn_with(app, state, chat_id, text, images, tee, None).await
+}
+
+/// Another chat's assistant asking this chat something: it answers with the
+/// model that chat has loaded (one model at a time), and can't ask on.
+pub(crate) struct Asking {
+    pub ep: engine::Endpoint,
+    pub tools: bool,
+    pub vision: bool,
+    /// The asking chat: id and title.
+    pub from: (String, String),
+}
+
+pub(crate) async fn run_asked(app: &AppHandle, state: &Arc<AppState>, chat_id: String, text: String, asking: Asking) -> Result<Option<Message>, String> {
+    run_turn_with(app, state, chat_id, text, Vec::new(), None, Some(asking)).await
+}
+
+async fn run_turn_with(
+    app: &AppHandle,
+    state: &Arc<AppState>,
+    chat_id: String,
+    text: String,
+    images: Vec<String>,
+    tee: Option<Tee>,
+    asking: Option<Asking>,
+) -> Result<Option<Message>, String> {
     let mut text = text.trim().to_string();
     if text.is_empty() && images.is_empty() {
         return Err("Type a message first.".into());
@@ -1290,6 +1316,7 @@ pub(crate) async fn run_turn(
     let _shared = SharedTurn(state.clone(), chat_id.clone());
     // Messages typed meanwhile: added to this reply, or queued for after it.
     let inbox = inbox::Opened::new(app, &chat_id);
+    let _asked = asking.as_ref().map(|_| tools::chats::Asked::new(&chat_id));
 
     let turn_id = uuid::Uuid::new_v4().to_string();
     let (chat, profile) = {
@@ -1306,11 +1333,17 @@ pub(crate) async fn run_turn(
     // Pictures in this message or earlier ones: start the model with its image encoder.
     let pictures = !images.is_empty()
         || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some()));
-    let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), pictures, || {
-        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
-    })
-    .await?;
-    let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
+    let (ep, use_tools, vision) = match &asking {
+        Some(a) => (a.ep.clone(), a.tools, a.vision),
+        None => {
+            let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), pictures, || {
+                app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
+            })
+            .await?;
+            let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
+            (ep, spec.tools, vision)
+        }
+    };
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
@@ -1357,16 +1390,20 @@ pub(crate) async fn run_turn(
             role: "user".into(),
             content: text.clone(),
             created_at: db::now_ms(),
-            meta: (!images.is_empty()).then(|| json!({ "images": images })),
+            meta: match &asking {
+                Some(a) => Some(json!({ "from_chat": a.from.0, "from_title": a.from.1 })),
+                None => (!images.is_empty()).then(|| json!({ "images": images })),
+            },
             ..Default::default()
         })?;
-        if first {
+        // A chat started by another chat keeps the title it was given.
+        if first && asking.is_none() {
             db::set_chat_title(&conn, &cipher, &chat_id, &chat::title_from(&text))?;
         }
     }
 
     // After the first reply, the model names the chat from the request.
-    let name_it = (first_message && !chat.incognito).then(|| (ep.clone(), text.clone()));
+    let name_it = (first_message && !chat.incognito && asking.is_none()).then(|| (ep.clone(), text.clone()));
     let emitter = app.clone();
     let watched = state.clone();
     let turn = agent::Turn {
@@ -1384,7 +1421,7 @@ pub(crate) async fn run_turn(
         cipher,
         ep,
         mode,
-        use_tools: spec.tools,
+        use_tools,
         vision,
         base,
         about,

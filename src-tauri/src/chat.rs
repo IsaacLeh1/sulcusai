@@ -213,6 +213,14 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
             }
             // When each message was sent, so "this afternoon" or "tonight"
             // make sense. Fixed per message, so the engine's cache holds.
+            // Asked by the assistant of another chat, not typed by the user.
+            "user" if m.meta.as_ref().is_some_and(|v| v.get("from_chat").is_some()) => {
+                let from = m.meta.as_ref().and_then(|v| v.get("from_title")).and_then(Value::as_str).unwrap_or("another chat");
+                out.push(json!({ "role": "user", "content": format!(
+                    "{}\n[From the assistant in the user's chat \"{from}\", working for the user. Do what it asks here, then answer it: your reply goes back to it.]\n{}",
+                    sent_note(m.created_at), m.content
+                ) }));
+            }
             "user" if m.created_at > 0 => out.push(json!({ "role": "user", "content": format!("{}\n{}", sent_note(m.created_at), m.content) })),
             role => out.push(json!({ "role": role, "content": m.content })),
         }

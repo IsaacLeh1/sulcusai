@@ -76,6 +76,11 @@ export const FEATURES: Record<FeatureId, Info> = {
   projects: { icon: "📚", name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
   scheduled: { icon: "⏰", name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },
   connectors: { icon: "🔌", name: tx("Connectors and plugins"), detail: tx("Add tools from MCP servers and plugins on this PC.") },
+  chat_team: {
+    icon: "💬",
+    name: tx("Chats working together"),
+    detail: tx("The assistant can look through your other chats, read them, and hand another chat a question or a piece of work: it works on it there, with the same model, and the answer comes back. Incognito chats are never included."),
+  },
   people: {
     icon: "👥",
     name: tx("People"),
@@ -88,7 +93,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
-  { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors"] },
+  { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
   { title: tx("With other people"), ids: ["people"] },
 ];
 

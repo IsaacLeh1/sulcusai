@@ -45,6 +45,8 @@ pub enum Feature {
     Scheduled,
     Connectors,
     People,
+    /// Chats searching, reading and asking each other.
+    ChatTeam,
 }
 
 pub const ALL: &[Feature] = &[
@@ -71,6 +73,7 @@ pub const ALL: &[Feature] = &[
     Feature::Scheduled,
     Feature::Connectors,
     Feature::People,
+    Feature::ChatTeam,
 ];
 
 impl Feature {
@@ -99,6 +102,7 @@ impl Feature {
             Feature::Scheduled => "Scheduled tasks",
             Feature::Connectors => "Connectors and plugins",
             Feature::People => "People",
+            Feature::ChatTeam => "Chats working together",
         }
     }
 
