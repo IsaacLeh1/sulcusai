@@ -2240,7 +2240,6 @@
  "connected": "verbunden",
  "none": "keine",
  "not connected": "nicht verbunden",
- "replies by {model} on their PC": "Antworten von {model} auf deren PC",
  "{name} can now reach you through your relay when you're not connected directly.": "{name} kann dich jetzt über dein Relay erreichen, wenn ihr nicht direkt verbunden seid.",
  "{name} can't use your relay anymore.": "{name} kann dein Relay nicht mehr nutzen.",
  "{name} isn't connected right now. Chats they share show here while you're both connected.": "{name} ist gerade nicht verbunden. Geteilte Chats erscheinen hier, solange ihr beide verbunden seid.",
@@ -2251,7 +2250,6 @@
  "{name}'s assistant is working on it": "Der Assistent von {name} arbeitet daran",
  "{name}'s assistant wants to work something out": "Der Assistent von {name} möchte etwas klären",
  "{name}'s assistant wants to work something out with yours": "Der Assistent von {name} möchte etwas mit deinem klären",
- "{name}'s chat, read-only": "Chat von {name}, nur lesen",
  "{n} more waiting.": "{n} weitere warten.",
  "← Shared chats": "← Geteilte Chats",
  "Loading the model…": "Modell wird geladen…",
@@ -2449,5 +2447,16 @@
  "Your email, if you'd like a reply (optional)": "Deine E-Mail, falls du eine Antwort möchtest (optional)",
  "Your message": "Deine Nachricht",
  "{name} will see when you've read their messages.": "{name} sieht, wann du die Nachrichten gelesen hast.",
- "{name} won't see when you've read their messages.": "{name} sieht nicht, wann du die Nachrichten gelesen hast."
+ "{name} won't see when you've read their messages.": "{name} sieht nicht, wann du die Nachrichten gelesen hast.",
+ "From {name}": "Von {name}",
+ "Open the chat first.": "Öffne zuerst den Chat.",
+ "Write in {name}'s chat; your own model answers here": "Schreib in {name}s Chat; dein eigenes Modell antwortet hier",
+ "Your model is answering…": "Dein Modell antwortet…",
+ "Your model is reading the chat…": "Dein Modell liest den Chat…",
+ "Your model is still answering in this chat.": "Dein Modell antwortet in diesem Chat noch.",
+ "their replies by {model} on their PC": "ihre Antworten von {model} auf ihrem PC",
+ "{name} sees what you write and your model's answer in their chat. Your model runs on this PC.": "{name} sieht, was du schreibst, und die Antwort deines Modells in ihrem Chat. Dein Modell läuft auf diesem PC.",
+ "{name} shares this chat with you": "{name} teilt diesen Chat mit dir",
+ "{name} shares this chat with you (not connected right now)": "{name} teilt diesen Chat mit dir (gerade nicht verbunden)",
+ "{name}'s chat, shared with you": "{name}s Chat, mit dir geteilt"
 }

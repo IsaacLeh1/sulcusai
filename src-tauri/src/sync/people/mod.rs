@@ -78,6 +78,9 @@ struct Book {
     invites: Vec<codes::Invite>,
     /// People who can't link with this app again.
     blocked: Vec<codes::Blocked>,
+    /// Chats others share with this user, remembered for the sidebar (the
+    /// title and who; never what's in them).
+    seen: Vec<share::Seen>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -749,6 +752,7 @@ fn forget_contact(state: &AppState, id: &str) -> Result<(), String> {
     let name = update(state, |b| {
         let name = b.contacts.iter().find(|p| p.id == id).map(|p| p.name.clone());
         b.contacts.retain(|p| p.id != id);
+        b.seen.retain(|s| s.contact != id);
         for s in &mut b.shares {
             s.with.retain(|w| *w != id);
         }

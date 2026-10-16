@@ -453,7 +453,7 @@ fn tool_names(state: &AppState, allow: &Allow) -> Vec<&'static str> {
 #[cfg(test)]
 pub(super) static TEST_ENDPOINT: Mutex<Option<crate::engine::Endpoint>> = Mutex::new(None);
 
-async fn endpoint(state: &Arc<AppState>) -> Result<crate::engine::Endpoint, String> {
+pub(super) async fn endpoint(state: &Arc<AppState>) -> Result<crate::engine::Endpoint, String> {
     #[cfg(test)]
     if let Some(ep) = TEST_ENDPOINT.lock().unwrap().clone() {
         return Ok(ep);

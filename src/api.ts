@@ -255,6 +255,21 @@ export interface SharedMsg {
   role: "user" | "assistant" | "step" | "note";
   text: string;
   at: number;
+  /** Written by someone it's shared with (their name), or by their model. */
+  by: string;
+  /** For an answer from someone else's model: which. */
+  model: string;
+  /** This user wrote it (or this user's model did). */
+  mine: boolean;
+}
+
+/** For the sidebar: a chat someone shares with this user. */
+export interface SharedHere {
+  contact_id: string;
+  contact_name: string;
+  /** Connected now, so it can be opened. */
+  online: boolean;
+  chat: SharedChat;
 }
 
 export interface SharedLive {
@@ -722,6 +737,10 @@ export interface ToolMeta {
   compacted?: boolean;
   /** A user message added while the reply was being written. */
   added?: boolean;
+  /** In a chat this user shares: written by that person (or their model). */
+  from_person?: string;
+  from_name?: string;
+  model?: string;
   /** A message from the assistant of another chat (it asked this one). */
   from_chat?: string;
   from_title?: string;
@@ -1429,6 +1448,11 @@ export const api = {
   /** Opens a chat someone shares; changes follow as people:snapshot and people:live. */
   peopleWatch: (contactId: string, chatId: string) => invoke<SharedView>("people_watch", { contactId, chatId }),
   peopleUnwatch: (contactId: string, chatId: string) => invoke<void>("people_unwatch", { contactId, chatId }),
+  /** Chats others share with this user (for the sidebar). */
+  peopleSharedChats: () => invoke<SharedHere[]>("people_shared_chats"),
+  /** Writes in a chat someone shares; this user's model answers it (people:post_live). */
+  peopleSharedPost: (contactId: string, chatId: string, text: string) => invoke<void>("people_shared_post", { contactId, chatId, text }),
+  peopleSharedStop: (contactId: string, chatId: string) => invoke<void>("people_shared_stop", { contactId, chatId }),
   peopleRequests: () => invoke<PersonRequest[]>("people_requests"),
   /** "assistant": let this user's assistant answer; "mine": answer with `text`; "decline". */
   peopleReply: (id: string, choice: "assistant" | "mine" | "decline", text: string | null, always: boolean) =>
@@ -1849,6 +1873,10 @@ export interface ChatEvents {
   "people:attempt": { invite_id: string; name: string; result: "checking" | "wrong" | "linked" | "refused"; at: number };
   "people:snapshot": { contact_id: string; chat_id: string; view: SharedView };
   "people:live": { contact_id: string; chat_id: string; live: SharedLive | null };
+  /** This user's model answering in a chat someone shares. */
+  "people:post_live": { contact_id: string; chat_id: string; status: "loading" | "writing" | "done"; delta: string | null };
+  /** Someone wrote in a chat this user shares (or their model did). */
+  "chat:changed": { chat_id: string };
   "update:progress": { received: number; total: number | null };
   "update:installing": Record<string, never>;
   "privacy:status": null;

@@ -222,6 +222,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:queue", mine((p) => setQueue(p.queue))),
       on("chat:read", mine((p) => setReadUpTo((r) => Math.max(r, p.up_to)))),
+      // Someone this chat is shared with wrote in it (or their model did).
+      on("chat:changed", mine(() => reload())),
       on("chat:start", mine((p) => {
         setCooling(null);
         setStatus("thinking");
@@ -816,9 +818,9 @@ function renderItems(
   const results = new Map<string, Message>();
   // "Sent" or "Read" under the newest message (and ones added mid-reply):
   // read once the model started answering after it.
-  const lastUser = messages.map((m) => m.role === "user").lastIndexOf(true);
+  const lastUser = messages.map((m) => m.role === "user" && !m.meta?.from_person).lastIndexOf(true);
   const receipt = (m: Message, i: number): "sent" | "read" | undefined => {
-    if (i !== lastUser && !m.meta?.added) return undefined;
+    if (m.meta?.from_person || (i !== lastUser && !m.meta?.added)) return undefined;
     const answered = messages.slice(i + 1).some((x) => x.role === "assistant" || x.role === "tool");
     return answered || (readUpTo > 0 && m.created_at <= readUpTo) ? "read" : "sent";
   };
@@ -920,6 +922,11 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt }: { m: Me
       {m.role === "user" && (m.meta?.added || receipt) && (
         <span className={`added-note ${receipt === "read" ? "read" : ""}`} title={receipt === "read" ? t("The model has read this") : t("The model hasn't read this yet")}>
           {[m.meta?.added ? t("Added while it worked") : null, receipt === "read" ? "✓✓ " + t("Read") : receipt === "sent" ? "✓ " + t("Sent") : null].filter(Boolean).join(" · ")}
+        </span>
+      )}
+      {m.meta?.from_person && (
+        <span className="added-note">
+          👥 {m.role === "user" ? t("From {name}", { name: m.meta.from_name ?? "" }) : t("{name}'s assistant", { name: m.meta.from_name ?? "" }) + (m.meta.model ? " · " + m.meta.model : "")}
         </span>
       )}
       {m.role === "user" && m.meta?.from_chat && (

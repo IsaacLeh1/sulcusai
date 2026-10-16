@@ -12,6 +12,7 @@ import {
   type InstallProgress,
   type Project,
   type SecurityStatus,
+  type SharedHere,
   type Settings,
   type BrowsersView,
 } from "./api";
@@ -54,9 +55,10 @@ const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m
 const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
 const StudioView = lazy(() => import("./views/StudioView").then((m) => ({ default: m.StudioView })));
 const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
+const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -164,6 +166,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   // Unread messages from people, for the badge on People.
   const [peopleUnread, setPeopleUnread] = useState(0);
   const peopleOn = has("people");
+  // Chats others share with this user: in the sidebar with this user's own.
+  const [sharedHere, setSharedHere] = useState<SharedHere[]>([]);
+  const [openShared, setOpenShared] = useState<SharedHere | null>(null);
+  useEffect(() => {
+    if (!peopleOn) return setSharedHere([]);
+    const load = () => api.peopleSharedChats().then(setSharedHere).catch(() => {});
+    load();
+    const subs = [on("people:shared", load), on("people:changed", load)];
+    return () => subs.forEach((s) => s.then((un) => un()));
+  }, [peopleOn]);
   useEffect(() => {
     if (!peopleOn) return setPeopleUnread(0);
     const count = () => api.peopleUnread().then(setPeopleUnread).catch(() => {});
@@ -499,7 +511,23 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           ))}
         </div>}
         <div className="chat-list" role="list">
-          {listed.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
+          {listed.length === 0 && sharedHere.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
+          {sharedHere.map((s) => (
+            <button
+              key={`${s.contact_id}:${s.chat.id}`}
+              role="listitem"
+              className={`chat-item shared ${view === "shared" && openShared?.chat.id === s.chat.id && openShared.contact_id === s.contact_id ? "active" : ""} ${s.online ? "" : "offline"}`}
+              onClick={() => {
+                setOpenShared(s);
+                setView("shared");
+              }}
+              title={s.online ? t("{name} shares this chat with you", { name: s.contact_name }) : t("{name} shares this chat with you (not connected right now)", { name: s.contact_name })}
+            >
+              <span className="ellipsis">{s.chat.title}</span>
+              <span className="shared-from">👥 {s.contact_name}</span>
+              {s.chat.busy && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
+            </button>
+          ))}
           {listed.map((c) => (
             <button
               key={c.id}
@@ -618,6 +646,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "activity" && <ActivityView toast={toast} />}
         {view === "connectors" && <ConnectorsView toast={toast} />}
         {view === "people" && <PeopleView toast={toast} />}
+        {view === "shared" && openShared && (
+          <div className="page shared-page">
+            <SharedChatView key={`${openShared.contact_id}:${openShared.chat.id}`} contactId={openShared.contact_id} contactName={openShared.contact_name} chat={openShared.chat} toast={toast} />
+          </div>
+        )}
         {view === "scheduled" && <ScheduledView installed={installed} onOpenChat={openChat} toast={toast} />}
         {view === "memory" && <MemoryView settings={settings} onSettings={setSettings} toast={toast} />}
         {view === "project" && activeProject && (

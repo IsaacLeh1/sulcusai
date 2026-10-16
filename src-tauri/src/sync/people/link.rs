@@ -56,6 +56,10 @@ pub(super) enum Frame {
     End { id: String, reason: String },
     /// The relay they may use to reach this app (None: not anymore).
     Relay { url: Option<String> },
+    /// Taking part in a chat the other side shares: a message written here,
+    /// and the answer this side's model gave to it.
+    Post { chat_id: String, id: String, text: String },
+    PostReply { chat_id: String, id: String, text: String, model: String },
     #[serde(other)]
     Unknown,
 }
@@ -330,6 +334,8 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
             changed(state);
         }
         Frame::Shared { chats } => share::listed(state, &p.id, chats),
+        Frame::Post { chat_id, id, text } => share::posted(state, &p.id, &chat_id, &id, &text, None),
+        Frame::PostReply { chat_id, id, text, model } => share::posted(state, &p.id, &chat_id, &id, &text, Some(&model)),
         Frame::Watch { chat_id } => share::watch(state, &p.id, &chat_id),
         Frame::Unwatch { chat_id } => share::unwatch(&p.id, &chat_id),
         Frame::Snapshot { chat, messages } => share::snapshot(state, &p.id, chat, messages),

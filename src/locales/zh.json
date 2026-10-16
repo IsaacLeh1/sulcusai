@@ -2240,7 +2240,6 @@
  "connected": "已连接",
  "none": "无",
  "not connected": "未连接",
- "replies by {model} on their PC": "回复由对方电脑上的 {model} 生成",
  "{name} can now reach you through your relay when you're not connected directly.": "现在你们未直接连接时，{name} 也可以通过你的中继联系你。",
  "{name} can't use your relay anymore.": "{name} 不能再使用你的中继了。",
  "{name} isn't connected right now. Chats they share show here while you're both connected.": "{name} 现在未连接。你们都在线连接时，对方共享的聊天会显示在这里。",
@@ -2251,7 +2250,6 @@
  "{name}'s assistant is working on it": "{name} 的助手正在处理",
  "{name}'s assistant wants to work something out": "{name} 的助手想一起解决一件事",
  "{name}'s assistant wants to work something out with yours": "{name} 的助手想与你的助手一起解决一件事",
- "{name}'s chat, read-only": "{name} 的聊天（只读）",
  "{n} more waiting.": "还有 {n} 个在等待。",
  "← Shared chats": "← 共享的聊天",
  "Loading the model…": "正在加载模型…",
@@ -2449,5 +2447,16 @@
  "Your email, if you'd like a reply (optional)": "你的邮箱，如需回复（可选）",
  "Your message": "你的消息",
  "{name} will see when you've read their messages.": "{name} 将能看到你何时读了他们的消息。",
- "{name} won't see when you've read their messages.": "{name} 将看不到你何时读了他们的消息。"
+ "{name} won't see when you've read their messages.": "{name} 将看不到你何时读了他们的消息。",
+ "From {name}": "来自 {name}",
+ "Open the chat first.": "请先打开对话。",
+ "Write in {name}'s chat; your own model answers here": "在 {name} 的对话中写点什么；由你自己的模型在这里回答",
+ "Your model is answering…": "你的模型正在回答…",
+ "Your model is reading the chat…": "你的模型正在阅读对话…",
+ "Your model is still answering in this chat.": "你的模型仍在这个对话中回答。",
+ "their replies by {model} on their PC": "对方的回复由其电脑上的 {model} 生成",
+ "{name} sees what you write and your model's answer in their chat. Your model runs on this PC.": "{name} 会在其对话中看到你写的内容和你的模型的回答。你的模型在这台电脑上运行。",
+ "{name} shares this chat with you": "{name} 与你共享了这个对话",
+ "{name} shares this chat with you (not connected right now)": "{name} 与你共享了这个对话（当前未连接）",
+ "{name}'s chat, shared with you": "{name} 的对话，已与你共享"
 }

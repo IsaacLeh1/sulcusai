@@ -372,7 +372,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
       </header>
       {tab === "shared" ? (
         watching ? (
-          <SharedChatView key={watching.id} contact={c} chat={watching} onBack={() => setWatching(null)} toast={toast} />
+          <SharedChatView key={watching.id} contactId={c.id} contactName={c.name} chat={watching} onBack={() => setWatching(null)} toast={toast} />
         ) : (
           <SharedPanel contact={c} onOpen={setWatching} toast={toast} />
         )
@@ -561,8 +561,18 @@ const LIVE_STATUS: Record<string, string> = {
 };
 
 /** A chat someone shares, live and read-only. */
-function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonContact; chat: SharedChat; onBack: () => void; toast: PushToast }) {
+/** A chat someone shares with this user, live: from People or the sidebar.
+ * This user can take part: what they write goes into that chat, and their
+ * own model, here, answers it there. */
+export function SharedChatView({ contactId, contactName, chat, onBack, toast }: { contactId: string; contactName: string; chat: SharedChat; onBack?: () => void; toast: PushToast }) {
+  const c = { id: contactId, name: contactName };
   const [v, setV] = useState<SharedView | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  // This user's model answering here: what it's doing, and its words so far.
+  const [mine, setMine] = useState<{ status: string; content: string } | null>(null);
+  // What this user just wrote, until it comes back in their chat.
+  const [pending, setPending] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   useEffect(() => {
@@ -572,13 +582,24 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
       .then((x) => alive && setV(x))
       .catch((e) => {
         if (!alive) return;
-        toast(errorText(e), "error");
-        onBack();
+        if (onBack) {
+          toast(errorText(e), "error");
+          onBack();
+        } else setFailed(errorText(e));
       });
-    const mine = (p: { contact_id: string; chat_id: string }) => p.contact_id === c.id && p.chat_id === chat.id;
+    const here = (p: { contact_id: string; chat_id: string }) => p.contact_id === c.id && p.chat_id === chat.id;
     const subs = [
-      on("people:snapshot", (p) => mine(p) && setV(p.view)),
-      on("people:live", (p) => mine(p) && setV((x) => (x ? { ...x, live: p.live } : x))),
+      on("people:snapshot", (p) => {
+        if (!here(p)) return;
+        setV(p.view);
+        setPending((t) => (t && p.view.messages.some((m) => m.mine && m.role === "user" && m.text === t) ? null : t));
+      }),
+      on("people:live", (p) => here(p) && setV((x) => (x ? { ...x, live: p.live } : x))),
+      on("people:post_live", (p) => {
+        if (!here(p)) return;
+        if (p.status === "done") setMine(null);
+        else setMine((m) => ({ status: p.status, content: (m?.content ?? "") + (p.delta ?? "") }));
+      }),
     ];
     return () => {
       alive = false;
@@ -586,7 +607,22 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
       api.peopleUnwatch(c.id, chat.id).catch(() => {});
     };
   }, [c.id, chat.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const size = (v?.messages.length ?? 0) + (v?.live?.content.length ?? 0);
+  const send = async () => {
+    const text = input.trim();
+    if (!text || mine) return;
+    setInput("");
+    setPending(text);
+    setMine({ status: "loading", content: "" });
+    try {
+      await api.peopleSharedPost(c.id, chat.id, text);
+    } catch (e) {
+      setMine(null);
+      setPending(null);
+      setInput(text);
+      toast(errorText(e), "error");
+    }
+  };
+  const size = (v?.messages.length ?? 0) + (v?.live?.content.length ?? 0) + (mine?.content.length ?? 0);
   useEffect(() => {
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [size]);
@@ -595,15 +631,18 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
   return (
     <>
       <div className="shared-head">
-        <button className="link small" onClick={onBack}>
-          {t("← Shared chats")}
-        </button>
+        {onBack && (
+          <button className="link small" onClick={onBack}>
+            {t("← Shared chats")}
+          </button>
+        )}
         <strong className="ellipsis">{info.title}</strong>
         <span className="small muted">
-          {t("{name}'s chat, read-only", { name: c.name })}
-          {info.model && " · " + t("replies by {model} on their PC", { model: info.model })}
+          👥 {t("{name}'s chat, shared with you", { name: c.name })}
+          {info.model && " · " + t("their replies by {model} on their PC", { model: info.model })}
         </span>
       </div>
+      {failed && <p className="muted small people-note">{failed}</p>}
       <div
         className="people-messages shared-messages"
         onScroll={(e) => {
@@ -622,8 +661,18 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
               {t("The earlier part of this chat was summarized here.")}
             </div>
           ) : (
-            <div key={m.id} className={`pmsg ${m.role === "user" ? "mine" : ""}`}>
-              <span className="small muted pmeta">{m.role === "user" ? c.name : info.model || t("Assistant")}</span>
+            <div key={m.id} className={`pmsg ${m.mine ? "mine" : ""}`}>
+              <span className="small muted pmeta">
+                {m.role === "user"
+                  ? m.mine
+                    ? t("You")
+                    : m.by || c.name
+                  : m.mine
+                    ? t("Your assistant") + (m.model ? " · " + m.model : "")
+                    : m.by
+                      ? t("{name}'s assistant", { name: m.by }) + (m.model ? " · " + m.model : "")
+                      : t("{name}'s assistant", { name: c.name }) + (info.model ? " · " + info.model : "")}
+              </span>
               <div className="pbubble">{m.role === "user" ? <span className="ptext">{m.text}</span> : <Markdown text={m.text} />}</div>
             </div>
           ),
@@ -638,8 +687,54 @@ function SharedChatView({ contact: c, chat, onBack, toast }: { contact: PersonCo
             )}
           </div>
         )}
+        {pending && (
+          <div className="pmsg mine">
+            <span className="small muted pmeta">{t("You")}</span>
+            <div className="pbubble">
+              <span className="ptext">{pending}</span>
+            </div>
+          </div>
+        )}
+        {mine && (
+          <div className="pmsg mine">
+            <span className="small muted pmeta live-dot">{mine.status === "loading" ? t("Your model is reading the chat…") : t("Your model is answering…")}</span>
+            {mine.content && (
+              <div className="pbubble">
+                <Markdown text={mine.content} />
+              </div>
+            )}
+          </div>
+        )}
         <div ref={end} />
       </div>
+      {v && (
+        <div className="shared-compose">
+          <textarea
+            className="input"
+            rows={2}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder={t("Write in {name}'s chat; your own model answers here", { name: c.name })}
+            aria-label={t("Message")}
+          />
+          {mine ? (
+            <button className="btn" onClick={() => api.peopleSharedStop(c.id, chat.id).catch(() => {})}>
+              {t("Stop")}
+            </button>
+          ) : (
+            <button className="btn primary" onClick={send} disabled={!input.trim()}>
+              {t("Send")}
+            </button>
+          )}
+          <p className="muted small shared-compose-note">{t("{name} sees what you write and your model's answer in their chat. Your model runs on this PC.", { name: c.name })}</p>
+        </div>
+      )}
     </>
   );
 }

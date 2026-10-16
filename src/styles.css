@@ -1278,3 +1278,13 @@ button.ctx:hover { background: var(--hover); }
 .offline-more { margin: 4px 0 10px; }
 .offline-more summary { cursor: pointer; color: var(--muted); }
 .msg.user .added-note.read { color: var(--accent); }
+/* Chats others share with this user */
+.chat-item.shared { display: flex; align-items: center; gap: 6px; }
+.chat-item.shared .shared-from { flex: none; font-size: 11.5px; color: var(--muted); }
+.chat-item.shared.offline { opacity: 0.6; }
+.shared-page { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.shared-page .shared-messages { flex: 1; min-height: 0; overflow: auto; }
+.shared-compose { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; padding: 10px 0 4px; }
+.shared-compose textarea { resize: vertical; }
+.shared-compose-note { grid-column: 1 / -1; margin: 0; }
+.msg.assistant .added-note { display: block; font-size: 11.5px; color: var(--muted); margin-top: 4px; }

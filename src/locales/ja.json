@@ -2240,7 +2240,6 @@
  "connected": "接続中",
  "none": "なし",
  "not connected": "未接続",
- "replies by {model} on their PC": "返信は相手の PC 上の {model} によるもの",
  "{name} can now reach you through your relay when you're not connected directly.": "直接つながっていないときも、{name} さんはあなたのリレー経由で連絡できるようになりました。",
  "{name} can't use your relay anymore.": "{name} さんはもうあなたのリレーを使えません。",
  "{name} isn't connected right now. Chats they share show here while you're both connected.": "{name} さんは今つながっていません。共有チャットはお互いにつながっている間ここに表示されます。",
@@ -2251,7 +2250,6 @@
  "{name}'s assistant is working on it": "{name} さんのアシスタントが対応中です",
  "{name}'s assistant wants to work something out": "{name} さんのアシスタントが相談したいことがあります",
  "{name}'s assistant wants to work something out with yours": "{name} さんのアシスタントがあなたのアシスタントと相談したいそうです",
- "{name}'s chat, read-only": "{name} さんのチャット（読み取り専用）",
  "{n} more waiting.": "ほかに {n} 件待っています。",
  "← Shared chats": "← 共有チャット",
  "Loading the model…": "モデルを読み込んでいます…",
@@ -2449,5 +2447,16 @@
  "Your email, if you'd like a reply (optional)": "返信が欲しい場合はメールアドレス（任意）",
  "Your message": "メッセージ",
  "{name} will see when you've read their messages.": "{name} のメッセージを読んだことが相手に伝わるようになりました。",
- "{name} won't see when you've read their messages.": "{name} のメッセージを読んでも相手に伝わらなくなりました。"
+ "{name} won't see when you've read their messages.": "{name} のメッセージを読んでも相手に伝わらなくなりました。",
+ "From {name}": "{name} から",
+ "Open the chat first.": "まずチャットを開いてください。",
+ "Write in {name}'s chat; your own model answers here": "{name} のチャットに書き込む（あなたのモデルがここで答えます）",
+ "Your model is answering…": "あなたのモデルが答えています…",
+ "Your model is reading the chat…": "あなたのモデルがチャットを読んでいます…",
+ "Your model is still answering in this chat.": "あなたのモデルはまだこのチャットで答えています。",
+ "their replies by {model} on their PC": "相手の返答は相手の PC の {model} によるもの",
+ "{name} sees what you write and your model's answer in their chat. Your model runs on this PC.": "{name} は、あなたが書いた内容とあなたのモデルの答えを自分のチャットで見られます。あなたのモデルはこの PC で動きます。",
+ "{name} shares this chat with you": "{name} がこのチャットを共有しています",
+ "{name} shares this chat with you (not connected right now)": "{name} がこのチャットを共有しています（今は接続されていません）",
+ "{name}'s chat, shared with you": "{name} のチャット（あなたと共有）"
 }

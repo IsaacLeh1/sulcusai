@@ -230,6 +230,19 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
                     .collect();
                 out.push(json!({ "role": "assistant", "content": m.content, "tool_calls": calls }));
             }
+            // In a chat the user shares: someone it's shared with wrote this,
+            // or their model answered them (on their PC, not this model).
+            _ if m.meta.as_ref().is_some_and(|v| v.get("from_person").is_some()) => {
+                let meta = m.meta.as_ref();
+                let name = meta.and_then(|v| v.get("from_name")).and_then(Value::as_str).unwrap_or("Someone");
+                let who = if m.role == "assistant" {
+                    let model = meta.and_then(|v| v.get("model")).and_then(Value::as_str).unwrap_or("their model");
+                    format!("[{name}'s assistant ({model}, on {name}'s PC) answered {name}:]")
+                } else {
+                    format!("[{name}, whom the user shares this chat with, wrote:]")
+                };
+                out.push(json!({ "role": "user", "content": format!("{}\n{who}\n{}", sent_note(m.created_at), m.content) }));
+            }
             // When each message was sent, so "this afternoon" or "tonight"
             // make sense. Fixed per message, so the engine's cache holds.
             // Asked by the assistant of another chat, not typed by the user.

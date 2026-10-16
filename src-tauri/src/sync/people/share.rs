@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Sharing chats live with someone linked. The owner picks chats and who
 //! may see them; while both apps are connected those people can open them
-//! read-only and watch replies being written. Nothing is kept on their side,
-//! so unsharing (or disconnecting) takes it away.
+//! (they're in their sidebar, marked with who shares them), watch replies
+//! being written, and take part: what they write goes into the owner's chat,
+//! and their own model, on their PC, answers it there too. Only the titles
+//! are kept on their side (for the sidebar), never the messages, so
+//! unsharing (or disconnecting) takes it away.
 //!
 //! - Incognito chats can't be shared.
 //! - The assistant's steps show as their titles ("Searched the web for …"),
@@ -55,6 +58,30 @@ pub struct SharedMsg {
     pub role: String,
     pub text: String,
     pub at: i64,
+    /// Someone it's shared with wrote it (their name), or their model did.
+    pub by: String,
+    /// For an answer from someone else's model: which.
+    pub model: String,
+    /// On the watching side: this user wrote it, or this user's model did.
+    pub mine: bool,
+}
+
+/// A chat someone shares with this user, remembered for the sidebar.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Seen {
+    pub contact: String,
+    pub chat: SharedChat,
+}
+
+/// For the sidebar: a chat someone shares with this user.
+#[derive(Debug, Clone, Serialize)]
+pub struct SharedHere {
+    pub contact_id: String,
+    pub contact_name: String,
+    /// Connected now (it can be opened).
+    pub online: bool,
+    pub chat: SharedChat,
 }
 
 /// A reply being written on the owner's side.
@@ -161,7 +188,10 @@ fn messages_of(state: &AppState, c: &Cipher, chat_id: &str) -> Vec<SharedMsg> {
                 }
                 _ => return None,
             };
-            Some(SharedMsg { id: m.id, role: role.into(), text: text.chars().take(MAX_TEXT).collect(), at: m.created_at })
+            let meta = m.meta.as_ref();
+            let by = meta.and_then(|v| v.get("from_name")).and_then(Value::as_str).unwrap_or_default().to_string();
+            let model = meta.and_then(|v| v.get("model")).and_then(Value::as_str).unwrap_or_default().to_string();
+            Some(SharedMsg { id: m.id, role: role.into(), text: text.chars().take(MAX_TEXT).collect(), at: m.created_at, by, model, mine: false })
         })
         .collect()
 }
@@ -287,14 +317,24 @@ pub(super) fn theirs(contact: &str) -> Vec<SharedChat> {
 
 pub(super) fn listed(state: &AppState, contact: &str, chats: Vec<SharedChat>) {
     let ids: HashSet<String> = chats.iter().map(|c| c.id.clone()).collect();
+    // Remembered for the sidebar (titles only), until they stop sharing.
+    let _ = update(state, |b| {
+        b.seen.retain(|s| s.contact != contact);
+        b.seen.extend(chats.iter().map(|ch| Seen { contact: contact.to_string(), chat: SharedChat { busy: false, ..ch.clone() } }));
+    });
     THEIRS.lock().unwrap().insert(contact.to_string(), chats);
     // Unshared: an open view of it closes.
     VIEWS.lock().unwrap().retain(|k, _| k.0 != contact || ids.contains(&k.1));
     emit(state, "people:shared", json!({ "contact_id": contact }));
 }
 
-pub(super) fn snapshot(state: &AppState, contact: &str, chat: SharedChat, messages: Vec<SharedMsg>) {
+pub(super) fn snapshot(state: &AppState, contact: &str, chat: SharedChat, mut messages: Vec<SharedMsg>) {
     let key = (contact.to_string(), chat.id.clone());
+    // What this user (or their model) wrote there carries this app's id.
+    let me = format!("{}:", crate::sync::device_id(&state.paths.data));
+    for m in &mut messages {
+        m.mine = m.id.starts_with(&me);
+    }
     let opening = OPENING.lock().unwrap().remove(&key);
     let view = {
         let mut views = VIEWS.lock().unwrap();
@@ -355,6 +395,7 @@ pub(super) fn gone(state: &AppState, contact: &str, chat_id: &str) {
     if let Some(list) = THEIRS.lock().unwrap().get_mut(contact) {
         list.retain(|c| c.id != chat_id);
     }
+    let _ = update(state, |b| b.seen.retain(|s| !(s.contact == contact && s.chat.id == chat_id)));
     if let Some(tx) = OPENING.lock().unwrap().remove(&key) {
         let _ = tx.send(Err("They don't share that chat anymore.".into()));
     }
@@ -379,6 +420,137 @@ pub(super) async fn open(contact: &str, chat_id: &str) -> Result<SharedView, Str
             Err("They didn't send the chat. Try again.".into())
         }
     }
+}
+
+/// Someone the chat is shared with wrote in it, or (`reply`: its name)
+/// their model answered what they wrote. It goes into the chat here, marked
+/// as theirs, and everyone watching sees it.
+pub(super) fn posted(state: &AppState, contact: &str, chat_id: &str, id: &str, text: &str, reply: Option<&str>) {
+    let Ok(c) = state.work_cipher() else { return };
+    let (ok, name, with) = {
+        let b = book(&state.db.lock().unwrap());
+        let name = b.contacts.iter().find(|p| p.id == contact).map(|p| p.name.clone()).unwrap_or_default();
+        let with = b.shares.iter().find(|s| s.chat_id == chat_id).map(|s| s.with.clone()).unwrap_or_default();
+        (shared_with(&b, chat_id, contact), name, with)
+    };
+    if !ok {
+        link::send(contact, Frame::Gone { chat_id: chat_id.into() });
+        return;
+    }
+    let text: String = text.trim().chars().take(MAX_TEXT).collect();
+    if text.is_empty() || id.len() > 64 {
+        return;
+    }
+    let mut meta = json!({ "from_person": contact, "from_name": name });
+    if let Some(model) = reply {
+        meta["model"] = json!(model.chars().take(80).collect::<String>());
+    }
+    let msg = db::Message {
+        id: format!("{contact}:{id}"),
+        chat_id: chat_id.into(),
+        role: if reply.is_some() { "assistant" } else { "user" }.into(),
+        content: text,
+        created_at: db::now_ms(),
+        meta: Some(meta),
+        ..Default::default()
+    };
+    // Sent twice (a resend): kept once.
+    if db::add_message(&state.db.lock().unwrap(), &c, &msg).is_err() {
+        return;
+    }
+    if let Some(app) = state.app.get() {
+        use tauri::Emitter;
+        app.emit("chat:changed", json!({ "chat_id": chat_id })).ok();
+    }
+    if let Some(f) = snapshot_of(state, &c, chat_id) {
+        for w in watchers(chat_id) {
+            link::send(&w, f.clone());
+        }
+    }
+    for w in with.iter().filter(|w| link::connected(w)) {
+        send_list(state, w, None);
+    }
+}
+
+/// Answers what this user wrote in a chat someone shares: this user's own
+/// model, here, from what the chat holds so far. Sends the answer back to
+/// go into their chat.
+async fn answer_here(state: &Arc<AppState>, contact: &str, view: &SharedView, text: &str) -> Result<(), String> {
+    let chat_id = view.chat.id.clone();
+    let key = format!("shared:{contact}:{chat_id}");
+    let Some((cancel, _guard)) = crate::claim(&state.generations, &key) else {
+        return Err("Your model is still answering in this chat.".into());
+    };
+    let say = |status: &str, delta: Option<&str>| {
+        if let Some(app) = state.app.get() {
+            use tauri::Emitter;
+            app.emit("people:post_live", json!({ "contact_id": contact, "chat_id": chat_id, "status": status, "delta": delta })).ok();
+        }
+    };
+    say("loading", None);
+    let (ep, model) = {
+        #[cfg(test)]
+        let test = super::ask::TEST_ENDPOINT.lock().unwrap().clone().map(|ep| (ep, "Test model".to_string()));
+        #[cfg(not(test))]
+        let test: Option<(crate::engine::Endpoint, String)> = None;
+        match test {
+            Some(t) => t,
+            None => crate::llm_endpoint(state, None, false, || {}).await.map(|(ep, spec, _)| (ep, spec.name))?,
+        }
+    };
+    let me = my_name(state);
+    let owner = contact_name(state, contact);
+    // The chat so far, as a transcript (the latest part that fits).
+    let lines: Vec<String> = view
+        .messages
+        .iter()
+        .filter_map(|m| match m.role.as_str() {
+            "user" if m.by.is_empty() => Some(format!("{owner}: {}", m.text)),
+            "user" => Some(format!("{}: {}", m.by, m.text)),
+            "assistant" if m.by.is_empty() => Some(format!("{owner}'s assistant: {}", m.text)),
+            "assistant" => Some(format!("{}'s assistant: {}", m.by, m.text)),
+            "note" => Some("(The earlier part of the chat was summarized.)".into()),
+            _ => None,
+        })
+        .collect();
+    let budget = (ep.ctx as usize).saturating_mul(2);
+    let mut transcript = String::new();
+    for line in lines.iter().rev() {
+        if transcript.len() + line.len() > budget {
+            break;
+        }
+        transcript.insert_str(0, &format!("{line}\n\n"));
+    }
+    let profile = db::profile(&state.db.lock().unwrap(), &state.work_cipher()?);
+    let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
+    let (base, _) = crate::chat::system_prompt(&profile, &today);
+    let system = format!(
+        "{base}\n\nYou're {me}'s assistant, on {me}'s PC. {owner} shares one of their chats with {me}, and {me} is taking part in it. \
+         The chat so far (the newest at the end):\n\n{transcript}Answer {me}'s new message below, in the context of that chat. \
+         Your answer goes into the shared chat, so {owner} reads it too."
+    );
+    let messages = vec![json!({ "role": "system", "content": system }), json!({ "role": "user", "content": text })];
+    let finished = crate::chat::stream(&ep, messages, None, &cancel, |d| {
+        if let crate::chat::Delta::Content(t) = d {
+            say("writing", Some(&t));
+        }
+    })
+    .await;
+    say("done", None);
+    let finished = finished?;
+    let answer = finished.content.trim().to_string();
+    if finished.cancelled || answer.is_empty() {
+        return Ok(());
+    }
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    if !link::send(contact, Frame::PostReply { chat_id: chat_id.clone(), id, text: answer, model }) {
+        return Err(format!("{owner} went offline, so your model's answer couldn't go into their chat."));
+    }
+    Ok(())
+}
+
+fn contact_name(state: &AppState, id: &str) -> String {
+    contact(state, id).map(|p| p.name).unwrap_or_else(|| "They".into())
 }
 
 /// Sets who a chat is shared with (an empty list stops sharing it).
@@ -455,6 +627,59 @@ pub async fn people_watch(state: AppStateRef<'_>, contact_id: String, chat_id: S
     features::require(&state, Feature::People)?;
     state.cipher()?;
     open(&contact_id, &chat_id).await
+}
+
+/// The chats others share with this user, for the sidebar.
+#[tauri::command(async)]
+pub fn people_shared_chats(state: AppStateRef) -> Vec<SharedHere> {
+    if !features::is_on(&state.db.lock().unwrap(), Feature::People) {
+        return Vec::new();
+    }
+    let b = book(&state.db.lock().unwrap());
+    let mut list: Vec<SharedHere> = b
+        .seen
+        .iter()
+        .filter_map(|s| {
+            let p = b.contacts.iter().find(|p| p.id == s.contact)?;
+            let online = link::connected(&p.id);
+            let live = theirs(&p.id).into_iter().find(|c| c.id == s.chat.id);
+            Some(SharedHere { contact_id: p.id.clone(), contact_name: p.name.clone(), online, chat: live.unwrap_or_else(|| s.chat.clone()) })
+        })
+        .collect();
+    list.sort_by_key(|s| std::cmp::Reverse(s.chat.updated_at));
+    list
+}
+
+/// This user writes in a chat someone shares: it goes into their chat, and
+/// this user's model answers it there (it streams here as
+/// `people:post_live`).
+#[tauri::command]
+pub async fn people_shared_post(state: AppStateRef<'_>, contact_id: String, chat_id: String, text: String) -> Result<(), String> {
+    features::require(&state, Feature::People)?;
+    state.cipher()?;
+    post_here(state.inner(), &contact_id, &chat_id, &text).await
+}
+
+pub(super) async fn post_here(state: &Arc<AppState>, contact_id: &str, chat_id: &str, text: &str) -> Result<(), String> {
+    let (contact_id, chat_id) = (contact_id.to_string(), chat_id.to_string());
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err("Type a message first.".into());
+    }
+    let view = VIEWS.lock().unwrap().get(&(contact_id.clone(), chat_id.clone())).cloned().ok_or("Open the chat first.")?;
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    if !link::send(&contact_id, Frame::Post { chat_id: chat_id.clone(), id, text: text.clone() }) {
+        return Err(format!("{} isn't connected right now, so this can't go into their chat.", contact_name(state, &contact_id)));
+    }
+    answer_here(state, &contact_id, &view, &text).await
+}
+
+/// Stops this user's model answering in a shared chat.
+#[tauri::command(async)]
+pub fn people_shared_stop(state: AppStateRef, contact_id: String, chat_id: String) {
+    if let Some(flag) = state.generations.lock().unwrap().get(&format!("shared:{contact_id}:{chat_id}")) {
+        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[tauri::command(async)]

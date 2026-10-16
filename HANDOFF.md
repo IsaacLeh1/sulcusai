@@ -644,6 +644,34 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 - `count_tokens` caches texts over 400 characters by hash for each engine run. The system prompt, the instructions and the tool list used to go to `/tokenize` again at every step.
 - The GPU pill reads every 5 s instead of every 3. Each reading starts nvidia-smi, which costs processor time and can keep a laptop's graphics card out of its idle state.
 
+## Feedback, crash reports, read receipts, shared chats you can join (2026-10-16, after 0.9.3)
+- **Feedback inbox** (his choice: on his own relay):
+  - `relay/worker.js` has an `Inbox` Durable Object (migration v2, binding `INBOX`). `POST /feedback` takes `{kind: bug|idea|crash, text, version?, contact?}`:
+    - text up to 8,000 characters
+    - 8 an hour per sender, counted under an hourly hash of the address and key (deleted after the hour)
+    - 400 a day
+  - `/feedback/inbox?key=` is his page (with delete); the key is the `FEEDBACK_KEY` secret. The link is ONLY in `C:\dev\sulcusai-disteedback-inbox.txt`, never in the repo.
+  - Deployed with `cd relay && npx -y wrangler@4.149.0 deploy`. A Durable Object stub's `fetch` takes no extra argument, so the object reads the secret from its own `env` (`local.mjs` mirrors that).
+  - App side: `feedback.rs` sends at every level, except Fully offline unless Web is kept.
+  - `FeedbackButton` sits in the top bar (`TopBar` in App.tsx). It sends only the text, plus a reply address and the version if the person chooses.
+- **Crash reports** (`crash.rs`, off by default, Settings → About):
+  - Sources: a panic hook; `report_window_error` (CrashScreen and window error/unhandledrejection, at most 3 a run); `running.json` with heartbeats every 30 s (`crash_ping` from the window).
+  - An unclean exit is reported only when Windows didn't restart since the last heartbeat (`System::boot_time`), so ordinary shutdowns aren't. A window ping more than 90 s older than the last heartbeat means a freeze.
+  - Reports drop the user's folder and name. `CrashReportPrompt` shows them at start: Send (to the inbox, kind crash), Copy, Don't send.
+  - `crash::closing()` runs on `RunEvent::Exit` and before every `app.restart()`.
+- **Read receipts** (People):
+  - `Contact.read_receipts` is set per person (contact menu). `open_chat` (was `people_messages`) sends `Frame::Read{ids}` for what it just marked read.
+  - The other side sets `people_messages.seen` (a new column; `read` was already 1 for one's own messages). `MessageView.read` shows ✓✓ Read.
+  - Test in `messages_cross_on_a_live_link`.
+- **Model read status:** `agent` emits `chat:read {up_to}` (the newest user message in that request) on the first streamed piece, or after a reply made only of tool calls. ChatView shows ✓ Sent → ✓✓ Read under the newest message and under added ones.
+- **Shared chats you can join:**
+  - On the watcher's side, `Book.seen` keeps titles only (updated by `listed`, removed by `gone` and `forget_contact`); `people_shared_chats` feeds the sidebar (👥 name).
+  - The `shared` view uses `SharedChatView` (now exported, taking `contactId`/`contactName`) with a box to write in.
+  - `people_shared_post` → `Frame::Post` to the owner. `answer_here` runs this user's default model (no tools) on a transcript of the view, streams `people:post_live`, and sends `Frame::PostReply{model}`.
+  - The owner's `share::posted` stores them in the chat as user/assistant messages with `meta.from_person/from_name/model`, id `<their app id>:<id>` (deduped), then emits `chat:changed` and re-snapshots watchers.
+  - `chat::api_messages` gives the owner's model both as user-role notes ("[Ben's assistant (model, on Ben's PC) answered Ben:]"). `SharedMsg.mine` (id prefix = own device id) puts one's own messages on the right.
+  - Test: the participation part of `a_shared_chat_is_watched_live`.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

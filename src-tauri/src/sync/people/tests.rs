@@ -260,9 +260,34 @@ async fn a_shared_chat_is_watched_live() {
     until("the finished reply", || share::view_of(&id_a, &chat.id).is_some_and(|v| v.live.is_none() && v.messages.len() == 4)).await;
     assert!(!share::theirs(&id_a)[0].busy);
 
+    // Ben takes part: what he writes goes into Ana's chat, and his own
+    // model's answer (on his PC) too; both show in his view, marked.
+    let _ = stand_in();
+    share::post_here(&b, &id_a, &chat.id, "What about a quieter hike?").await.unwrap();
+    let at_ana = || crate::db::messages(&a.db.lock().unwrap(), &ca, &chat.id);
+    until("both in Ana's chat", || {
+        let all = at_ana();
+        let from = |m: &Message, k: &str| m.meta.as_ref().and_then(|v| v.get(k)).and_then(|v| v.as_str()).map(str::to_string);
+        all.iter().any(|m| m.role == "user" && m.content == "What about a quieter hike?" && from(m, "from_name").as_deref() == Some("Ben"))
+            && all.iter().any(|m| m.role == "assistant" && m.content.contains("Kolob") && from(m, "model").as_deref() == Some("Test model"))
+    })
+    .await;
+    until("Ben sees both, marked as his", || {
+        share::view_of(&id_a, &chat.id).is_some_and(|v| v.messages.iter().filter(|m| m.by == "Ben").count() == 2)
+    })
+    .await;
+    // Ana's model is told who wrote what (Ben's model's answer isn't its own).
+    let told = crate::chat::api_messages("", &at_ana());
+    let said: Vec<&str> = told.iter().filter_map(|m| m["content"].as_str()).collect();
+    assert!(said.iter().any(|t| t.contains("[Ben, whom the user shares this chat with, wrote:]")), "{said:?}");
+    assert!(said.iter().any(|t| t.contains("[Ben's assistant (Test model, on Ben's PC) answered Ben:]")));
+    // His sidebar remembers the chat (its title, not what's in it).
+    assert!(book(&b.db.lock().unwrap()).seen.iter().any(|s| s.chat.title == "Trip plans" && s.contact == id_a));
+
     // Stopped sharing: gone from his list and his view.
     share::share_now(&a, &chat.id, vec![]).unwrap();
     until("gone", || share::theirs(&id_a).is_empty() && share::view_of(&id_a, &chat.id).is_none()).await;
+    assert!(book(&b.db.lock().unwrap()).seen.is_empty(), "and from his sidebar");
     assert!(share::open(&id_a, &chat.id).await.is_err());
     link::hang_up(&id_b);
 }
@@ -322,6 +347,8 @@ fn stand_in() -> Arc<Mutex<Vec<serde_json::Value>>> {
                                 "How about Tuesday at 3 pm?"
                             } else if system.contains("asked you to work this out") {
                                 "DONE: Tuesday at 3 pm suits both."
+                            } else if system.contains("is taking part in it") {
+                                "Try Kolob Canyons: quieter, and just as good."
                             } else {
                                 "?"
                             };
