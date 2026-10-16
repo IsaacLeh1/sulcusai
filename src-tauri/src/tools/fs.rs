@@ -246,7 +246,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 }
-                std::fs::write(&path, content).map_err(|e| format!("Couldn't write {label}: {e}"))?;
+                crate::storage::write_safely(&path, content).map_err(|e| format!("Couldn't write {label}: {e}"))?;
                 let verb = if existed { "Replaced" } else { "Created" };
                 Ok(Outcome::ok(
                     format!("{verb} {label} ({} lines).", line_count(content)),
@@ -262,7 +262,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let replace_all = args.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
                 let (new, n) = apply_edit(&old, arg_str(args, "old_text")?, arg_str(args, "new_text")?, replace_all)?;
                 ctx.recorder.before_write(&path)?;
-                std::fs::write(&path, &new).map_err(|e| format!("Couldn't write {label}: {e}"))?;
+                crate::storage::write_safely(&path, &new).map_err(|e| format!("Couldn't write {label}: {e}"))?;
                 Ok(Outcome::ok(
                     format!("Edited {label} ({n} replacement{}).", if n == 1 { "" } else { "s" }),
                     format!("Edited {label}"),

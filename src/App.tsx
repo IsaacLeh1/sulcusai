@@ -30,6 +30,7 @@ import { UpdatePill } from "./components/Updates";
 import { SETTINGS_VIEWS, SettingsNav } from "./components/SettingsNav";
 import { PrivacyPill } from "./components/PrivacySettings";
 import { WebPermission } from "./components/WebPermission";
+import { FolderPermission } from "./components/FolderPermission";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 
@@ -707,6 +708,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         </span>
       </footer>
       <WebPermission chats={chats} onOpenChat={openChat} />
+      <FolderPermission chats={chats} onOpenChat={openChat} />
       <PeopleRequests enabled={has("people")} onOpenPeople={() => setView("people")} toast={toast} />
       {newProject && (
         <NewProjectDialog

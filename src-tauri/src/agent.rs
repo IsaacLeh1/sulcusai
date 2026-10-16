@@ -3,6 +3,7 @@
 //! and continues until it answers without calling a tool.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -123,9 +124,17 @@ pub struct TurnResult {
 /// Extra system-prompt text describing the tools and the current mode.
 pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
     if sandbox.is_empty() {
-        return "\n\nNo folders are shared with you, so you can't open or change files. If the user asks for file or coding work, \
-                tell them to share a folder with the 📁 button under the message box."
-            .into();
+        return if mode == Mode::Plan {
+            "\n\nNo folders are shared with you, so you can't open files yet. If you need to look at the user's files to plan, \
+             call request_folder with the folder you'd look in; they approve it in a popup."
+                .into()
+        } else {
+            "\n\nNo folders are shared with you yet. When the user wants something made or changed on their PC (a website, an app, \
+             a script, documents), don't just paste the code: call request_folder with a folder to work in (for example a new folder \
+             on their Desktop) and say what it's for. They approve it in a popup; then you can create the files, install what's needed \
+             and run it in this same reply."
+                .into()
+        };
     }
     let folders: Vec<String> = sandbox.roots().iter().map(|r| format!("{}/", sandbox.display(r))).collect();
     let mode_text = match mode {
@@ -140,6 +149,9 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
          for example {}README.md.\n- Look before you change anything: list folders, read files, search.\n\
          - For small changes use edit_file, and read the file first so old_text matches exactly.\n\
          - After changing code, run its build or tests with run_command when that makes sense.\n\
+         - When asked to build something (a website, an app, a script), do it on their PC: make the files, install what's needed and run it. \
+         Start servers and watchers with run_command and background: true, then open the result for the user with open_path. Don't stop at showing code.\n\
+         - Need a folder that isn't shared? Call request_folder.\n\
          - Finish with a short summary of what you did.\n{mode_text}",
         folders.join(", "),
         folders[0]
@@ -210,7 +222,7 @@ impl Turn {
             let folders = if on.contains(&Feature::Files) { projects::chat_folders(&conn, &chat) } else { Vec::new() };
             (folders, project, memories, memory_on, request, on)
         };
-        let sandbox = Sandbox::new(&folders);
+        let mut sandbox = Sandbox::new(&folders);
         let files = self.use_tools && !sandbox.is_empty();
         let memory_tools = self.use_tools && memory_on;
         let mut defs = tools::definitions(self.mode, files, memory_tools).as_array().cloned().unwrap_or_default();
@@ -228,7 +240,10 @@ impl Turn {
             }
         }
         // Knowing the app itself: what's connected, and connecting accounts.
-        let mut extra: Vec<&str> = if self.use_tools { vec!["app_status", "open_page"] } else { Vec::new() };
+        let mut extra: Vec<&str> = if self.use_tools { vec!["app_status", "open_page", "request_folder"] } else { Vec::new() };
+        if self.use_tools && self.mode != tools::Mode::Plan {
+            extra.push("open_path");
+        }
         if self.use_tools && self.mode != tools::Mode::Plan && (features.contains(&Feature::Email) || features.contains(&Feature::Calendar)) {
             extra.push("connect_account");
         }
@@ -345,7 +360,8 @@ impl Turn {
             about.push_str(&compact::prompt_section(&summary));
         }
         let project_id = project.as_ref().map(|p| p.id.clone());
-        let system = if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
+        let system_of = |about: &str| if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
+        let mut system = system_of(&about);
         let checkpoint_dir = self.state.paths.data.join("checkpoints");
 
         let mut result = TurnResult { last: None, context: ContextInfo::default(), tps: None, cancelled: false };
@@ -496,6 +512,34 @@ impl Turn {
                         }
                     }
                 }
+                // The user shared a folder: the file tools work there from the next step on.
+                if outcome.meta["folder_granted"] == true {
+                    let folders = {
+                        let conn = self.state.db.lock().unwrap();
+                        db::chat(&conn, &self.cipher, &self.chat_id).map(|c| projects::chat_folders(&conn, &c)).unwrap_or_default()
+                    };
+                    let before = tool_instructions(&sandbox, self.mode);
+                    sandbox = Sandbox::new(&folders);
+                    about = about.replacen(&before, &tool_instructions(&sandbox, self.mode), 1);
+                    system = system_of(&about);
+                    if let Some(Value::Array(defs)) = tools.as_mut() {
+                        let mut add = tools::definitions(self.mode, true, false).as_array().cloned().unwrap_or_default();
+                        if features.contains(&Feature::Documents) {
+                            for name in ["read_document", "create_document"] {
+                                if let Some(d) = tools::find(name).filter(|d| tools::permission(self.mode, d.risk, false) != Permission::Refuse) {
+                                    add.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
+                                }
+                            }
+                        }
+                        let has = |d: &Value, defs: &[Value]| defs.iter().any(|x| x.pointer("/function/name") == d.pointer("/function/name"));
+                        for d in add {
+                            let name = d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default();
+                            if !has(&d, defs) && !adv.forbids(tools::find(name).map_or(Risk::Connector, |t| t.risk)) {
+                                defs.push(d);
+                            }
+                        }
+                    }
+                }
                 let outcome = fit_result(outcome, self.ep.ctx);
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -555,6 +599,9 @@ impl Turn {
         }
         if call.name == "request_web" {
             return self.request_web(call).await;
+        }
+        if call.name == "request_folder" {
+            return self.request_folder(call, sandbox).await;
         }
         if call.name == "load_skill" {
             let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
@@ -802,6 +849,86 @@ impl Turn {
         o
     }
 
+    /// The model needs a folder it can't reach: the user is asked in a popup
+    /// (and can pick another). A yes shares it, and the turn carries on with
+    /// the file tools there.
+    async fn request_folder(&self, call: &ToolCall, sandbox: &Sandbox) -> Outcome {
+        let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+        let reason = args.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()).unwrap_or("this request").to_string();
+        let asked = args.get("path").and_then(Value::as_str).map(str::trim).filter(|p| !p.is_empty()).unwrap_or("");
+        let desktop = crate::workspace::desktop(&self.state);
+        let suggested = if Path::new(asked).is_absolute() {
+            PathBuf::from(asked)
+        } else if asked.is_empty() {
+            match &desktop {
+                Some(d) => d.clone(),
+                None => return Outcome::error("Ask for a folder", "Couldn't find the Desktop. Ask again with a full path."),
+            }
+        } else if Path::new(asked).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+            match &desktop {
+                Some(d) => d.join(asked),
+                None => return Outcome::error("Ask for a folder", "Couldn't find the Desktop. Ask again with a full path."),
+            }
+        } else {
+            return Outcome::error("Ask for a folder", "Give a full path, or just a new folder's name to make on the Desktop.");
+        };
+        // Already shared (or inside a shared folder): nothing to ask.
+        let shared = sandbox.roots().iter().find(|r| {
+            let existing = suggested.ancestors().find(|a| a.exists()).and_then(|a| dunce::canonicalize(a).ok());
+            existing.is_some_and(|e| e.starts_with(r))
+        });
+        if let Some(root) = shared {
+            return Outcome::ok(
+                format!(
+                    "{} is inside {}/, which is already shared with you. Work there directly: write_file makes any folders it needs.",
+                    suggested.display(),
+                    sandbox.display(root)
+                ),
+                format!("Already shared: {}", sandbox.display(root)),
+                "text",
+                None,
+            );
+        }
+        crate::workspace::offer_folder(&call.id, &suggested);
+        // The popup (FolderPermission) shows the reason and the folder.
+        let preview = Preview { title: format!("Use a folder for: {reason}"), kind: "folder", detail: Some(reason.clone()), note: Some(suggested.display().to_string()) };
+        if self.ask(call, Risk::Read, preview).await == Decision::Deny {
+            crate::workspace::chosen_folder(&call.id);
+            self.log(&format!("Didn't share a folder (asked for: {reason})"));
+            return Outcome::ok(
+                "The user didn't share a folder. Don't try to reach their files another way: do what you can without them \
+                 (for code, show it in the reply and say where it would go), and say in a sentence what you couldn't do.",
+                format!("No folder shared: {reason}"),
+                "text",
+                None,
+            );
+        }
+        let chosen = crate::workspace::chosen_folder(&call.id).unwrap_or(suggested);
+        if !crate::features::is_on(&self.state.db.lock().unwrap(), Feature::Files) {
+            if let Err(e) = crate::features::set(&self.state.db.lock().unwrap(), Feature::Files, true) {
+                return Outcome::error("Couldn't share the folder", e);
+            }
+            self.emit("features:changed", json!({}));
+        }
+        let shown = match crate::workspace::share_folder(&self.state, &chosen, true, true) {
+            Ok(s) => s,
+            Err(e) => return Outcome::error("Couldn't share the folder", format!("{e} Tell the user, and ask them to share one with the 📁 button.")),
+        };
+        self.emit("folders:changed", json!({}));
+        let name = Path::new(&shown).file_name().map_or_else(|| shown.clone(), |n| n.to_string_lossy().to_string());
+        let mut o = Outcome::ok(
+            format!(
+                "The user shared {shown}. Go ahead now: it's {name}/ for the file tools (write files as {name}/index.html, and so on), \
+                 and run_command can run there (folder \"{name}\")."
+            ),
+            format!("Shared a folder: {name}"),
+            "text",
+            None,
+        );
+        o.meta["folder_granted"] = json!(true);
+        o
+    }
+
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {
         let (tx, mut rx) = oneshot::channel();
         let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview };
@@ -864,7 +991,9 @@ mod tests {
         let sb = Sandbox::new(&[d.join("proj").display().to_string()]);
         let plan = tool_instructions(&sb, Mode::Plan);
         assert!(plan.contains("proj/") && plan.contains("PLAN mode"));
-        assert!(tool_instructions(&Sandbox::new(&[]), Mode::Auto).contains("📁"));
+        // No folder: it asks for one rather than pasting code.
+        assert!(tool_instructions(&Sandbox::new(&[]), Mode::Auto).contains("call request_folder"));
+        assert!(tool_instructions(&Sandbox::new(&[]), Mode::Plan).contains("call request_folder"));
     }
 
     #[test]

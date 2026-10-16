@@ -1018,6 +1018,109 @@ async fn asking_for_the_web_carries_on_in_the_same_reply() {
     }
 }
 
+/// No folder shared: the model asks for one, the user allows it in the
+/// popup (after picking another, or says no), and the same reply goes on to
+/// make a file there. Against a stand-in engine.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn asking_for_a_folder_carries_on_in_the_same_reply() {
+    use axum::{routing::post, Json, Router};
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<(Vec<String>, String)>>>;
+    let seen: Seen = Default::default();
+    let base = dunce::canonicalize(std::env::temp_dir()).unwrap().join(format!("sulcusai-site-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&base).unwrap();
+    let asked = base.join("portfolio");
+    let (s, ask_path) = (seen.clone(), asked.display().to_string());
+    let app = Router::new()
+        .route("/tokenize", post(|Json(b): Json<serde_json::Value>| async move {
+            let n = b["content"].as_str().map_or(0, |t| t.len() / 4 + 1);
+            Json(serde_json::json!({ "tokens": vec![1; n] }))
+        }))
+        .route("/v1/chat/completions", post(move |Json(b): Json<serde_json::Value>| {
+            let (s, ask_path) = (s.clone(), ask_path.clone());
+            async move {
+                let names: Vec<String> = b["tools"].as_array().into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(|n| n.as_str()).map(str::to_string)).collect();
+                let system = b["messages"][0]["content"].as_str().unwrap_or_default().to_string();
+                let results = b["messages"].as_array().map_or(0, |m| m.iter().filter(|m| m["role"] == "tool").count());
+                s.lock().unwrap().push((names.clone(), system));
+                let chunk = |v: serde_json::Value| format!("data: {v}\n\n");
+                let call = |id: &str, name: &str, args: serde_json::Value| {
+                    let c = serde_json::json!({ "index": 0, "id": id, "type": "function", "function": { "name": name, "arguments": args.to_string() } });
+                    chunk(serde_json::json!({ "choices": [{ "delta": { "tool_calls": [c] }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }))
+                };
+                let body = if results == 0 {
+                    call("call_folder", "request_folder", serde_json::json!({ "reason": "build your portfolio site", "path": ask_path }))
+                } else if results == 1 && names.iter().any(|n| n == "write_file") {
+                    call("call_write", "write_file", serde_json::json!({ "path": "chosen/index.html", "content": "<h1>Hi</h1>" }))
+                } else {
+                    chunk(serde_json::json!({ "choices": [{ "delta": { "content": "Done." }, "finish_reason": null }] }))
+                        + &chunk(serde_json::json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }))
+                } + "data: [DONE]\n\n";
+                ([(axum::http::header::CONTENT_TYPE, "text/event-stream")], body)
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    let state = scratch_state();
+    let cipher = state.cipher().unwrap();
+    crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Files, false).unwrap();
+
+    for allow in [true, false] {
+        seen.lock().unwrap().clear();
+        let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        // The person, answering the popup (picking another folder, then
+        // allowing it), then the card for writing the file (Auto mode asks).
+        let (st, chosen) = (state.clone(), base.join("chosen"));
+        let popup: std::sync::Arc<std::sync::Mutex<Option<crate::agent::PendingApproval>>> = Default::default();
+        let seen_popup = popup.clone();
+        let answering = tokio::spawn(async move {
+            loop {
+                for p in st.approvals.waiting() {
+                    let d = if p.tool == "request_folder" {
+                        if allow {
+                            std::fs::create_dir_all(&chosen).unwrap();
+                            crate::workspace::offer_folder(&p.call_id, &chosen);
+                        }
+                        *seen_popup.lock().unwrap() = Some(p.clone());
+                        if allow { crate::agent::Decision::Allow } else { crate::agent::Decision::Deny }
+                    } else {
+                        crate::agent::Decision::Allow
+                    };
+                    st.approvals.answer(&p.call_id, d);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        });
+        let reply = tokio::time::timeout(std::time::Duration::from_secs(60), say(&state, &ep, &cipher, &chat.id, "Build me a portfolio website.")).await.expect("the reply finished");
+        answering.abort();
+        let asked_for = popup.lock().unwrap().clone().expect("the folder was asked for");
+        assert_eq!(reply, "Done.", "the same reply went on after the answer");
+        assert_eq!(asked_for.preview.note.as_deref(), Some(asked.display().to_string().as_str()), "the popup names the folder it asked for");
+        let seen = seen.lock().unwrap().clone();
+        assert!(seen[0].0.contains(&"request_folder".to_string()) && !seen[0].0.contains(&"write_file".to_string()), "no folder: only a way to ask");
+        assert!(seen[0].1.contains("call request_folder"), "and it's told to ask instead of pasting code");
+        let shared = crate::db::folders(&state.db.lock().unwrap());
+        if allow {
+            assert!(shared.iter().any(|f| f.ends_with("chosen")) && !shared.iter().any(|f| f.ends_with("portfolio")), "the folder they picked is shared: {shared:?}");
+            assert!(crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Files), "Files turned on with it");
+            assert!(seen[1].0.contains(&"write_file".to_string()) && seen[1].0.contains(&"run_command".to_string()), "the file tools, right away");
+            assert!(seen[1].1.contains("chosen/"), "the instructions name the new folder");
+            assert_eq!(std::fs::read_to_string(base.join("chosen").join("index.html")).unwrap(), "<h1>Hi</h1>");
+            for f in shared {
+                crate::db::remove_folder(&state.db.lock().unwrap(), &f).unwrap();
+            }
+            crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Files, false).unwrap();
+        } else {
+            assert!(shared.is_empty() && !asked.exists(), "a no shares and makes nothing");
+            assert_eq!(seen.len(), 2);
+            assert!(!seen[1].0.contains(&"write_file".to_string()), "a no keeps the file tools away");
+        }
+    }
+    std::fs::remove_dir_all(&base).ok();
+}
+
 /// Web search for real (DuckDuckGo, no key), reading a page, and the model
 /// using both in a chat with web turned on.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

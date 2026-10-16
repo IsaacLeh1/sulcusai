@@ -521,8 +521,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             live={status}
           />
         )}
-        {/* Asking for the web is a popup (WebPermission), wherever the person is. */}
-        {pending.filter((p) => p.tool !== "request_web").map((p) => (
+        {/* Asking for the web or a folder is a popup (WebPermission, FolderPermission), wherever the person is. */}
+        {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder").map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
         {jobs.map((j) => (

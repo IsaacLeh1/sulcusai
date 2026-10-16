@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
+import { api, errorText, on, type DesktopAccess, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
 import type { PushToast } from "./Toasts";
 import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
@@ -144,6 +144,42 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
   );
 }
 
+/** "Let the assistant use anything on my Desktop": shares the Desktop
+ * (in every chat), or stops sharing it. */
+function DesktopCheck({ toast, folders, onChange }: { toast: PushToast; folders: Folder[]; onChange: () => void }) {
+  const [access, setAccess] = useState<DesktopAccess | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.desktopAccess().then(setAccess).catch(() => {});
+  }, []);
+  if (!access?.path) return null;
+  const desktop = access.path.toLowerCase();
+  return (
+    <label className="desktop-check" title={access.path}>
+      <input
+        type="checkbox"
+        checked={folders.some((f) => f.path.toLowerCase() === desktop)}
+        disabled={busy}
+        onChange={async (e) => {
+          setBusy(true);
+          try {
+            setAccess(await api.setDesktopAccess(e.target.checked));
+            onChange();
+          } catch (err) {
+            toast(errorText(err), "error");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+      <span>
+        {t("Let the assistant use anything on my Desktop")}
+        <span className="block muted small">{t("Every file and folder on it, in every chat. Otherwise it asks for a folder when it needs one.")}</span>
+      </span>
+    </label>
+  );
+}
+
 /** Composer button: which folders the assistant may use. */
 export function FolderMenu({ toast }: { toast: PushToast }) {
   const [openMenu, setOpenMenu] = useState(false);
@@ -153,6 +189,11 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
 
   useEffect(() => {
     load();
+    // The assistant was given a folder (it asked) while this was showing.
+    const sub = on("folders:changed", load);
+    return () => {
+      sub.then((un) => un());
+    };
   }, []);
   useEffect(() => {
     if (!openMenu) return;
@@ -207,6 +248,7 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
           <button className="btn small" onClick={add}>
             {t("+ Share a folder")}
           </button>
+          <DesktopCheck toast={toast} folders={folders} onChange={load} />
         </div>
       )}
     </div>
@@ -219,6 +261,10 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
   const load = () => api.folders().then(setFolders).catch(() => {});
   useEffect(() => {
     load();
+    const sub = on("folders:changed", load);
+    return () => {
+      sub.then((un) => un());
+    };
   }, []);
   const add = async () => {
     const picked = await open({ directory: true, multiple: false, title: t("Share a folder with SulcusAI") });
@@ -262,6 +308,7 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
       <div>
         <button className="btn" onClick={add}>{t("+ Share a folder")}</button>
       </div>
+      <DesktopCheck toast={toast} folders={folders} onChange={load} />
     </section>
   );
 }

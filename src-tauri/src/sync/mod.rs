@@ -131,7 +131,7 @@ pub fn device_id(data: &Path) -> String {
         }
     }
     let id = uuid::Uuid::new_v4().simple().to_string();
-    std::fs::write(&file, &id).ok();
+    crate::storage::write_safely(&file, &id).ok();
     id
 }
 

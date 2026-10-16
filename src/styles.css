@@ -1108,6 +1108,11 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .jump-latest:hover { background: var(--hover); }
 /* The assistant asking to use the web: what it wants to look up. */
 .web-ask-reason { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; font-weight: 500; }
+.folder-ask-path { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 6px 6px 12px; margin: 0 0 10px; }
+.folder-ask-path > span { flex: 1; min-width: 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+.desktop-check { display: flex; gap: 8px; align-items: flex-start; margin: 8px 0 0; font-size: 13px; cursor: pointer; }
+.desktop-check input { margin-top: 2px; flex: none; }
+.folder-pop .desktop-check { border-top: 1px solid var(--border); padding-top: 8px; }
 /* Models → Hugging Face */
 .hub-search { margin: 8px 0; }
 .hub-search { flex-wrap: nowrap; }

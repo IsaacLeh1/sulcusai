@@ -86,6 +86,13 @@ impl Sandbox {
         self.roots.is_empty()
     }
 
+    /// Whether a path (which may not exist yet) is inside a granted folder,
+    /// for checking a command before it runs.
+    pub fn holds(&self, p: &Path) -> bool {
+        let p = canonical(p).unwrap_or_else(|| p.to_path_buf());
+        self.roots.iter().any(|r| is_inside(&p, r))
+    }
+
     /// Resolves a path the model gave (absolute, or relative to the first
     /// granted folder). Refuses anything outside the granted folders,
     /// including `..` tricks and links that point elsewhere.

@@ -6,6 +6,7 @@ pub mod browser;
 pub mod comms;
 mod documents;
 mod fs;
+mod guard;
 mod media;
 mod meetings;
 mod memory;
@@ -102,7 +103,7 @@ fn group(name: &str) -> &'static str {
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
-        "app_status" | "connect_account" | "open_page" => "app",
+        "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" => "app",
         "ask_person" | "work_with_person" => "people",
         _ => "files",
     }
@@ -139,6 +140,14 @@ pub const TOOLS: &[ToolDef] = &[
         } else {
             "Run a bash command in a shared folder and return its output, for example to build, test, use git or run scripts. No interactive input."
         } },
+    ToolDef { name: "command_output", risk: Risk::Read, params: shell::command_output_params,
+        description: "What a command started with background: true has printed since, and whether it's still running." },
+    ToolDef { name: "stop_command", risk: Risk::Read, params: shell::stop_command_params,
+        description: "Stop a command started with background: true (and anything it started)." },
+    ToolDef { name: "request_folder", risk: Risk::Read, params: request_folder_params,
+        description: "Ask the user for a folder to work in when you need files and none fits: to build or change something on their PC (a website, an app, documents), or to reach a folder that isn't shared. They approve it in a popup (and can pick another); then the file tools and run_command work there in this same reply." },
+    ToolDef { name: "open_path", risk: Risk::Write, params: open_path_params,
+        description: "Open a file from a shared folder, or a web address, for the user: in their browser or the app that opens it. Use it to show them what you made, e.g. the site you just started at http://localhost:5173. Never runs programs." },
     ToolDef { name: "remember", risk: Risk::Memory, params: memory::remember_params,
         description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
@@ -226,9 +235,56 @@ fn delegate_params() -> Value {
 pub fn helper_definitions(files: bool) -> Value {
     let mut defs = definitions(Mode::Plan, files, false);
     if let Some(list) = defs.as_array_mut() {
-        list.retain(|d| d["function"]["name"] != "delegate");
+        list.retain(|d| d["function"]["name"] != "delegate" && d["function"]["name"] != "stop_command");
     }
     defs
+}
+
+fn request_folder_params() -> Value {
+    json!({ "type": "object", "required": ["reason"], "properties": {
+        "reason": { "type": "string", "description": "In a few words, what it's for, e.g. \"build your portfolio website\"." },
+        "path": { "type": "string", "description": "The folder you'd use: a full path, or a new folder's name to make on their Desktop (e.g. \"portfolio-site\"). Leave it out to suggest the Desktop." } } })
+}
+
+fn open_path_params() -> Value {
+    json!({ "type": "object", "required": ["target"], "properties": {
+        "target": { "type": "string", "description": "A file or folder in a shared folder (e.g. site/index.html), or a web address starting with http:// or https://." } } })
+}
+
+/// Kinds of file that run something when opened: open_path refuses them.
+const RUNS: &[&str] = &[
+    "exe", "com", "bat", "cmd", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "msi", "msp", "scr", "pif", "lnk", "cpl", "reg", "jar", "appref-ms", "url", "sh",
+];
+
+/// open_path: shows the user a file (in its usual app) or a web address
+/// (in their browser).
+fn open_path(args: &Value, ctx: &Ctx<'_>) -> Outcome {
+    let target = match arg_str(args, "target") {
+        Ok(t) => t.trim().to_string(),
+        Err(e) => return Outcome::error("Open something", e),
+    };
+    let title = format!("Opened {target}");
+    if target.starts_with("http://") || target.starts_with("https://") {
+        return match crate::open_with_system(std::ffi::OsStr::new(&target)) {
+            Ok(()) => Outcome::ok(format!("Opened {target} in the user's browser."), title, "text", None),
+            Err(e) => Outcome::error(title, e),
+        };
+    }
+    let path = match ctx.sandbox.resolve(&target) {
+        Ok(p) => p,
+        Err(e) => return Outcome::error(title, e),
+    };
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if RUNS.contains(&ext.as_str()) {
+        return Outcome::error(title, "That would run a program. Use run_command instead, where the user sees what runs.");
+    }
+    if !path.exists() {
+        return Outcome::error(title, format!("{} doesn't exist.", ctx.sandbox.display(&path)));
+    }
+    match crate::open_with_system(path.as_os_str()) {
+        Ok(()) => Outcome::ok(format!("Opened {} for the user.", ctx.sandbox.display(&path)), title, "text", None),
+        Err(e) => Outcome::error(title, e),
+    }
 }
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
@@ -252,6 +308,12 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
     Value::Array(list)
 }
 
+/// Whether any command the assistant started is still running (an update
+/// waits for them).
+pub fn commands_running() -> bool {
+    shell::running()
+}
+
 /// What SulcusAI is and what's connected, for the system prompt.
 pub fn app_note(state: &crate::AppState, c: &Cipher) -> String {
     app::note(state, c)
@@ -261,7 +323,7 @@ pub fn app_note(state: &crate::AppState, c: &Cipher) -> String {
 #[derive(Debug, Clone, Serialize)]
 pub struct Preview {
     pub title: String,
-    /// "diff", "command" or "text".
+    /// "diff", "command", "text" or "folder" (a folder request: detail is the reason, note the folder).
     pub kind: &'static str,
     pub detail: Option<String>,
     pub note: Option<String>,
@@ -331,6 +393,12 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         "ask_person" | "work_with_person" => Ok(people_preview(name, args)),
+        "open_path" => Ok(Preview {
+            title: format!("Open {}", args.get("target").and_then(Value::as_str).unwrap_or("something")),
+            kind: "text",
+            detail: args.get("target").and_then(Value::as_str).map(str::to_string),
+            note: Some("Opens in your browser, or the app that usually opens this kind of file.".into()),
+        }),
         _ => fs::preview(name, args, sandbox),
     }
 }
@@ -350,6 +418,11 @@ fn people_preview(name: &str, args: &Value) -> Preview {
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     match name {
         "ask_person" => crate::sync::people::ask::tool(args, ctx).await,
+        "command_output" => shell::output(args),
+        "stop_command" => shell::stop(args),
+        "open_path" => open_path(args, ctx),
+        // Asked of the user by the agent itself.
+        "request_folder" => Outcome::error("Ask for a folder", "Folders are asked for in the chat."),
         // Its assistant runs tools too, so the call is boxed.
         "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
@@ -445,7 +518,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 36);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 38);
     }
 
     #[test]

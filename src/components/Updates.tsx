@@ -98,7 +98,7 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
         />
         <span>
           {t("Check for updates automatically")}
-          <span className="muted small block">{t("A few times a day, even Offline: it only asks SulcusAI's GitHub releases for the latest version number. Updates install only when you say so.")}</span>
+          <span className="muted small block">{t("A few times a day, even Offline: it only asks SulcusAI's GitHub releases for the latest version number.")}</span>
         </span>
       </label>
       <label className="check">

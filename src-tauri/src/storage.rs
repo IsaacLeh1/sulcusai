@@ -75,7 +75,31 @@ fn files_in(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn free_on(dir: &Path) -> Option<u64> {
+/// Writes a file so a crash or power cut leaves the old contents or the new,
+/// never half of either: a copy beside it, flushed to the disk, then put in
+/// its place. Where that can't be done (another app holds the file open),
+/// it's written in place as before.
+pub fn write_safely(path: &Path, bytes: impl AsRef<[u8]>) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".sulcusai-{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(name);
+    let swapped = (|| {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes.as_ref())?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if swapped.is_ok() {
+        return Ok(());
+    }
+    std::fs::remove_file(&tmp).ok();
+    std::fs::write(path, bytes)
+}
+
+/// Free space on the drive holding `dir`.
+pub fn free_on(dir: &Path) -> Option<u64> {
     let disks = sysinfo::Disks::new_with_refreshed_list();
     disks.list().iter().filter(|d| dir.starts_with(d.mount_point())).max_by_key(|d| d.mount_point().as_os_str().len()).map(|d| d.available_space())
 }
@@ -191,7 +215,7 @@ pub async fn move_models(app: AppHandle, state: AppStateRef<'_>, dest: String) -
             if target == st.paths.data.join("models") {
                 std::fs::remove_file(&location).ok();
             } else {
-                std::fs::write(&location, target.display().to_string()).map_err(|e| e.to_string())?;
+                write_safely(&location, target.display().to_string()).map_err(|e| e.to_string())?;
             }
             for f in copied {
                 std::fs::remove_file(f).ok();

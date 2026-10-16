@@ -13,6 +13,23 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub const CANCELLED: &str = "cancelled";
 
+/// Free space a download always leaves on its drive, so Windows and other
+/// apps (game downloads, updates) can still write.
+const KEEP_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Why a download of `more` bytes into `dir` mustn't go on, if so.
+fn too_full(dir: &Path, more: u64) -> Option<String> {
+    let free = crate::storage::free_on(dir)?;
+    (free < more.saturating_add(KEEP_FREE)).then(|| {
+        let gb = |b: u64| b as f64 / (1024.0 * 1024.0 * 1024.0);
+        format!(
+            "Not enough free space: this needs {:.1} GB more and {:.1} GB is free (SulcusAI always leaves 2 GB free so your PC keeps working). Make room, then try again; what's downloaded so far is kept.",
+            gb(more),
+            gb(free)
+        )
+    })
+}
+
 pub(crate) fn part_path(dest: &Path) -> PathBuf {
     let mut name = dest.file_name().unwrap_or_default().to_os_string();
     name.push(".part");
@@ -94,6 +111,10 @@ pub async fn fetch_verified(
             hasher = Sha256::new();
         }
 
+        let dir = dest.parent().unwrap_or(dest).to_path_buf();
+        if let Some(why) = too_full(&dir, size - have) {
+            return Err(why);
+        }
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -105,8 +126,17 @@ pub async fn fetch_verified(
 
         let mut stream = resp.bytes_stream();
         let mut last = Instant::now();
+        let mut checked = Instant::now();
         progress(have, size);
         while let Some(chunk) = stream.next().await {
+            // Something else filling the disk meanwhile: pause (it resumes later).
+            if checked.elapsed() >= Duration::from_secs(5) {
+                checked = Instant::now();
+                if let Some(why) = too_full(&dir, size - have) {
+                    file.flush().await.ok();
+                    return Err(why);
+                }
+            }
             if cancel.load(Ordering::Relaxed) {
                 file.flush().await.ok();
                 return Err(CANCELLED.into());
@@ -126,6 +156,9 @@ pub async fn fetch_verified(
             }
         }
         file.flush().await.map_err(|e| e.to_string())?;
+        // On the disk for real before it's used, so a crash or power cut
+        // can't leave a model that passed its check but is cut short.
+        file.sync_all().await.map_err(|e| e.to_string())?;
         progress(have, size);
     }
 

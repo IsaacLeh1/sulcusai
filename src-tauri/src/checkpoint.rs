@@ -85,7 +85,7 @@ fn restore(cipher: &Cipher, backup: &str, to: &Path) -> Result<(), String> {
     if let Some(dir) = to.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    std::fs::write(to, bytes).map_err(|e| e.to_string())
+    crate::storage::write_safely(to, bytes).map_err(|e| e.to_string())
 }
 
 /// Reverses every recorded change in a turn, newest first. Returns notes

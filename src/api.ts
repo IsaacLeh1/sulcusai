@@ -727,7 +727,7 @@ export interface ToolMeta {
 
 export interface Preview {
   title: string;
-  kind: "diff" | "command" | "text";
+  kind: "diff" | "command" | "text" | "folder";
   detail: string | null;
   note: string | null;
 }
@@ -738,6 +738,12 @@ export interface PendingApproval {
   tool: string;
   risk: "read" | "write" | "execute" | "connector" | "memory" | "submit";
   preview: Preview;
+}
+
+/** Whether the assistant may use anything on the Desktop. */
+export interface DesktopAccess {
+  on: boolean;
+  path: string | null;
 }
 
 export interface Folder {
@@ -1483,6 +1489,10 @@ export const api = {
   /** The warning to confirm before sharing this folder, if it needs one. */
   folderWarning: (path: string) => invoke<string | null>("folder_warning", { path }),
   removeFolder: (path: string) => invoke<void>("remove_folder", { path }),
+  /** Picks another folder for the assistant's folder request. */
+  chooseFolder: (callId: string, path: string) => invoke<void>("choose_folder", { callId, path }),
+  desktopAccess: () => invoke<DesktopAccess>("desktop_access"),
+  setDesktopAccess: (on: boolean) => invoke<DesktopAccess>("set_desktop_access", { on }),
   setChatMode: (chatId: string, mode: RunMode) => invoke<void>("set_chat_mode", { chatId, mode }),
   answerApproval: (callId: string, decision: "allow" | "always" | "deny") => invoke<void>("answer_approval", { callId, decision }),
   pendingApprovals: (chatId: string) => invoke<PendingApproval[]>("pending_approvals", { chatId }),
@@ -1713,6 +1723,7 @@ export interface ChatEvents {
   "downloads:changed": Record<string, never>;
   "security:locked": null;
   "features:changed": Record<string, never>;
+  "folders:changed": Record<string, never>;
   "models:found": { names: string[] };
   "task:reminder": { id: string; title: string };
   "perf:heat": HeatState;

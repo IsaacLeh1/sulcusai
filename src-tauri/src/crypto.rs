@@ -248,10 +248,8 @@ impl Vault {
     }
 
     fn save(&self) -> Result<(), String> {
-        let tmp = self.path.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(&self.file).map_err(|e| e.to_string())?;
-        std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+        crate::storage::write_safely(&self.path, json).map_err(|e| e.to_string())
     }
 
     /// The key, for anything the person at the screen asks for.
@@ -416,7 +414,7 @@ impl Vault {
         let dk = to_key(raw).ok_or("The backup's key is damaged.")?;
         let file = KeyFile { version: 1, dpapi: Some(B64.encode(protector.protect(dk.as_ref())?)), ..Default::default() };
         let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-        std::fs::write(path, json).map_err(|e| e.to_string())
+        crate::storage::write_safely(path, json).map_err(|e| e.to_string())
     }
 
     /// Stores (or removes) the Windows Hello copy of the data key.

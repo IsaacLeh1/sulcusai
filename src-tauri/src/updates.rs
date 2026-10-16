@@ -4,9 +4,9 @@
 //! app). The automatic check runs at every level, Offline included: it only
 //! asks GitHub for the latest version number, and it's a switch in Settings.
 //! (It used to skip Offline, the default, so most copies never heard of an
-//! update.) Installing is the user's click, unless they turned on installing
-//! automatically: then it happens when nothing is running, and the app
-//! restarts.
+//! update.) Updates install on their own when nothing is running, and the
+//! app restarts (fixes reach everyone); the user can turn that off, and then
+//! installing is their click.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -27,14 +27,24 @@ const EVERY: i64 = 6 * 3600 * 1000;
 pub struct UpdateSettings {
     /// Look for updates on its own.
     pub auto: bool,
-    /// Install what it finds without asking (when nothing is running).
-    pub install: bool,
+    /// Install what it finds without asking (when nothing is running), once
+    /// the user chose; until then it does.
+    install: bool,
+    /// Whether the user chose `install` (before 0.9.2 it was off unless
+    /// they turned it on, so nobody's "off" was a choice).
+    chosen: bool,
     pub last_check: i64,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
-        UpdateSettings { auto: true, install: false, last_check: 0 }
+        UpdateSettings { auto: true, install: true, chosen: false, last_check: 0 }
+    }
+}
+
+impl UpdateSettings {
+    pub fn installs(&self) -> bool {
+        !self.chosen || self.install
     }
 }
 
@@ -46,6 +56,7 @@ fn idle(state: &AppState) -> bool {
         && crate::meeting::live_meeting().is_none()
         && crate::media::list_jobs().is_empty()
         && !crate::finetune::training()
+        && !crate::tools::commands_running()
 }
 
 fn settings(state: &AppState) -> UpdateSettings {
@@ -105,7 +116,7 @@ pub fn start(app: AppHandle) {
             }
             // Installing on its own: once nothing is running (checked again
             // every few minutes until then).
-            if s.install && PENDING.lock().unwrap().is_some() {
+            if s.installs() && PENDING.lock().unwrap().is_some() {
                 for _ in 0..12 {
                     if idle(&state) {
                         state.log("settings", "Installing an update automatically");
@@ -136,7 +147,7 @@ pub struct UpdateView {
 pub fn update_view(state: AppStateRef) -> UpdateView {
     let s = settings(&state);
     let available = PENDING.lock().unwrap().as_ref().map(|u| Available { version: u.version.clone(), notes: u.body.clone().unwrap_or_default(), date: u.date.map(|d| d.date().to_string()) });
-    UpdateView { current: env!("CARGO_PKG_VERSION").into(), auto: s.auto, install: s.install, last_check: s.last_check, available }
+    UpdateView { current: env!("CARGO_PKG_VERSION").into(), auto: s.auto, install: s.installs(), last_check: s.last_check, available }
 }
 
 /// Checks now (the user asked, so it works at every level).
@@ -159,6 +170,7 @@ pub fn set_update_install(state: AppStateRef, install: bool) -> Result<(), Strin
     let conn = state.db.lock().unwrap();
     let mut s: UpdateSettings = db::get(&conn, KEY).unwrap_or_default();
     s.install = install;
+    s.chosen = true;
     if install {
         s.auto = true;
     }
