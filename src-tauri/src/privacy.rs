@@ -456,6 +456,7 @@ pub struct PrivacyTest {
 /// goes now (falling back to ipify.org for just the address).
 #[tauri::command]
 pub async fn test_privacy(state: AppStateRef<'_>) -> Result<PrivacyTest, String> {
+    crate::offline::check(crate::offline::Keep::Web)?;
     check(Route::Web)?;
     let mut b = reqwest::Client::builder().connect_timeout(Duration::from_secs(60)).timeout(Duration::from_secs(90));
     if let Some(p) = proxy_for(Route::Web) {

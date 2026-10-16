@@ -39,7 +39,13 @@ pub enum Purpose {
 /// `chat_web` is the per-chat globe toggle, which turns web on for one chat
 /// while the app stays Offline.
 pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
-    match purpose {
+    // Fully offline: only what the person kept.
+    let kept = match purpose {
+        Purpose::ModelDownload => !crate::offline::blocks(crate::offline::Keep::Downloads),
+        Purpose::Search | Purpose::Web => !crate::offline::blocks(crate::offline::Keep::Web),
+        Purpose::Cloud => true,
+    };
+    kept && match purpose {
         Purpose::ModelDownload => true,
         Purpose::Search | Purpose::Web => level != Connectivity::Offline || chat_web,
         Purpose::Cloud => level == Connectivity::Cloud,
@@ -89,6 +95,11 @@ pub fn private_ok(url: &str) -> bool {
 
 /// Client for requests that leave the PC; refuses when the level forbids it.
 pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) -> Result<reqwest::Client, String> {
+    match purpose {
+        Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
+        Purpose::Search | Purpose::Web => crate::offline::check(crate::offline::Keep::Web)?,
+        Purpose::Cloud => {}
+    }
     if !allowed(level, purpose, chat_web) {
         return Err(blocked_message(purpose).to_string());
     }

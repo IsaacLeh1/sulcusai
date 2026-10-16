@@ -652,7 +652,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       </main>
 
       <footer className="statusbar">
-        <ConnectivityMenu level={settings.connectivity} onChange={changeConnectivity} />
+        <ConnectivityMenu level={settings.connectivity} onChange={changeConnectivity} onRefresh={() => api.settings().then(setSettings).catch(() => {})} />
         <span className="status-item" title={loadedName ? t("The model in memory") : t("Models load when you send a message and unload after a while idle, to free memory")}>
           {engineDl ? (
             <>

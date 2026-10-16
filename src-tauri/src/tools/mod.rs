@@ -273,6 +273,9 @@ fn open_path(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     };
     let title = format!("Opened {target}");
     if target.starts_with("http://") || target.starts_with("https://") {
+        if let Err(e) = crate::offline::check(crate::offline::Keep::Web) {
+            return Outcome::error("Open something", e);
+        }
         return match crate::open_with_system(std::ffi::OsStr::new(&target)) {
             Ok(()) => Outcome::ok(format!("Opened {target} in the user's browser."), title, "text", None),
             Err(e) => Outcome::error(title, e),

@@ -1472,6 +1472,9 @@ export const api = {
   cancelInstall: (modelId: string) => invoke<void>("cancel_install", { modelId }),
   removeModel: (modelId: string) => invoke<void>("remove_model", { modelId }),
   settings: () => invoke<Settings>("get_settings"),
+  offlineView: () => invoke<OfflineView>("offline_view"),
+  /** Fully offline on (with what to keep) or off. */
+  setFullyOffline: (on: boolean, keep: OfflineKeep[]) => invoke<OfflineView>("set_fully_offline", { on, keep }),
   setConnectivity: (level: Connectivity) => invoke<Settings>("set_connectivity", { level }),
   setDefaultModel: (modelId: string) => invoke<Settings>("set_default_model", { modelId }),
   profile: () => invoke<Profile>("get_profile"),
@@ -1701,6 +1704,14 @@ export type MeetingEvent =
   | { meeting_id: string; kind: "error"; error: string };
 
 /** The graphics card right now (bottom bar). */
+export type OfflineKeep = "updates" | "downloads" | "web" | "local_network" | "connectors";
+
+/** Fully offline: on or off, and what may still use the network. */
+export interface OfflineView {
+  on: boolean;
+  items: { id: OfflineKeep; name: string; detail: string; in_use: boolean; kept: boolean }[];
+}
+
 export interface GpuLimit {
   percent: number;
   has_gpu: boolean;
@@ -1768,6 +1779,7 @@ export interface ChatEvents {
   "chat:titled": { chat_id: string; title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
   "gpu:limit": { percent: number };
+  "offline:changed": { on: boolean };
   "engine:memory": MemoryWarning;
   "engine:memory_done": { id: string };
   "chat:web": { chat_id: string; web: boolean };

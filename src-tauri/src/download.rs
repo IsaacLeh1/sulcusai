@@ -96,6 +96,7 @@ pub async fn fetch_verified(
     };
 
     if have < size {
+        crate::offline::check(crate::offline::Keep::Downloads)?;
         let mut req = client.get(url);
         if have > 0 {
             req = req.header(RANGE, format!("bytes={have}-"));

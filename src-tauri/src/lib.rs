@@ -51,6 +51,7 @@ mod natural;
 mod net;
 mod notes;
 mod notify;
+mod offline;
 mod oauth;
 mod paths;
 mod perf;
@@ -963,6 +964,12 @@ fn set_connectivity(app: AppHandle, state: AppStateRef, level: Connectivity) -> 
         browser::close(&app);
     }
     state.cipher()?;
+    // Picking a level ends Fully offline (what it stopped may start again).
+    if offline::on() {
+        offline::turn_off(&state);
+        let (app, state) = (app.clone(), state.inner().clone());
+        tauri::async_runtime::spawn(async move { offline::apply(&app, &state).await });
+    }
     let conn = state.db.lock().unwrap();
     let before = db::settings(&conn).connectivity;
     let s = db::update_settings(&conn, |s| s.connectivity = level)?;
@@ -1699,6 +1706,8 @@ pub fn run() {
             if let Ok(c) = state.cipher() {
                 state.migrate_plaintext(&c);
             }
+            // Fully offline is known before anything starts going online.
+            offline::load(&state.db.lock().unwrap());
             checkpoint::prune(&state.db.lock().unwrap());
             // What a crash may have left: picture/video work, teaching data.
             media::clean_work(&state.paths);
@@ -1733,6 +1742,8 @@ pub fn run() {
             perf::perf_view,
             perf::gpu_now,
             perf::gpu_limit,
+            offline::offline_view,
+            offline::set_fully_offline,
             perf::set_gpu_limit,
             memcheck::answer_memory_warning,
             security::set_keep_working,

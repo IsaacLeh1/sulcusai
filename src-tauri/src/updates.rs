@@ -75,6 +75,7 @@ pub struct Available {
 
 /// The updater, through the private connection when that's on for updates.
 fn updater(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
+    crate::offline::check(crate::offline::Keep::Updates)?;
     let mut b = app.updater_builder();
     crate::privacy::check(crate::privacy::Route::Updates)?;
     if let Some(p) = crate::privacy::proxy_for(crate::privacy::Route::Updates) {

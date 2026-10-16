@@ -76,6 +76,7 @@ pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
 
 /// The browser window, opened (and shown) if it isn't already.
 pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
+    crate::offline::check(crate::offline::Keep::Web)?;
     if let Some(w) = window(app) {
         if visible {
             let _ = w.show();

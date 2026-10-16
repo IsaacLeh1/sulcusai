@@ -25,6 +25,8 @@ fn cache() -> &'static Mutex<Option<(Instant, Place)>> {
 
 /// This PC's position from Windows location services (cached 30 minutes).
 pub async fn detect() -> Result<Place, String> {
+    // Windows may look the position up online.
+    crate::offline::check(crate::offline::Keep::Web)?;
     if let Some((at, p)) = cache().lock().unwrap().clone() {
         if at.elapsed() < Duration::from_secs(1800) {
             return Ok(p);

@@ -160,6 +160,11 @@ pub struct OfferedTool {
 /// Connectors that fail to start are reported, not fatal.
 pub async fn offer(state: &AppState, c: &Cipher) -> (Vec<Value>, HashMap<String, OfferedTool>, Vec<String>) {
     let list: Vec<Connector> = connectors(&state.db.lock().unwrap(), c).into_iter().filter(|x| x.enabled).collect();
+    if !list.is_empty() {
+        if let Err(e) = crate::offline::check(crate::offline::Keep::Connectors) {
+            return (Vec::new(), HashMap::new(), vec![e]);
+        }
+    }
     let mut defs = Vec::new();
     let mut map = HashMap::new();
     let mut problems = Vec::new();
@@ -195,6 +200,7 @@ pub async fn offer(state: &AppState, c: &Cipher) -> (Vec<Value>, HashMap<String,
 
 /// Makes sure the connector's server is running; returns its tools.
 pub async fn ensure_running(state: &AppState, conn: &Connector) -> Result<Vec<McpTool>, String> {
+    crate::offline::check(crate::offline::Keep::Connectors)?;
     let mut clients = state.mcp.lock().await;
     if let Some(client) = clients.get_mut(&conn.id) {
         if client.alive() {
@@ -212,6 +218,14 @@ pub async fn call(state: &AppState, connector_id: &str, tool: &str, args: Value)
     let mut clients = state.mcp.lock().await;
     let client = clients.get_mut(connector_id).ok_or("The connector isn't running.")?;
     client.call(tool, args).await
+}
+
+/// Stops every connector's program (fully offline).
+pub async fn stop_all(state: &AppState) {
+    let all: Vec<_> = state.mcp.lock().await.drain().map(|(_, c)| c).collect();
+    for client in all {
+        client.stop().await;
+    }
 }
 
 async fn stop(state: &AppState, id: &str) {

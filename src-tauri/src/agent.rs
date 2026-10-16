@@ -315,7 +315,8 @@ impl Turn {
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
                 extra.extend(["weather", "web_search", "fetch_page"]);
-            } else {
+            } else if !crate::offline::blocks(crate::offline::Keep::Web) {
+                // Fully offline: a yes couldn't turn the web on anyway.
                 extra.push("request_web");
             }
         }

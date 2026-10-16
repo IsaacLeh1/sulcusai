@@ -123,6 +123,13 @@ pub(super) fn wake() {
     WAKE.notify_one();
 }
 
+/// Ends every connection (fully offline).
+pub(super) fn hang_up_all() {
+    for (_, c) in CONNS.lock().unwrap().drain() {
+        let _ = c.stop.send(true);
+    }
+}
+
 /// Ends the connection with them, if any.
 pub(super) fn hang_up(id: &str) {
     if let Some(c) = CONNS.lock().unwrap().remove(id) {
@@ -390,7 +397,7 @@ pub(in crate::sync) async fn answer(state: &Arc<AppState>, mut stream: TcpStream
 
 /// Calls whoever isn't connected, waiting longer after each failed try.
 fn tick(state: &Arc<AppState>) {
-    if state.work_cipher().is_err() {
+    if state.work_cipher().is_err() || crate::offline::blocks(crate::offline::Keep::LocalNetwork) {
         return;
     }
     if features::is_on(&state.db.lock().unwrap(), Feature::People) {

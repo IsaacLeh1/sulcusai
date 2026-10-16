@@ -264,8 +264,9 @@ pub fn start(app: AppHandle) {
             let showing = people::showing_code(&state);
             let (enabled, wanted) = {
                 let conn = state.db.lock().unwrap();
-                let enabled = config(&conn).enabled;
-                (enabled, enabled || people::wants_calls(&conn, showing))
+                // Fully offline: not on the network at all, unless kept.
+                let enabled = config(&conn).enabled && !crate::offline::blocks(crate::offline::Keep::LocalNetwork);
+                (enabled, enabled || (people::wants_calls(&conn, showing) && !crate::offline::blocks(crate::offline::Keep::LocalNetwork)))
             };
             let live = LIVE.lock().unwrap().is_some();
             if wanted && !live {
@@ -294,6 +295,11 @@ fn stop() {
     }
     NEARBY.lock().unwrap().clear();
     *PAIRING.lock().unwrap() = None;
+}
+
+/// Whether syncing between the user's PCs is turned on.
+pub fn sync_on(conn: &rusqlite::Connection) -> bool {
+    config(conn).enabled
 }
 
 /// Checks right away whether to listen (People was turned on or off).

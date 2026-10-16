@@ -88,6 +88,10 @@ pub fn apply(state: Arc<AppState>) {
     if !on {
         return;
     }
+    if let Err(e) = crate::offline::check(crate::offline::Keep::LocalNetwork) {
+        *PROBLEM.lock().unwrap() = Some(e);
+        return;
+    }
     let (tx, rx) = oneshot::channel();
     tauri::async_runtime::spawn(async move {
         let mut listener = None;

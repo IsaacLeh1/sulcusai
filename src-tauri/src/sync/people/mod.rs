@@ -49,6 +49,11 @@ pub(super) use codes::{pair_answer, showing_code};
 pub(super) use link::{answer, start};
 pub use share::{chat_event, turn_changed};
 
+/// Ends every live link (fully offline turned on).
+pub fn hang_up_all() {
+    link::hang_up_all();
+}
+
 const KEY: &str = "people";
 /// What a call asks for (`Open::want`): linking, or the live link.
 pub(super) const LINK: &str = "person";
@@ -411,6 +416,7 @@ fn tell(state: &AppState, title: &str, text: &str) {
 /// Calls an app at `addr`; when that fails, says why in plain words.
 async fn connect(addr: SocketAddr) -> Result<TcpStream, String> {
     use std::io::ErrorKind;
+    crate::offline::check(crate::offline::Keep::LocalNetwork)?;
     match timeout(Duration::from_secs(8), TcpStream::connect(addr)).await {
         Ok(Ok(s)) => Ok(s),
         // Nothing came back at all: a firewall dropping the call, or nobody at that address.
