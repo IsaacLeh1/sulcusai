@@ -42,6 +42,10 @@ fn navigable_with(url: &tauri::Url, allow_local: bool) -> bool {
     }
     let Some(host) = url.host_str() else { return false };
     let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    // A server on this PC the person chose to view, or the assistant started.
+    if crate::ports::local_port(url.as_str()).is_some_and(crate::ports::previewable) {
+        return true;
+    }
     if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || !host.contains('.') && host.parse::<IpAddr>().is_err() {
         return allow_local;
     }

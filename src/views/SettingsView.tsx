@@ -18,6 +18,7 @@ import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
+import { PortsSettings } from "../components/PortsSettings";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
@@ -328,6 +329,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-performance" className="settings-anchor" />
       <PerformanceSection toast={toast} />
+
+      <span id="settings-servers" className="settings-anchor" />
+      <PortsSettings toast={toast} />
 
       <span id="settings-storage" className="settings-anchor" />
       <ModelStorage toast={toast} />

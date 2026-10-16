@@ -61,6 +61,7 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
 /** One tool call and (once it has run) its result. */
 export function ToolCard({ call, meta, output, running, liveSteps, onOpenChat }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[]; onOpenChat?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
   const title = meta?.title ? tf(meta.title) : describe(call);
@@ -88,6 +89,14 @@ export function ToolCard({ call, meta, output, running, liveSteps, onOpenChat }:
           <button className="btn small" onClick={() => onOpenChat(meta.open_chat!)}>
             {meta.open_title ? t("Open “{title}”", { title: meta.open_title }) : t("Open the chat")}
           </button>
+        </div>
+      )}
+      {meta?.preview_port && status === "ok" && (
+        <div className="tool-actions">
+          <button className="btn small" onClick={() => api.previewPort(meta.preview_port!).then(() => setPreviewError(null)).catch((e) => setPreviewError(errorText(e)))}>
+            {t("Preview in SulcusAI's browser")}
+          </button>
+          <span className={previewError ? "warn-text small" : "muted small"}>{previewError ?? t("Servers and ports in Settings can stop or restart it.")}</span>
         </div>
       )}
       {meta?.file && status === "ok" && (

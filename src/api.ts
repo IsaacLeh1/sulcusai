@@ -766,6 +766,8 @@ export interface ToolMeta {
   auto?: boolean;
   /** A document the assistant made (it can be opened). */
   file?: string;
+  /** A server the assistant started on this PC: its port, for Preview. */
+  preview_port?: number;
   /** The assistant asked the user to turn on web access. */
   web_request?: boolean;
   /** Pictures, clips or sounds the assistant made. */
@@ -1363,6 +1365,32 @@ export interface MediaView {
 
 export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
 
+export interface PortRow {
+  port: number;
+  addresses: string[];
+  local_only: boolean;
+  pid: number;
+  program: string;
+  /** The assistant's server it belongs to. */
+  server: string | null;
+  /** Part of Windows: not stopped from here. */
+  system: boolean;
+}
+
+export interface ServerInfo {
+  id: string;
+  command: string;
+  folder: string;
+  running: boolean;
+  url: string | null;
+}
+
+export interface PortsView {
+  ports: PortRow[];
+  servers: ServerInfo[];
+  supported: boolean;
+}
+
 export interface MediaRequest {
   op: MediaOp;
   model_id?: string | null;
@@ -1677,6 +1705,13 @@ export const api = {
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
+  /** Servers and ports: what's listening on this PC. */
+  portsView: () => invoke<PortsView>("ports_view"),
+  stopPortProgram: (pid: number) => invoke<PortsView>("stop_port_program", { pid }),
+  serverStop: (id: string) => invoke<PortsView>("server_stop", { id }),
+  serverStart: (id: string) => invoke<PortsView>("server_start", { id }),
+  /** Opens a port on this PC in SulcusAI's browser. */
+  previewPort: (port: number) => invoke<void>("preview_port", { port }),
   /** Shows a file the assistant made in File Explorer (nothing is run). */
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),

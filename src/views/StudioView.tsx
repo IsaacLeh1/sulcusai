@@ -319,6 +319,7 @@ function best(models: MediaModelCard[], can?: string): string {
 const LOOKS: { id: string; label: string }[] = [
   { id: "auto", label: tx("Auto (realistic unless you say)") },
   { id: "photo", label: tx("Realistic photo") },
+  { id: "phone_photo", label: tx("📱 Phone photo (most lifelike)") },
   { id: "cinematic", label: tx("Cinematic") },
   { id: "cartoon", label: tx("Cartoon") },
   { id: "anime", label: tx("Anime") },

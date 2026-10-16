@@ -52,6 +52,108 @@ struct Background {
 }
 
 static BACKGROUND: LazyLock<Mutex<HashMap<String, Background>>> = LazyLock::new(Default::default);
+/// Background commands stopped from the Servers panel or by the assistant,
+/// newest last, so they can be started again: id, command, folder.
+static STOPPED: LazyLock<Mutex<Vec<(String, String, std::path::PathBuf)>>> = LazyLock::new(Default::default);
+
+/// A background command, for the Servers panel.
+#[derive(serde::Serialize, Clone)]
+pub struct ServerInfo {
+    pub id: String,
+    pub command: String,
+    pub folder: String,
+    pub running: bool,
+    /// The shell's process id (its programs are below it).
+    #[serde(skip)]
+    pub pid: Option<u32>,
+    /// The address it printed, if any.
+    pub url: Option<String>,
+}
+
+/// Background commands, running or not, newest first.
+pub fn servers() -> Vec<ServerInfo> {
+    let mut out: Vec<ServerInfo> = BACKGROUND
+        .lock()
+        .unwrap()
+        .iter_mut()
+        .map(|(id, b)| {
+            let running = matches!(b.child.try_wait(), Ok(None));
+            ServerInfo { id: id.clone(), command: b.command.clone(), folder: b.dir.display().to_string(), running, pid: b.child.id(), url: first_url(&b.output.lock().unwrap().text()) }
+        })
+        .collect();
+    for (id, command, dir) in STOPPED.lock().unwrap().iter().rev() {
+        if !out.iter().any(|s| &s.id == id) {
+            out.push(ServerInfo { id: id.clone(), command: command.clone(), folder: dir.display().to_string(), running: false, pid: None, url: None });
+        }
+    }
+    out
+}
+
+/// Stops a background command and anything it started (Servers panel).
+pub fn stop_server(id: &str) -> Result<(), String> {
+    let mut b = BACKGROUND.lock().unwrap().remove(id).ok_or("That server isn't running.")?;
+    kill_tree(b.child.id());
+    let _ = b.child.start_kill();
+    remember_stopped(id, &b.command, &b.dir);
+    Ok(())
+}
+
+fn remember_stopped(id: &str, command: &str, dir: &std::path::Path) {
+    let mut all = STOPPED.lock().unwrap();
+    all.retain(|(i, ..)| i != id);
+    all.push((id.to_string(), command.to_string(), dir.to_path_buf()));
+    let extra = all.len().saturating_sub(10);
+    all.drain(..extra);
+}
+
+/// Starts a server again, the same command in the same folder (Servers
+/// panel). The person approved it when the assistant first ran it.
+pub async fn start_server(id: &str) -> Result<ServerInfo, String> {
+    let found = {
+        let mut running = BACKGROUND.lock().unwrap();
+        match running.get_mut(id) {
+            Some(b) => {
+                if matches!(b.child.try_wait(), Ok(None)) {
+                    return Err("It's already running.".into());
+                }
+                Some((b.command.clone(), b.dir.clone()))
+            }
+            None => None,
+        }
+    }
+    .or_else(|| STOPPED.lock().unwrap().iter().find(|(i, ..)| i == id).map(|(_, c, d)| (c.clone(), d.clone())));
+    let (command, dir) = found.ok_or("SulcusAI doesn't know that server any more.")?;
+    if !dir.is_dir() {
+        return Err(format!("{} isn't there any more.", dir.display()));
+    }
+    if let Some(why) = guard::disk_too_full(&dir) {
+        return Err(why);
+    }
+    let mut child = spawn_shell(&command, &dir, None)?;
+    let output = Arc::new(Mutex::new(Kept::default()));
+    if let Some(out) = child.stdout.take() {
+        collect(out, output.clone());
+    }
+    if let Some(err) = child.stderr.take() {
+        collect(err, output.clone());
+    }
+    // A moment to print its address, or to fail.
+    for _ in 0..24 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if matches!(child.try_wait(), Ok(Some(_))) || first_url(&output.lock().unwrap().text()).is_some() {
+            break;
+        }
+    }
+    if let Ok(Some(s)) = child.try_wait() {
+        let said = clip(output.lock().unwrap().text().trim());
+        return Err(format!("It ended right away (exit code {}). {said}", s.code().map_or("none".into(), |c| c.to_string())));
+    }
+    STOPPED.lock().unwrap().retain(|(i, ..)| i != id);
+    let info = ServerInfo { id: id.to_string(), command: command.clone(), folder: dir.display().to_string(), running: true, pid: child.id(), url: first_url(&output.lock().unwrap().text()) };
+    BACKGROUND.lock().unwrap().insert(id.to_string(), Background { command, dir, child, output });
+    watch_background();
+    Ok(info)
+}
 /// The most output kept from a command: its start, and its latest part.
 const KEEP_HEAD: usize = 50_000;
 const KEEP_TAIL: usize = 150_000;
@@ -185,6 +287,7 @@ pub fn stop(args: &Value) -> Outcome {
     };
     kill_tree(b.child.id());
     let _ = b.child.start_kill();
+    remember_stopped(&id, &b.command, &b.dir);
     Outcome::ok(format!("Stopped {id}."), format!("Stopped: {}", short(&b.command)), "text", None)
 }
 
@@ -232,12 +335,18 @@ async fn keep_running(mut child: tokio::process::Child, command: String, dir: st
     let url = first_url(&so_far);
     let text = format!(
         "Running in the background as {id} (it keeps going after this).{}\nOutput so far:\n{}\nCheck on it with command_output, stop it with stop_command.",
-        url.as_ref().map(|u| format!(" It's at {u}: open it for the user with open_path.")).unwrap_or_default(),
+        url.as_ref().map(|u| format!(" It's at {u}: the user can preview it in SulcusAI's browser from this step (or you can open it there with browser_open).")).unwrap_or_default(),
         if so_far.is_empty() { "(none yet)" } else { &so_far }
     );
-    BACKGROUND.lock().unwrap().insert(id, Background { command: command.clone(), dir, child, output });
+    BACKGROUND.lock().unwrap().insert(id.clone(), Background { command: command.clone(), dir, child, output });
     watch_background();
-    Outcome::ok(text.clone(), format!("Started in the background: {}", short(&command)), "command", Some(format!("> {command}\n\n{text}")))
+    let mut o = Outcome::ok(text.clone(), format!("Started in the background: {}", short(&command)), "command", Some(format!("> {command}\n\n{text}")));
+    // The step offers "Preview" for a server on this PC.
+    if let Some(port) = url.as_deref().and_then(crate::ports::local_port) {
+        o.meta["preview_port"] = json!(port);
+        o.meta["server"] = json!(id);
+    }
+    o
 }
 
 fn workdir(args: &Value, sb: &Sandbox) -> Result<std::path::PathBuf, String> {
@@ -299,6 +408,18 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     };
     let timeout = Duration::from_secs(args.get("timeout_seconds").and_then(Value::as_u64).unwrap_or(DEFAULT_TIMEOUT).clamp(1, MAX_TIMEOUT));
     let title = format!("Ran a command in {}", ctx.sandbox.display(&dir));
+    let child = match spawn_shell(&command, &dir, ctx.job) {
+        Ok(c) => c,
+        Err(e) => return Outcome::error(title, e),
+    };
+    if args.get("background").and_then(Value::as_bool) == Some(true) {
+        return keep_running(child, command, dir, title, ctx).await;
+    }
+    run_to_end(child, &command, &dir, timeout, title, ctx).await
+}
+
+/// Starts the shell running `command` in `dir`, in its own limited job.
+fn spawn_shell(command: &str, dir: &std::path::Path, fallback_job: Option<&crate::engine::JobRef>) -> Result<tokio::process::Child, String> {
     let script = format!(
         "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8\n{command}"
     );
@@ -324,19 +445,21 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     crate::engine::tie_to_app(&mut cmd);
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => return Outcome::error(title, format!("Couldn't start the shell: {e}")),
-    };
+    let child = cmd.spawn().map_err(|e| format!("Couldn't start the shell: {e}"))?;
     // Its own limited job (memory, processes, priority); the app's if that failed.
     #[cfg(windows)]
-    if let (Some(job), Some(pid)) = (commands_job().or(ctx.job), child.id()) {
+    if let (Some(job), Some(pid)) = (commands_job().or(fallback_job), child.id()) {
         job.assign(pid).ok();
     }
-    if args.get("background").and_then(Value::as_bool) == Some(true) {
-        return keep_running(child, command, dir, title, ctx).await;
-    }
+    #[cfg(not(windows))]
+    let _ = fallback_job;
+    Ok(child)
+}
 
+/// A command run to its end (or its time limit), with its output.
+async fn run_to_end(mut child: tokio::process::Child, command: &str, dir: &std::path::Path, timeout: Duration, title: String, ctx: &Ctx<'_>) -> Outcome {
+    let command = command.to_string();
+    let dir = dir.to_path_buf();
     let (out, err) = (Arc::new(Mutex::new(Kept::default())), Arc::new(Mutex::new(Kept::default())));
     let read_out = collect(child.stdout.take().unwrap(), out.clone());
     let read_err = collect(child.stderr.take().unwrap(), err.clone());

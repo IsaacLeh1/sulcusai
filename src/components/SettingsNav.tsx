@@ -17,6 +17,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "folders", label: tx("Shared folders"), show: features.has("files") },
     { id: "voice", label: tx("Voice and meetings"), show: VOICE_FEATURES.some((f) => features.has(f)) },
     { id: "performance", label: tx("Performance") },
+    { id: "servers", label: tx("Servers and ports") },
     { id: "storage", label: tx("Where models are saved") },
     { id: "sign-in", label: tx("Microsoft and Google sign-in"), show: features.has("email") || features.has("calendar") },
     { id: "connectivity", label: tx("Connectivity") },

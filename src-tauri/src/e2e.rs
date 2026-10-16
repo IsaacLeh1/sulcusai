@@ -1574,6 +1574,60 @@ async fn e2e_makes_files_on_ollama_model() {
     assert!(made[1] > made[0], "the script was made as a file");
 }
 
+/// Builds a live stock-exchange site with a real model, starts its server
+/// in the background, and checks the server answers and that SulcusAI's
+/// browser may show it (a preview). SULCUSAI_TEST_GGUF: the model file;
+/// SULCUSAI_TEST_OUT: the folder it works in (kept, to look at).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_builds_a_live_site_and_serves_it() {
+    let ctx = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(16384);
+    let layers = std::env::var("SULCUSAI_TEST_LAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(99);
+    let blob = std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF");
+    let work = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_OUT").expect("SULCUSAI_TEST_OUT"));
+    std::fs::create_dir_all(&work).unwrap();
+    let (state, ep, cipher) = agent_harness_on(Some((blob.into(), ctx, layers)), None).await;
+    let (st, inside) = (state.clone(), work.clone());
+    let approver = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                if p.tool == "request_folder" {
+                    crate::workspace::offer_folder(&p.call_id, &inside.join("site"));
+                }
+                let no = p.tool == "open_path" || p.tool == "open_page";
+                st.approvals.answer(&p.call_id, if no { crate::agent::Decision::Deny } else { crate::agent::Decision::Allow });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&work).unwrap().display().to_string()).unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let ask = "Build me a live stock exchange website in a new folder called stock-exchange: a scrolling ticker strip, a table of 8 companies \
+               whose prices update every second (make up realistic prices and moves in JavaScript, no outside data), a live price chart \
+               for the selected stock drawn on a canvas, and buy and sell buttons with a cash balance and portfolio. Then start a local \
+               server for it in the background on port 8765 so I can preview it.";
+    let t = std::time::Instant::now();
+    let answer = say(&state, &ep, &cipher, &chat.id, ask).await;
+    let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    let calls: Vec<String> = msgs.iter().flat_map(|m| m.tool_calls.clone().unwrap_or_default()).map(|c| format!("{}({:.90})", c.name, c.arguments)).collect();
+    println!("{:.1} s, calls: {calls:#?}\nfiles: {:?}\n{answer:.800}", t.elapsed().as_secs_f32(), walkdir_names(&work));
+    let preview = msgs.iter().filter_map(|m| m.meta.as_ref()?.get("preview_port")?.as_u64()).last();
+    println!("preview offered on port {preview:?}; servers: {:?}", crate::tools::shell::servers().iter().map(|s| (&s.command, s.running, &s.url)).collect::<Vec<_>>());
+    let port = preview.unwrap_or(8765) as u16;
+    let page = reqwest::get(format!("http://localhost:{port}/")).await;
+    let ok = page.as_ref().is_ok_and(|r| r.status().is_success());
+    let body = match page {
+        Ok(r) => r.text().await.unwrap_or_default(),
+        Err(e) => e.to_string(),
+    };
+    println!("GET :{port} -> {ok}, {} bytes; previewable: {}", body.len(), crate::ports::previewable(port));
+    approver.abort();
+    state.engine.lock().await.stop().await;
+    assert!(ok && body.to_lowercase().contains("<html"), "the site is served");
+    assert!(crate::ports::previewable(port), "SulcusAI's browser may show the assistant's own server");
+    assert!(!crate::ports::previewable(1), "but not any port on this PC");
+}
+
 fn walkdir_names(dir: &std::path::Path) -> Vec<String> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
@@ -1827,8 +1881,6 @@ async fn e2e_weather_question() {
     state.engine.lock().await.stop().await;
 }
 
-/// App state with the real engines and models but a throwaway database and
-/// gallery (so test pictures never land in the real app's gallery).
 /// Pictures look real by default, and a picture can be edited from an
 /// instruction: a portrait, then a top hat added, then a party behind him.
 /// SULCUSAI_MEDIA_OUT: where the three pictures are written to look at.
@@ -1858,6 +1910,47 @@ async fn e2e_realistic_picture_and_edits() {
     }
 }
 
+/// Renders a set of pictures to compare looks and models. SULCUSAI_PICS:
+/// "name|model|style|steps|prompt" entries separated by ";;" (empty model,
+/// style or steps: the defaults); SULCUSAI_MEDIA_OUT: where they go.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_picture_set() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").expect("SULCUSAI_MEDIA_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let c = state.cipher().unwrap();
+    let list = std::env::var("SULCUSAI_PICS").expect("SULCUSAI_PICS");
+    for entry in list.split(";;").map(str::trim).filter(|e| !e.is_empty()) {
+        let f: Vec<&str> = entry.splitn(5, '|').collect();
+        let [name, model, style, steps, prompt] = f[..] else { panic!("bad entry: {entry}") };
+        if !model.is_empty() {
+            media::install_for_test(&state, model).await.unwrap_or_else(|e| panic!("installing {model}: {e}"));
+        }
+        let req = Request {
+            op: "generate".into(),
+            prompt: prompt.into(),
+            model_id: (!model.is_empty()).then(|| model.to_string()),
+            style: (!style.is_empty()).then(|| style.to_string()),
+            steps: steps.parse().ok(),
+            shape: Some("landscape".into()),
+            seed: Some(42),
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        match media::run(&state, store::new_id(), req).await {
+            Ok(made) => {
+                std::fs::write(out.join(format!("{name}.png")), store::read(&state.paths, &c, &made[0].id).unwrap()).unwrap();
+                println!("{name}: {:.1}s", started.elapsed().as_secs_f64());
+            }
+            Err(e) => println!("{name}: FAILED {e}"),
+        }
+    }
+}
+
+/// App state with the real engines and models but a throwaway database and
+/// gallery (so test pictures never land in the real app's gallery).
 fn media_state() -> std::sync::Arc<crate::AppState> {
     temp_state(None)
 }

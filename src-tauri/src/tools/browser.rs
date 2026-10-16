@@ -170,7 +170,11 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, log: impl Fn
         match name {
             "browser_open" => {
                 let url = super::arg_str(args, "url")?;
-                let url = crate::web::check_url(url).await?;
+                // Its own server on this PC (a preview); anything else must be public.
+                let url = match crate::ports::local_port(url).filter(|p| crate::ports::previewable(*p)) {
+                    Some(_) => reqwest::Url::parse(url).map_err(|e| e.to_string())?,
+                    None => crate::web::check_url(url).await?,
+                };
                 log(&format!("Opened {} in {}", host(url.as_str()), d.name()));
                 d.open(url.as_str()).await?;
                 let page = d.read().await?;

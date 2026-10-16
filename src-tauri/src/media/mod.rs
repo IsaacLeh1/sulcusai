@@ -478,6 +478,8 @@ pub struct Request {
 /// Looks a new picture can have: id and the words added to its description.
 pub const STYLES: &[(&str, &str)] = &[
     ("photo", "realistic photograph, natural lighting, true-to-life colors and skin texture, fine detail, sharp focus, shot on a full-frame camera"),
+    // A snapshot from someone's phone: what makes a picture pass for real.
+    ("phone_photo", "candid photo taken with a smartphone camera, everyday snapshot, unposed, natural available light, true-to-life colors, real skin texture with pores and small imperfections, slight sensor noise, ordinary unedited phone photo, slightly imperfect framing, no studio lighting, no filter"),
     ("cinematic", "cinematic film still, realistic, dramatic lighting, shallow depth of field, film grain"),
     ("cartoon", "cartoon illustration, bold outlines, flat bright colors"),
     ("anime", "anime style, cel shading, clean line art"),
@@ -493,7 +495,7 @@ pub const STYLES: &[(&str, &str)] = &[
 const LOOK_WORDS: &[&str] = &[
     "cartoon", "anime", "manga", "illustration", "illustrated", "drawing", "drawn", "sketch", "painting", "painted", "watercolor", "watercolour",
     "oil paint", "3d", "render", "pixel", "comic", "clipart", "clip art", "vector", "logo", "icon", "chibi", "low poly", "claymation", "storybook",
-    "pastel", "digital art", "concept art", "photo", "photograph", "realistic", "cinematic", "film still",
+    "pastel", "digital art", "concept art", "photo", "photograph", "realistic", "cinematic", "film still", "snapshot", "selfie",
 ];
 
 /// The description with its style's words added. Auto adds the photo look

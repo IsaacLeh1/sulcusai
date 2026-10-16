@@ -12,7 +12,7 @@ mod media;
 mod meetings;
 mod memory;
 mod notes;
-mod shell;
+pub(crate) mod shell;
 mod web;
 
 use std::sync::atomic::AtomicBool;

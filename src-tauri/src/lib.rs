@@ -59,6 +59,7 @@ mod paths;
 mod perf;
 mod privacy;
 mod phone;
+mod ports;
 mod projects;
 mod quick;
 mod sandbox;
@@ -1786,6 +1787,11 @@ pub fn run() {
             media::media_list,
             media::media_in_chat,
             media::improve_media_prompt,
+            ports::ports_view,
+            ports::stop_port_program,
+            ports::server_stop,
+            ports::server_start,
+            ports::preview_port,
             media::media_get,
             media::media_file,
             media::media_thumb,
