@@ -1528,6 +1528,65 @@ async fn e2e_mail_triage_on_model() {
     assert_eq!(unread_after, report.items.iter().filter(|i| i.important).count(), "exactly the kept ones are still unread");
 }
 
+/// Asked to make something with a folder shared, a model that would paste
+/// the code (qwen2.5-coder) makes the files instead. SULCUSAI_TEST_GGUF is
+/// the model file; approvals are answered Allow.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_makes_files_on_ollama_model() {
+    let ctx = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(8192);
+    let layers = std::env::var("SULCUSAI_TEST_LAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(99);
+    let blob = std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF");
+    let (state, ep, cipher) = agent_harness_on(Some((blob.into(), ctx, layers)), None).await;
+    let work = std::env::temp_dir().join(format!("sulcusai-make-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&work).unwrap();
+    // Approvals as a person would give them, but a new folder goes in the
+    // test's folder (not the Desktop) and nothing is opened on the screen.
+    let (st, inside) = (state.clone(), work.clone());
+    let approver = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                if p.tool == "request_folder" {
+                    crate::workspace::offer_folder(&p.call_id, &inside.join("asked"));
+                }
+                let no = p.tool == "open_path" || p.tool == "open_page";
+                st.approvals.answer(&p.call_id, if no { crate::agent::Decision::Deny } else { crate::agent::Decision::Allow });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    });
+    crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&work).unwrap().display().to_string()).unwrap();
+    let asks = ["Make me a simple website for my bakery called Sweet Crumbs", "Create a python script that prints the first 20 prime numbers"];
+    let mut made = Vec::new();
+    for q in asks {
+        let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        let t = std::time::Instant::now();
+        let answer = say(&state, &ep, &cipher, &chat.id, q).await;
+        let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+        let calls: Vec<String> = msgs.iter().flat_map(|m| m.tool_calls.clone().unwrap_or_default()).map(|c| format!("{}({:.80})", c.name, c.arguments)).collect();
+        let files: Vec<String> = walkdir_names(&work);
+        println!("\n=== {q}\n{:.1} s, calls: {calls:?}\nfiles now: {files:?}\n{answer:.600}", t.elapsed().as_secs_f32());
+        made.push(files.len());
+    }
+    approver.abort();
+    state.engine.lock().await.stop().await;
+    assert!(made[0] > 0, "the website was made as files");
+    assert!(made[1] > made[0], "the script was made as a file");
+}
+
+fn walkdir_names(dir: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walkdir_names(&p));
+        } else {
+            out.push(p.file_name().unwrap().to_string_lossy().to_string());
+        }
+    }
+    out
+}
+
 /// Mail and calendar questions the way people ask them, on the model Ollama
 /// downloaded (qwen2.5-coder 14B, the one these went wrong on): every tool
 /// call is printed with how long each answer took.

@@ -846,11 +846,17 @@ pub fn log_action_enc(conn: &Connection, c: &Cipher, category: &str, summary: &s
     log_action(conn, category, &c.encrypt(summary));
 }
 
+#[cfg(test)]
 pub fn actions(conn: &Connection, c: &Cipher, limit: u32) -> Vec<Action> {
-    let Ok(mut stmt) = conn.prepare("SELECT id, at, category, summary FROM action_log ORDER BY id DESC LIMIT ?1") else {
+    actions_since(conn, c, 0, limit)
+}
+
+/// The newest `limit` entries from `since` (ms) on.
+pub fn actions_since(conn: &Connection, c: &Cipher, since: i64, limit: u32) -> Vec<Action> {
+    let Ok(mut stmt) = conn.prepare("SELECT id, at, category, summary FROM action_log WHERE at >= ?1 ORDER BY id DESC LIMIT ?2") else {
         return Vec::new();
     };
-    stmt.query_map([limit], |r| {
+    stmt.query_map(rusqlite::params![since, limit], |r| {
         Ok(Action { id: r.get(0)?, at: r.get(1)?, category: r.get(2)?, summary: c.decrypt_or(&r.get::<_, String>(3)?, "(unreadable)") })
     })
     .map(|rows| rows.filter_map(Result::ok).collect())

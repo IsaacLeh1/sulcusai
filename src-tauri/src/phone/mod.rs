@@ -62,7 +62,36 @@ pub struct Phone {
     pub last_seen: Option<i64>,
     /// The newest request time seen (replays are refused).
     last_ts: i64,
+    /// The phone's password, set when pairing: Argon2id of it, and its salt (hex).
+    pass_hash: String,
+    pass_salt: String,
+    /// Wrong passwords in a row, and when it may try again.
+    fails: u32,
+    wait_until: i64,
 }
+
+/// A phone's password: at least this long.
+const MIN_PASSWORD: usize = 6;
+/// Wrong passwords in a row before the phone is unpaired.
+const MAX_FAILS: u32 = 10;
+/// How long a phone stays signed in without being used.
+const SESSION_IDLE_MS: i64 = 12 * 60 * 60 * 1000;
+
+fn hash_password(password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    use argon2::{Algorithm, Argon2, Params, Version};
+    let params = Params::new(19 * 1024, 2, 1, Some(32)).map_err(|e| e.to_string())?;
+    let mut out = [0u8; 32];
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, params).hash_password_into(password.as_bytes(), salt, &mut out).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Equal, comparing every byte (no early exit to time).
+fn same(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
+/// Signed-in phones: phone id -> (session token, last used). Gone when the app restarts.
+static SESSIONS: LazyLock<Mutex<HashMap<String, (String, i64)>>> = LazyLock::new(Default::default);
 
 fn settings(conn: &rusqlite::Connection) -> Settings {
     db::get(conn, KEY).unwrap_or_default()
@@ -157,6 +186,9 @@ struct Call {
     #[serde(default)]
     args: Value,
     ts: i64,
+    /// From signing in with the phone's password.
+    #[serde(default)]
+    session: String,
 }
 
 async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
@@ -186,15 +218,80 @@ async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes
         }
         let _ = db::set(&conn, KEY, &s);
     }
-    let answer = match handle(&state, &c, &phone, &call.op, &call.args).await {
-        Ok(data) => json!({ "ok": true, "data": data }),
-        Err(e) => json!({ "ok": false, "error": e }),
+    let answer = if phone.pass_hash.is_empty() {
+        json!({ "ok": false, "error": "This phone was paired before phones had passwords. Pair it again from SulcusAI on your PC (Settings, Phone)." })
+    } else if call.op == "login" {
+        match login(&state, &phone, call.args["password"].as_str().unwrap_or_default()).await {
+            Ok(session) => json!({ "ok": true, "data": { "session": session } }),
+            Err(e) => json!({ "ok": false, "error": e, "login": true }),
+        }
+    } else if !signed_in(&phone.id, &call.session, now) {
+        json!({ "ok": false, "error": "Enter this phone's password.", "login": true })
+    } else if call.op == "logout" {
+        SESSIONS.lock().unwrap().remove(&phone.id);
+        json!({ "ok": true, "data": null })
+    } else {
+        match handle(&state, &c, &phone, &call.op, &call.args).await {
+            Ok(data) => json!({ "ok": true, "data": data }),
+            Err(e) => json!({ "ok": false, "error": e }),
+        }
     };
     (
         [(header::CONTENT_TYPE, "text/plain"), (header::CACHE_CONTROL, "no-store")],
         seal(&key, answer.to_string().as_bytes()),
     )
         .into_response()
+}
+
+/// Whether the phone signed in with its password, and recently; keeps it signed in.
+fn signed_in(phone: &str, session: &str, now: i64) -> bool {
+    let mut all = SESSIONS.lock().unwrap();
+    match all.get_mut(phone) {
+        Some((token, used)) if now - *used < SESSION_IDLE_MS && !session.is_empty() && same(token.as_bytes(), session.as_bytes()) => {
+            *used = now;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Checks the phone's password: a new session, or why not. Wrong ones in a
+/// row make it wait longer each time, and at `MAX_FAILS` the phone is
+/// unpaired (it has to be added again from the PC).
+async fn login(state: &Arc<AppState>, phone: &Phone, password: &str) -> Result<String, String> {
+    let now = db::now_ms();
+    if phone.wait_until > now {
+        return Err(format!("Too many wrong passwords. Try again in {} s.", (phone.wait_until - now + 999) / 1000));
+    }
+    let salt = hex::decode(&phone.pass_salt).map_err(|e| e.to_string())?;
+    let typed = password.to_string();
+    let hash = tokio::task::spawn_blocking(move || hash_password(&typed, &salt)).await.map_err(|e| e.to_string())??;
+    let right = same(&hash, &hex::decode(&phone.pass_hash).unwrap_or_default());
+    let conn = state.db.lock().unwrap();
+    let mut s = settings(&conn);
+    let Some(p) = s.phones.iter_mut().find(|p| p.id == phone.id) else { return Err("This phone isn't paired.".into()) };
+    if right {
+        p.fails = 0;
+        p.wait_until = 0;
+        db::set(&conn, KEY, &s)?;
+        let token = hex::encode(crate::sync::random_bytes::<32>());
+        SESSIONS.lock().unwrap().insert(phone.id.clone(), (token.clone(), now));
+        return Ok(token);
+    }
+    p.fails += 1;
+    if p.fails >= MAX_FAILS {
+        let name = p.name.clone();
+        s.phones.retain(|x| x.id != phone.id);
+        db::set(&conn, KEY, &s)?;
+        db::log_action(&conn, "security", &format!("Unpaired {name} from the phone page after {MAX_FAILS} wrong passwords"));
+        return Err("Too many wrong passwords: this phone was unpaired. Pair it again from SulcusAI on your PC.".into());
+    }
+    // From the fourth wrong one: 30 s, then 1, 2, 4... minutes.
+    if p.fails >= 4 {
+        p.wait_until = now + 30_000 * (1i64 << (p.fails - 4).min(6));
+    }
+    db::set(&conn, KEY, &s)?;
+    Err("Wrong password.".into())
 }
 
 fn phone_key(c: &Cipher, p: &Phone) -> Option<[u8; 32]> {
@@ -370,6 +467,8 @@ pub struct PhoneRow {
     name: String,
     added: i64,
     last_seen: Option<i64>,
+    /// Paired with a password (phones paired before 0.9.4 weren't).
+    has_password: bool,
 }
 
 fn view(state: &AppState) -> PhoneView {
@@ -380,7 +479,7 @@ fn view(state: &AppState) -> PhoneView {
         running: port.is_some(),
         address: port.and_then(|p| local_ip().map(|ip| format!("http://{}", SocketAddr::new(ip, p)))),
         problem: PROBLEM.lock().unwrap().clone(),
-        phones: s.phones.iter().map(|p| PhoneRow { id: p.id.clone(), name: p.name.clone(), added: p.added, last_seen: p.last_seen }).collect(),
+        phones: s.phones.iter().map(|p| PhoneRow { id: p.id.clone(), name: p.name.clone(), added: p.added, last_seen: p.last_seen, has_password: !p.pass_hash.is_empty() }).collect(),
         while_locked: s.while_locked,
         keep_working: crate::security::keep_working(state),
     }
@@ -431,8 +530,13 @@ pub struct NewPhone {
 
 /// Adds a phone: a fresh key, shown once as a QR code.
 #[tauri::command(async)]
-pub fn add_phone(state: AppStateRef, name: String) -> Result<NewPhone, String> {
+pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<NewPhone, String> {
     let c = state.cipher()?;
+    if password.chars().count() < MIN_PASSWORD {
+        return Err("Choose a phone password of at least 6 characters.".into());
+    }
+    let salt: [u8; 16] = crate::sync::random_bytes();
+    let hash = hash_password(&password, &salt)?;
     let v = view(&state);
     let base = v.address.ok_or("Turn on the phone page first, and make sure this PC is on a network.")?;
     let key: [u8; 32] = crate::sync::random_bytes();
@@ -444,8 +548,24 @@ pub fn add_phone(state: AppStateRef, name: String) -> Result<NewPhone, String> {
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
-        s.phones.push(Phone { id: id.clone(), name: name.clone(), key: c.encrypt(&zeroize::Zeroizing::new(hex::encode(key))), added: db::now_ms(), last_seen: None, last_ts: 0 });
+        // One phone at a time: a new one replaces the one before.
+        let replaced = !s.phones.is_empty();
+        for old in &s.phones {
+            SESSIONS.lock().unwrap().remove(&old.id);
+        }
+        s.phones = vec![Phone {
+            id: id.clone(),
+            name: name.clone(),
+            key: c.encrypt(&zeroize::Zeroizing::new(hex::encode(key))),
+            added: db::now_ms(),
+            pass_hash: hex::encode(hash),
+            pass_salt: hex::encode(salt),
+            ..Default::default()
+        }];
         db::set(&conn, KEY, &s)?;
+        if replaced {
+            db::log_action(&conn, "security", "Unpaired the previous phone: only one phone can be paired");
+        }
     }
     state.log("settings", &format!("Added {name} to the phone page"));
     let link = format!("{base}/#p={id}.{}", B64URL.encode(key));
@@ -466,6 +586,7 @@ pub fn remove_phone(state: AppStateRef, id: String) -> Result<PhoneView, String>
         s.phones.retain(|p| p.id != id);
         db::set(&conn, KEY, &s)?;
     }
+    SESSIONS.lock().unwrap().remove(&id);
     state.log("settings", "Removed a phone from the phone page");
     Ok(view(&state))
 }
@@ -484,7 +605,16 @@ mod tests {
         let key: [u8; 32] = crate::sync::random_bytes();
         {
             let conn = state.db.lock().unwrap();
-            let p = Phone { id: "ph1".into(), name: "Test phone".into(), key: c.encrypt(&hex::encode(key)), added: 1, last_seen: None, last_ts: 0 };
+            let salt = [7u8; 16];
+            let p = Phone {
+                id: "ph1".into(),
+                name: "Test phone".into(),
+                key: c.encrypt(&hex::encode(key)),
+                added: 1,
+                pass_hash: hex::encode(hash_password("sunflower", &salt).unwrap()),
+                pass_salt: hex::encode(salt),
+                ..Default::default()
+            };
             db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p], ..Default::default() }).unwrap();
             notes::save_note(&conn, &c, None, notes::NoteBody { title: "Groceries".into(), body: "eggs, milk".into(), folder: String::new(), tags: vec![] }).unwrap();
         }
@@ -509,10 +639,10 @@ mod tests {
 const nacl = require("./nacl.js");
 const [url, phone, keyB64] = process.argv.slice(2);
 const key = Uint8Array.from(Buffer.from(keyB64, "base64"));
-let last = 0;
+let last = 0, session = "";
 async function raw(op, args, ts, k = key) {
   const nonce = nacl.randomBytes(24);
-  const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify({ op, args, ts })), nonce, k);
+  const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify({ op, args, ts, session })), nonce, k);
   const r = await fetch(url + "/api", { method: "POST", headers: { "X-Phone": phone }, body: Buffer.concat([Buffer.from(nonce), Buffer.from(box)]).toString("base64") });
   const text = await r.text();
   if (!r.ok) return { status: r.status, text };
@@ -523,10 +653,16 @@ async function raw(op, args, ts, k = key) {
 const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last + 1)));
 (async () => {
   if (process.argv[5] === "hello") {
-    console.log(JSON.stringify(await call("hello")));
+    const li = await call("login", { password: "sunflower" });
+    if (li.ok) session = li.data.session;
+    console.log(JSON.stringify(li.ok ? await call("hello") : li));
     return;
   }
   const out = {};
+  out.before = await call("hello");
+  out.wrong = await call("login", { password: "tulip123" });
+  const li = await call("login", { password: "sunflower" });
+  session = li.data.session;
   out.hello = await call("hello");
   out.added = await call("add_task", { title: "Call Sam tomorrow" });
   out.tasks = await call("tasks");
@@ -550,8 +686,13 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         let text = String::from_utf8_lossy(&out.stdout);
         eprintln!("{text}\n{}", String::from_utf8_lossy(&out.stderr));
         let v: Value = serde_json::from_str(text.trim()).unwrap();
+        // Nothing without the phone's password; a wrong one is counted.
+        assert_eq!(v["before"]["ok"], false);
+        assert_eq!(v["before"]["login"], true);
+        assert_eq!(v["wrong"]["error"], "Wrong password.");
         assert_eq!(v["hello"]["ok"], true);
         assert_eq!(v["hello"]["data"]["phone"], "Test phone");
+        assert_eq!(settings(&state.db.lock().unwrap()).phones[0].fails, 0, "the right one clears the count");
         assert_eq!(v["added"]["data"]["title"], "Call Sam");
         assert!(v["added"]["data"]["due"].is_number(), "\"tomorrow\" became a due date");
         assert_eq!(v["tasks"]["data"].as_array().unwrap().len(), 1);
@@ -598,7 +739,8 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         let key: [u8; 32] = crate::sync::random_bytes();
         {
             let conn = state.db.lock().unwrap();
-            let p = Phone { id: "demo".into(), name: "Demo phone".into(), key: c.encrypt(&hex::encode(key)), added: 1, last_seen: None, last_ts: 0 };
+            // Its password: "sunflower".
+            let p = Phone { id: "demo".into(), name: "Demo phone".into(), key: c.encrypt(&hex::encode(key)), added: 1, pass_hash: hex::encode(hash_password("sunflower", &[7u8; 16]).unwrap()), pass_salt: hex::encode([7u8; 16]), ..Default::default() };
             db::set(&conn, KEY, &Settings { enabled: true, phones: vec![p], ..Default::default() }).unwrap();
             notes::save_note(&conn, &c, None, notes::NoteBody { title: "Groceries".into(), body: "eggs, milk, **coffee**".into(), folder: String::new(), tags: vec![] }).unwrap();
             notes::save_task(&conn, &c, notes::new_task("Call Sam")).unwrap();

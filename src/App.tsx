@@ -139,6 +139,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     if (!SETTINGS_VIEWS.includes(view)) backTo.current = view;
     if (view !== "settings") setSettingsJump(null);
   }, [view]);
+  // A link elsewhere (the connectivity menu) opening a Settings section.
+  useEffect(() => {
+    const go = (e: Event) => {
+      setView("settings");
+      setSettingsJump({ id: (e as CustomEvent<string>).detail, at: Date.now() });
+    };
+    window.addEventListener("open-settings", go);
+    return () => window.removeEventListener("open-settings", go);
+  }, [setView]);
   const [chats, setChats] = useState<Chat[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [newProject, setNewProject] = useState(false);

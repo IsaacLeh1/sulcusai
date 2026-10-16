@@ -472,7 +472,22 @@ impl Turn {
                 // or calendar, or says it can't access them, instead of looking
                 // gets one more try that can only be a lookup. The reply is dropped.
                 let asked = history.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect::<Vec<_>>()) {
+                let offered: Vec<String> = tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
+                // Asked to make something and pasted it (or steps) instead: one
+                // more try that can only make it on the PC. The pasted reply is dropped.
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(asked, &finished.content, &offered) {
+                    if let Some(f) = tools.as_ref().and_then(chat::forced_build) {
+                        let mut ep = self.ep.clone();
+                        ep.extra["response_format"] = f.response_format.clone();
+                        ep.extra["max_tokens"] = json!((self.ep.ctx / 2).clamp(1024, 8192));
+                        forced = Some((ep, f));
+                        first = Some(finished);
+                        message_id = uuid::Uuid::new_v4().to_string();
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
+                }
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &offered) {
                     let looks_only = |n: &str| n != "open_page" && tools::find(n).is_some_and(|t| t.risk == Risk::Read);
                     if let Some(f) = tools.as_ref().and_then(|t| chat::forced_lookup(t, asked, looks_only)) {
                         let mut ep = self.ep.clone();

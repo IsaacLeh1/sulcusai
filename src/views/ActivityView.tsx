@@ -15,6 +15,24 @@ const CATEGORIES: { id: string; label: string; icon: string }[] = [
   { id: "people", label: tx("People"), icon: "👥" },
 ];
 
+const PERIODS: { id: string; label: string; days: number | null }[] = [
+  { id: "day", label: tx("Today"), days: 0 },
+  { id: "week", label: tx("Past week"), days: 7 },
+  { id: "month", label: tx("Past month"), days: 30 },
+  { id: "all", label: tx("All time"), days: null },
+];
+
+/** Where a period starts: today from midnight, the others counted back from now. */
+function periodStart(days: number | null): number | undefined {
+  if (days === null) return undefined;
+  if (days === 0) {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  return Date.now() - days * 86_400_000;
+}
+
 function icon(category: string) {
   return CATEGORIES.find((c) => c.id === category)?.icon || "•";
 }
@@ -26,14 +44,19 @@ function when(ms: number) {
 export function ActivityView({ toast }: { toast: PushToast }) {
   const [actions, setActions] = useState<Action[] | null>(null);
   const [filter, setFilter] = useState("all");
+  const [period, setPeriod] = useState("week");
   const [query, setQuery] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const load = () => api.actions(1000).then(setActions).catch((e) => toast(errorText(e), "error"));
+  const load = () => {
+    const days = PERIODS.find((p) => p.id === period)?.days ?? null;
+    api.actions(days === null ? 5000 : 2000, periodStart(days)).then(setActions).catch((e) => toast(errorText(e), "error"));
+  };
   useEffect(() => {
+    setActions(null);
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [period]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -50,6 +73,14 @@ export function ActivityView({ toast }: { toast: PushToast }) {
           </div>
         </header>
 
+        <div className="mode-switch activity-period" role="group" aria-label={t("Period")}>
+          {PERIODS.map((p) => (
+            <button key={p.id} className={`mode ${period === p.id ? "active" : ""}`} aria-pressed={period === p.id} onClick={() => setPeriod(p.id)}>
+              {t(p.label)}
+            </button>
+          ))}
+        </div>
+
         <div className="filters">
           {CATEGORIES.map((c) => (
             <button key={c.id} className={`chip ${filter === c.id ? "active" : ""}`} onClick={() => setFilter(c.id)}>
@@ -62,7 +93,8 @@ export function ActivityView({ toast }: { toast: PushToast }) {
 
         <section className="card activity">
           {actions === null && <p className="muted">{t("Loading…")}</p>}
-          {actions !== null && shown.length === 0 && <p className="muted">{t("Nothing here yet.")}</p>}
+          {actions !== null && shown.length === 0 && <p className="muted">{period === "all" ? t("Nothing here yet.") : t("Nothing in this period.")}</p>}
+          {actions !== null && shown.length > 0 && <p className="muted small">{shown.length === 1 ? t("1 entry") : t("{n} entries", { n: shown.length })}</p>}
           <ol className="activity-list">
             {shown.map((a) => (
               <li key={a.id}>

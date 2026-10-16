@@ -22,6 +22,7 @@ import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
+import { SettingsSearch } from "../components/SettingsSearch";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -231,8 +232,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   return (
     <div className="page" ref={pageRef} onScroll={spy} onWheel={release} onPointerDown={release} onKeyDown={release} onTouchStart={release}>
       <div className="narrow">
-      <header className="page-head">
+      <header className="page-head settings-head">
         <h1>{t("Settings")}</h1>
+        <SettingsSearch pageRef={pageRef} />
       </header>
 
       <span id="settings-appearance" className="settings-anchor" />

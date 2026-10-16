@@ -520,6 +520,49 @@ pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
     NO_ACCESS.is_match(&opening) || (reply.chars().count() < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(&reply))
 }
 
+// Asking for something to be made: a site, an app, a script, files.
+static BUILD_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(make|create|build|write|generate|code|program|develop|scaffold|set up|save|put)\b[\s\S]{0,80}\b(files?|folders?|website|web ?site|web ?page|page|site|app|application|script|program|game|project|component|extension|bot|server|api|tool|calculator|html|css|javascript|python|react|template|readme|\.[a-z]{1,4}\b)").unwrap()
+});
+// Steps for the person to follow instead of doing it.
+static HANDS_OVER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(create (a|an|the) (new )?(file|folder|directory)|save (this|it|the (code|file)) as|copy (and paste |the following|this)|paste (this|it|the following)|open (your|a) (terminal|editor|text editor|command prompt)|step 1\b|here'?s (the|a|some) (code|html|script))").unwrap()
+});
+
+/// A request to make something answered with code or steps in the chat,
+/// though tools to make it on the PC were offered.
+pub fn builds_in_chat(user: &str, reply: &str, offered: &[String]) -> bool {
+    let can_make = offered.iter().any(|n| n == "write_file" || n == "request_folder");
+    let code_lines = reply.split("```").skip(1).step_by(2).map(|block| block.lines().count()).sum::<usize>();
+    can_make && BUILD_ASK.is_match(user) && (code_lines >= 4 || HANDS_OVER.is_match(reply))
+}
+
+/// For a model that pasted what it was asked to make: one call that makes it
+/// on the PC (the first file, or asking for a folder to put it in).
+pub fn forced_build(tools: &Value) -> Option<ForcedLookup> {
+    let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
+    let all = tools.as_array()?;
+    let has = |n: &str| all.iter().any(|t| name_of(t) == n);
+    let pick: &[&str] = if has("write_file") { &["write_file", "make_folder"] } else if has("request_folder") { &["request_folder"] } else { return None };
+    let list: Vec<&Value> = all.iter().filter(|t| pick.contains(&name_of(t).as_str())).collect();
+    let names: Vec<String> = list.iter().map(|t| name_of(t)).collect();
+    let schema = json!({ "oneOf": list.iter().map(|t| json!({
+        "type": "object",
+        "properties": { "name": { "const": name_of(t) }, "arguments": t["function"]["parameters"] },
+        "required": ["name", "arguments"],
+    })).collect::<Vec<_>>() });
+    let what = if names[0] == "write_file" {
+        "Make it on my PC now: write the first file with write_file (its full contents, not a sketch). You'll write the rest next."
+    } else {
+        "Make it on my PC: first ask for a folder to work in with request_folder."
+    };
+    Some(ForcedLookup {
+        names,
+        nudge: format!("(Don't paste the code or give me steps to follow. {what} Reply with only one tool call as JSON, {{\"name\": ..., \"arguments\": {{...}}}}.)"),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
 /// For a model that stalled: its look-up tools (most relevant to the question
 /// first), what to tell it, and a JSON schema that makes the engine accept
 /// nothing but one call to one of them. (`tool_choice: "required"` isn't
@@ -864,6 +907,23 @@ Found it.
         assert!(!repeats_itself(&format!("Hello.\n{}", line.repeat(3))));
         assert!(!repeats_itself("1. a\n2. b\n3. c\n4. d\n5. e\n"));
         assert!(!repeats_itself("---\n---\n---\n---\n"), "short lines like rules are fine");
+    }
+
+    #[test]
+    fn notices_a_model_pasting_what_it_was_asked_to_make() {
+        let files = vec!["read_file".to_string(), "write_file".to_string()];
+        let code = "Sure! Here's a simple site.\n\n```html\n<!doctype html>\n<html>\n<body>\n<h1>Hi</h1>\n</body>\n</html>\n```\nSave it as index.html and open it.";
+        assert!(builds_in_chat("Make me a website for my bakery", code, &files));
+        assert!(builds_in_chat("can you create a python script that renames my photos", "Step 1: open your terminal. Step 2: ...", &files));
+        assert!(builds_in_chat("put this in notes.txt", "Create a new file called notes.txt and paste this in.", &files));
+        // No folder yet: asking for one still counts as making it.
+        assert!(builds_in_chat("Build a todo app", code, &["request_folder".to_string()]));
+        // Nothing to make it with, a question, or a short snippet in an explanation: left alone.
+        assert!(!builds_in_chat("Make me a website", code, &["read_file".to_string()]));
+        assert!(!builds_in_chat("What's a closure in Rust?", "```rust\nlet f = |x| x + 1;\nprintln!(\"{}\", f(1));\nlet g = f;\n```", &files));
+        assert!(!builds_in_chat("How do I write a for loop in Python?", "Like this: `for x in xs:`", &files));
+        let forced = forced_build(&json!([{ "type": "function", "function": { "name": "write_file", "description": "", "parameters": { "type": "object" } } }, { "type": "function", "function": { "name": "read_file", "description": "", "parameters": { "type": "object" } } }])).unwrap();
+        assert_eq!(forced.names, vec!["write_file"]);
     }
 
     #[test]

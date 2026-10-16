@@ -179,9 +179,27 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
   );
 }
 
+type ServerKind = "openwebui" | "litellm" | "other";
+
+const SERVERS: Record<ServerKind, { name: string; placeholder: string; hint: string }> = {
+  openwebui: { name: "Open WebUI", placeholder: "https://chat.example.com", hint: tx("Your Open WebUI address. The key is under Settings → Account → API keys there.") },
+  litellm: { name: "LiteLLM", placeholder: "https://litellm.example.com", hint: tx("Your LiteLLM proxy address. Use a virtual key from its admin.") },
+  other: { name: "", placeholder: "https://…/v1", hint: tx("Any OpenAI-compatible API: the address its /chat/completions and /models are under.") },
+};
+
+/** Where a server's OpenAI-compatible API is: Open WebUI's under /api, LiteLLM's under /v1. */
+function serverApiUrl(kind: ServerKind, url: string): string {
+  let u = url.trim().replace(/\/+$/, "");
+  if (u && !/^[a-z]+:\/\//i.test(u)) u = "https://" + u;
+  if (kind === "openwebui" && !/\/api$/i.test(u)) u += "/api";
+  if (kind === "litellm" && !/\/v1$/i.test(u)) u += "/v1";
+  return u;
+}
+
 export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: boolean }) {
   const [v, setV] = useState<CloudView | null>(null);
-  const [custom, setCustom] = useState<{ name: string; url: string } | null>(null);
+  // Adding an OpenAI-compatible server: its kind sets the path its API is on.
+  const [custom, setCustom] = useState<{ name: string; url: string; kind: ServerKind } | null>(null);
   const [budget, setBudget] = useState("");
   useEffect(() => {
     api.cloudView().then((x) => {
@@ -206,6 +224,9 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
         {t("Use models from providers you have an account with, with your own API key. They only work at the Cloud level, and what you send to them goes to that provider. Models on this PC stay the default.")}
         {!cloudOn && " " + t("You're not at the Cloud level now, so these models are switched off.")}
       </p>
+      {v.providers.length === 0 && (
+        <p className="small callout">{t("To add an API key: pick your provider under “Add:” below (Open WebUI and LiteLLM servers too), then paste the key.")}</p>
+      )}
 
       <div className="cloud-spend">
         <div className="adv-head">
@@ -242,22 +263,30 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
             {p.name}
           </button>
         ))}
-        <button className="btn ghost small" onClick={() => setCustom({ name: "", url: "" })}>{t("Other (OpenAI-compatible)…")}</button>
+        <button className="btn small" onClick={() => setCustom({ name: "Open WebUI", url: "", kind: "openwebui" })}>Open WebUI…</button>
+        <button className="btn small" onClick={() => setCustom({ name: "LiteLLM", url: "", kind: "litellm" })}>LiteLLM…</button>
+        <button className="btn ghost small" onClick={() => setCustom({ name: "", url: "", kind: "other" })}>{t("Other (OpenAI-compatible)…")}</button>
       </div>
       {custom && (
-        <div className="row wrap">
-          <input className="input" placeholder={t("Name")} value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} />
-          <input className="input" placeholder="https://…/v1" value={custom.url} onChange={(e) => setCustom({ ...custom, url: e.target.value })} />
-          <button
-            className="btn small"
-            disabled={!custom.url.trim()}
-            onClick={async () => {
-              await run(() => api.addCloudProvider(null, custom.name, custom.url));
-              setCustom(null);
-            }}
-          >
-            {t("Add")}
-          </button>
+        <div className="form cloud-server">
+          <span className="muted small">{t(SERVERS[custom.kind].hint)}</span>
+          <div className="row wrap">
+            <input className="input" placeholder={t("Name")} value={custom.name} onChange={(e) => setCustom({ ...custom, name: e.target.value })} aria-label={t("Name")} />
+            <input className="input" placeholder={SERVERS[custom.kind].placeholder} value={custom.url} autoFocus onChange={(e) => setCustom({ ...custom, url: e.target.value })} aria-label={t("Address")} />
+            <button
+              className="btn small primary"
+              disabled={!custom.url.trim()}
+              onClick={async () => {
+                await run(() => api.addCloudProvider(null, custom.name || SERVERS[custom.kind].name || null, serverApiUrl(custom.kind, custom.url)));
+                setCustom(null);
+                toast(t("Added. Paste its API key above, then choose its models."), "success");
+              }}
+            >
+              {t("Add")}
+            </button>
+            <button className="btn ghost small" onClick={() => setCustom(null)}>{t("Cancel")}</button>
+          </div>
+          {custom.url.trim() && custom.kind !== "other" && <span className="muted small">{t("Its API: {url}", { url: serverApiUrl(custom.kind, custom.url) })}</span>}
         </div>
       )}
     </section>

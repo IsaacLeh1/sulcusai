@@ -176,7 +176,7 @@ export interface PhoneView {
   /** The page's address on this network, e.g. "http://192.168.1.42:47818". */
   address: string | null;
   problem: string | null;
-  phones: { id: string; name: string; added: number; last_seen: number | null }[];
+  phones: { id: string; name: string; added: number; last_seen: number | null; has_password: boolean }[];
   /** Paired phones keep working while SulcusAI is locked. */
   while_locked: boolean;
   /** "Keep working while locked" (Settings → Security), which that needs. */
@@ -1422,7 +1422,7 @@ export const api = {
   moveModels: (dest: string) => invoke<void>("move_models", { dest }),
   phoneView: () => invoke<PhoneView>("phone_view"),
   setPhone: (enabled: boolean) => invoke<PhoneView>("set_phone", { enabled }),
-  addPhone: (name: string) => invoke<NewPhone>("add_phone", { name }),
+  addPhone: (name: string, password: string) => invoke<NewPhone>("add_phone", { name, password }),
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
   syncView: () => invoke<SyncView>("sync_view"),
@@ -1567,7 +1567,8 @@ export const api = {
   setKeepWorking: (on: boolean) => invoke<void>("set_keep_working", { on }),
   setHello: (enabled: boolean) => invoke<void>("set_hello", { enabled }),
   setAutoLock: (minutes: number) => invoke<void>("set_auto_lock", { minutes }),
-  actions: (limit?: number) => invoke<Action[]>("list_actions", { limit }),
+  /** The activity log, newest first; `since` in ms limits it to a period. */
+  actions: (limit?: number, since?: number) => invoke<Action[]>("list_actions", { limit, since: since ?? null }),
   clearActions: () => invoke<void>("clear_actions"),
   folders: () => invoke<Folder[]>("list_folders"),
   addFolder: (path: string, allowSystem = false) => invoke<void>("add_folder", { path, allowSystem }),

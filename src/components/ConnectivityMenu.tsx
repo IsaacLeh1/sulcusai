@@ -34,6 +34,11 @@ export function levelInfo(level: Connectivity) {
 
 /** Status-bar switch: one click to see and change the level (or go fully
  * offline, keeping what the person picks). */
+/** Opens Settings at a section (by its anchor id), from anywhere. */
+export function openSettings(section: string) {
+  window.dispatchEvent(new CustomEvent("open-settings", { detail: section }));
+}
+
 export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connectivity; onChange: (l: Connectivity) => void; onRefresh: () => void }) {
   const [open, setOpen] = useState(false);
   const [confirmCloud, setConfirmCloud] = useState(false);
@@ -98,6 +103,17 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
               </span>
             </button>
           ))}
+          {level === "cloud" && (
+            <button
+              className="link conn-more"
+              onClick={() => {
+                setOpen(false);
+                openSettings("cloud");
+              }}
+            >
+              {t("☁ Cloud models and API keys…")}
+            </button>
+          )}
         </div>
       )}
       {choosing && offline && (

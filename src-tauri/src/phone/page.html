@@ -32,6 +32,8 @@ ul.list li.tap { cursor: pointer; }
 .composer { position: fixed; left: 0; right: 0; bottom: 49px; padding: 8px 10px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); background: var(--bg); display: flex; gap: 8px; max-width: 760px; margin: 0 auto; }
 .composer textarea { flex: 1; resize: none; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px; max-height: 40vh; }
 .row { display: flex; gap: 8px; align-items: center; }
+form.login { display: flex; flex-direction: column; gap: 12px; max-width: 340px; margin: 12vh auto 0; padding: 0 16px; }
+form.login input { font: inherit; font-size: 16px; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 input.text { flex: 1; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 .ask { border: 1px solid var(--accent); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
 .ask pre { white-space: pre-wrap; font-size: 13px; max-height: 30vh; overflow: auto; }
@@ -41,7 +43,7 @@ input.text { flex: 1; font: inherit; color: inherit; background: var(--panel); b
 </style>
 </head>
 <body>
-<header><button class="link" id="back" hidden aria-label="Back">‹</button><h1 id="title">SulcusAI</h1><button class="link" id="new" hidden>New chat</button></header>
+<header><button class="link" id="back" hidden aria-label="Back">‹</button><h1 id="title">SulcusAI</h1><button class="link" id="new" hidden>New chat</button><button class="link" id="lock" hidden aria-label="Lock">🔒</button></header>
 <main id="main"><p class="center muted">Connecting…</p></main>
 <nav class="tabs" id="tabs" hidden>
   <button data-tab="chats" class="on">Chats</button><button data-tab="tasks">Tasks</button><button data-tab="notes">Notes</button>
@@ -52,6 +54,7 @@ input.text { flex: 1; font: inherit; color: inherit; background: var(--panel); b
 const $ = (s) => document.querySelector(s);
 const main = $("#main");
 let phone = null, key = null, tab = "chats", openChat = null, timer = null;
+let session = sessionStorage.getItem("sulcus.session") || "";
 
 // The key arrives after "#" in the QR code's link (never sent to the network); keep it on this phone.
 (function pair() {
@@ -78,7 +81,7 @@ async function call(op, args = {}) {
   const ts = Math.max(Date.now(), lastTs + 1);
   lastTs = ts;
   const nonce = nacl.randomBytes(24);
-  const box = nacl.secretbox(enc.encode(JSON.stringify({ op, args, ts })), nonce, key);
+  const box = nacl.secretbox(enc.encode(JSON.stringify({ op, args, ts, session })), nonce, key);
   const body = new Uint8Array(24 + box.length);
   body.set(nonce);
   body.set(box, 24);
@@ -89,7 +92,16 @@ async function call(op, args = {}) {
   const plain = nacl.secretbox.open(raw.slice(24), raw.slice(0, 24), key);
   if (!plain) throw new Error("The answer didn't check out.");
   const res = JSON.parse(dec.decode(plain));
-  if (!res.ok) throw new Error(res.error);
+  if (!res.ok) {
+    const e = new Error(res.error);
+    // Not signed in (or the PC restarted): ask for the password again.
+    if (res.login && op !== "login") {
+      session = "";
+      sessionStorage.removeItem("sulcus.session");
+      e.login = true;
+    }
+    throw e;
+  }
   return res.data;
 }
 
@@ -110,7 +122,7 @@ function md(s) {
 const when = (ms) => new Date(ms).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
 function stopPolling() { if (timer) clearTimeout(timer); timer = null; }
-function fail(e) { main.innerHTML = `<p class="center error">${esc(String(e.message || e))}</p><p class="center"><button onclick="location.reload()">Try again</button></p>`; }
+function fail(e) { if (e && e.login) return showLogin(e.message); main.innerHTML = `<p class="center error">${esc(String(e.message || e))}</p><p class="center"><button onclick="location.reload()">Try again</button></p>`; }
 
 function header(title, back) {
   $("#title").textContent = title;
@@ -222,17 +234,64 @@ $("#new").onclick = () => showChat(null, "New chat");
 document.querySelectorAll("nav.tabs button").forEach((b) => (b.onclick = () => go(b.dataset.tab)));
 document.addEventListener("visibilitychange", () => { if (document.hidden) stopPolling(); else if (openChat) refresh(); });
 
+// The phone's password, asked each time the page is opened; the session it
+// gives lasts only while this tab is open.
+function showLogin(message) {
+  stopPolling();
+  openChat = null;
+  $("#tabs").hidden = true;
+  $("#lock").hidden = true;
+  header("SulcusAI", false);
+  $("#new").hidden = true;
+  main.innerHTML = `<form class="login" id="login">
+    <p class="center">Enter the password you chose for this phone on your PC.</p>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Phone password" required minlength="6">
+    <button type="submit" class="primary">Unlock</button>
+    <p class="center ${message ? "error" : "muted"}" id="why">${esc(message || "")}</p>
+  </form>`;
+  $("#pw").focus();
+  $("#login").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const button = $("#login button");
+    button.disabled = true;
+    try {
+      const r = await call("login", { password: $("#pw").value });
+      session = r.session;
+      sessionStorage.setItem("sulcus.session", session);
+      start();
+    } catch (e) {
+      button.disabled = false;
+      $("#pw").value = "";
+      $("#why").className = "center error";
+      $("#why").textContent = String(e.message || e);
+    }
+  };
+}
+
+async function start() {
+  try {
+    const hi = await call("hello");
+    document.title = hi.pc ? `SulcusAI · ${hi.pc}` : "SulcusAI";
+    $("#tabs").hidden = false;
+    $("#lock").hidden = false;
+    go("chats");
+  } catch (e) { fail(e); }
+}
+
+$("#lock").onclick = async () => {
+  try { await call("logout"); } catch (e) { /* signed out either way */ }
+  session = "";
+  sessionStorage.removeItem("sulcus.session");
+  showLogin();
+};
+
 (async () => {
   if (!phone || !key || key.length !== 32) {
     main.innerHTML = `<p class="center">To use SulcusAI here, open it on your PC: Settings → Phone → Add a phone, and scan the code with this phone's camera.</p>`;
     return;
   }
-  try {
-    const hi = await call("hello");
-    document.title = hi.pc ? `SulcusAI · ${hi.pc}` : "SulcusAI";
-    $("#tabs").hidden = false;
-    go("chats");
-  } catch (e) { fail(e); }
+  if (!session) showLogin();
+  else start();
 })();
 </script>
 </body>

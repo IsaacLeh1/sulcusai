@@ -646,6 +646,18 @@ a.md-link { cursor: pointer; }
 .studio-composer .form { display: flex; flex-direction: column; gap: 10px; }
 .row.wrap { flex-wrap: wrap; }
 .filters.tight { margin-bottom: 0; }
+.activity-period { margin-bottom: 10px; }
+.conn-more { display: block; padding: 8px 12px; text-align: left; font-size: 12.5px; }
+.cloud-server { margin-top: 6px; }
+.settings-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; position: sticky; top: 0; z-index: 5; background: var(--bg); padding-bottom: 8px; }
+.settings-search { position: relative; flex: 1; max-width: 340px; min-width: 200px; }
+.settings-search .input { width: 100%; }
+.settings-results { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); padding: 4px; z-index: 20; max-height: 60vh; overflow-y: auto; }
+.settings-results > p { margin: 6px 8px; }
+.settings-result { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; text-align: left; border: 0; background: none; border-radius: 7px; padding: 6px 8px; cursor: pointer; color: var(--text); font: inherit; }
+.settings-result.active { background: var(--hover); }
+.search-hit { animation: search-hit 2.2s ease-out; border-radius: 6px; }
+@keyframes search-hit { 0%, 40% { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background: transparent; box-shadow: none; } }
 .grow { flex: 1; min-width: 0; }
 .studio-jobs { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .job-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }

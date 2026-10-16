@@ -859,10 +859,15 @@ async fn list_models(p: &Provider, key: &str, client: &reqwest::Client) -> Resul
         }
         Kind::Openai => {
             let resp = client.get(format!("{base}/models")).bearer_auth(key).send().await.map_err(|e| e.to_string())?;
+            let to_login = resp.status().is_redirection() || resp.url().host_str().is_some_and(|h| h.contains("login.") || h.contains("microsoftonline"));
+            if to_login {
+                return Err(not_an_api(&p.name, true));
+            }
             if !resp.status().is_success() {
                 return Err(error_text(resp, &p.name).await);
             }
-            let v: Value = resp.json().await.map_err(|e| e.to_string())?;
+            let body = resp.text().await.map_err(|e| e.to_string())?;
+            let v: Value = serde_json::from_str(&body).map_err(|_| not_an_api(&p.name, body.trim_start().starts_with('<')))?;
             for m in v["data"].as_array().into_iter().flatten() {
                 let id = m["id"].as_str().unwrap_or_default().trim_start_matches("models/").to_string();
                 // OpenRouter adds names, context sizes and prices (per token).
@@ -882,6 +887,16 @@ async fn list_models(p: &Provider, key: &str, client: &reqwest::Client) -> Resul
     }
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(out)
+}
+
+/// A server that answered its model list with something other than its API:
+/// a sign-in page (an app proxy in front of it) or the wrong address.
+fn not_an_api(name: &str, web_page: bool) -> String {
+    if web_page {
+        format!("{name} answered with a web page (likely a sign-in page) instead of its API. SulcusAI can't sign in through a browser page for a server: use an address that takes an API key directly, such as the server's LiteLLM address ending in /v1, or ask its admin for API access.")
+    } else {
+        format!("{name} didn't answer like an OpenAI-compatible API. Check the address: Open WebUI's ends in /api, LiteLLM's in /v1.")
+    }
 }
 
 // ---------- commands ----------
