@@ -689,7 +689,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Imported models get catalog ratings by family (`local::known_ratings`).
 - **Activity:** Today / Past week / Past month / All time (`list_actions` takes `since`).
 - **Settings search** (`SettingsSearch.tsx` + `fuzzy.ts`, tested in `fuzzy.test.ts`): indexes the page's headings, labels, callouts and aria-labelled inputs. Handles typos (Damerau distance), prefixes and a synonym map, and shows "Showing results for …". Picking a result scrolls there and highlights it.
-- **Cloud keys:** Open WebUI (`…/api`) and LiteLLM (`…/v1`) buttons in Cloud models, a "Cloud models and API keys…" link in the connectivity menu (`openSettings` → `open-settings` event), and `not_an_api` explains a sign-in page (his aigateway is behind Entra App Proxy) instead of a JSON error.
+- **Cloud keys:** Open WebUI (`…/api`) and LiteLLM (`…/v1`) buttons in Cloud models, a "Cloud models and API keys…" link in the connectivity menu (`openSettings` → `open-settings` event), and `not_an_api` explains a sign-in page (a server behind a sign-in proxy) instead of a JSON error.
 - **Phone: one phone, with a password:**
   - `add_phone(name, password)` replaces any paired phone.
   - The password is Argon2id (19 MiB, t=2), stored as `pass_hash`/`pass_salt`.
