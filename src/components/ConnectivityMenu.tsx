@@ -123,6 +123,14 @@ const FULLY = {
   detail: tx("Nothing goes out at all: no update checks, downloads, web or local network, except what you choose to keep."),
 };
 
+const KEEP_TEXT: Record<OfflineKeep, { name: string; detail: string }> = {
+  updates: { name: tx("Update checks"), detail: tx("Asks GitHub for new versions of SulcusAI, and installs them.") },
+  downloads: { name: tx("Downloads"), detail: tx("Models, the AI engine, voices and other parts you add (only when you ask).") },
+  web: { name: tx("Web"), detail: tx("Web search and reading pages in chats, weather, finding your location, and the browser.") },
+  local_network: { name: tx("Local network"), detail: tx("Syncing your PCs, People, and the phone page, over your network or a VPN.") },
+  connectors: { name: tx("Connectors"), detail: tx("Their programs run on this PC and may go online themselves.") },
+};
+
 /** Turning Fully offline on: what's on now that needs the network, and
  * which of it to keep. */
 function FullyOfflineDialog({ view, onClose, onDone }: { view: OfflineView; onClose: () => void; onDone: (v: OfflineView) => void }) {
@@ -145,8 +153,8 @@ function FullyOfflineDialog({ view, onClose, onDone }: { view: OfflineView; onCl
         }
       />
       <span>
-        {t("Keep {name}", { name: t(i.name) })}
-        <span className="muted small block">{t(i.detail)}</span>
+        {t("Keep {name}", { name: t(KEEP_TEXT[i.id]?.name ?? i.name) })}
+        <span className="muted small block">{t(KEEP_TEXT[i.id]?.detail ?? i.detail)}</span>
       </span>
     </label>
   );

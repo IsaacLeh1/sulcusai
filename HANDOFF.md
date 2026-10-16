@@ -540,9 +540,9 @@ His brother's PC crashed while the assistant built a "NYSE live website", and St
 - **Not done:** the engine's fit uses total RAM, not what's free now (`hardware.rs` collects `ram_available` but nothing uses it); engine/media logs have no size cap while running; checkpoint backups have no total cap.
 - **Afterwards:** the brother's Event Viewer showed Event 7 "\Device\Harddisk0\DR0 has a bad block" several times a second: his drive is failing (hardware), which explains the crash and Steam's error.
 
-## Security review of 0.9.2 (2026-10-15, open)
+## Security review of 0.9.2 (2026-10-15; done 2026-10-16, see "Where each finding stands")
 
-An outside static review of the 0.9.2 source zip (his copy: `Downloads\SulcusAI-0.9.2-security-review.md`) found no malware, embedded keys or credential theft, and seven weaknesses. Each was checked against the code here and is real. None is fixed yet; suggested fixes follow each.
+An outside static review of the 0.9.2 source zip (his copy: `Downloads\SulcusAI-0.9.2-security-review.md`) found no malware, embedded keys or credential theft, and seven weaknesses. Each was checked against the code here and is real. Suggested fixes follow each.
 - **F1 (high): commands aren't confined to the shared folders.** `run_command` runs PowerShell/bash as the user; the working folder, `guard::refuse` (a regex backstop) and the job object (resources only) don't stop an interpreter, build script or package from reading, writing or going online anywhere the user can. "Allow for this chat" and Bypass skip the per-command card. README's "Agent mode" lines read stronger than that. Fix: say plainly in README, the approval card and Settings what a command can reach; consider always asking for `run_command` even when "allowed for this chat"; a real boundary would be an AppContainer / restricted-token / separate low-privilege account, with ACLs on the shared folders.
 - **F2 (high off Windows): folder checks ignore capitalization everywhere** (`sandbox.rs` `key()` lowercases). Harmless on normal Windows/NTFS; on Linux (and case-sensitive macOS volumes) `/x/Project` grants `/x/project`. Fix: case-insensitive only on Windows, exact comparison of canonical paths elsewhere, test with two folders differing only in case. `guard.rs` reuses `Sandbox::holds`, so it inherits the fix.
 - **F3 (high, feature off by default): the phone page is served over plain HTTP** on every interface (`phone/mod.rs:93`, `:368`; `phone/page.html`), so someone who can tamper with LAN traffic can swap the script and take the pairing key from the URL fragment/localStorage, then read chats and notes and answer approvals. Known and warned about in Settings. Fix: an authenticated transport for the page (HTTPS with a certificate the QR pins can't be checked by a browser, so this needs thought: e.g. the companion as an installed PWA fetched once over HTTPS from the website, talking to the PC with the existing sealed API); until then keep the warning and add "forget all phones".
@@ -562,6 +562,83 @@ An outside static review of the 0.9.2 source zip (his copy: `Downloads\SulcusAI-
   - F2 (case-folding off Windows) should be safe to fix.
   - F4 (DNS resolver that drops private addresses) is fine as long as web search, fetching pages and the private connection (Tor/proxy) still work.
   - F3 (phone over HTTP) only if pairing and the phone page keep working; otherwise leave it.
+
+**Where each finding stands (2026-10-16, on phase7, not built):**
+- **F5, done:** `phone::Settings.while_locked` ("Paired phones work while it's locked", Settings → Phone; `set_phone_while_locked`). `phone::api` uses `cipher()` unless it's on, then `work_cipher()` (which still needs Keep working while locked). `e2e_phone_page` (ignored, needs node) covers both: 503 when locked, OK once allowed.
+- **F6, done:** `net::private_ok` (https, or http to exactly `localhost` or a loopback IP) for custom cloud providers, `set_relay` and a person's offered relay (`people/mailbox.rs`). `external_client(Purpose::Cloud)` follows redirects only to the same host and only if still `private_ok`, because reqwest drops `Authorization` on a cross-host redirect but not `x-api-key`. Test `only_this_pc_may_be_plain_http`.
+- **F2, done:** `sandbox::key` lowercases only on Windows.
+- **F4, done:** web pages and redirects resolve through `web::PublicOnly` (a `reqwest` DNS resolver that drops non-public addresses at connect time). The SearXNG search uses `searxng_client` (plain lookup), because it's often on localhost or the LAN. With a private-connection proxy the far end resolves, so the resolver isn't installed. Test `names_inside_the_network_are_refused_when_connecting`.
+- **F7 → Fully offline, done:** see that section.
+- **F3, left as is.** A browser can't check a certificate this PC makes without warnings or breaking pairing. An HTTPS page from the website can't call `http://<LAN>` either (mixed content and Chrome's Private Network Access). It stays off by default with the trusted-network warning.
+- **F1, kept** at his choice.
+- **Other notes:** interrupted teaching data is now cleaned at startup (`finetune::clean_leftovers`). The extension permissions and the macOS/Linux `protector.key` fallback are unchanged.
+- **Dependencies:** rustls 0.23.46 and quick-xml 0.41 fixed six advisories; `pnpm audit` is clean. Left with no fix available:
+  - rsa (Marvin, through Arti, which doesn't decrypt with it)
+  - paste, proc-macro-error and ttf-parser (unmaintained)
+  - yanked `zip` versions pinned by dependencies
+
+## Fully offline (2026-10-16)
+
+The first entry in the status-bar level menu (✈). It is Offline, and nothing goes out except what the person keeps. The core is in `offline.rs`:
+- `Keep`: updates, downloads, web, local network, connectors.
+- `NOW`: a static set at startup by `offline::load`, before anything starts.
+- Settings key `fully_offline`.
+
+**Turning it on:**
+- Sets the level to Offline.
+- `ConnectivityMenu.tsx` → `FullyOfflineDialog` lists `offline_view()`: the items in use first (`in_use`), each one keepable.
+- `set_fully_offline(on, keep)` then calls `apply`, which:
+  - closes the browser
+  - stops connectors (`connectors::stop_all`)
+  - hangs up People links (`people::hang_up_all`)
+  - wakes sync and re-applies the phone server
+- Picking any level calls `offline::turn_off`.
+
+**Gates** (`offline::check`/`blocks`):
+- `net::allowed` and `net::external_client` (by purpose)
+- `download::fetch_verified` (before the network part; a local copy from another app still works)
+- `updates::updater`
+- `location::detect`
+- `browser::open`
+- `privacy::test_privacy`
+- `open_path` for URLs
+- the sync loop (listening and sessions)
+- the People tick and `connect`
+- `phone::apply` (its `problem` says why)
+- `connectors::offer` and `ensure_running`
+- the agent: neither web tools nor `request_web` are offered
+
+**Not gated:** commands the assistant runs (their own programs; the dialog says so) and loopback-only things (the engine, the local API server, the Tor gateway).
+
+**Test:** `fully_offline_stops_everything_not_kept`, on the pure `stops()`; tests never set `NOW`.
+
+## Typing while it replies, GPU limit, memory check, chats together (2026-10-16)
+- **Queue / add now** (`inbox.rs`):
+  - A per-chat inbox exists only while a reply runs (`Opened` in `run_turn`). The agent drains it at the top of each step, saving each message as a user message with `meta.added`. A reply that was about to end carries on.
+  - `cloud::to_anthropic` doesn't count a user message that follows a tool result as a new turn, so thinking blocks are kept.
+  - Ctrl+Enter / Queue → `QUEUED`. When the reply finishes, the unread inbox plus the queue go out as one message (`send_later`). Stopping keeps them (`chat_queue_send`).
+  - UI: chips above the box; Add now / Queue buttons and a hint while replying. Test `a_message_added_mid_reply_is_read_and_answered`.
+- **GPU limit:**
+  - `PerfSettings.gpu_limit` (percent) → `Limits.gpu_share`, which `launch_within` uses for the layers on the card. A hot card can only lower it further.
+  - `GpuLimitMenu` sits in the chat header (hidden for cloud models and PCs without a GPU). `set_perf` keeps the stored `gpu_limit`.
+  - llama.cpp has no way to cap utilisation, so this is the closest real control.
+- **Memory check** (`memcheck.rs`):
+  - Runs before any load in `llm_endpoint`, with the engine released while the person decides.
+  - `need()` estimates RAM and VRAM. Free RAM (sysinfo) and free VRAM (nvidia-smi) count back what the replaced model's process frees.
+  - It warns when RAM would go under 1.5 GB free, or when VRAM is over by more than 0.5 GB.
+  - `MemoryWarningPopup` shows the biggest apps; Load anyway / Don't load it. Without an app handle (tests) it never asks.
+- **Chats working together** (feature `chat_team`; `tools/chats.rs`):
+  - `search_chats` and `read_chat` (never incognito chats, never the current one).
+  - `message_chat`, in `agent::ask_chat`: the target runs `run_asked`, i.e. `run_turn_with` with `Asking`. It uses the asking chat's endpoint (the loaded model), its message gets `meta.from_chat`, and `api_messages` tells its model who's asking.
+  - `tools::chats::Asked` stops a chat that's answering from asking on.
+  - `message_chat` is boxed with an explicit `dyn Future + Send` type, because the agent recurses through `run_turn`. A plain `async fn` hits a Send cycle.
+  - `ElsewhereApprovals` pops up approvals from chats not on screen.
+  - Test `a_chat_finds_and_reads_another_chat`. **The cross-chat run itself isn't covered by a test** (it needs a real app handle); try it in the real app.
+- **Disk care:**
+  - installs check free space live
+  - undo backups are capped at 2 GB in total
+  - startup removes media work folders, interrupted teaching data and month-old teaching logs
+  - engine and speech logs are cut at 64 MB (`engine::capped_log`, append mode, trimmed by a thread every 60 s)
 
 ## Website (2026-10-12)
 

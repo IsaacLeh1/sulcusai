@@ -533,7 +533,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 38);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 41);
     }
 
     #[test]
