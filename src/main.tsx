@@ -16,6 +16,21 @@ const quick = getCurrentWindow().label === "quick";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
 
+// For crash reports (kept only if turned on): errors the window didn't catch,
+// and that the window is still responding.
+if (!quick) {
+  window.addEventListener("error", (e) => {
+    import("./api").then(({ api }) => api.reportWindowError(String(e.message), e.error?.stack ?? null).catch(() => {}));
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    const r = e.reason;
+    import("./api").then(({ api }) => api.reportWindowError(String(r?.message ?? r), r?.stack ?? null).catch(() => {}));
+  });
+  const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));
+  ping();
+  setInterval(ping, 30_000);
+}
+
 // Changing the language redraws the window where it is (the new elements
 // re-render everything below them).
 function Root() {

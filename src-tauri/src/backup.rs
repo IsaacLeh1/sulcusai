@@ -322,6 +322,7 @@ pub async fn restore_backup(app: AppHandle, state: AppStateRef<'_>, path: String
     // Give the window a moment to show that it's restarting.
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(600));
+        crate::crash::closing();
         app.restart();
     });
     Ok(())

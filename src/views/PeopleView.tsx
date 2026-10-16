@@ -346,6 +346,23 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                 {c.offer_relay ? "✓ " : ""}
                 {t("Let {name} reach me through my relay", { name: c.name })}
               </button>
+              <button
+                role="menuitem"
+                title={t("They see when you've read their messages. You see theirs only if they turn this on for you.")}
+                onClick={async () => {
+                  setMenu(false);
+                  try {
+                    await api.peopleSetReadReceipts(c.id, !c.read_receipts);
+                    toast(c.read_receipts ? t("{name} won't see when you've read their messages.", { name: c.name }) : t("{name} will see when you've read their messages.", { name: c.name }), "success");
+                    onChanged();
+                  } catch (e) {
+                    toast(errorText(e), "error");
+                  }
+                }}
+              >
+                {c.read_receipts ? "✓ " : ""}
+                {t("Let {name} see when I've read their messages", { name: c.name })}
+              </button>
               <button role="menuitem" className="danger" onClick={remove}>
                 {t("Remove {name}", { name: c.name })}
               </button>
@@ -403,7 +420,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                 </div>
                 <span className="small muted pmeta">
                   {time(m.at)}
-                  {m.from_me && (m.delivered ? " · " + t("Delivered") : " · " + t("Waiting to send"))}
+                  {m.from_me && (m.read ? " · ✓✓ " + t("Read") : m.delivered ? " · ✓ " + t("Delivered") : " · " + t("Waiting to send"))}
                 </span>
               </div>
             </div>

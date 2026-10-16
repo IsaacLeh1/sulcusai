@@ -33,6 +33,7 @@ import { WebPermission } from "./components/WebPermission";
 import { FolderPermission } from "./components/FolderPermission";
 import { MemoryWarningPopup } from "./components/MemoryWarning";
 import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
+import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 
@@ -713,6 +714,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       <FolderPermission chats={chats} onOpenChat={openChat} />
       <MemoryWarningPopup />
       <ElsewhereApprovals chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} />
+      <CrashReportPrompt toast={toast} />
       <PeopleRequests enabled={has("people")} onOpenPeople={() => setView("people")} toast={toast} />
       {newProject && (
         <NewProjectDialog
@@ -791,16 +793,18 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
     window.addEventListener("browser-changed", load);
     return () => window.removeEventListener("browser-changed", load);
   }, []);
-  if (!view) return null;
-  const builtin = view.current.kind === "builtin";
+  const builtin = view?.current.kind === "builtin";
   // The built-in browser is a feature; another browser can always be opened.
-  if (builtin && !browserOn) return null;
-  const name = view.current.kind === "app" ? view.current.name : view.current.kind === "system" ? t("your default browser") : t("the SulcusAI browser");
+  const web = !!view && !(builtin && !browserOn);
+  const name = view?.current.kind === "app" ? view.current.name : view?.current.kind === "system" ? t("your default browser") : t("the SulcusAI browser");
   return (
     <div className="topbar">
-      <button className="icon-btn web-btn" title={t("Open {name}", { name })} aria-label={t("Open {name}", { name })} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
-        🌐
-      </button>
+      <FeedbackButton toast={toast} />
+      {web && (
+        <button className="icon-btn web-btn" title={t("Open {name}", { name })} aria-label={t("Open {name}", { name })} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
+          🌐
+        </button>
+      )}
     </div>
   );
 }

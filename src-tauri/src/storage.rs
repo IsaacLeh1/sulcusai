@@ -229,6 +229,7 @@ pub async fn move_models(app: AppHandle, state: AppStateRef<'_>, dest: String) -
                 st.log("settings", "Moved the models; restarting");
                 let _ = app.emit("models:moving", json!({ "finished": true }));
                 std::thread::sleep(std::time::Duration::from_millis(600));
+                crate::crash::closing();
                 app.restart();
             }
             Err(e) => {

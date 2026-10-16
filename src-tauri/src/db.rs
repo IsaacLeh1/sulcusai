@@ -234,6 +234,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "parent_id", "TEXT"),
     ("meeting_segments", "voice", "INTEGER"),
     ("installed_models", "prompt_tps", "REAL"),
+    // This user's messages the other person has read (their read receipt).
+    ("people_messages", "seen", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {

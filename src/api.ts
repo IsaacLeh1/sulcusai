@@ -234,6 +234,8 @@ export interface PersonMessage {
   file: { name: string; size: number } | null;
   /** For messages from here: they have it. */
   delivered: boolean;
+  /** For messages from here: they've read it (they send read receipts). */
+  read: boolean;
 }
 
 /** A chat someone shares with this user (seen live while connected). */
@@ -335,6 +337,8 @@ export interface PersonContact {
   via_relay: boolean;
   /** This user lets them use their relay. */
   offer_relay: boolean;
+  /** This user tells them when they've read their messages. */
+  read_receipts: boolean;
 }
 
 /** A code for linking: it doesn't expire; it works for up to `max` people. */
@@ -1434,6 +1438,7 @@ export const api = {
   peopleAsks: (id: string) => invoke<PersonAsk[]>("people_asks", { id }),
   /** Lets someone reach this app through this user's relay. */
   peopleSetRelayOffer: (id: string, on: boolean) => invoke<void>("people_set_relay_offer", { id, on }),
+  peopleSetReadReceipts: (id: string, on: boolean) => invoke<void>("people_set_read_receipts", { id, on }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -1473,6 +1478,14 @@ export const api = {
   removeModel: (modelId: string) => invoke<void>("remove_model", { modelId }),
   settings: () => invoke<Settings>("get_settings"),
   offlineView: () => invoke<OfflineView>("offline_view"),
+  /** To the developer's inbox: only this text (plus a reply address and the version, if given). */
+  sendFeedback: (kind: "bug" | "idea", text: string, contact: string | null, version: boolean) => invoke<void>("send_feedback", { kind, text, contact, version }),
+  crashReportsView: () => invoke<CrashView>("crash_reports_view"),
+  setCrashReports: (on: boolean) => invoke<CrashView>("set_crash_reports", { on }),
+  dismissCrashReports: () => invoke<void>("dismiss_crash_reports"),
+  sendCrashReport: (id: string) => invoke<void>("send_crash_report", { id }),
+  crashPing: () => invoke<void>("crash_ping"),
+  reportWindowError: (message: string, stack: string | null) => invoke<void>("report_window_error", { message, stack }),
   /** Fully offline on (with what to keep) or off. */
   setFullyOffline: (on: boolean, keep: OfflineKeep[]) => invoke<OfflineView>("set_fully_offline", { on, keep }),
   setConnectivity: (level: Connectivity) => invoke<Settings>("set_connectivity", { level }),
@@ -1704,6 +1717,19 @@ export type MeetingEvent =
   | { meeting_id: string; kind: "error"; error: string };
 
 /** The graphics card right now (bottom bar). */
+/** A crash report kept on this PC, shown before anything is sent. */
+export interface CrashReport {
+  id: string;
+  kind: "core" | "window" | "closed";
+  at: number;
+  text: string;
+}
+
+export interface CrashView {
+  on: boolean;
+  pending: CrashReport[];
+}
+
 export type OfflineKeep = "updates" | "downloads" | "web" | "local_network" | "connectors";
 
 /** Fully offline: on or off, and what may still use the network. */
@@ -1778,6 +1804,8 @@ export interface ChatEvents {
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
+  /** The model has read this chat's messages up to then (it started answering). */
+  "chat:read": { chat_id: string; up_to: number };
   "gpu:limit": { percent: number };
   "offline:changed": { on: boolean };
   "engine:memory": MemoryWarning;

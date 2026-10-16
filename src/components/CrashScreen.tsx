@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { Component, type ReactNode } from "react";
+import { api } from "../api";
 import { t } from "../i18n";
 
 /** Catches a rendering crash so the window shows what happened instead of going blank. */
@@ -12,6 +13,8 @@ export class CrashScreen extends Component<{ children: ReactNode }, { error: Err
 
   componentDidCatch(error: Error) {
     console.error(error);
+    // Kept for a crash report only if those are turned on.
+    api.reportWindowError(String(error?.message ?? error), error?.stack ?? null).catch(() => {});
   }
 
   render() {

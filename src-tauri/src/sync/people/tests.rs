@@ -174,6 +174,22 @@ async fn messages_cross_on_a_live_link() {
     until("live reply at Ana's", || texts(&a, &id_b).contains(&"Sure".to_string())).await;
     assert_eq!(texts(&a, &id_b).len(), 4, "nothing twice");
 
+    // Read receipts, for each person: Ben tells Ana when he's read hers;
+    // Ana doesn't tell Ben.
+    set_read_receipts(&b, &id_a, true).unwrap();
+    open_chat(&b, &id_a).unwrap();
+    let read_at_a = |text: &str| messages(&a.db.lock().unwrap(), &ca, &id_b).unwrap().into_iter().find(|m| m.text == text).is_some_and(|m| m.read);
+    until("Ana sees Ben read hers", || read_at_a("Lunch?") && read_at_a("Hey Ben")).await;
+    queue(&a, &ca, &id_b, "1pm?", None).unwrap();
+    until("the next one at Ben's", || texts(&b, &id_a).contains(&"1pm?".to_string())).await;
+    assert!(!read_at_a("1pm?"), "not read until he opens the chat");
+    open_chat(&b, &id_a).unwrap();
+    until("read once he looks", || read_at_a("1pm?")).await;
+    open_chat(&a, &id_b).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let read_at_b = messages(&b.db.lock().unwrap(), &cb, &id_a).unwrap().into_iter().filter(|m| m.from_me).any(|m| m.read);
+    assert!(!read_at_b, "Ana sends no read receipts");
+
     // One side hangs up: both see it.
     link::hang_up(&id_b);
     until("both ends apart", || !link::connected(&id_a) && !link::connected(&id_b)).await;

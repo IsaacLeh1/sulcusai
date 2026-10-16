@@ -20,6 +20,7 @@ import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
+import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
 
 const THIRD_PARTY = [
@@ -378,6 +379,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <section className="card">
         <h2>{t("About {app}", { app: APP_NAME })}</h2>
         <UpdateSettings toast={toast} />
+        <CrashReportsSetting toast={toast} />
         {info && (
           <p className="small muted">{t("Data folder: {path}", { path: info.data_dir })}</p>
         )}

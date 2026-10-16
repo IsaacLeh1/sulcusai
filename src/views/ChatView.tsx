@@ -125,6 +125,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [pending, setPending] = useState<PendingApproval[]>([]);
   /** Messages waiting for the reply to finish (Ctrl+Enter). */
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  /** The model has read the messages sent up to then (it started answering). */
+  const [readUpTo, setReadUpTo] = useState(0);
   const [runningCall, setRunningCall] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
@@ -219,6 +221,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       })),
       on("chat:context", mine((p) => setContext(p.context))),
       on("chat:queue", mine((p) => setQueue(p.queue))),
+      on("chat:read", mine((p) => setReadUpTo((r) => Math.max(r, p.up_to)))),
       on("chat:start", mine((p) => {
         setCooling(null);
         setStatus("thinking");
@@ -467,9 +470,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall, helperSteps, features, searchOn],
+    [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -808,8 +811,17 @@ function renderItems(
   toast?: PushToast,
   onEnableWeb?: (() => void) | null,
   openPicture?: (i: MediaItem) => void,
+  readUpTo = 0,
 ): ReactNode[] {
   const results = new Map<string, Message>();
+  // "Sent" or "Read" under the newest message (and ones added mid-reply):
+  // read once the model started answering after it.
+  const lastUser = messages.map((m) => m.role === "user").lastIndexOf(true);
+  const receipt = (m: Message, i: number): "sent" | "read" | undefined => {
+    if (i !== lastUser && !m.meta?.added) return undefined;
+    const answered = messages.slice(i + 1).some((x) => x.role === "assistant" || x.role === "tool");
+    return answered || (readUpTo > 0 && m.created_at <= readUpTo) ? "read" : "sent";
+  };
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
 
   const out: ReactNode[] = [];
@@ -827,11 +839,11 @@ function renderItems(
   messages.forEach((m, i) => {
     if (m.role === "user" && m.meta?.added) {
       // Added mid-reply: still the same turn (and the same Undo).
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} />);
     } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} />);
     } else if (m.role === "assistant" && m.meta?.compacted) {
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
@@ -887,7 +899,7 @@ function CompactedNote({ m }: { m: Message }) {
   );
 }
 
-function MessageView({ m, live, toast, onPicture, onOpenChat }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void }) {
+function MessageView({ m, live, toast, onPicture, onOpenChat, receipt }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void; receipt?: "sent" | "read" }) {
   const thinkingNow = live === "thinking" && !m.content;
   return (
     <div className={`msg ${m.role}`}>
@@ -905,7 +917,11 @@ function MessageView({ m, live, toast, onPicture, onOpenChat }: { m: Message; li
         </details>
       )}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
-      {m.role === "user" && m.meta?.added && <span className="added-note">{t("Added while it worked")}</span>}
+      {m.role === "user" && (m.meta?.added || receipt) && (
+        <span className={`added-note ${receipt === "read" ? "read" : ""}`} title={receipt === "read" ? t("The model has read this") : t("The model hasn't read this yet")}>
+          {[m.meta?.added ? t("Added while it worked") : null, receipt === "read" ? "✓✓ " + t("Read") : receipt === "sent" ? "✓ " + t("Sent") : null].filter(Boolean).join(" · ")}
+        </span>
+      )}
       {m.role === "user" && m.meta?.from_chat && (
         <span className="added-note">
           {t("From the assistant in")}{" "}

@@ -625,6 +625,11 @@ html.quick-window, html.quick-window body { background: transparent; overflow: h
 
 /* ---------- top bar ---------- */
 .topbar { display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 6px 14px 0; flex: none; }
+.feedback-btn { font-size: 12.5px; }
+.feedback-kind { margin-bottom: 10px; }
+.feedback-text { width: 100%; resize: vertical; margin-bottom: 8px; }
+.feedback-privacy { display: flex; flex-direction: column; gap: 4px; background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+.crash-text { white-space: pre-wrap; max-height: 280px; overflow: auto; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .web-btn { font-size: 18px; border-radius: 8px; padding: 4px 6px; }
 .web-btn:hover { background: var(--accent-soft); }
 a.md-link { cursor: pointer; }
@@ -1272,3 +1277,4 @@ button.ctx:hover { background: var(--hover); }
 .offline-keep { display: grid; gap: 8px; margin: 6px 0 12px; }
 .offline-more { margin: 4px 0 10px; }
 .offline-more summary { cursor: pointer; color: var(--muted); }
+.msg.user .added-note.read { color: var(--accent); }

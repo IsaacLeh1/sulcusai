@@ -101,6 +101,9 @@ struct Contact {
     /// Mailbox positions: the last letter written to them, and read from them.
     box_next: u64,
     box_got: u64,
+    /// Tell them when this user has read their messages (off unless chosen,
+    /// for each person).
+    read_receipts: bool,
 }
 
 fn book(conn: &Connection) -> Book {
@@ -227,6 +230,8 @@ pub struct MessageView {
     file: Option<FileView>,
     /// For messages from here: they have it.
     delivered: bool,
+    /// For messages from here: they've read it (they send read receipts).
+    read: bool,
 }
 
 /// A message as it travels (inside the link's encryption).
@@ -257,10 +262,12 @@ fn row_view(c: &Cipher, r: &rusqlite::Row) -> rusqlite::Result<MessageView> {
         text: c.decrypt_or(&r.get::<_, String>(3)?, ""),
         file: file_name.map(|n| FileView { name: c.decrypt_or(&n, "file"), size: file_size.unwrap_or(0).max(0) as u64 }),
         delivered: r.get::<_, i64>(6)? != 0,
+        read: r.get::<_, i64>(7)? != 0,
     })
 }
 
-const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent";
+/// `seen`: this user's message, read by them (their read receipt).
+const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent, seen";
 
 fn messages(conn: &Connection, c: &Cipher, contact: &str) -> Result<Vec<MessageView>, String> {
     let mut stmt = conn
@@ -452,6 +459,7 @@ fn keep(state: &AppState, c: &Cipher, id: &str, name: &str, key: &[u8], addr: Op
             last_seen: Some(now),
             offer_relay: before.as_ref().is_some_and(|p| p.offer_relay),
             their_relay: before.as_ref().and_then(|p| p.their_relay.clone()),
+            read_receipts: before.as_ref().is_some_and(|p| p.read_receipts),
             allow: before.map(|p| p.allow).unwrap_or_default(),
             // A new key means new mailboxes.
             box_next: 0,
@@ -596,6 +604,8 @@ pub struct ContactView {
     via_relay: bool,
     /// This user lets them use their relay.
     offer_relay: bool,
+    /// This user tells them when they've read their messages.
+    read_receipts: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -660,6 +670,7 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                 relay,
                 via_relay: !online && mailbox::via(&p.id),
                 offer_relay: p.offer_relay,
+                read_receipts: p.read_receipts,
             }
         })
         .collect();
@@ -778,17 +789,74 @@ pub async fn people_set_address(state: AppStateRef<'_>, id: String, address: Str
 #[tauri::command(async)]
 pub fn people_messages(state: AppStateRef, id: String) -> Result<Vec<MessageView>, String> {
     features::require(&state, Feature::People)?;
+    open_chat(&state, &id)
+}
+
+/// Opening a conversation: what they sent is read now.
+pub(super) fn open_chat(state: &AppState, id: &str) -> Result<Vec<MessageView>, String> {
+    let id = id.to_string();
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let read = conn
-        .execute("UPDATE people_messages SET read = 1 WHERE contact_id = ?1 AND from_me = 0 AND read = 0", [&id])
-        .map_err(err)?;
+    let fresh: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM people_messages WHERE contact_id = ?1 AND from_me = 0 AND read = 0").map_err(err)?;
+        let rows = stmt.query_map([&id], |r| r.get(0)).map_err(err)?;
+        rows.filter_map(Result::ok).collect()
+    };
+    conn.execute("UPDATE people_messages SET read = 1 WHERE contact_id = ?1 AND from_me = 0 AND read = 0", [&id]).map_err(err)?;
     let list = messages(&conn, &c, &id)?;
     drop(conn);
-    if read > 0 {
-        changed(&state);
+    if !fresh.is_empty() {
+        // Read now: they hear of it, if this user tells them.
+        if contact(state, &id).is_some_and(|p| p.read_receipts) {
+            link::send(&id, link::Frame::Read { ids: fresh });
+        }
+        changed(state);
     }
     Ok(list)
+}
+
+/// Their read receipt: this user's messages they've now read.
+pub(super) fn they_read(state: &AppState, contact: &str, ids: &[String]) {
+    let conn = state.db.lock().unwrap();
+    for id in ids.iter().take(500) {
+        let _ = conn.execute("UPDATE people_messages SET seen = 1 WHERE contact_id = ?1 AND id = ?2 AND from_me = 1", params![contact, id]);
+    }
+}
+
+/// Whether to tell this person when their messages have been read. Turning
+/// it on tells them about the latest ones read already.
+#[tauri::command(async)]
+pub fn people_set_read_receipts(state: AppStateRef, id: String, on: bool) -> Result<(), String> {
+    features::require(&state, Feature::People)?;
+    set_read_receipts(&state, &id, on)
+}
+
+pub(super) fn set_read_receipts(state: &AppState, id: &str, on: bool) -> Result<(), String> {
+    let id = id.to_string();
+    state.cipher()?;
+    let p = update(state, |b| {
+        b.contacts.iter_mut().find(|x| x.id == id).map(|x| {
+            x.read_receipts = on;
+            x.clone()
+        })
+    })?
+    .ok_or("They aren't linked anymore.")?;
+    if on {
+        let read: Vec<String> = {
+            let conn = state.db.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT id FROM people_messages WHERE contact_id = ?1 AND from_me = 0 AND read = 1 ORDER BY at DESC LIMIT 50")
+                .map_err(err)?;
+            let rows = stmt.query_map([&id], |r| r.get(0)).map_err(err)?;
+            rows.filter_map(Result::ok).collect()
+        };
+        if !read.is_empty() {
+            link::send(&id, link::Frame::Read { ids: read });
+        }
+    }
+    state.log("people", &if on { format!("{} now sees when you've read their messages", p.name) } else { format!("{} no longer sees when you've read their messages", p.name) });
+    changed(state);
+    Ok(())
 }
 
 /// Stores a message for someone; it goes right away if they're connected,
@@ -825,6 +893,7 @@ fn queue(state: &AppState, c: &Cipher, contact: &str, text: &str, file: Option<(
         text: text.to_string(),
         file: file.map(|(name, data)| FileView { name, size: data.len() as u64 }),
         delivered: false,
+        read: false,
     })
 }
 

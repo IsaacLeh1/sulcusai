@@ -19,6 +19,8 @@ mod compact;
 mod cloud;
 mod checkpoint;
 mod connectors;
+mod crash;
+mod feedback;
 mod crypto;
 mod db;
 mod docs;
@@ -1716,6 +1718,8 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
+            // Crash reports (if turned on): the failure hook and how the last run ended.
+            crash::start(&state);
             backup::finish_restore(&state);
             api_server::apply(state.clone());
             // Models already on this PC, from an earlier install or another app.
@@ -1742,6 +1746,13 @@ pub fn run() {
             perf::perf_view,
             perf::gpu_now,
             perf::gpu_limit,
+            crash::crash_reports_view,
+            crash::set_crash_reports,
+            crash::dismiss_crash_reports,
+            crash::send_crash_report,
+            crash::crash_ping,
+            crash::report_window_error,
+            feedback::send_feedback,
             offline::offline_view,
             offline::set_fully_offline,
             perf::set_gpu_limit,
@@ -1880,6 +1891,7 @@ pub fn run() {
             sync::people::ask::people_set_allow,
             sync::people::ask::people_asks,
             sync::people::mailbox::people_set_relay_offer,
+            sync::people::people_set_read_receipts,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,
@@ -2035,6 +2047,7 @@ pub fn run() {
 
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {
+            crash::closing();
             let state = handle.state::<Arc<AppState>>().inner().clone();
             tauri::async_runtime::block_on(async move {
                 state.engine.lock().await.stop().await;

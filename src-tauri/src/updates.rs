@@ -204,5 +204,6 @@ async fn install(app: &AppHandle, state: &AppState) -> Result<(), String> {
         .await
         .map_err(|e| format!("The update didn't install: {e}"))?;
     state.log("settings", &format!("Installed SulcusAI {}", update.version));
+    crate::crash::closing();
     app.restart();
 }

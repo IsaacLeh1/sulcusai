@@ -35,6 +35,8 @@ pub(super) enum Frame {
     Msgs { items: Vec<Item> },
     /// Messages now stored on the other side.
     Got { ids: Vec<String> },
+    /// Messages the other person has read (they send read receipts).
+    Read { ids: Vec<String> },
     /// The chats the other side shares with this one.
     Shared { chats: Vec<share::SharedChat> },
     Watch { chat_id: String },
@@ -322,6 +324,10 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
             mailbox::confirmed(&p.id, &ids);
             changed(state);
             flush(state, &p.id);
+        }
+        Frame::Read { ids } => {
+            super::they_read(state, &p.id, &ids);
+            changed(state);
         }
         Frame::Shared { chats } => share::listed(state, &p.id, chats),
         Frame::Watch { chat_id } => share::watch(state, &p.id, &chat_id),

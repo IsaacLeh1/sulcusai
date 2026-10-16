@@ -426,7 +426,17 @@ impl Turn {
                     Some((ep, _)) => (ep, None),
                     None => (&self.ep, tools.as_ref()),
                 };
+                // The model has read the person's messages once it starts answering
+                // (or calls a tool without a word): the window shows "Read".
+                let newest_user = kept.iter().rev().find(|m| m.role == "user").map(|m| m.created_at);
+                let read = AtomicBool::new(false);
+                let tell_read = || {
+                    if let (false, Some(up_to)) = (read.swap(true, Ordering::Relaxed), newest_user) {
+                        self.emit("chat:read", json!({ "chat_id": self.chat_id, "up_to": up_to }));
+                    }
+                };
                 let result = chat::stream(ep, messages, offer, &self.cancel, |d| {
+                    tell_read();
                     if quiet {
                         return;
                     }
@@ -437,6 +447,9 @@ impl Turn {
                     self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": content, "thinking": thinking }));
                 })
                 .await;
+                if result.as_ref().is_ok_and(|r| !r.cancelled) {
+                    tell_read();
+                }
                 if let Some((_, f)) = &forced {
                     // Its call, or (if the engine or model let us down) the first reply.
                     let first = first.take().expect("the first reply is kept for a forced try");
