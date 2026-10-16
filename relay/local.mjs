@@ -4,7 +4,7 @@
 // a relay without Cloudflare: node relay/local.mjs [port]
 import http from "node:http";
 import { DatabaseSync } from "node:sqlite";
-import worker, { Box } from "./worker.js";
+import worker, { Box, Inbox } from "./worker.js";
 
 /** Just enough of a Durable Object's storage for the relay. */
 function storage() {
@@ -25,7 +25,10 @@ function storage() {
 }
 
 const objects = new Map();
+const inbox = new Inbox({ storage: storage() }, { FEEDBACK_KEY: process.env.FEEDBACK_KEY || "" });
 const env = {
+  FEEDBACK_KEY: process.env.FEEDBACK_KEY || "",
+  INBOX: { idFromName: (name) => name, get: () => ({ fetch: (request) => inbox.fetch(request) }) },
   BOX: {
     idFromName: (name) => name,
     get(id) {

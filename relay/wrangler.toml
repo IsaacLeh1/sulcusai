@@ -14,3 +14,13 @@ class_name = "Box"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Box"]
+
+# The feedback inbox (the app's Bug / Feedback button): its own object.
+#   npx wrangler secret put FEEDBACK_KEY   (the developer's key for /feedback/inbox)
+[[durable_objects.bindings]]
+name = "INBOX"
+class_name = "Inbox"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Inbox"]
