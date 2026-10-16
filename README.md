@@ -41,9 +41,16 @@ and stops it, and keeps your data.
 - **Agent mode.** The assistant can work in folders you share: read, search,
   create, edit, move and delete files (deletes go to the Recycle Bin), and run
   commands to build and test code.
+  - The file tools only reach the folders you share. Commands are different:
+    a command is a program running under your Windows account, so once you
+    approve one (or in Bypass mode) it can reach other files and the network.
+    SulcusAI refuses the riskiest kinds (disks, how Windows starts, backups,
+    Windows security, plainly deleting outside your shared folders) and stops
+    commands that use too much memory or fill the disk. That's a safety net,
+    not a sandbox: read a command before you approve it.
   - **Plan / Auto / Bypass** run modes. Auto asks before every change and shows
     a diff first.
-  - **Undo** for the file changes from any reply.
+  - **Undo** for the file changes from any reply (not for what a command did).
 - **Memory** across chats. It's encrypted, and you can view, edit and delete it.
   Incognito chats neither use nor save memories.
 - **Projects** with their own instructions, folders and memories.
