@@ -841,7 +841,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Checking latest.json from Windows PowerShell 5.1: `Invoke-RestMethod` reads it as Latin-1 and garbles "→", so its notes look different. Download it and decode as UTF-8 to compare.
 - **Installing over a running copy:** the installer (`/P` through WMI) closes SulcusAI and doesn't reopen it.
 
-## After 0.9.7 (2026-10-17, on phase7, not built)
+## 0.9.8 (2026-10-17): look up what it doesn't know, sites that work, Preview panel
 
 From his brother's report (a "Legend of Zelda" picture came out as a generic blond swordsman) and his own ("a live stock exchange website" came out basic, with nothing working).
 
@@ -870,10 +870,10 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
     - It emits `chat:preview` and returns the problems. Meta carries `preview_url/site/root/start/problems`.
     - Helpers don't get it, and `forced_lookup` never picks it.
   - **The agent** (`run`): when a turn wrote a page (`chat::site_folder`) and the model stops:
-    - If the site hasn't been previewed since the last write or edit, `forced_preview` makes the next step that call (up to 3 previews).
-    - If the last preview found problems, `forced_fix` makes it start fixing (up to 2 rounds).
+    - If the site hasn't been previewed since the last write or edit, `forced_preview` makes the next step that call (up to 6 previews).
+    - If the last preview found problems, `forced_fix` makes it start fixing (up to 3 rounds).
     - A forced follow-up the engine doesn't answer with a call isn't retried that turn (`follow_ups_failed`); words it wrote become the reply.
-    - Follow-ups are capped at 8.
+    - Follow-ups are capped at 12.
   - **Build instructions** (`tool_instructions`, folder shared):
     - every feature, with working JavaScript; no placeholder buttons or fake data passed off as real
     - index.html + style.css + app.js
@@ -890,11 +890,48 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
   - `paths_stay_inside_the_site`, `the_check_names_what_doesnt_work` and `a_site_is_served_on_this_pc_only_and_follows_the_chats_web` (preview).
   - `src/preview.test.ts`.
   - The panel was tried in the UI mock: the site runs, a click inside it works, and the edge resizes it.
-- **Not tried in the real app yet:**
-  - the iframe under the real window's CSP (WebView2)
-  - the hidden check window
-  - a real model building a site through the forced preview and fix steps
-  - the picture name lookup with a real model
+- **Live test in dev mode** (desktop, his real data, Qwen2.5-Coder 14B at 8K context, Z-Image Turbo; driven over WebView2's DevTools port with `C:\dev\tools\drive.mjs` / `watch.mjs`; test chats, folder and model removed afterwards). Verified: the iframe under the real CSP, the hidden check window, the forced preview and fix steps, the picture lookup. What it found and what changed:
+  - **Tool descriptions filled the window:**
+    - Every tool's description took 4,655 of 8,192 tokens, which left about 330 for the conversation, so the first file overflowed it.
+    - A build ask on a local model with ctx ≤ 16K is now offered only `tools::for_building` tools (files, web, `request_folder`, `open_path`), with no media, people or chat notes (`lean`). That's 1,815 tokens.
+  - **History holds each file twice:**
+    - `chat::without_written` drops older write/edit contents (the key itself, never a stand-in, which the model copied into files) and long code blocks pasted next to writes (without a note, which it also copied).
+    - It's used only when the history doesn't fit (second `fit_history` pass).
+    - `fit_history` also cuts the turn's own long earlier assistant text to 300 characters when needed.
+  - `write_file` refuses stand-ins as a whole file ("[corrected content]", `fs::is_stand_in`).
+  - `apply_edit` falls back to `loose_edit` (the one place that matches with spacing and indentation ignored; re-indents the new text).
+  - **Repeat guards:**
+    - A failed call wasn't retried after the file it needed was written.
+    - A successful Write/Execute now clears `failed_calls` and the Read entries of `done_calls`.
+  - **The check grew:**
+    - The visibility test uses computed style: `offsetParent` is null in a window that never shows, so every button looked hidden.
+    - It names ids the script asks for that the page lacks, and lists the page's ids.
+    - It notes "no buttons or fields" when the ask wanted actions (`wants_actions`), and buttons that vanish after the page updates (counted at 1.5 s and 5 s).
+    - It clicks each wired button after filling empty fields, then reports ones after which nothing changed (no text, dialog or error). Dialogs are stubbed so they can't block.
+    - It flags "nothing changes by itself" when the ask wanted live updates (`wants_live`).
+    - Missing files are reported once, by path.
+  - `page_missing` + `forced_page`: CSS/JS written but no index.html.
+  - The same problems twice in a row get a "rewrite the whole file with write_file" note.
+  - Caps: 6 previews, 3 fix rounds, 12 follow-ups.
+  - Build instructions now say "index.html first, each file with write_file, preview once every file is written".
+  - **Pictures in chats:**
+    - `make_room` used to keep the chat model loaded for a chat's job, so a 14B model plus Z-Image overflowed 12 GB and every picture fell to the processor (292 s).
+    - Now, if the picture model fits alone but not beside the chat model, `Engine::pause` stops it keeping its port and key, and `give_back` restarts it at the same address (`ensure` reuses a paused address), so the turn's `Endpoint` stays valid.
+    - Measured: 21 s on the card, chat model back in 5 s.
+  - `forced_picture`: a picture ask answered without a call ("I can't generate images") gets one forced `create_image`.
+  - A reply that denies making pictures after one was made is replaced (`denies_pictures`).
+  - A second `create_image` in the same reply is skipped unless the ask wanted several (`wants_several`).
+  - **Names check:** with the web already on, the first two names are looked up even when the model says it knows them. Its memory gave "green tunic, blue tunic, red tunic"; the search gave "blond, long pointy ears, green tunic and floppy hat".
+  - **Save button:** `MediaInline` showed Save only when Read aloud was on (renderItems passed read-aloud's toast). It now gets its own `saveToast`.
+  - **Results with the 14B model:**
+    - The stock site came out working on most runs after the fixes (prices move, Buy/Sell change cash and holdings, verified by hand).
+    - The finance tracker passed in 60 s, including the filled-in form click.
+    - Some runs still stall on a bug the model can't reason out. Larger models and contexts do better.
+- **Hugging Face picture links** (his brother only ever got the old "It runs GGUF chat models…" refusal):
+  - That was the "not a supported family" message; SD 1.5 and FLUX.1 models hit it.
+  - Added Realistic Vision V6.0 (SD 1.5, fp16 + vae-ft-mse) to the catalog, whose `hub` family "Stable Diffusion 1.5" opens SD 1.5 repos. Live-tested: 704×896 on the card in 9 s.
+  - `hub_why_not` explains by kind: FLUX.1 not supported yet; picture repos only in diffusers folders (unet/, vae/) need a single file; video needs Wan, music ACE-Step; chat models need GGUF.
+  - FLUX.1 (dev/schnell) support is the next step for picture links: it needs clip_l, t5xxl and ae files and a catalog base.
 
 ## Website (2026-10-12)
 

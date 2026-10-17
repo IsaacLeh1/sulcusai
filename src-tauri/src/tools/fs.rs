@@ -43,6 +43,48 @@ pub fn write_file_params() -> Value {
     json!({ "type": "object", "required": ["path", "content"], "properties": {
         "path": { "type": "string" }, "content": { "type": "string", "description": "The complete new file contents." } } })
 }
+/// A stand-in some models write instead of a file's contents: one short
+/// bracketed or "…"-style line ("[corrected content]", "[insert code here]",
+/// "... rest of the code ...").
+fn is_stand_in(content: &str) -> bool {
+    let t = content.trim();
+    if t.is_empty() || t.lines().count() > 1 || t.chars().count() > 80 {
+        return false;
+    }
+    let bracketed = (t.starts_with('[') && t.ends_with(']')) || (t.starts_with('<') && t.ends_with('>') && !t.contains("</")) || (t.starts_with('{') && t.ends_with('}') && !t.contains(':'));
+    let filler = t.starts_with("...") || t.starts_with('…') || t.to_lowercase().contains("rest of the");
+    // Words in brackets, not data (["a", "b"]) or markup.
+    let words = t.chars().any(char::is_alphabetic) && t.contains(' ') && !t.contains('"') && !t.contains('\'') && !t.contains('=');
+    (bracketed && words) || filler
+}
+
+#[cfg(test)]
+#[test]
+fn edits_match_when_only_the_spacing_differs() {
+    let js = "document.addEventListener('DOMContentLoaded', () => {\n    const buy = document.getElementById('buy');\n    buy.addEventListener('click', go);\n});\n";
+    // Copied without its indentation, with a doubled space.
+    let (out, n) = apply_edit(js, "const buy = document.getElementById('buy');\nbuy.addEventListener('click',  go);", "const buy = document.getElementById('buy-button');\nbuy.addEventListener('click', go);", false).unwrap();
+    assert_eq!(n, 1);
+    assert_eq!(out, "document.addEventListener('DOMContentLoaded', () => {\n    const buy = document.getElementById('buy-button');\n    buy.addEventListener('click', go);\n});\n");
+    // CRLF files keep CRLF; over-indented old text is shifted back.
+    let crlf = "a {\r\n  color: red;\r\n}\r\n";
+    let (out, _) = apply_edit(crlf, "        color: red;", "        color: blue;\n        margin: 0;", false).unwrap();
+    assert_eq!(out, "a {\r\n  color: blue;\r\n  margin: 0;\r\n}\r\n");
+    // Two places that match loosely: still refused.
+    assert!(apply_edit("x = 1;\ny = 2;\n  x = 1;\n", "x  =  1;", "x = 3;", false).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn stand_ins_arent_written_as_files() {
+    for s in ["[corrected content]", "[insert code here]", "  [written to the file; read_file shows it]\n", "... rest of the code ...", "<your HTML here>", "{ full contents }"] {
+        assert!(is_stand_in(s), "{s}");
+    }
+    for s in ["<p>Hi</p>", "[1, 2, 3]", "[\"a\", \"b\"]", "{\"a\": 1}", "body { margin: 0 }", "console.log('hi');", "", "<meta charset=\"utf-8\">", "line one\n[two words]"] {
+        assert!(!is_stand_in(s), "{s}");
+    }
+}
+
 pub fn edit_file_params() -> Value {
     json!({ "type": "object", "required": ["path", "old_text", "new_text"], "properties": {
         "path": { "type": "string" },
@@ -131,6 +173,60 @@ pub fn strip_line_numbers(s: &str) -> Option<String> {
 }
 
 /// Applies an edit_file request to text, or explains why it can't.
+/// A line with its runs of spaces and tabs made one space, and none at the ends.
+fn squash(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `old` found line by line with spacing and indentation not counting (in
+/// exactly one place), replaced by `new` indented to fit where it goes.
+fn loose_edit(text: &str, old: &str, new: &str) -> Option<String> {
+    let given: Vec<&str> = old.lines().collect();
+    let first = given.iter().position(|l| !l.trim().is_empty())?;
+    let last = given.iter().rposition(|l| !l.trim().is_empty())?;
+    let want: Vec<String> = given[first..=last].iter().map(|l| squash(l)).collect();
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut at = 0;
+    for l in &lines {
+        starts.push(at);
+        at += l.len() + 1;
+    }
+    let mut found = None;
+    for i in 0..lines.len().saturating_sub(want.len() - 1) {
+        if (0..want.len()).all(|k| squash(lines[i + k]) == want[k]) {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(i);
+        }
+    }
+    let i = found?;
+    let end_line = i + want.len() - 1;
+    let start = starts[i];
+    let end = starts[end_line] + lines[end_line].trim_end_matches('\r').len();
+    // Shift the new lines by the difference between the file's indentation and the model's.
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let have = indent(lines[i]);
+    let gave = indent(given[first]);
+    let pad = &lines[i][..have];
+    let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    let replaced: Vec<String> = new
+        .lines()
+        .map(|l| {
+            if l.trim().is_empty() {
+                String::new()
+            } else if have > gave {
+                format!("{}{l}", &pad[..have - gave])
+            } else {
+                let cut = (gave - have).min(indent(l));
+                l[cut..].to_string()
+            }
+        })
+        .collect();
+    Some(format!("{}{}{}", &text[..start], replaced.join(eol), &text[end..]))
+}
+
 pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result<(String, usize), String> {
     if old.is_empty() {
         return Err("old_text is empty. To create or replace a whole file, use write_file.".into());
@@ -151,7 +247,12 @@ pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result
                 let new = new.replace("\r\n", "\n").replace('\n', "\r\n");
                 return apply_edit(text, &crlf_old, &new, replace_all);
             }
-            Err("old_text wasn't found. Read the file again and copy the text exactly, including spaces and indentation.".into())
+            // Small models rarely copy indentation and spacing exactly: the one
+            // place that matches when spaces don't count is the place meant.
+            if let Some(t) = loose_edit(text, old, new) {
+                return Ok((t, 1));
+            }
+            Err("old_text wasn't found. Read the file again and copy the text exactly, including spaces and indentation, or send the whole fixed file with write_file.".into())
         }
         1 => Ok((text.replacen(old, new, 1), 1)),
         n if replace_all => Ok((text.replace(old, new), n)),
@@ -239,6 +340,11 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let raw = arg_str(args, "content")?;
                 let stripped = strip_line_numbers(raw);
                 let content = stripped.as_deref().unwrap_or(raw);
+                if is_stand_in(content) {
+                    return Err(format!(
+                        "{content:?} is a placeholder, not the file's contents. Send the whole file, every line of it, as content."
+                    ));
+                }
                 let label = sb.display(&path);
                 let old = if path.exists() { read_text(&path)? } else { String::new() };
                 let existed = path.exists();

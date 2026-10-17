@@ -43,6 +43,23 @@ pub struct Report {
     pub text: usize,
     #[serde(default)]
     pub buttons: usize,
+    /// Fields to type in or choose from.
+    #[serde(default)]
+    pub inputs: usize,
+    /// Element ids the scripts looked for that the page doesn't have, and the ids it does have.
+    #[serde(default)]
+    pub missing_ids: Vec<String>,
+    #[serde(default)]
+    pub ids: Vec<String>,
+    /// Buttons soon after loading (the summary is taken a few seconds later).
+    #[serde(default)]
+    pub early_buttons: usize,
+    /// Buttons after whose click nothing on the page changed.
+    #[serde(default)]
+    pub quiet: Vec<String>,
+    /// Whether the page's text changed by itself in the seconds after it loaded.
+    #[serde(default)]
+    pub changes: Option<bool>,
     #[serde(default)]
     pub dead: Vec<String>,
 }
@@ -85,7 +102,7 @@ struct Ctx {
 /// Serves a folder (the page to start on is `start`, e.g. "index.html"),
 /// reusing the server already running for it in this chat.
 pub async fn serve(chat_id: &str, root: &Path, start: &str, web: bool) -> Result<Served, String> {
-    let root = root.canonicalize().map_err(|_| format!("{} doesn't exist.", root.display()))?;
+    let root = dunce::canonicalize(root).map_err(|_| format!("{} doesn't exist.", root.display()))?;
     if !root.is_dir() {
         return Err(format!("{} isn't a folder.", root.display()));
     }
@@ -211,7 +228,7 @@ async fn page(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: U
 
 impl Default for Report {
     fn default() -> Self {
-        Report { kind: String::new(), message: String::new(), title: String::new(), text: 0, buttons: 0, dead: Vec::new() }
+        Report { kind: String::new(), message: String::new(), title: String::new(), text: 0, buttons: 0, inputs: 0, missing_ids: Vec::new(), ids: Vec::new(), early_buttons: 0, quiet: Vec::new(), changes: None, dead: Vec::new() }
     }
 }
 
@@ -249,7 +266,7 @@ fn file_for(root: &Path, path: &str) -> Option<PathBuf> {
     if full.is_dir() {
         full.push("index.html");
     }
-    let real = full.canonicalize().ok()?;
+    let real = dunce::canonicalize(&full).ok()?;
     (real.starts_with(root) && real.is_file()).then_some(real)
 }
 
@@ -294,6 +311,26 @@ const PROBE: &str = r##"(function () {
     try { fetch('/__sulcus/report', { method: 'POST', body: JSON.stringify(o), keepalive: true }); } catch (e) {}
   };
   var listened = new WeakSet();
+  // Pop-ups would stop the page in a window nobody sees: they're answered here
+  // and counted (a message is a response to a click).
+  var dialogs = 0, errors = 0;
+  window.alert = function () { dialogs++; };
+  window.confirm = function () { dialogs++; return true; };
+  window.prompt = function (m, d) { dialogs++; return d || '1'; };
+  // Ids the scripts asked for that weren't there (checked again once it has loaded).
+  var asked = {};
+  var byId = Document.prototype.getElementById;
+  Document.prototype.getElementById = function (id) {
+    var r = byId.call(this, id);
+    if (r === null && typeof id === 'string') asked[id] = 1;
+    return r;
+  };
+  var one = Document.prototype.querySelector;
+  Document.prototype.querySelector = function (sel) {
+    var r = one.call(this, sel);
+    if (r === null && typeof sel === 'string' && /^#[A-Za-z][\w-]*$/.test(sel)) asked[sel.slice(1)] = 1;
+    return r;
+  };
   var add = EventTarget.prototype.addEventListener;
   EventTarget.prototype.addEventListener = function (type, fn, opts) {
     try { if (/^(click|pointerdown|pointerup|mousedown|mouseup|touchstart|submit|keydown)$/.test(type)) listened.add(this); } catch (e) {}
@@ -302,10 +339,11 @@ const PROBE: &str = r##"(function () {
   window.addEventListener('error', function (e) {
     var t = e.target;
     if (t && t !== window && (t.src || t.href)) send({ kind: 'missing', message: String(t.src || t.href) });
-    else send({ kind: 'error', message: String(e.message || 'Script error') + (e.filename ? ' (' + e.filename.replace(location.origin, '') + ':' + e.lineno + ')' : '') });
+    else errors++, send({ kind: 'error', message: String(e.message || 'Script error') + (e.filename ? ' (' + e.filename.replace(location.origin, '') + ':' + e.lineno + ')' : '') });
   }, true);
   window.addEventListener('unhandledrejection', function (e) {
     var r = e.reason;
+    errors++;
     send({ kind: 'error', message: 'Unhandled promise rejection: ' + String((r && r.message) || r) });
   });
   document.addEventListener('securitypolicyviolation', function (e) {
@@ -336,18 +374,79 @@ const PROBE: &str = r##"(function () {
     }
     return listened.has(window) || listened.has(document);
   };
+  var count = function () {
+    return document.querySelectorAll('button, [role=button], input[type=button], input[type=submit]').length;
+  };
+  var text = function () { return document.body ? document.body.innerText : ''; };
+  var label = function (el) { return (el.innerText || el.value || el.getAttribute('aria-label') || el.tagName).trim().slice(0, 40); };
+  var early = 0, earlyText = '';
+  // Clicks each button (number fields filled in first) and notes the ones
+  // after which nothing on the page changed: no new text, no message, no error.
+  var tryClicks = function (els, done) {
+    var quiet = [];
+    document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
+    // Empty fields filled in the way a person would, so a form's button has
+    // something to work with (a blank form rightly does nothing).
+    var today = new Date().toISOString().slice(0, 10);
+    [].forEach.call(document.querySelectorAll('input, select, textarea'), function (f) {
+      var t = (f.type || '').toLowerCase();
+      if (f.disabled || f.readOnly || ['button', 'submit', 'reset', 'hidden', 'checkbox', 'radio', 'file', 'range', 'color'].indexOf(t) >= 0) return;
+      if (f.tagName === 'SELECT') {
+        if (!f.value || f.selectedIndex <= 0) {
+          for (var k = 0; k < f.options.length; k++) if (f.options[k].value) { f.selectedIndex = k; break; }
+        }
+      } else if (!f.value) {
+        f.value = t === 'number' ? '25' : t === 'date' ? today : t === 'email' ? 'test@example.com' : t === 'time' ? '12:00' : t === 'month' ? today.slice(0, 7) : t === 'url' ? 'https://example.com' : t === 'tel' ? '5551234' : 'Test';
+      }
+      f.dispatchEvent(new Event('input', { bubbles: true }));
+      f.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    var i = 0;
+    var next = function () {
+      if (i >= els.length) return done(quiet);
+      var el = els[i++];
+      var before = text(), d = dialogs, e = errors;
+      try { el.click(); } catch (x) {}
+      setTimeout(function () {
+        if (text() === before && dialogs === d && errors === e) quiet.push(label(el));
+        next();
+      }, 150);
+    };
+    next();
+  };
   window.addEventListener('load', function () {
+    // Once soon after loading, and again after the page has had time to update
+    // itself (a live list redrawn without its buttons).
+    setTimeout(function () { early = count(); earlyText = text(); }, 1500);
     setTimeout(function () {
+      var changes = text() !== earlyText;
       var controls = [].slice.call(document.querySelectorAll('button, [role=button], input[type=button], input[type=submit], a[href="#"], a:not([href])'));
       var dead = [];
+      // Shown by its style (layout isn't there to ask in a window that never shows).
+      var shown = function (el) {
+        for (var n = el; n && n.nodeType === 1; n = n.parentElement) {
+          var s = getComputedStyle(n);
+          if (s.display === 'none' || s.visibility === 'hidden') return false;
+        }
+        return true;
+      };
+      var live = [];
       controls.forEach(function (el) {
-        if (el.disabled || !el.offsetParent) return;
+        if (el.disabled || !shown(el)) return;
         if (el.tagName === 'A' && el.getAttribute('href') && el.getAttribute('href') !== '#') return;
-        if (!handled(el)) dead.push((el.innerText || el.value || el.getAttribute('aria-label') || el.tagName).trim().slice(0, 40));
+        if (!handled(el)) dead.push(label(el));
+        else if (el.tagName !== 'A') live.push(el);
       });
       var body = document.body;
-      send({ kind: 'summary', title: document.title || '', text: body ? body.innerText.trim().length : 0, buttons: controls.length, dead: dead.slice(0, 12) });
-    }, 1500);
+      var summary = { kind: 'summary', title: document.title || '', text: body ? body.innerText.trim().length : 0, buttons: controls.length, inputs: document.querySelectorAll('input:not([type=button]):not([type=submit]):not([type=hidden]), select, textarea').length, dead: dead.slice(0, 12),
+        missing_ids: Object.keys(asked).filter(function (id) { return byId.call(document, id) === null; }).slice(0, 12),
+        ids: [].map.call(document.querySelectorAll('[id]'), function (e) { return e.id; }).slice(0, 30),
+        early_buttons: early, changes: changes };
+      tryClicks(live.slice(0, 8), function (quiet) {
+        summary.quiet = quiet.slice(0, 12);
+        send(summary);
+      });
+    }, 5000);
   });
 })();"##;
 
@@ -393,8 +492,32 @@ pub async fn check(app: &AppHandle, id: &str) -> Result<Vec<Report>, String> {
     Ok(out)
 }
 
+/// An address on this PC as a path on the site ("http://127.0.0.1:5000/app.js" → "/app.js").
+fn site_path(what: &str) -> String {
+    match reqwest::Url::parse(what) {
+        Ok(u) if crate::ports::local_port(what).is_some() => u.path().to_string(),
+        _ => what.to_string(),
+    }
+}
+
+/// The person asked for something that updates by itself (live prices, a clock).
+pub fn wants_live(asked: &str) -> bool {
+    static LIVE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)\b(live|real[- ]?time|live-updating|updating|ticker|countdown|clock|timer|streaming|auto-?refresh)").unwrap());
+    LIVE.is_match(asked)
+}
+
+/// The person asked for things to do on the page (buy, add, search, play…),
+/// not just something to look at.
+pub fn wants_actions(asked: &str) -> bool {
+    static DO: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(buy|sell|trade|order|add|remove|delete|edit|create|search|filter|sort|log ?in|sign ?(up|in)|submit|book|reserve|calculate|convert|play|vote|upload|send|chat|track|toggle|check ?out|cart|quiz|game|form|calculator|to-?do|planner|tracker|manage)\b").unwrap()
+    });
+    DO.is_match(asked)
+}
+
 /// What the check found, in words for the model: (problems, everything).
-pub fn describe(reports: &[Report], web: bool) -> (Vec<String>, String) {
+/// `asked` is what the person asked for (to notice a page with nothing to use).
+pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, String) {
     let mut problems: Vec<String> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
     let mut once = |p: String, problems: &mut Vec<String>| {
@@ -407,7 +530,8 @@ pub fn describe(reports: &[Report], web: bool) -> (Vec<String>, String) {
         match r.kind.as_str() {
             "error" => once(format!("Script error: {}", r.message), &mut problems),
             "console" => once(format!("Console error: {}", r.message), &mut problems),
-            "missing" => once(format!("Missing file (404): {}", r.message), &mut problems),
+            // The server and the page both report a missing file; once, by its path.
+            "missing" => once(format!("Missing file (404): {}", site_path(&r.message)), &mut problems),
             "request_failed" => once(format!("Request failed: {}", r.message), &mut problems),
             "blocked" if !web => once(
                 format!("Blocked {} because this chat is offline: use the site's own files, or simulated data labelled as simulated (or ask to turn the web on with request_web)", r.message),
@@ -427,6 +551,48 @@ pub fn describe(reports: &[Report], web: bool) -> (Vec<String>, String) {
             if s.text < 40 {
                 once(format!("The page shows almost nothing ({} characters of text): its content may be built by a script that failed", s.text), &mut problems);
             }
+            if !s.missing_ids.is_empty() {
+                let has = if s.ids.is_empty() { "none".to_string() } else { s.ids.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ") };
+                once(
+                    format!(
+                        "The script looks for elements the page doesn't have: {}. The page's ids are: {has}. Make the ids in the HTML and the script match",
+                        s.missing_ids.iter().map(|i| format!("#{i}")).collect::<Vec<_>>().join(", ")
+                    ),
+                    &mut problems,
+                );
+            }
+            if !s.quiet.is_empty() {
+                once(
+                    format!(
+                        "Clicking these changed nothing on the page (no new text, no message): {}. Make each one do its job and show the result, for example update the cash, the totals or a list",
+                        s.quiet.iter().map(|q| format!("“{q}”")).collect::<Vec<_>>().join(", ")
+                    ),
+                    &mut problems,
+                );
+            }
+            if s.changes == Some(false) && wants_live(asked) {
+                once(
+                    "Nothing on the page changes by itself, though the user asked for it to update live: change the numbers on a timer (setInterval) and show them"
+                        .to_string(),
+                    &mut problems,
+                );
+            }
+            if s.early_buttons > s.buttons {
+                once(
+                    format!(
+                        "Buttons disappear as the page updates itself: {} soon after it loads, {} a few seconds later (the live update redraws that part without them). Keep the controls when updating, for example update only the numbers",
+                        s.early_buttons, s.buttons
+                    ),
+                    &mut problems,
+                );
+            } else if s.buttons == 0 && s.inputs == 0 && wants_actions(asked) {
+                once(
+                    "The page has no buttons and no fields at all, so none of what the user asked to do can be done on it. Add working controls \
+                     (buttons, inputs, forms) for every action they asked for, wired up in the JavaScript"
+                        .to_string(),
+                    &mut problems,
+                );
+            }
             if !s.dead.is_empty() {
                 once(
                     format!("These buttons do nothing when clicked (no click handler): {}. Make every one of them work", s.dead.iter().map(|d| format!("“{d}”")).collect::<Vec<_>>().join(", ")),
@@ -434,11 +600,12 @@ pub fn describe(reports: &[Report], web: bool) -> (Vec<String>, String) {
                 );
             }
             format!(
-                "It loaded: “{}”, {} characters of text, {} buttons ({} with nothing behind them).",
+                "It loaded: “{}”, {} characters of text, {} buttons ({} with nothing behind them), {} fields.",
                 if s.title.is_empty() { "(no title)" } else { &s.title },
                 s.text,
                 s.buttons,
-                s.dead.len()
+                s.dead.len(),
+                s.inputs
             )
         }
     };
@@ -459,7 +626,7 @@ pub async fn preview_open(state: AppStateRef<'_>, chat_id: String, root: String,
     };
     let sandbox = crate::sandbox::Sandbox::new(&folders);
     let path = PathBuf::from(&root);
-    if !sandbox.roots().iter().any(|r| path.canonicalize().is_ok_and(|p| p.starts_with(r))) {
+    if !sandbox.roots().iter().any(|r| dunce::canonicalize(&path).is_ok_and(|p| p.starts_with(r))) {
         return Err("That folder isn't shared with this chat anymore.".into());
     }
     serve(&chat_id, &path, start.as_deref().unwrap_or("index.html"), web).await
@@ -509,7 +676,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("css")).unwrap();
         std::fs::write(dir.join("index.html"), "<h1>Hi</h1>").unwrap();
         std::fs::write(dir.join("css").join("site style.css"), "h1{}").unwrap();
-        let root = dir.canonicalize().unwrap();
+        let root = dunce::canonicalize(&dir).unwrap();
         assert_eq!(file_for(&root, "/"), Some(root.join("index.html")));
         assert_eq!(file_for(&root, "/css/site%20style.css"), Some(root.join("css").join("site style.css")));
         assert_eq!(file_for(&root, "/../secret.txt"), None);
@@ -531,18 +698,49 @@ mod tests {
         summary.buttons = 4;
         summary.dead = vec!["Buy".into(), "Sell".into()];
         let (problems, text) = describe(
-            &[r("error", "prices is not defined (/app.js:12)"), r("error", "prices is not defined (/app.js:12)"), r("missing", "/chart.js"), r("blocked", "https://api.example.com/quotes"), summary],
+            &[r("error", "prices is not defined (/app.js:12)"), r("error", "prices is not defined (/app.js:12)"), r("missing", "/chart.js"), r("missing", "http://127.0.0.1:5000/chart.js"), r("blocked", "https://api.example.com/quotes"), summary.clone()],
             false,
+            "Build me a stock exchange site where I can buy and sell",
         );
         assert_eq!(problems.len(), 4, "{problems:?}");
         assert!(problems[0].contains("prices is not defined"));
         assert!(problems[1].contains("/chart.js"));
         assert!(problems[2].contains("offline"));
         assert!(problems[3].contains("“Buy”, “Sell”"));
-        assert!(text.contains("Stock Exchange") && text.contains("4 buttons (2 with nothing behind them)"));
-        let (problems, text) = describe(&[], true);
+        assert!(text.contains("Stock Exchange") && text.contains("4 buttons (2 with nothing behind them), 0 fields"));
+        let (problems, text) = describe(&[], true, "");
         assert_eq!(problems.len(), 1);
         assert!(text.contains("didn't finish"));
+        // Asked to buy and sell, and the page has nothing to click or type in
+        // (what Qwen2.5-Coder 14B made in the live test).
+        let mut bare = summary;
+        bare.buttons = 0;
+        bare.dead.clear();
+        let (problems, _) = describe(&[bare.clone()], true, "a live stock exchange where I can buy and sell shares");
+        assert!(problems.len() == 1 && problems[0].contains("no buttons and no fields"), "{problems:?}");
+        // The script looks for #buy but the button is #buy-button (also from the live test).
+        let mut mismatched = bare.clone();
+        mismatched.buttons = 2;
+        mismatched.missing_ids = vec!["buy".into(), "sell".into()];
+        mismatched.ids = vec!["stock-prices".into(), "buy-button".into(), "sell-button".into()];
+        let (problems, _) = describe(&[mismatched], true, "buy and sell");
+        assert!(problems[0].contains("#buy, #sell") && problems[0].contains("#buy-button"), "{problems:?}");
+        // Eight buttons at first, none after the prices redraw (the live test again).
+        let mut vanishing = bare.clone();
+        vanishing.early_buttons = 8;
+        let (problems, _) = describe(&[vanishing], true, "buy and sell");
+        assert!(problems.len() == 1 && problems[0].contains("8 soon after it loads, 0 a few seconds later"), "{problems:?}");
+        // Buttons with handlers that do nothing, and "live" prices that never move (the live test's last site).
+        let mut idle = bare.clone();
+        idle.buttons = 8;
+        idle.quiet = vec!["Buy".into(), "Sell".into()];
+        idle.changes = Some(false);
+        let (problems, _) = describe(&[idle.clone()], true, "a live stock exchange website where I can buy and sell");
+        assert!(problems.len() == 2 && problems[0].contains("“Buy”, “Sell”") && problems[1].contains("setInterval"), "{problems:?}");
+        assert_eq!(describe(&[idle], true, "a site where I can buy and sell").0.len(), 1, "not asked to be live");
+        // Something just to look at doesn't need controls.
+        assert!(describe(&[bare], true, "make me a page about my dog Rex").0.is_empty());
+        assert!(wants_actions("track my portfolio") && !wants_actions("a page about the history of Rome"));
     }
 
     #[tokio::test]

@@ -1918,6 +1918,70 @@
         }
       },
       {
+        "id": "realistic-vision-v6",
+        "name": "Realistic Vision V6.0",
+        "publisher": "SG161222",
+        "source": "https://huggingface.co/SG161222/Realistic_Vision_V6.0_B1_noVAE",
+        "description": "Lifelike photos of people and places on modest graphics cards (3 GB is enough), built on Stable Diffusion 1.5. Opens the thousands of Stable Diffusion 1.5 models on Hugging Face.",
+        "license": {
+          "name": "CreativeML Open RAIL-M",
+          "url": "https://huggingface.co/spaces/CompVis/stable-diffusion-license",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate"
+        ],
+        "files": [
+          {
+            "role": "model",
+            "file": "Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+            "url": "https://huggingface.co/SG161222/Realistic_Vision_V6.0_B1_noVAE/resolve/main/Realistic_Vision_V6.0_NV_B1_fp16.safetensors",
+            "size": 2132625894,
+            "sha256": "c48bfd159cd7a6507b128685e963c398fa72399cefafaf603781df50ce836cc7"
+          },
+          {
+            "role": "vae",
+            "file": "vae-ft-mse-840000-ema-pruned.safetensors",
+            "url": "https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors",
+            "size": 334641190,
+            "sha256": "735e4c3a447a3255760d7f86845f09f937809baa529c17370d83e4c3758f3c75"
+          }
+        ],
+        "min_vram_gb": 3,
+        "cpu": true,
+        "secs": 8,
+        "quality": 6,
+        "defaults": {
+          "steps": 25,
+          "cfg": 6.0,
+          "sampler": "dpm++2m",
+          "scheduler": "karras",
+          "width": 512,
+          "height": 768,
+          "negative": "cartoon, anime, illustration, painting, drawing, 3d render, cgi, blurry, low quality, deformed, disfigured, bad anatomy, extra fingers, watermark, text"
+        },
+        "hub": {
+          "name": "Stable Diffusion 1.5",
+          "bases": [
+            "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "runwayml/stable-diffusion-v1-5",
+            "CompVis/stable-diffusion-v1-4"
+          ],
+          "role": "model",
+          "min_size": 1500000000,
+          "max_size": 4500000000,
+          "avoid": [
+            "inpaint",
+            "fp32",
+            "ema-only-fp32"
+          ],
+          "tags": [
+            "diffusers:StableDiffusionPipeline"
+          ]
+        }
+      },
+      {
         "id": "wan2.2-ti2v-5b",
         "name": "Wan 2.2 5B",
         "publisher": "Wan (Alibaba)",

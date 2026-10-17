@@ -2735,7 +2735,6 @@
  "Share folder…": "Partager le dossier…",
  "Share “{name}”": "Partager « {name} »",
  "Sharing uses People. Turn it on in Features, link with someone, then share the folder.": "Le partage utilise Personnes. Activez-le dans Fonctionnalités, liez-vous à quelqu'un, puis partagez le dossier.",
- "SulcusAI can't use that model. It runs GGUF chat models, and picture, video and music models built on SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan or ACE-Step.": "SulcusAI ne peut pas utiliser ce modèle. Il fait tourner les modèles de chat GGUF, et les modèles d'image, de vidéo et de musique basés sur SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan ou ACE-Step.",
  "SulcusAI's logs (Settings → Logs). They start again from now.": "Les journaux de SulcusAI (Paramètres → Journaux). Ils recommencent à partir de maintenant.",
  "That folder no longer exists.": "Ce dossier n'existe plus.",
  "That isn't a Hugging Face link. Paste a link that starts with https://huggingface.co/.": "Ce n'est pas un lien Hugging Face. Collez un lien qui commence par https://huggingface.co/.",
@@ -2793,5 +2792,9 @@
  "That preview has stopped. Ask the assistant to preview the site again.": "Cet aperçu s'est arrêté. Demandez à l'assistant de prévisualiser le site à nouveau.",
  "The page didn't finish loading within 15 seconds (an endless loop or a script that never ends?)": "La page n'a pas fini de se charger en 15 secondes (une boucle infinie ou un script qui ne se termine jamais ?)",
  "The site built in this chat, running beside it": "Le site créé dans cette discussion, affiché à côté",
- "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "Cette discussion est hors ligne, le site ne peut donc pas accéder à Internet. Activez le web pour cette discussion pour le permettre."
+ "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "Cette discussion est hors ligne, le site ne peut donc pas accéder à Internet. Activez le web pour cette discussion pour le permettre.",
+ "Didn't make it again": "Pas refait une seconde fois",
+ "It's ready: it's shown above, with a button to save it.": "C'est prêt : c'est affiché ci-dessus, avec un bouton pour l'enregistrer.",
+ "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI ne peut pas encore utiliser ce modèle de musique. Les modèles de musique de Hugging Face fonctionnent lorsqu'ils sont basés sur ACE-Step 1.5.",
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI ne peut pas encore utiliser ce modèle vidéo. Les modèles vidéo de Hugging Face fonctionnent lorsqu'ils sont basés sur Wan 2.2 5B ou Wan 2.1 1.3B."
 }

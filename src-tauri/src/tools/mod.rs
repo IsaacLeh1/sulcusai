@@ -91,6 +91,13 @@ pub struct ToolDef {
     pub params: fn() -> Value,
 }
 
+/// Tools for making something on the PC and checking it: on a small memory,
+/// a request to build is offered only these (every tool's description took
+/// more than half of an 8K window, leaving no room for the files).
+pub fn for_building(name: &str) -> bool {
+    matches!(group(name), "files" | "web") || matches!(name, "request_folder" | "open_path")
+}
+
 /// Which group a tool belongs to; groups are offered only when available.
 fn group(name: &str) -> &'static str {
     match name {

@@ -97,7 +97,18 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         None => Err("there's no window to check it in here".into()),
     };
     let (problems, summary) = match &checked {
-        Ok(reports) => crate::preview::describe(reports, web),
+        Ok(reports) => {
+            // What the person asked for: a page with nothing to use is a problem only if they wanted to do things on it.
+            let asked: String = crate::db::messages(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher, &chat_id)
+                .iter()
+                .rev()
+                .filter(|m| m.role == "user")
+                .take(3)
+                .map(|m| m.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n");
+            crate::preview::describe(reports, web, &asked)
+        }
         Err(e) => (Vec::new(), format!("It couldn't be checked ({e}).")),
     };
     let offline = if web { "" } else { " This chat is offline, so the site can't reach the internet: anything live has to be simulated (and labelled so) or the web turned on with request_web." };

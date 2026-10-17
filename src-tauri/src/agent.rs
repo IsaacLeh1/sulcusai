@@ -152,11 +152,12 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
          - When asked to build something (a website, an app, a script), do it on their PC: make the files, install what's needed and run it. \
          Start servers and watchers with run_command and background: true. Don't stop at showing code.\n\
          - Websites and web apps: build every feature they asked for, with real, working JavaScript: no placeholder buttons, \
-         no \"coming soon\", no fake data passed off as real. Split it into index.html, style.css and app.js. Live data (prices, scores, \
-         news) comes from a free public source that needs no key when this chat can use the web; otherwise simulate it with realistic, \
-         changing numbers and label it \"simulated\". Then call preview_site with the site's folder (or the port of a dev server you \
-         started): it opens the site in a panel beside the chat and reports script errors, missing files and buttons that do nothing. \
-         Fix every problem it reports and preview again before you say it's done.\n\
+         no \"coming soon\", no fake data passed off as real. Write index.html first, then style.css and app.js, each with write_file \
+         (never as JSON or code in your reply). Live data (prices, scores, news) comes from a free public source that needs no key \
+         when this chat can use the web; otherwise simulate it with realistic, changing numbers and label it \"simulated\". Once every \
+         file is written, call preview_site with the site's folder (or the port of a dev server you started): it opens the site in a \
+         panel beside the chat and reports script errors, missing files and buttons that do nothing. Fix every problem it reports \
+         and preview again before you say it's done.\n\
          - Need a folder that isn't shared? Call request_folder.\n\
          - Finish with a short summary of what you did.\n{mode_text}",
         folders.join(", "),
@@ -329,6 +330,17 @@ impl Turn {
                 extra.push("request_web");
             }
         }
+        // A small memory and a request to build: only the tools for building
+        // (and none of the notes about pictures, people or other chats), so the
+        // files it writes have room.
+        let lean = build_ask && self.ep.cloud.is_none() && self.ep.ctx <= 16_384;
+        if lean {
+            extra.retain(|n| tools::for_building(n));
+            defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_some_and(tools::for_building));
+            media_note.clear();
+        }
+        let people_note = people_note.filter(|_| !lean);
+        let chats_note = chats_note && !lean;
         {
             for name in extra {
                 if let Some(d) = tools::find(name) {
@@ -424,6 +436,8 @@ impl Turn {
         let mut previews = 0;
         let mut problems_left: Option<String> = None;
         let mut fix_rounds = 0;
+        // A picture, clip or song made this turn (it's in the chat already).
+        let mut made_media = false;
         // Calls that failed this turn and why: the same call again won't do better.
         let mut failed_calls: Vec<(String, String)> = Vec::new();
         let mut failed_repeats = 0;
@@ -444,7 +458,13 @@ impl Turn {
             }
             self.rest_if_hot().await;
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
-            let (kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
+            // When it doesn't all fit, files it already wrote aren't sent again
+            // (it can read them back); when it does, it keeps seeing them, to edit them exactly.
+            let (mut kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
+            let room = self.ep.ctx.saturating_sub(info.system_tokens + info.profile_tokens + info.tools_tokens + info.reply_reserve);
+            if info.history_tokens > room || info.dropped_messages > 0 {
+                (kept, info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &chat::without_written(&history)).await?;
+            }
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
 
@@ -547,6 +567,20 @@ impl Turn {
                         continue;
                     }
                 }
+                // Asked for a picture and answered without making one ("I can't
+                // generate images"): one more try that can only make it.
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_for_picture(asked) {
+                    if let Some(f) = tools.as_ref().and_then(chat::forced_picture) {
+                        let mut ep = self.ep.clone();
+                        ep.extra["response_format"] = f.response_format.clone();
+                        ep.extra["max_tokens"] = json!(600);
+                        forced = Some((ep, f));
+                        first = Some(finished);
+                        message_id = uuid::Uuid::new_v4().to_string();
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
+                }
                 // Doesn't know what (or who) the user means: it looks it up on
                 // the web, or asks to when the web is off. The guess is dropped.
                 if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::doesnt_know(&finished.content) {
@@ -578,11 +612,17 @@ impl Turn {
             };
 
             let calls = finished.tool_calls.clone();
+            // "I can't generate images" just after making one: say what's true instead.
+            let content = if calls.is_empty() && made_media && chat::denies_pictures(&finished.content) {
+                "It's ready: it's shown above, with a button to save it.".to_string()
+            } else {
+                finished.content
+            };
             let message = Message {
                 id: message_id,
                 chat_id: self.chat_id.clone(),
                 role: "assistant".into(),
-                content: finished.content,
+                content,
                 thinking: (!finished.thinking.is_empty()).then_some(finished.thinking),
                 created_at: now(),
                 tool_calls: (!calls.is_empty()).then(|| calls.clone()),
@@ -610,7 +650,7 @@ impl Turn {
                 // It stopped, but a page it wrote uses files it didn't write
                 // (small models write index.html and leave out styles.css):
                 // one more step writes each, up to a few.
-                if follow_ups < 8 && !follow_ups_failed && self.ep.cloud.is_none() && step < max_steps - 1 {
+                if follow_ups < 12 && !follow_ups_failed && self.ep.cloud.is_none() && step < max_steps - 1 {
                     let offers = |name: &str| tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some(name)));
                     let can_write = offers("write_file");
                     let next = chat::missing_pieces(&written)
@@ -621,18 +661,23 @@ impl Turn {
                         // it stopped without writing anything ("Great, let's
                         // proceed"): the next step writes the first file.
                         .or_else(|| (build_ask && can_write && written.is_empty()).then(|| tools.as_ref().and_then(chat::forced_build)).flatten())
+                        // A stylesheet and script but no page to load them.
+                        .or_else(|| {
+                            let (dir, links) = chat::page_missing(&written)?;
+                            tools.as_ref().and_then(|t| chat::forced_page(t, &dir.join("index.html"), &links))
+                        })
                         // It wrote a site and stopped: open it beside the chat and
                         // check it, then (up to twice) make it fix what the check found.
                         .or_else(|| {
                             let folder = chat::site_folder(&written)?;
-                            if !offers("preview_site") || previews >= 3 {
+                            if !offers("preview_site") || previews >= 6 {
                                 return None;
                             }
                             if !previewed {
                                 return tools.as_ref().and_then(|t| chat::forced_preview(t, &sandbox.display(&folder)));
                             }
                             let problems = problems_left.as_ref()?;
-                            if fix_rounds >= 2 {
+                            if fix_rounds >= 3 {
                                 return None;
                             }
                             fix_rounds += 1;
@@ -665,13 +710,21 @@ impl Turn {
                 let key = call_key(call);
                 let repeat = done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
                 let failed_before = failed_calls.iter().find(|(k, _)| *k == key).map(|(_, why)| why.clone());
-                let outcome = if self.cancel.load(Ordering::Relaxed) {
+                let mut outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
                 } else if let Some(why) = failed_before {
                     failed_repeats += 1;
                     Outcome::error(
                         tools::failed_title(&call.name, &args_of(call)),
                         format!("This exact call already failed: {why} Don't send it again unchanged: fix what the error says, or use another tool."),
+                    )
+                } else if made_media && matches!(call.name.as_str(), "create_image" | "create_video" | "create_music") && !chat::wants_several(&request) {
+                    // Small models went on making the same picture again and again.
+                    Outcome::ok(
+                        "You already made it in this reply, and it's shown in the chat with a button to save it. Don't make another: tell the user in a sentence what you made.",
+                        "Didn't make it again",
+                        "text",
+                        None,
                     )
                 } else if repeat {
                     repeats += 1;
@@ -693,6 +746,14 @@ impl Turn {
                         crate::applog::line("agent", &format!("The {} tool failed in a chat (model {})", call.name, self.ep.cloud.as_ref().map_or("on this PC", |_| "in the cloud")));
                         let why = o.meta["detail"].as_str().map(str::to_string).unwrap_or_else(|| o.text.clone());
                         failed_calls.push((key, why));
+                    } else if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute)) {
+                        // Something changed (a file written, a command run): a call
+                        // that failed before (previewing a page that wasn't there
+                        // yet) may work now.
+                        failed_calls.clear();
+                        failed_repeats = 0;
+                        // Reading a file or previewing the site again shows the change.
+                        done_calls.retain(|k| !tools::find(k.split('{').next().unwrap_or_default()).is_some_and(|t| t.risk == Risk::Read));
                     }
                     o
                 };
@@ -700,11 +761,22 @@ impl Turn {
                 if matches!(call.name.as_str(), "write_file" | "edit_file") && outcome.meta["status"] != "error" {
                     previewed = false;
                 }
+                if matches!(call.name.as_str(), "create_image" | "edit_image" | "create_video" | "create_music") && outcome.meta["status"] == "ok" {
+                    made_media = true;
+                }
                 if call.name == "preview_site" && outcome.meta["preview_site"].is_string() {
                     previewed = true;
                     previews += 1;
-                    problems_left = (outcome.meta["preview_problems"].as_u64().unwrap_or(0) > 0)
+                    let found = (outcome.meta["preview_problems"].as_u64().unwrap_or(0) > 0)
                         .then(|| outcome.meta["detail"].as_str().unwrap_or_default().lines().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n"));
+                    // The same problems as last time: patching isn't working.
+                    if found.is_some() && found == problems_left {
+                        outcome.text.push_str(
+                            "\n\nThese are the same problems as the last preview: the change didn't fix them. Read the whole file with read_file, \
+                             then send it back fixed and complete with write_file (define everything before it's used), instead of another small edit.",
+                        );
+                    }
+                    problems_left = found;
                 }
                 // The user let it use the web: the web tools, from the next step on.
                 if outcome.meta["web_granted"] == true {
@@ -994,10 +1066,15 @@ impl Turn {
         let mut notes: Vec<String> = Vec::new();
         let mut web_granted = false;
         let unsure: Vec<usize> = names.iter().enumerate().filter(|(_, n)| !n.described()).map(|(i, _)| i).take(3).collect();
-        if !unsure.is_empty() {
+        // With the web already on, the first named things are looked up even when
+        // the model says it knows them: its memory of a look is often muddled
+        // ("green tunic, blue tunic, red tunic"). With it off, it asks only when unsure.
+        let free = crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id);
+        let targets: Vec<usize> = if free { (0..names.len()).take(2).chain(unsure.iter().copied()).fold(Vec::new(), |mut v, i| { if !v.contains(&i) { v.push(i); } v }) } else { unsure.clone() };
+        if !targets.is_empty() {
             let list = unsure.iter().map(|&i| names[i].name.trim().to_string()).collect::<Vec<_>>().join(", ");
-            let mut can_search = crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id);
-            if !can_search && !crate::offline::blocks(crate::offline::Keep::Web) {
+            let mut can_search = free;
+            if !can_search && !unsure.is_empty() && !crate::offline::blocks(crate::offline::Keep::Web) {
                 let looks = if unsure.len() == 1 { "looks" } else { "look" };
                 let ask_call = ToolCall {
                     id: format!("{}_web", call.id),
@@ -1008,7 +1085,7 @@ impl Turn {
                 can_search = web_granted;
             }
             if can_search {
-                for &i in &unsure {
+                for &i in &targets {
                     if self.cancel.load(Ordering::Relaxed) {
                         break;
                     }

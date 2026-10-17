@@ -437,7 +437,41 @@ async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, Strin
             return Ok(HubLink::Chat { file, model });
         }
     }
-    Err("SulcusAI can't use that model. It runs GGUF chat models, and picture, video and music models built on SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan or ACE-Step.".into())
+    Err(hub_why_not(&r.info))
+}
+
+/// Why a pasted model can't be used, by what kind of model it is (his
+/// brother read "GGUF" in the old message as a broken file, every time).
+fn hub_why_not(info: &serde_json::Value) -> String {
+    let text = |v: &serde_json::Value| v.as_str().map(str::to_lowercase).unwrap_or_default();
+    let id = text(&info["id"]);
+    let pipeline = text(&info["pipeline_tag"]);
+    let tags: Vec<String> = info["tags"].as_array().into_iter().flatten().map(text).collect();
+    let bases = text(&info["cardData"]["base_model"]) + &info["cardData"]["base_model"].as_array().into_iter().flatten().map(text).collect::<Vec<_>>().join(" ");
+    let picture = matches!(pipeline.as_str(), "text-to-image" | "image-to-image") || tags.iter().any(|t| t.starts_with("diffusers"));
+    let works = "Picture models from Hugging Face work when they're built on SDXL (for example Juggernaut XL or RealVisXL), Stable Diffusion 1.5 (for example Realistic Vision), Z-Image, FLUX.2 klein or Qwen Image.";
+    // Only the folders Python's diffusers library reads (unet/, vae/…), no single file.
+    let files: Vec<String> = info["siblings"].as_array().into_iter().flatten().map(|s| text(&s["rfilename"])).collect();
+    let one_file = files.iter().any(|f| !f.contains('/') && (f.ends_with(".safetensors") || f.ends_with(".ckpt") || f.ends_with(".gguf")));
+    let split = files.iter().any(|f| f.starts_with("unet/") || f.starts_with("transformer/")) && !one_file;
+    if (id.contains("flux.1") || bases.contains("flux.1")) && !id.contains("flux.2") {
+        format!("FLUX.1 models (dev and schnell) don't run in SulcusAI yet; the newer FLUX.2 klein does. {works}")
+    } else if picture && split {
+        format!(
+            "That model is only there split into folders (unet, vae, text_encoder), the way Python tools load it. SulcusAI needs it as one .safetensors or .gguf file: \
+             look for a version of it with a single file (often in another repository, or under Files and versions). {works}"
+        )
+    } else if picture {
+        format!("SulcusAI can't run that picture model yet: it isn't built on one of the kinds it runs. {works}")
+    } else if pipeline.contains("video") {
+        "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.".into()
+    } else if pipeline.contains("audio") || pipeline.contains("music") {
+        "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.".into()
+    } else if matches!(pipeline.as_str(), "text-generation" | "image-text-to-text") {
+        "That chat model has no GGUF file, the format SulcusAI runs chat models in. Look for the same model with \"GGUF\" in its name (for example from unsloth or bartowski) and paste that link.".into()
+    } else {
+        format!("SulcusAI can't use that model. Chat models need a GGUF file. {works}")
+    }
 }
 
 /// Installs one file of a Hugging Face model, like a catalog model.
@@ -2240,5 +2274,24 @@ mod open_tests {
     fn a_long_address_opens_in_the_browser() {
         let url = format!("https://sulcusai.sseditor.com/?test={}", "x".repeat(700));
         super::open_with_system(std::ffi::OsStr::new(&url)).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod hub_link_tests {
+    use serde_json::json;
+
+    /// What his brother pasted: Stable Diffusion 1.5 and FLUX.1 models, and the
+    /// message read like a broken GGUF file.
+    #[test]
+    fn a_model_that_cant_be_used_says_why_in_plain_words() {
+        let flux = super::hub_why_not(&json!({ "id": "city96/FLUX.1-schnell-gguf", "pipeline_tag": "text-to-image", "cardData": { "base_model": "black-forest-labs/FLUX.1-schnell" } }));
+        assert!(flux.starts_with("FLUX.1 models") && flux.contains("Juggernaut XL"), "{flux}");
+        let sd3 = super::hub_why_not(&json!({ "id": "stabilityai/stable-diffusion-3.5-large", "pipeline_tag": "text-to-image", "tags": ["diffusers"] }));
+        assert!(sd3.contains("picture model") && !sd3.contains("GGUF"), "{sd3}");
+        let split = super::hub_why_not(&json!({ "id": "Lykon/dreamshaper-8", "pipeline_tag": "text-to-image", "siblings": [{ "rfilename": "unet/diffusion_pytorch_model.safetensors" }, { "rfilename": "vae/diffusion_pytorch_model.safetensors" }] }));
+        assert!(split.contains("split into folders"), "{split}");
+        let chat = super::hub_why_not(&json!({ "id": "Qwen/Qwen3-8B", "pipeline_tag": "text-generation" }));
+        assert!(chat.contains("no GGUF file") && chat.contains("unsloth"), "{chat}");
     }
 }

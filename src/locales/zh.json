@@ -2735,7 +2735,6 @@
  "Share folder…": "共享文件夹…",
  "Share “{name}”": "共享“{name}”",
  "Sharing uses People. Turn it on in Features, link with someone, then share the folder.": "共享需要使用“联系人”。请在“功能”中开启，先与某人关联，再共享文件夹。",
- "SulcusAI can't use that model. It runs GGUF chat models, and picture, video and music models built on SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan or ACE-Step.": "SulcusAI 无法使用这个模型。它可以运行 GGUF 聊天模型，以及基于 SDXL、Z-Image、FLUX.2 klein、Qwen Image、Wan 或 ACE-Step 的图片、视频和音乐模型。",
  "SulcusAI's logs (Settings → Logs). They start again from now.": "SulcusAI 的日志（“设置 → 日志”）。会从现在起重新记录。",
  "That folder no longer exists.": "该文件夹已不存在。",
  "That isn't a Hugging Face link. Paste a link that starts with https://huggingface.co/.": "这不是 Hugging Face 链接。请粘贴以 https://huggingface.co/ 开头的链接。",
@@ -2793,5 +2792,9 @@
  "That preview has stopped. Ask the assistant to preview the site again.": "该预览已停止。请让助手重新预览网站。",
  "The page didn't finish loading within 15 seconds (an endless loop or a script that never ends?)": "页面在 15 秒内未加载完成（死循环或永不结束的脚本？）",
  "The site built in this chat, running beside it": "此聊天中构建的网站，在旁边运行",
- "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "此聊天处于离线状态，因此网站无法访问互联网。为此聊天开启网络即可允许。"
+ "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "此聊天处于离线状态，因此网站无法访问互联网。为此聊天开启网络即可允许。",
+ "Didn't make it again": "没有再次生成",
+ "It's ready: it's shown above, with a button to save it.": "已完成：显示在上方，并附有保存按钮。",
+ "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI 暂时无法运行该音乐模型。基于 ACE-Step 1.5 的 Hugging Face 音乐模型可以使用。",
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI 暂时无法运行该视频模型。基于 Wan 2.2 5B 或 Wan 2.1 1.3B 的 Hugging Face 视频模型可以使用。"
 }

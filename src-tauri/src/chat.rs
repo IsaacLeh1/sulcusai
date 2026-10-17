@@ -149,6 +149,55 @@ fn turns(history: &[Message]) -> Vec<&[Message]> {
     out
 }
 
+/// History with what's already in files left out: the contents of files it
+/// wrote or edited in earlier steps, and long code it pasted into the chat
+/// alongside them. A site's three files otherwise filled a small model's
+/// memory twice over (pasted and written) by the second file. Only what's
+/// sent changes; the newest message stays whole.
+///
+/// The contents are dropped, not replaced with a note: given a stand-in
+/// ("[written to the file]"), Qwen2.5-Coder 14B wrote stand-ins into the
+/// next files. Copying a call with no contents fails loudly instead.
+pub fn without_written(history: &[Message]) -> Vec<Message> {
+    static FENCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)```[^\n]*\n(.*?)```").unwrap());
+    let last = history.len().saturating_sub(1);
+    history
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if i == last || m.role != "assistant" {
+                return m.clone();
+            }
+            let mut m = m.clone();
+            let mut wrote = false;
+            if let Some(calls) = m.tool_calls.as_mut() {
+                for c in calls.iter_mut().filter(|c| matches!(c.name.as_str(), "write_file" | "edit_file" | "create_document")) {
+                    let Ok(mut args) = serde_json::from_str::<Value>(&c.arguments) else { continue };
+                    for key in ["content", "new_text", "old_text", "markdown"] {
+                        if args.get(key).and_then(Value::as_str).is_some_and(|s| s.len() > 300) {
+                            if let Some(o) = args.as_object_mut() {
+                                o.remove(key);
+                            }
+                            wrote = true;
+                        }
+                    }
+                    c.arguments = args.to_string();
+                }
+            }
+            // Code it pasted next to a file it wrote, or before writing one.
+            let next_writes = history.get(i + 1..).into_iter().flatten().take(4).any(|n| n.tool_calls.iter().flatten().any(|c| c.name == "write_file"));
+            // Left out without a note: given "[72 lines of code, in the files]" it
+            // wrote that into its next reply instead of code.
+            if wrote || next_writes {
+                m.content = FENCE
+                    .replace_all(&m.content, |c: &regex::Captures| if c[1].lines().count() > 12 { String::new() } else { c[0].to_string() })
+                    .into_owned();
+            }
+            m
+        })
+        .collect()
+}
+
 /// Keeps the newest turns that fit. If even the current turn is too big,
 /// older tool outputs inside it are replaced with a short note.
 pub async fn fit_history(
@@ -194,6 +243,23 @@ pub async fn fit_history(
                 if m.role == "tool" && *size > stub {
                     m.content = TRIMMED_TOOL_OUTPUT.into();
                     total = total - size + stub;
+                }
+            }
+            // Still too big: its own long earlier text in this turn ("Step 14:
+            // write the files again…") is cut to its first lines. The newest
+            // message stays whole.
+            let last = group.len().saturating_sub(1);
+            for i in 0..last {
+                if total <= budget {
+                    break;
+                }
+                let m = &mut group[i];
+                if m.role == "assistant" && m.content.chars().count() > 400 {
+                    let before = message_tokens(ep, m).await?;
+                    let head: String = m.content.chars().take(300).collect();
+                    m.content = format!("{head}…");
+                    let after = message_tokens(ep, m).await?;
+                    total = total.saturating_sub(before.saturating_sub(after));
                 }
             }
             used += total;
@@ -547,6 +613,45 @@ pub fn forced_web(tools: &Value) -> Option<ForcedLookup> {
     })
 }
 
+// Asking for a picture to be made.
+static PICTURE_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(make|create|draw|generate|paint|render|design|show me|give me|i want|can you (make|draw|create))\b[\s\S]{0,60}\b(picture|image|photo|drawing|painting|illustration|artwork|art|wallpaper|logo|portrait|sketch|pixel art|poster)\b|\b(picture|image|photo|drawing|painting) of\b|\b(draw|paint|sketch|illustrate)\s+(me\s+)?(a|an|the|some|my|our)\b").unwrap()
+});
+// Saying it can't make pictures (often right after making one).
+static NO_PICTURES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(can'?t|cannot|can not|unable to|not able to|don'?t have the ability to)\b[^.!?\n]{0,30}\b(generate|create|make|draw|produce|display|show)\b[^.!?\n]{0,20}\b(images?|pictures?|photos?|drawings?|art)").unwrap()
+});
+
+/// More than one picture (or clip, or song) asked for in one message.
+pub fn wants_several(text: &str) -> bool {
+    static SEVERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(pictures|images|photos|drawings|versions|variations|options|several|a few|some|both|each|every|all of|series|set of|[2-9]|two|three|four|five)\b").unwrap()
+    });
+    SEVERAL.is_match(text)
+}
+
+/// The person asked for a picture to be made.
+pub fn asks_for_picture(text: &str) -> bool {
+    PICTURE_ASK.is_match(text)
+}
+
+/// The reply says it can't make pictures.
+pub fn denies_pictures(reply: &str) -> bool {
+    NO_PICTURES.is_match(&reply.replace(['\u{2019}', '\u{2018}'], "'"))
+}
+
+/// For a model that answered a picture request without making one: one call
+/// that makes it.
+pub fn forced_picture(tools: &Value) -> Option<ForcedLookup> {
+    let def = tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some("create_image"))?;
+    let schema = json!({ "type": "object", "properties": { "name": { "const": "create_image" }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
+    Some(ForcedLookup {
+        names: vec!["create_image".into()],
+        nudge: "(You can make pictures on this PC: make it now with create_image, with a vivid description of what I asked for (spell out how anything named looks). Reply with only one tool call as JSON, {\"name\": \"create_image\", \"arguments\": {...}}.)".into(),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
 /// A named thing in a picture request (a character, a game, a brand, a
 /// person, a place) and what the model says it looks like.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -782,6 +887,40 @@ pub fn forced_fix(tools: &Value, problems: &str) -> Option<ForcedLookup> {
         ),
         response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
     })
+}
+
+/// A site's stylesheet or script written but no page to load them: the
+/// folder its index.html belongs in, and the files it should link.
+pub fn page_missing(written: &[std::path::PathBuf]) -> Option<(std::path::PathBuf, Vec<String>)> {
+    let ext = |p: &std::path::PathBuf| p.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    if written.iter().any(|p| matches!(ext(p).as_str(), "html" | "htm")) {
+        return None;
+    }
+    let parts: Vec<&std::path::PathBuf> = written.iter().filter(|p| matches!(ext(p).as_str(), "css" | "js" | "mjs")).collect();
+    let first = parts.first()?;
+    // A script in js/ or css/ belongs to the folder above.
+    let mut dir = first.parent()?.to_path_buf();
+    if dir.file_name().is_some_and(|n| matches!(n.to_string_lossy().to_ascii_lowercase().as_str(), "js" | "css" | "scripts" | "styles" | "assets")) {
+        dir = dir.parent()?.to_path_buf();
+    }
+    let index = dir.join("index.html");
+    if index.exists() {
+        return None;
+    }
+    let links = parts.iter().filter_map(|p| p.strip_prefix(&dir).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).collect();
+    Some((dir, links))
+}
+
+/// One call that writes the page a site's stylesheet and script were made for.
+pub fn forced_page(tools: &Value, index: &std::path::Path, links: &[String]) -> Option<ForcedLookup> {
+    let mut f = forced_write(tools, "index.html", index)?;
+    f.nudge = format!(
+        "(The site has {} but no page: write index.html now with write_file (path {:?}), the whole page, linking {} and with every part the user asked for. Reply with only one tool call as JSON, {{\"name\": \"write_file\", \"arguments\": {{...}}}}.)",
+        links.join(" and "),
+        index.display().to_string(),
+        links.join(" and ")
+    );
+    Some(f)
 }
 
 /// The folder of the newest web page written (where a site's index.html is).
@@ -1138,6 +1277,28 @@ mod tests {
     }
 
     #[test]
+    fn files_it_already_wrote_are_left_out_of_what_the_model_is_sent() {
+        let page = format!("<html>{}</html>", "<p>row</p>\n".repeat(80));
+        let pasted = format!("Here it is:\n```html\n{page}\n```\nNow I'll save it.");
+        let call = |name: &str, args: Value| ToolCall { id: "c".into(), name: name.into(), arguments: args.to_string() };
+        let history = vec![
+            Message { role: "user".into(), content: "Build a site".into(), ..Default::default() },
+            Message { role: "assistant".into(), content: pasted.clone(), ..Default::default() },
+            Message { role: "assistant".into(), tool_calls: Some(vec![call("write_file", json!({ "path": "s/index.html", "content": page }))]), ..Default::default() },
+            Message { role: "tool".into(), content: "Created s/index.html".into(), tool_call_id: Some("c".into()), ..Default::default() },
+            Message { role: "assistant".into(), tool_calls: Some(vec![call("write_file", json!({ "path": "s/app.js", "content": "x".repeat(900) }))]), ..Default::default() },
+        ];
+        let slim = without_written(&history);
+        assert!(!slim[1].content.contains("<p>row</p>") && !slim[1].content.contains('[') && slim[1].content.starts_with("Here it is:"), "{}", slim[1].content);
+        let args: Value = serde_json::from_str(&slim[2].tool_calls.as_ref().unwrap()[0].arguments).unwrap();
+        assert!(args.get("content").is_none(), "no stand-in for the model to copy: {args}");
+        assert_eq!(args["path"], "s/index.html");
+        // The newest message is sent whole.
+        assert_eq!(slim[4].tool_calls, history[4].tool_calls);
+        assert_eq!(slim[0].content, "Build a site");
+    }
+
+    #[test]
     fn a_built_site_is_previewed_and_its_problems_fixed() {
         let def = |n: &str| json!({ "type": "function", "function": { "name": n, "description": "", "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "port": { "type": "integer" } } } } });
         let tools = json!([def("preview_site"), def("edit_file"), def("write_file"), def("run_command")]);
@@ -1152,6 +1313,35 @@ mod tests {
         let written = vec![std::path::PathBuf::from("C:/s/site/app.js"), std::path::PathBuf::from("C:/s/site/index.html"), std::path::PathBuf::from("C:/s/site/style.css")];
         assert_eq!(site_folder(&written), Some(std::path::PathBuf::from("C:/s/site")));
         assert_eq!(site_folder(&written[..1]), None);
+        // A stylesheet and script but no page (what Qwen2.5-Coder 14B left in the live test).
+        let base = std::env::temp_dir().join(format!("sulcus-page-{}", uuid::Uuid::new_v4().simple()));
+        let parts = vec![base.join("style.css"), base.join("js").join("app.js")];
+        let (dir, links) = page_missing(&parts).unwrap();
+        assert_eq!(dir, base);
+        assert_eq!(links, vec!["style.css".to_string(), "js/app.js".to_string()]);
+        assert!(page_missing(&written).is_none(), "a page was written");
+        let tools = json!([def("write_file")]);
+        let f = forced_page(&tools, &dir.join("index.html"), &links).unwrap();
+        assert!(f.nudge.contains("style.css and js/app.js"));
+        assert_eq!(f.response_format["json_schema"]["schema"]["properties"]["arguments"]["properties"]["path"]["const"], dir.join("index.html").display().to_string());
+    }
+
+    #[test]
+    fn picture_requests_get_a_picture_even_when_the_model_says_it_cant() {
+        for a in ["Make me a picture of Link from The Legend of Zelda in pixel art.", "can you draw a cat wearing a hat", "I want a logo for my bakery", "image of a sunset over Provo"] {
+            assert!(asks_for_picture(a), "{a}");
+        }
+        for a in ["What's in this picture?", "Build me a stock exchange website", "how do I resize an image in Photoshop"] {
+            assert!(!asks_for_picture(a), "{a}");
+        }
+        assert!(denies_pictures("I'm sorry, but I can't generate images directly. However, I can help you find templates."));
+        assert!(denies_pictures("As a text model I am unable to create pictures."));
+        assert!(!denies_pictures("Here's Link in pixel art, standing on a grassy hill."));
+        let tools = json!([{ "type": "function", "function": { "name": "create_image", "description": "", "parameters": { "type": "object", "properties": { "prompt": { "type": "string" } } } } }]);
+        assert_eq!(forced_picture(&tools).unwrap().names, vec!["create_image".to_string()]);
+        assert!(forced_picture(&json!([])).is_none());
+        assert!(!wants_several("Make me a picture of Link from The Legend of Zelda in pixel art."));
+        assert!(wants_several("make 3 pictures of a cat") && wants_several("show me a few versions of the logo"));
     }
 
     #[test]

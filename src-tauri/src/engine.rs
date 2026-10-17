@@ -374,6 +374,18 @@ impl Endpoint {
 #[derive(Default)]
 pub struct Engine {
     running: Option<Running>,
+    /// A model paused to give a picture the graphics card: its address, so
+    /// it comes back where the chat that asked for the picture expects it.
+    paused: Option<Paused>,
+}
+
+/// What a paused model needs to come back as it was.
+#[derive(Debug, Clone)]
+pub struct Paused {
+    pub model_id: String,
+    pub vision: bool,
+    port: u16,
+    key: String,
 }
 
 impl Engine {
@@ -446,8 +458,12 @@ impl Engine {
         }
         self.stop().await;
 
-        let port = free_port()?;
-        let key = uuid::Uuid::new_v4().simple().to_string();
+        // Coming back from a pause: the same address, if it's still free.
+        let back = self.paused.take().filter(|p| p.model_id == spec.model_id && std::net::TcpListener::bind(("127.0.0.1", p.port)).is_ok());
+        let (port, key) = match back {
+            Some(p) => (p.port, p.key),
+            None => (free_port()?, uuid::Uuid::new_v4().simple().to_string()),
+        };
         let (log, log_err) = capped_log(spec.log).map_err(|e| e.to_string())?;
 
         // On a PC with integrated graphics too, the model goes on the dedicated card.
@@ -539,6 +555,19 @@ impl Engine {
             r.child.start_kill().ok();
             let _ = tokio::time::timeout(Duration::from_secs(5), r.child.wait()).await;
         }
+    }
+
+    /// Stops the model for a while (a picture needs the graphics card), keeping
+    /// its address for when it's started again. What was paused, if anything.
+    pub async fn pause(&mut self) -> Option<Paused> {
+        if !self.alive() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        let p = Paused { model_id: r.model_id.clone(), vision: r.vision, port: r.port, key: r.key.clone() };
+        self.stop().await;
+        self.paused = Some(p.clone());
+        Some(p)
     }
 }
 

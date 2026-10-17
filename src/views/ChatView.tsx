@@ -508,7 +508,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo],
   );
@@ -884,6 +884,8 @@ function renderItems(
   openPicture?: (i: MediaItem) => void,
   readUpTo = 0,
   openPreview?: (p: PreviewTarget) => void,
+  /** For saving pictures made in the chat (always on; `toast` above is read-aloud's). */
+  saveToast?: PushToast,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   // "Sent" or "Read" under the newest message (and ones added mid-reply):
@@ -935,7 +937,7 @@ function renderItems(
             return (
               <Fragment key={c.id}>
                 <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} />
-                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={toast} />}
+                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={saveToast} />}
               </Fragment>
             );
           })}

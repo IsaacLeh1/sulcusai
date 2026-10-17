@@ -2735,7 +2735,6 @@
  "Share folder…": "フォルダーを共有…",
  "Share “{name}”": "「{name}」を共有",
  "Sharing uses People. Turn it on in Features, link with someone, then share the folder.": "共有には「ピープル」を使います。「機能」でオンにし、相手とリンクしてからフォルダーを共有してください。",
- "SulcusAI can't use that model. It runs GGUF chat models, and picture, video and music models built on SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan or ACE-Step.": "SulcusAI ではこのモデルを使えません。使えるのは GGUF のチャットモデルと、SDXL、Z-Image、FLUX.2 klein、Qwen Image、Wan、ACE-Step をベースにした画像・動画・音楽モデルです。",
  "SulcusAI's logs (Settings → Logs). They start again from now.": "SulcusAI のログ（「設定 → ログ」）です。今から記録し直します。",
  "That folder no longer exists.": "そのフォルダーはもうありません。",
  "That isn't a Hugging Face link. Paste a link that starts with https://huggingface.co/.": "Hugging Face のリンクではありません。https://huggingface.co/ で始まるリンクを貼り付けてください。",
@@ -2793,5 +2792,9 @@
  "That preview has stopped. Ask the assistant to preview the site again.": "そのプレビューは停止しました。アシスタントにもう一度サイトをプレビューするよう頼んでください。",
  "The page didn't finish loading within 15 seconds (an endless loop or a script that never ends?)": "ページが 15 秒以内に読み込み終わりませんでした（無限ループか、終わらないスクリプト？）",
  "The site built in this chat, running beside it": "このチャットで作ったサイトを横で実行",
- "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "このチャットはオフラインのため、サイトはインターネットにアクセスできません。許可するには、このチャットでウェブをオンにしてください。"
+ "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "このチャットはオフラインのため、サイトはインターネットにアクセスできません。許可するには、このチャットでウェブをオンにしてください。",
+ "Didn't make it again": "もう一度は作りませんでした",
+ "It's ready: it's shown above, with a button to save it.": "できました。上に表示されていて、保存ボタンもあります。",
+ "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI はまだその音楽モデルを実行できません。Hugging Face の音楽モデルは ACE-Step 1.5 をベースにしたものなら使えます。",
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI はまだその動画モデルを実行できません。Hugging Face の動画モデルは Wan 2.2 5B または Wan 2.1 1.3B をベースにしたものなら使えます。"
 }

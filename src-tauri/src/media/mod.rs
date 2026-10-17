@@ -1289,23 +1289,67 @@ impl RunCtx<'_> {
 }
 
 /// Unloads the chat model when nothing is using it, so a picture or video
-/// gets the whole graphics card. Never for a job a chat asked for: that
-/// chat's reply continues on the loaded model afterwards.
-async fn make_room(state: &Arc<AppState>, req: &Request) {
-    if req.chat_id.is_none() && state.budget().vram > 0 && state.generations.lock().unwrap().is_empty() {
-        let mut e = state.engine.lock().await;
-        if e.status().model_id.is_some() {
-            e.stop().await;
-            emit(state, "engine:unloaded", json!({}));
+/// gets the whole graphics card.
+///
+/// For a job a chat asked for, whose reply goes on afterwards: the chat model
+/// steps aside only when the picture model fits the card alone but not beside
+/// it (a 14B chat model took 9 of 12 GB, and pictures fell back to the
+/// processor: minutes instead of seconds). It's paused, keeping its address,
+/// and `give_back` brings it back for the rest of the reply.
+async fn make_room(state: &Arc<AppState>, req: &Request, model: Option<&MediaModel>) -> Option<crate::engine::Paused> {
+    let vram = state.budget().vram;
+    if vram == 0 {
+        return None;
+    }
+    if req.chat_id.is_none() {
+        if state.generations.lock().unwrap().is_empty() {
+            let mut e = state.engine.lock().await;
+            if e.status().model_id.is_some() {
+                e.stop().await;
+                emit(state, "engine:unloaded", json!({}));
+            }
         }
+        return None;
+    }
+    // Another chat replying on it too: it stays.
+    if state.generations.lock().unwrap().len() > 1 {
+        return None;
+    }
+    let need = (model?.min_vram_gb * GIB as f64) as u64;
+    let reserved = chat_model_vram(state).await;
+    if reserved == 0 || vram < need || vram.saturating_sub(reserved) >= need {
+        return None;
+    }
+    let paused = state.engine.lock().await.pause().await?;
+    crate::applog::line("media", &format!("Paused {} so the picture gets the graphics card", paused.model_id));
+    emit(state, "engine:unloaded", json!({}));
+    Some(paused)
+}
+
+/// Starts a model paused for a chat's picture again, at its old address, so
+/// the chat's reply carries on.
+async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paused) {
+    match crate::llm_endpoint(state, Some(paused.model_id.clone()), paused.vision, || {}).await {
+        Ok(_) => crate::applog::line("media", &format!("Started {} again after the picture", paused.model_id)),
+        Err(e) => crate::applog::line("media", &format!("Couldn't start {} again after the picture: {e}", paused.model_id)),
     }
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
-    if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
-        make_room(state, req).await;
+    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
+        make_room(state, req, model).await
+    } else {
+        None
+    };
+    let result = run_kind(state, id, req, model, cancel, progress).await;
+    if let Some(p) = paused {
+        give_back(state, p).await;
     }
+    result
+}
+
+async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let reserved = chat_model_vram(state).await;
     let ctx = RunCtx { state, req, cancel, progress, reserved };
     let work = work_dir(&state.paths, id)?;
