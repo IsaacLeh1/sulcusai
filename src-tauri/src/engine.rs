@@ -163,15 +163,39 @@ async fn dedicated_devices(exe: &Path) -> Vec<String> {
 /// the integrated one. Uses what the chat engine found; its numbers match
 /// the engine's only when it saw every card, so nothing is set otherwise.
 pub fn prefer_dedicated(cmd: &mut Command) {
-    let Some((_, devices)) = DEVICES.lock().unwrap().clone() else { return };
+    if let Some(picked) = dedicated_indexes() {
+        cmd.env("GGML_VK_VISIBLE_DEVICES", picked);
+    }
+}
+
+/// The dedicated cards' Vulkan numbers ("0"), when known for sure: the
+/// engine listed every card, and some are integrated.
+fn dedicated_indexes() -> Option<String> {
+    let (_, devices) = DEVICES.lock().unwrap().clone()?;
     let cards = crate::hardware::cards();
     if devices.len() != cards.len() || std::env::var_os("GGML_VK_VISIBLE_DEVICES").is_some() {
-        return;
+        return None;
     }
     let picked: Vec<String> = dedicated_of(&devices, &cards).iter().filter_map(|id| id.strip_prefix("Vulkan").map(str::to_string)).collect();
-    if !picked.is_empty() {
-        cmd.env("GGML_VK_VISIBLE_DEVICES", picked.join(","));
+    (!picked.is_empty()).then(|| picked.join(","))
+}
+
+/// Before a graphics engine runs (pictures, speech): learns which card is
+/// which from the installed chat engine, if no chat model did yet this run,
+/// so the engine can be kept off the integrated graphics. True when the
+/// dedicated card is known and engines will be pinned to it.
+pub async fn learn_devices(state: &crate::AppState) -> bool {
+    let known = DEVICES.lock().unwrap().is_some();
+    if !known {
+        let exe = backend_for(&state.budget()).ok().and_then(|b| installed_server(&state.paths, &state.catalog.engine, b));
+        if let Some(exe) = exe {
+            dedicated_devices(&exe).await;
+            if let Some((_, d)) = DEVICES.lock().unwrap().as_ref() {
+                crate::applog::line("engine", &format!("Graphics devices the engines see: {}", d.iter().map(|(id, name)| format!("{id} {name}")).collect::<Vec<_>>().join(", ")));
+            }
+        }
     }
+    dedicated_indexes().is_some()
 }
 
 /// Finds a program by file name anywhere under `dir`.

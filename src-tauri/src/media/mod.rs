@@ -296,6 +296,14 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
             return Ok(m.clone());
         }
     }
+    // The best one that fits the graphics card, so the job stays on it.
+    let fits = |m: &&MediaModel| {
+        let b = state.budget();
+        b.vram > 0 && b.vram as f64 >= m.min_vram_gb * GIB as f64
+    };
+    if let Some(m) = state.catalog.media.models.iter().filter(ok).filter(fits).max_by_key(|m| m.quality) {
+        return Ok(m.clone());
+    }
     if let Some(m) = state.catalog.media.models.iter().filter(ok).max_by_key(|m| m.quality) {
         return Ok(m.clone());
     }
@@ -633,6 +641,8 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 /// Queues a job and runs it when it's its turn. Returns what it made.
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
     check(state, &req)?;
+    // Which card is which, so every media engine runs on the dedicated one.
+    crate::engine::learn_devices(state).await;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
     let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok() };
@@ -824,6 +834,57 @@ fn card_trouble(e: &str) -> bool {
     ["make enough memory", "compute failed", "out of memory", "vulkan", "device lost", "vk_error", "ggml_backend"].iter().any(|w| l.contains(w))
 }
 
+/// The value after a flag, if it's there.
+fn flag_value<'a>(args: &'a [std::ffi::OsString], flag: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).and_then(|v| v.to_str())
+}
+
+/// `flag value` set (replaced, or put before the output path, which stays last).
+fn with_flag(args: &[std::ffi::OsString], flag: &str, value: Option<&str>) -> Vec<std::ffi::OsString> {
+    let mut out = args.to_vec();
+    if let Some(i) = out.iter().position(|a| a == flag) {
+        match value {
+            Some(v) if i + 1 < out.len() => out[i + 1] = v.into(),
+            _ => {}
+        }
+        return out;
+    }
+    let at = out.iter().position(|a| a == "-o").unwrap_or(out.len());
+    let mut add: Vec<std::ffi::OsString> = vec![flag.into()];
+    if let Some(v) = value {
+        add.push(v.into());
+    }
+    out.splice(at..at, add);
+    out
+}
+
+/// A job planned to stay on the graphics card: 1 GiB of it kept free for
+/// spikes and other programs (unless a budget is set already), and the
+/// picture decoded in tiles on cards under 12 GB or for big pictures.
+fn card_friendly(args: &[std::ffi::OsString], vram_gib: f64) -> Vec<std::ffi::OsString> {
+    let mut out = if flag_value(args, "--max-vram").is_some() { args.to_vec() } else { with_flag(args, "--max-vram", Some("-1")) };
+    let pixels = flag_value(args, "-W").and_then(|w| w.parse::<f64>().ok()).unwrap_or(0.0) * flag_value(args, "-H").and_then(|h| h.parse::<f64>().ok()).unwrap_or(0.0);
+    if vram_gib < 12.0 || pixels > 1.2e6 {
+        out = with_flag(&out, "--vae-tiling", None);
+    }
+    out
+}
+
+/// After the card failed: more of it left free (or half the budget), the
+/// text reader on the processor, and no fast attention. With the card
+/// `pinned` (the only one the engine sees), the rest is named for it, since
+/// the engine's own placement otherwise may move it to integrated graphics.
+fn lighter_on_card(args: &[std::ffi::OsString], pinned: bool) -> Vec<std::ffi::OsString> {
+    let budget = flag_value(args, "--max-vram").and_then(|v| v.parse::<f64>().ok()).unwrap_or(-1.0);
+    let lighter = if budget > 0.0 { format!("{:.1}", (budget / 2.0).max(1.0)) } else { "-3".to_string() };
+    let mut out: Vec<std::ffi::OsString> = with_flag(args, "--max-vram", Some(&lighter)).into_iter().filter(|a| a != "--diffusion-fa").collect();
+    out = with_flag(&out, "--vae-tiling", None);
+    if pinned && flag_value(&out, "--backend").is_none() {
+        out = with_flag(&out, "--backend", Some("diffusion=Vulkan0,te=cpu,vae=Vulkan0"));
+    }
+    out
+}
+
 /// The argument list with the picture's size brought down to `side` pixels
 /// on its longer edge (multiples of 16, as the engine needs).
 fn smaller(args: &[std::ffi::OsString], side: u32) -> Vec<std::ffi::OsString> {
@@ -860,26 +921,6 @@ fn without_vram(args: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
     out
 }
 
-/// The argument list with its graphics-memory budget replaced.
-fn with_vram(args: &[std::ffi::OsString], gib: f64) -> Vec<std::ffi::OsString> {
-    let mut out = Vec::with_capacity(args.len() + 2);
-    let mut skip = false;
-    for a in args {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if a == "--max-vram" {
-            skip = true;
-            continue;
-        }
-        out.push(a.clone());
-    }
-    // Before the output path, which stays last.
-    let at = out.len().saturating_sub(2);
-    out.splice(at..at, ["--max-vram".into(), format!("{:.1}", gib.max(1.0)).into()]);
-    out
-}
 
 impl RunCtx<'_> {
     fn limits(&self) -> sd::Limits {
@@ -898,40 +939,48 @@ impl RunCtx<'_> {
     }
 
     async fn run_sd(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
-        let first = self.run_sd_once(args.clone(), work, None).await;
-        let on_card = self.state.budget().vram > 0;
-        let second = match first {
-            // Short of graphics memory (other programs use the card too), or
-            // the card's driver gave up: once more with half the budget,
-            // which streams more weights, and the picture decoded in tiles.
-            Err(e) if on_card && card_trouble(&e) => {
-                crate::applog::line("media", &format!("The graphics card failed ({}); trying again with less of its memory", e.lines().take(3).collect::<Vec<_>>().join(" | ")));
-                let had = self.limits().max_vram_gib.unwrap_or(self.state.budget().vram as f64 / GIB as f64);
-                eprintln!("media: retrying with less graphics memory ({:.1} GiB): {}", had / 2.0, e.lines().next().unwrap_or(""));
-                let mut lighter = with_vram(&args, had / 2.0);
-                if !lighter.iter().any(|a| a == "--vae-tiling") {
-                    let at = lighter.len().saturating_sub(2);
-                    lighter.insert(at, "--vae-tiling".into());
-                }
-                (self.run_sd_once(lighter, work, None).await, e)
-            }
+        let vram_gib = self.state.budget().vram as f64 / GIB as f64;
+        let on_card = vram_gib > 0.0;
+        if !on_card {
+            return self.run_sd_once(args, work, None).await;
+        }
+        // Kept on the dedicated card: on a PC with integrated graphics too, the
+        // engine would otherwise use whichever card it lists first.
+        let pinned = crate::engine::learn_devices(self.state).await;
+        // Planned to stay on the card: headroom it keeps free, and the
+        // picture decoded in tiles where the last step's burst could overflow it.
+        let first = card_friendly(&args, vram_gib);
+        let mut last = match self.run_sd_once(first.clone(), work, None).await {
+            Err(e) if card_trouble(&e) => e,
             other => return other,
         };
-        match second {
-            (Ok(()), _) => Ok(()),
-            // Still failing on the card: a picture is made on the processor
-            // instead (slower, but it doesn't depend on the card's driver).
-            // Not videos, which would take hours there.
-            (Err(e), first) if e != download::CANCELLED && !self.cancel.load(Ordering::Relaxed) && args.iter().any(|a| a == "img_gen") => {
-                eprintln!("media: the graphics card failed twice, using the processor: {}", first.lines().next().unwrap_or(""));
-                crate::applog::line("media", &format!("The graphics card failed twice ({}); making the picture on the processor, smaller", e.lines().take(3).collect::<Vec<_>>().join(" | ")));
-                (self.progress)("The graphics card couldn't make it, so it's being made on the processor (slower)", 0.0);
-                let cpu = self.cpu_engine().await.map_err(|why| format!("{e}\n\nCouldn't switch to the processor: {why}"))?;
-                // At full size the processor takes many minutes; 640 pixels keeps it to a few.
-                self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await.map_err(|on_cpu| format!("{e}\n\nOn the processor too: {on_cpu}"))
+        // Still on the card, lighter each time: more headroom, the text reader
+        // on the processor, no fast attention (some drivers fail with it),
+        // then a smaller picture.
+        let lighter = lighter_on_card(&first, pinned);
+        let tries = [(lighter.clone(), "with more of its memory left free"), (smaller(&lighter, 768), "smaller")];
+        for (try_args, how) in tries {
+            if self.cancel.load(Ordering::Relaxed) {
+                return Err(download::CANCELLED.into());
             }
-            (Err(e), _) => Err(e),
+            crate::applog::line("media", &format!("The graphics card failed ({}); trying again on it {how}", last.lines().take(3).collect::<Vec<_>>().join(" | ")));
+            (self.progress)("The graphics card ran short, so it's trying again with less of its memory", 0.0);
+            match self.run_sd_once(try_args, work, None).await {
+                Err(e) if card_trouble(&e) => last = e,
+                other => return other,
+            }
         }
+        // The card failed three times: as a last resort, a small picture on
+        // the processor (slow, but it doesn't depend on the card). Not videos,
+        // which would take hours there.
+        if self.cancel.load(Ordering::Relaxed) || !args.iter().any(|a| a == "img_gen") {
+            return Err(last);
+        }
+        crate::applog::line("media", &format!("The graphics card failed three times ({}); making the picture on the processor, smaller", last.lines().take(3).collect::<Vec<_>>().join(" | ")));
+        (self.progress)("The graphics card couldn't make it, so it's being made on the processor (slower)", 0.0);
+        let cpu = self.cpu_engine().await.map_err(|why| format!("{last}\n\nCouldn't switch to the processor: {why}"))?;
+        // At full size the processor takes many minutes; 640 pixels keeps it to a few.
+        self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await.map_err(|on_cpu| format!("{last}\n\nOn the processor too: {on_cpu}"))
     }
 
     /// The processor build of the picture engine, downloaded the first time it's needed (about 18 MB).
@@ -1761,6 +1810,17 @@ mod tests {
         assert!(card_trouble("diffusion model compute failed"));
         let args: Vec<std::ffi::OsString> = ["-M", "img_gen", "--max-vram", "3.0", "-o", "x.png"].iter().map(Into::into).collect();
         assert_eq!(without_vram(&args), ["-M", "img_gen", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
+        // Planned for an 8 GB card: 1 GiB kept free and tiled decoding; after
+        // a failure, more free, the text reader on the processor, no fast attention.
+        let job: Vec<std::ffi::OsString> = ["-M", "img_gen", "--diffusion-fa", "-W", "1024", "-H", "1024", "-o", "x.png"].iter().map(Into::into).collect();
+        let first = card_friendly(&job, 8.0);
+        let s = |v: &[std::ffi::OsString]| v.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert_eq!(s(&first), "-M img_gen --diffusion-fa -W 1024 -H 1024 --max-vram -1 --vae-tiling -o x.png");
+        assert_eq!(s(&lighter_on_card(&first, true)), "-M img_gen -W 1024 -H 1024 --max-vram -3 --vae-tiling --backend diffusion=Vulkan0,te=cpu,vae=Vulkan0 -o x.png");
+        assert!(!s(&lighter_on_card(&first, false)).contains("--backend"), "not knowing which card is which, nothing is moved");
+        let capped: Vec<std::ffi::OsString> = ["-M", "img_gen", "--max-vram", "6.0", "-o", "x.png"].iter().map(Into::into).collect();
+        assert!(s(&lighter_on_card(&capped, true)).contains("--max-vram 3.0"), "a set budget is halved");
+        assert!(!s(&card_friendly(&job, 16.0)).contains("--vae-tiling"), "a big card decodes in one go");
         // On the processor, a 1184x880 picture becomes 640x480 (the longer edge 640).
         let big: Vec<std::ffi::OsString> = ["-W", "1184", "-H", "880", "-o", "x.png"].iter().map(Into::into).collect();
         assert_eq!(smaller(&big, 640), ["-W", "640", "-H", "480", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
@@ -1846,10 +1906,11 @@ mod tests {
     #[test]
     fn the_memory_budget_is_replaced_before_the_output() {
         let args: Vec<std::ffi::OsString> = ["-p", "x", "--max-vram", "9.0", "-o", "out.png"].iter().map(|s| s.into()).collect();
-        let out: Vec<String> = with_vram(&args, 4.5).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        let out: Vec<String> = with_flag(&args, "--max-vram", Some("4.5")).iter().map(|s| s.to_string_lossy().into_owned()).collect();
         assert_eq!(out, ["-p", "x", "--max-vram", "4.5", "-o", "out.png"]);
         let plain: Vec<std::ffi::OsString> = ["-p", "x", "-o", "o.png"].iter().map(|s| s.into()).collect();
-        assert_eq!(with_vram(&plain, 2.0).len(), 6);
+        let added: Vec<String> = with_flag(&plain, "--max-vram", Some("-1")).iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(added, ["-p", "x", "--max-vram", "-1", "-o", "o.png"], "before the output path");
     }
 
     #[test]

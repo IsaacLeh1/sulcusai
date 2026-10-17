@@ -738,7 +738,13 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - **crashes.log:** every panic, unclean exit and window error, even with crash reports off; `crash::write` always logs and saves a report to send only when on.
   - Logs past 2 MB start over and keep the old file as `.old.log`. They never include chat text, prompts or file contents.
   - Settings → Logs lists the files with what each holds, shows the last 400 lines (`read_log`, logs folder only), opens the logs or data folder (`open_app_folder`), and can clear them. About has the folder buttons too.
-- **Processor fallback for pictures:** it now shrinks the picture to 640 px on the longer edge (`smaller`), so it takes minutes, not 20.
+- **Keeping pictures on the graphics card** (after 0.9.5):
+  - **What we found:** on his laptop, `sd-cli` without a pinned device used the first Vulkan device. With `--backend te=cpu` its auto-fit put the DiT on **Intel graphics** (Vulkan1: more "free" shared memory), taking 193 s instead of 17. A PC that lists its built-in graphics first gets every picture there; likely the brother's 20 minutes.
+  - **Pinning:** `prefer_dedicated` (GGML_VK_VISIBLE_DEVICES) only worked after a chat model had loaded. `engine::learn_devices` now runs the installed llama-server `--list-devices` before any media job or speech start.
+  - **First try:** `card_friendly` keeps 1 GiB free (`--max-vram -1`) and tiles the VAE on cards under 12 GB or above 1.2 MP.
+  - **Two lighter tries on the card:** `lighter_on_card` frees more (`-3`, or half a set budget), drops `--diffusion-fa`, adds `--vae-tiling`, and with the card pinned adds `--backend diffusion=Vulkan0,te=cpu,vae=Vulkan0`. The second of them is also at 768 px.
+  - Only then the processor, at 640 px (`smaller`).
+  - `choose` prefers an installed model whose `min_vram_gb` fits the card.
 - **Models: Grid / List** (remembered in localStorage). List mode is CSS on the same cards (`.model-grid.list`; the card is a column flexbox, so the rows set `flex-direction: row`).
 - **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 

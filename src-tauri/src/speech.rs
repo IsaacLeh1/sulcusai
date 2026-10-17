@@ -426,6 +426,8 @@ pub async fn endpoint(state: &AppState, purpose: Use) -> Result<SpeechEndpoint, 
 }
 
 async fn endpoint_for(state: &AppState, chosen: &InstalledSpeech, language: String) -> Result<SpeechEndpoint, String> {
+    // Which card is which, so speech runs on the dedicated one.
+    crate::engine::learn_devices(state).await;
     let exe = engine::find_exe(&state.paths.engines.join(engine_dir(&state.catalog.speech.engine)), SERVER_EXE)
         .or_else(|| engine::on_path(SERVER_EXE))
         .ok_or("Speech recognition isn't fully installed. Reinstall the speech model from Models › Speech.")?;
