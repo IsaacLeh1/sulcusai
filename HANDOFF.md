@@ -843,6 +843,8 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 
 ## 0.9.8 (2026-10-17): look up what it doesn't know, sites that work, Preview panel
 
+**Published and installed 2026-10-17** (main = phase7 = d899332). The release build took 5.7 min (incremental, 8 jobs). Notes are in `C:\dev\tools\notes-098.md`; the body and latest.json were checked.
+
 From his brother's report (a "Legend of Zelda" picture came out as a generic blond swordsman) and his own ("a live stock exchange website" came out basic, with nothing working).
 
 - **Looking up what it doesn't know** (`chat.rs`, `agent.rs`):
