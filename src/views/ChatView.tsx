@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
@@ -27,6 +27,7 @@ import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
+import { PreviewPanel, latestPreview, usePreviewWidth, type PreviewTarget } from "../components/PreviewPanel";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
@@ -116,6 +117,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   }, [status]);
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
+  // Before a picture of something named: checking (or looking up) its look.
+  const [lookingUp, setLookingUp] = useState<string | null>(null);
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
   const [handingOff, setHandingOff] = useState(false);
   const [compacting, setCompacting] = useState(false);
@@ -127,6 +130,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   /** Messages waiting for the reply to finish (Ctrl+Enter). */
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [showFiles, setShowFiles] = useState(false);
+  // A site the assistant built, shown beside the chat.
+  const [preview, setPreview] = useState<PreviewTarget | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewStamp, setPreviewStamp] = useState(0);
+  const [previewWidth, setPreviewWidth] = usePreviewWidth();
   // Sent while it worked, not read by the model yet: shown in the chat meanwhile.
   const [waiting, setWaiting] = useState<QueueItem[]>([]);
   /** The model has read the messages sent up to then (it started answering). */
@@ -212,8 +220,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:status", mine((p) => {
         if (p.status === "handoff") setHandingOff(true);
         else if (p.status === "compacting") setCompacting(true);
-        else if (p.status === "idle") setCompacting(false);
-        else if (p.status === "cooling") {
+        else if (p.status === "idle") {
+          setCompacting(false);
+          setLookingUp(null);
+        } else if (p.status === "looking_up") {
+          setLookingUp(p.detail ?? "");
+          setStatus("working");
+        } else if (p.status === "cooling") {
           setCooling(p.detail ?? t("the PC"));
           setStatus("working");
         } else setStatus("loading");
@@ -228,10 +241,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:queue", mine((p) => setQueue(p.queue))),
       on("chat:inbox", mine((p) => setWaiting(p.waiting))),
       on("chat:read", mine((p) => setReadUpTo((r) => Math.max(r, p.up_to)))),
+      // The assistant previewed a site: it opens beside the chat (again, with its changes).
+      on("chat:preview", mine((p) => {
+        setPreview({ url: p.url, site: p.site, root: p.root, start: p.start, port: p.port });
+        setShowPreview(true);
+        setPreviewStamp((n) => n + 1);
+      })),
       // Someone this chat is shared with wrote in it (or their model did).
       on("chat:changed", mine(() => reload())),
       on("chat:start", mine((p) => {
         setCooling(null);
+        setLookingUp(null);
         setStatus("thinking");
         setStreaming({ id: p.message_id, content: "", thinking: "" });
       })),
@@ -297,7 +317,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   useEffect(() => {
     following.current = true;
     setAwayFromEnd(false);
+    setPreview(null);
+    setShowPreview(false);
   }, [chat.id]);
+  // The site this chat previewed last, until the assistant previews another.
+  const lastPreview = useMemo(() => latestPreview(messages), [messages]);
+  const previewTarget = preview ?? lastPreview;
+  const openPreview = useCallback((p: PreviewTarget) => {
+    setPreview(p);
+    setShowPreview(true);
+  }, []);
 
   const sendText = async (text: string, images: string[] = [], force = false) => {
     if ((!text && images.length === 0) || (busy && !force)) return;
@@ -479,7 +508,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo],
   );
@@ -487,7 +516,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
 
   return (
-    <div className="conversation">
+    <div
+      className={`conversation ${showPreview && previewTarget ? "with-preview" : ""}`}
+      style={showPreview && previewTarget ? ({ "--preview-w": `${previewWidth}%` } as CSSProperties) : undefined}
+    >
       <header className="chat-header">
         <h1 className="ellipsis" title={chat.title}>{chat.title}</h1>
         <div className="mode-switch" role="radiogroup" aria-label={t("Run mode")}>
@@ -509,6 +541,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
+          {previewTarget && (
+            <button className={`btn ghost small ${showPreview ? "active" : ""}`} aria-pressed={showPreview} onClick={() => setShowPreview((v) => !v)} title={t("The site built in this chat, running beside it")}>
+              🖥 {t("Preview")}
+            </button>
+          )}
           <button className={`btn ghost small ${showFiles ? "active" : ""}`} aria-pressed={showFiles} onClick={() => setShowFiles((v) => !v)} title={t("Pictures and files made in this chat")}>
             🗂 {t("Files")}
           </button>
@@ -593,7 +630,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
         {status === "loading" && !streaming && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
-          <p className="muted small pad">{cooling ? t("Letting the PC cool down before the next step ({what})…", { what: cooling }) : t("Working…")}</p>
+          <p className="muted small pad">
+            {cooling
+              ? t("Letting the PC cool down before the next step ({what})…", { what: cooling })
+              : lookingUp
+                ? t("Looking up what {what} looks like, so the picture matches…", { what: lookingUp })
+                : lookingUp === ""
+                  ? t("Checking the names in the picture's description…")
+                  : t("Working…")}
+          </p>
         )}
         {showRunPlan && (
           <div className="plan-actions">
@@ -760,6 +805,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {!webOn && searchOn && <p className="muted small center">{t("Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
       </div>
 
+      {showPreview && previewTarget && (
+        <PreviewPanel chatId={chat.id} target={previewTarget} stamp={previewStamp} onWidth={setPreviewWidth} onClose={() => setShowPreview(false)} toast={toast} />
+      )}
       {showFiles && <ChatFilesPanel chatId={chat.id} messages={messages} onOpenPicture={setLightbox} onClose={() => setShowFiles(false)} toast={toast} />}
       {lightbox && <Lightbox item={lightbox} toast={toast} onClose={() => setLightbox(null)} />}
       {confirmBypass && (
@@ -835,6 +883,7 @@ function renderItems(
   onEnableWeb?: (() => void) | null,
   openPicture?: (i: MediaItem) => void,
   readUpTo = 0,
+  openPreview?: (p: PreviewTarget) => void,
 ): ReactNode[] {
   const results = new Map<string, Message>();
   // "Sent" or "Read" under the newest message (and ones added mid-reply):
@@ -885,7 +934,7 @@ function renderItems(
             }
             return (
               <Fragment key={c.id}>
-                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} />
+                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} />
                 {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={toast} />}
               </Fragment>
             );

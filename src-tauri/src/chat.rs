@@ -26,7 +26,8 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
          Use Markdown when it helps. If you don't know something, say so.\n\n\
          When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
          notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
-         and never guess figures.\n\nToday's date is {today}."
+         and never guess figures. If they mention a name, title or term you don't recognize or aren't sure about \
+         (a game, a character, a show, a product, slang), don't guess or make it up: look it up first.\n\nToday's date is {today}."
     );
     let mut about = String::new();
     if !profile.name.trim().is_empty() {
@@ -513,6 +514,127 @@ static STALLING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(||
     regex::Regex::new(r"(?i)i'?ll need to|i need to|i will need|i would need|please (provide|confirm|specify)|(could|can) you (please )?(provide|confirm|specify|tell me|share|give me)|(any|more|specific) (details|criteria|information)|function call|<tool|(i'?ll|i will|let me) (search|look|check)|(don'?t|do not|can'?t|cannot) (have )?access|(unable|not able) to (access|read|check|see)|i (can'?t|cannot) (read|check|see)").unwrap()
 });
 
+// "I'm not familiar with that", "as of my knowledge cutoff": it doesn't know
+// what was asked about, which a web search would tell it.
+static NOT_KNOWN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(i'?m|i am) (not |un)familiar\b|\bnot (familiar|aware) with\b|\b(i'?m|i am) not (sure|certain) (what|who|which) .{0,40}\b(is|are|was|were|refers? to|means?)\b|\bi (don'?t|do not) (know|recognize|recognise) (what|who) .{0,40}\b(is|are|was|were|refers? to|means?)\b|\bi (don'?t|do not) (know|recognize|recognise) (of |anything about )|\bi (don'?t|do not) have (any )?(information|details|knowledge) (on|about|of) (that|this|it|the)\b|\b(as of|beyond|after|past) my (last )?(knowledge|training) (cutoff|cut-off|date|update)|\bmy (knowledge|training data) (only goes|doesn'?t|does not|ends|is limited)|\bi couldn'?t find (any )?information|\b(could|can) you (clarify|explain|tell me) (what|who) .{0,40}\b(is|are|means?)\b").unwrap()
+});
+
+/// The reply says it doesn't know what (or who) the user means.
+pub fn doesnt_know(reply: &str) -> bool {
+    let reply = reply.trim().replace(['\u{2019}', '\u{2018}'], "'");
+    let opening: String = reply.chars().take(600).collect();
+    NOT_KNOWN.is_match(&opening)
+}
+
+/// For a model that doesn't know what it was asked about: one call that looks
+/// it up on the web (or asks to, when the web is off for this chat).
+pub fn forced_web(tools: &Value) -> Option<ForcedLookup> {
+    let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
+    let all = tools.as_array()?;
+    let pick = if all.iter().any(|t| name_of(t) == "web_search") { "web_search" } else if all.iter().any(|t| name_of(t) == "request_web") { "request_web" } else { return None };
+    let def = all.iter().find(|t| name_of(t) == pick)?;
+    let schema = json!({ "type": "object", "properties": { "name": { "const": pick }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
+    let what = if pick == "web_search" {
+        "search the web for it now with web_search (a short query naming it)"
+    } else {
+        "ask to look it up with request_web (the reason names what you'd look up)"
+    };
+    Some(ForcedLookup {
+        names: vec![pick.into()],
+        nudge: format!("(Don't guess and don't ask me to explain it: {what}. Reply with only one tool call as JSON, {{\"name\": \"{pick}\", \"arguments\": {{...}}}}.)"),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
+/// A named thing in a picture request (a character, a game, a brand, a
+/// person, a place) and what the model says it looks like.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct Named {
+    pub name: String,
+    #[serde(default)]
+    pub known: bool,
+    #[serde(default)]
+    pub looks: String,
+}
+
+impl Named {
+    /// Sure of its look, with enough words to draw it.
+    pub fn described(&self) -> bool {
+        self.known && self.looks.split_whitespace().count() >= 4
+    }
+}
+
+/// Asks the model which things in a picture request have a particular look
+/// that picture models won't know by name, and what each looks like.
+pub fn names_check(asked: &str, prompt: &str) -> (String, Value) {
+    let ask = format!(
+        "A picture is about to be made.\nWhat the user asked: \u{ab}{asked}\u{bb}\nThe description for the picture model: \u{ab}{prompt}\u{bb}\n\n\
+         Picture models don't know names: they only draw what the words describe. List each specific named thing above that \
+         has its own particular look: a character, a game, film, show or book, a brand, product or logo, a real person, a famous \
+         place, building or artwork. Leave out ordinary things (a dog, a castle, a sword, a sunset). For each one: known is true \
+         only if you are sure exactly what it looks like, and looks is that look in one line (colors, clothes, hair, shapes, \
+         distinctive marks), or empty if you aren't sure. An empty list is fine. Reply with only the JSON."
+    );
+    let schema = json!({ "type": "object", "properties": { "names": { "type": "array", "maxItems": 6, "items": {
+        "type": "object",
+        "properties": { "name": { "type": "string" }, "known": { "type": "boolean" }, "looks": { "type": "string" } },
+        "required": ["name", "known", "looks"] } } }, "required": ["names"] });
+    (ask, json!({ "type": "json_schema", "json_schema": { "name": "names", "schema": schema } }))
+}
+
+/// The named things from a names check's reply (empty if it isn't JSON).
+pub fn names_of(reply: &str) -> Vec<Named> {
+    #[derive(serde::Deserialize)]
+    struct Reply {
+        #[serde(default)]
+        names: Vec<Named>,
+    }
+    let all: Vec<Named> = serde_json::from_str::<Reply>(reply.trim()).map(|r| r.names).unwrap_or_default();
+    let mut names: Vec<Named> = Vec::new();
+    for n in all {
+        if !n.name.trim().is_empty() && !names.iter().any(|k| k.name.trim().eq_ignore_ascii_case(n.name.trim())) {
+            names.push(n);
+        }
+    }
+    names.truncate(6);
+    names
+}
+
+/// Asks the model to describe a thing's look from web search results.
+pub fn looks_from(name: &str, found: &str) -> (String, Value) {
+    let ask = format!(
+        "{found}\n\nFrom the search results above, describe how {name} looks, in one line for a picture model: colors, clothes, \
+         hair, shapes and distinctive marks. Only what the results say or clearly show; empty if they say nothing about its look. \
+         Reply with only the JSON."
+    );
+    let schema = json!({ "type": "object", "properties": { "looks": { "type": "string" } }, "required": ["looks"] });
+    (ask, json!({ "type": "json_schema", "json_schema": { "name": "looks", "schema": schema } }))
+}
+
+/// The look from a `looks_from` reply.
+pub fn looks_of(reply: &str) -> String {
+    serde_json::from_str::<Value>(reply.trim()).ok().and_then(|v| v["looks"].as_str().map(|s| s.trim().to_string())).unwrap_or_default()
+}
+
+/// The picture description with each named thing's look spelled out after
+/// it, since picture models draw words, not names.
+pub fn with_looks(prompt: &str, names: &[Named]) -> String {
+    let lower = prompt.to_lowercase();
+    let added: Vec<String> = names
+        .iter()
+        .filter(|n| n.described())
+        // Already described in the prompt itself.
+        .filter(|n| !lower.contains(&n.looks.to_lowercase()))
+        .map(|n| format!("{} looks like this: {}", n.name.trim(), n.looks.trim().trim_end_matches('.')))
+        .collect();
+    if added.is_empty() {
+        return prompt.to_string();
+    }
+    let p = prompt.trim().trim_end_matches('.');
+    format!("{p}. {}.", added.join(". "))
+}
+
 /// A small model asked the user for details or permission about their own
 /// mail, calendar, notes, tasks or weather instead of using a tool to look.
 pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
@@ -619,6 +741,56 @@ pub fn forced_write(tools: &Value, page: &str, missing: &std::path::Path) -> Opt
         ),
         response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
     })
+}
+
+/// For a model that wrote a site and stopped: one call that previews it (the
+/// folder fixed in the schema), which opens it beside the chat and checks it.
+pub fn forced_preview(tools: &Value, folder: &str) -> Option<ForcedLookup> {
+    let def = tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some("preview_site"))?;
+    let mut params = def["function"]["parameters"].clone();
+    params["properties"] = json!({ "path": { "type": "string", "const": folder } });
+    params["required"] = json!(["path"]);
+    let schema = json!({ "type": "object", "properties": { "name": { "const": "preview_site" }, "arguments": params }, "required": ["name", "arguments"] });
+    Some(ForcedLookup {
+        names: vec!["preview_site".into()],
+        nudge: format!(
+            "(Before you finish, open the site and check that it works: call preview_site with path {folder:?}. Reply with only one tool call as JSON, {{\"name\": \"preview_site\", \"arguments\": {{\"path\": {folder:?}}}}}.)"
+        ),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
+/// For a model that stopped with problems the preview found: one call that
+/// starts fixing them (it carries on from there by itself).
+pub fn forced_fix(tools: &Value, problems: &str) -> Option<ForcedLookup> {
+    let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
+    let list: Vec<&Value> = tools.as_array()?.iter().filter(|t| matches!(name_of(t).as_str(), "edit_file" | "write_file" | "read_file")).collect();
+    if list.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = list.iter().map(|t| name_of(t)).collect();
+    let schema = json!({ "oneOf": list.iter().map(|t| json!({
+        "type": "object",
+        "properties": { "name": { "const": name_of(t) }, "arguments": t["function"]["parameters"] },
+        "required": ["name", "arguments"],
+    })).collect::<Vec<_>>() });
+    Some(ForcedLookup {
+        names,
+        nudge: format!(
+            "(The site isn't finished: the preview found these problems.\n{problems}\nDon't stop or tell me it's done: fix them now. \
+             Read the file first if you need to, then change it. Reply with only one tool call as JSON, {{\"name\": ..., \"arguments\": {{...}}}}.)"
+        ),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
+/// The folder of the newest web page written (where a site's index.html is).
+pub fn site_folder(written: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    written
+        .iter()
+        .rev()
+        .find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("html") || e.eq_ignore_ascii_case("htm")))
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
 }
 
 /// For a model that pasted what it was asked to make: one call that makes it
@@ -933,6 +1105,72 @@ mod tests {
         let ep = Endpoint { port, key: "k".into(), ctx: 8192, extra: json!({}), cloud: None };
         assert_eq!(summary_title(&ep, "Summarize my most recent email from Google").await.as_deref(), Some("Summarize Latest Google Email"));
         assert_eq!(LAST_MAX.load(Ordering::SeqCst), 48 + 768, "asked again with room");
+    }
+
+    #[test]
+    fn replies_that_dont_know_the_thing_are_caught() {
+        for r in [
+            "I'm not familiar with \"Skibidi Fortnite Rizz\". Could you tell me more?",
+            "I'm not sure what Sulcus Studio is, but here's a guess.",
+            "As of my knowledge cutoff in 2023, there is no game called that.",
+            "I don't know what the Lumen Loop refers to.",
+            "Could you clarify what a bloopsnorf is?",
+            "I couldn't find information about that band.",
+        ] {
+            assert!(doesnt_know(r), "{r}");
+        }
+        for r in [
+            "Here's a picture of a castle at sunset.",
+            "I'm not sure what style you'd like, so I made it bright and colorful.",
+            "I don't know your schedule yet, so let me check it.",
+            "The Legend of Zelda is an action adventure series by Nintendo.",
+        ] {
+            assert!(!doesnt_know(r), "{r}");
+        }
+        let tools = json!([
+            { "type": "function", "function": { "name": "request_web", "description": "", "parameters": { "type": "object" } } },
+            { "type": "function", "function": { "name": "search_notes", "description": "", "parameters": { "type": "object" } } },
+        ]);
+        let f = forced_web(&tools).unwrap();
+        assert_eq!(f.names, vec!["request_web".to_string()]);
+        assert_eq!(f.response_format["json_schema"]["schema"]["properties"]["name"]["const"], "request_web");
+        assert!(forced_web(&json!([{ "type": "function", "function": { "name": "search_notes", "parameters": {} } }])).is_none());
+    }
+
+    #[test]
+    fn a_built_site_is_previewed_and_its_problems_fixed() {
+        let def = |n: &str| json!({ "type": "function", "function": { "name": n, "description": "", "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "port": { "type": "integer" } } } } });
+        let tools = json!([def("preview_site"), def("edit_file"), def("write_file"), def("run_command")]);
+        let p = forced_preview(&tools, "stock-site/").unwrap();
+        let args = &p.response_format["json_schema"]["schema"]["properties"]["arguments"];
+        assert_eq!(args["properties"]["path"]["const"], "stock-site/");
+        assert!(args["properties"].get("port").is_none());
+        let f = forced_fix(&tools, "- Script error: x is not defined").unwrap();
+        assert_eq!(f.names, vec!["edit_file".to_string(), "write_file".to_string()]);
+        assert!(f.nudge.contains("x is not defined"));
+        assert!(forced_preview(&json!([def("write_file")]), "a/").is_none());
+        let written = vec![std::path::PathBuf::from("C:/s/site/app.js"), std::path::PathBuf::from("C:/s/site/index.html"), std::path::PathBuf::from("C:/s/site/style.css")];
+        assert_eq!(site_folder(&written), Some(std::path::PathBuf::from("C:/s/site")));
+        assert_eq!(site_folder(&written[..1]), None);
+    }
+
+    #[test]
+    fn named_things_get_their_look_spelled_out_for_the_picture_model() {
+        let names = names_of(r#"{"names":[
+            {"name":"Link","known":true,"looks":"elf-eared young hero in a green tunic and pointed green cap, blond hair, sword and blue-red shield"},
+            {"name":"Hyrule","known":false,"looks":""},
+            {"name":"link","known":true,"looks":"duplicate"},
+            {"name":"","known":true,"looks":"no name"}]}"#);
+        assert_eq!(names.len(), 2, "duplicates and blanks dropped: {names:?}");
+        assert!(names[0].described() && !names[1].described());
+        let p = with_looks("Pixel art of Link from the Legend of Zelda on a hill.", &names);
+        assert_eq!(p, "Pixel art of Link from the Legend of Zelda on a hill. Link looks like this: elf-eared young hero in a green tunic and pointed green cap, blond hair, sword and blue-red shield.");
+        assert_eq!(with_looks("A dog on a beach", &[]), "A dog on a beach");
+        assert!(names_of("not json").is_empty());
+        assert_eq!(looks_of(r#"{"looks":" green tunic, pointed cap "}"#), "green tunic, pointed cap");
+        let (ask, format) = names_check("draw link", "Link on a hill");
+        assert!(ask.contains("draw link") && ask.contains("Link on a hill"));
+        assert_eq!(format["json_schema"]["name"], "names");
     }
 
     #[test]

@@ -781,6 +781,14 @@ export interface ToolCall {
   arguments: string;
 }
 
+/** A site served on this PC for the Preview panel. */
+export interface SitePreview {
+  id: string;
+  url: string;
+  root: string;
+  web: boolean;
+}
+
 export interface ToolMeta {
   title: string;
   status: "ok" | "error" | "denied";
@@ -812,6 +820,12 @@ export interface ToolMeta {
   file?: string;
   /** A server the assistant started on this PC: its port, for Preview. */
   preview_port?: number;
+  /** A site the assistant previewed: where it is served, its folder and page, and what its check found. */
+  preview_url?: string;
+  preview_site?: string;
+  preview_root?: string;
+  preview_start?: string;
+  preview_problems?: number;
   /** The assistant asked the user to turn on web access. */
   web_request?: boolean;
   /** Pictures, clips or sounds the assistant made. */
@@ -1881,6 +1895,9 @@ export const api = {
   serverStart: (id: string) => invoke<PortsView>("server_start", { id }),
   /** Opens a port on this PC in SulcusAI's browser. */
   previewPort: (port: number) => invoke<void>("preview_port", { port }),
+  previewOpen: (chatId: string, root: string, start: string | null) => invoke<SitePreview>("preview_open", { chatId, root, start }),
+  previewStop: (id: string) => invoke<void>("preview_stop", { id }),
+  previewOpenExternal: (url: string) => invoke<void>("preview_open_external", { url }),
   /** Shows a file the assistant made in File Explorer (nothing is run). */
   showInFolder: (path: string) => invoke<void>("show_in_folder", { path }),
   quickClipboard: () => invoke<string | null>("quick_clipboard"),
@@ -2045,7 +2062,7 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "idle"; detail?: string };
+  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "looking_up" | "idle"; detail?: string };
   "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
@@ -2069,6 +2086,8 @@ export interface ChatEvents {
   "engine:memory": MemoryWarning;
   "engine:memory_done": { id: string };
   "chat:web": { chat_id: string; web: boolean };
+  /** The assistant opened a site in the chat's Preview panel. */
+  "chat:preview": { chat_id: string; url: string; site?: string; root?: string; start?: string; port?: number };
   "app:navigate": { page: string };
   "mail:triage": { done: number; total: number };
   "mail:triaged": Record<string, never>;

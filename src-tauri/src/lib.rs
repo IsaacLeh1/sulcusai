@@ -65,6 +65,7 @@ mod perf;
 mod privacy;
 mod phone;
 mod ports;
+mod preview;
 mod projects;
 mod quick;
 mod sandbox;
@@ -1237,6 +1238,7 @@ pub(crate) fn delete_chat_now(state: &AppState, chat_id: &str) -> Result<(), Str
     }
     state.contexts.lock().unwrap().remove(chat_id);
     state.approvals.forget_chat(chat_id);
+    preview::stop_chat(chat_id);
     let conn = state.db.lock().unwrap();
     db::delete_chat(&conn, chat_id)?;
     media::store::delete_attachments(&conn, &state.paths, chat_id);
@@ -1940,6 +1942,9 @@ pub fn run() {
             ports::server_stop,
             ports::server_start,
             ports::preview_port,
+            preview::preview_open,
+            preview::preview_stop,
+            preview::preview_open_external,
             handoff_guard::handoffs_view,
             handoff_guard::handoff_revoke,
             handoff_guard::handoff_forget,

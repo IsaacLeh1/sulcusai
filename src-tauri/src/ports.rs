@@ -31,6 +31,11 @@ pub fn local_port(url: &str) -> Option<u16> {
     u.port_or_known_default()
 }
 
+/// Lets SulcusAI's browser show a port on this PC (a site preview it serves).
+pub fn allow(port: u16) {
+    CHOSEN.lock().unwrap().insert(port);
+}
+
 /// Whether SulcusAI's browser may show this port on this PC.
 pub fn previewable(port: u16) -> bool {
     CHOSEN.lock().unwrap().contains(&port) || ours(port).is_some()

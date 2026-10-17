@@ -841,6 +841,61 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Checking latest.json from Windows PowerShell 5.1: `Invoke-RestMethod` reads it as Latin-1 and garbles "→", so its notes look different. Download it and decode as UTF-8 to compare.
 - **Installing over a running copy:** the installer (`/P` through WMI) closes SulcusAI and doesn't reopen it.
 
+## After 0.9.7 (2026-10-17, on phase7, not built)
+
+From his brother's report (a "Legend of Zelda" picture came out as a generic blond swordsman) and his own ("a live stock exchange website" came out basic, with nothing working).
+
+- **Looking up what it doesn't know** (`chat.rs`, `agent.rs`):
+  - The base prompt says not to guess at names, titles or terms it doesn't recognize, and `request_web`'s description covers that case.
+  - `chat::doesnt_know` catches replies like "I'm not familiar with…" or "as of my knowledge cutoff…" (`NOT_KNOWN`). At step 0 with a local engine, `forced_web` makes the next try one `web_search` call, or `request_web` (the popup) when the web is off. This runs before the older `stalls` check.
+  - **Pictures:** before `create_image`, `edit_image` (edit or restyle) or `create_video` runs on a local engine, `Turn::picture_names` asks the model in one quiet JSON call (`names_check`, schema `names`) which named things in the request have their own look, and what each looks like.
+    - A name it isn't sure of (`Named::described`: known and at least 4 words) is looked up: `web_search "<name> appearance"`, then `looks_from` turns the results into one line. When the web is off it asks with the same popup ("what X looks like, for the picture").
+    - `with_looks` then adds "X looks like this: …" to the description, because picture models draw words, not names. A look it couldn't find goes in the tool result, so the model tells the user.
+    - The chat shows "Checking the names…" or "Looking up what X looks like…" (`chat:status` `looking_up`).
+- **Building sites and the Preview panel:**
+  - `preview.rs` serves a site's folder from inside SulcusAI: one axum server per site on 127.0.0.1, port 0.
+    - The Host header must be this PC, and paths can't leave the folder.
+    - It sends `no-store`, so changes show on reload.
+    - The site follows its chat's web setting: with the web off, a CSP blocks anything outside the site.
+    - Its port joins `ports::allow`, so SulcusAI's own browser may show it.
+  - `preview::check` loads the site in a **hidden window** (its own `sitecheck` profile, no IPC, can't leave the site) with `PROBE` as an initialization script. The probe reports back to the site's own `/__sulcus/report`:
+    - script errors and unhandled rejections
+    - `console.error`
+    - missing files (the server notes 404s too)
+    - requests the CSP blocked, and failed `fetch`es
+    - after load, buttons with nothing listening for a click (it wraps `addEventListener` before the page's scripts run)
+  - `describe` turns the reports into the problems the model is told to fix.
+  - **Tool `preview_site`** (`tools/site.rs`, Risk::Read, files group):
+    - It takes a `path` (a folder or an .html page) or a `port` (a dev server the assistant started; that one gets only a load check).
+    - It emits `chat:preview` and returns the problems. Meta carries `preview_url/site/root/start/problems`.
+    - Helpers don't get it, and `forced_lookup` never picks it.
+  - **The agent** (`run`): when a turn wrote a page (`chat::site_folder`) and the model stops:
+    - If the site hasn't been previewed since the last write or edit, `forced_preview` makes the next step that call (up to 3 previews).
+    - If the last preview found problems, `forced_fix` makes it start fixing (up to 2 rounds).
+    - A forced follow-up the engine doesn't answer with a call isn't retried that turn (`follow_ups_failed`); words it wrote become the reply.
+    - Follow-ups are capped at 8.
+  - **Build instructions** (`tool_instructions`, folder shared):
+    - every feature, with working JavaScript; no placeholder buttons or fake data passed off as real
+    - index.html + style.css + app.js
+    - live data from a free source that needs no key when the web is on, or simulated and labelled "simulated" when it's off
+    - then `preview_site`, fix, and preview again
+  - **Window:**
+    - `components/PreviewPanel.tsx` docks to the right of the chat. The chat column narrows (`.conversation.with-preview`, `--preview-w`), and the panel's left edge drags to resize it (25 to 75%, remembered).
+    - It shows the site in an `<iframe>`, sandboxed: scripts, same origin, forms, modals. The window CSP allows only `frame-src http://127.0.0.1:* http://localhost:*` for it.
+    - Buttons: Reload; Open in browser (`preview_open_external`: the main-browser choice, and SulcusAI's browser is allowed the port); Stop (`preview_stop`).
+    - `preview_open` serves the folder again after a restart, if it's still shared with the chat.
+    - The header gets a 🖥 Preview button once the chat has previewed a site, and the step card has "Show the preview".
+- **Tests:**
+  - `replies_that_dont_know_the_thing_are_caught`, `named_things_get_their_look_spelled_out_for_the_picture_model` and `a_built_site_is_previewed_and_its_problems_fixed` (chat).
+  - `paths_stay_inside_the_site`, `the_check_names_what_doesnt_work` and `a_site_is_served_on_this_pc_only_and_follows_the_chats_web` (preview).
+  - `src/preview.test.ts`.
+  - The panel was tried in the UI mock: the site runs, a click inside it works, and the edge resizes it.
+- **Not tried in the real app yet:**
+  - the iframe under the real window's CSP (WebView2)
+  - the hidden check window
+  - a real model building a site through the forced preview and fix steps
+  - the picture name lookup with a real model
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

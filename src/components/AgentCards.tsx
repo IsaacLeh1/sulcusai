@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type DesktopAccess, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
 import type { PushToast } from "./Toasts";
+import type { PreviewTarget } from "./PreviewPanel";
 import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
 
@@ -12,6 +13,7 @@ const TOOL_ICONS: Record<string, string> = {
   message_chat: "💬",
   list_dir: "📂",
   read_file: "📄",
+  preview_site: "🖥",
   find_files: "🔎",
   search_files: "🔎",
   write_file: "✏️",
@@ -59,7 +61,23 @@ function Detail({ kind, detail }: { kind: string; detail: string }) {
 }
 
 /** One tool call and (once it has run) its result. */
-export function ToolCard({ call, meta, output, running, liveSteps, onOpenChat }: { call: ToolCall; meta?: ToolMeta; output?: string; running: boolean; liveSteps?: string[]; onOpenChat?: (id: string) => void }) {
+export function ToolCard({
+  call,
+  meta,
+  output,
+  running,
+  liveSteps,
+  onOpenChat,
+  onPreview,
+}: {
+  call: ToolCall;
+  meta?: ToolMeta;
+  output?: string;
+  running: boolean;
+  liveSteps?: string[];
+  onOpenChat?: (id: string) => void;
+  onPreview?: (p: PreviewTarget) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
@@ -91,7 +109,18 @@ export function ToolCard({ call, meta, output, running, liveSteps, onOpenChat }:
           </button>
         </div>
       )}
-      {meta?.preview_port && status === "ok" && (
+      {meta?.preview_url && status === "ok" && onPreview && (
+        <div className="tool-actions">
+          <button
+            className="btn small"
+            onClick={() => onPreview({ url: meta.preview_url!, site: meta.preview_site, root: meta.preview_root, start: meta.preview_start, port: meta.preview_port })}
+          >
+            🖥 {t("Show the preview")}
+          </button>
+          {!!meta.preview_problems && <span className="warn-text small">{t("Its check found problems; the assistant was asked to fix them.")}</span>}
+        </div>
+      )}
+      {meta?.preview_port && !meta.preview_url && status === "ok" && (
         <div className="tool-actions">
           <button className="btn small" onClick={() => api.previewPort(meta.preview_port!).then(() => setPreviewError(null)).catch((e) => setPreviewError(errorText(e)))}>
             {t("Preview in SulcusAI's browser")}

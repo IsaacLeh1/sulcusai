@@ -13,6 +13,7 @@ mod meetings;
 mod memory;
 mod notes;
 pub(crate) mod shell;
+mod site;
 mod web;
 
 use std::sync::atomic::AtomicBool;
@@ -148,6 +149,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Stop a command started with background: true (and anything it started)." },
     ToolDef { name: "request_folder", risk: Risk::Read, params: request_folder_params,
         description: "Ask the user for a folder to work in when you need files and none fits: to build or change something on their PC (a website, an app, documents), or to reach a folder that isn't shared. They approve it in a popup (and can pick another); then the file tools and run_command work there in this same reply." },
+    ToolDef { name: "preview_site", risk: Risk::Read, params: site::preview_site_params,
+        description: "Show a website you built: serves its folder on this PC, opens it in a Preview panel beside the chat (the user can open it in their browser from there), and checks it in a hidden window for script errors, missing files, blocked outside requests and buttons that do nothing. Call it after writing a site, fix every problem it reports, and call it again." },
     ToolDef { name: "open_path", risk: Risk::Write, params: open_path_params,
         description: "Open a file from a shared folder, or a web address, for the user: in their browser or the app that opens it. Use it to show them what you made, e.g. the site you just started at http://localhost:5173. Never runs programs." },
     ToolDef { name: "remember", risk: Risk::Memory, params: memory::remember_params,
@@ -179,7 +182,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
-        description: "Web access is off in this chat. If the task needs current information from the internet, call this: the user is asked in a popup. If they allow it, web_search, fetch_page and weather are available right away to finish the task; if not, answer without the web." },
+        description: "Web access is off in this chat. If the task needs current information from the internet, or something the user mentions that you don't know or aren't sure about (a name, a game, a character, a term), call this: the user is asked in a popup. If they allow it, web_search, fetch_page and weather are available right away to finish the task; if not, answer without the web." },
     ToolDef { name: "browser_open", risk: Risk::Read, params: browser::browser_open_params,
         description: "Open a website in the built-in browser, which the user can watch. Use it to use a site (fill in a search, click through pages); for just reading, web_search and fetch_page are quicker. Returns the page's text and its links, buttons and fields, numbered." },
     ToolDef { name: "browser_read", risk: Risk::Read, params: browser::browser_read_params,
@@ -243,7 +246,7 @@ fn delegate_params() -> Value {
 pub fn helper_definitions(files: bool) -> Value {
     let mut defs = definitions(Mode::Plan, files, false);
     if let Some(list) = defs.as_array_mut() {
-        list.retain(|d| d["function"]["name"] != "delegate" && d["function"]["name"] != "stop_command");
+        list.retain(|d| !matches!(d["function"]["name"].as_str(), Some("delegate" | "stop_command" | "preview_site")));
     }
     defs
 }
@@ -432,6 +435,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "command_output" => shell::output(args),
         "stop_command" => shell::stop(args),
         "open_path" => open_path(args, ctx),
+        "preview_site" => site::run(args, ctx).await,
         "search_chats" => chats::search(args, ctx),
         "read_chat" => chats::read(args, ctx),
         // Run by the agent itself (it needs the model that's loaded).
