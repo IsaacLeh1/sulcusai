@@ -1355,9 +1355,35 @@ button.ctx:hover { background: var(--hover); }
 .made-stats { margin: 4px 0; }
 .lightbox-body .made-stats { color: #ddd; }
 
+/* A pasted Hugging Face link. */
+.hub-link { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.hub-link .hub-search { margin: 0; }
+
 /* The Studio's Hugging Face models. */
 .media-hub { margin-top: 12px; }
 .media-hub.closed { display: flex; justify-content: flex-start; }
 .media-hub .mode-switch { margin: 6px 0; align-self: flex-start; }
 .hub-file-what { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .hub-file-what .block { flex-basis: 100%; }
+
+/* Chat folders in the sidebar. */
+.folders .folder.drop > .folder-head { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.folder-head .folder-caret { width: 12px; display: inline-block; color: var(--muted); }
+.folder-head .folder-count { margin-left: auto; }
+.folder-chats .chat-item.in-folder { padding-left: 28px; }
+.folder-empty { padding-left: 28px; }
+.chat-kept { font-size: 11px; opacity: 0.7; }
+.context-menu .menu-label { display: block; padding: 4px 10px 2px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.context-menu hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* Settings → Cleanup and space. */
+.cleanup-picks { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 6px 0; }
+.cleanup-pick { gap: 8px; align-items: center; }
+.cleanup-pick .input { width: auto; }
+.cleanup-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.cleanup-list .teach-list { width: 100%; max-height: 260px; overflow: auto; }
+.cache-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+
+/* Lock a model against the automatic cleanup. */
+.keep-btn { font-size: 14px; opacity: 0.45; }
+.keep-btn.on, .keep-btn:hover { opacity: 1; }

@@ -508,6 +508,50 @@ export interface HubModel {
   recommended: string | null;
 }
 
+/** Chats and models the automatic cleanup never removes. */
+export interface KeepLocks {
+  chats: string[];
+  models: string[];
+}
+
+/** Something the automatic cleanup would remove (or did). */
+export interface CleanItem {
+  kind: "chat" | "model" | "media";
+  id: string;
+  name: string;
+  last_used: number;
+  size: number;
+}
+
+export interface CleanView {
+  settings: { chat_days: number | null; model_days: number | null; last_run: number; last_result: string | null };
+  locks: KeepLocks;
+  would_remove: CleanItem[];
+  next_run: number | null;
+}
+
+export interface CacheItem {
+  id: string;
+  name: string;
+  what: string;
+  size: number;
+}
+
+/** A chat folder in the sidebar. */
+export interface FolderView {
+  id: string;
+  name: string;
+  chats: string[];
+  locked: boolean;
+  shared_with: { id: string; name: string }[];
+  collapsed: boolean;
+}
+
+/** A pasted Hugging Face link, as the model it points at, and the file it named. */
+export type HubLinkResult =
+  | { kind: "chat"; model: HubModel; file: string | null }
+  | { kind: "media"; model: HubMediaModel; media: "image" | "video" | "music"; file: string | null };
+
 export interface HubResults {
   models: HubModel[];
   /** Results left out because no file of theirs runs on this PC. */
@@ -1393,6 +1437,14 @@ export interface MediaView {
   installing: string[];
   jobs: MediaJob[];
   gallery: number;
+  /** The model used unless a job names one, per kind. */
+  defaults: MediaDefaults;
+}
+
+export interface MediaDefaults {
+  image: string | null;
+  video: string | null;
+  music: string | null;
 }
 
 /** One file of a Hugging Face repository the Studio can install. */
@@ -1614,6 +1666,7 @@ export const api = {
   hubSearch: (query: string, sort: "downloads" | "trending" | "newest", all = false) => invoke<HubResults>("hub_search", { query, sort, all }),
   /** Starts installing one file; returns the model id its progress is reported under. */
   hubInstall: (repo: string, file: string, force = false) => invoke<string>("hub_install", { repo, file, force }),
+  hubLink: (link: string) => invoke<HubLinkResult>("hub_link", { link }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   speedTestStatus: () => invoke<SpeedStatus>("speed_test_status"),
@@ -1629,7 +1682,23 @@ export const api = {
   /** Adds models already on this PC (an earlier install or another app). `again` also brings back ones removed earlier. */
   findModels: (again = false) => invoke<FoundModels>("find_models", { again }),
   cancelInstall: (modelId: string) => invoke<void>("cancel_install", { modelId }),
-  removeModel: (modelId: string) => invoke<void>("remove_model", { modelId }),
+  /** Removes a chat model; `deleteFile` also sends another app's (or a folder's) file to the Recycle Bin. Returns the bytes freed. */
+  removeModel: (modelId: string, deleteFile = false) => invoke<number>("remove_model", { modelId, deleteFile }),
+  keepLocks: () => invoke<KeepLocks>("keep_locks"),
+  setKept: (kind: "chat" | "model", id: string, keep: boolean) => invoke<KeepLocks>("set_kept", { kind, id, keep }),
+  cleanView: () => invoke<CleanView>("clean_view"),
+  setAutoClean: (chatDays: number | null, modelDays: number | null) => invoke<CleanView>("set_auto_clean", { chatDays, modelDays }),
+  cleanNow: () => invoke<CleanView>("clean_now"),
+  cacheView: () => invoke<CacheItem[]>("cache_view"),
+  clearCache: (ids: string[]) => invoke<{ freed: number; skipped: number }>("clear_cache", { ids }),
+  foldersView: () => invoke<FolderView[]>("folders_view"),
+  createFolder: (name: string, chatId: string | null = null) => invoke<FolderView[]>("create_folder", { name, chatId }),
+  renameFolder: (id: string, name: string) => invoke<FolderView[]>("rename_folder", { id, name }),
+  setFolderFlags: (id: string, flags: { locked?: boolean; collapsed?: boolean }) => invoke<FolderView[]>("set_folder_flags", { id, locked: flags.locked ?? null, collapsed: flags.collapsed ?? null }),
+  deleteFolder: (id: string) => invoke<FolderView[]>("delete_folder", { id }),
+  moveToFolder: (chatId: string, folderId: string | null) => invoke<FolderView[]>("move_to_folder", { chatId, folderId }),
+  folderSharing: (id: string) => invoke<{ id: string; name: string; shared: boolean }[]>("folder_sharing", { id }),
+  shareFolder: (id: string, withIds: string[]) => invoke<{ id: string; name: string; shared: boolean }[]>("share_folder", { id, with: withIds }),
   settings: () => invoke<Settings>("get_settings"),
   offlineView: () => invoke<OfflineView>("offline_view"),
   /** To the developer's inbox: only this text (plus a reply address and the version, if given). */
@@ -1824,7 +1893,8 @@ export const api = {
   mediaHubSearch: (kind: "image" | "video" | "music", query: string, sort: "downloads" | "trending" | "newest", all = false) =>
     invoke<HubMediaResults>("media_hub_search", { kind, query, sort, all }),
   mediaHubInstall: (repo: string, file: string) => invoke<string>("media_hub_install", { repo, file }),
-  removeMedia: (modelId: string) => invoke<void>("remove_media_model", { modelId }),
+  mediaSetDefault: (kind: "image" | "video" | "music", modelId: string | null) => invoke<MediaDefaults>("media_set_default", { kind, modelId }),
+  removeMedia: (modelId: string) => invoke<number>("remove_media_model", { modelId }),
   mediaStart: (request: MediaRequest) => invoke<string>("media_start", { request }),
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
   mediaJobs: () => invoke<MediaJob[]>("media_jobs"),

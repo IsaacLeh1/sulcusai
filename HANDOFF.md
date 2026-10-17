@@ -780,6 +780,57 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 - **Release builds use thin LTO** (`[profile.release]`). Full LTO in one codegen unit made every release a long single-threaded link.
 - **From 0.9.7 on, building, testing and publishing move to his desktop** (RTX 5070 12 GB, 32 GB). A release compile took the laptop's processor to 98 °C. Setup steps and the rules are in `C:\dev\sulcusai-dist\DESKTOP-HANDOFF.md`, kept outside the repo next to the signing files.
 
+## After 0.9.6 (2026-10-17, for 0.9.7; written on the laptop, not built — build it on the desktop)
+
+- **Paste a Hugging Face link** (`HubLinkBox` in `components/HubLink.tsx`, in both Hugging Face panels: Models → Chat and the Studio's models).
+  - `hub::parse_link` takes a model page, a file page (`…/blob/main/x`), a download link (`…/resolve/main/x`), with or without https, or just `owner/name`. It refuses datasets, spaces and other sites, and paths with `..`.
+  - The `hub_link` command (lib.rs) tries picture, video and music models first (`media::hub::from_link`, since their files are GGUF too), then chat models (`hub::is_chat` + `hub::describe` with every file).
+  - The file the link named is shown first ("From your link"). Installing goes through `hub_install` / `media_hub_install`.
+  - Families can now also match on a tag (`HubFamily.tags`). SDXL has `diffusers:StableDiffusionXLPipeline`, because RealVisXL V5.0 and others name no base model.
+  - Tests: `pasted_links_name_the_model_and_file` (unit) and `pasted_links_find_the_right_kind_of_model` (live, ignored).
+- **Default picture, video and music models** (`media_defaults` key, `media_set_default`). His report: chats always used FLUX, and the Studio went back to FLUX after switching tabs.
+  - **Cause:** `choose` picked the best model that fit the card's *free* memory, which is small while a chat model is loaded.
+  - **Fix:** the default now wins (the job frees the card first anyway).
+  - "Make default" is on the Models rows and next to the Studio's picker.
+  - The Studio remembers the last pick per tab (localStorage `sulcus.studio.model.<kind>`, `useModelPick`). Setting a default clears that and remounts the composer.
+- **Deleting a model from the PC** (`remove_model_now`, `media::remove_now`). Both return the bytes freed.
+  - **What goes:** half-finished downloads, models taught on it (`finetune::forget_adapters_of`), its paused download, its custom name, and its cleanup lock and usage.
+  - **Another app's model:** "Stop using" by default. The dialog can also send the file to the Recycle Bin, except Ollama's (it says to use `ollama rm`).
+  - **Chats that pointed at a removed model** now use the default model in `llm_endpoint` instead of failing.
+- **Automatic cleanup and locks** (`cleanup.rs`, Settings → Cleanup and space). All of it lives in this PC's settings: only `profile` syncs, so none of this travels.
+  - **Usage:** `last_used` is written by `llm_endpoint`, by `media::run` and when a chat opens (`get_messages`), at most every 10 minutes per item. Chats also count their `updated_at`. Models with no record count from the first time the cleanup sees them, so nothing goes on the day it updates.
+  - **Locks:** `keep_locks` holds chats and models; folders can be locked too.
+  - **Never removed:**
+    - locked chats and models, and chats in a locked or shared folder
+    - chats shared with people, and a chat writing a reply
+    - the default chat model, the default picture, video and music models, and the loaded model
+    - models from other apps (removing them frees nothing), and anything being installed
+  - **When it runs:** checked every 3 h, and it runs at most once a day while unlocked and idle. Turning it on waits a day before the first run, and the page lists what would go, with "Keep" buttons. "Clean up now" skips the wait. Everything it removes goes in Activity ("cleanup").
+  - **Sync:** chats it deletes are deleted on synced PCs too, like any deleted chat, and the page says so.
+  - Test: `the_cleanup_keeps_locked_chats_and_removes_old_ones` (ignored, scratch data).
+- **Clear cache** (same section, `cache_view` / `clear_cache`). It never touches chats, notes, the gallery, settings or models. Each item shows its size and what clearing it does; the texts live in the frontend's `CACHE_TEXT`. The items:
+  - media job leftovers
+  - unfinished downloads (`.part` files, engine staging, paused-download records)
+  - old engine versions (a known engine family whose build isn't the catalog's current one; unknown folders are kept)
+  - undo copies (`checkpoints` rows and files)
+  - the built-in browser profile
+  - the WebView cache folders
+  - the Tor cache
+  - before-restore copies
+  - unsent crash reports
+  - screenshots in %TEMP%
+  - logs
+  
+  Files in use are skipped and counted.
+- **Chat folders** (`folders.rs`, `components/ChatFolders.tsx`): a Folders section in the sidebar.
+  - **Storage:** kept in this PC's settings with encrypted names, not synced.
+  - **Organizing:** drag a chat onto a folder, or right-click a chat → Move to folder / New folder… / Out of "…". The chat menu also locks and unlocks a chat.
+  - **Folder menu** (right-click a folder): Rename, Lock, Share folder…, Delete (its chats stay).
+  - **Sharing a folder** uses People: every chat in it is shared with the chosen people (`share::set_chat_sharing`), chats moved in later too, and chats moved out stop being shared with them.
+  - **What recipients see:** the chats individually, not as a folder. Showing the folder would need a protocol change.
+  - **Deleting a chat** (`delete_chat_now`) first stops its sharing, then removes it from folders, locks and usage.
+- **Preview mock:** chat folders live under `W.__chatFolders`; `W.__folders` is the assistant's shared folders.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

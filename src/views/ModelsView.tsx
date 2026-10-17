@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
+import { HubLinkBox } from "../components/HubLink";
 import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
@@ -48,6 +49,11 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
     }
   };
   const [everything, setEverything] = useState<ModelCard[] | null>(null);
+  // Models locked against the automatic cleanup.
+  const [keptModels, setKeptModels] = useState<string[]>([]);
+  useEffect(() => {
+    api.keepLocks().then((l) => setKeptModels(l.models)).catch(() => {});
+  }, []);
   useEffect(() => {
     if (!showAll) return;
     api.catalog(true).then((v) => setEverything(v.models)).catch(() => {});
@@ -170,7 +176,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <h2>{t("Installed")}</h2>
           <div className={`model-grid ${layout}`}>
             {installed.map((m) => (
-              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
+              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} kept={keptModels.includes(m.id)} onKept={setKeptModels} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
             ))}
           </div>
         </>
@@ -433,6 +439,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
           <p className="muted small">{t("Thousands of models people share. Only the versions this PC can run are shown. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}</p>
         </div>
       </div>
+      <HubLinkBox progress={progress} isInstalled={(id) => models.some((c) => c.id === id && c.installed)} toast={toast} onInstalled={() => onRefresh()} />
       <form
         className="row wrap hub-search"
         onSubmit={(e) => {
@@ -731,8 +738,28 @@ function RenameModel({ m, onClose, onRefresh }: { m: ModelCard; onClose: () => v
   );
 }
 
-function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m: ModelCard; rank: RankInfo; isDefault: boolean; onRefresh: () => Promise<void>; onSettings: (s: Settings) => void; toast: PushToast }) {
+function InstalledCard({
+  m,
+  rank,
+  isDefault,
+  kept,
+  onKept,
+  onRefresh,
+  onSettings,
+  toast,
+}: {
+  m: ModelCard;
+  rank: RankInfo;
+  isDefault: boolean;
+  kept: boolean;
+  onKept: (models: string[]) => void;
+  onRefresh: () => Promise<void>;
+  onSettings: (s: Settings) => void;
+  toast: PushToast;
+}) {
   const [confirm, setConfirm] = useState(false);
+  const [alsoFile, setAlsoFile] = useState(false);
+  const ollama = m.local?.app.toLowerCase() === "ollama";
   const [renaming, setRenaming] = useState(false);
   const inst = m.installed!;
   const variant = m.variants.find((v) => v.quant === inst.quant);
@@ -748,7 +775,17 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
             {t("{quality} quality", { quality: variant?.quality ?? inst.quant })} · {bytes(inst.size)}
           </span>
         </div>
-        {isDefault ? <span className="badge">{t("Default")}</span> : null}
+        <span className="row">
+          {isDefault ? <span className="badge">{t("Default")}</span> : null}
+          <button
+            className={`icon-btn keep-btn ${kept ? "on" : ""}`}
+            aria-pressed={kept}
+            title={kept ? t("Locked: the automatic cleanup never removes it. Click to unlock.") : t("Lock it so the automatic cleanup never removes it")}
+            onClick={() => api.setKept("model", m.id, !kept).then((l) => onKept(l.models)).catch((e) => toast(errorText(e), "error"))}
+          >
+            {kept ? "🔒" : "🔓"}
+          </button>
+        </span>
       </div>
       <p className="desc">{m.description}</p>
       {m.local ? <p className="muted small ellipsis" title={m.local.path}>{t("{n}B parameters", { n: m.params_b })}{m.tools ? ` · ${t("can use tools")}` : ""}</p> : <Capability m={m} rank={rank} />}
@@ -778,17 +815,32 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
           {t("Rename")}
         </button>
         <span className="spacer" />
-        <button className="btn ghost danger" onClick={() => setConfirm(true)}>
-          {m.local ? t("Stop using") : t("Remove")}
+        <button className="btn ghost danger" onClick={() => (setAlsoFile(false), setConfirm(true))}>
+          {m.local ? t("Stop using") : t("Delete from this PC")}
         </button>
       </div>
       {renaming && <RenameModel m={m} onClose={() => setRenaming(false)} onRefresh={onRefresh} />}
       {confirm && (
-        <Modal title={m.local ? t("Stop using {name}?", { name: m.name }) : t("Remove {name}?", { name: m.name })} onClose={() => setConfirm(false)}>
+        <Modal title={m.local && !alsoFile ? t("Stop using {name}?", { name: m.name }) : t("Delete {name} from this PC?", { name: m.name })} onClose={() => setConfirm(false)}>
           {m.local ? (
-            <p>{t("SulcusAI stops listing it. The file stays in {app}, and Look for models on this PC brings it back.", { app: m.local.app })}</p>
+            <>
+              <p>{t("SulcusAI stops listing it. The file stays in {app}, and Look for models on this PC brings it back.", { app: m.local.app })}</p>
+              {ollama ? (
+                <p className="small muted">{t("To delete the file too, remove the model in Ollama (ollama rm), so Ollama keeps working.")}</p>
+              ) : (
+                <label className="check">
+                  <input type="checkbox" checked={alsoFile} onChange={(e) => setAlsoFile(e.target.checked)} />
+                  <span>
+                    {t("Also delete the file itself ({size}): it moves to the Recycle Bin, and {app} won't have it either.", { size: bytes(inst.size), app: m.local.app })}
+                    <span className="muted small block ellipsis" title={m.local.path}>{m.local.path}</span>
+                  </span>
+                </label>
+              )}
+            </>
           ) : (
-            <p>{t("This deletes the model file ({size}) from this PC. Your chats stay, and you can reinstall it any time.", { size: bytes(inst.size) })}</p>
+            <p>
+              {t("This deletes the model file ({size}) and everything SulcusAI kept for it: half-finished downloads, models taught on top of it and the name you gave it. Your chats stay (they use your default model), and you can install it again any time.", { size: bytes(inst.size) })}
+            </p>
           )}
           <div className="modal-actions">
             <button className="btn" onClick={() => setConfirm(false)}>{t("Cancel")}</button>
@@ -796,9 +848,11 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
               className="btn danger-fill"
               onClick={async () => {
                 try {
-                  await api.removeModel(m.id);
+                  const freed = await api.removeModel(m.id, alsoFile);
                   setConfirm(false);
-                  if (m.local) toast(t("Stopped using {name}. Its file is still in {app}.", { name: m.name, app: m.local.app }), "success");
+                  if (m.local && !alsoFile) toast(t("Stopped using {name}. Its file is still in {app}.", { name: m.name, app: m.local.app }), "success");
+                  else if (m.local) toast(t("Deleted {name}. Its file is in the Recycle Bin; empty it to free {size}.", { name: m.name, size: bytes(freed) }), "success");
+                  else toast(t("Deleted {name} from this PC ({size} freed).", { name: m.name, size: bytes(freed) }), "success");
                   await onRefresh();
                   onSettings(await api.settings());
                 } catch (e) {
@@ -806,7 +860,7 @@ function InstalledCard({ m, rank, isDefault, onRefresh, onSettings, toast }: { m
                 }
               }}
             >
-              {m.local ? t("Stop using") : t("Remove")}
+              {m.local && !alsoFile ? t("Stop using") : t("Delete from this PC")}
             </button>
           </div>
         </Modal>

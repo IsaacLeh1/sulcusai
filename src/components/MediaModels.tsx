@@ -5,6 +5,7 @@ import { api, errorText, on, type HubMediaFile, type HubMediaModel, type HubMedi
 import { bytes, percent } from "../format";
 import { t, tx } from "../i18n";
 import { waitLabel } from "../media";
+import { HubLinkBox } from "./HubLink";
 import type { PushToast } from "./Toasts";
 
 const KINDS: { kind: MediaKind; title: string; per: string }[] = [
@@ -30,6 +31,11 @@ export function useMediaView(): [MediaView | null, () => void] {
 
 export function MediaModels({ progress, toast, only }: { progress: Record<string, InstallProgress>; toast: PushToast; only?: MediaKind[] }) {
   const [view, load] = useMediaView();
+  // Models locked against the automatic cleanup.
+  const [kept, setKept] = useState<string[]>([]);
+  useEffect(() => {
+    api.keepLocks().then((l) => setKept(l.models)).catch(() => {});
+  }, []);
   if (!view) return <p className="muted">{t("Loading…")}</p>;
   const busy = Object.keys(progress).length > 0;
   const kinds = KINDS.filter((k) => !only || only.includes(k.kind));
@@ -43,7 +49,7 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
             <h3>{t(title)}</h3>
             {kind === "video" && view.video_note && <p className="small warn-text">{view.video_note}</p>}
             {list.map((m) => (
-              <MediaModelRow key={m.id} m={m} per={per} progress={progress[m.id]} busy={busy} toast={toast} onChanged={load} />
+              <MediaModelRow key={m.id} m={m} per={per} progress={progress[m.id]} busy={busy} toast={toast} onChanged={load} isDefault={defaultOf(view, m.kind) === m.id} kept={kept.includes(m.id)} onKept={setKept} />
             ))}
           </section>
         );
@@ -64,6 +70,11 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
       />
     </div>
   );
+}
+
+/** The default model for a kind that has one (pictures, video, music). */
+function defaultOf(view: MediaView, kind: MediaKind): string | null {
+  return kind === "image" ? view.defaults?.image ?? null : kind === "video" ? view.defaults?.video ?? null : kind === "music" ? view.defaults?.music ?? null : null;
 }
 
 /** Asks before installing a model whose license limits its use. */
@@ -180,6 +191,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
           </p>
         </div>
       </div>
+      <HubLinkBox progress={progress} isInstalled={(id) => installed.has(id)} toast={toast} onInstalled={onChanged} />
       <div className="mode-switch small" role="tablist">
         {HUB_KINDS.map((k) => (
           <button
@@ -288,7 +300,28 @@ function abilities(m: MediaModelCard): string[] {
   }
 }
 
-function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaModelCard; per: string; progress?: InstallProgress; busy: boolean; toast: PushToast; onChanged: () => void }) {
+function MediaModelRow({
+  m,
+  per,
+  progress,
+  busy,
+  toast,
+  onChanged,
+  isDefault,
+  kept,
+  onKept,
+}: {
+  m: MediaModelCard;
+  per: string;
+  progress?: InstallProgress;
+  busy: boolean;
+  toast: PushToast;
+  onChanged: () => void;
+  isDefault: boolean;
+  kept: boolean;
+  onKept: (models: string[]) => void;
+}) {
+  const defaultable = m.installed && (m.kind === "image" || m.kind === "video" || m.kind === "music");
   const [removing, setRemoving] = useState(false);
   const size = m.files.reduce((s, f) => s + f.size, 0);
   return (
@@ -302,6 +335,17 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
             </a>
           )}
           {!m.license.commercial && <span className="badge subtle" title={m.license.note ?? undefined}>{t("Non-commercial")}</span>}
+          {isDefault && <span className="badge" title={t("Chats and the Studio use this model unless you pick another")}>★ {t("Default")}</span>}
+          {m.installed && (
+            <button
+              className={`icon-btn keep-btn ${kept ? "on" : ""}`}
+              aria-pressed={kept}
+              title={kept ? t("Locked: the automatic cleanup never removes it. Click to unlock.") : t("Lock it so the automatic cleanup never removes it")}
+              onClick={() => api.setKept("model", m.id, !kept).then((l) => onKept(l.models)).catch((e) => toast(errorText(e), "error"))}
+            >
+              {kept ? "🔒" : "🔓"}
+            </button>
+          )}
           <span className="cap-badges">
             {abilities(m).map((a) => (
               <span key={a} className="badge subtle">{t(a)}</span>
@@ -319,14 +363,33 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
             <a href={m.license.url} target="_blank" rel="noreferrer">{m.license.name}</a>
           </span>
         </div>
+        {defaultable && !isDefault && (
+          <button
+            className="btn ghost small"
+            title={t("Chats and the Studio use this model unless you pick another")}
+            onClick={() => {
+              // The Studio's remembered pick for this kind gives way to the new default.
+              try {
+                localStorage.removeItem(`sulcus.studio.model.${m.kind}`);
+              } catch {
+                /* nothing kept */
+              }
+              api.mediaSetDefault(m.kind as "image" | "video" | "music", m.id).then(onChanged).catch((e) => toast(errorText(e), "error"));
+            }}
+          >
+            {t("Make default")}
+          </button>
+        )}
         {m.installed ? (
           <button
             className="btn ghost danger small"
             disabled={removing}
             onClick={async () => {
+              if (!window.confirm(t("Delete {name} from this PC? Its files ({size}) are deleted, except ones another installed model shares. You can install it again any time.", { name: m.name, size: bytes(size) }))) return;
               setRemoving(true);
               try {
-                await api.removeMedia(m.id);
+                const freed = await api.removeMedia(m.id);
+                toast(t("Deleted {name} from this PC ({size} freed).", { name: m.name, size: bytes(freed) }), "success");
                 onChanged();
               } catch (e) {
                 toast(errorText(e), "error");
@@ -335,7 +398,7 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
               }
             }}
           >
-            {t("Remove")}
+            {t("Delete from this PC")}
           </button>
         ) : (
           !progress && (

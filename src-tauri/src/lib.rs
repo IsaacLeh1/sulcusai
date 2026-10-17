@@ -7,6 +7,8 @@
 mod advanced;
 mod agent;
 mod applog;
+mod cleanup;
+mod folders;
 mod backup;
 mod api_server;
 mod audio;
@@ -390,6 +392,51 @@ fn downloads_view(state: AppStateRef) -> DownloadsView {
 #[tauri::command]
 async fn hub_search(state: AppStateRef<'_>, query: String, sort: String, all: Option<bool>) -> Result<hub::HubResults, String> {
     hub::search(state.inner(), &query, &sort, all.unwrap_or(false)).await
+}
+
+/// A pasted Hugging Face link, as the model it points at.
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum HubLink {
+    /// A GGUF chat model (installs with `hub_install`).
+    Chat { model: hub::HubModel, file: Option<String> },
+    /// A picture, video or music model (installs with `media_hub_install`).
+    Media { model: media::hub::HubMediaModel, media: &'static str, file: Option<String> },
+}
+
+/// Looks up a pasted Hugging Face link: the model it points at, with every
+/// file SulcusAI can use (the ones this PC can't run say why), and the file
+/// the link named, if it named one.
+#[tauri::command]
+async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, String> {
+    let (repo_id, file) = hub::parse_link(&link)?;
+    let client = hub::client(&state)?;
+    state.log("network", "Looked up a pasted Hugging Face link (huggingface.co)");
+    let r = hub::repo(&client, &repo_id).await.map_err(|e| {
+        if e.contains("401") || e.contains("404") {
+            "There's no public model at that link. Check it, or the model may be private.".to_string()
+        } else {
+            e
+        }
+    })?;
+    if !r.info["gated"].is_null() && r.info["gated"] != false {
+        return Err("That model needs a Hugging Face account to download, which SulcusAI doesn't use.".into());
+    }
+    // The file the link named, when it's one SulcusAI can use (else all are shown).
+    let named = |files: Vec<&String>| file.clone().filter(|f| files.contains(&f));
+    // Picture, video and music models first: their files are GGUF too.
+    if let Some((model, kind)) = media::hub::from_link(&state, &r) {
+        let file = named(model.files.iter().map(|f| &f.file).collect());
+        return Ok(HubLink::Media { file, model, media: kind });
+    }
+    if hub::is_chat(&r) {
+        let model = hub::describe(&r.info, &r, &state.budget(), true);
+        if !model.files.is_empty() {
+            let file = named(model.files.iter().map(|f| &f.file).collect());
+            return Ok(HubLink::Chat { file, model });
+        }
+    }
+    Err("SulcusAI can't use that model. It runs GGUF chat models, and picture, video and music models built on SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan or ACE-Step.".into())
 }
 
 /// Installs one file of a Hugging Face model, like a catalog model.
@@ -908,36 +955,65 @@ fn cancel_install(app: AppHandle, state: AppStateRef, model_id: String) {
     app.emit("downloads:changed", json!({})).ok();
 }
 
+/// Removes a chat model. `delete_file`: a model from another app or a
+/// folder also has its file moved to the Recycle Bin (never Ollama's, whose
+/// files only Ollama can remove safely). Returns the bytes freed.
 #[tauri::command]
-async fn remove_model(state: AppStateRef<'_>, model_id: String) -> Result<(), String> {
+async fn remove_model(state: AppStateRef<'_>, model_id: String, delete_file: Option<bool>) -> Result<u64, String> {
     state.cipher()?;
-    let spec = state.model_spec(&model_id);
+    remove_model_now(state.inner(), &model_id, delete_file.unwrap_or(false)).await
+}
+
+/// Removes a chat model from this PC entirely: its files (and half-finished
+/// downloads), models taught on top of it, its paused download, the name
+/// given to it, and the lock and usage the cleanup kept.
+pub(crate) async fn remove_model_now(state: &Arc<AppState>, model_id: &str, delete_file: bool) -> Result<u64, String> {
+    let spec = state.model_spec(model_id);
     {
         let mut engine = state.engine.lock().await;
-        if engine.status().model_id.as_deref() == Some(&model_id) {
+        if engine.status().model_id.as_deref() == Some(model_id) {
             engine.stop().await;
         }
     }
     let from = spec.as_ref().and_then(|s| s.local.clone());
-    // Another app's file stays where it is.
-    let dir = state.paths.models.join(&model_id);
+    if delete_file && from.as_ref().is_some_and(|l| l.app.eq_ignore_ascii_case("ollama")) {
+        return Err("Ollama keeps this model in its own store. Remove it in Ollama instead (ollama rm <name>), so Ollama doesn't break.".into());
+    }
+    let mut freed = 0u64;
+    // Another app's file stays where it is, unless the person asked for it to go.
+    let dir = state.paths.models.join(model_id);
     if from.is_none() && dir.starts_with(&state.paths.models) && dir != state.paths.models && dir.exists() {
+        freed += storage::folder_size(&dir);
         std::fs::remove_dir_all(&dir).map_err(|e| format!("Couldn't delete the model files: {e}"))?;
     }
+    if let (Some(l), true) = (&from, delete_file) {
+        let file = std::path::PathBuf::from(&l.path);
+        if file.is_file() {
+            let size = file.metadata().map_or(0, |m| m.len());
+            checkpoint::recycle(&file).map_err(|e| format!("Couldn't move the model file to the Recycle Bin: {e}"))?;
+            freed += size;
+        }
+    }
+    let taught = finetune::forget_adapters_of(state, model_id);
     let conn = state.db.lock().unwrap();
-    db::remove_installed(&conn, &model_id)?;
-    local::forget(&conn, &model_id)?;
-    hub::forget(&conn, &model_id)?;
-    if db::settings(&conn).default_model.as_deref() == Some(&model_id) {
+    db::remove_installed(&conn, model_id)?;
+    local::forget(&conn, model_id)?;
+    hub::forget(&conn, model_id)?;
+    downloads::forget(&conn, model_id)?;
+    db::set_model_name(&conn, model_id, None)?;
+    cleanup::forget_model(&conn, model_id);
+    if db::settings(&conn).default_model.as_deref() == Some(model_id) {
         let next = db::installed_models(&conn).first().map(|m| m.model_id.clone());
         db::update_settings(&conn, |s| s.default_model = next)?;
     }
-    let name = spec.as_ref().map_or(model_id.as_str(), |m| m.name.as_str());
-    match &from {
-        Some(l) => db::log_action(&conn, "model", &format!("Stopped using {name} (its file stays in {})", l.app)),
-        None => db::log_action(&conn, "model", &format!("Removed {name} and deleted its files")),
+    let name = spec.as_ref().map_or(model_id, |m| m.name.as_str());
+    let taught = if taught > 0 { format!(" and {taught} model(s) taught on it") } else { String::new() };
+    match (&from, delete_file) {
+        (Some(l), false) => db::log_action(&conn, "model", &format!("Stopped using {name} (its file stays in {})", l.app)),
+        (Some(_), true) => db::log_action(&conn, "model", &format!("Removed {name}{taught} and moved its file to the Recycle Bin ({} freed once it's emptied)", size_label(freed))),
+        (None, _) => db::log_action(&conn, "model", &format!("Removed {name}{taught} and deleted its files ({} freed)", size_label(freed))),
     }
-    Ok(())
+    Ok(freed)
 }
 
 // ---------- settings & profile ----------
@@ -1149,12 +1225,23 @@ fn create_chat(state: AppStateRef) -> Result<Chat, String> {
 
 #[tauri::command(async)]
 fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
-    state.cipher()?;
-    state.contexts.lock().unwrap().remove(&chat_id);
-    state.approvals.forget_chat(&chat_id);
+    delete_chat_now(&state, &chat_id)
+}
+
+/// Deletes a chat: its messages and pasted pictures, its place in a folder,
+/// its lock, and (first) its sharing with people.
+pub(crate) fn delete_chat_now(state: &AppState, chat_id: &str) -> Result<(), String> {
+    let c = state.cipher()?;
+    if sync::people::shared_chat_ids(&state.db.lock().unwrap()).contains(chat_id) {
+        let _ = sync::people::share::set_chat_sharing(state, &c, chat_id, Vec::new());
+    }
+    state.contexts.lock().unwrap().remove(chat_id);
+    state.approvals.forget_chat(chat_id);
     let conn = state.db.lock().unwrap();
-    db::delete_chat(&conn, &chat_id)?;
-    media::store::delete_attachments(&conn, &state.paths, &chat_id);
+    db::delete_chat(&conn, chat_id)?;
+    media::store::delete_attachments(&conn, &state.paths, chat_id);
+    folders::forget_chat(&conn, chat_id);
+    cleanup::forget_chat(&conn, chat_id);
     db::log_action(&conn, "chat", "Deleted a chat and its messages");
     Ok(())
 }
@@ -1192,7 +1279,10 @@ fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Resu
 #[tauri::command(async)]
 fn get_messages(state: AppStateRef, chat_id: String) -> Result<Vec<Message>, String> {
     let c = state.cipher()?;
-    Ok(db::messages(&state.db.lock().unwrap(), &c, &chat_id))
+    let messages = db::messages(&state.db.lock().unwrap(), &c, &chat_id);
+    // Opened just now (the automatic cleanup counts from the last use).
+    cleanup::touch_chat(&state, &chat_id);
+    Ok(messages)
 }
 
 #[tauri::command(async)]
@@ -1486,7 +1576,14 @@ pub(crate) async fn llm_endpoint(
 ) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
     let id = {
         let conn = state.db.lock().unwrap();
-        model_id.or_else(|| db::settings(&conn).default_model).ok_or("Install a model first: open Models and pick one.")?
+        let default = db::settings(&conn).default_model;
+        // A chat whose model was removed (by hand or by the cleanup) uses the default.
+        let gone = |id: &String| !cloud::is_cloud(id) && finetune::parse_ref(id).is_none() && db::installed_model(&conn, id).is_none();
+        let chosen = match model_id {
+            Some(id) if gone(&id) && default.as_ref().is_some_and(|d| !gone(d)) => default.clone(),
+            other => other,
+        };
+        chosen.or(default).ok_or("Install a model first: open Models and pick one.")?
     };
     if cloud::is_cloud(&id) {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
@@ -1502,6 +1599,7 @@ pub(crate) async fn llm_endpoint(
     };
     let base_id = taught.as_ref().map_or(id.clone(), |a| a.base.clone());
     let installed = db::installed_model(&state.db.lock().unwrap(), &base_id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
+    cleanup::touch_model(state, &installed.model_id);
     let mut spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
     if let Some(a) = &taught {
         spec.name = format!("{} + {}", spec.name, a.name);
@@ -1749,6 +1847,7 @@ pub fn run() {
             // Crash reports: the failure hook and how the last run ended (always logged here; sent only if turned on).
             crash::start(&state);
             devmode::start(&state);
+            cleanup::start(&state);
             backup::finish_restore(&state);
             api_server::apply(state.clone());
             // Models already on this PC, from an earlier install or another app.
@@ -1804,6 +1903,23 @@ pub fn run() {
             media::media_view,
             media::install_media_model,
             media::media_hub_search,
+            media::media_set_default,
+            cleanup::clean_view,
+            cleanup::set_auto_clean,
+            cleanup::clean_now,
+            cleanup::set_kept,
+            cleanup::keep_locks,
+            cleanup::cache_view,
+            cleanup::clear_cache,
+            folders::folders_view,
+            folders::create_folder,
+            folders::rename_folder,
+            folders::set_folder_flags,
+            folders::delete_folder,
+            folders::move_to_folder,
+            folders::folder_sharing,
+            folders::share_folder,
+            hub_link,
             media::media_hub_install,
             media::remove_media_model,
             media::media_start,

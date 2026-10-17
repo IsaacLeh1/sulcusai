@@ -11,6 +11,7 @@ import { SignInApps } from "../components/SignIn";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
 import { ModelStorage } from "../components/ModelStorage";
+import { CleanupSettings } from "../components/CleanupSettings";
 import type { PushToast } from "../components/Toasts";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { ApiServerSettings } from "../components/ApiServerSettings";
@@ -341,6 +342,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-storage" className="settings-anchor" />
       <ModelStorage toast={toast} />
+      <span id="settings-cleanup" className="settings-anchor" />
+      <CleanupSettings toast={toast} />
 
       <span id="settings-sign-in" className="settings-anchor" />
       {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}

@@ -106,6 +106,25 @@ fn save(state: &AppState, list: &[Adapter]) -> Result<(), String> {
     db::set(&state.db.lock().unwrap(), KEY, &list)
 }
 
+/// A model was removed: the models taught on top of it (which only work
+/// with it) go too. Returns how many.
+pub fn forget_adapters_of(state: &AppState, base: &str) -> usize {
+    let mut list = adapters(state);
+    let root = state.paths.data.join("adapters");
+    let gone: Vec<Adapter> = list.iter().filter(|a| a.base == base).cloned().collect();
+    for a in &gone {
+        let dir = root.join(&a.id);
+        if dir.starts_with(&root) && dir != root {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+    if !gone.is_empty() {
+        list.retain(|a| a.base != base);
+        let _ = save(state, &list);
+    }
+    gone.len()
+}
+
 /// "adapter:<id>" in the model menu.
 pub fn parse_ref(id: &str) -> Option<&str> {
     id.strip_prefix("adapter:")

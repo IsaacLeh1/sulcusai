@@ -1911,6 +1911,9 @@
             "inpaint",
             "fp32",
             "pruned"
+          ],
+          "tags": [
+            "diffusers:StableDiffusionXLPipeline"
           ]
         }
       },

@@ -268,7 +268,7 @@ fn spec_for(repo_id: &str, info: &Value, variants: Vec<Variant>, vision: Option<
 
 /// What a search shows for one repository: the files this PC can run (or,
 /// with `all`, every file, the ones it can't run without a placement).
-fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> HubModel {
+pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> HubModel {
     let id = m["id"].as_str().unwrap_or_default().to_string();
     let mut files: Vec<&RemoteFile> = model_files(repo).filter(|f| f.size <= budget.disk).collect();
     files.sort_by_key(|f| f.size);
@@ -300,6 +300,50 @@ fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> HubModel {
         files,
         id,
     }
+}
+
+/// A GGUF chat model: Hugging Face calls it a text model (or names no
+/// task) and it has a single-file model SulcusAI can load.
+pub(crate) fn is_chat(repo: &Repo) -> bool {
+    let task_ok = matches!(repo.info["pipeline_tag"].as_str(), None | Some("text-generation" | "image-text-to-text"));
+    task_ok && model_files(repo).next().is_some()
+}
+
+/// The repository ("owner/name") and file a pasted Hugging Face link points
+/// at: a model page, a file page ("…/blob/main/x.gguf"), a download link
+/// ("…/resolve/main/x.gguf"), with or without https://, or just "owner/name".
+pub fn parse_link(text: &str) -> Result<(String, Option<String>), String> {
+    let t = text.trim().trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'');
+    let t = t.split(['?', '#']).next().unwrap_or("");
+    let rest = ["https://", "http://"].iter().find_map(|p| t.strip_prefix(p)).unwrap_or(t);
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let path = match ["huggingface.co/", "hf.co/"].iter().find_map(|h| rest.strip_prefix(h)) {
+        Some(p) => p,
+        None if rest.contains("://") || rest.split('/').next().is_some_and(|h| h.contains('.')) => {
+            return Err("That isn't a Hugging Face link. Paste a link that starts with https://huggingface.co/.".into())
+        }
+        None => rest,
+    };
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    if matches!(parts.first(), Some(&("datasets" | "spaces" | "docs" | "papers" | "collections"))) {
+        return Err("That link is to a Hugging Face page that isn't a model. Paste the link to a model's page.".into());
+    }
+    let ok = |p: &str| !p.is_empty() && p.len() <= 96 && p.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !p.starts_with('.');
+    let (Some(owner), Some(name)) = (parts.first().copied(), parts.get(1).copied()) else {
+        return Err("Paste the link to a model's page on Hugging Face, like https://huggingface.co/owner/model-name.".into());
+    };
+    if !ok(owner) || !ok(name) {
+        return Err("That link doesn't look like a Hugging Face model. Paste the link to a model's page.".into());
+    }
+    // "…/blob/<revision>/<path>" or "…/resolve/<revision>/<path>": one file.
+    let file = match parts.get(2) {
+        Some(&("blob" | "resolve")) if parts.len() > 4 => {
+            let f = parts[4..].join("/");
+            (!f.split('/').any(|seg| seg == "..")).then_some(f)
+        }
+        _ => None,
+    };
+    Ok((format!("{owner}/{name}"), file))
 }
 
 /// The id a file installs as: the same for the same file, every time.
@@ -487,6 +531,27 @@ mod live {
     /// Against huggingface.co with this PC's hardware: a search shows only
     /// runnable files, and a small model downloads, checks out and is read.
     #[cfg(windows)]
+    #[test]
+    fn pasted_links_name_the_model_and_file() {
+        let repo = |t: &str| parse_link(t).unwrap();
+        assert_eq!(repo("https://huggingface.co/unsloth/Qwen3-8B-GGUF"), ("unsloth/Qwen3-8B-GGUF".into(), None));
+        assert_eq!(repo("huggingface.co/unsloth/Qwen3-8B-GGUF/tree/main"), ("unsloth/Qwen3-8B-GGUF".into(), None));
+        assert_eq!(repo("  https://www.huggingface.co/unsloth/Qwen3-8B-GGUF?library=llama.cpp  "), ("unsloth/Qwen3-8B-GGUF".into(), None));
+        assert_eq!(
+            repo("https://huggingface.co/unsloth/Qwen3-8B-GGUF/blob/main/Qwen3-8B-Q4_K_M.gguf"),
+            ("unsloth/Qwen3-8B-GGUF".into(), Some("Qwen3-8B-Q4_K_M.gguf".into()))
+        );
+        assert_eq!(
+            repo("https://hf.co/QuantStack/Wan2.2-TI2V-5B-GGUF/resolve/main/sub/Wan2.2-TI2V-5B-Q4_K_M.gguf?download=true"),
+            ("QuantStack/Wan2.2-TI2V-5B-GGUF".into(), Some("sub/Wan2.2-TI2V-5B-Q4_K_M.gguf".into()))
+        );
+        assert_eq!(repo("SG161222/RealVisXL_V5.0"), ("SG161222/RealVisXL_V5.0".into(), None));
+        assert!(parse_link("https://huggingface.co/datasets/x/y").is_err());
+        assert!(parse_link("https://example.com/a/b").is_err());
+        assert!(parse_link("https://huggingface.co/unsloth").is_err());
+        assert_eq!(repo("https://huggingface.co/a/b/blob/main/../../etc/passwd").1, None, "no climbing out");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn search_and_fetch_from_hugging_face() {

@@ -34,6 +34,9 @@ pub struct HubFamily {
     pub name: String,
     /// Hugging Face's ids of the base model (their "base_model" link).
     pub bases: Vec<String>,
+    /// Tags that mark a model of this family when it names no base model
+    /// ("diffusers:StableDiffusionXLPipeline").
+    pub tags: Vec<String>,
     /// The file a model from Hugging Face replaces: "model" (the whole
     /// checkpoint), "diffusion" or "dit" (music).
     pub role: String,
@@ -126,7 +129,7 @@ fn families_of<'a>(info: &Value, donors: &'a [MediaModel]) -> Vec<&'a MediaModel
     let id = info["id"].as_str().unwrap_or_default();
     donors.iter().filter(|d| {
         d.hub.as_ref().is_some_and(|h| {
-            h.bases.iter().any(|b| {
+            h.tags.iter().any(|tag| tags.iter().any(|t| t.eq_ignore_ascii_case(tag))) || h.bases.iter().any(|b| {
                 id.eq_ignore_ascii_case(b)
                     || tags.iter().any(|t| {
                         // "base_model:X", "base_model:finetune:X", "base_model:quantized:X", "base_model:merge:X";
@@ -381,65 +384,85 @@ pub async fn search(state: &Arc<AppState>, kind: &str, query: &str, sort: &str, 
         .buffered(6)
         .collect()
         .await;
-    let hw = state.hardware.read().unwrap().clone();
-    let budget = Budget::from_hardware(&hw);
     let known = known_files(state);
     let mut out = HubMediaResults { models: Vec::new(), hidden: 0 };
     for (m, r) in details {
         let Ok(r) = r else { continue };
-        // Search results lack the license; the repository's details have it.
-        let mut info = r.info.clone();
-        if info["tags"].is_null() {
-            info["tags"] = m["tags"].clone();
+        match describe(state, &m, &r, &donors, &known, all) {
+            Some((model, _)) => out.models.push(model),
+            None => out.hidden += 1,
         }
-        let mine = families_of(&info, &donors);
-        let Some(first) = mine.first() else {
-            out.hidden += 1;
-            continue;
-        };
-        let h = first.hub.clone().unwrap_or_default();
-        let repo_id = m["id"].as_str().unwrap_or_default().to_string();
-        let files: Vec<HubMediaFile> = offered(&r, &mine, &known)
-            .into_iter()
-            .map(|(f, donor)| {
-                let spec = derive(donor, &repo_id, &info, f, String::new());
-                let missing = missing_bytes(&state.paths, &spec);
-                let fit = fit(&spec, &hw, &budget, missing, None);
-                HubMediaFile {
-                    file: f.path.clone(),
-                    model_id: spec.id.clone(),
-                    quant: quant_label(&f.path),
-                    size: f.size,
-                    download: missing,
-                    runnable: fit.runnable && fit.disk_ok,
-                    on_gpu: fit.on_gpu,
-                    est_secs: fit.est_secs,
-                    reason: fit.reason.clone().or_else(|| (!fit.disk_ok).then(|| "needs more free disk space".into())),
-                }
-            })
-            .filter(|f| all || f.runnable)
-            .collect();
-        if files.is_empty() {
-            out.hidden += 1;
-            continue;
-        }
-        let recommended = recommend(&files);
-        out.models.push(HubMediaModel {
-            name: hf::display_name(&repo_id),
-            author: repo_id.split('/').next().unwrap_or("").to_string(),
-            downloads: m["downloads"].as_u64().unwrap_or(0),
-            likes: m["likes"].as_u64().unwrap_or(0),
-            updated: m["lastModified"].as_str().map(|d| d.chars().take(10).collect()),
-            url: format!("{}/{repo_id}", hf::SITE),
-            family: h.name.clone(),
-            base_model: first.name.clone(),
-            license: info["cardData"]["license"].as_str().map(str::to_string),
-            files,
-            recommended,
-            id: repo_id,
-        });
     }
     Ok(out)
+}
+
+/// What the Studio shows for one repository: the files this PC can run (or,
+/// with `all`, every file), with the kind of model it is. None when it isn't
+/// built on a family SulcusAI runs, or no file of it can be used.
+fn describe(state: &AppState, m: &Value, r: &Repo, donors: &[MediaModel], known: &HashSet<String>, all: bool) -> Option<(HubMediaModel, Kind)> {
+    let hw = state.hardware.read().unwrap().clone();
+    let budget = Budget::from_hardware(&hw);
+    // Search results lack the license; the repository's details have it.
+    let mut info = r.info.clone();
+    if info["tags"].is_null() {
+        info["tags"] = m["tags"].clone();
+    }
+    let mine = families_of(&info, donors);
+    let first = mine.first()?;
+    let h = first.hub.clone().unwrap_or_default();
+    let repo_id = m["id"].as_str().or(info["id"].as_str()).unwrap_or_default().to_string();
+    let files: Vec<HubMediaFile> = offered(r, &mine, known)
+        .into_iter()
+        .map(|(f, donor)| {
+            let spec = derive(donor, &repo_id, &info, f, String::new());
+            let missing = missing_bytes(&state.paths, &spec);
+            let fit = fit(&spec, &hw, &budget, missing, None);
+            HubMediaFile {
+                file: f.path.clone(),
+                model_id: spec.id.clone(),
+                quant: quant_label(&f.path),
+                size: f.size,
+                download: missing,
+                runnable: fit.runnable && fit.disk_ok,
+                on_gpu: fit.on_gpu,
+                est_secs: fit.est_secs,
+                reason: fit.reason.clone().or_else(|| (!fit.disk_ok).then(|| "needs more free disk space".into())),
+            }
+        })
+        .filter(|f| all || f.runnable)
+        .collect();
+    if files.is_empty() {
+        return None;
+    }
+    let recommended = recommend(&files);
+    let model = HubMediaModel {
+        name: hf::display_name(&repo_id),
+        author: repo_id.split('/').next().unwrap_or("").to_string(),
+        downloads: m["downloads"].as_u64().unwrap_or(0),
+        likes: m["likes"].as_u64().unwrap_or(0),
+        updated: m["lastModified"].as_str().map(|d| d.chars().take(10).collect()),
+        url: format!("{}/{repo_id}", hf::SITE),
+        family: h.name.clone(),
+        base_model: first.name.clone(),
+        license: info["cardData"]["license"].as_str().map(str::to_string),
+        files,
+        recommended,
+        id: repo_id,
+    };
+    Some((model, first.kind))
+}
+
+/// A repository someone linked to, as a picture, video or music model, with
+/// every file (the ones this PC can't run say why): None when it isn't one.
+pub fn from_link(state: &AppState, r: &Repo) -> Option<(HubMediaModel, &'static str)> {
+    let donors: Vec<MediaModel> = [Kind::Image, Kind::Video, Kind::Music].into_iter().flat_map(|k| families(state, k)).collect();
+    let (model, kind) = describe(state, &r.info, r, &donors, &known_files(state), true)?;
+    let kind = match kind {
+        Kind::Video => "video",
+        Kind::Music => "music",
+        _ => "image",
+    };
+    Some((model, kind))
 }
 
 /// The file that suits this PC best: the biggest one that runs on the card,
@@ -527,6 +550,30 @@ mod tests {
         assert_eq!(m.defaults.steps, 28, "a regular fine-tune of a fast model takes the usual steps");
         assert!(m.hub.is_none());
         assert_eq!(m.license.name, "creativeml-openrail-m");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore]
+    async fn pasted_links_find_the_right_kind_of_model() {
+        let state = crate::e2e::scratch_state();
+        let client = hf::client(&state).unwrap();
+        for (link, kind) in [
+            ("https://huggingface.co/SG161222/RealVisXL_V5.0/blob/main/RealVisXL_V5.0_fp16.safetensors", Some("image")),
+            ("https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF", Some("video")),
+            ("hf.co/unsloth/Qwen3-0.6B-GGUF", None),
+        ] {
+            let (repo, file) = hf::parse_link(link).unwrap();
+            let r = hf::repo(&client, &repo).await.unwrap();
+            let media = from_link(&state, &r);
+            println!("{link} -> media {:?} ({} files), chat {}", media.as_ref().map(|m| m.1), media.as_ref().map_or(0, |m| m.0.files.len()), hf::is_chat(&r));
+            assert_eq!(media.as_ref().map(|m| m.1), kind);
+            if kind.is_none() {
+                assert!(hf::is_chat(&r), "a chat model");
+            }
+            if let (Some(f), Some((m, _))) = (file, &media) {
+                assert!(m.files.iter().any(|x| x.file == f), "the linked file is offered");
+            }
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

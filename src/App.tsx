@@ -15,6 +15,8 @@ import {
   type SharedHere,
   type Settings,
   type BrowsersView,
+  type FolderView,
+  type KeepLocks,
 } from "./api";
 import { APP_NAME } from "./brand";
 import { t } from "./i18n";
@@ -22,6 +24,7 @@ import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
 import { SideMenu } from "./components/SideMenu";
+import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
@@ -213,15 +216,23 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   activeChatRef.current = activeChat;
 
   const refreshChats = useCallback(async () => setChats(await api.chats()), []);
+  // Chat folders and the chats and models locked against the automatic cleanup.
+  const [folders, setFolders] = useState<FolderView[]>([]);
+  const [locks, setLocks] = useState<KeepLocks>({ chats: [], models: [] });
+  const refreshFolders = useCallback(() => {
+    api.foldersView().then(setFolders).catch(() => {});
+    api.keepLocks().then(setLocks).catch(() => {});
+  }, []);
   const refreshCatalog = useCallback(async () => setCatalog(await api.catalog()), []);
   const refreshEngine = useCallback(async () => setEngine(await api.engineStatus()), []);
 
   useEffect(() => {
     refreshChats();
+    refreshFolders();
     refreshCatalog();
     refreshEngine();
     api.settings().then(setSettings);
-  }, [refreshChats, refreshCatalog, refreshEngine]);
+  }, [refreshChats, refreshFolders, refreshCatalog, refreshEngine]);
 
   // Install progress outlives page switches, so it is tracked here.
   useEffect(() => {
@@ -297,6 +308,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
   // New chats stay out of the list until something is sent in them.
   const listed = chats.filter((c) => !c.empty || started.has(c.id) || running.includes(c.id));
+  const foldered = new Set(folders.flatMap((f) => f.chats));
+  const [folderFor, setFolderFor] = useState<string | null>(null);
   const installed = useMemo(() => (catalog?.models ?? []).filter((m) => m.installed), [catalog]);
   const current = chats.find((c) => c.id === activeChat) ?? null;
 
@@ -394,6 +407,32 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       toast(errorText(e), "error");
     }
   };
+  /** One chat in the sidebar (main list or a folder); it can be dragged onto a folder. */
+  const chatItem = (c: Chat, inFolder: boolean) => (
+    <button
+      key={c.id}
+      role="listitem"
+      className={`chat-item ${inFolder ? "in-folder" : ""} ${view === "chat" && c.id === activeChat ? "active" : ""}`}
+      onClick={() => openChat(c.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setChatMenu({ id: c.id, x: e.clientX, y: e.clientY });
+      }}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("application/x-sulcus-chat", c.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      title={c.title}
+    >
+      {c.incognito && <span aria-label={t("Incognito")}>🕶</span>}
+      <span className="ellipsis">{c.title}</span>
+      {locks.chats.includes(c.id) && <span className="chat-kept" title={t("Locked: the automatic cleanup never removes it")}>🔒</span>}
+      {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
+      {c.web && <span className="globe-mini" title={t("Web on for this chat")}>🌐</span>}
+      {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
+    </button>
+  );
   const picker = (label: ReactNode) => (
     <ModelPicker label={label} installed={installed} current={settings?.default_model} onPick={pickDefault} onModels={() => setView("models")} />
   );
@@ -519,6 +558,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           ))}
         </div>}
+        {(folders.length > 0 || listed.length > 0) && (
+          <FolderSection folders={folders} chats={listed} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
+        )}
         <div className="chat-list" role="list">
           {listed.length === 0 && sharedHere.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
           {sharedHere.map((s) => (
@@ -537,37 +579,72 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {s.chat.busy && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
             </button>
           ))}
-          {listed.map((c) => (
-            <button
-              key={c.id}
-              role="listitem"
-              className={`chat-item ${view === "chat" && c.id === activeChat ? "active" : ""}`}
-              onClick={() => openChat(c.id)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                setChatMenu({ id: c.id, x: e.clientX, y: e.clientY });
-              }}
-              title={c.title}
-            >
-              {c.incognito && <span aria-label={t("Incognito")}>🕶</span>}
-              <span className="ellipsis">{c.title}</span>
-              {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
-              {c.web && <span className="globe-mini" title={t("Web on for this chat")}>🌐</span>}
-              {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
-            </button>
-          ))}
+          {listed.filter((c) => !foldered.has(c.id)).map((c) => chatItem(c, false))}
         </div>
         </>)}
         <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
       </aside>
       {chatMenu && (
-        <ChatMenu
-          x={chatMenu.x}
-          y={chatMenu.y}
-          onClose={() => setChatMenu(null)}
-          onDelete={() => {
-            setConfirmDelete(chats.find((c) => c.id === chatMenu.id) ?? null);
-            setChatMenu(null);
+        <FloatingMenu x={chatMenu.x} y={chatMenu.y} onClose={() => setChatMenu(null)}>
+          {(() => {
+            const id = chatMenu.id;
+            const kept = locks.chats.includes(id);
+            const current = folders.find((f) => f.chats.includes(id));
+            const done = () => setChatMenu(null);
+            const move = (folderId: string | null) => {
+              done();
+              api.moveToFolder(id, folderId).then(setFolders).catch((e) => toast(errorText(e), "error"));
+            };
+            return (
+              <>
+                <span className="menu-label">{t("Move to folder")}</span>
+                {folders.filter((f) => f.id !== current?.id).map((f) => (
+                  <button key={f.id} role="menuitem" onClick={() => move(f.id)}>
+                    📁 {f.name}
+                  </button>
+                ))}
+                <button role="menuitem" onClick={() => (setFolderFor(id), done())}>
+                  ＋ {t("New folder…")}
+                </button>
+                {current && (
+                  <button role="menuitem" onClick={() => move(null)}>
+                    ↩ {t("Out of “{name}”", { name: current.name })}
+                  </button>
+                )}
+                <hr />
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    done();
+                    api.setKept("chat", id, !kept).then(setLocks).catch((e) => toast(errorText(e), "error"));
+                  }}
+                >
+                  {kept ? `🔓 ${t("Unlock (the cleanup may remove it)")}` : `🔒 ${t("Lock (the cleanup never removes it)")}`}
+                </button>
+                <button
+                  role="menuitem"
+                  className="danger"
+                  onClick={() => {
+                    setConfirmDelete(chats.find((c) => c.id === id) ?? null);
+                    done();
+                  }}
+                >
+                  {t("🗑 Delete chat")}
+                </button>
+              </>
+            );
+          })()}
+        </FloatingMenu>
+      )}
+      {folderFor && (
+        <NameModal
+          title={t("New folder")}
+          initial=""
+          onClose={() => setFolderFor(null)}
+          onSave={(name) => {
+            const id = folderFor;
+            setFolderFor(null);
+            api.createFolder(name, id).then(setFolders).catch((e) => toast(errorText(e), "error"));
           }}
         />
       )}
@@ -588,6 +665,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                   await api.deleteChat(id);
                   if (activeChat === id) setActiveChat(null);
                   await refreshChats();
+                  refreshFolders();
                 } catch (e) {
                   toast(errorText(e), "error");
                 }
@@ -800,31 +878,6 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
   );
 }
 
-/** Right-click menu on a chat in the sidebar. */
-function ChatMenu({ x, y, onClose, onDelete }: { x: number; y: number; onClose: () => void; onDelete: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    };
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("mousedown", close);
-    window.addEventListener("keydown", esc);
-    window.addEventListener("blur", onClose);
-    return () => {
-      window.removeEventListener("mousedown", close);
-      window.removeEventListener("keydown", esc);
-      window.removeEventListener("blur", onClose);
-    };
-  }, [onClose]);
-  return (
-    <div ref={ref} className="context-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 180), top: Math.min(y, window.innerHeight - 60) }}>
-      <button role="menuitem" className="danger" onClick={onDelete} autoFocus>
-        {t("🗑 Delete chat")}
-      </button>
-    </div>
-  );
-}
 
 /** Across the top of the page: the web button, which opens the main browser. */
 function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) {

@@ -179,16 +179,28 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           </>
         ) : tab === "pictures" ? (
           <PictureComposer
+            key={view?.defaults?.image ?? "no-default"}
             models={installedOf("image")}
+            defaultId={view?.defaults?.image ?? null}
+            onSetDefault={(id) => api.mediaSetDefault("image", id).then(reloadView).catch(() => {})}
             onStart={start}
             onEditPhoto={importFile}
             lifelike={view?.models.find((m) => m.id === "z-image-turbo" && !m.installed && m.fit.runnable) ?? null}
             onModels={() => setModels(["image"])}
           />
         ) : tab === "video" ? (
-          <VideoComposer models={installedOf("video")} source={source} onPickSource={setSource} gallery={items} onStart={start} />
+          <VideoComposer
+            key={view?.defaults?.video ?? "no-default"}
+            models={installedOf("video")}
+            defaultId={view?.defaults?.video ?? null}
+            onSetDefault={(id) => api.mediaSetDefault("video", id).then(reloadView).catch(() => {})}
+            source={source}
+            onPickSource={setSource}
+            gallery={items}
+            onStart={start}
+          />
         ) : tab === "music" ? (
-          <MusicComposer models={installedOf("music")} onStart={start} />
+          <MusicComposer key={view?.defaults?.music ?? "no-default"} models={installedOf("music")} defaultId={view?.defaults?.music ?? null} onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView).catch(() => {})} onStart={start} />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
         )}
@@ -262,12 +274,26 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       )}
 
       {models && (
-        <Modal title={t("Models for the studio")} onClose={() => setModels(null)}>
+        <Modal
+          title={t("Models for the studio")}
+          onClose={() => {
+            setModels(null);
+            reloadView();
+          }}
+        >
           <div className="studio-models">
             <MediaModels progress={progress} toast={toast} />
           </div>
           <div className="modal-actions">
-            <button className="btn" onClick={() => setModels(null)}>{t("Close")}</button>
+            <button
+              className="btn"
+              onClick={() => {
+                setModels(null);
+                reloadView();
+              }}
+            >
+              {t("Close")}
+            </button>
           </div>
         </Modal>
       )}
@@ -318,6 +344,42 @@ function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; valu
 
 function best(models: MediaModelCard[], can?: string): string {
   return [...models].filter((m) => !can || m.can.includes(can)).sort((a, b) => b.quality - a.quality)[0]?.id ?? "";
+}
+
+/** The model a composer uses: the one last picked on this tab (remembered,
+ * so leaving the tab doesn't undo it), else the default set for this kind,
+ * else the best installed one. Worked out on every render, so it's right
+ * once the model list arrives too. */
+function useModelPick(kind: string, models: MediaModelCard[], defaultId: string | null): [string, (id: string) => void] {
+  const key = `sulcus.studio.model.${kind}`;
+  const [chosen, setChosen] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  });
+  const resolved = [chosen, defaultId].find((id) => id && models.some((m) => m.id === id)) ?? best(models);
+  const pick = (id: string) => {
+    setChosen(id);
+    try {
+      localStorage.setItem(key, id);
+    } catch {
+      /* not kept */
+    }
+  };
+  return [resolved, pick];
+}
+
+/** "Make this the default" beside the model picker (models on this PC only). */
+function DefaultLink({ id, defaultId, onSetDefault }: { id: string | undefined; defaultId: string | null; onSetDefault: (id: string) => void }) {
+  if (!id || id.startsWith("cloud:")) return null;
+  if (id === defaultId) return <span className="badge subtle" title={t("Chats use this model too, unless you ask for another")}>★ {t("Default")}</span>;
+  return (
+    <button className="link small" title={t("Chats use the default too, unless you ask for another")} onClick={() => onSetDefault(id)}>
+      {t("Make default")}
+    </button>
+  );
 }
 
 /** Looks for new pictures (ids match the core's STYLES). Auto: a realistic
@@ -372,6 +434,8 @@ function PictureComposer({
   onEditPhoto,
   lifelike,
   onModels,
+  defaultId,
+  onSetDefault,
 }: {
   models: MediaModelCard[];
   onStart: (r: MediaRequest) => Promise<boolean>;
@@ -379,12 +443,14 @@ function PictureComposer({
   /** A model that makes more lifelike photos, not installed yet. */
   lifelike: MediaModelCard | null;
   onModels: () => void;
+  defaultId: string | null;
+  onSetDefault: (id: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [shape, setShape] = useState<Shape>("square");
   const [count, setCount] = useState(1);
   const [style, setStyle] = useState("auto");
-  const [model, setModel] = useState(best(models));
+  const [model, setModel] = useModelPick("image", models, defaultId);
   const m = models.find((x) => x.id === model) ?? models[0];
   const canEdit = models.some((x) => x.can.includes("edit"));
   const go = async () => {
@@ -420,6 +486,7 @@ function PictureComposer({
           ))}
         </select>
         <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
+        <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         <ImproveButton prompt={prompt} kind="image" onDone={setPrompt} />
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
@@ -448,12 +515,16 @@ function PictureComposer({
 
 function VideoComposer({
   models,
+  defaultId,
+  onSetDefault,
   source,
   onPickSource,
   gallery,
   onStart,
 }: {
   models: MediaModelCard[];
+  defaultId: string | null;
+  onSetDefault: (id: string) => void;
   source: MediaItem | null;
   onPickSource: (i: MediaItem | null) => void;
   gallery: MediaItem[];
@@ -462,7 +533,7 @@ function VideoComposer({
   const [prompt, setPrompt] = useState("");
   const [seconds, setSeconds] = useState(3);
   const [shape, setShape] = useState<Shape>("landscape");
-  const [model, setModel] = useState(best(models));
+  const [model, setModel] = useModelPick("video", models, defaultId);
   const [picking, setPicking] = useState(false);
   const usable = source ? models.filter((m) => m.can.includes("image")) : models;
   const m = usable.find((x) => x.id === model) ?? usable[0];
@@ -507,6 +578,7 @@ function VideoComposer({
           ))}
         </select>
         <ModelPick models={usable} value={m?.id ?? ""} onChange={setModel} />
+        <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * seconds) / Math.max(1, m.defaults.seconds || 3))}</span>}
         <button className="btn primary" disabled={(!prompt.trim() && !source) || !m} onClick={go}>{t("Make video")}</button>
@@ -533,14 +605,14 @@ function VideoComposer({
   );
 }
 
-function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart: (r: MediaRequest) => Promise<boolean> }) {
+function MusicComposer({ models, defaultId, onSetDefault, onStart }: { models: MediaModelCard[]; defaultId: string | null; onSetDefault: (id: string) => void; onStart: (r: MediaRequest) => Promise<boolean> }) {
   const [sound, setSound] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [vocals, setVocals] = useState<"write" | "none" | "mine">("write");
   const [lyrics, setLyrics] = useState("");
   const [seconds, setSeconds] = useState(30);
   const [language, setLanguage] = useState("auto");
-  const [model, setModel] = useState(best(models));
+  const [model, setModel] = useModelPick("music", models, defaultId);
   const m = models.find((x) => x.id === model) ?? models[0];
   const secs = sound ? Math.min(Math.max(seconds, 10), 30) : seconds;
   const go = async () => {
@@ -597,6 +669,7 @@ function MusicComposer({ models, onStart }: { models: MediaModelCard[]; onStart:
           ))}
         </select>
         <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
+        <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * secs) / 30)}</span>}
         <button className="btn primary" disabled={!prompt.trim() || (vocals === "mine" && !sound && !lyrics.trim())} onClick={go}>

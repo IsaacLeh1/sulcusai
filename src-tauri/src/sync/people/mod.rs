@@ -109,6 +109,16 @@ struct Contact {
     read_receipts: bool,
 }
 
+/// Chats this user shares with anyone.
+pub fn shared_chat_ids(conn: &Connection) -> std::collections::HashSet<String> {
+    book(conn).shares.into_iter().map(|s| s.chat_id).collect()
+}
+
+/// The people this user is linked with: (id, name).
+pub fn contact_names(conn: &Connection) -> Vec<(String, String)> {
+    book(conn).contacts.into_iter().map(|c| (c.id, c.name)).collect()
+}
+
 fn book(conn: &Connection) -> Book {
     let mut b: Book = db::get(conn, KEY).unwrap_or_default();
     if b.name.trim().is_empty() {

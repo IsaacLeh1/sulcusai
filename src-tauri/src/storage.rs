@@ -52,6 +52,11 @@ pub struct StorageView {
     error: Option<String>,
 }
 
+/// The size of everything in a folder.
+pub fn folder_size(dir: &Path) -> u64 {
+    size_of(dir)
+}
+
 fn size_of(dir: &Path) -> u64 {
     let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
     entries

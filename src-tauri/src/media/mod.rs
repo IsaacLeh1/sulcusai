@@ -236,6 +236,37 @@ pub struct InstalledMedia {
 }
 
 const INSTALLED_KEY: &str = "media_installed";
+const DEFAULTS_KEY: &str = "media_defaults";
+
+/// The model the person picked to use unless a job names one (chats and
+/// the Studio), per kind.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MediaDefaults {
+    pub image: Option<String>,
+    pub video: Option<String>,
+    pub music: Option<String>,
+}
+
+pub fn defaults(conn: &Connection) -> MediaDefaults {
+    db::get(conn, DEFAULTS_KEY).unwrap_or_default()
+}
+
+/// Sets (or with None clears) the default model for "image", "video" or "music".
+#[tauri::command(async)]
+pub fn media_set_default(state: AppStateRef, kind: String, model_id: Option<String>) -> Result<MediaDefaults, String> {
+    let conn = state.db.lock().unwrap();
+    let mut d = defaults(&conn);
+    let slot = match kind.as_str() {
+        "image" => &mut d.image,
+        "video" => &mut d.video,
+        "music" => &mut d.music,
+        _ => return Err("Unknown kind of model.".into()),
+    };
+    *slot = model_id.filter(|m| !m.is_empty());
+    db::set(&conn, DEFAULTS_KEY, &d)?;
+    Ok(d)
+}
 
 pub fn installed(conn: &Connection) -> Vec<InstalledMedia> {
     db::get(conn, INSTALLED_KEY).unwrap_or_default()
@@ -319,6 +350,19 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
         if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
             return Ok(m.clone());
         }
+    }
+    // The person's default for this kind, when it can do the job. It wins
+    // over "fits the card": the job frees the card (a loaded chat model)
+    // before it starts, so the free memory now says little.
+    let d = defaults(&state.db.lock().unwrap());
+    let preferred = match kind {
+        Kind::Image => d.image,
+        Kind::Video => d.video,
+        Kind::Music => d.music,
+        _ => None,
+    };
+    if let Some(m) = preferred.and_then(|id| all.iter().find(|m| m.id == id).filter(ok)) {
+        return Ok(m.clone());
     }
     // The best one that fits the graphics card, so the job stays on it.
     let fits = |m: &&MediaModel| {
@@ -801,6 +845,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     if let (Ok(items), Some(m)) = (&result, &model) {
         if !items.is_empty() {
             learn_speed(state, m, &req, started.elapsed().as_secs_f64());
+            crate::cleanup::touch_model(state, &m.id);
         }
     }
     let name = match req.op.as_str() {
@@ -1611,6 +1656,8 @@ pub struct MediaView {
     installing: Vec<String>,
     jobs: Vec<JobInfo>,
     gallery: usize,
+    /// The default model per kind.
+    pub defaults: MediaDefaults,
 }
 
 #[tauri::command(async)]
@@ -1654,7 +1701,8 @@ fn view(state: &AppState) -> MediaView {
         let gallery = if unlocked { store::count(&conn) } else { 0 };
         (crate::cloud::media_choices(&conn), gallery)
     };
-    MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery }
+    let defaults = defaults(&state.db.lock().unwrap());
+    MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery, defaults }
 }
 
 #[tauri::command(async)]
@@ -1726,9 +1774,16 @@ pub(crate) fn start_install(app: AppHandle, state: Arc<AppState>, spec: MediaMod
 }
 
 #[tauri::command]
-pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Result<(), String> {
+pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Result<u64, String> {
     state.cipher()?;
-    let all = models(&state);
+    remove_now(&state, &model_id)
+}
+
+/// Removes a picture, video or music model from this PC: its files (and any
+/// half-downloaded ones), unless another installed model shares them, and
+/// what SulcusAI kept about it. Returns the bytes freed.
+pub(crate) fn remove_now(state: &AppState, model_id: &str) -> Result<u64, String> {
+    let all = models(state);
     let spec = all.iter().find(|m| m.id == model_id).ok_or("Unknown model")?.clone();
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
@@ -1739,11 +1794,18 @@ pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Res
         .filter(|m| list.iter().any(|i| i.model_id == m.id))
         .flat_map(|m| m.files.iter().map(|f| file_path(&state.paths, m, f)).collect::<Vec<_>>())
         .collect();
+    let mut freed = 0;
     for f in &spec.files {
         let p = file_path(&state.paths, &spec, f);
         if !keep.contains(&p) {
+            freed += p.metadata().map_or(0, |m| m.len());
             std::fs::remove_file(&p).ok();
         }
+        let mut part = p.clone().into_os_string();
+        part.push(".part");
+        let part = PathBuf::from(part);
+        freed += part.metadata().map_or(0, |m| m.len());
+        std::fs::remove_file(&part).ok();
     }
     if spec.kind == Kind::Background {
         cutout::unload();
@@ -1752,8 +1814,18 @@ pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Res
     if spec.from_hub.is_some() {
         hub::forget(&conn, &spec.id)?;
     }
-    db::log_action(&conn, "model", &format!("Removed {} and deleted its files", spec.name));
-    Ok(())
+    // Not the default any more.
+    let mut d = defaults(&conn);
+    if [&d.image, &d.video, &d.music].iter().any(|x| x.as_deref() == Some(model_id)) {
+        for slot in [&mut d.image, &mut d.video, &mut d.music] {
+            if slot.as_deref() == Some(model_id) {
+                *slot = None;
+            }
+        }
+        db::set(&conn, DEFAULTS_KEY, &d)?;
+    }
+    db::log_action(&conn, "model", &format!("Removed {} and deleted its files ({} freed)", spec.name, crate::size_label(freed)));
+    Ok(freed)
 }
 
 #[tauri::command(async)]

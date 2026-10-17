@@ -554,6 +554,16 @@ fn contact_name(state: &AppState, id: &str) -> String {
 }
 
 /// Sets who a chat is shared with (an empty list stops sharing it).
+/// Who a chat is shared with (contact ids).
+pub fn sharing_of(conn: &rusqlite::Connection, chat_id: &str) -> Vec<String> {
+    super::book(conn).shares.into_iter().find(|s| s.chat_id == chat_id).map(|s| s.with).unwrap_or_default()
+}
+
+/// Shares a chat with exactly these people (chat folders use it).
+pub fn set_chat_sharing(state: &AppState, c: &Cipher, chat_id: &str, with: Vec<String>) -> Result<(), String> {
+    set_sharing(state, c, chat_id, with)
+}
+
 fn set_sharing(state: &AppState, c: &Cipher, chat_id: &str, with: Vec<String>) -> Result<(), String> {
     let chat = db::chat(&state.db.lock().unwrap(), c, chat_id).ok_or("That chat no longer exists.")?;
     if chat.incognito && !with.is_empty() {
