@@ -706,6 +706,13 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         "narrate" => "a narration",
         _ => "a picture",
     };
+    let took = started.elapsed().as_secs_f64();
+    let with = model.as_ref().map(|m| m.id.clone()).or_else(|| on_cloud.clone()).unwrap_or_else(|| "the built-in voice".into());
+    match &result {
+        Ok(_) => crate::applog::line("media", &format!("{} with {with}: done in {took:.0} s", req.op)),
+        Err(e) if e == download::CANCELLED => crate::applog::line("media", &format!("{} with {with}: stopped after {took:.0} s", req.op)),
+        Err(e) => crate::applog::line("media", &format!("{} with {with}: failed after {took:.0} s: {}", req.op, e.lines().take(6).collect::<Vec<_>>().join(" | "))),
+    }
     match &result {
         Ok(_) if on_cloud.is_some() => state.log("media", &format!("Made {name} with a cloud model")),
         Ok(_) => state.log("media", &format!("Made {name} on this PC")),
@@ -817,6 +824,26 @@ fn card_trouble(e: &str) -> bool {
     ["make enough memory", "compute failed", "out of memory", "vulkan", "device lost", "vk_error", "ggml_backend"].iter().any(|w| l.contains(w))
 }
 
+/// The argument list with the picture's size brought down to `side` pixels
+/// on its longer edge (multiples of 16, as the engine needs).
+fn smaller(args: &[std::ffi::OsString], side: u32) -> Vec<std::ffi::OsString> {
+    let value = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).and_then(|v| v.to_str()?.parse::<u32>().ok());
+    let (Some(w), Some(h)) = (value("-W"), value("-H")) else { return args.to_vec() };
+    if w.max(h) <= side {
+        return args.to_vec();
+    }
+    let scale = side as f64 / w.max(h) as f64;
+    let fit = |v: u32| (((v as f64 * scale) / 16.0).round() as u32 * 16).max(256);
+    let (nw, nh) = (fit(w), fit(h));
+    let mut out = args.to_vec();
+    for (flag, v) in [("-W", nw), ("-H", nh)] {
+        if let Some(i) = out.iter().position(|a| a == flag) {
+            out[i + 1] = v.to_string().into();
+        }
+    }
+    out
+}
+
 /// The argument list without a graphics-memory budget (for the processor build).
 fn without_vram(args: &[std::ffi::OsString]) -> Vec<std::ffi::OsString> {
     let mut out = Vec::with_capacity(args.len());
@@ -878,6 +905,7 @@ impl RunCtx<'_> {
             // the card's driver gave up: once more with half the budget,
             // which streams more weights, and the picture decoded in tiles.
             Err(e) if on_card && card_trouble(&e) => {
+                crate::applog::line("media", &format!("The graphics card failed ({}); trying again with less of its memory", e.lines().take(3).collect::<Vec<_>>().join(" | ")));
                 let had = self.limits().max_vram_gib.unwrap_or(self.state.budget().vram as f64 / GIB as f64);
                 eprintln!("media: retrying with less graphics memory ({:.1} GiB): {}", had / 2.0, e.lines().next().unwrap_or(""));
                 let mut lighter = with_vram(&args, had / 2.0);
@@ -896,9 +924,11 @@ impl RunCtx<'_> {
             // Not videos, which would take hours there.
             (Err(e), first) if e != download::CANCELLED && !self.cancel.load(Ordering::Relaxed) && args.iter().any(|a| a == "img_gen") => {
                 eprintln!("media: the graphics card failed twice, using the processor: {}", first.lines().next().unwrap_or(""));
+                crate::applog::line("media", &format!("The graphics card failed twice ({}); making the picture on the processor, smaller", e.lines().take(3).collect::<Vec<_>>().join(" | ")));
                 (self.progress)("The graphics card couldn't make it, so it's being made on the processor (slower)", 0.0);
                 let cpu = self.cpu_engine().await.map_err(|why| format!("{e}\n\nCouldn't switch to the processor: {why}"))?;
-                self.run_sd_once(without_vram(&args), work, Some(cpu)).await.map_err(|on_cpu| format!("{e}\n\nOn the processor too: {on_cpu}"))
+                // At full size the processor takes many minutes; 640 pixels keeps it to a few.
+                self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await.map_err(|on_cpu| format!("{e}\n\nOn the processor too: {on_cpu}"))
             }
             (Err(e), _) => Err(e),
         }
@@ -1731,6 +1761,9 @@ mod tests {
         assert!(card_trouble("diffusion model compute failed"));
         let args: Vec<std::ffi::OsString> = ["-M", "img_gen", "--max-vram", "3.0", "-o", "x.png"].iter().map(Into::into).collect();
         assert_eq!(without_vram(&args), ["-M", "img_gen", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
+        // On the processor, a 1184x880 picture becomes 640x480 (the longer edge 640).
+        let big: Vec<std::ffi::OsString> = ["-W", "1184", "-H", "880", "-o", "x.png"].iter().map(Into::into).collect();
+        assert_eq!(smaller(&big, 640), ["-W", "640", "-H", "480", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());
     }
 
     fn hw(vram_gb: u64, cores: usize) -> (Hardware, Budget) {

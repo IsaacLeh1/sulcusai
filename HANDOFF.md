@@ -733,6 +733,13 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Verified with his models through `e2e_makes_files_on_ollama_model`, using `SULCUSAI_TEST_ASKS` and `SULCUSAI_TEST_BEFORE` for the follow-up case:
     - The 1.5B now writes index.html, styles.css and script.js. They're very basic, which is the model's limit.
     - The 14B now writes a working index.html after "try again to do it for me".
+- **Logs on the PC** (`applog.rs`, after 0.9.5). His brother's 20-minute picture can't be explained without logs.
+  - **app.log:** every Activity entry (`db::log_action` mirrors in) plus a startup line with the hardware, model loads and failures (`engine.rs`), media jobs with model, time and errors, the card's failures and the processor fallback, downloads, and tool failures (name only).
+  - **crashes.log:** every panic, unclean exit and window error, even with crash reports off; `crash::write` always logs and saves a report to send only when on.
+  - Logs past 2 MB start over and keep the old file as `.old.log`. They never include chat text, prompts or file contents.
+  - Settings → Logs lists the files with what each holds, shows the last 400 lines (`read_log`, logs folder only), opens the logs or data folder (`open_app_folder`), and can clear them. About has the folder buttons too.
+- **Processor fallback for pictures:** it now shrinks the picture to 640 px on the longer edge (`smaller`), so it takes minutes, not 20.
+- **Models: Grid / List** (remembered in localStorage). List mode is CSS on the same cards (`.model-grid.list`; the card is a column flexbox, so the rows set `flex-direction: row`).
 - **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
 ## Website (2026-10-12)

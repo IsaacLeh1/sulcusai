@@ -835,6 +835,7 @@ pub struct Action {
 
 /// Records something the app did. Summaries never include chat content.
 pub fn log_action(conn: &Connection, category: &str, summary: &str) {
+    crate::applog::line(category, summary);
     let _ = conn.execute(
         "INSERT INTO action_log (at, category, summary) VALUES (?1, ?2, ?3)",
         params![now_ms(), category, summary],

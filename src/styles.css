@@ -232,6 +232,9 @@ select, .input {
 .ports-table th:nth-child(4) { width: 130px; }
 .ports-table .badge { margin-left: 6px; }
 .ports-servers code { font-size: 12px; }
+.log-viewer { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.log-text { max-height: 360px; overflow: auto; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; background: var(--code-bg); padding: 8px; border-radius: 6px; }
+.logs-list .btn.active { background: var(--accent-soft); color: var(--accent); }
 .cap-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
 .chat-actions .btn.active { background: var(--accent-soft); color: var(--accent); }
 .chat-header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
@@ -291,6 +294,14 @@ select, .input {
 .hw-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); gap: 12px; }
 
 .model-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+/* List view: one compact row per model. */
+.model-grid.list { grid-template-columns: 1fr; gap: 8px; }
+.model-grid.list .card.model { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 10px 14px; }
+.model-grid.list .model-head { flex: 1 1 240px; }
+.model-grid.list .desc, .model-grid.list .tags { display: none; }
+.model-grid.list .capability { flex: 1 1 220px; margin: 0; }
+.model-grid.list .install-row { flex: 0 1 auto; }
+.model-grid.list .fit-line { flex-basis: 100%; margin: 0; }
 .model { display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .model.installed { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .model-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }

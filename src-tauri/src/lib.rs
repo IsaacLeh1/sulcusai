@@ -6,6 +6,7 @@
 
 mod advanced;
 mod agent;
+mod applog;
 mod backup;
 mod api_server;
 mod audio;
@@ -1725,7 +1726,26 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
-            // Crash reports (if turned on): the failure hook and how the last run ended.
+            // The app's own logs, and what this PC is (for reading them later).
+            applog::init(&state.paths.logs);
+            {
+                let hw = state.hardware.read().unwrap();
+                let gpus: Vec<String> = hw.gpus.iter().map(|g| format!("{} ({:.1} GB{})", g.name, g.vram_bytes as f64 / 1e9, if g.integrated { ", built-in" } else { "" })).collect();
+                applog::line(
+                    "app",
+                    &format!(
+                        "Started SulcusAI {} on {} · {} ({} threads) · {:.0} GB memory · graphics: {} · models in {}",
+                        env!("CARGO_PKG_VERSION"),
+                        hw.os,
+                        hw.cpu_name,
+                        hw.cpu_threads,
+                        hw.ram_total as f64 / 1e9,
+                        if gpus.is_empty() { "none found".to_string() } else { gpus.join(", ") },
+                        state.paths.models.display()
+                    ),
+                );
+            }
+            // Crash reports: the failure hook and how the last run ended (always logged here; sent only if turned on).
             crash::start(&state);
             backup::finish_restore(&state);
             api_server::apply(state.clone());
@@ -1789,6 +1809,10 @@ pub fn run() {
             media::media_in_chat,
             media::improve_media_prompt,
             ports::ports_view,
+            applog::logs_view,
+            applog::read_log,
+            applog::open_app_folder,
+            applog::clear_logs,
             ports::stop_port_program,
             ports::server_stop,
             ports::server_start,

@@ -31,6 +31,22 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   // "Show models this PC can't run": every model, fetched when switched on
   // (and again when the list changes, e.g. after an install).
   const [showAll, setShowAll] = useState(false);
+  // Cards in a grid, or one row per model (kept for next time).
+  const [layout, setLayoutState] = useState<"grid" | "list">(() => {
+    try {
+      return localStorage.getItem("sulcus.models.layout") === "list" ? "list" : "grid";
+    } catch {
+      return "grid";
+    }
+  });
+  const setLayout = (l: "grid" | "list") => {
+    setLayoutState(l);
+    try {
+      localStorage.setItem("sulcus.models.layout", l);
+    } catch {
+      /* not kept */
+    }
+  };
   const [everything, setEverything] = useState<ModelCard[] | null>(null);
   useEffect(() => {
     if (!showAll) return;
@@ -134,10 +150,17 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
             {t(FILTERS.find((f) => f.id === filter)!.hint)}{" "}
             {filter === "fastest" ? t("Measured once installed; estimated before.") : t("Scores are rough guides from public benchmarks; bigger models also need more of the PC.")}
           </p>
-          <label className="check small">
-            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-            <span>{t("Show models this PC can't run")}</span>
-          </label>
+          <div className="row wrap">
+            <label className="check small">
+              <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+              <span>{t("Show models this PC can't run")}</span>
+            </label>
+            <span className="spacer" />
+            <div className="mode-switch small-switch" role="radiogroup" aria-label={t("View")}>
+              <button role="radio" aria-checked={layout === "grid"} className={`mode ${layout === "grid" ? "active" : ""}`} onClick={() => setLayout("grid")}>▦ {t("Grid")}</button>
+              <button role="radio" aria-checked={layout === "list"} className={`mode ${layout === "list" ? "active" : ""}`} onClick={() => setLayout("list")}>☰ {t("List")}</button>
+            </div>
+          </div>
           {arranged.length === 0 && <p className="muted">{t("None of the models this PC can run stand out here yet. Try All.")}</p>}
         </div>
       )}
@@ -145,7 +168,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
       {tab === "chat" && installed.length > 0 && (
         <>
           <h2>{t("Installed")}</h2>
-          <div className="model-grid">
+          <div className={`model-grid ${layout}`}>
             {installed.map((m) => (
               <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
             ))}
@@ -157,7 +180,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         <>
           <h2>{showAll ? t("Available") : t("Available for this PC")}</h2>
           {available.length === 0 && filter === "all" && <p className="muted">{t("Every model that fits this PC is installed.")}</p>}
-          <div className="model-grid">
+          <div className={`model-grid ${layout}`}>
             {available.map((m) => (
               <AvailableCard key={m.id} m={m} rank={cardRank} budget={catalog.budget} progress={progress[m.id]} otherBusy={busy && !progress[m.id]} toast={toast} />
             ))}

@@ -1365,6 +1365,12 @@ export interface MediaView {
 
 export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
 
+export interface LogsView {
+  folder: string;
+  data_folder: string;
+  files: { name: string; size: number; modified: number }[];
+}
+
 export interface HandoffsView {
   /** "Chats work together" is on: chats share freely. */
   together: boolean;
@@ -1715,6 +1721,12 @@ export const api = {
   handoffsView: () => invoke<HandoffsView>("handoffs_view"),
   handoffRevoke: (key: string) => invoke<HandoffsView>("handoff_revoke", { key }),
   handoffForget: (key: string) => invoke<HandoffsView>("handoff_forget", { key }),
+  /** Settings → Logs. */
+  logsView: () => invoke<LogsView>("logs_view"),
+  readLog: (name: string, lines?: number) => invoke<string>("read_log", { name, lines: lines ?? null }),
+  /** Opens the logs folder, or with `data` the app's data folder, in File Explorer. */
+  openAppFolder: (data: boolean) => invoke<void>("open_app_folder", { data }),
+  clearLogs: () => invoke<LogsView>("clear_logs"),
   /** Servers and ports: what's listening on this PC. */
   portsView: () => invoke<PortsView>("ports_view"),
   stopPortProgram: (pid: number) => invoke<PortsView>("stop_port_program", { pid }),

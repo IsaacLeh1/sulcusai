@@ -474,10 +474,22 @@ impl Engine {
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
+        let started = Instant::now();
+        let what = format!(
+            "{} ({}, {} context, {} layers on the graphics card{}{})",
+            spec.model_id,
+            spec.quant,
+            spec.ctx,
+            spec.gpu_layers,
+            if devices.is_empty() { String::new() } else { format!(", device {}", devices.join(",")) },
+            if spec.mmproj.is_some() { ", sees pictures" } else { "" }
+        );
         if let Err(e) = self.wait_ready(&endpoint, spec.log).await {
+            crate::applog::line("engine", &format!("Couldn't load {what}: {e}"));
             self.stop().await;
             return Err(e);
         }
+        crate::applog::line("engine", &format!("Loaded {what} in {:.1} s", started.elapsed().as_secs_f64()));
         Ok(endpoint)
     }
 

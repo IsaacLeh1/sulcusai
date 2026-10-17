@@ -68,6 +68,26 @@ pub async fn fetch_verified(
     if let Some(dir) = dest.parent() {
         tokio::fs::create_dir_all(dir).await.map_err(|e| e.to_string())?;
     }
+    let name = dest.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let result = fetch_verified_inner(client, url, dest, size, sha256, cancel, &mut progress).await;
+    match &result {
+        Ok(()) => crate::applog::line("download", &format!("{name} ({} MB) is ready", size / 1_000_000)),
+        Err(e) if e == CANCELLED => crate::applog::line("download", &format!("{name}: stopped")),
+        Err(e) => crate::applog::line("download", &format!("{name} from {}: failed: {e}", crate::host_of(url))),
+    }
+    result
+}
+
+async fn fetch_verified_inner(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    size: u64,
+    sha256: &str,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(u64, u64),
+) -> Result<(), String> {
+    let mut progress = progress;
     let part = part_path(dest);
     // Another app on this PC has the same file: link it, or copy it from
     // another drive, instead of downloading it again.

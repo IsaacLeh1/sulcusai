@@ -97,6 +97,11 @@ fn duration(ms: i64) -> String {
 }
 
 fn write(kind: &str, what: &str, details: &str) {
+    // Always kept on this PC, for the person to read (Settings → Logs).
+    crate::applog::crash(what, details);
+    if !ON.load(Ordering::Relaxed) {
+        return;
+    }
     let Some(dir) = reports_dir() else { return };
     let at = now();
     let when = chrono::Local::now().format("%Y-%m-%d %H:%M").to_string();
@@ -126,9 +131,6 @@ pub fn start(state: &Arc<AppState>) {
     let before = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         before(info);
-        if !ON.load(Ordering::Relaxed) {
-            return;
-        }
         let place = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
         let message = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
         let thread = std::thread::current().name().unwrap_or("unnamed").to_string();
@@ -141,7 +143,7 @@ pub fn start(state: &Arc<AppState>) {
         if let Some(last) = std::fs::read_to_string(&m).ok().and_then(|t| serde_json::from_str::<Running>(&t).ok()) {
             let boot = sysinfo::System::boot_time() as i64 * 1000;
             // Windows restarted since: a shutdown, not something to report.
-            if ON.load(Ordering::Relaxed) && boot < last.alive {
+            if boot < last.alive {
                 let frozen = last.alive - last.window;
                 let what = if frozen > 90_000 {
                     format!("SulcusAI was closed unexpectedly after its window had stopped responding for about {} (a freeze).", duration(frozen))
@@ -253,7 +255,7 @@ pub fn crash_ping() {
 /// An error in the window, with where it happened.
 #[tauri::command(async)]
 pub fn report_window_error(message: String, stack: Option<String>) {
-    if !ON.load(Ordering::Relaxed) || WINDOW_ERRORS.fetch_add(1, Ordering::Relaxed) >= 3 {
+    if WINDOW_ERRORS.fetch_add(1, Ordering::Relaxed) >= 3 {
         return;
     }
     let message: String = message.chars().take(500).collect();

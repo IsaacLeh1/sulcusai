@@ -631,6 +631,7 @@ impl Turn {
                         }
                     }
                     if o.meta["status"] == "error" {
+                        crate::applog::line("agent", &format!("The {} tool failed in a chat (model {})", call.name, self.ep.cloud.as_ref().map_or("on this PC", |_| "in the cloud")));
                         let why = o.meta["detail"].as_str().map(str::to_string).unwrap_or_else(|| o.text.clone());
                         failed_calls.push((key, why));
                     }

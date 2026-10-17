@@ -20,6 +20,7 @@ import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
+import { LogSettings } from "../components/LogSettings";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
@@ -385,13 +386,20 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <span id="settings-advanced" className="settings-anchor" />
       <AdvancedSettings toast={toast} />
 
+      <span id="settings-logs" className="settings-anchor" />
+      <LogSettings toast={toast} />
+
       <span id="settings-about" className="settings-anchor" />
       <section className="card">
         <h2>{t("About {app}", { app: APP_NAME })}</h2>
         <UpdateSettings toast={toast} />
         <CrashReportsSetting toast={toast} />
         {info && (
-          <p className="small muted">{t("Data folder: {path}", { path: info.data_dir })}</p>
+          <p className="small muted row wrap">
+            <span>{t("Data folder: {path}", { path: info.data_dir })}</span>
+            <button className="btn ghost small" onClick={() => api.openAppFolder(true).catch((e) => toast(errorText(e), "error"))}>{t("Open")}</button>
+            <button className="btn ghost small" onClick={() => api.openAppFolder(false).catch((e) => toast(errorText(e), "error"))}>{t("Open logs folder")}</button>
+          </p>
         )}
         <p className="small">
           {t("{app} is free software under the GNU Affero General Public License v3.0. The name and logo are not covered by that license.", { app: APP_NAME })}
