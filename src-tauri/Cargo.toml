@@ -134,8 +134,10 @@ opt-level = 3
 opt-level = 3
 
 [profile.release]
-codegen-units = 1
-lto = true
+# Thin LTO over parallel codegen units: release builds take a fraction of
+# the time of full LTO in one unit, for a slightly bigger binary (the heavy
+# work runs in the llama.cpp and stable-diffusion.cpp engines, not here).
+lto = "thin"
 strip = true
 
 # macOS and Linux: the system keychain protects the data key (DPAPI's role on Windows).

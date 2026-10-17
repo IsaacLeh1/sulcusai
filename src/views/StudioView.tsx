@@ -19,7 +19,7 @@ import {
 import { clock } from "../format";
 import { t, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
-import { AudioPlayer, JobCard, MediaTile, saveAs, useMediaJobs } from "../components/MediaBits";
+import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, useMediaJobs } from "../components/MediaBits";
 import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
@@ -743,6 +743,7 @@ function Viewer({
             {item.kind === "video" && ` · ${item.width} × ${item.height}`}
             {item.seed != null && ` · ${t("seed {seed}", { seed: item.seed })}`}
           </p>
+          <MadeStatsLine item={item} />
           {item.parent && (
             <button className="link small" onClick={() => api.mediaGet(item.parent!).then(onOpen).catch(() => toast(t("The original is no longer in the gallery."), "error"))}>
               {t("← The original")}

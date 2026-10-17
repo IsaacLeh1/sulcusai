@@ -10,6 +10,7 @@
 mod cutout;
 pub(crate) mod imaging;
 mod cloud;
+pub mod hub;
 mod music;
 pub(crate) mod proc;
 pub mod screen;
@@ -85,6 +86,14 @@ pub struct Defaults {
     pub seconds: f32,
     pub flow_shift: f32,
     pub negative: String,
+    /// The noise schedule ("karras"), when the model wants one.
+    pub scheduler: String,
+    /// Exact noise levels, comma-separated (distilled models tuned to them).
+    pub sigmas: String,
+    /// Extra settings the engine takes for some models ("key=value,…").
+    pub model_args: String,
+    /// Sides must be a multiple of this (16 when not set).
+    pub align: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -105,6 +114,19 @@ pub struct MediaModel {
     pub quality: u8,
     #[serde(default)]
     pub defaults: Defaults,
+    /// Models on Hugging Face built on this one, offered by the Studio's search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<hub::HubFamily>,
+    /// Installed from Hugging Face: its repository there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_hub: Option<String>,
+}
+
+/// Every media model: the catalog's, then those installed from Hugging Face.
+pub fn models(state: &AppState) -> Vec<MediaModel> {
+    let mut all = state.catalog.media.models.clone();
+    all.extend(hub::list(&state.db.lock().unwrap()));
+    all
 }
 
 impl MediaModel {
@@ -228,7 +250,8 @@ fn save_installed(conn: &Connection, list: &[InstalledMedia]) -> Result<(), Stri
 pub fn prune_missing(conn: &Connection, paths: &Paths, c: &MediaCatalog) -> usize {
     let mut list = installed(conn);
     let before = list.len();
-    list.retain(|i| c.models.iter().find(|m| m.id == i.model_id).is_some_and(|m| missing_bytes(paths, m) == 0));
+    let from_hub = hub::list(conn);
+    list.retain(|i| c.models.iter().chain(&from_hub).find(|m| m.id == i.model_id).is_some_and(|m| missing_bytes(paths, m) == 0));
     let gone = before - list.len();
     if gone > 0 {
         let _ = save_installed(conn, &list);
@@ -239,7 +262,7 @@ pub fn prune_missing(conn: &Connection, paths: &Paths, c: &MediaCatalog) -> usiz
 /// Any model of this kind installed.
 pub fn has_kind(state: &AppState, kind: Kind) -> bool {
     let list = installed(&state.db.lock().unwrap());
-    state.catalog.media.models.iter().any(|m| m.kind == kind && list.iter().any(|i| i.model_id == m.id))
+    models(state).iter().any(|m| m.kind == kind && list.iter().any(|i| i.model_id == m.id))
 }
 
 pub fn model_dir(paths: &Paths, m: &MediaModel) -> PathBuf {
@@ -288,11 +311,12 @@ fn sd_exe(state: &AppState) -> Result<PathBuf, String> {
 pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_input: bool) -> Result<MediaModel, String> {
     let kind = op_kind(op).ok_or("Unknown kind of job.")?;
     let list = installed(&state.db.lock().unwrap());
+    let all = models(state);
     let ok = |m: &&MediaModel| {
         m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(op)) && (!needs_image_input || kind != Kind::Video || m.can("image"))
     };
     if let Some(id) = wanted.filter(|w| !w.is_empty()) {
-        if let Some(m) = state.catalog.media.models.iter().find(|m| m.id == id).filter(ok) {
+        if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
             return Ok(m.clone());
         }
     }
@@ -301,10 +325,12 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
         let b = state.budget();
         b.vram > 0 && b.vram as f64 >= m.min_vram_gb * GIB as f64
     };
-    if let Some(m) = state.catalog.media.models.iter().filter(ok).filter(fits).max_by_key(|m| m.quality) {
+    // Catalog models first among equals: they're the tested ones.
+    let rank = |m: &&MediaModel| (m.quality, m.from_hub.is_none());
+    if let Some(m) = all.iter().filter(ok).filter(fits).max_by_key(rank) {
         return Ok(m.clone());
     }
-    if let Some(m) = state.catalog.media.models.iter().filter(ok).max_by_key(|m| m.quality) {
+    if let Some(m) = all.iter().filter(ok).max_by_key(rank) {
         return Ok(m.clone());
     }
     Err(match (kind, op) {
@@ -431,7 +457,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
 
 #[cfg(test)]
 pub async fn install_for_test(state: &Arc<AppState>, id: &str) -> Result<(), String> {
-    let spec = state.catalog.media.models.iter().find(|m| m.id == id).cloned().ok_or("unknown")?;
+    let spec = models(state).into_iter().find(|m| m.id == id).ok_or("unknown")?;
     install(state, &spec, &AtomicBool::new(false), &|_, _, _| {}).await
 }
 
@@ -540,6 +566,15 @@ pub struct JobInfo {
     pub eta_secs: Option<f64>,
     pub est_secs: f64,
     pub chat_id: Option<String>,
+    /// What's making it: "graphics card", "processor" or "cloud" (while it runs).
+    pub on: Option<String>,
+    /// Which one: the card's or processor's name, or the cloud model.
+    pub device: Option<String>,
+    /// The graphics card now: percent busy and °C.
+    pub gpu_usage: Option<f32>,
+    pub gpu_temp: Option<f32>,
+    /// The processor now: percent busy.
+    pub cpu_usage: Option<f32>,
 }
 
 struct Job {
@@ -664,6 +699,11 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
             eta_secs: None,
             est_secs: est,
             chat_id: req.chat_id.clone(),
+            on: None,
+            device: None,
+            gpu_usage: None,
+            gpu_temp: None,
+            cpu_usage: None,
         };
         jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
         emit(state, "media:progress", json!(info));
@@ -685,7 +725,37 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         i.status = "running".into();
         i.stage = "Starting".into();
     });
+    // What makes it: the dedicated card for pictures and video (and music,
+    // with the card's music engine), else the processor, or a cloud model.
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video")
+        || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")));
+    let (gpu_name, cpu_name) = {
+        let hw = state.hardware.read().unwrap();
+        (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
+    };
+    let has_card = state.budget().vram > 0 && gpu_name.is_some();
+    let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card)));
+    let device_now = {
+        let (on_processor, gpu_name, cpu_name, cloud) = (on_processor.clone(), gpu_name.clone(), cpu_name.clone(), on_cloud.clone());
+        move || -> (String, Option<String>) {
+            match &cloud {
+                Some(c) => ("cloud".into(), Some(cloud_label(c))),
+                None if on_processor.load(Ordering::Relaxed) => ("processor".into(), (!cpu_name.is_empty()).then(|| cpu_name.clone())),
+                None => ("graphics card".into(), gpu_name.clone()),
+            }
+        }
+    };
+    {
+        let (on, device) = device_now();
+        update(state, &id, |i| {
+            i.on = Some(on);
+            i.device = device;
+        });
+    }
     let progress = |stage: &str, fraction: f64| {
+        if stage == PROCESSOR_STAGE {
+            on_processor.store(true, Ordering::Relaxed);
+        }
         let elapsed = started.elapsed().as_secs_f64();
         let eta = if fraction > 0.12 { elapsed / fraction - elapsed } else { (est - elapsed).max(5.0) };
         update(state, &id, |i| {
@@ -694,6 +764,30 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
             i.eta_secs = Some(eta.max(0.0).round());
         });
     };
+    // The card and processor, every 2 seconds while it works: shown live,
+    // and the peak temperature and average use kept with what's made.
+    let watching = Arc::new(AtomicBool::new(true));
+    let readings: Arc<std::sync::Mutex<Vec<Reading>>> = Arc::default();
+    if on_cloud.is_none() {
+        let (st, id2, w, r, device_now) = (state.clone(), id.clone(), watching.clone(), readings.clone(), device_now.clone());
+        tauri::async_runtime::spawn(async move {
+            crate::perf::cpu_usage();
+            while w.load(Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                let g = if has_card { crate::perf::gpu_reading(&st).await } else { Default::default() };
+                let cpu = tokio::task::spawn_blocking(crate::perf::cpu_usage).await.ok();
+                let (on, device) = device_now();
+                r.lock().unwrap().push(Reading { gpu_usage: g.usage, gpu_temp: g.temp, cpu_usage: cpu, on_card: on == "graphics card" });
+                update(&st, &id2, |i| {
+                    i.gpu_usage = g.usage;
+                    i.gpu_temp = g.temp;
+                    i.cpu_usage = cpu;
+                    i.on = Some(on);
+                    i.device = device;
+                });
+            }
+        });
+    }
     let result = match &on_cloud {
         Some(cid) => {
             let ctx = RunCtx { state, req: &req, cancel: &cancel, progress: &progress, reserved: 0 };
@@ -716,12 +810,74 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         "narrate" => "a narration",
         _ => "a picture",
     };
+    watching.store(false, Ordering::Relaxed);
     let took = started.elapsed().as_secs_f64();
     let with = model.as_ref().map(|m| m.id.clone()).or_else(|| on_cloud.clone()).unwrap_or_else(|| "the built-in voice".into());
+    // What making it took, kept with each item (and shown under it).
+    let result = result.map(|mut items| {
+        let r = readings.lock().unwrap();
+        let picture_or_video = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video");
+        let steps = picture_or_video.then(|| req.steps.or(model.as_ref().map(|m| m.defaults.steps)).unwrap_or(0)).filter(|s| *s > 0);
+        let (on, device) = device_now();
+        let on_card = on == "graphics card";
+        // The readings from while the one that made it was working.
+        let mine: Vec<&Reading> = r.iter().filter(|x| x.on_card == on_card).collect();
+        let avg = |v: Vec<f32>| (!v.is_empty()).then(|| (v.iter().sum::<f32>() / v.len() as f32).round());
+        let peak = |v: Vec<f32>| v.into_iter().reduce(f32::max).map(f32::round);
+        let gpu = |f: fn(&Reading) -> Option<f32>| if on_card { mine.iter().filter_map(|x| f(x)).collect() } else { Vec::new() };
+        let cpu: Vec<f32> = if on == "processor" { mine.iter().filter_map(|x| x.cpu_usage).collect() } else { Vec::new() };
+        let stats = store::MadeStats {
+            secs: (took * 10.0).round() / 10.0,
+            on,
+            device,
+            steps,
+            prompt_tokens: (!req.prompt.trim().is_empty()).then(|| approx_tokens(&req.prompt)),
+            audio_tokens: None,
+            frames: None,
+            gpu_peak_temp: peak(gpu(|x| x.gpu_temp)),
+            gpu_avg_usage: avg(gpu(|x| x.gpu_usage)),
+            gpu_peak_usage: peak(gpu(|x| x.gpu_usage)),
+            cpu_avg_usage: avg(cpu.clone()),
+            cpu_peak_usage: peak(cpu),
+        };
+        if let Ok(c) = state.work_cipher() {
+            let conn = state.db.lock().unwrap();
+            for item in items.iter_mut() {
+                let mut s = stats.clone();
+                if item.kind == "audio" && matches!(req.op.as_str(), "music" | "sound") {
+                    s.audio_tokens = Some((item.seconds * 5.0).round() as u32);
+                }
+                if item.kind == "video" {
+                    s.frames = Some((item.seconds * model.as_ref().map_or(24, |m| m.defaults.fps.max(1)) as f64).round() as u32);
+                }
+                item.stats = Some(s);
+                let _ = store::update(&conn, &c, item);
+            }
+        }
+        items
+    });
     match &result {
-        Ok(_) => crate::applog::line("media", &format!("{} with {with}: done in {took:.0} s", req.op)),
+        Ok(items) => {
+            let how = items.first().and_then(|i| i.stats.as_ref()).map(|s| {
+                let mut out = format!(" on the {}", s.on);
+                if let Some(d) = &s.device {
+                    out += &format!(" ({d})");
+                }
+                if let Some(t) = s.gpu_peak_temp {
+                    out += &format!(", card up to {t:.0} °C");
+                }
+                if let Some(u) = s.gpu_avg_usage.or(s.cpu_avg_usage) {
+                    out += &format!(", {u:.0}% busy on average");
+                }
+                out
+            });
+            crate::applog::line("media", &format!("{} with {with}: done in {took:.0} s{}", req.op, how.unwrap_or_default()))
+        }
         Err(e) if e == download::CANCELLED => crate::applog::line("media", &format!("{} with {with}: stopped after {took:.0} s", req.op)),
-        Err(e) => crate::applog::line("media", &format!("{} with {with}: failed after {took:.0} s: {}", req.op, e.lines().take(6).collect::<Vec<_>>().join(" | "))),
+        Err(e) => {
+            crate::applog::line("media", &format!("{} with {with}: failed after {took:.0} s: {}", req.op, e.lines().take(6).collect::<Vec<_>>().join(" | ")));
+            crate::devmode::soon(state);
+        }
     }
     match &result {
         Ok(_) if on_cloud.is_some() => state.log("media", &format!("Made {name} with a cloud model")),
@@ -832,6 +988,35 @@ async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
 fn card_trouble(e: &str) -> bool {
     let l = e.to_lowercase();
     ["make enough memory", "compute failed", "out of memory", "vulkan", "device lost", "vk_error", "ggml_backend"].iter().any(|w| l.contains(w))
+}
+
+/// One look at the card and processor while a job runs.
+struct Reading {
+    gpu_usage: Option<f32>,
+    gpu_temp: Option<f32>,
+    cpu_usage: Option<f32>,
+    /// The card was making it then (not the processor).
+    on_card: bool,
+}
+
+/// "gpt-image-1 (openai)" from "cloud:openai:gpt-image-1".
+fn cloud_label(id: &str) -> String {
+    let mut parts = id.splitn(3, ':').skip(1);
+    match (parts.next(), parts.next()) {
+        (Some(provider), Some(model)) => format!("{model} ({provider})"),
+        _ => id.to_string(),
+    }
+}
+
+/// What progress says when a picture moved to the processor.
+pub const PROCESSOR_STAGE: &str = "The graphics card couldn't make it, so it's being made on the processor (slower)";
+
+/// About how many tokens a description is for a model's text reader (words
+/// and punctuation, the way most tokenizers split English).
+fn approx_tokens(text: &str) -> u32 {
+    let words = text.split_whitespace().count() as f64;
+    let marks = text.chars().filter(|c| c.is_ascii_punctuation()).count() as f64;
+    (words * 1.3 + marks * 0.5).round().max(1.0) as u32
 }
 
 /// The value after a flag, if it's there.
@@ -977,7 +1162,7 @@ impl RunCtx<'_> {
             return Err(last);
         }
         crate::applog::line("media", &format!("The graphics card failed three times ({}); making the picture on the processor, smaller", last.lines().take(3).collect::<Vec<_>>().join(" | ")));
-        (self.progress)("The graphics card couldn't make it, so it's being made on the processor (slower)", 0.0);
+        (self.progress)(PROCESSOR_STAGE, 0.0);
         let cpu = self.cpu_engine().await.map_err(|why| format!("{last}\n\nCouldn't switch to the processor: {why}"))?;
         // At full size the processor takes many minutes; 640 pixels keeps it to a few.
         self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await.map_err(|on_cpu| format!("{last}\n\nOn the processor too: {on_cpu}"))
@@ -1107,21 +1292,23 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
     let seed = req.seed.unwrap_or_else(random_seed);
     let steps = req.steps.unwrap_or(d.steps).clamp(1, 60);
     let out = work.join("out_%d.png");
+    // Some models want sides in steps of 32.
+    let al = |(w, h): (u32, u32)| if d.align > 16 { ((w / d.align).max(1) * d.align, (h / d.align).max(1) * d.align) } else { (w, h) };
     let mut source: Option<(MediaItem, image::DynamicImage)> = None;
     let mut fill_mask: Option<image::GrayImage> = None;
     let mut count = 1;
     let (prompt, w, h, init, mask, refs) = match req.op.as_str() {
         "generate" => {
             count = req.count.unwrap_or(1).clamp(1, 4);
-            let (w, h) = match (req.width, req.height) {
+            let (w, h) = al(match (req.width, req.height) {
                 (Some(w), Some(h)) => (imaging::round16(w.clamp(256, 2048) as f64), imaging::round16(h.clamp(256, 2048) as f64)),
                 _ => imaging::shape_size(req.shape.as_deref().unwrap_or("square"), side),
-            };
+            });
             (styled(&req.prompt, req.style.as_deref()), w, h, None, None, vec![])
         }
         "edit" | "restyle" => {
             let s = ctx.source()?;
-            let (w, h) = imaging::work_size(s.1.width(), s.1.height(), side * side);
+            let (w, h) = al(imaging::work_size(s.1.width(), s.1.height(), side * side));
             let src = work.join("source.png");
             std::fs::write(&src, imaging::png(&s.1.resize_exact(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
             let prompt = if req.op == "restyle" {
@@ -1134,7 +1321,7 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         }
         "fill" => {
             let s = ctx.source()?;
-            let (w, h) = imaging::work_size(s.1.width(), s.1.height(), side * side);
+            let (w, h) = al(imaging::work_size(s.1.width(), s.1.height(), side * side));
             let bytes = base64::engine::general_purpose::STANDARD.decode(req.mask.as_deref().unwrap_or("")).map_err(|_| "The painted area couldn't be read.".to_string())?;
             let mk = imaging::grow(&imaging::mask_from_paint(&bytes, w, h)?, 4);
             let (src, mpath) = (work.join("source.png"), work.join("mask.png"));
@@ -1156,7 +1343,7 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
                 return Err("Choose which sides to extend.".into());
             }
             let (canvas, mk) = imaging::extend(&s.1, l, t, r, b);
-            let (w, h) = imaging::work_size(canvas.width(), canvas.height(), side * side);
+            let (w, h) = al(imaging::work_size(canvas.width(), canvas.height(), side * side));
             let canvas = image::DynamicImage::ImageRgba8(canvas).resize_exact(w, h, image::imageops::FilterType::Lanczos3);
             let mk = image::imageops::resize(&mk, w, h, image::imageops::FilterType::Nearest);
             let (src, mpath) = (work.join("source.png"), work.join("mask.png"));
@@ -1177,7 +1364,7 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         d,
         &sd::Picture {
             prompt: &prompt,
-            negative: req.negative.as_deref(),
+            negative: req.negative.as_deref().filter(|n| !n.trim().is_empty()).or((!d.negative.is_empty()).then_some(d.negative.as_str())),
             width: w,
             height: h,
             steps,
@@ -1438,8 +1625,13 @@ fn view(state: &AppState) -> MediaView {
     let mut hidden = 0;
     let mut video_note = None;
     let mut models = Vec::new();
-    for m in &state.catalog.media.models {
+    let installing: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
+    for m in &self::models(state) {
         let inst = list.iter().find(|i| i.model_id == m.id);
+        // From Hugging Face: shown once installed (or while it installs).
+        if m.from_hub.is_some() && inst.is_none() && !installing.contains(&m.id) {
+            continue;
+        }
         let f = fit(m, &hw, &b, missing_bytes(&state.paths, m), inst.and_then(|i| i.secs));
         if inst.is_none() && !(f.runnable && f.disk_ok) {
             hidden += 1;
@@ -1462,14 +1654,32 @@ fn view(state: &AppState) -> MediaView {
         let gallery = if unlocked { store::count(&conn) } else { 0 };
         (crate::cloud::media_choices(&conn), gallery)
     };
-    let installing = state.installs.lock().unwrap().keys().cloned().collect();
     MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery }
 }
 
 #[tauri::command(async)]
 pub fn install_media_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
-    let spec = state.catalog.media.models.iter().find(|m| m.id == model_id).ok_or("Unknown model")?.clone();
+    let spec = models(&state).into_iter().find(|m| m.id == model_id).ok_or("Unknown model")?;
     start_install(app, state.inner().clone(), spec, None)
+}
+
+/// The Studio's Hugging Face search: picture, video or music models built
+/// on a family SulcusAI runs.
+#[tauri::command]
+pub async fn media_hub_search(state: AppStateRef<'_>, kind: String, query: String, sort: String, all: Option<bool>) -> Result<hub::HubMediaResults, String> {
+    hub::search(state.inner(), &kind, &query, &sort, all.unwrap_or(false)).await
+}
+
+/// Installs one file of a Hugging Face repository like a catalog model.
+#[tauri::command]
+pub async fn media_hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String) -> Result<String, String> {
+    let spec = hub::prepare(state.inner(), &repo, &file).await?;
+    let id = spec.id.clone();
+    if let Err(e) = start_install(app, state.inner().clone(), spec, None) {
+        hub::forget(&state.db.lock().unwrap(), &id).ok();
+        return Err(e);
+    }
+    Ok(id)
 }
 
 /// Downloads a model in the background; `then_feature` is turned on after.
@@ -1518,15 +1728,13 @@ pub(crate) fn start_install(app: AppHandle, state: Arc<AppState>, spec: MediaMod
 #[tauri::command]
 pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Result<(), String> {
     state.cipher()?;
-    let spec = state.catalog.media.models.iter().find(|m| m.id == model_id).ok_or("Unknown model")?.clone();
+    let all = models(&state);
+    let spec = all.iter().find(|m| m.id == model_id).ok_or("Unknown model")?.clone();
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     list.retain(|i| i.model_id != model_id);
     // Keep files another installed model still uses.
-    let keep: Vec<PathBuf> = state
-        .catalog
-        .media
-        .models
+    let keep: Vec<PathBuf> = all
         .iter()
         .filter(|m| list.iter().any(|i| i.model_id == m.id))
         .flat_map(|m| m.files.iter().map(|f| file_path(&state.paths, m, f)).collect::<Vec<_>>())
@@ -1541,6 +1749,9 @@ pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Res
         cutout::unload();
     }
     save_installed(&conn, &list)?;
+    if spec.from_hub.is_some() {
+        hub::forget(&conn, &spec.id)?;
+    }
     db::log_action(&conn, "model", &format!("Removed {} and deleted its files", spec.name));
     Ok(())
 }
@@ -1865,6 +2076,14 @@ mod tests {
     }
 
     #[test]
+    fn what_making_it_took_is_described_plainly() {
+        assert_eq!(approx_tokens("a man playing frisbee with a dog in a park"), 13);
+        assert_eq!(approx_tokens(""), 1);
+        assert_eq!(cloud_label("cloud:openai:gpt-image-1"), "gpt-image-1 (openai)");
+        assert_eq!(cloud_label("odd"), "odd");
+    }
+
+    #[test]
     fn pictures_run_anywhere_but_slower_without_a_card() {
         let (h0, b0) = hw(0, 8);
         let (h1, b1) = hw(12, 8);
@@ -1888,8 +2107,13 @@ mod tests {
             }
             match m.kind {
                 Kind::Music => assert!(m.file("lm").is_some() && m.file("dit").is_some()),
-                Kind::Image | Kind::Video => assert!(m.file("diffusion").is_some() && m.file("vae").is_some()),
+                // A whole checkpoint (SDXL), or a diffusion model with its decoder.
+                Kind::Image | Kind::Video => assert!(m.file("model").is_some() || (m.file("diffusion").is_some() && m.file("vae").is_some()), "{}", m.id),
                 _ => {}
+            }
+            // A family opened to Hugging Face replaces a file the model has.
+            if let Some(h) = &m.hub {
+                assert!(m.file(&h.role).is_some() && !h.bases.is_empty() && h.min_size < h.max_size, "{}", m.id);
             }
         }
         // Shared files are listed identically wherever they appear.

@@ -42,6 +42,34 @@ pub struct MediaItem {
     pub hidden: bool,
     /// Videos: a still frame is saved as the thumbnail.
     pub poster: bool,
+    /// What making it took (made here or in the cloud).
+    pub stats: Option<MadeStats>,
+}
+
+/// How long making an item took, and what it used.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MadeStats {
+    pub secs: f64,
+    /// "graphics card", "processor" or "cloud".
+    pub on: String,
+    /// Which one: the card's or processor's name, or the cloud model.
+    pub device: Option<String>,
+    /// Diffusion steps (pictures and video).
+    pub steps: Option<u32>,
+    /// About how many tokens the description was, read by the model's text reader.
+    pub prompt_tokens: Option<u32>,
+    /// Music: audio tokens the music model wrote (5 a second).
+    pub audio_tokens: Option<u32>,
+    /// Video: frames made.
+    pub frames: Option<u32>,
+    /// The graphics card while it was made.
+    pub gpu_peak_temp: Option<f32>,
+    pub gpu_avg_usage: Option<f32>,
+    pub gpu_peak_usage: Option<f32>,
+    /// The processor while it was made (when it made it).
+    pub cpu_avg_usage: Option<f32>,
+    pub cpu_peak_usage: Option<f32>,
 }
 
 pub fn dir(paths: &Paths) -> PathBuf {

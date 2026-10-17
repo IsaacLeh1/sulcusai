@@ -21,6 +21,7 @@ import { PhoneSettings } from "../components/PhoneSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
 import { LogSettings } from "../components/LogSettings";
+import { DevModeSetting } from "../components/DevMode";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
@@ -394,6 +395,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <h2>{t("About {app}", { app: APP_NAME })}</h2>
         <UpdateSettings toast={toast} />
         <CrashReportsSetting toast={toast} />
+        <DevModeSetting toast={toast} />
         {info && (
           <p className="small muted row wrap">
             <span>{t("Data folder: {path}", { path: info.data_dir })}</span>

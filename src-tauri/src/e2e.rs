@@ -1907,7 +1907,8 @@ async fn e2e_weather_question() {
 
 /// Pictures look real by default, and a picture can be edited from an
 /// instruction: a portrait, then a top hat added, then a party behind him.
-/// SULCUSAI_MEDIA_OUT: where the three pictures are written to look at.
+/// SULCUSAI_MEDIA_OUT: where the three pictures are written to look at;
+/// SULCUSAI_EDIT_MODEL: the model (FLUX.2 klein 4B unless set).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn e2e_realistic_picture_and_edits() {
@@ -1916,7 +1917,8 @@ async fn e2e_realistic_picture_and_edits() {
     let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").expect("SULCUSAI_MEDIA_OUT"));
     std::fs::create_dir_all(&out).unwrap();
     let c = state.cipher().unwrap();
-    media::install_for_test(&state, "flux2-klein-4b").await.unwrap();
+    let model = std::env::var("SULCUSAI_EDIT_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
+    media::install_for_test(&state, &model).await.unwrap();
     let mut source: Option<String> = None;
     let steps = [
         ("1-portrait", "generate", "a portrait of a smiling man in his twenties with short brown hair and a denim jacket, standing outdoors in a park"),
@@ -1925,12 +1927,45 @@ async fn e2e_realistic_picture_and_edits() {
     ];
     for (name, op, prompt) in steps {
         let started = std::time::Instant::now();
-        let req = Request { op: op.into(), prompt: prompt.into(), source: source.clone(), shape: Some("portrait".into()), ..Default::default() };
+        let req = Request { op: op.into(), prompt: prompt.into(), source: source.clone(), shape: Some("portrait".into()), model_id: Some(model.clone()), ..Default::default() };
         let made = media::run(&state, store::new_id(), req).await.unwrap_or_else(|e| panic!("{name}: {e}"));
         let item = &made[0];
         std::fs::write(out.join(format!("{name}.png")), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
-        println!("{name}: {:.1}s, {}x{}", started.elapsed().as_secs_f64(), item.width, item.height);
+        println!("{name}: {:.1}s, {}x{}, {:?}", started.elapsed().as_secs_f64(), item.width, item.height, item.stats);
         source = Some(item.id.clone());
+    }
+}
+
+/// A model from Hugging Face, installed the way the Studio installs one
+/// (sharing the catalog model's text reader and decoder), makes a picture.
+/// SULCUSAI_HUB_REPO / SULCUSAI_HUB_FILE pick it (a FLUX.2 klein 4B
+/// quantization unless set). Its own file is deleted afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_hub_media_model() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let repo = std::env::var("SULCUSAI_HUB_REPO").unwrap_or_else(|_| "unsloth/FLUX.2-klein-4B-GGUF".into());
+    let file = std::env::var("SULCUSAI_HUB_FILE").unwrap_or_else(|_| "flux-2-klein-4b-Q5_K_M.gguf".into());
+    let spec = media::hub::prepare(&state, &repo, &file).await.unwrap();
+    println!("prepared {} ({}): {:?}", spec.name, spec.id, spec.files.iter().map(|f| (&f.role, &f.file)).collect::<Vec<_>>());
+    media::install_for_test(&state, &spec.id).await.unwrap();
+    assert!(media::installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == spec.id));
+    let req = Request { op: "generate".into(), prompt: "a lighthouse on a rocky cliff at dusk, photograph".into(), model_id: Some(spec.id.clone()), shape: Some("landscape".into()), seed: Some(7), ..Default::default() };
+    let made = media::run(&state, store::new_id(), req).await.unwrap();
+    assert_eq!(made[0].model_id.as_deref(), Some(spec.id.as_str()), "made with the Hugging Face model");
+    let png = store::read(&state.paths, &c, &made[0].id).unwrap();
+    assert!(image::load_from_memory(&png).is_ok());
+    if let Ok(out) = std::env::var("SULCUSAI_MEDIA_OUT") {
+        std::fs::write(std::path::Path::new(&out).join("hub-model.png"), &png).unwrap();
+    }
+    println!("made: {:?}", made[0].stats);
+    // Only its own file goes; the shared ones stay for the catalog model.
+    let own: Vec<std::path::PathBuf> = spec.files.iter().filter(|f| f.file.starts_with("hfm-")).map(|f| media::model_dir(&state.paths, &spec).join(&f.file)).collect();
+    assert_eq!(own.len(), 1);
+    for p in own {
+        std::fs::remove_file(&p).unwrap();
     }
 }
 
@@ -1966,7 +2001,7 @@ async fn e2e_picture_set() {
         match media::run(&state, store::new_id(), req).await {
             Ok(made) => {
                 std::fs::write(out.join(format!("{name}.png")), store::read(&state.paths, &c, &made[0].id).unwrap()).unwrap();
-                println!("{name}: {:.1}s", started.elapsed().as_secs_f64());
+                println!("{name}: {:.1}s {:?}", started.elapsed().as_secs_f64(), made[0].stats);
             }
             Err(e) => println!("{name}: FAILED {e}"),
         }
@@ -2136,15 +2171,21 @@ async fn e2e_media() {
             let bytes = keep(&clip[0], "8-video");
             assert_eq!(&bytes[..4], &[0x1A, 0x45, 0xDF, 0xA3], "a WebM file");
             assert_eq!(clip[0].kind, "video");
+            println!("video: {:?}", clip[0].stats);
+            let s = clip[0].stats.as_ref().expect("what making it took");
+            assert!(s.frames.is_some_and(|f| f > 0) && s.steps.is_some());
         }
     }
     if want("music") {
-        install("ace-step-1.5").await;
-        let song = go(Request { op: "music".into(), prompt: "upbeat acoustic folk song about a road trip through the mountains, warm male vocals".into(), seconds: Some(20.0), ..Default::default() }).await.unwrap();
+        // SULCUSAI_MUSIC_MODEL: another music model than ACE-Step 1.5.
+        let music: &'static str = Box::leak(std::env::var("SULCUSAI_MUSIC_MODEL").unwrap_or_else(|_| "ace-step-1.5".into()).into_boxed_str());
+        install(music).await;
+        let song = go(Request { op: "music".into(), model_id: Some(music.into()), prompt: "upbeat acoustic folk song about a road trip through the mountains, warm male vocals".into(), seconds: Some(20.0), ..Default::default() }).await.unwrap();
         let bytes = keep(&song[0], "9-song");
         assert!(bytes.len() > 100_000);
-        println!("song: {:.1}s, lyrics: {:?}", song[0].seconds, song[0].lyrics.as_deref().map(|l| l.chars().take(160).collect::<String>()));
-        let sound = go(Request { op: "sound".into(), prompt: "rain on a tin roof with distant thunder".into(), seconds: Some(10.0), ..Default::default() }).await.unwrap();
+        println!("song: {:.1}s, lyrics: {:?}, {:?}", song[0].seconds, song[0].lyrics.as_deref().map(|l| l.chars().take(160).collect::<String>()), song[0].stats);
+        assert!(song[0].stats.as_ref().and_then(|s| s.audio_tokens).is_some_and(|t| t > 0), "audio tokens are counted");
+        let sound = go(Request { op: "sound".into(), model_id: Some(music.into()), prompt: "rain on a tin roof with distant thunder".into(), seconds: Some(10.0), ..Default::default() }).await.unwrap();
         keep(&sound[0], "10-sound");
     }
     if want("narrate") {

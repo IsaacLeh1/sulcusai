@@ -24,6 +24,7 @@ mod crash;
 mod feedback;
 mod crypto;
 mod db;
+mod devmode;
 mod docs;
 mod diarize;
 mod download;
@@ -1747,6 +1748,7 @@ pub fn run() {
             }
             // Crash reports: the failure hook and how the last run ended (always logged here; sent only if turned on).
             crash::start(&state);
+            devmode::start(&state);
             backup::finish_restore(&state);
             api_server::apply(state.clone());
             // Models already on this PC, from an earlier install or another app.
@@ -1801,6 +1803,8 @@ pub fn run() {
             quick::quick_screenshot,
             media::media_view,
             media::install_media_model,
+            media::media_hub_search,
+            media::media_hub_install,
             media::remove_media_model,
             media::media_start,
             media::media_cancel,
@@ -1813,6 +1817,9 @@ pub fn run() {
             applog::read_log,
             applog::open_app_folder,
             applog::clear_logs,
+            devmode::dev_mode_view,
+            devmode::set_dev_mode,
+            devmode::send_dev_report,
             ports::stop_port_program,
             ports::server_stop,
             ports::server_start,

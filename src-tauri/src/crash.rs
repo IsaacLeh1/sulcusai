@@ -27,6 +27,8 @@ static ABOUT: OnceLock<String> = OnceLock::new();
 static STARTED: AtomicI64 = AtomicI64::new(0);
 /// When the window last showed it was responsive (its ping), ms.
 static WINDOW_OK: AtomicI64 = AtomicI64::new(0);
+/// The app, for sending a crash in developer mode.
+static STATE: std::sync::OnceLock<Arc<AppState>> = std::sync::OnceLock::new();
 /// Window errors kept this run (a loop of errors makes one report, not 100).
 static WINDOW_ERRORS: AtomicU32 = AtomicU32::new(0);
 
@@ -61,7 +63,7 @@ pub struct Report {
 }
 
 /// The user's folder (and name) out of a text.
-fn tidy(s: &str) -> String {
+pub(crate) fn tidy(s: &str) -> String {
     let mut out = s.to_string();
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         let home = home.to_string_lossy().to_string();
@@ -99,6 +101,10 @@ fn duration(ms: i64) -> String {
 fn write(kind: &str, what: &str, details: &str) {
     // Always kept on this PC, for the person to read (Settings → Logs).
     crate::applog::crash(what, details);
+    // Developer mode: to the developer at once.
+    if let Some(state) = STATE.get() {
+        crate::devmode::crash(state, what, details);
+    }
     if !ON.load(Ordering::Relaxed) {
         return;
     }
@@ -122,6 +128,7 @@ fn write(kind: &str, what: &str, details: &str) {
 /// At startup: the switch, a failure hook, the running marker, and a report
 /// if the last run ended without closing (while Windows kept running).
 pub fn start(state: &Arc<AppState>) {
+    let _ = STATE.set(state.clone());
     let _ = DIR.set(state.paths.data.join("crashes"));
     let _ = ABOUT.set(about(state));
     STARTED.store(now(), Ordering::Relaxed);

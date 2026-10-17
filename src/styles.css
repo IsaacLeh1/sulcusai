@@ -235,6 +235,8 @@ select, .input {
 .log-viewer { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
 .log-text { max-height: 360px; overflow: auto; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; background: var(--code-bg); padding: 8px; border-radius: 6px; }
 .logs-list .btn.active { background: var(--accent-soft); color: var(--accent); }
+.dev-mode { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 6px; }
+.dev-mode .badge { margin-left: 6px; }
 .cap-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-left: 6px; vertical-align: middle; }
 .chat-actions .btn.active { background: var(--accent-soft); color: var(--accent); }
 .chat-header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
@@ -1339,3 +1341,23 @@ button.ctx:hover { background: var(--hover); }
 .shared-compose textarea { resize: vertical; }
 .shared-compose-note { grid-column: 1 / -1; margin: 0; }
 .msg.assistant .added-note { display: block; font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+
+/* The graphics card while a picture, video or song is made. */
+.job-device { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.gpu-bar { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.gpu-label { min-width: 96px; }
+.gpu-meter { flex: 1; max-width: 220px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.gpu-meter > span { display: block; height: 100%; background: var(--accent); transition: width 0.6s ease; }
+.gpu-temp { font-variant-numeric: tabular-nums; padding: 0 6px; border-radius: 8px; }
+.gpu-temp.cool { color: var(--success); }
+.gpu-temp.warm { color: var(--warn); }
+.gpu-temp.hot { color: var(--danger); font-weight: 600; }
+.made-stats { margin: 4px 0; }
+.lightbox-body .made-stats { color: #ddd; }
+
+/* The Studio's Hugging Face models. */
+.media-hub { margin-top: 12px; }
+.media-hub.closed { display: flex; justify-content: flex-start; }
+.media-hub .mode-switch { margin: 6px 0; align-self: flex-start; }
+.hub-file-what { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.hub-file-what .block { flex-basis: 100%; }

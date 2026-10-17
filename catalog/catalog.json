@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-15",
+  "updated": "2026-10-17",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
@@ -1602,6 +1602,180 @@
           "sampler": "euler",
           "width": 1024,
           "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.2 klein",
+          "bases": [
+            "black-forest-labs/FLUX.2-klein-4B"
+          ],
+          "role": "diffusion",
+          "min_size": 1000000000,
+          "max_size": 9000000000,
+          "avoid": [
+            "9b",
+            "base",
+            "text",
+            "fp8"
+          ],
+          "any_of": [
+            "4b"
+          ]
+        }
+      },
+      {
+        "id": "flux2-klein-9b",
+        "name": "FLUX.2 klein 9B",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B",
+        "description": "The bigger FLUX.2 klein: clearly better edits from plain instructions (\"put me at a party\", \"add a top hat\") and closer to what you describe, in about 4 steps. For personal, non-commercial use.",
+        "license": {
+          "name": "FLUX Non-Commercial License",
+          "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.txt",
+          "commercial": false,
+          "note": "Non-commercial use only. The license also asks that what it makes is checked (by a filter or by you) before it's shared."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "edit",
+          "fill",
+          "extend",
+          "restyle"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux-2-klein-9b-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf",
+            "size": 5909829920,
+            "sha256": "5489463ed96056b0bb5472abb5d1bba7055e48d574e37877acb43b407465e26f"
+          },
+          {
+            "role": "llm",
+            "file": "Qwen3-8B-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/Qwen3-8B-GGUF/resolve/main/Qwen3-8B-Q4_K_M.gguf",
+            "size": 5027784512,
+            "sha256": "120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4"
+          },
+          {
+            "role": "vae",
+            "file": "flux2-vae.safetensors",
+            "url": "https://huggingface.co/unsloth/FLUX.2-VAE/resolve/main/split_files/vae/flux2-vae.safetensors",
+            "size": 336213556,
+            "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 28,
+        "quality": 9,
+        "defaults": {
+          "steps": 4,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.2 klein 9B",
+          "bases": [
+            "black-forest-labs/FLUX.2-klein-9B"
+          ],
+          "role": "diffusion",
+          "min_size": 3000000000,
+          "max_size": 19000000000,
+          "avoid": [
+            "4b",
+            "base",
+            "fp8",
+            "text"
+          ],
+          "any_of": [
+            "9b"
+          ]
+        }
+      },
+      {
+        "id": "qwen-image-2.1-turbo",
+        "name": "Qwen Image 2.1 Turbo",
+        "publisher": "Qwen (Alibaba)",
+        "source": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo",
+        "description": "The best picture quality you can run on a PC: true-to-life photos, faces and readable text, plus the best edits from plain instructions, in 8 steps. For research and personal evaluation only (not commercial).",
+        "license": {
+          "name": "Qwen Research License",
+          "url": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/blob/main/LICENSE",
+          "commercial": false,
+          "note": "Research and evaluation use only: not for commercial use."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "edit",
+          "fill",
+          "extend",
+          "restyle"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "qwen-image-2.1-turbo-Q5_K_S.gguf",
+            "url": "https://huggingface.co/unsloth/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen-image-2.1-turbo-Q5_K_S.gguf",
+            "size": 4501948224,
+            "sha256": "72d93eb6f5d7be1a619c34f525393d001bc2fb9485d087f63c8462932b40177d"
+          },
+          {
+            "role": "llm",
+            "file": "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            "size": 5027784800,
+            "sha256": "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2"
+          },
+          {
+            "role": "llm_vision",
+            "file": "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            "size": 1159029824,
+            "sha256": "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38"
+          },
+          {
+            "role": "vae",
+            "file": "qwen_image_2.1_vae_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+            "size": 675509688,
+            "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 32,
+        "quality": 10,
+        "defaults": {
+          "steps": 8,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024,
+          "align": 32,
+          "sigmas": "1.0,0.978453,0.95418,0.926626,0.89508,0.845148,0.704534,0.414568,0.0"
+        },
+        "hub": {
+          "name": "Qwen Image 2.1",
+          "bases": [
+            "Qwen/Qwen-Image-2.1-Turbo"
+          ],
+          "role": "diffusion",
+          "min_size": 2500000000,
+          "max_size": 17000000000,
+          "avoid": [
+            "fp8",
+            "mmproj",
+            "vae"
+          ],
+          "any_of": [
+            "2.1",
+            "2_1",
+            "21"
+          ]
         }
       },
       {
@@ -1654,6 +1828,90 @@
           "sampler": "euler",
           "width": 1024,
           "height": 1024
+        },
+        "hub": {
+          "name": "Z-Image",
+          "bases": [
+            "Tongyi-MAI/Z-Image-Turbo"
+          ],
+          "role": "diffusion",
+          "min_size": 1500000000,
+          "max_size": 13000000000,
+          "avoid": [
+            "base",
+            "omni",
+            "edit",
+            "fp8",
+            "qwen"
+          ],
+          "any_of": [
+            "z-image",
+            "z_image",
+            "zimage"
+          ]
+        }
+      },
+      {
+        "id": "realvisxl-v5-lightning",
+        "name": "RealVisXL V5.0 Lightning",
+        "publisher": "SG161222",
+        "source": "https://huggingface.co/SG161222/RealVisXL_V5.0_Lightning",
+        "description": "Photo-realistic pictures of people, places and things in about 6 steps, built on Stable Diffusion XL. Also fills in painted areas and extends the edges. Opens the many SDXL models on Hugging Face.",
+        "license": {
+          "name": "CreativeML Open RAIL++-M",
+          "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "model",
+            "file": "RealVisXL_V5.0_Lightning_fp16.safetensors",
+            "url": "https://huggingface.co/SG161222/RealVisXL_V5.0_Lightning/resolve/main/RealVisXL_V5.0_Lightning_fp16.safetensors",
+            "size": 6938065512,
+            "sha256": "fabcadd9330dcc4f9702063428d40b9d4d07168d8acefc819b8d1d9db466b3ec"
+          },
+          {
+            "role": "vae",
+            "file": "sdxl_vae_fp16_fix.safetensors",
+            "url": "https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl_vae.safetensors",
+            "size": 334641162,
+            "sha256": "235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1"
+          }
+        ],
+        "min_vram_gb": 6,
+        "cpu": false,
+        "secs": 12,
+        "quality": 8,
+        "defaults": {
+          "steps": 6,
+          "cfg": 1.5,
+          "sampler": "dpm++2m",
+          "scheduler": "karras",
+          "width": 1024,
+          "height": 1024,
+          "negative": "cartoon, anime, illustration, painting, drawing, 3d render, cgi, blurry, low quality, deformed, disfigured, bad anatomy, extra fingers, watermark, text"
+        },
+        "hub": {
+          "name": "SDXL",
+          "bases": [
+            "stabilityai/stable-diffusion-xl-base-1.0"
+          ],
+          "role": "model",
+          "min_size": 2000000000,
+          "max_size": 8000000000,
+          "tune_steps": true,
+          "avoid": [
+            "refiner",
+            "inpaint",
+            "fp32",
+            "pruned"
+          ]
         }
       },
       {
@@ -1709,6 +1967,25 @@
           "seconds": 3,
           "flow_shift": 5.0,
           "negative": "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+        },
+        "hub": {
+          "name": "Wan 2.2 5B",
+          "bases": [
+            "Wan-AI/Wan2.2-TI2V-5B"
+          ],
+          "role": "diffusion",
+          "min_size": 1500000000,
+          "max_size": 11000000000,
+          "avoid": [
+            "14b",
+            "a14b",
+            "fun",
+            "control",
+            "fp8"
+          ],
+          "any_of": [
+            "5b"
+          ]
         }
       },
       {
@@ -1763,6 +2040,28 @@
           "seconds": 3,
           "flow_shift": 3.0,
           "negative": "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+        },
+        "hub": {
+          "name": "Wan 2.1 1.3B",
+          "bases": [
+            "Wan-AI/Wan2.1-T2V-1.3B"
+          ],
+          "role": "diffusion",
+          "min_size": 600000000,
+          "max_size": 6000000000,
+          "avoid": [
+            "14b",
+            "i2v",
+            "vace",
+            "flf2v",
+            "fun",
+            "fp8"
+          ],
+          "any_of": [
+            "1.3b",
+            "1_3b",
+            "1-3b"
+          ]
         }
       },
       {
@@ -1875,6 +2174,88 @@
         "quality": 8,
         "defaults": {
           "seconds": 30
+        },
+        "hub": {
+          "name": "ACE-Step 1.5",
+          "bases": [
+            "ACE-Step/Ace-Step1.5"
+          ],
+          "role": "dit",
+          "min_size": 800000000,
+          "max_size": 5500000000,
+          "require": [
+            "turbo"
+          ],
+          "avoid": [
+            "xl"
+          ]
+        }
+      },
+      {
+        "id": "ace-step-1.5-xl",
+        "name": "ACE-Step 1.5 XL",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The larger ACE-Step music model (4B): fuller arrangements and clearer vocals than the standard one, at about twice the time.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-xl-turbo-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-xl-turbo-Q8_0.gguf",
+            "size": 5305828736,
+            "sha256": "4f1044fb646374fb5730e10f64325766883eb2fc02a643c1b403f2d61f39dc19"
+          },
+          {
+            "role": "lm",
+            "file": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-1.7B-Q8_0.gguf",
+            "size": 1975837568,
+            "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 171,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "hub": {
+          "name": "ACE-Step 1.5 XL",
+          "bases": [
+            "ACE-Step/Ace-Step1.5"
+          ],
+          "role": "dit",
+          "min_size": 2000000000,
+          "max_size": 11000000000,
+          "require": [
+            "xl",
+            "turbo"
+          ]
         }
       },
       {

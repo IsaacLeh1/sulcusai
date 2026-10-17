@@ -550,9 +550,27 @@ fn gpu_cache() -> &'static Mutex<Option<(Instant, GpuNow)>> {
 /// The graphics card right now, read at most every 2 seconds.
 #[tauri::command]
 pub async fn gpu_now(state: AppStateRef<'_>) -> Result<GpuNow, String> {
+    Ok(gpu_reading(&state).await)
+}
+
+/// The processor's use (percent of all cores) since the last reading.
+pub fn cpu_usage() -> f32 {
+    static SYS: std::sync::OnceLock<Mutex<sysinfo::System>> = std::sync::OnceLock::new();
+    let sys = SYS.get_or_init(|| {
+        let mut s = sysinfo::System::new();
+        s.refresh_cpu_usage();
+        Mutex::new(s)
+    });
+    let mut s = sys.lock().unwrap();
+    s.refresh_cpu_usage();
+    s.global_cpu_usage()
+}
+
+/// The dedicated card's use and temperature now (cached for 2 seconds).
+pub async fn gpu_reading(state: &crate::AppState) -> GpuNow {
     if let Some((at, g)) = gpu_cache().lock().unwrap().clone() {
         if at.elapsed() < Duration::from_secs(2) {
-            return Ok(g);
+            return g;
         }
     }
     // The dedicated card (the one models run on), never the integrated one.
@@ -564,7 +582,7 @@ pub async fn gpu_now(state: AppStateRef<'_>) -> Result<GpuNow, String> {
     let g = match nvidia {
         Some(g) => g,
         None => {
-            let Some(card) = best else { return Ok(GpuNow::default()) };
+            let Some(card) = best else { return GpuNow::default() };
             let luid = card.luid;
             GpuNow {
                 name: Some(card.name.clone()),
@@ -579,7 +597,7 @@ pub async fn gpu_now(state: AppStateRef<'_>) -> Result<GpuNow, String> {
         }
     };
     *gpu_cache().lock().unwrap() = Some((Instant::now(), g.clone()));
-    Ok(g)
+    g
 }
 
 fn too_hot(t: Temps, l: &Limits, margin: f32) -> Option<String> {

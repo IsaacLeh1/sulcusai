@@ -9,6 +9,7 @@ import type { PushToast } from "./Toasts";
 const ABOUT: [RegExp, string][] = [
   [/^app\.(old\.)?log$/, tx("What SulcusAI did: starting up, models loaded, pictures made (and on which card, and how long), downloads, updates, settings changed, and errors.")],
   [/^crashes\.(old\.)?log$/, tx("Every crash or freeze, with where it happened. Kept here whether or not crash reports are sent.")],
+  [/^dev-sent\.log$/, tx("Every report developer mode sent to the developer, exactly as sent.")],
   [/^engine\.log$/, tx("The chat engine (llama.cpp) while it runs a model.")],
   [/^media\.log$/, tx("The picture and video engine (stable-diffusion.cpp).")],
   [/^music-/, tx("The music engine (acestep.cpp).")],

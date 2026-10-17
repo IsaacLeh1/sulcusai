@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Picture, video and music models: what fits this PC, install and remove.
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type InstallProgress, type MediaKind, type MediaModelCard, type MediaView } from "../api";
+import { api, errorText, on, type HubMediaFile, type HubMediaModel, type HubMediaResults, type InstallProgress, type MediaKind, type MediaModelCard, type MediaView } from "../api";
 import { bytes, percent } from "../format";
 import { t, tx } from "../i18n";
 import { waitLabel } from "../media";
@@ -55,7 +55,212 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
             : t("{n} more models need more than this PC has, so they're not shown.", { n: view.hidden })}
         </p>
       )}
+      <MediaHubBrowser
+        first={only?.includes("video") ? "video" : only?.includes("music") ? "music" : "image"}
+        installed={new Set(view.models.filter((m) => m.installed).map((m) => m.id))}
+        progress={progress}
+        toast={toast}
+        onChanged={load}
+      />
     </div>
+  );
+}
+
+/** Asks before installing a model whose license limits its use. */
+function licenseOk(m: MediaModelCard): boolean {
+  if (m.license.commercial) return true;
+  return window.confirm(
+    t("{name}'s license ({license}) allows personal, non-commercial use only. {note}Read it on the model's page before using what it makes. Install it?", {
+      name: m.name,
+      license: m.license.name,
+      note: m.license.note ? `${m.license.note} ` : "",
+    }),
+  );
+}
+
+type HubKind = "image" | "video" | "music";
+const HUB_KINDS: { kind: HubKind; title: string; per: string; hint: string }[] = [
+  { kind: "image", title: tx("Pictures"), per: tx("a picture"), hint: tx("Search, e.g. realistic, juggernaut, anime") },
+  { kind: "video", title: tx("Video"), per: tx("a 3-second clip"), hint: tx("Search, e.g. wan, gguf") },
+  { kind: "music", title: tx("Music"), per: tx("a 30-second song"), hint: tx("Search, e.g. ace-step, xl") },
+];
+const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
+const baseName = (path: string) => path.split("/").pop() ?? path;
+
+/** Picture, video and music models people share on Hugging Face, built on a
+ * kind SulcusAI runs (SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan,
+ * ACE-Step). Nothing is asked of huggingface.co until the person searches. */
+function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { first: HubKind; installed: Set<string>; progress: Record<string, InstallProgress>; toast: PushToast; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<HubKind>(first);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<"downloads" | "trending" | "newest">("downloads");
+  const [results, setResults] = useState<HubMediaResults | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [allOf, setAllOf] = useState<string | null>(null);
+  const busy = Object.keys(progress).length > 0;
+  const per = HUB_KINDS.find((k) => k.kind === kind)!;
+
+  const search = async (k = kind, by = sort) => {
+    setSearching(true);
+    setProblem(null);
+    try {
+      setResults(await api.mediaHubSearch(k, query, by));
+    } catch (e) {
+      setProblem(errorText(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+  const install = async (m: HubMediaModel, f: HubMediaFile) => {
+    const ok = window.confirm(
+      t("{name} is shared on Hugging Face by {author}{license}. Check what its license allows on the model's page before using what it makes for work. Install it?", {
+        name: m.name,
+        author: m.author,
+        license: m.license ? t(" under the license “{license}”", { license: m.license }) : "",
+      }),
+    );
+    if (!ok) return;
+    try {
+      await api.mediaHubInstall(m.id, f.file);
+      onChanged();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
+  if (!open) {
+    return (
+      <section className="media-hub closed">
+        <button className="btn ghost small" onClick={() => setOpen(true)}>
+          🤗 {t("More models from Hugging Face…")}
+        </button>
+      </section>
+    );
+  }
+
+  const row = (m: HubMediaModel, f: HubMediaFile) => {
+    const p = progress[f.model_id];
+    return (
+      <div key={f.file} className="hub-file">
+        <div className="hub-file-what">
+          <strong>{f.quant}</strong>
+          {f.file === m.recommended && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
+          <span className="muted small ellipsis" title={f.file}>{baseName(f.file)}</span>
+          {f.runnable ? (
+            <span className="muted small block">
+              {f.on_gpu ? t("Runs on your graphics card") : t("Runs on your processor")} · {t("{time} for {what}", { time: waitLabel(f.est_secs), what: t(per.per) })} ·{" "}
+              {f.download < f.size ? t("{size} to download (shares files you have)", { size: bytes(f.download) }) : t("{size} download", { size: bytes(f.download) })}
+            </span>
+          ) : (
+            <span className="warn-text small block">⚠ {f.reason ? t("This PC can't run it: it {reason}.", { reason: f.reason }) : t("too much for this PC")}</span>
+          )}
+        </div>
+        {p ? (
+          <InstallBar p={p} />
+        ) : installed.has(f.model_id) ? (
+          <span className="badge subtle">{t("Installed")}</span>
+        ) : (
+          <button className="btn small" onClick={() => install(m, f)} disabled={busy || !f.runnable} title={busy ? t("One install at a time") : undefined}>
+            {t("Install")}
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <section className="card hub media-hub">
+      <div className="look-row">
+        <div>
+          <strong>🤗 {t("Hugging Face")}</strong>
+          <p className="muted small">
+            {t("Picture, video and music models people share, built on the kinds SulcusAI runs (SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan and ACE-Step). Only versions this PC can run are shown. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}
+          </p>
+        </div>
+      </div>
+      <div className="mode-switch small" role="tablist">
+        {HUB_KINDS.map((k) => (
+          <button
+            key={k.kind}
+            role="tab"
+            aria-selected={kind === k.kind}
+            className={`mode ${kind === k.kind ? "active" : ""}`}
+            onClick={() => {
+              setKind(k.kind);
+              setResults(null);
+              setAllOf(null);
+            }}
+          >
+            {t(k.title)}
+          </button>
+        ))}
+      </div>
+      <form
+        className="row wrap hub-search"
+        onSubmit={(e) => {
+          e.preventDefault();
+          search();
+        }}
+      >
+        <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t(per.hint)} aria-label={t("Search Hugging Face")} />
+        <select
+          className="input"
+          value={sort}
+          aria-label={t("Order")}
+          onChange={(e) => {
+            const by = e.target.value as typeof sort;
+            setSort(by);
+            if (results) search(kind, by);
+          }}
+        >
+          <option value="downloads">{t("Most downloaded")}</option>
+          <option value="trending">{t("Trending")}</option>
+          <option value="newest">{t("Recently updated")}</option>
+        </select>
+        <button className="btn" type="submit" disabled={searching}>
+          {searching ? t("Searching…") : query.trim() ? t("Search") : t("Show popular models")}
+        </button>
+      </form>
+      {problem && <p className="warn-text small">{problem}</p>}
+      {results && (
+        <>
+          <p className="muted small" role="status">
+            {results.models.length === 0
+              ? t("Nothing found that this PC can run. Try another search.")
+              : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
+            {results.hidden > 0 && t("{n} more were left out: too big for this PC, add-ons, or in formats SulcusAI can't use.", { n: results.hidden })}
+          </p>
+          <div className="hub-list">
+            {results.models.map((m) => {
+              const best = m.files.find((f) => f.file === m.recommended) ?? m.files[m.files.length - 1];
+              const shown = allOf === m.id ? m.files : [best];
+              return (
+                <article key={m.id} className="hub-model">
+                  <div className="hub-head">
+                    <div>
+                      <a href={m.url} target="_blank" rel="noreferrer"><strong>{m.name}</strong></a> <span className="muted small">{t("by {author}", { author: m.author })}</span>{" "}
+                      <span className="badge subtle" title={t("Built on {model}", { model: m.base_model })}>{m.family}</span>
+                    </div>
+                    <span className="muted small">
+                      ⬇ {compact.format(m.downloads)} · ♥ {compact.format(m.likes)}
+                      {m.license && ` · ${m.license}`}
+                    </span>
+                  </div>
+                  {shown.map((f) => row(m, f))}
+                  {m.files.length > 1 && (
+                    <button className="link small" onClick={() => setAllOf(allOf === m.id ? null : m.id)}>
+                      {allOf === m.id ? t("Show only the best fit") : t("All {n} versions", { n: m.files.length })}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -91,6 +296,12 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
       <div className="row">
         <div className="grow">
           <strong>{m.name}</strong> <span className="muted small">· {m.publisher}</span>
+          {m.from_hub && (
+            <a className="badge subtle" href={m.source} target="_blank" rel="noreferrer" title={m.from_hub}>
+              🤗 {t("From Hugging Face")}
+            </a>
+          )}
+          {!m.license.commercial && <span className="badge subtle" title={m.license.note ?? undefined}>{t("Non-commercial")}</span>}
           <span className="cap-badges">
             {abilities(m).map((a) => (
               <span key={a} className="badge subtle">{t(a)}</span>
@@ -128,7 +339,7 @@ function MediaModelRow({ m, per, progress, busy, toast, onChanged }: { m: MediaM
           </button>
         ) : (
           !progress && (
-            <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={() => api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>
+            <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={() => licenseOk(m) && api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>
               {t("Install")}
             </button>
           )

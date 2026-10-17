@@ -21,8 +21,8 @@ use sha2::{Digest, Sha256};
 use crate::catalog::{self, Arch, Budget, License, ModelSpec, Placement, Ratings, Variant, VisionFile};
 use crate::{db, gguf, local, net, AppState};
 
-const API: &str = "https://huggingface.co/api/models";
-const SITE: &str = "https://huggingface.co";
+pub(crate) const API: &str = "https://huggingface.co/api/models";
+pub(crate) const SITE: &str = "https://huggingface.co";
 const KEY: &str = "hub_models";
 /// Results looked at per search (each needs one more request for its files).
 const PAGE: usize = 24;
@@ -88,19 +88,19 @@ pub struct HubResults {
 }
 
 /// A file in a repository, with its checksum.
-struct RemoteFile {
-    path: String,
-    size: u64,
-    sha256: String,
+pub(crate) struct RemoteFile {
+    pub path: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 /// A repository's details: its files and what Hugging Face read from its GGUF.
-struct Repo {
-    info: Value,
-    files: Vec<RemoteFile>,
+pub(crate) struct Repo {
+    pub info: Value,
+    pub files: Vec<RemoteFile>,
 }
 
-async fn repo(client: &reqwest::Client, id: &str) -> Result<Repo, String> {
+pub(crate) async fn repo(client: &reqwest::Client, id: &str) -> Result<Repo, String> {
     let info: Value = client
         .get(format!("{API}/{id}?blobs=true"))
         .send()
@@ -126,7 +126,7 @@ async fn repo(client: &reqwest::Client, id: &str) -> Result<Repo, String> {
     Ok(Repo { info, files })
 }
 
-fn base_name(path: &str) -> &str {
+pub(crate) fn base_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
@@ -135,7 +135,7 @@ fn is_projector(path: &str) -> bool {
 }
 
 /// "…-00001-of-00003.gguf": part of a model split across files.
-fn is_split(path: &str) -> bool {
+pub(crate) fn is_split(path: &str) -> bool {
     let stem = base_name(path).trim_end_matches(".gguf");
     let mut it = stem.rsplit('-');
     let digits = |s: &str| s.len() == 5 && s.bytes().all(|b| b.is_ascii_digit());
@@ -226,7 +226,7 @@ fn estimate_arch(params_b: f64, architecture: &str, repo_id: &str, ctx_len: u32)
 }
 
 /// A short name from the repository's: "unsloth/gpt-oss-20b-GGUF" → "gpt-oss-20b".
-fn display_name(id: &str) -> String {
+pub(crate) fn display_name(id: &str) -> String {
     let name = id.rsplit('/').next().unwrap_or(id);
     let trimmed = ["-GGUF", "_GGUF", "-gguf", "_gguf", ".GGUF", "-Gguf"].iter().find_map(|s| name.strip_suffix(s)).unwrap_or(name);
     trimmed.to_string()
@@ -307,7 +307,7 @@ fn model_id(repo_id: &str, file: &str) -> String {
     format!("hf-{}", &hex::encode(Sha256::digest(format!("{repo_id}/{file}").as_bytes()))[..12])
 }
 
-fn client(state: &AppState) -> Result<reqwest::Client, String> {
+pub(crate) fn client(state: &AppState) -> Result<reqwest::Client, String> {
     net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)
 }
 

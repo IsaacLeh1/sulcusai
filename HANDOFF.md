@@ -748,6 +748,38 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 - **Models: Grid / List** (remembered in localStorage). List mode is CSS on the same cards (`.model-grid.list`; the card is a column flexbox, so the rows set `flex-direction: row`).
 - **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
+## Batch for 0.9.6 (2026-10-17)
+
+- **What making something took** (pictures, video, music):
+  - `media::run` watches the card and processor every 2 s while a job runs (`perf::gpu_reading`, `perf::cpu_usage`). `JobInfo` carries `on` ("graphics card" / "processor" / "cloud"), `device` (the card's or processor's name, or the cloud model), `gpu_usage`, `gpu_temp` and `cpu_usage`. The Studio and chat job cards show "Making it on <device>" with a use bar (and °C for the card); while the processor works, the card's bar shows too.
+  - Each item made keeps `MediaItem.stats` (`MadeStats`): seconds, where and which device, steps, prompt tokens (estimated, words×1.3 + punctuation), audio tokens for music (5 a second), frames for video, the card's peak °C and average/peak use, or the processor's average use. Readings only count while the device that made it was working (a processor fallback doesn't credit the card).
+  - Shown under the result (`MadeStatsLine` in chats, the lightbox and the Studio viewer) and written to app.log ("done in 17 s on the graphics card (…), card up to 71 °C, 88% busy on average").
+- **Developer mode** (`devmode.rs`, Settings → About): off by default. Turning it on shows what it sends and never sends, and needs "I understand…" ticked (`set_dev_mode(on, understood)`).
+  - **What it sends:** to the relay inbox as kind "dev". A first report 3 minutes after start, then every 30 minutes with new app.log lines in the engine-side categories (`SENT`; not settings, people, security or privacy), user folder and name taken out by `crash::tidy`. Crashes go at once (`crash::write` calls `devmode::crash`), and an error triggers a report within about a minute (at most every 10 minutes).
+  - The header has a short hash of the device id, the version and hardware. Every report is copied to `logs\dev-sent.log`.
+- **Hugging Face for the Studio** (`media/hub.rs`, "More models from Hugging Face…" under the Studio's models):
+  - Catalog models with a `hub` family open Hugging Face models built on them, found by the `base_model:` link (`filter=base_model:<id>`, one search per base, together). Adapters (`base_model:adapter:`) are left out.
+  - **Families:** FLUX.2 klein 4B/9B, Qwen Image 2.1, Z-Image, SDXL (via RealVisXL), Wan 2.2 5B / 2.1 1.3B, ACE-Step 1.5 and 1.5 XL.
+  - **Installing:** the catalog model's files with the downloaded file in place of the family's `role` (`model` = a whole SDXL checkpoint, `diffusion`, or `dit` for music). The text reader and decoder are shared. The file is saved as `hfm-<hash>-<name>`, so two repositories' files never collide.
+  - **Which files are offered** (`candidates`):
+    - Size between `min_size` and `max_size`; `require` (all of), `any_of` and `avoid` words.
+    - No split parts, add-ons by name (`is_part`) or diffusers folders.
+    - Not files the catalog already has (same sha256).
+  - SDXL fine-tunes get 28 steps / cfg 5.5 unless "lightning/turbo/hyper/lcm/dmd" is in the name (`tune_steps`).
+  - Installed ones are kept under `hub_media_models` and join `media::models(state)` (catalog + Hugging Face), which replaced `state.catalog.media.models` everywhere a model is looked up. Removing one forgets it. `prune_missing` checks them too.
+  - The live test is `search_hugging_face_for_media_models` (ignored).
+- **New catalog models** (picked from a research pass over sd-cli master-948's docs and the Artificial Analysis arenas):
+  - Qwen Image 2.1 Turbo (Qwen Research License, non-commercial; best open model for making and editing).
+  - FLUX.2 klein 9B (FLUX Non-Commercial; its original asks for the license to be accepted, so the app asks too).
+  - RealVisXL V5.0 Lightning (SDXL, openrail++, with the fp16-fix VAE as `--vae`).
+  - ACE-Step 1.5 XL (MIT).
+  - **Not added:** Mage-Flow (Microsoft pulled it and says it's research-only), Krea 2 (license gate would be sidestepped by the mirror), Qwen-Image-Edit-2511 and Wan 2.2 I2V A14B (need LoRA support; 2511 is 13 GB and 1-2 minutes per edit). FLUX.3 Klein needs sd.cpp master-968+.
+  - **New engine settings in `Defaults`:** `scheduler`, `sigmas` (Qwen 2.1 Turbo's exact list, since 948 lacks the preset), `model_args`, `align` (Qwen 2.1 wants sides in steps of 32). There's a new file role `llm_vision` (`--llm_vision`), passed only when editing. A model's `negative` is used when the request has none.
+  - Installing a model whose license isn't commercial asks first (`licenseOk`); Hugging Face installs always ask (their license is the repository's).
+- **Tests with model overrides:** `e2e_realistic_picture_and_edits` takes `SULCUSAI_EDIT_MODEL`; `e2e_media` takes `SULCUSAI_MUSIC_MODEL`. Both print the stats.
+- **Release builds use thin LTO** (`[profile.release]`). Full LTO in one codegen unit made every release a long single-threaded link.
+- **From 0.9.7 on, building, testing and publishing move to his desktop** (RTX 5070 12 GB, 32 GB). A release compile took the laptop's processor to 98 °C. Setup steps and the rules are in `C:\dev\sulcusai-dist\DESKTOP-HANDOFF.md`, kept outside the repo next to the signing files.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

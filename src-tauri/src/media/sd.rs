@@ -20,6 +20,7 @@ pub fn model_args(files: &[(String, PathBuf)]) -> Vec<OsString> {
             "t5xxl" => "--t5xxl",
             "clip_l" => "--clip_l",
             "vae" => "--vae",
+            "llm_vision" => "--llm_vision",
             "model" => "-m",
             "upscale" => "--upscale-model",
             _ => continue,
@@ -70,7 +71,9 @@ pub struct Picture<'a> {
 
 pub fn picture_args(files: &[(String, PathBuf)], d: &Defaults, p: &Picture<'_>, l: &Limits) -> Vec<OsString> {
     let mut a: Vec<OsString> = vec!["-M".into(), "img_gen".into()];
-    a.extend(model_args(files));
+    // The picture reader (for models that read pictures) only when editing.
+    let files: Vec<(String, PathBuf)> = files.iter().filter(|(role, _)| role != "llm_vision" || !p.refs.is_empty()).cloned().collect();
+    a.extend(model_args(&files));
     a.extend(["-p".into(), p.prompt.into()]);
     if let Some(n) = p.negative.filter(|n| !n.trim().is_empty()) {
         a.extend(["-n".into(), n.into()]);
@@ -93,6 +96,15 @@ pub fn picture_args(files: &[(String, PathBuf)], d: &Defaults, p: &Picture<'_>, 
         // The prompt stays out of the file, so a shared picture doesn't carry it.
         "--disable-image-metadata".into(),
     ]);
+    if !d.scheduler.is_empty() {
+        a.extend(["--scheduler".into(), d.scheduler.as_str().into()]);
+    }
+    if !d.sigmas.is_empty() {
+        a.extend(["--sigmas".into(), d.sigmas.as_str().into()]);
+    }
+    if !d.model_args.is_empty() {
+        a.extend(["--model-args".into(), d.model_args.as_str().into()]);
+    }
     if p.count > 1 {
         a.extend(["-b".into(), p.count.to_string().into()]);
     }

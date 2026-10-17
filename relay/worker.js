@@ -17,7 +17,7 @@
 //
 // Feedback inbox (bug reports and ideas from the app's Bug / Feedback
 // button, and crash reports people choose to send), one Durable Object:
-//   POST   /feedback                    {kind: "bug"|"idea"|"crash", text, version?, contact?}
+//   POST   /feedback                    {kind: "bug"|"idea"|"crash"|"dev", text, version?, contact?}
 //                                       Open to anyone: text only, size-limited, a few an
 //                                       hour from one sender. Nothing about the sender is kept
 //                                       (the hourly count uses a hash of their address that
@@ -130,7 +130,8 @@ export class Box {
   }
 }
 
-const KINDS = ["bug", "idea", "crash"];
+// "dev": reports from PCs with developer mode on (the person agreed to send them).
+const KINDS = ["bug", "idea", "crash", "dev"];
 const MAX_TEXT = 8000;
 const PER_HOUR = 8;
 const PER_DAY = 400;
@@ -193,7 +194,7 @@ export class Inbox {
         .join(String.fromCharCode(10));
       const page =
         `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SulcusAI feedback</title>` +
-        `<style>body{font:15px system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;background:#111018;color:#e8e6f0}article{border:1px solid #2b2938;border-radius:10px;padding:10px 14px;margin:12px 0}article.bug{border-color:#7a3b52}article.crash{border-color:#8a5a1c}header{display:flex;gap:8px;align-items:center;color:#a09db0}header form{margin-left:auto}pre{white-space:pre-wrap;font:14px ui-monospace,Consolas,monospace;margin:8px 0 0}button{background:#1b1a24;color:#e8e6f0;border:1px solid #3a3850;border-radius:6px;padding:3px 10px;cursor:pointer}</style>` +
+        `<style>body{font:15px system-ui,sans-serif;max-width:860px;margin:24px auto;padding:0 16px;background:#111018;color:#e8e6f0}article{border:1px solid #2b2938;border-radius:10px;padding:10px 14px;margin:12px 0}article.bug{border-color:#7a3b52}article.crash{border-color:#8a5a1c}article.dev{border-color:#2f5d7a}header{display:flex;gap:8px;align-items:center;color:#a09db0}header form{margin-left:auto}pre{white-space:pre-wrap;font:14px ui-monospace,Consolas,monospace;margin:8px 0 0}button{background:#1b1a24;color:#e8e6f0;border:1px solid #3a3850;border-radius:6px;padding:3px 10px;cursor:pointer}</style>` +
         `<h1>SulcusAI feedback <small>(${rows.length})</small></h1>` +
         (rows.length
           ? `<form method="post" action="/feedback/delete?key=${k}" onsubmit="return confirm('Delete everything?')"><input type="hidden" name="id" value="all"><button>Delete all</button></form>`

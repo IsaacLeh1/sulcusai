@@ -2,7 +2,7 @@
 // Pieces the studio and chats share: tiles, job progress, the audio player.
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, toBase64, type MediaItem, type MediaJob } from "../api";
+import { api, errorText, on, toBase64, type MadeStats, type MediaItem, type MediaJob } from "../api";
 import { clock } from "../format";
 import { t } from "../i18n";
 import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
@@ -63,8 +63,89 @@ export function JobCard({ job }: { job: MediaJob }) {
           ? t("Waiting for the job before it · takes {time}", { time: waitLabel(job.est_secs) })
           : `${job.stage}${job.eta_secs != null ? ` · ${t("{time} left", { time: waitLabel(job.eta_secs) })}` : ""}`}
       </span>
+      {job.status === "running" && <JobDevice job={job} />}
     </div>
   );
+}
+
+/** What's making it right now: the card or processor by name, how busy it
+ * is and (the card) how warm; the card is shown too while the processor works. */
+function JobDevice({ job }: { job: MediaJob }) {
+  if (!job.on) return null;
+  if (job.on === "cloud") return <div className="job-device small muted">☁ {t("Making it in the cloud with {model}", { model: job.device ?? t("a cloud model") })}</div>;
+  const card = job.gpu_usage != null || job.gpu_temp != null;
+  return (
+    <div className="job-device">
+      <span className="small ellipsis">
+        {t("Making it on")} <strong>{job.device ?? (job.on === "processor" ? t("the processor") : t("the graphics card"))}</strong>
+      </span>
+      {job.on === "processor" ? (
+        <>
+          <UseBar label={t("Processor")} usage={job.cpu_usage} temp={null} />
+          {card && <UseBar label={t("Graphics card")} usage={job.gpu_usage} temp={job.gpu_temp} />}
+        </>
+      ) : (
+        <UseBar label={t("Graphics card")} usage={job.gpu_usage} temp={job.gpu_temp} />
+      )}
+    </div>
+  );
+}
+
+/** How busy a card or processor is, and how warm, while a job runs. */
+export function UseBar({ label, usage, temp }: { label: string; usage: number | null; temp: number | null }) {
+  // Under 70 °C is fine, to 83 warm, above that hot (most cards slow down near 85-90).
+  const heat = temp == null ? "" : temp >= 83 ? "hot" : temp >= 70 ? "warm" : "cool";
+  return (
+    <div className="gpu-bar" title={t("Updated every 2 seconds")}>
+      <span className="small muted gpu-label">{label}</span>
+      <div className="gpu-meter" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage ?? 0)}>
+        <span style={{ width: `${Math.min(100, Math.max(2, usage ?? 0))}%` }} />
+      </div>
+      <span className="small">{usage != null ? t("{n}% busy", { n: Math.round(usage) }) : "—"}</span>
+      {temp != null && <span className={`small gpu-temp ${heat}`}>{Math.round(temp)} °C</span>}
+    </div>
+  );
+}
+
+/** "Took 41 s on NVIDIA GeForce RTX 5070 · about 32 prompt tokens · 8 steps · up to 71 °C, 88% busy on average". */
+export function madeLine(s: MadeStats | null | undefined): string {
+  if (!s) return "";
+  const parts = [
+    s.device
+      ? t("Took {time} on {device}", { time: took(s.secs), device: s.device })
+      : s.on === "cloud"
+        ? t("Took {time} in the cloud", { time: took(s.secs) })
+        : s.on === "processor"
+          ? t("Took {time} on the processor", { time: took(s.secs) })
+          : t("Took {time} on the graphics card", { time: took(s.secs) }),
+  ];
+  if (s.prompt_tokens) parts.push(t("about {n} prompt tokens", { n: s.prompt_tokens }));
+  if (s.audio_tokens) parts.push(t("{n} audio tokens", { n: s.audio_tokens.toLocaleString() }));
+  if (s.frames) parts.push(t("{n} frames", { n: s.frames }));
+  if (s.steps) parts.push(t("{n} steps", { n: s.steps }));
+  if (s.gpu_peak_temp != null || s.gpu_avg_usage != null) {
+    const temp = s.gpu_peak_temp != null ? t("up to {n} °C", { n: Math.round(s.gpu_peak_temp) }) : "";
+    const busy = s.gpu_avg_usage != null ? t("{n}% busy on average", { n: Math.round(s.gpu_avg_usage) }) : "";
+    parts.push([temp, busy].filter(Boolean).join(", "));
+  } else if (s.cpu_avg_usage != null) {
+    parts.push(t("processor {n}% busy on average", { n: Math.round(s.cpu_avg_usage) }));
+  }
+  return parts.join(" · ");
+}
+
+/** "41 s", "3 min 12 s". */
+function took(secs: number): string {
+  const s = Math.max(0, Math.round(secs * 10) / 10);
+  if (s < 10) return t("{s} s", { s: s.toFixed(1) });
+  if (s < 60) return t("{s} s", { s: Math.round(s) });
+  const m = Math.floor(s / 60);
+  return t("{m} min {s} s", { m, s: Math.round(s - m * 60) });
+}
+
+/** The line under something made: how long it took and what it used. */
+export function MadeStatsLine({ item }: { item: MediaItem }) {
+  const line = madeLine(item.stats);
+  return line ? <p className="made-stats small muted">⏱ {line}</p> : null;
 }
 
 /** Running jobs, kept up to date from the core's events. */
@@ -227,6 +308,7 @@ export function MediaInline({ items, onOpen, toast }: { items: MediaItem[]; onOp
       {items.map((i) => (
         <div key={i.id} className="media-inline-one">
           <InlineOne item={i} onOpen={onOpen} />
+          <MadeStatsLine item={i} />
           {toast && (
             <button className="btn ghost small" onClick={() => saveAs(i, toast)}>
               ⬇ {t("Save…")}
@@ -263,6 +345,7 @@ export function Lightbox({ item, onClose, toast }: { item: MediaItem; onClose: (
     <div className="modal-backdrop lightbox" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="lightbox-body">
         {src && <img src={src} alt={item.prompt || t("Picture")} />}
+        <MadeStatsLine item={item} />
         <div className="row">
           <span className="small muted ellipsis">{item.prompt}</span>
           <span className="spacer" />

@@ -1298,6 +1298,8 @@ export interface MediaModelCard {
   files: { role: string; file: string; size: number }[];
   quality: number;
   defaults: { steps: number; width: number; height: number; fps: number; seconds: number };
+  /** Installed from Hugging Face: its repository there ("owner/name"). */
+  from_hub?: string | null;
   fit: MediaFit;
   installed: boolean;
 }
@@ -1322,6 +1324,28 @@ export interface MediaItem {
   hidden: boolean;
   /** Videos: a still frame is saved as the thumbnail. */
   poster: boolean;
+  /** What making it took (older items have none). */
+  stats: MadeStats | null;
+}
+
+/** How long making an item took, and what it used. */
+export interface MadeStats {
+  secs: number;
+  on: "graphics card" | "processor" | "cloud" | string;
+  /** Which one: the card's or processor's name, or the cloud model. */
+  device: string | null;
+  steps: number | null;
+  /** About how many tokens the description was. */
+  prompt_tokens: number | null;
+  /** Music: audio tokens written (5 a second). */
+  audio_tokens: number | null;
+  /** Video: frames made. */
+  frames: number | null;
+  gpu_peak_temp: number | null;
+  gpu_avg_usage: number | null;
+  gpu_peak_usage: number | null;
+  cpu_avg_usage: number | null;
+  cpu_peak_usage: number | null;
 }
 
 export interface MediaJob {
@@ -1335,6 +1359,14 @@ export interface MediaJob {
   eta_secs: number | null;
   est_secs: number;
   chat_id: string | null;
+  /** What's making it while it runs, and which one (the card's or processor's name, or the cloud model). */
+  on: "graphics card" | "processor" | "cloud" | null;
+  device: string | null;
+  /** The graphics card now: percent busy and °C. */
+  gpu_usage: number | null;
+  gpu_temp: number | null;
+  /** The processor now: percent busy. */
+  cpu_usage: number | null;
 }
 
 export type CloudMediaKind = "image" | "video" | "speech";
@@ -1363,7 +1395,49 @@ export interface MediaView {
   gallery: number;
 }
 
+/** One file of a Hugging Face repository the Studio can install. */
+export interface HubMediaFile {
+  file: string;
+  model_id: string;
+  quant: string;
+  size: number;
+  /** What's left to download (shared files may be here already). */
+  download: number;
+  runnable: boolean;
+  on_gpu: boolean;
+  est_secs: number;
+  reason: string | null;
+}
+
+export interface HubMediaModel {
+  id: string;
+  name: string;
+  author: string;
+  downloads: number;
+  likes: number;
+  updated: string | null;
+  url: string;
+  /** "SDXL", "Z-Image", and the catalog model it builds on. */
+  family: string;
+  base_model: string;
+  license: string | null;
+  files: HubMediaFile[];
+  recommended: string | null;
+}
+
+export interface HubMediaResults {
+  models: HubMediaModel[];
+  hidden: number;
+}
+
 export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
+
+export interface DevModeView {
+  on: boolean;
+  since: number | null;
+  reports: number;
+  last_sent: number | null;
+}
 
 export interface LogsView {
   folder: string;
@@ -1721,6 +1795,10 @@ export const api = {
   handoffsView: () => invoke<HandoffsView>("handoffs_view"),
   handoffRevoke: (key: string) => invoke<HandoffsView>("handoff_revoke", { key }),
   handoffForget: (key: string) => invoke<HandoffsView>("handoff_forget", { key }),
+  /** Developer mode: reports to the developer from this PC (only after a yes). */
+  devModeView: () => invoke<DevModeView>("dev_mode_view"),
+  setDevMode: (on: boolean, understood: boolean) => invoke<DevModeView>("set_dev_mode", { on, understood }),
+  sendDevReport: () => invoke<DevModeView>("send_dev_report"),
   /** Settings → Logs. */
   logsView: () => invoke<LogsView>("logs_view"),
   readLog: (name: string, lines?: number) => invoke<string>("read_log", { name, lines: lines ?? null }),
@@ -1743,6 +1821,9 @@ export const api = {
   quickScreenshot: () => invoke<MediaItem>("quick_screenshot"),
   mediaView: () => invoke<MediaView>("media_view"),
   installMedia: (modelId: string) => invoke<void>("install_media_model", { modelId }),
+  mediaHubSearch: (kind: "image" | "video" | "music", query: string, sort: "downloads" | "trending" | "newest", all = false) =>
+    invoke<HubMediaResults>("media_hub_search", { kind, query, sort, all }),
+  mediaHubInstall: (repo: string, file: string) => invoke<string>("media_hub_install", { repo, file }),
   removeMedia: (modelId: string) => invoke<void>("remove_media_model", { modelId }),
   mediaStart: (request: MediaRequest) => invoke<string>("media_start", { request }),
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
