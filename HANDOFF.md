@@ -831,6 +831,16 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - **Deleting a chat** (`delete_chat_now`) first stops its sharing, then removes it from folders, locks and usage.
 - **Preview mock:** chat folders live under `W.__chatFolders`; `W.__folders` is the assistant's shared folders.
 
+## 0.9.7 (2026-10-17, the first release built on the desktop)
+
+- **Shipped:** everything in "After 0.9.6" (Hugging Face links, default picture/video/music models, Delete from this PC, automatic cleanup with locks, Clear cache, shareable chat folders). Published and installed on the desktop; main = phase7 = 37d1f00.
+- **Build:** 7.5 min from cold (no earlier release build) on the desktop (i5-14600K, RTX 5070 12 GB, 32 GB) with `CARGO_BUILD_JOBS=8`. Unit tests: 317 pass, 66 ignored; the first debug compile took 4 min. Nothing needed fixing.
+- **Desktop setup notes:**
+  - Plain `python` here is MSYS2's (`C:\msys64\ucrt64\bin`), not 3.12. Run the translation check with `py -3.12 -I scripts/i18n_extract.py .`.
+  - Git Credential Manager and `gh` were already signed in as IsaacLeh1, so pushing and publishing needed no sign-in.
+  - Checking latest.json from Windows PowerShell 5.1: `Invoke-RestMethod` reads it as Latin-1 and garbles "→", so its notes look different. Download it and decode as UTF-8 to compare.
+- **Installing over a running copy:** the installer (`/P` through WMI) closes SulcusAI and doesn't reopen it.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
