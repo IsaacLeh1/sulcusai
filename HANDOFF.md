@@ -959,9 +959,9 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - Live test (ignored): `an_original_upload_finds_its_gguf_copy`, which finds ggml-org/gpt-oss-120b-GGUF.
   - Split GGUFs (…-00001-of-0000N) still aren't offered (`is_split`); unsloth's 120b is only split.
 
-## After 0.9.9 (2026-10-17, not released yet): live data, API keys, tools like ChatGPT/Claude
+## 0.9.10 (2026-10-17): live data, API keys, tools like ChatGPT/Claude
 
-Draft notes: `C:\dev\tools\notes-0910.md`.
+**Published and installed 2026-10-17** (main = phase7 = d0c0b71). The release build took 6.5 min. Notes are in `C:\dev\tools\notes-0910.md`; the release assets and latest.json were checked.
 
 - **His brother's live stock exchange (20B model, "settings online") never got live data:**
   - Bug: `tools/site.rs` and `preview_open` used `browser::allowed_for_chat` (the chat's globe only), while the chat's web tools use `web::allowed_for_chat` (globe or the Web search feature). With Web search on and the app Offline, the site was served with the offline CSP and every request was blocked, and the check suggested `request_web`, which isn't offered then. Both now use `web::allowed_for_chat`.
