@@ -346,7 +346,7 @@ impl Turn {
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
-                extra.extend(["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote"]);
+                extra.extend(["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote", "find_places"]);
             } else if !crate::offline::blocks(crate::offline::Keep::Web) {
                 // Fully offline: a yes couldn't turn the web on anyway.
                 extra.push("request_web");
@@ -880,7 +880,7 @@ impl Turn {
                 if outcome.meta["web_granted"] == true {
                     if let Some(Value::Array(defs)) = tools.as_mut() {
                         defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str) != Some("request_web"));
-                        for name in ["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote"] {
+                        for name in ["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote", "find_places"] {
                             if let Some(d) = tools::find(name) {
                                 defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
                             }
@@ -1531,7 +1531,7 @@ impl Turn {
         }
         self.emit("chat:web", json!({ "chat_id": self.chat_id, "web": true }));
         let mut o = Outcome::ok(
-            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page, wikipedia, research, market_quote or weather to finish what they asked.",
+            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page, wikipedia, research, market_quote, find_places or weather to finish what they asked.",
             format!("Web turned on: {reason}"),
             "text",
             None,

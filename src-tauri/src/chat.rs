@@ -23,7 +23,8 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
         "You are SulcusAI, a helpful assistant that runs privately on the user's own computer. \
          Nothing in this conversation leaves their PC. Be clear, accurate and friendly. \
-         Use Markdown when it helps. If you don't know something, say so.\n\n\
+         Use Markdown when it helps; write math formulas in LaTeX, $...$ in a sentence and $$...$$ on their own lines. \
+         If you don't know something, say so.\n\n\
          When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
          notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
          and never guess figures. If they mention a name, title or term you don't recognize or aren't sure about \
@@ -569,7 +570,7 @@ pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
 }
 
 static ABOUT_THEIR_THINGS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)\b(e-?mails?|mail|inbox|messages?|calendar|events?|schedule|meetings?|appointments?|party|birthday|today|tonight|tomorrow|this week|next week|notes?|tasks?|to-?dos?|reminders?|weather|forecast)\b").unwrap()
+    regex::Regex::new(r"(?i)\b(e-?mails?|mail|inbox|messages?|calendar|events?|schedule|meetings?|appointments?|party|birthday|today|tonight|tomorrow|this week|next week|notes?|tasks?|to-?dos?|reminders?|weather|forecast|near me|nearby|nearest|closest|around here)\b").unwrap()
 });
 // "I don't have access to your messages": wrong whenever tools were offered,
 // whatever the question.
@@ -618,7 +619,7 @@ pub fn forced_web(tools: &Value) -> Option<ForcedLookup> {
 // Dates (10/17, 2026-10-17) and sizes (3x3) aren't sums.
 static MATH_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(
-        r"(?i)\d\s*[*×÷^]\s*\(?\d|\d\s+[-+/]\s+\(?\d|\d\s*\+\s*\d|\b\d[\d,.]*\s*(plus|minus|times|divided by|multiplied by|to the power of)\s+\d|\b\d+(\.\d+)?\s*(%|percent)\s+of\s+\$?\d|\b(square root|cube root|sqrt) of\s+\d|\bhow many (days|weeks|months|hours|minutes|seconds) (until|till|between|since|from|are (there )?in|left)\b|\b(compound interest|monthly payment|mortgage payment|loan payment)\b|\btip on \$?\d|\bsplit \$?\d[\d,.]* (\w+ )?(ways|between)\b",
+        r"(?i)\d\s*[*×÷^]\s*\(?\d|\d\s+[-+/]\s+\(?\d|\d\s*\+\s*\d|\b\d[\d,.]*\s*(plus|minus|times|divided by|multiplied by|to the power of)\s+\d|\b\d+(\.\d+)?\s*(%|percent)\s+of\s+\$?\d|\b(square root|cube root|sqrt) of\s+\d|\bhow many (days|weeks|months|hours|minutes|seconds) (until|till|between|since|from|are (there )?in|left)\b|\b(compound interest|monthly payment|mortgage payment|loan payment)\b|\btip on \$?\d|\bsplit \$?\d[\d,.]* (\w+ )?(ways|between)\b|\bsolve\b[^.?!\n]*=|\b(integral|integrate|derivative|differentiate)\b|\b[a-z]\s*\^\s*\d",
     )
     .unwrap()
 });
@@ -635,7 +636,8 @@ pub fn forced_calc(tools: &Value) -> Option<ForcedLookup> {
     let schema = json!({ "type": "object", "properties": { "name": { "const": "calculate" }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
     Some(ForcedLookup {
         names: vec!["calculate".into()],
-        nudge: "(Don't work it out in your head: call calculate with the math from my message as one expression, e.g. \"37*48\", \"15% of 2345\" or \
+        nudge: "(Don't work it out in your head: call calculate with the math from my message as one expression, e.g. \"37*48\", \"15% of 2345\", \
+                an equation as it is (\"x^2 - 5x + 6 = 0\"), \"integral of x^2 from 0 to 3\", \"derivative of x^3 at 2\" or \
                 \"daysBetween('2026-10-17', '2026-12-25')\". Reply with only one tool call as JSON, {\"name\": \"calculate\", \"arguments\": {\"expression\": \"...\"}}.)"
             .into(),
         response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
@@ -1070,6 +1072,7 @@ pub fn forced_lookup(tools: &Value, asked: &str, looks_only: impl Fn(&str) -> bo
         ("search_notes", &["note"]),
         ("list_tasks", &["task", "to-do", "todo", "remind"]),
         ("weather", &["weather", "forecast", "rain", "temperature"]),
+        ("find_places", &["near me", "nearby", "nearest", "closest", "around here", "near "]),
         ("search_meetings", &["meeting notes", "transcript"]),
         ("market_quote", &["stock", "share price", "price of", "crypto", "bitcoin", "exchange rate", "currency"]),
         ("research", &["research", "compare", "better", "best", "versus", " vs", "pros and cons"]),
@@ -1330,6 +1333,17 @@ mod tests {
     }
 
     #[test]
+    fn asking_where_they_are_for_a_near_me_question_is_a_stall() {
+        let offered = vec!["find_places".to_string()];
+        assert!(stalls("Find coffee shops near me.", "To find coffee shops near you, I'll need your location. Could you please provide the city or address where you are?", &offered));
+        let tools = json!([
+            { "type": "function", "function": { "name": "web_search", "description": "", "parameters": { "type": "object" } } },
+            { "type": "function", "function": { "name": "find_places", "description": "", "parameters": { "type": "object" } } },
+        ]);
+        assert_eq!(forced_lookup(&tools, "Find coffee shops near me.", |_| true).unwrap().names, vec!["find_places".to_string()]);
+    }
+
+    #[test]
     fn announcing_a_lookup_without_doing_it_is_a_stall() {
         let offered = vec!["research".to_string(), "web_search".to_string()];
         let said = "To research which is better, I'll perform a few web searches. Here are the searches I'll run:\n\n1. \"iPhone 17 battery life\"\n2. \"Pixel 10 battery life\"\n\nLet's execute these searches and gather the results.";
@@ -1356,6 +1370,9 @@ mod tests {
             "what's the monthly payment on a 300k mortgage at 6.5% for 30 years",
             "split $184.50 4 ways",
             "square root of 1764",
+            "Solve x^2 - 5x + 6 = 0 and show the steps.",
+            "What's the integral of x^2 from 0 to 3?",
+            "find the derivative of sin(x) at 1",
         ] {
             assert!(asks_math(ask), "{ask}");
         }

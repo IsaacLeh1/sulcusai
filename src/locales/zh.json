@@ -2819,7 +2819,6 @@
  "{platform} ({host}), for {reason}": "{platform}（{host}），用于{reason}",
  "{platform} API key": "{platform} API 密钥",
  "Calculate": "计算",
- "Calculated {shown} = {v}": "已计算：{shown} = {v}",
  "Chart": "图表",
  "Check a price": "查询价格",
  "Checked {1}": "已查询：{1}",
@@ -2850,5 +2849,15 @@
  "That time doesn't exist (a clock change).": "该时间不存在（时钟调整）。",
  "The code stopped with an error": "代码因错误停止",
  "Wikipedia's answer was unreadable.": "无法读取维基百科的回复。",
- "Yahoo Finance's answer was unreadable.": "无法读取 Yahoo Finance 的回复。"
+ "Yahoo Finance's answer was unreadable.": "无法读取 Yahoo Finance 的回复。",
+ "Couldn't find {n}": "找不到 {n}",
+ "Couldn't look up places": "无法查找地点",
+ "Couldn't reach OpenStreetMap": "无法连接 OpenStreetMap",
+ "Find places": "查找地点",
+ "Found {1} places for “{query}”": "为“{query}”找到 {1} 个地点",
+ "No places found for “{query}”": "没有找到“{query}”的地点",
+ "OpenStreetMap's answer was unreadable.": "无法读取 OpenStreetMap 的回复。",
+ "OpenStreetMap's place search is busy; try again in a minute.": "OpenStreetMap 的地点搜索正忙，请一分钟后再试。",
+ "Calculated {shown}": "已计算：{shown}",
+ "It's shown in the chat.": "已显示在聊天中。"
 }

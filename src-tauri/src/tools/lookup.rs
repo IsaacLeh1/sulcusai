@@ -31,6 +31,13 @@ pub fn market_quote_params() -> Value {
         "range": { "type": "string", "description": "To see how it moved, with a chart: 1d, 5d, 1mo, 6mo, ytd, 1y, 5y or max." } } })
 }
 
+pub fn find_places_params() -> Value {
+    json!({ "type": "object", "required": ["query"], "properties": {
+        "query": { "type": "string", "description": "What to find: a kind of place (\"coffee\", \"gas station\", \"pharmacy\"), a business or landmark (\"Walmart\", \"Eiffel Tower\") or an address." },
+        "near": { "type": "string", "description": "A city or address to search around, only if the user named one. Leave it out for near the user." },
+        "radius_km": { "type": "number", "description": "How far to look for a kind of place, in km (default 3, up to 25)." } } })
+}
+
 /// Everything a lookup needs, read before going out.
 pub struct Web {
     pub client: reqwest::Client,
@@ -51,8 +58,105 @@ pub async fn run(name: &str, args: &Value, w: Web, ctx: &MemoryCtx<'_>) -> Outco
         "wikipedia" => wikipedia(args, &w, ctx).await,
         "research" => research(args, &w, ctx).await,
         "market_quote" => market_quote(args, &w, ctx).await,
+        "find_places" => find_places(args, &w, ctx).await,
         other => Outcome::error(format!("Couldn't use {other}"), "Unknown lookup."),
     }
+}
+
+async fn find_places(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
+    let query = args.get("query").and_then(Value::as_str).map(str::trim).unwrap_or_default().to_string();
+    if query.is_empty() {
+        return Outcome::error("Find places", "Say what to find (query), e.g. \"coffee\" or \"Walmart\".");
+    }
+    let radius = args.get("radius_km").and_then(Value::as_f64).unwrap_or(3.0).clamp(0.2, 25.0);
+    // A place to search around only if the user named it (small models fill in a city of their own).
+    let asked_near = args.get("near").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty() && !crate::location::means_here(n)).map(str::to_string);
+    let recent: String = crate::db::messages(&ctx.db.lock().unwrap(), ctx.cipher, ctx.chat_id).iter().rev().filter(|m| m.role == "user").take(4).map(|m| m.content.clone()).collect::<Vec<_>>().join(" ");
+    let near = asked_near.filter(|n| crate::location::named_in(n, &recent));
+    crate::db::log_action(&ctx.db.lock().unwrap(), "network", "Looked up places with OpenStreetMap");
+    let center: Option<(f64, f64, String)> = match &near {
+        Some(n) => match crate::places::geocode(&w.client, n).await {
+            Ok(Some(c)) => Some(c),
+            Ok(None) => return Outcome::error(format!("Couldn't find {n}"), format!("OpenStreetMap doesn't know a place called “{n}”. Ask the user to say it another way.")),
+            Err(e) => return Outcome::error("Couldn't reach OpenStreetMap", e),
+        },
+        None => {
+            let profile = crate::db::profile(&ctx.db.lock().unwrap(), ctx.cipher);
+            match (profile.lat, profile.lon) {
+                (Some(lat), Some(lon)) => Some((lat, lon, if profile.location.trim().is_empty() { "where the user is".into() } else { profile.location.trim().to_string() })),
+                _ => match crate::location::detect().await {
+                    Ok(p) => Some((p.lat, p.lon, p.label)),
+                    Err(_) => None,
+                },
+            }
+        }
+    };
+    let at = center.as_ref().map(|c| (c.0, c.1));
+    let kind = crate::places::kind_of(&query);
+    let found = match (kind, at) {
+        // Overpass is often overloaded: Nominatim's search then.
+        (Some((filter, what)), Some(c)) => match crate::places::nearby(&w.client, filter, what, c, radius).await {
+            Ok(s) => Ok(s),
+            Err(_) => crate::places::nearby_by_name(&w.client, what, c, radius).await,
+        },
+        (Some(_), None) => return Outcome::error("Couldn't tell where you are", "Ask the user which city or address to search near, then call find_places with it as near."),
+        (None, c) => crate::places::by_name(&w.client, &query, c).await,
+    };
+    let spots = match found {
+        Ok(s) => s,
+        Err(e) => return Outcome::error("Couldn't look up places", e),
+    };
+    let around = center.as_ref().map(|c| c.2.clone()).unwrap_or_default();
+    let miles = at.is_some_and(|(la, lo)| crate::places::in_us(la, lo));
+    if spots.is_empty() {
+        let within = if kind.is_some() { format!(" within {}", crate::places::distance_text(radius, miles)) } else { String::new() };
+        return Outcome::ok(
+            format!("OpenStreetMap has nothing matching “{query}”{within}{}. Try a wider radius_km or other words.", if around.is_empty() { String::new() } else { format!(" of {around}") }),
+            format!("No places found for “{query}”"),
+            "text",
+            None,
+        );
+    }
+    let lines: Vec<String> = spots
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let (map, route) = crate::places::links(s, at);
+            let mut l = format!("{}. {}", i + 1, s.name);
+            if !s.kind.is_empty() && !s.name.to_lowercase().contains(&s.kind.to_lowercase()) {
+                l.push_str(&format!(" ({})", s.kind));
+            }
+            if !s.address.is_empty() {
+                l.push_str(&format!(", {}", s.address));
+            }
+            if let Some(d) = s.distance_km {
+                l.push_str(&format!(", {} away", crate::places::distance_text(d, miles)));
+            }
+            if !s.hours.is_empty() {
+                l.push_str(&format!(". Hours: {}", s.hours));
+            }
+            if !s.phone.is_empty() {
+                l.push_str(&format!(". Phone: {}", s.phone));
+            }
+            if !s.website.is_empty() {
+                l.push_str(&format!(". Website: {}", s.website));
+            }
+            l.push_str(&format!(". Map: {map}"));
+            if let Some(r) = route {
+                l.push_str(&format!(" Directions: {r}"));
+            }
+            l
+        })
+        .collect();
+    let from = if around.is_empty() { String::new() } else { format!(" near {around}") };
+    let text = format!(
+        "{UNTRUSTED}\n\nPlaces for “{query}”{from}, from OpenStreetMap, nearest first:\n{}\n\nAnswer with these exact places and distances (don't add others), each with its map link as a Markdown link. Hours are in OpenStreetMap's format; say them plainly. Map data © OpenStreetMap contributors.",
+        lines.join("\n")
+    );
+    let sources: Vec<Value> = spots.iter().map(|s| json!({ "title": s.name, "url": crate::places::links(s, None).0, "snippet": s.address })).collect();
+    let mut o = Outcome::ok(text, format!("Found {} places for “{query}”", spots.len()), "text", Some(lines.join("\n")));
+    o.meta["sources"] = json!(sources);
+    o
 }
 
 async fn wikipedia(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {

@@ -98,14 +98,14 @@ pub struct ToolDef {
 /// a request to build is offered only these (every tool's description took
 /// more than half of an 8K window, leaving no room for the files).
 pub fn for_building(name: &str) -> bool {
-    (matches!(group(name), "files" | "web") && !matches!(name, "wikipedia" | "research" | "market_quote")) || matches!(name, "request_folder" | "open_path")
+    (matches!(group(name), "files" | "web") && !matches!(name, "wikipedia" | "research" | "market_quote" | "find_places")) || matches!(name, "request_folder" | "open_path")
 }
 
 /// Tools for making pictures, video and music (and looking up what things
 /// look like): what a small memory is offered for a picture request, so the
 /// conversation (what the person wanted from the start) still fits.
 pub fn for_pictures(name: &str) -> bool {
-    matches!(group(name), "media" | "web") && !matches!(name, "request_api_key" | "research" | "market_quote")
+    matches!(group(name), "media" | "web") && !matches!(name, "request_api_key" | "research" | "market_quote" | "find_places")
 }
 
 /// What a small memory leaves out first when the instructions and every tool
@@ -134,6 +134,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["app_status", "open_page", "connect_account"], g(r"sulcus|settings|connect|account|install|\bmodels?\b|feature")),
         (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
         (&["weather"], g(r"weather|forecast|temperature|\brain|snow|wind|sunny|\bhot\b|\bcold\b")),
+        (&["find_places"], g(r"\bnear\b|nearby|nearest|closest|close to|around (here|me)|where('?s| is| can i)|address|directions|\bmaps?\b|places?\b|restaurants?|coffee|caf[eé]|\bgas\b|pharmacy|hospital|store|shop|open now|how far")),
         (&["wikipedia"], g(r"who (is|was|are|were)|what (is|was|are|were)|wiki|history of|tell me about|meaning of")),
         (&["remember", "search_memory"], g(r"remember|forget|recall|my name|about me|last time")),
     ]
@@ -152,7 +153,7 @@ fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
-        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" => "web",
+        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
         "create_document" | "read_document" => "documents",
@@ -245,6 +246,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Research a question in depth: runs several web searches at once, reads the best pages and returns what they say with their addresses. Use it for questions that need more than one search (comparisons, reports, recommendations, recent events)." },
     ToolDef { name: "market_quote", risk: Risk::Read, params: lookup::market_quote_params,
         description: "Live prices for stocks, funds, indexes, crypto, currencies and commodities (with a chart of how they moved when given a range). Use it for any price or exchange rate instead of web_search." },
+    ToolDef { name: "find_places", risk: Risk::Read, params: lookup::find_places_params,
+        description: "Find places on the map from OpenStreetMap: kinds of places near the user or a city (\"coffee\", \"gas station\", \"pharmacy\"), a business or landmark, or an address, with distances, hours and map and directions links. Use it for anything near, nearest or where something is. It knows where the user is: don't ask them." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
@@ -522,7 +525,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory).await,
-        "wikipedia" | "research" | "market_quote" => {
+        "wikipedia" | "research" | "market_quote" | "find_places" => {
             let prepared = {
                 let conn = ctx.memory.db.lock().unwrap();
                 crate::web::prepare(&conn, ctx.memory.cipher, ctx.memory.chat_id)
@@ -578,6 +581,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "wikipedia" => return "Couldn't look it up on Wikipedia".into(),
         "research" => return "Couldn't research that".into(),
         "market_quote" => return "Couldn't check the prices".into(),
+        "find_places" => return "Couldn't look up places".into(),
         "calculate" => return "Couldn't calculate that".into(),
         "run_code" => return "The code couldn't run".into(),
         "schedule_task" => return "Couldn't schedule the task".into(),
@@ -629,6 +633,8 @@ mod tests {
         assert!(needed("research", "Which is better, the iPhone 17 or the Pixel 10?"));
         assert!(!needed("email_search", "What's 18.5% of 2,340?"));
         assert!(!needed("browser_open", "Who is Link from Zelda?"));
+        assert!(needed("find_places", "Where's the nearest coffee shop?") && needed("find_places", "gas stations near Provo"));
+        assert!(!needed("find_places", "What's 18.5% of 2,340?"));
         // Never left out.
         for always in ["calculate", "web_search", "fetch_page", "read_file", "write_file", "run_command", "preview_site", "request_api_key"] {
             assert!(!SPARE.iter().any(|(g, _)| in_group(always, g)), "{always}");
@@ -643,7 +649,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 48);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 49);
     }
 
     #[test]

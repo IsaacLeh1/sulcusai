@@ -2819,7 +2819,6 @@
  "{platform} ({host}), for {reason}": "{platform} ({host}), für {reason}",
  "{platform} API key": "{platform}-API-Schlüssel",
  "Calculate": "Berechnen",
- "Calculated {shown} = {v}": "Berechnet: {shown} = {v}",
  "Chart": "Diagramm",
  "Check a price": "Einen Kurs abrufen",
  "Checked {1}": "Abgerufen: {1}",
@@ -2850,5 +2849,15 @@
  "That time doesn't exist (a clock change).": "Diese Uhrzeit gibt es nicht (Zeitumstellung).",
  "The code stopped with an error": "Der Code brach mit einem Fehler ab",
  "Wikipedia's answer was unreadable.": "Die Antwort von Wikipedia war nicht lesbar.",
- "Yahoo Finance's answer was unreadable.": "Die Antwort von Yahoo Finance war nicht lesbar."
+ "Yahoo Finance's answer was unreadable.": "Die Antwort von Yahoo Finance war nicht lesbar.",
+ "Couldn't find {n}": "{n} wurde nicht gefunden",
+ "Couldn't look up places": "Orte konnten nicht gesucht werden",
+ "Couldn't reach OpenStreetMap": "OpenStreetMap war nicht erreichbar",
+ "Find places": "Orte suchen",
+ "Found {1} places for “{query}”": "{1} Orte für „{query}“ gefunden",
+ "No places found for “{query}”": "Keine Orte für „{query}“ gefunden",
+ "OpenStreetMap's answer was unreadable.": "Die Antwort von OpenStreetMap war nicht lesbar.",
+ "OpenStreetMap's place search is busy; try again in a minute.": "Die Ortssuche von OpenStreetMap ist ausgelastet; in einer Minute erneut versuchen.",
+ "Calculated {shown}": "Berechnet: {shown}",
+ "It's shown in the chat.": "Es wird im Chat angezeigt."
 }

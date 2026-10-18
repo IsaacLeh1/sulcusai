@@ -63,6 +63,7 @@ mod offline;
 mod oauth;
 mod paths;
 mod perf;
+mod places;
 mod privacy;
 mod phone;
 mod ports;

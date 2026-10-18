@@ -12,13 +12,14 @@ use super::{Ctx, Outcome};
 
 pub fn calculate_params() -> Value {
     json!({ "type": "object", "required": ["expression"], "properties": {
-        "expression": { "type": "string", "description": "The math to work out, e.g. \"(1250 * 0.07) / 12\", \"2^10\", \"15% of 2345\", \"sqrt(2) * PI\" or \"daysBetween('2026-10-17', '2026-12-25')\"." } } })
+        "expression": { "type": "string", "description": "The math to work out, e.g. \"(1250 * 0.07) / 12\", \"2^10\", \"15% of 2345\", \"sqrt(2) * PI\", an equation to solve (\"x^2 - 5x + 6 = 0\"), \"integral of x^2 from 0 to 3\", \"derivative of x^3 at 2\" or \"daysBetween('2026-10-17', '2026-12-25')\"." } } })
 }
 
 pub fn run_code_params() -> Value {
     json!({ "type": "object", "required": ["code"], "properties": {
         "code": { "type": "string", "description": "JavaScript to run. The last expression's value comes back, and so does anything you console.log. \
-            Helpers: sum, mean, median, stdev, round2(x, digits), daysBetween(a, b), addDays(date, n), compound(principal, ratePercent, years), \
+            Helpers: sum, mean, median, stdev, round2(x, digits), solve('x**2 - 4') (the x values that make it 0), integrate('x**2', 0, 3), \
+            derivative('x**3', 2), daysBetween(a, b), addDays(date, n), compound(principal, ratePercent, years), \
             payment(principal, ratePercent, years), readFile(path), readCSV(path) (rows as objects), readJSON(path), and \
             chart({ type: 'bar'|'line'|'area'|'pie'|'scatter', title, labels, values }) or chart({ type, title, labels, series: [{ name, data }] }) \
             to show a chart in the chat. No network." } } })
@@ -47,11 +48,18 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             return Outcome::error("Calculate", "Give the math to work out (expression).");
         }
         let js = crate::jsrun::as_js(&expr);
+        let unknown = crate::jsrun::solving_for(&js);
         let ran = tokio::task::spawn_blocking(move || crate::jsrun::run(&js, read)).await.unwrap_or_default();
         return match (ran.error, ran.value) {
             (None, Some(v)) => {
-                let shown: String = expr.chars().take(80).collect();
-                Outcome::ok(format!("{expr} = {v}\nUse this exact result in your answer."), format!("Calculated {shown} = {v}"), "text", Some(format!("{expr} = {v}")))
+                // An equation's solutions as "x = 2 or x = 3"; a check as true or false.
+                let v = match (&unknown, serde_json::from_str::<Value>(&v)) {
+                    (Some(x), Ok(Value::Array(roots))) => roots.iter().map(|r| format!("{x} = {r}")).collect::<Vec<_>>().join(" or "),
+                    _ => v,
+                };
+                let line = if unknown.is_some() || v == "true" || v == "false" { format!("{expr}: {v}") } else { format!("{expr} = {v}") };
+                let shown: String = line.chars().take(100).collect();
+                Outcome::ok(format!("{line}\nUse this exact result in your answer."), format!("Calculated {shown}"), "text", Some(line))
             }
             (Some(e), _) => Outcome::error("Couldn't calculate that", format!("{e}\nWrite it as math with numbers and + - * / ^ ( ), or use run_code for anything longer.")),
             (None, None) => Outcome::error("Couldn't calculate that", "It gave no result. Write it as one expression, e.g. (12 * 4) / 3."),

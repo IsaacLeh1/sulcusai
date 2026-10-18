@@ -45,6 +45,48 @@ const PRELUDE: &str = r#"(function () {
   g.compound = function (p, rate, years, n) { n = n || 12; return p * Math.pow(1 + rate / 100 / n, n * years); };
   // A loan's monthly payment: principal, yearly rate (6.5 = 6.5%), years.
   g.payment = function (p, rate, years) { var r = rate / 100 / 12, n = years * 12; return r ? p * r / (1 - Math.pow(1 + r, -n)) : p / n; };
+  // Math in x: an expression as text ('x**2 - 5*x + 6') or a function.
+  var fn = function (expr, v) { return typeof expr === 'function' ? expr : new Function(v || 'x', 'return (' + expr + ');'); };
+  var tidy = function (r) { r = Number(r.toPrecision(10)); return Math.abs(r) < 1e-10 ? 0 : r; };
+  // The real values of v that make expr zero (sign changes and touching roots, in -1e6..1e6).
+  g.solve = function (expr, v) {
+    var f = fn(expr, v), roots = [];
+    var add = function (r) { r = tidy(r); if (!roots.some(function (q) { return Math.abs(q - r) <= 1e-7 * Math.max(1, Math.abs(r)); })) roots.push(r); };
+    var bisect = function (a, b, fa) {
+      for (var i = 0; i < 200; i++) {
+        var m = (a + b) / 2, fm = f(m);
+        if (fm === 0 || b - a < 1e-14 * Math.max(1, Math.abs(m))) return m;
+        if ((fm < 0) === (fa < 0)) { a = m; fa = fm; } else b = m;
+      }
+      return (a + b) / 2;
+    };
+    var scan = function (lo, hi, n) {
+      var step = (hi - lo) / n, x0 = lo, f0 = f(x0);
+      for (var i = 1; i <= n; i++) {
+        var x1 = lo + i * step, f1 = f(x1);
+        if (isFinite(f0) && isFinite(f1)) {
+          if (Math.abs(f0) < 1e-12) add(x0);
+          else if ((f0 < 0) !== (f1 < 0) && Math.abs(f1) > 1e-12) { var r = bisect(x0, x1, f0); if (Math.abs(f(r)) < 1e-6 * Math.max(1, Math.abs(f0), Math.abs(f1))) add(r); }
+        }
+        x0 = x1; f0 = f1;
+      }
+      if (isFinite(f0) && Math.abs(f0) < 1e-12) add(x0);
+    };
+    scan(-10, 10, 20000); scan(-1000, 1000, 200000); scan(-1e6, 1e6, 200000);
+    roots.sort(function (a, b) { return a - b; });
+    return roots.length ? roots : 'no real solution';
+  };
+  // The area under expr from a to b (Simpson's rule).
+  g.integrate = function (expr, a, b, v) {
+    var f = fn(expr, v), n = 20000, h = (b - a) / n, s = f(a) + f(b);
+    for (var i = 1; i < n; i++) s += f(a + i * h) * (i % 2 ? 4 : 2);
+    return tidy(s * h / 3);
+  };
+  // The slope of expr at a point.
+  g.derivative = function (expr, at, v) {
+    var f = fn(expr, v), h = 1e-4 * Math.max(1, Math.abs(at));
+    return tidy((f(at - 2 * h) - 8 * f(at - h) + 8 * f(at + h) - f(at + 2 * h)) / (12 * h));
+  };
   g.parseCSV = function (text) {
     var rows = [], row = [], cell = '', q = false;
     for (var i = 0; i < text.length; i++) {
@@ -185,7 +227,8 @@ pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) 
             match chart_of(&spec) {
                 Ok(v) => {
                     c.push(v);
-                    format!("Chart {} drawn.", c.len())
+                    // Not "Chart 1": models wrote "[Chart 1]" into their reply.
+                    "It's shown in the chat.".to_string()
                 }
                 Err(e) => format!("No chart: {e}"),
             }
@@ -247,7 +290,139 @@ pub fn as_js(expr: &str) -> String {
     s = regex_lite(r"(?i)(\d+(?:\.\d+)?)\s*(?:%|percent)\s*of\s*").replace_all(&s, "($1/100)*").into_owned();
     s = regex_lite(r"(\d+(?:\.\d+)?)\s*%").replace_all(&s, "($1/100)").into_owned();
     s = regex_lite(r"(\d)\s*[xX]\s*(\d)").replace_all(&s, "$1*$2").into_owned();
-    s
+    // "integral of x^2 from 0 to 3", "derivative of x^3 at 2".
+    if let Some(c) = regex_lite(r"(?i)^(?:what\s+is\s+)?(?:the\s+)?(?:definite\s+)?integral\s+of\s+(.+?)\s+from\s+(\S+)\s+to\s+(\S+?)\s*$").captures(&s) {
+        s = format!("integrate({}, {}, {})", &c[1], &c[2], &c[3]);
+    } else if let Some(c) = regex_lite(r"(?i)^(?:what\s+is\s+)?(?:the\s+)?derivative\s+of\s+(.+?)\s+at\s+(?:[a-z]\s*=\s*)?(\S+?)\s*$").captures(&s) {
+        s = format!("derivative({}, {})", &c[1], &c[2]);
+    }
+    s = implied_times(&s);
+    s = quote_first_arg(&s);
+    equation(&s).unwrap_or(s)
+}
+
+/// Names that aren't unknowns in an equation.
+const KNOWN: &[&str] = &[
+    "abs", "acos", "asin", "atan", "atan2", "cbrt", "ceil", "cos", "cosh", "exp", "floor", "hypot", "log", "log2", "log10", "max", "min", "pow", "random", "round", "sign", "sin", "sinh",
+    "sqrt", "tan", "tanh", "trunc", "PI", "E", "ln", "Math", "Infinity", "NaN", "sum", "mean", "average", "median", "stdev", "factorial", "round2", "daysBetween", "addDays", "compound",
+    "payment", "solve", "integrate", "derivative",
+];
+
+/// "5x" as 5*x, "2(3+4)" as 2*(3+4), ")(" as ")*(" — but not inside names
+/// ("log10(") or numbers ("1e5"), or in quotes.
+fn implied_times(s: &str) -> String {
+    let c: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len() + 8);
+    let (mut quote, mut in_name, mut in_number) = (None::<char>, false, false);
+    for i in 0..c.len() {
+        let ch = c[i];
+        out.push(ch);
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            in_name = false;
+            in_number = false;
+            continue;
+        }
+        if in_name {
+            in_name = ch.is_ascii_alphanumeric() || ch == '_';
+        } else if ch.is_ascii_alphabetic() || ch == '_' {
+            in_name = true;
+        }
+        in_number = !in_name && (ch.is_ascii_digit() || (ch == '.' && in_number));
+        let Some(&next) = c.get(i + 1) else { continue };
+        let sci = (next == 'e' || next == 'E') && c.get(i + 2).is_some_and(|d| d.is_ascii_digit() || ((*d == '-' || *d == '+') && c.get(i + 3).is_some_and(char::is_ascii_digit)));
+        if ((in_number && !sci) || ch == ')') && (next.is_ascii_alphabetic() || next == '_' || next == '(') {
+            out.push('*');
+        }
+    }
+    out
+}
+
+/// solve(x^2 - 4, …), integrate(x^2, 0, 3): the expression as text, as the helpers take it.
+fn quote_first_arg(s: &str) -> String {
+    let re = regex_lite(r"\b(solve|integrate|derivative)\(\s*");
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(m) = re.find(rest) {
+        out.push_str(&rest[..m.end()]);
+        rest = &rest[m.end()..];
+        if rest.starts_with(['\'', '"']) {
+            continue;
+        }
+        let mut depth = 0i32;
+        let end = rest.char_indices().find(|&(_, ch)| match ch {
+            '(' => { depth += 1; false }
+            ')' if depth == 0 => true,
+            ')' => { depth -= 1; false }
+            ',' => depth == 0,
+            _ => false,
+        }).map_or(rest.len(), |(i, _)| i);
+        let arg = rest[..end].trim();
+        let arg = match split_equation(arg) {
+            Some((l, r)) => format!("({l}) - ({r})"),
+            None => arg.to_string(),
+        };
+        out.push_str(&format!("'{}'", arg.replace('\'', "")));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// "lhs = rhs" (one plain =, not ==, <=, >=, != or =>), outside quotes.
+fn split_equation(s: &str) -> Option<(String, String)> {
+    let c: Vec<char> = s.chars().collect();
+    let mut quote = None::<char>;
+    let mut at = Vec::new();
+    for i in 0..c.len() {
+        match (quote, c[i]) {
+            (Some(q), ch) if ch == q => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"') => quote = Some(c[i]),
+            (None, '=') => {
+                let before = i.checked_sub(1).map(|j| c[j]);
+                let after = c.get(i + 1).copied();
+                if !matches!(before, Some('=' | '<' | '>' | '!')) && !matches!(after, Some('=' | '>')) {
+                    at.push(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    let [i] = at[..] else { return None };
+    let (l, r): (String, String) = (c[..i].iter().collect(), c[i + 1..].iter().collect());
+    (!l.trim().is_empty() && !r.trim().is_empty()).then(|| (l.trim().to_string(), r.trim().to_string()))
+}
+
+/// An equation in one unknown ("x**2 - 5*x + 6 = 0") as solve('…', 'x'); one
+/// with no unknowns ("2+2 = 4") as a check.
+fn equation(s: &str) -> Option<String> {
+    let (l, r) = split_equation(s)?;
+    let names = regex_lite(r"[A-Za-z_]\w*");
+    let outside_quotes = regex_lite(r#"'[^']*'|"[^"]*""#).replace_all(s, "");
+    let mut unknown: Vec<&str> = Vec::new();
+    for m in names.find_iter(&outside_quotes) {
+        let calls = outside_quotes[m.end()..].trim_start().starts_with('(');
+        if !calls && !KNOWN.contains(&m.as_str()) && !unknown.contains(&m.as_str()) {
+            unknown.push(m.as_str());
+        }
+    }
+    match unknown[..] {
+        [] => Some(format!("({l}) === ({r})")),
+        [v] => Some(format!("solve('({}) - ({})', '{v}')", l.replace('\'', ""), r.replace('\'', ""))),
+        _ => None,
+    }
+}
+
+/// The unknown an expression from `as_js` solves for, if it's an equation.
+pub fn solving_for(js: &str) -> Option<String> {
+    regex_lite(r"^solve\('.*', '([A-Za-z_]\w*)'\)$").captures(js).map(|c| c[1].to_string())
 }
 
 fn regex_lite(p: &str) -> regex::Regex {
@@ -278,6 +453,32 @@ mod tests {
             assert_eq!(as_js(said), js);
             assert_eq!(value(js), out);
         }
+    }
+
+    #[test]
+    fn equations_integrals_and_derivatives() {
+        let calc = |said: &str| {
+            let js = as_js(said);
+            let r = run(&js, |_| Err("no".into()));
+            assert_eq!(r.error, None, "{said} → {js}");
+            (js, r.value.unwrap_or_default())
+        };
+        assert_eq!(as_js("x^2 - 5x + 6 = 0"), "solve('(x**2 - 5*x + 6) - (0)', 'x')");
+        assert_eq!(calc("x^2 - 5x + 6 = 0").1, "[\n  2,\n  3\n]");
+        assert_eq!(solving_for(&as_js("x^2 - 5x + 6 = 0")).as_deref(), Some("x"));
+        assert_eq!(calc("(x - 2)^2 = 0").1, "[\n  2\n]", "a touching root");
+        assert_eq!(calc("2y + 3 = 11").1, "[\n  4\n]");
+        assert_eq!(calc("x^2 + 1 = 0").1, "no real solution");
+        assert_eq!(calc("solve(x^2 - 2 = 0)").1, "[\n  -1.414213562,\n  1.414213562\n]");
+        assert_eq!(calc("integral of x^2 from 0 to 3").1, "9");
+        assert_eq!(calc("integrate(sin(x), 0, PI)").1, "2");
+        assert_eq!(calc("derivative of x^3 at 2").1, "12");
+        assert_eq!(calc("2+2 = 4").1, "true");
+        // Implied multiplication, but not inside names or numbers.
+        assert_eq!(as_js("2(3+4)"), "2*(3+4)");
+        assert_eq!(calc("log10(1000) + 1e3").1, "1003");
+        assert_eq!(calc("3sqrt(16)").1, "12");
+        assert_eq!(as_js("daysBetween('2026-10-17', '2026-12-25')"), "daysBetween('2026-10-17', '2026-12-25')");
     }
 
     #[test]

@@ -1001,6 +1001,29 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - "Every weekday at 8am…" scheduled (removed afterwards).
 - Not done: FLUX.1 links and split GGUFs (as before), LaTeX math in replies, maps and places.
 
+## After 0.9.10 (2026-10-17, not released yet): math and places
+
+Draft notes: `C:\dev\tools\notes-0911.md`.
+
+- **Math formulas in replies:**
+  - KaTeX via remark-math and rehype-katex in `components/Markdown.tsx`, with the CSS and fonts bundled; the CSP already allowed them.
+  - `src/math.ts mathify` turns `\[…\]`, `\(…\)`, a line of `$$…$$` and `$…$` into the double-dollar form remark-math reads (singleDollarTextMath off). A single-dollar `$…$` only counts when its inside looks like math, so "$5 and $10" stays money; code is left alone. Tests are in `src/math.test.ts`.
+  - The base prompt asks for LaTeX.
+  - Live: a quadratic's steps rendered 23 formulas with no errors.
+- **The calculator does algebra and calculus** (`jsrun.rs`):
+  - Helpers `solve` (scan plus bisection over -1e6..1e6, touching roots included), `integrate` (Simpson) and `derivative` (5-point).
+  - `as_js` handles implied multiplication without touching names like log10 or numbers like 1e3 (`implied_times`), "integral of … from a to b", "derivative of … at a", a single `=` with one unknown as `solve('(lhs) - (rhs)', 'x')` (none: a true/false check), and quotes the expression argument (`quote_first_arg`).
+  - calculate shows "x = 2 or x = 3". `asks_math` also catches solve…=, integral, derivative and x^2.
+  - chart() now returns "It's shown in the chat." (models wrote "[Chart 1]").
+- **find_places** (`places.rs`, `tools/lookup.rs`, group web, `SPARE` topic):
+  - Kinds of place ("coffee", 41 kinds, `KINDS`) come from Overpass near the user (profile location or `location::detect`) or near a place the user named. Overpass falls back to the kumi mirror, then to Nominatim's bounded search (`nearby_by_name`), because every public Overpass server was down during the test.
+  - Names and addresses come from Nominatim, bounded to about 45 km first, then anywhere.
+  - Results include miles in the US, hours, phone, website, an OSM map link and a directions link. Nominatim gets one request a second (`nominatim_turn`).
+  - "near me" counts as asking about their own things, so asking for their city is a stall (`ABOUT_THEIR_THINGS`), and `forced_lookup` ranks find_places.
+  - Live (ignored) test: `finds_real_places_near_orem`.
+- **Live test** (dev mode, 14B): x^2 - 5x + 6 = 0 solved by calculate, the integral = 9, cafés near the user (Starbucks 0.3 mi…), gas near Provo, the nearest Walmart to Provo 2.1 mi, and a bar chart whose axis now reaches past the top bar. Test chats removed.
+- `e2e::a_chat_finds_and_reads_another_chat` now uses a 32K stand-in: with 8K, fit_small rightly left the chat tools out of "And the hotel?".
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

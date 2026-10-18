@@ -39,6 +39,7 @@ const THIRD_PARTY = [
   { name: "SQLite", license: tx("Public domain"), url: "https://sqlite.org/copyright.html" },
   { name: "React", license: "MIT", url: "https://github.com/facebook/react" },
   { name: "react-markdown / remark-gfm", license: "MIT", url: "https://github.com/remarkjs/react-markdown" },
+  { name: "KaTeX / remark-math / rehype-katex", license: "MIT", url: "https://github.com/KaTeX/KaTeX" },
   { name: "RustCrypto (aes-gcm, argon2, sha2)", license: "MIT / Apache-2.0", url: "https://github.com/RustCrypto" },
   { name: tx("Email and calendar (async-imap, mail-parser, lettre, quick-xml, chrono-tz)"), license: "MIT / Apache-2.0", url: "" },
   { name: tx("Documents (docx-rs, rust_xlsxwriter, calamine, pdf-extract)"), license: "MIT / Apache-2.0", url: "" },

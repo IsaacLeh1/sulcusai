@@ -1212,7 +1212,9 @@ async fn a_chat_finds_and_reads_another_chat() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move { axum::serve(listener, app).await.ok() });
-    let ep = engine::Endpoint { port, key: "k".into(), ctx: 8192, extra: serde_json::json!({}), cloud: None };
+    // A memory big enough for every tool (an 8K one leaves out the chat tools
+    // for "And the hotel?", which doesn't mention chats: fit_small).
+    let ep = engine::Endpoint { port, key: "k".into(), ctx: 32768, extra: serde_json::json!({}), cloud: None };
     let state = scratch_state();
     let cipher = state.cipher().unwrap();
     let (planning, secret, here) = {

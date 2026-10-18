@@ -21,6 +21,7 @@ const TOOL_ICONS: Record<string, string> = {
   wikipedia: "📚",
   research: "🔬",
   market_quote: "📈",
+  find_places: "📍",
   schedule_task: "⏰",
   find_files: "🔎",
   search_files: "🔎",

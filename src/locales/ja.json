@@ -2819,7 +2819,6 @@
  "{platform} ({host}), for {reason}": "{platform}（{host}）：{reason}のため",
  "{platform} API key": "{platform} の API キー",
  "Calculate": "計算する",
- "Calculated {shown} = {v}": "計算しました：{shown} = {v}",
  "Chart": "グラフ",
  "Check a price": "価格を調べる",
  "Checked {1}": "調べました：{1}",
@@ -2850,5 +2849,15 @@
  "That time doesn't exist (a clock change).": "その時刻は存在しません（時刻の切り替え）。",
  "The code stopped with an error": "コードがエラーで止まりました",
  "Wikipedia's answer was unreadable.": "Wikipedia の応答を読み取れませんでした。",
- "Yahoo Finance's answer was unreadable.": "Yahoo Finance の応答を読み取れませんでした。"
+ "Yahoo Finance's answer was unreadable.": "Yahoo Finance の応答を読み取れませんでした。",
+ "Couldn't find {n}": "{n} が見つかりませんでした",
+ "Couldn't look up places": "場所を調べられませんでした",
+ "Couldn't reach OpenStreetMap": "OpenStreetMap に接続できませんでした",
+ "Find places": "場所を探す",
+ "Found {1} places for “{query}”": "「{query}」の場所が {1} 件見つかりました",
+ "No places found for “{query}”": "「{query}」の場所は見つかりませんでした",
+ "OpenStreetMap's answer was unreadable.": "OpenStreetMap の応答を読み取れませんでした。",
+ "OpenStreetMap's place search is busy; try again in a minute.": "OpenStreetMap の場所検索が混み合っています。1 分後にもう一度お試しください。",
+ "Calculated {shown}": "計算しました：{shown}",
+ "It's shown in the chat.": "チャットに表示されています。"
 }
