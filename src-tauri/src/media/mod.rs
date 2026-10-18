@@ -1976,6 +1976,10 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     let (mut w, mut h) = (d.width.max(256), d.height.max(256));
     if let Some(spec) = &req.wallpaper {
         (w, h) = wallpaper::make_size(spec, imaging::round16(((w * h) as f64).sqrt()), 32);
+    } else if let (Some(rw), Some(rh)) = (req.width, req.height) {
+        // A size asked for, in the steps of 32 the video models work in.
+        let step = |v: u32| (v.clamp(256, 1920) + 16) / 32 * 32;
+        (w, h) = (step(rw), step(rh));
     } else if matches!(req.shape.as_deref(), Some("portrait" | "tall")) {
         std::mem::swap(&mut w, &mut h);
     } else if req.shape.as_deref() == Some("square") {
