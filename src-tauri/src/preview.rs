@@ -12,16 +12,20 @@
 //! A site follows its chat's web setting: while the chat is offline, the
 //! pages are served with a policy that blocks anything outside the site
 //! (live data, scripts from a CDN), and the check says what was blocked.
+//! While it may use the web, its pages get live data through
+//! /__sulcus/fetch: SulcusAI fetches it for them (pages can't read most data
+//! sources themselves) and adds any API key the user approved for that
+//! source, so a key is never in the page.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::State;
 use axum::http::{header, HeaderMap, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -57,6 +61,12 @@ pub struct Report {
     /// Buttons after whose click nothing on the page changed.
     #[serde(default)]
     pub quiet: Vec<String>,
+    /// Buttons whose click only showed a pop-up message.
+    #[serde(default)]
+    pub popups: Vec<String>,
+    /// What the page's buttons and fields say.
+    #[serde(default)]
+    pub labels: Vec<String>,
     /// Whether the page's text changed by itself in the seconds after it loaded.
     #[serde(default)]
     pub changes: Option<bool>,
@@ -97,11 +107,19 @@ struct Ctx {
     port: u16,
     web: bool,
     reports: Arc<Mutex<Vec<Report>>>,
+    state: Arc<crate::AppState>,
+    chat_id: String,
+    /// For live data: made on first use (plain, and one for requests carrying a key).
+    clients: Arc<Mutex<Option<(reqwest::Client, reqwest::Client)>>>,
+    /// When the latest live-data requests were made (a page fetching in a tight loop is slowed).
+    recent: Arc<Mutex<VecDeque<Instant>>>,
+    /// Hosts this site got data from (logged once each).
+    hosts: Arc<Mutex<HashSet<String>>>,
 }
 
 /// Serves a folder (the page to start on is `start`, e.g. "index.html"),
 /// reusing the server already running for it in this chat.
-pub async fn serve(chat_id: &str, root: &Path, start: &str, web: bool) -> Result<Served, String> {
+pub async fn serve(state: &Arc<crate::AppState>, chat_id: &str, root: &Path, start: &str, web: bool) -> Result<Served, String> {
     let root = dunce::canonicalize(root).map_err(|_| format!("{} doesn't exist.", root.display()))?;
     if !root.is_dir() {
         return Err(format!("{} isn't a folder.", root.display()));
@@ -130,9 +148,19 @@ pub async fn serve(chat_id: &str, root: &Path, start: &str, web: bool) -> Result
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.map_err(|e| format!("Couldn't start the preview: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let reports = Arc::new(Mutex::new(Vec::new()));
-    let ctx = Ctx { root: root.clone(), port, web, reports: reports.clone() };
+    let ctx = Ctx {
+        root: root.clone(),
+        port,
+        web,
+        reports: reports.clone(),
+        state: state.clone(),
+        chat_id: chat_id.to_string(),
+        clients: Default::default(),
+        recent: Default::default(),
+        hosts: Default::default(),
+    };
     let (tx, rx) = oneshot::channel();
-    let app = Router::new().route("/__sulcus/report", post(report)).fallback(page).with_state(ctx);
+    let app = Router::new().route("/__sulcus/report", post(report)).route("/__sulcus/fetch", get(fetch)).fallback(page).with_state(ctx);
     tauri::async_runtime::spawn(async move {
         let _ = axum::serve(listener, app).with_graceful_shutdown(async { rx.await.ok(); }).await;
     });
@@ -179,6 +207,12 @@ async fn report(State(ctx): State<Ctx>, headers: HeaderMap, body: String) -> Sta
     if let Ok(mut r) = serde_json::from_str::<Report>(&body) {
         r.message = r.message.chars().take(400).collect();
         r.dead.truncate(12);
+        r.quiet.truncate(12);
+        r.popups.truncate(12);
+        r.labels.truncate(40);
+        for l in r.labels.iter_mut() {
+            *l = l.chars().take(40).collect();
+        }
         let mut all = ctx.reports.lock().unwrap();
         if all.len() < 300 {
             all.push(r);
@@ -226,9 +260,194 @@ async fn page(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: U
     r
 }
 
+/// Most a live-data answer may be.
+const FETCH_BYTES: usize = 5 * 1024 * 1024;
+/// Most live-data requests a site may make in a minute.
+const FETCH_PER_MINUTE: usize = 120;
+
+fn note(ctx: &Ctx, kind: &str, message: String) {
+    let mut all = ctx.reports.lock().unwrap();
+    if all.len() < 300 {
+        all.push(Report { kind: kind.into(), message, ..Report::default() });
+    }
+}
+
+/// An answer the page can show: {"error": "..."}.
+fn refuse(status: StatusCode, why: &str) -> Response {
+    (status, [(header::CONTENT_TYPE, "application/json")], serde_json::json!({ "error": why }).to_string()).into_response()
+}
+
+/// The address a fetch asks for (`?url=`): all of it, whether the page
+/// encoded it or not ("?url=https://a.io/q?s=1&t=2" keeps its "&t=2").
+fn asked_url(uri: &Uri) -> Option<String> {
+    let q = uri.query()?;
+    let raw = match q.strip_prefix("url=") {
+        Some(rest) => decode(rest),
+        None => reqwest::Url::parse(&format!("http://x/?{q}")).ok()?.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned())?,
+    };
+    Some(raw.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+/// A stand-in where a key should be ("YOUR_API_KEY", "<key>", "demo").
+pub fn placeholder_key(value: &str) -> bool {
+    static FAKE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"(?i)^(your|my|insert|enter|put|replace|add)[ _-]?.*(key|token)|^(api[_-]?)?(key|token)([_-]?here)?$|^<[^>]*>$|^\{[^}]*\}$|^x{6,}$|^demo$|^test$|^null$|^undefined$").unwrap()
+    });
+    FAKE.is_match(value.trim())
+}
+
+/// A key that goes in the address, in place of any stand-in the page put there.
+fn add_key(url: &mut reqwest::Url, k: &crate::sitekeys::SiteKey) {
+    if k.param.is_empty() {
+        return;
+    }
+    let kept: Vec<(String, String)> = url.query_pairs().filter(|(n, _)| *n != k.param).map(|(n, v)| (n.into_owned(), v.into_owned())).collect();
+    url.query_pairs_mut().clear().extend_pairs(kept).append_pair(&k.param, &k.key);
+}
+
+/// GET /__sulcus/fetch?url=<address>: live data for the site's pages,
+/// fetched here. Only public http(s) addresses, only while the chat may use
+/// the web, and only for the site's own pages (a page elsewhere can't use it,
+/// or the key). A key the user approved for that host goes along; it's never
+/// in what the page or the model sees.
+async fn fetch(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: Uri) -> Response {
+    if !local_host(&headers, ctx.port) {
+        return (StatusCode::FORBIDDEN, "Only this PC can open this preview.").into_response();
+    }
+    if headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()).is_some_and(|s| s != "same-origin" && s != "none") {
+        return refuse(StatusCode::FORBIDDEN, "Only this site's own pages can fetch through it.");
+    }
+    if method != Method::GET {
+        return refuse(StatusCode::METHOD_NOT_ALLOWED, "Live data is fetched with GET.");
+    }
+    {
+        let mut recent = ctx.recent.lock().unwrap();
+        let now = Instant::now();
+        while recent.front().is_some_and(|t| now.duration_since(*t) > Duration::from_secs(60)) {
+            recent.pop_front();
+        }
+        if recent.len() >= FETCH_PER_MINUTE {
+            drop(recent);
+            note(&ctx, "live_failed", format!("more than {FETCH_PER_MINUTE} live-data requests a minute: fetch less often (every 15 to 60 seconds), and several things in one request where the source allows it"));
+            return refuse(StatusCode::TOO_MANY_REQUESTS, "Too many requests: fetch less often.");
+        }
+        recent.push_back(now);
+    }
+    let Some(asked) = asked_url(&uri) else {
+        note(&ctx, "live_failed", "a fetch without an address: call /__sulcus/fetch?url= + encodeURIComponent(the full https address)".into());
+        return refuse(StatusCode::BAD_REQUEST, "Give the address to fetch as ?url=");
+    };
+    let shown = |u: &reqwest::Url| format!("{}{}", u.host_str().unwrap_or_default(), u.path());
+    if !crate::web::allowed_for_chat(&ctx.state.db.lock().unwrap(), &ctx.chat_id) {
+        let what = reqwest::Url::parse(&asked).map(|u| shown(&u)).unwrap_or_else(|_| asked.chars().take(80).collect());
+        note(&ctx, "live_blocked", what);
+        return refuse(StatusCode::FORBIDDEN, "This chat is offline, so the site can't get live data.");
+    }
+    let mut url = match crate::web::check_url(&asked).await {
+        Ok(u) => u,
+        Err(e) => {
+            note(&ctx, "live_failed", format!("{}: {e}", asked.chars().take(80).collect::<String>()));
+            return refuse(StatusCode::BAD_REQUEST, &e);
+        }
+    };
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let what = shown(&url);
+    let fake = url.query_pairs().find(|(_, v)| placeholder_key(v)).map(|(k, _)| k.into_owned());
+    let key = ctx.state.cipher().ok().and_then(|c| crate::sitekeys::for_request(&ctx.state.db.lock().unwrap(), &c, &ctx.chat_id, &host));
+    if let Some(k) = &key {
+        add_key(&mut url, k);
+    }
+    let clients = {
+        let mut c = ctx.clients.lock().unwrap();
+        if c.is_none() {
+            match crate::web::site_clients(&ctx.state.db.lock().unwrap(), &ctx.chat_id) {
+                Ok(made) => *c = Some(made),
+                Err(e) => {
+                    drop(c);
+                    note(&ctx, "live_blocked", what.clone());
+                    return refuse(StatusCode::FORBIDDEN, &e);
+                }
+            }
+        }
+        c.clone().unwrap()
+    };
+    let client = if key.is_some() { &clients.1 } else { &clients.0 };
+    let mut req = client.get(url).header(header::ACCEPT, headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("application/json, */*"));
+    if let Some(k) = key.as_ref().filter(|k| !k.header.is_empty()) {
+        req = req.header(k.header.as_str(), k.header_value());
+    }
+    let mut res = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            // Without the address: it may carry the key.
+            let e = e.without_url();
+            note(&ctx, "live_failed", format!("{what}: couldn't get it ({e})"));
+            return refuse(StatusCode::BAD_GATEWAY, &format!("Couldn't reach {host}."));
+        }
+    };
+    let status = res.status();
+    let kind = res.headers().get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("application/octet-stream").to_string();
+    let mut body = Vec::new();
+    loop {
+        match res.chunk().await {
+            Ok(Some(c)) if body.len() + c.len() <= FETCH_BYTES => body.extend_from_slice(&c),
+            Ok(Some(_)) => {
+                note(&ctx, "live_failed", format!("{what}: the answer was over 5 MB; ask for less"));
+                return refuse(StatusCode::BAD_GATEWAY, "That answer is too big.");
+            }
+            Ok(None) => break,
+            Err(e) => {
+                let e = e.without_url();
+                note(&ctx, "live_failed", format!("{what}: the answer broke off ({e})"));
+                return refuse(StatusCode::BAD_GATEWAY, &format!("{host} stopped answering."));
+            }
+        }
+    }
+    match status.as_u16() {
+        200..=299 => {
+            note(&ctx, "live_ok", host.clone());
+            if ctx.hosts.lock().unwrap().insert(host.clone()) {
+                ctx.state.log("privacy", &format!("A site the assistant built got live data from {host}"));
+            }
+        }
+        401 | 403 if key.is_some() => note(&ctx, "live_key_refused", format!("{host} ({status})")),
+        401 | 403 => note(&ctx, "live_key_needed", format!("{what} ({status})")),
+        429 => note(&ctx, "live_failed", format!("{what} answered 429 (too many requests): fetch less often")),
+        _ => note(&ctx, "live_failed", format!("{what} answered {status}")),
+    }
+    if let (Some(name), None) = (&fake, &key) {
+        note(&ctx, "live_placeholder", format!("{host} (the {name} parameter)"));
+    }
+    let mut r = (status, body).into_response();
+    let h = r.headers_mut();
+    if let Ok(v) = kind.parse() {
+        h.insert(header::CONTENT_TYPE, v);
+    }
+    h.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    h.insert("x-content-type-options", "nosniff".parse().unwrap());
+    // Shown as a page, it would run apart from the site (no reaching its pages or the fetch route).
+    h.insert(header::CONTENT_SECURITY_POLICY, "sandbox".parse().unwrap());
+    r
+}
+
 impl Default for Report {
     fn default() -> Self {
-        Report { kind: String::new(), message: String::new(), title: String::new(), text: 0, buttons: 0, inputs: 0, missing_ids: Vec::new(), ids: Vec::new(), early_buttons: 0, quiet: Vec::new(), changes: None, dead: Vec::new() }
+        Report {
+            kind: String::new(),
+            message: String::new(),
+            title: String::new(),
+            text: 0,
+            buttons: 0,
+            inputs: 0,
+            missing_ids: Vec::new(),
+            ids: Vec::new(),
+            early_buttons: 0,
+            quiet: Vec::new(),
+            popups: Vec::new(),
+            labels: Vec::new(),
+            changes: None,
+            dead: Vec::new(),
+        }
     }
 }
 
@@ -355,9 +574,14 @@ const PROBE: &str = r##"(function () {
     return ce.apply(console, arguments);
   };
   var of = window.fetch;
+  // Requests still out (a click that loads data is judged once they're back).
+  var inflight = 0;
   window.fetch = function (input) {
     var url = String((input && input.url) || input);
     var p = of.apply(this, arguments);
+    inflight++;
+    var settle = function () { inflight--; };
+    p.then(settle, settle);
     if (url.indexOf('/__sulcus/') >= 0) return p;
     return p.then(function (r) {
       if (!r.ok) send({ kind: 'request_failed', message: url + ' (' + r.status + ')' });
@@ -381,9 +605,10 @@ const PROBE: &str = r##"(function () {
   var label = function (el) { return (el.innerText || el.value || el.getAttribute('aria-label') || el.tagName).trim().slice(0, 40); };
   var early = 0, earlyText = '';
   // Clicks each button (number fields filled in first) and notes the ones
-  // after which nothing on the page changed: no new text, no message, no error.
+  // after which nothing on the page changed: no new text, no message, no
+  // error (and the ones that only showed a pop-up message).
   var tryClicks = function (els, done) {
-    var quiet = [];
+    var quiet = [], popups = [];
     document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
     // Empty fields filled in the way a person would, so a form's button has
     // something to work with (a blank form rightly does nothing).
@@ -403,14 +628,19 @@ const PROBE: &str = r##"(function () {
     });
     var i = 0;
     var next = function () {
-      if (i >= els.length) return done(quiet);
+      if (i >= els.length) return done(quiet, popups);
       var el = els[i++];
-      var before = text(), d = dialogs, e = errors;
+      var before = text(), d = dialogs, e = errors, waited = 0;
       try { el.click(); } catch (x) {}
-      setTimeout(function () {
-        if (text() === before && dialogs === d && errors === e) quiet.push(label(el));
+      var judge = function () {
+        // Data it asked for is still coming (up to 3 s).
+        if (inflight > 0 && waited < 3000) { waited += 150; return setTimeout(judge, 150); }
+        var same = text() === before;
+        if (same && dialogs === d && errors === e) quiet.push(label(el));
+        else if (same && dialogs !== d) popups.push(label(el));
         next();
-      }, 150);
+      };
+      setTimeout(judge, 150);
     };
     next();
   };
@@ -441,9 +671,11 @@ const PROBE: &str = r##"(function () {
       var summary = { kind: 'summary', title: document.title || '', text: body ? body.innerText.trim().length : 0, buttons: controls.length, inputs: document.querySelectorAll('input:not([type=button]):not([type=submit]):not([type=hidden]), select, textarea').length, dead: dead.slice(0, 12),
         missing_ids: Object.keys(asked).filter(function (id) { return byId.call(document, id) === null; }).slice(0, 12),
         ids: [].map.call(document.querySelectorAll('[id]'), function (e) { return e.id; }).slice(0, 30),
+        labels: controls.concat([].slice.call(document.querySelectorAll('input:not([type=hidden]), select, textarea'))).map(function (el) { return el.placeholder || label(el); }).slice(0, 40),
         early_buttons: early, changes: changes };
-      tryClicks(live.slice(0, 8), function (quiet) {
+      tryClicks(live.slice(0, 8), function (quiet, popups) {
         summary.quiet = quiet.slice(0, 12);
+        summary.popups = popups.slice(0, 12);
         send(summary);
       });
     }, 5000);
@@ -515,6 +747,29 @@ pub fn wants_actions(asked: &str) -> bool {
     DO.is_match(asked)
 }
 
+/// Things the person asked to do on the page, each with words its control would say.
+pub fn asked_actions(asked: &str) -> Vec<(&'static str, &'static [&'static str])> {
+    const ACTIONS: &[(&str, &[&str])] = &[
+        ("buy", &["buy", "purchase", "order"]),
+        ("sell", &["sell"]),
+        ("add", &["add", "+", "new", "create", "save"]),
+        ("delete", &["delete", "remove", "clear", "×", "✕", "🗑"]),
+        ("search", &["search", "find", "go", "🔍"]),
+        ("send", &["send", "submit", "post"]),
+        ("book", &["book", "reserve"]),
+        ("reserve", &["book", "reserve"]),
+        ("convert", &["convert", "calculate", "="]),
+        ("calculate", &["calculate", "compute", "convert", "="]),
+        ("vote", &["vote"]),
+        ("upload", &["upload", "choose", "browse"]),
+        ("deposit", &["deposit", "add"]),
+        ("withdraw", &["withdraw"]),
+        ("transfer", &["transfer", "send"]),
+    ];
+    let low = asked.to_lowercase();
+    ACTIONS.iter().filter(|(verb, _)| regex::Regex::new(&format!(r"\b{verb}\b")).is_ok_and(|re| re.is_match(&low))).copied().collect()
+}
+
 /// What the check found, in words for the model: (problems, everything).
 /// `asked` is what the person asked for (to notice a page with nothing to use).
 pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, String) {
@@ -532,13 +787,49 @@ pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, Str
             "console" => once(format!("Console error: {}", r.message), &mut problems),
             // The server and the page both report a missing file; once, by its path.
             "missing" => once(format!("Missing file (404): {}", site_path(&r.message)), &mut problems),
+            // Straight from the page to another site: browsers don't let most data sources be read that way.
+            "request_failed" if web && outside(&r.message) => once(
+                format!(
+                    "Request failed: {}. A page can't read most data sources directly: fetch it through SulcusAI instead, \
+                     fetch('/__sulcus/fetch?url=' + encodeURIComponent(address)), and leave any key out (request_api_key)",
+                    r.message
+                ),
+                &mut problems,
+            ),
             "request_failed" => once(format!("Request failed: {}", r.message), &mut problems),
+            "live_blocked" => once(
+                format!("The page asked for live data ({}) but this chat is offline: use simulated data labelled as simulated, or ask to turn the web on with request_web", r.message),
+                &mut problems,
+            ),
+            "live_key_needed" => once(
+                format!(
+                    "{} refused the request because it needs an API key: call request_api_key so the user can connect it (SulcusAI then adds the key; \
+                     never put a key in the files), or switch to a source that needs no key",
+                    r.message
+                ),
+                &mut problems,
+            ),
+            "live_key_refused" => once(
+                format!("{} refused the key the user gave: tell the user the key may be wrong or not allowed for this data, or switch to a source that needs no key", r.message),
+                &mut problems,
+            ),
+            "live_placeholder" => once(
+                format!("The site sends a stand-in instead of an API key to {}: take it out of the files and call request_api_key (SulcusAI adds the real key)", r.message),
+                &mut problems,
+            ),
+            "live_failed" => once(format!("Live data failed: {}", r.message), &mut problems),
             "blocked" if !web => once(
                 format!("Blocked {} because this chat is offline: use the site's own files, or simulated data labelled as simulated (or ask to turn the web on with request_web)", r.message),
                 &mut problems,
             ),
             "blocked" => once(format!("Blocked by the page's own policy: {}", r.message), &mut problems),
             _ => {}
+        }
+    }
+    let mut live: Vec<&str> = Vec::new();
+    for r in reports.iter().filter(|r| r.kind == "live_ok") {
+        if !live.contains(&r.message.as_str()) {
+            live.push(&r.message);
         }
     }
     let summary = reports.iter().rev().find(|r| r.kind == "summary");
@@ -570,10 +861,27 @@ pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, Str
                     &mut problems,
                 );
             }
-            if s.changes == Some(false) && wants_live(asked) {
+            if !s.popups.is_empty() && wants_actions(asked) {
                 once(
-                    "Nothing on the page changes by itself, though the user asked for it to update live: change the numbers on a timer (setInterval) and show them"
-                        .to_string(),
+                    format!(
+                        "Clicking these only shows a pop-up message and changes nothing on the page: {}. Show the result on the page itself \
+                         (for example update the cash, the holdings, the totals or a list), and keep pop-ups for errors",
+                        s.popups.iter().map(|q| format!("“{q}”")).collect::<Vec<_>>().join(", ")
+                    ),
+                    &mut problems,
+                );
+            }
+            // Real data that refreshes every 15 s or more won't change in the seconds the check watches.
+            if s.changes == Some(false) && live.is_empty() && wants_live(asked) {
+                once(
+                    if web {
+                        "Nothing on the page changes by itself and it got no live data, though the user asked for live updates: fetch the real data \
+                         through fetch('/__sulcus/fetch?url=' + encodeURIComponent(address)) and fetch it again every 15 to 30 seconds with setInterval"
+                    } else {
+                        "Nothing on the page changes by itself, though the user asked for it to update live: change the numbers on a timer (setInterval), \
+                         show them, and label them as simulated (this chat is offline)"
+                    }
+                    .to_string(),
                     &mut problems,
                 );
             }
@@ -593,6 +901,22 @@ pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, Str
                     &mut problems,
                 );
             }
+            // Things they asked to do that no control on the page offers (the
+            // live test's 14B removed Buy and Sell to get rid of an error).
+            if s.buttons + s.inputs > 0 && !s.labels.is_empty() {
+                let have: Vec<String> = s.labels.iter().map(|l| l.to_lowercase()).collect();
+                let missing: Vec<&str> = asked_actions(asked).into_iter().filter(|(_, words)| !have.iter().any(|l| words.iter().any(|w| l.contains(w)))).map(|(v, _)| v).collect();
+                if !missing.is_empty() {
+                    once(
+                        format!(
+                            "The user asked to {} on the page, but no button or field does that (it has: {}). Add a working control for each, and keep the features that already work",
+                            missing.join(" and "),
+                            s.labels.iter().filter(|l| !l.trim().is_empty()).take(12).map(|l| format!("“{l}”")).collect::<Vec<_>>().join(", ")
+                        ),
+                        &mut problems,
+                    );
+                }
+            }
             if !s.dead.is_empty() {
                 once(
                     format!("These buttons do nothing when clicked (no click handler): {}. Make every one of them work", s.dead.iter().map(|d| format!("“{d}”")).collect::<Vec<_>>().join(", ")),
@@ -600,16 +924,60 @@ pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, Str
                 );
             }
             format!(
-                "It loaded: “{}”, {} characters of text, {} buttons ({} with nothing behind them), {} fields.",
+                "It loaded: “{}”, {} characters of text, {} buttons ({} with nothing behind them), {} fields.{}",
                 if s.title.is_empty() { "(no title)" } else { &s.title },
                 s.text,
                 s.buttons,
                 s.dead.len(),
-                s.inputs
+                s.inputs,
+                if live.is_empty() { String::new() } else { format!(" It got live data from {}.", live.join(", ")) }
             )
         }
     };
     (problems, text)
+}
+
+/// Puts the line a script error points to beside it ("(/app.js:46)" gets
+/// line 46's text), so a small model can fix it with one exact edit.
+pub fn quote_lines(root: &Path, problems: &mut [String]) {
+    static AT: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\((/[^():]+\.(?:js|mjs|html?)):(\d+)\)").unwrap());
+    // 'You don't have…': the apostrophe ends the string (the live test's 14B wrote this).
+    static APOSTROPHE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"'[^'\n]*[A-Za-z]'[A-Za-z][^'\n]*'").unwrap());
+    // "buyStock is not defined" from an onclick: the fix is in the script, not
+    // the page (the live test's 14B kept editing the button instead).
+    static UNDEFINED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"ReferenceError: ([A-Za-z_$][\w$]*) is not defined").unwrap());
+    let scripts: Vec<String> = std::fs::read_dir(root)
+        .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.to_ascii_lowercase().ends_with(".js")).collect())
+        .unwrap_or_default();
+    for p in problems.iter_mut() {
+        if let Some(name) = UNDEFINED.captures(p).map(|c| c[1].to_string()) {
+            let script = scripts.first().map_or("the page's script".to_string(), |s| s.clone());
+            p.push_str(&format!(
+                ". Nothing defines {name}: write function {name}(…) {{ … }} in {script}, at the top level (not inside another function or a DOMContentLoaded handler), so the page can call it"
+            ));
+            continue;
+        }
+        let Some(c) = AT.captures(p) else { continue };
+        let (path, n) = (c[1].to_string(), c[2].parse::<usize>().unwrap_or(0));
+        let Some(file) = file_for(root, &path) else { continue };
+        let Some(line) = std::fs::read_to_string(&file).ok().and_then(|t| t.lines().nth(n.saturating_sub(1)).map(|l| l.trim().to_string())) else { continue };
+        if line.is_empty() {
+            continue;
+        }
+        let line: String = line.chars().take(240).collect();
+        let hint = if p.contains("SyntaxError") && APOSTROPHE.is_match(&line) {
+            " (the apostrophe inside '…' ends the string early: put that text in double quotes or backticks instead)"
+        } else {
+            ""
+        };
+        p.push_str(&format!(". Line {n} of {} is: {line}{hint}", path.trim_start_matches('/')));
+    }
+}
+
+/// A failed request's address is another site's (not this PC's).
+fn outside(message: &str) -> bool {
+    let address = message.split_whitespace().next().unwrap_or_default();
+    (address.starts_with("http://") || address.starts_with("https://")) && crate::ports::local_port(address).is_none() && !address.contains("://127.0.0.1") && !address.contains("://localhost")
 }
 
 // ---------- commands ----------
@@ -622,14 +990,15 @@ pub async fn preview_open(state: AppStateRef<'_>, chat_id: String, root: String,
     let (folders, web) = {
         let conn = state.db.lock().unwrap();
         let chat = crate::db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
-        (crate::projects::chat_folders(&conn, &chat), crate::browser::allowed_for_chat(&conn, &chat_id))
+        // The same rule as the chat's web tools (the Web search feature counts too).
+        (crate::projects::chat_folders(&conn, &chat), crate::web::allowed_for_chat(&conn, &chat_id))
     };
     let sandbox = crate::sandbox::Sandbox::new(&folders);
     let path = PathBuf::from(&root);
     if !sandbox.roots().iter().any(|r| dunce::canonicalize(&path).is_ok_and(|p| p.starts_with(r))) {
         return Err("That folder isn't shared with this chat anymore.".into());
     }
-    serve(&chat_id, &path, start.as_deref().unwrap_or("index.html"), web).await
+    serve(state.inner(), &chat_id, &path, start.as_deref().unwrap_or("index.html"), web).await
 }
 
 #[tauri::command(async)]
@@ -739,19 +1108,115 @@ mod tests {
         assert!(problems.len() == 2 && problems[0].contains("“Buy”, “Sell”") && problems[1].contains("setInterval"), "{problems:?}");
         assert_eq!(describe(&[idle], true, "a site where I can buy and sell").0.len(), 1, "not asked to be live");
         // Something just to look at doesn't need controls.
-        assert!(describe(&[bare], true, "make me a page about my dog Rex").0.is_empty());
+        assert!(describe(&[bare.clone()], true, "make me a page about my dog Rex").0.is_empty());
         assert!(wants_actions("track my portfolio") && !wants_actions("a page about the history of Rome"));
+        // Buy and Sell that only pop up a message (the live stock test's first site).
+        let mut popping = bare.clone();
+        popping.buttons = 6;
+        popping.popups = vec!["Buy".into(), "Sell".into()];
+        let (problems, _) = describe(&[popping.clone()], true, "a stock exchange where I can buy and sell");
+        assert!(problems.len() == 1 && problems[0].contains("only shows a pop-up"), "{problems:?}");
+        assert!(describe(&[popping], true, "a page about my dog Rex").0.is_empty());
+        // Buy and Sell taken out, only Refresh left (the live test's 4th site).
+        let mut shrunk = bare.clone();
+        shrunk.buttons = 1;
+        shrunk.labels = vec!["Refresh Prices".into()];
+        let (problems, _) = describe(&[shrunk.clone()], true, "a live stock exchange where I can buy and sell shares");
+        assert!(problems.len() == 1 && problems[0].contains("asked to buy and sell") && problems[0].contains("“Refresh Prices”"), "{problems:?}");
+        shrunk.labels = vec!["Buy shares".into(), "Sell".into(), "Refresh Prices".into()];
+        assert!(describe(&[shrunk], true, "a live stock exchange where I can buy and sell shares").0.is_empty());
+        // Real prices that refresh every 15 s don't change while the check watches: not a problem.
+        let mut real = bare;
+        real.buttons = 8;
+        real.changes = Some(false);
+        let (problems, text) = describe(&[r("live_ok", "query1.finance.yahoo.com"), r("live_ok", "query1.finance.yahoo.com"), real], true, "a live stock exchange where I can buy");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(text.contains("It got live data from query1.finance.yahoo.com."), "{text}");
     }
 
+    #[test]
+    fn live_data_problems_point_to_the_fetch_route_and_keys() {
+        let r = |kind: &str, message: &str| Report { kind: kind.into(), message: message.into(), ..Report::default() };
+        let mut s = r("summary", "");
+        s.title = "Stocks".into();
+        s.text = 500;
+        s.buttons = 2;
+        let (problems, _) = describe(
+            &[
+                r("request_failed", "https://finnhub.io/api/v1/quote?symbol=AAPL (TypeError: Failed to fetch)"),
+                r("request_failed", "http://127.0.0.1:5000/data.json (404)"),
+                r("live_key_needed", "api.polygon.io/v2/last (401 Unauthorized)"),
+                r("live_placeholder", "finnhub.io (the token parameter)"),
+                r("live_failed", "example.com/x answered 500 Internal Server Error"),
+                s,
+            ],
+            true,
+            "live stock prices",
+        );
+        assert_eq!(problems.len(), 5, "{problems:?}");
+        assert!(problems[0].contains("/__sulcus/fetch") && problems[0].contains("request_api_key"));
+        assert!(!problems[1].contains("/__sulcus/fetch"), "a file of the site's own isn't another site");
+        assert!(problems[2].contains("request_api_key") && problems[2].contains("api.polygon.io"));
+        assert!(problems[3].contains("stand-in"));
+        assert!(problems[4].starts_with("Live data failed"));
+        // Offline, a direct request is only a failed request (the policy says why).
+        let (problems, _) = describe(&[r("request_failed", "https://finnhub.io/x (Failed to fetch)")], false, "");
+        assert!(!problems[0].contains("/__sulcus/fetch"));
+    }
+
+    #[test]
+    fn a_script_error_comes_with_its_line() {
+        let dir = std::env::temp_dir().join(format!("sulcus-preview-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("app.js"), "let cash = 1;\n  alert('You don't have any shares to sell.');\n").unwrap();
+        let root = dunce::canonicalize(&dir).unwrap();
+        let mut problems = vec!["Script error: Uncaught SyntaxError: missing ) after argument list (/app.js:2)".to_string(), "Missing file (404): /x.css".to_string()];
+        quote_lines(&root, &mut problems);
+        assert!(problems[0].ends_with("Line 2 of app.js is: alert('You don't have any shares to sell.'); (the apostrophe inside '…' ends the string early: put that text in double quotes or backticks instead)"), "{}", problems[0]);
+        assert_eq!(problems[1], "Missing file (404): /x.css");
+        // A button calling a function nothing defines: the fix goes in the script.
+        let mut problems = vec!["Script error: Uncaught ReferenceError: buyStock is not defined (/index.html:17)".to_string()];
+        quote_lines(&root, &mut problems);
+        assert!(problems[0].contains("write function buyStock(…) { … } in app.js, at the top level"), "{}", problems[0]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn stand_in_keys_are_noticed_and_real_keys_replace_them() {
+        for fake in ["YOUR_API_KEY", "your-key-here", "API_KEY", "apikey", "<key>", "{token}", "xxxxxxxx", "demo"] {
+            assert!(placeholder_key(fake), "{fake}");
+        }
+        for real in ["AAPL", "c1a2b3c4d5e6f7", "1m", "usd", "bitcoin,ethereum"] {
+            assert!(!placeholder_key(real), "{real}");
+        }
+        let k = crate::sitekeys::SiteKey { host: "finnhub.io".into(), platform: "Finnhub".into(), param: "token".into(), header: String::new(), key: "s3cr3t".into(), chats: vec![] };
+        let mut u = reqwest::Url::parse("https://finnhub.io/api/v1/quote?symbol=AAPL&token=YOUR_API_KEY").unwrap();
+        add_key(&mut u, &k);
+        assert_eq!(u.as_str(), "https://finnhub.io/api/v1/quote?symbol=AAPL&token=s3cr3t");
+        assert_eq!(asked_url(&"/__sulcus/fetch?url=https%3A%2F%2Fa.io%2Fq%3Fs%3D1%26t%3D2".parse().unwrap()).as_deref(), Some("https://a.io/q?s=1&t=2"));
+        assert_eq!(asked_url(&"/__sulcus/fetch".parse().unwrap()), None);
+        // Not encoded (what Qwen2.5-Coder 14B wrote in the live test): the whole address still arrives.
+        assert_eq!(
+            asked_url(&"/__sulcus/fetch?url=https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1m&range=1d".parse().unwrap()).as_deref(),
+            Some("https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1m&range=1d")
+        );
+    }
+
+    #[cfg(windows)]
     #[tokio::test]
     async fn a_site_is_served_on_this_pc_only_and_follows_the_chats_web() {
+        let state = crate::e2e::temp_state(None);
+        let serve = |chat: &'static str, dir: PathBuf, web: bool| {
+            let state = state.clone();
+            async move { super::serve(&state, chat, &dir, "index.html", web).await }
+        };
         let dir = std::env::temp_dir().join(format!("sulcus-preview-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("index.html"), "<!doctype html><title>T</title><p>Hello</p>").unwrap();
-        let s = serve("chat-a", &dir, "index.html", false).await.unwrap();
+        let s = serve("chat-a", dir.clone(), false).await.unwrap();
         assert!(s.url.starts_with("http://127.0.0.1:") && s.url.ends_with("/index.html"));
         // The same folder in the same chat is the same preview.
-        assert_eq!(serve("chat-a", &dir, "index.html", false).await.unwrap().id, s.id);
+        assert_eq!(serve("chat-a", dir.clone(), false).await.unwrap().id, s.id);
         let client = reqwest::Client::new();
         let r = client.get(&s.url).send().await.unwrap();
         assert_eq!(r.status(), 200);
@@ -771,10 +1236,24 @@ mod tests {
             assert_eq!(kinds, vec!["missing".to_string(), "error".to_string()]);
         }
         // Web turned on for the chat: served again without the policy.
-        let s2 = serve("chat-a", &dir, "index.html", true).await.unwrap();
+        let s2 = serve("chat-a", dir.clone(), true).await.unwrap();
         assert_ne!(s2.id, s.id);
         let r = client.get(&s2.url).send().await.unwrap();
         assert!(r.headers().get("content-security-policy").is_none());
+        // Live data: only for the site's own pages, only public addresses, and an address is needed.
+        let base = s2.url.trim_end_matches("index.html");
+        let r = client.get(format!("{base}__sulcus/fetch?url=https%3A%2F%2Fexample.com%2F")).header("sec-fetch-site", "cross-site").send().await.unwrap();
+        assert_eq!(r.status(), 403);
+        let r = client.get(format!("{base}__sulcus/fetch")).send().await.unwrap();
+        assert_eq!(r.status(), 400);
+        assert!(r.text().await.unwrap().contains("\"error\""));
+        let r = client.get(format!("{base}__sulcus/fetch?url=http%3A%2F%2F127.0.0.1%3A9%2Fsecret")).send().await.unwrap();
+        assert_eq!(r.status(), 400, "nothing on this PC or the home network");
+        {
+            let sites = SITES.lock().unwrap();
+            let kinds: Vec<String> = sites[&s2.id].reports.lock().unwrap().iter().map(|r| r.kind.clone()).collect();
+            assert_eq!(kinds, vec!["live_failed".to_string(), "live_failed".to_string()]);
+        }
         stop_chat("chat-a");
         assert!(!stop(&s2.id));
         let _ = std::fs::remove_dir_all(&dir);

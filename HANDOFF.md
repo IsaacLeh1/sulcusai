@@ -959,6 +959,48 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - Live test (ignored): `an_original_upload_finds_its_gguf_copy`, which finds ggml-org/gpt-oss-120b-GGUF.
   - Split GGUFs (…-00001-of-0000N) still aren't offered (`is_split`); unsloth's 120b is only split.
 
+## After 0.9.9 (2026-10-17, not released yet): live data, API keys, tools like ChatGPT/Claude
+
+Draft notes: `C:\dev\tools\notes-0910.md`.
+
+- **His brother's live stock exchange (20B model, "settings online") never got live data:**
+  - Bug: `tools/site.rs` and `preview_open` used `browser::allowed_for_chat` (the chat's globe only), while the chat's web tools use `web::allowed_for_chat` (globe or the Web search feature). With Web search on and the app Offline, the site was served with the offline CSP and every request was blocked, and the check suggested `request_web`, which isn't offered then. Both now use `web::allowed_for_chat`.
+  - Even with web on, pages can't read most sources (CORS) or need keys. Each preview server now has `GET /__sulcus/fetch?url=<address>` (`preview.rs fetch`):
+    - Allowed only while the chat may use the web, only from the site's own pages (`Sec-Fetch-Site`), public http(s) only (`web::check_url`), 120 a minute, 5 MB.
+    - It takes the whole rest of the query as the address, so unencoded addresses keep their own `&` parts (the 14B never encoded).
+    - Answers carry `CSP: sandbox`. Clients come from `web::site_clients`; the keyed one never follows a redirect to another host.
+    - Reports `live_ok`, `live_failed`, `live_blocked`, `live_key_needed` (401/403), `live_key_refused` and `live_placeholder` (YOUR_API_KEY and the like, `placeholder_key`). `describe` turns them into problems, and a direct request that fails gets "fetch it through SulcusAI".
+  - `agent.rs LIVE_DATA` (only with folders and web on, and on small memories only for build asks):
+    - Tells the model to fetch through the route every 15-30 s and update numbers in place.
+    - Names the free sources, all verified: Yahoo chart v8 (needs a browser User-Agent; v7 quote is 401), CoinGecko simple/price and Open-Meteo.
+  - The check ignores "nothing changes by itself" once real data came in (a 15 s refresh doesn't change within the 5 s it watches).
+- **API keys (his ask: tell the user, say what's needed, let them approve):** `request_api_key`, with platform, address, reason, signup and key_param or key_header.
+  - The popup is `KeyPermission.tsx`; the key travels by `site_key_give` before the allow.
+  - `sitekeys.rs` stores keys encrypted in settings (`site_keys`), per host, with the chats allowed to use them. `fetch` adds the key as the parameter (replacing any stand-in) or the header ("Authorization" gets "Bearer").
+  - Settings → Connectivity lists the saved keys, with Remove.
+  - Known free hosts get "needs no key" (`sitekeys::keyless`): the 14B asked for a Yahoo key. Both places given: the parameter wins.
+- **Site check additions:** buttons whose click only pops up a message (`Report.popups`) are a problem when the ask wants actions. `quote_lines` adds the line a script error points to; an apostrophe inside '…' gets a hint (the 14B wrote `alert('You don't have…')`). preview_site called before any file was written forces the first file (`forced_build`).
+- **Tools like ChatGPT/Claude (he asked for "all the tools they use"):**
+  - `calculate` and `run_code` (`jsrun.rs`, QuickJS via rquickjs 0.14):
+    - Limits: no network, 10 s, 256 MB. Helpers are globals on globalThis (so the code's own `const sum` works). `readFile`, `readCSV` and `readJSON` read shared folders only.
+    - `chart()` draws charts, which `ChartView.tsx` renders under the tool card; `save_chart` saves them as SVG.
+    - `as_js` turns ^, ×, "15% of", "1,234" and "3 x 4" into JavaScript.
+    - `chat::asks_math` plus `forced_calc` make a step-0 answer without a tool do the sum.
+  - `market_quote` (`quotes.rs`, Yahoo chart plus search for names; aliases like bitcoin, S&P 500, gold, EUR/USD), with a `range` chart. `wikipedia` (REST search plus extracts). `research` (2-4 searches side by side, 8 sources, 6 read with `web::excerpts`). All are in `tools/lookup.rs`.
+  - `schedule_task` (`tools/scheduled.rs`, Risk::Write so it asks first) saves a read-only `schedule::Schedule` with the chat's model.
+  - `chat::stalls` also catches a reply that ends on a lookup it never made (`ANNOUNCES`), and `forced_lookup` ranks research, market_quote and wikipedia by the ask.
+- **Small memories (`fit_small`):** with every feature on, an 8K model couldn't start a chat at all ("no longer fits").
+  - When base, notes and tools leave less than a quarter of the context for the chat, tool groups the ask doesn't mention are left out, in `tools::SPARE` order, together with their notes.
+  - Never left out: calculate, the web and file tools, and connectors. 25 tools went for a plain question.
+- **Live test** (dev mode, his real data, Qwen2.5-Coder 14B at 8K):
+  - Stock site: real prices from Yahoo through the route, with the check reporting "It got live data from query1.finance.yahoo.com".
+  - 18.5% of 2,340 = 432.9 (calculate).
+  - AAPL with a 1-month chart (market_quote).
+  - Link (wikipedia).
+  - A bar chart with total 535 and average 133.75 (run_code).
+  - "Every weekday at 8am…" scheduled (removed afterwards).
+- Not done: FLUX.1 links and split GGUFs (as before), LaTeX math in replies, maps and places.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

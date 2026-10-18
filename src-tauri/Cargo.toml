@@ -48,6 +48,8 @@ similar = "2"
 ignore = "0.4"
 regex = "1"
 dunce = "1"
+# calculate and run_code: a JavaScript sandbox (QuickJS) with no network or file writes.
+rquickjs = "0.14"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"

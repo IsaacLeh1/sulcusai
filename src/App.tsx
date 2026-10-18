@@ -35,6 +35,7 @@ import { SETTINGS_VIEWS, SettingsNav } from "./components/SettingsNav";
 import { PrivacyPill } from "./components/PrivacySettings";
 import { WebPermission } from "./components/WebPermission";
 import { FolderPermission } from "./components/FolderPermission";
+import { KeyPermission } from "./components/KeyPermission";
 import { MemoryWarningPopup } from "./components/MemoryWarning";
 import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
@@ -832,6 +833,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       </footer>
       <WebPermission chats={chats} onOpenChat={openChat} />
       <FolderPermission chats={chats} onOpenChat={openChat} />
+      <KeyPermission chats={chats} onOpenChat={openChat} />
       <MemoryWarningPopup />
       <ElsewhereApprovals chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} />
       <CrashReportPrompt toast={toast} />

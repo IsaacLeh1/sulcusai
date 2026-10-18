@@ -133,6 +133,21 @@ fn client(level: Connectivity, chat_web: bool) -> Result<reqwest::Client, String
     b.build().map_err(|e| e.to_string())
 }
 
+/// For the sites the assistant builds: their live data, fetched here (a page
+/// can't read most data sources itself). The second client is for requests
+/// carrying the user's key: it never follows a redirect to another host, or
+/// down to plain http, where the key would go along.
+pub fn site_clients(conn: &Connection, chat_id: &str) -> Result<(reqwest::Client, reqwest::Client), String> {
+    let (level, on) = chat_access(conn, chat_id);
+    let plain = client(level, on)?;
+    let b = builder()?.redirect(reqwest::redirect::Policy::custom(|a| {
+        let same_host = a.previous().last().is_some_and(|p| p.host_str() == a.url().host_str());
+        if a.previous().len() < 5 && same_host && a.url().scheme() == "https" { a.follow() } else { a.stop() }
+    }));
+    let b = if crate::privacy::proxy_for(net::Route::Web).is_some() { b } else { b.dns_resolver(std::sync::Arc::new(PublicOnly)) };
+    Ok((plain, b.build().map_err(|e| e.to_string())?))
+}
+
 /// The user's own SearXNG may be on this PC or their network: its searches
 /// use the plain lookup (the pages it finds still go through `client`).
 fn searxng_client() -> Result<reqwest::Client, String> {

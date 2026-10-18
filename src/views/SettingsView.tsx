@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
-import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
 import { chosenLanguage, LANGUAGES, setLanguage, t, tx } from "../i18n";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
@@ -103,6 +103,39 @@ function WebSearchSettings({ toast }: { toast: PushToast }) {
           <span className="muted small">{t("The server must allow JSON output (search.formats: json).")}</span>
         </label>
       )}
+    </div>
+  );
+}
+
+/** Keys the user gave for sites the assistant built (live prices and the like). */
+function SiteKeys({ toast }: { toast: PushToast }) {
+  const [keys, setKeys] = useState<SavedSiteKey[]>([]);
+  useEffect(() => {
+    api.siteKeys().then(setKeys).catch(() => {});
+  }, []);
+  if (keys.length === 0) return null;
+  const forget = async (host: string) => {
+    try {
+      await api.siteKeyForget(host);
+      setKeys((all) => all.filter((k) => k.host !== host));
+      toast(t("Removed."), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="form web-search">
+      <h3>{t("Keys for sites the assistant built")}</h3>
+      <p className="muted small">{t("Saved encrypted on this PC. Each is sent only to its own service, from sites in the chats you allowed it for.")}</p>
+      {keys.map((k) => (
+        <div key={k.host} className="row">
+          <span>
+            🔑 <strong>{k.platform}</strong> <span className="muted small">{k.host}</span>
+          </span>
+          <span className="spacer" />
+          <button className="btn ghost small danger" onClick={() => forget(k.host)}>{t("Remove")}</button>
+        </div>
+      ))}
     </div>
   );
 }
@@ -366,6 +399,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         </div>
         <p className="muted small">{t("Tip: while Offline, the 🌐 button in a chat (or Ctrl+Shift+W) turns web on for just that chat.")}</p>
         <WebSearchSettings toast={toast} />
+        <SiteKeys toast={toast} />
         <BrowserChoice toast={toast} />
       </section>
 

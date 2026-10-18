@@ -152,9 +152,9 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
          - When asked to build something (a website, an app, a script), do it on their PC: make the files, install what's needed and run it. \
          Start servers and watchers with run_command and background: true. Don't stop at showing code.\n\
          - Websites and web apps: build every feature they asked for, with real, working JavaScript: no placeholder buttons, \
-         no \"coming soon\", no fake data passed off as real. Write index.html first, then style.css and app.js, each with write_file \
-         (never as JSON or code in your reply). Live data (prices, scores, news) comes from a free public source that needs no key \
-         when this chat can use the web; otherwise simulate it with realistic, changing numbers and label it \"simulated\". Once every \
+         no \"coming soon\", no fake data passed off as real, and every button shows its result on the page (not just a pop-up). Write index.html first, then style.css and app.js, each with write_file \
+         (never as JSON or code in your reply). Live data (prices, scores, news) is real when this chat can use the web (fetched as \
+         described under Live data); otherwise simulate it with realistic, changing numbers and label it \"simulated\". Once every \
          file is written, call preview_site with the site's folder (or the port of a dev server you started): it opens the site in a \
          panel beside the chat and reports script errors, missing files and buttons that do nothing. Fix every problem it reports \
          and preview again before you say it's done.\n\
@@ -164,6 +164,21 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
         folders[0]
     )
 }
+
+/// How the sites it builds get live data, while the chat may use the web.
+const LIVE_DATA: &str = "\n\n## Live data in sites you build\n\
+     This chat can use the web, so a site you build shows real, live data, never made-up numbers. A page can't read most data \
+     sources directly, so fetch through SulcusAI from the site's own address: \
+     fetch('/__sulcus/fetch?url=' + encodeURIComponent(address)).then(r => r.json()), and again every 15 to 30 seconds with setInterval, \
+     changing the numbers already on the page (not adding new elements each time). \
+     Sources that need no key: stock prices, one symbol per request: https://query1.finance.yahoo.com/v8/finance/chart/AAPL?interval=1m&range=1d \
+     (chart.result[0].meta has regularMarketPrice, chartPreviousClose, regularMarketChangePercent and longName), for example \
+     async function quote(s) { const r = await fetch('/__sulcus/fetch?url=' + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/' + s + '?interval=1m&range=1d')); \
+     const m = (await r.json()).chart.result[0].meta; return { name: m.longName, price: m.regularMarketPrice, change: m.regularMarketChangePercent }; }; \
+     crypto: https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true; \
+     weather: https://api.open-meteo.com/v1/forecast?latitude=40.76&longitude=-111.89&current=temperature_2m,wind_speed_10m. \
+     If a source needs an API key, call request_api_key: the user is told what the site connects to and approves it, and SulcusAI \
+     adds the key to those requests. Never write a key or a stand-in like YOUR_API_KEY into the files, and never ask for one in the chat.";
 
 fn now() -> i64 {
     db::now_ms()
@@ -254,6 +269,13 @@ impl Turn {
         if self.use_tools && self.mode != tools::Mode::Plan {
             extra.push("open_path");
         }
+        // Exact math and a code sandbox, in every chat with tools.
+        if self.use_tools {
+            extra.extend(["calculate", "run_code"]);
+        }
+        if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::Scheduled) {
+            extra.push("schedule_task");
+        }
         if self.use_tools && self.mode != tools::Mode::Plan && (features.contains(&Feature::Email) || features.contains(&Feature::Calendar)) {
             extra.push("connect_account");
         }
@@ -324,7 +346,7 @@ impl Turn {
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
-                extra.extend(["weather", "web_search", "fetch_page"]);
+                extra.extend(["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote"]);
             } else if !crate::offline::blocks(crate::offline::Keep::Web) {
                 // Fully offline: a yes couldn't turn the web on anyway.
                 extra.push("request_web");
@@ -366,6 +388,8 @@ impl Turn {
         let mut tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();
+        // Notes about tools a small memory may leave out (fit_small), with the tools they're about.
+        let mut notes: Vec<(&[&str], String)> = Vec::new();
         if let Some(p) = &project {
             about.push_str(&projects::prompt_section(p));
         }
@@ -373,7 +397,7 @@ impl Turn {
             about.push_str(&memory::prompt_section(&memory::relevant(&memories, &request)));
         }
         if !media_note.is_empty() {
-            about.push_str(&format!(
+            let text = format!(
                 "\n\nYou can make {} on this PC. When the user asks for one, call the tool with a vivid, specific description \
                  (who and what, where, what's happening, what's around, the light) instead of describing it in words; a fuller \
                  description makes a better picture. Pictures come out as realistic photos unless they ask for another look \
@@ -390,19 +414,24 @@ impl Turn {
                  so don't paste links or ids; say in a sentence what you made. If making it fails, say so in a sentence and \
                  don't guess at causes or send them to other pages.",
                 media_note.join(", ")
-            ));
+            );
+            about.push_str(&text);
+            notes.push((&["create_image", "edit_image", "create_video", "create_music"], text));
         }
         if let Some(note) = &people_note {
             about.push_str(note);
+            notes.push((&["ask_person", "work_with_person"], note.clone()));
         }
         if chats_note {
-            about.push_str(if tools::chats::is_asked(&self.chat_id) {
+            let text = if tools::chats::is_asked(&self.chat_id) {
                 "\n\nYou can look through the user's other chats with search_chats and read_chat."
             } else {
                 "\n\nThe user's other chats on this PC work with you: look through them with search_chats and read_chat, and give another \
                  chat's assistant a piece of work or a question with message_chat (or start a new chat for it). It works there with \
                  the same model, one at a time, and its reply comes back to you. Use it when the user asks, or to split up a big job."
-            });
+            };
+            about.push_str(text);
+            notes.push((&["search_chats", "read_chat", "message_chat"], text.to_string()));
         } else if self.use_tools && !incognito {
             // Chats don't work together: other chats' notes aren't this chat's work.
             about.push_str(
@@ -414,6 +443,13 @@ impl Turn {
         if self.use_tools {
             about.push_str(&tools::app_note(&self.state, &self.cipher));
             about.push_str(&tool_instructions(&sandbox, self.mode));
+            self.add_live_data(&sandbox, &mut about, &mut tools, build_ask || !small);
+            if tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("calculate"))) {
+                about.push_str(
+                    "\n\nFor any arithmetic, percentages, money, dates or counting, call calculate (or run_code for longer work) and use its exact result; \
+                     never work numbers out in your head.",
+                );
+            }
             about.push_str(&connectors::skills_prompt(&extras.skills));
             if !extras.problems.is_empty() {
                 about.push_str(&format!(
@@ -425,6 +461,9 @@ impl Turn {
         // A compacted chat: the latest summary stands in for what came before it.
         if let (_, Some(summary)) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id)) {
             about.push_str(&compact::prompt_section(&summary));
+        }
+        if small && !lean {
+            self.fit_small(&recent_asks.join("\n"), &mut about, &mut tools, &notes).await;
         }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let system_of = |about: &str| if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
@@ -593,6 +632,20 @@ impl Turn {
                         continue;
                     }
                 }
+                // A sum answered from its head: one more try that works it out
+                // with calculate. The guess is dropped.
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_math(asked) {
+                    if let Some(f) = tools.as_ref().and_then(chat::forced_calc) {
+                        let mut ep = self.ep.clone();
+                        ep.extra["response_format"] = f.response_format.clone();
+                        ep.extra["max_tokens"] = json!(300);
+                        forced = Some((ep, f));
+                        first = Some(finished);
+                        message_id = uuid::Uuid::new_v4().to_string();
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
+                }
                 // Doesn't know what (or who) the user means: it looks it up on
                 // the web, or asks to when the web is off. The guess is dropped.
                 if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::doesnt_know(&finished.content) {
@@ -678,6 +731,15 @@ impl Turn {
                             let (dir, links) = chat::page_missing(&written)?;
                             tools.as_ref().and_then(|t| chat::forced_page(t, &dir.join("index.html"), &links))
                         })
+                        // It ended by pasting a fixed file into its reply: save it (then preview, below).
+                        .or_else(|| {
+                            let said = result.last.as_ref().map(|m| m.content.as_str()).unwrap_or_default();
+                            if !chat::pasted_code(said) || problems_left.is_none() {
+                                return None;
+                            }
+                            let file = chat::named_file(said, &written)?;
+                            tools.as_ref().and_then(|t| chat::forced_save(t, &PathBuf::from(sandbox.display(&file))))
+                        })
                         // It wrote a site and stopped: open it beside the chat and
                         // check it, then (up to twice) make it fix what the check found.
                         .or_else(|| {
@@ -738,6 +800,22 @@ impl Turn {
                         "text",
                         None,
                     )
+                } else if repeat && call.name == "preview_site" && result.last.as_ref().is_some_and(|m| chat::pasted_code(&m.content)) {
+                    // It wrote the fix into its reply, not the file, and previews the
+                    // unchanged site again (the live test's 14B): the next step saves it.
+                    let file = result.last.as_ref().and_then(|m| chat::named_file(&m.content, &written));
+                    if follow_ups < 12 {
+                        if let Some(f) = file.as_deref().and_then(|p| tools.as_ref().and_then(|t| chat::forced_save(t, &PathBuf::from(sandbox.display(p))))) {
+                            follow_ups += 1;
+                            follow_up = Some(f);
+                        }
+                    }
+                    Outcome::ok(
+                        "The site hasn't changed since the last preview: the code in your reply was never saved to the file. Save it with write_file (the whole file), then preview again.",
+                        format!("Skipped a repeat of {}", call.name),
+                        "text",
+                        None,
+                    )
                 } else if repeat {
                     repeats += 1;
                     Outcome::ok(
@@ -776,6 +854,14 @@ impl Turn {
                 if matches!(call.name.as_str(), "create_image" | "edit_image" | "create_video" | "create_music") && outcome.meta["status"] == "ok" {
                     made_media = true;
                 }
+                // Asked to preview before writing anything (the live test's 14B
+                // did, three times): the next step writes the first file.
+                if call.name == "preview_site" && outcome.meta["status"] != "ok" && written.is_empty() && build_ask && follow_ups < 12 {
+                    if let Some(f) = tools.as_ref().and_then(chat::forced_build) {
+                        follow_ups += 1;
+                        follow_up = Some(f);
+                    }
+                }
                 if call.name == "preview_site" && outcome.meta["preview_site"].is_string() {
                     previewed = true;
                     previews += 1;
@@ -794,11 +880,14 @@ impl Turn {
                 if outcome.meta["web_granted"] == true {
                     if let Some(Value::Array(defs)) = tools.as_mut() {
                         defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str) != Some("request_web"));
-                        for name in ["weather", "web_search", "fetch_page"] {
+                        for name in ["weather", "web_search", "fetch_page", "wikipedia", "research", "market_quote"] {
                             if let Some(d) = tools::find(name) {
                                 defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
                             }
                         }
+                    }
+                    if self.add_live_data(&sandbox, &mut about, &mut tools, build_ask || !small) {
+                        system = system_of(&about);
                     }
                 }
                 // The user shared a folder: the file tools work there from the next step on.
@@ -827,6 +916,9 @@ impl Turn {
                                 defs.push(d);
                             }
                         }
+                    }
+                    if self.add_live_data(&sandbox, &mut about, &mut tools, build_ask || !small) {
+                        system = system_of(&about);
                     }
                 }
                 let outcome = fit_result(outcome, self.ep.ctx);
@@ -908,6 +1000,9 @@ impl Turn {
         }
         if call.name == "request_folder" {
             return self.request_folder(call, sandbox).await;
+        }
+        if call.name == "request_api_key" {
+            return self.request_api_key(call).await;
         }
         if call.name == "message_chat" {
             return self.message_chat(call).await;
@@ -1239,6 +1334,173 @@ impl Turn {
         }
     }
 
+    /// A small memory (8K) can't take every tool and note at once: the tools
+    /// this request doesn't need are left out, group by group (tools::SPARE),
+    /// with their notes, until the instructions and tools leave room for the
+    /// chat and the reply. Sizes are counted by the engine once, then scaled.
+    async fn fit_small(&self, asked: &str, about: &mut String, offered: &mut Option<Value>, notes: &[(&[&str], String)]) {
+        let Some(Value::Array(defs)) = offered.as_mut() else { return };
+        let json_len = Value::Array(defs.clone()).to_string().len().max(1);
+        let (Ok(base), Ok(said), Ok(listed)) = (
+            chat::count_tokens(&self.ep, &self.base).await,
+            chat::count_tokens(&self.ep, about).await,
+            chat::count_tokens(&self.ep, &Value::Array(defs.clone()).to_string()).await,
+        ) else {
+            return;
+        };
+        let reply = (self.ep.ctx / 4).clamp(256, 4096);
+        // Room for the conversation itself.
+        let chat_room = (self.ep.ctx / 4).max(768);
+        let limit = self.ep.ctx.saturating_sub(reply + chat_room) as f64;
+        let mut total = (base + said + listed) as f64;
+        if total <= limit {
+            return;
+        }
+        let per_tool_byte = listed as f64 / json_len as f64;
+        let per_note_byte = said as f64 / about.len().max(1) as f64;
+        let name = |d: &Value| d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default().to_string();
+        let mut left_out: Vec<String> = Vec::new();
+        for (group, needed) in tools::SPARE.iter() {
+            if total <= limit {
+                break;
+            }
+            if needed.is_match(asked) {
+                continue;
+            }
+            defs.retain(|d| {
+                let n = name(d);
+                if tools::in_group(&n, group) {
+                    total -= d.to_string().len() as f64 * per_tool_byte;
+                    left_out.push(n);
+                    false
+                } else {
+                    true
+                }
+            });
+            for (tools_of, note) in notes {
+                if !defs.iter().any(|d| tools_of.contains(&name(d).as_str())) && about.contains(note.as_str()) {
+                    *about = about.replacen(note.as_str(), "", 1);
+                    total -= note.len() as f64 * per_note_byte;
+                }
+            }
+        }
+        if !left_out.is_empty() {
+            crate::applog::line("agent", &format!("Small memory ({}): left out {} tools this request doesn't need", self.ep.ctx, left_out.len()));
+        }
+    }
+
+    /// Building with the web on: how sites get live data, and a way to ask
+    /// for a key. Whether it added them (once a turn). `wanted` is false for a
+    /// small memory when nothing is being built (the note would crowd it).
+    fn add_live_data(&self, sandbox: &Sandbox, about: &mut String, offered: &mut Option<Value>, wanted: bool) -> bool {
+        if !wanted || !self.use_tools || sandbox.is_empty() || self.mode == tools::Mode::Plan || about.contains(LIVE_DATA) {
+            return false;
+        }
+        if !crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
+            return false;
+        }
+        about.push_str(LIVE_DATA);
+        if let (Some(Value::Array(defs)), Some(d)) = (offered.as_mut(), tools::find("request_api_key")) {
+            if !defs.iter().any(|x| x.pointer("/function/name").and_then(Value::as_str) == Some(d.name)) {
+                defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
+            }
+        }
+        true
+    }
+
+    /// A site needs a data source that asks for a key: the user is told what
+    /// it connects to and what it needs, and gives the key in a popup (or
+    /// keeps one saved earlier). SulcusAI keeps it and adds it to this chat's
+    /// sites' requests to that host; the model never sees it.
+    async fn request_api_key(&self, call: &ToolCall) -> Outcome {
+        let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
+        let text = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        let Some(host) = text("address").as_deref().and_then(crate::sitekeys::host_of) else {
+            return Outcome::error("Ask for a key", "Give the API's public address (address), e.g. https://finnhub.io/api/v1/.");
+        };
+        let platform: String = text("platform").unwrap_or_else(|| host.clone()).chars().take(60).collect();
+        let reason: String = text("reason").unwrap_or_else(|| "this site".into()).chars().take(120).collect();
+        // The free sources under Live data need no key (the live test's 14B asked for a Yahoo one).
+        if crate::sitekeys::keyless(&host) {
+            return Outcome::ok(
+                format!(
+                    "{platform} ({host}) needs no API key: fetch it through fetch('/__sulcus/fetch?url=' + encodeURIComponent(address)) as it is. \
+                     Go on now: write the site's files with write_file, index.html first."
+                ),
+                format!("{platform} needs no key"),
+                "text",
+                None,
+            );
+        }
+        let mut param = text("key_param").unwrap_or_default();
+        let mut header = text("key_header").unwrap_or_default();
+        // Both given (copied from the examples): the parameter, the usual place.
+        if !param.is_empty() && !header.is_empty() {
+            if crate::sitekeys::param_ok(&param) {
+                header.clear();
+            } else {
+                param.clear();
+            }
+        }
+        let place_ok = match (param.is_empty(), header.is_empty()) {
+            (false, true) => crate::sitekeys::param_ok(&param),
+            (true, false) => crate::sitekeys::header_ok(&header),
+            _ => false,
+        };
+        if !place_ok {
+            return Outcome::error(
+                format!("Ask for a {platform} key"),
+                "Say where the key goes: key_param (the query parameter, e.g. token) or key_header (e.g. X-API-Key), one of them.",
+            );
+        }
+        if !crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
+            return Outcome::error(format!("Ask for a {platform} key"), "This chat is offline, so a site can't use the key. Ask to turn the web on with request_web first.");
+        }
+        let signup = text("signup").filter(|s| s.starts_with("https://") && reqwest::Url::parse(s).is_ok());
+        let saved = crate::sitekeys::saved_for(&self.state.db.lock().unwrap(), &self.cipher, &host).is_some();
+        crate::sitekeys::offer(&call.id, crate::sitekeys::Ask { platform: platform.clone(), host: host.clone(), reason: reason.clone(), signup, saved });
+        // The popup (KeyPermission) shows the platform, what it's for, where to get a key, and a box for it.
+        let preview = Preview { title: format!("Connect {platform} for: {reason}"), kind: "key", detail: Some(reason.clone()), note: Some(host.clone()) };
+        let decision = self.ask(call, Risk::Read, preview).await;
+        let typed = crate::sitekeys::taken(&call.id);
+        if decision == Decision::Deny || (typed.is_none() && !saved) {
+            self.log(&format!("Didn't connect {platform} (asked for: {reason})"));
+            return Outcome::ok(
+                format!(
+                    "The user didn't connect {platform}. Don't ask for the key in the chat or put one in the files. Use a source that \
+                     needs no key instead (see Live data), or, if there's none for this, show realistic simulated data labelled \"simulated\", \
+                     and say in a sentence that connecting {platform} would make it live."
+                ),
+                format!("{platform} not connected"),
+                "text",
+                None,
+            );
+        }
+        let given = crate::sitekeys::SiteKey { host: host.clone(), platform: platform.clone(), param: param.clone(), header: header.clone(), key: String::new(), chats: Vec::new() };
+        {
+            let conn = self.state.db.lock().unwrap();
+            if let Err(e) = crate::sitekeys::approve(&conn, &self.cipher, &self.chat_id, given, typed) {
+                return Outcome::error(format!("Couldn't connect {platform}"), e);
+            }
+            db::log_action(&conn, "privacy", &format!("Let this chat's sites use an API key for {host} (the assistant asked)"));
+        }
+        let place = if param.is_empty() { format!("in the {header} header") } else { format!("as the {param} parameter") };
+        let mut o = Outcome::ok(
+            format!(
+                "The user connected {platform}. SulcusAI adds their key {place} to every request this chat's sites make to {host} through \
+                 /__sulcus/fetch. In the JavaScript, leave the key out entirely and fetch like this: \
+                 fetch('/__sulcus/fetch?url=' + encodeURIComponent('https://{host}/...')).then(r => r.json()). Never write the key, \
+                 a stand-in for it or a {} into the files.",
+                if param.is_empty() { "key header".to_string() } else { format!("{param}= parameter") }
+            ),
+            format!("Connected {platform}"),
+            "text",
+            None,
+        );
+        o.meta["key_granted"] = json!(host);
+        o
+    }
+
     /// Web access is off and the model needs it: the user is asked in a
     /// popup. A yes turns web on for this chat and the turn carries on with
     /// the web tools; a no lets the model answer without them.
@@ -1269,7 +1531,7 @@ impl Turn {
         }
         self.emit("chat:web", json!({ "chat_id": self.chat_id, "web": true }));
         let mut o = Outcome::ok(
-            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page or weather to finish what they asked.",
+            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page, wikipedia, research, market_quote or weather to finish what they asked.",
             format!("Web turned on: {reason}"),
             "text",
             None,

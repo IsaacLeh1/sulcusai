@@ -613,8 +613,37 @@ pub fn forced_web(tools: &Value) -> Option<ForcedLookup> {
     })
 }
 
+// A sum to work out ("what's 37*48", "15% of 2,345", "1250 divided by 7",
+// "how many days until Christmas"), which small models get wrong in their heads.
+// Dates (10/17, 2026-10-17) and sizes (3x3) aren't sums.
+static MATH_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)\d\s*[*×÷^]\s*\(?\d|\d\s+[-+/]\s+\(?\d|\d\s*\+\s*\d|\b\d[\d,.]*\s*(plus|minus|times|divided by|multiplied by|to the power of)\s+\d|\b\d+(\.\d+)?\s*(%|percent)\s+of\s+\$?\d|\b(square root|cube root|sqrt) of\s+\d|\bhow many (days|weeks|months|hours|minutes|seconds) (until|till|between|since|from|are (there )?in|left)\b|\b(compound interest|monthly payment|mortgage payment|loan payment)\b|\btip on \$?\d|\bsplit \$?\d[\d,.]* (\w+ )?(ways|between)\b",
+    )
+    .unwrap()
+});
+
+/// The message asks for something to be worked out (and isn't a request to build or write code).
+pub fn asks_math(text: &str) -> bool {
+    let t: String = text.chars().take(600).collect();
+    MATH_ASK.is_match(&t) && !t.contains("```") && !is_build_ask(&[t.as_str()])
+}
+
+/// For a model that answered a sum from its head: one call that works it out.
+pub fn forced_calc(tools: &Value) -> Option<ForcedLookup> {
+    let def = tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some("calculate"))?;
+    let schema = json!({ "type": "object", "properties": { "name": { "const": "calculate" }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
+    Some(ForcedLookup {
+        names: vec!["calculate".into()],
+        nudge: "(Don't work it out in your head: call calculate with the math from my message as one expression, e.g. \"37*48\", \"15% of 2345\" or \
+                \"daysBetween('2026-10-17', '2026-12-25')\". Reply with only one tool call as JSON, {\"name\": \"calculate\", \"arguments\": {\"expression\": \"...\"}}.)"
+            .into(),
+        response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+    })
+}
+
 // Asking for a picture to be made.
-static PICTURE_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+static PICTURE_ASK:std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"(?i)\b(make|create|draw|generate|paint|render|design|show me|give me|i want|can you (make|draw|create))\b[\s\S]{0,60}\b(picture|image|photo|drawing|painting|illustration|artwork|art|wallpaper|logo|portrait|sketch|pixel art|poster)\b|\b(picture|image|photo|drawing|painting) of\b|\b(draw|paint|sketch|illustrate)\s+(me\s+)?(a|an|the|some|my|our)\b").unwrap()
 });
 // Saying it can't make pictures (often right after making one).
@@ -776,8 +805,16 @@ pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
     }
     // Saying it has no access is wrong however long the reply goes on.
     let opening: String = reply.chars().take(600).collect();
-    NO_ACCESS.is_match(&opening) || (reply.chars().count() < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(&reply))
+    // Ending on what it's about to look up, without looking ("Here are the
+    // searches I'll run: … Let's execute these searches", the live test's 14B).
+    let n = reply.chars().count();
+    let ending: String = reply.chars().skip(n.saturating_sub(250)).collect();
+    NO_ACCESS.is_match(&opening) || (n < 800 && ABOUT_THEIR_THINGS.is_match(user) && STALLING.is_match(&reply)) || (n < 1500 && ANNOUNCES.is_match(&ending))
 }
+
+static ANNOUNCES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(i'?ll|i will|let me|let'?s|let us|i'?m going to|i am going to)\s+(now\s+)?(perform|run|do|execute|conduct|start|carry out|search|look|check|research|find|gather|fetch|browse)\b[^\n]{0,80}\b(search(es)?|research|look ?ups?|the web|online|sources|information|results|data)\b[^\n]{0,40}[.:!]?\s*$").unwrap()
+});
 
 // Asking for something to be made: a site, an app, a script, files.
 static BUILD_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -869,6 +906,37 @@ pub fn forced_write(tools: &Value, page: &str, missing: &std::path::Path) -> Opt
         ),
         response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
     })
+}
+
+/// The reply has a long block of code in it (more than 12 lines).
+pub fn pasted_code(reply: &str) -> bool {
+    static FENCE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?s)```[^\n]*\n(.*?)(```|$)").unwrap());
+    FENCE.captures_iter(reply).any(|c| c[1].lines().count() > 12)
+}
+
+/// The file a reply is about, among those written this turn: the one it
+/// names ("update `app.js`"), else the newest script, else the newest file.
+pub fn named_file(reply: &str, written: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    let low = reply.to_lowercase();
+    written
+        .iter()
+        .rev()
+        .find(|p| p.file_name().is_some_and(|n| low.contains(&n.to_string_lossy().to_lowercase())))
+        .or_else(|| written.iter().rev().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("js"))))
+        .or_else(|| written.last())
+        .cloned()
+}
+
+/// For a model that wrote a fix into its reply and previewed the unchanged
+/// site again: one call that saves the file, whole.
+pub fn forced_save(tools: &Value, file: &std::path::Path) -> Option<ForcedLookup> {
+    let mut f = forced_write(tools, "", file)?;
+    let name = file.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    f.nudge = format!(
+        "(The {name} you wrote in your reply was never saved, so the site didn't change. Save it now with write_file (path {:?}): the whole file, with every fix and every feature. Reply with only one tool call as JSON, {{\"name\": \"write_file\", \"arguments\": {{...}}}}.)",
+        file.display().to_string()
+    );
+    Some(f)
 }
 
 /// For a model that wrote a site and stopped: one call that previews it (the
@@ -1003,6 +1071,9 @@ pub fn forced_lookup(tools: &Value, asked: &str, looks_only: impl Fn(&str) -> bo
         ("list_tasks", &["task", "to-do", "todo", "remind"]),
         ("weather", &["weather", "forecast", "rain", "temperature"]),
         ("search_meetings", &["meeting notes", "transcript"]),
+        ("market_quote", &["stock", "share price", "price of", "crypto", "bitcoin", "exchange rate", "currency"]),
+        ("research", &["research", "compare", "better", "best", "versus", " vs", "pros and cons"]),
+        ("wikipedia", &["who is", "who was", "what is", "tell me about"]),
     ];
     let rank = |name: &str| first.iter().position(|(n, words)| *n == name && words.iter().any(|w| q.contains(w))).unwrap_or(usize::MAX);
     let name_of = |t: &Value| t.pointer("/function/name").and_then(Value::as_str).unwrap_or("").to_string();
@@ -1242,6 +1313,59 @@ mod tests {
 
     fn m(role: &str, id: &str) -> Message {
         Message { id: id.into(), role: role.into(), content: id.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_fix_pasted_into_the_reply_is_saved_next() {
+        let code: String = (0..20).map(|i| format!("line {i}\n")).collect();
+        let reply = format!("Great! Now I'll update the `app.js` file.\n\n```javascript\n{code}```");
+        assert!(pasted_code(&reply) && !pasted_code("Here's a short one:\n```js\nlet a = 1;\n```"));
+        let written = vec![std::path::PathBuf::from("C:/s/index.html"), std::path::PathBuf::from("C:/s/app.js"), std::path::PathBuf::from("C:/s/style.css")];
+        assert_eq!(named_file(&reply, &written), Some(std::path::PathBuf::from("C:/s/app.js")));
+        assert_eq!(named_file("fixed it", &written), Some(std::path::PathBuf::from("C:/s/app.js")), "the newest script");
+        let tools = json!([{ "type": "function", "function": { "name": "write_file", "description": "", "parameters": { "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } } } } }]);
+        let f = forced_save(&tools, std::path::Path::new("live-test2/app.js")).unwrap();
+        assert!(f.nudge.contains("never saved"));
+        assert_eq!(f.response_format["json_schema"]["schema"]["properties"]["arguments"]["properties"]["path"]["const"], "live-test2/app.js");
+    }
+
+    #[test]
+    fn announcing_a_lookup_without_doing_it_is_a_stall() {
+        let offered = vec!["research".to_string(), "web_search".to_string()];
+        let said = "To research which is better, I'll perform a few web searches. Here are the searches I'll run:\n\n1. \"iPhone 17 battery life\"\n2. \"Pixel 10 battery life\"\n\nLet's execute these searches and gather the results.";
+        assert!(stalls("Research which is better for battery life", said, &offered));
+        // An answer that mentions looking things up along the way isn't one.
+        assert!(!stalls("Who is Link?", "Link is the hero of The Legend of Zelda. Let me know if you'd like more details!", &offered));
+        let tools = json!([
+            { "type": "function", "function": { "name": "web_search", "description": "", "parameters": { "type": "object" } } },
+            { "type": "function", "function": { "name": "research", "description": "", "parameters": { "type": "object" } } },
+        ]);
+        let f = forced_lookup(&tools, "Research which is better, the iPhone 17 or the Pixel 10", |_| true).unwrap();
+        assert_eq!(f.names, vec!["research".to_string()]);
+    }
+
+    #[test]
+    fn sums_are_worked_out_not_guessed() {
+        for ask in [
+            "what's 37*48?",
+            "What is 15% of 2,345",
+            "how much is 1250 divided by 7",
+            "1234 + 5678",
+            "what is 2^10",
+            "How many days until Christmas?",
+            "what's the monthly payment on a 300k mortgage at 6.5% for 30 years",
+            "split $184.50 4 ways",
+            "square root of 1764",
+        ] {
+            assert!(asks_math(ask), "{ask}");
+        }
+        for not in ["what's on 10/17?", "make a 3x3 grid game", "my birthday is 2026-10-17", "Build me a calculator app", "tell me about Apollo 11", "I have 2 cats"] {
+            assert!(!asks_math(not), "{not}");
+        }
+        let tools = json!([{ "type": "function", "function": { "name": "calculate", "description": "", "parameters": { "type": "object" } } }]);
+        let f = forced_calc(&tools).unwrap();
+        assert_eq!(f.response_format["json_schema"]["schema"]["properties"]["name"]["const"], "calculate");
+        assert!(forced_calc(&json!([])).is_none());
     }
 
     /// gpt-oss thinks even when asked not to: with a small allowance it ran

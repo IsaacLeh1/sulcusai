@@ -14,6 +14,16 @@ pub fn preview_site_params() -> Value {
         "port": { "type": "integer", "description": "Instead of path: the port of a dev server you started with run_command (background: true), e.g. 5173." } } })
 }
 
+pub fn request_api_key_params() -> Value {
+    json!({ "type": "object", "required": ["platform", "address", "reason"], "properties": {
+        "platform": { "type": "string", "description": "The service's name, e.g. \"Finnhub\"." },
+        "address": { "type": "string", "description": "The API's address the site fetches, e.g. \"https://finnhub.io/api/v1/\". The key is only ever sent there." },
+        "reason": { "type": "string", "description": "In a few words, what the site uses it for, e.g. \"live stock prices\"." },
+        "signup": { "type": "string", "description": "The page where the user gets a key, e.g. \"https://finnhub.io/register\"." },
+        "key_param": { "type": "string", "description": "The query parameter that carries the key, as the service's docs say, e.g. \"token\" or \"apikey\". Give this or key_header, not both." },
+        "key_header": { "type": "string", "description": "Only if the service takes the key in a header instead: its name, e.g. \"X-API-Key\" (\"Authorization\" sends \"Bearer <key>\")." } } })
+}
+
 /// The page to start on in a folder: index.html, or its only page.
 fn start_page(dir: &std::path::Path) -> Option<String> {
     if dir.join("index.html").is_file() {
@@ -37,8 +47,9 @@ fn show(ctx: &Ctx<'_>, payload: Value) {
 
 pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let chat_id = ctx.memory.chat_id.to_string();
-    // The site may reach the internet only when this chat may.
-    let web = crate::browser::allowed_for_chat(&ctx.memory.db.lock().unwrap(), &chat_id);
+    // The site may reach the internet only when this chat may (by the same
+    // rule as its web tools: the Web search feature counts too).
+    let web = crate::web::allowed_for_chat(&ctx.memory.db.lock().unwrap(), &chat_id);
     if let Some(port) = args.get("port").and_then(Value::as_u64).filter(|p| *p > 0 && *p < 65536) {
         let port = port as u16;
         if !crate::ports::previewable(port) {
@@ -87,7 +98,7 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         return Outcome::error(format!("Preview {target}"), format!("{} doesn't exist.", ctx.sandbox.display(&path)));
     };
     let shown = ctx.sandbox.display(&root);
-    let served = match crate::preview::serve(&chat_id, &root, &start, web).await {
+    let served = match crate::preview::serve(ctx.state, &chat_id, &root, &start, web).await {
         Ok(s) => s,
         Err(e) => return Outcome::error(format!("Preview {shown}"), e),
     };
@@ -107,7 +118,9 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 .map(|m| m.content.clone())
                 .collect::<Vec<_>>()
                 .join("\n");
-            crate::preview::describe(reports, web, &asked)
+            let (mut problems, summary) = crate::preview::describe(reports, web, &asked);
+            crate::preview::quote_lines(std::path::Path::new(&served.root), &mut problems);
+            (problems, summary)
         }
         Err(e) => (Vec::new(), format!("It couldn't be checked ({e}).")),
     };

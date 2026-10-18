@@ -6,6 +6,7 @@ import type { PushToast } from "./Toasts";
 import type { PreviewTarget } from "./PreviewPanel";
 import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
+import { ChartView } from "./ChartView";
 
 const TOOL_ICONS: Record<string, string> = {
   search_chats: "💬",
@@ -14,6 +15,13 @@ const TOOL_ICONS: Record<string, string> = {
   list_dir: "📂",
   read_file: "📄",
   preview_site: "🖥",
+  request_api_key: "🔑",
+  calculate: "🧮",
+  run_code: "⚙️",
+  wikipedia: "📚",
+  research: "🔬",
+  market_quote: "📈",
+  schedule_task: "⏰",
   find_files: "🔎",
   search_files: "🔎",
   write_file: "✏️",
@@ -69,6 +77,7 @@ export function ToolCard({
   liveSteps,
   onOpenChat,
   onPreview,
+  toast,
 }: {
   call: ToolCall;
   meta?: ToolMeta;
@@ -77,6 +86,7 @@ export function ToolCard({
   liveSteps?: string[];
   onOpenChat?: (id: string) => void;
   onPreview?: (p: PreviewTarget) => void;
+  toast?: PushToast;
 }) {
   const [open, setOpen] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -126,6 +136,13 @@ export function ToolCard({
             {t("Preview in SulcusAI's browser")}
           </button>
           <span className={previewError ? "warn-text small" : "muted small"}>{previewError ?? t("Servers and ports in Settings can stop or restart it.")}</span>
+        </div>
+      )}
+      {meta?.charts && meta.charts.length > 0 && status === "ok" && (
+        <div className="tool-charts">
+          {meta.charts.map((c, i) => (
+            <ChartView key={i} spec={c} toast={toast} />
+          ))}
         </div>
       )}
       {meta?.file && status === "ok" && (

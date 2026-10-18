@@ -5,13 +5,16 @@ mod app;
 pub mod browser;
 pub mod chats;
 pub mod comms;
+mod compute;
 mod documents;
 mod fs;
 mod guard;
+mod lookup;
 mod media;
 mod meetings;
 mod memory;
 mod notes;
+mod scheduled;
 pub(crate) mod shell;
 mod site;
 mod web;
@@ -95,14 +98,50 @@ pub struct ToolDef {
 /// a request to build is offered only these (every tool's description took
 /// more than half of an 8K window, leaving no room for the files).
 pub fn for_building(name: &str) -> bool {
-    matches!(group(name), "files" | "web") || matches!(name, "request_folder" | "open_path")
+    (matches!(group(name), "files" | "web") && !matches!(name, "wikipedia" | "research" | "market_quote")) || matches!(name, "request_folder" | "open_path")
 }
 
 /// Tools for making pictures, video and music (and looking up what things
 /// look like): what a small memory is offered for a picture request, so the
 /// conversation (what the person wanted from the start) still fits.
 pub fn for_pictures(name: &str) -> bool {
-    matches!(group(name), "media" | "web")
+    matches!(group(name), "media" | "web") && !matches!(name, "request_api_key" | "research" | "market_quote")
+}
+
+/// What a small memory leaves out first when the instructions and every tool
+/// don't fit with room for the chat (an 8K model with every feature on
+/// couldn't even start), in order, each with what a request says when it does
+/// need them: those stay. Names ending in "_" are prefixes. Never left out:
+/// calculate, the web search and files tools, and connectors.
+pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex)>> = std::sync::LazyLock::new(|| {
+    let g = |p: &str| regex::Regex::new(&format!("(?i){p}")).unwrap();
+    vec![
+        (&["delegate"][..], g(r"\bhelpers?\b|delegate")),
+        (&["search_chats", "read_chat", "message_chat"], g(r"\bchats?\b|conversation")),
+        (&["ask_person", "work_with_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+")),
+        (&["search_meetings", "read_meeting"], g(r"meeting|transcript")),
+        (&["browser_"], g(r"browser|log ?in|sign ?in|click|fill (in|out)|web ?page|go to|book |order |buy ")),
+        (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)")),
+        (&["calendar_"], g(r"calendar|meeting|events?\b|appointment|schedule|free time|busy|tomorrow|today|tonight|next week|this week")),
+        (&["create_note", "search_notes", "read_note", "update_note"], g(r"\bnotes?\b|jot|write (it |that )?down")),
+        (&["create_task", "list_tasks", "complete_task"], g(r"\btasks?\b|to-?dos?|remind")),
+        (&["schedule_task"], g(r"\bevery\b|\beach (day|morning|evening|night|week)|daily|weekly|hourly|remind me|schedule")),
+        (&["create_image", "edit_image", "create_video", "create_music"], g(r"picture|image|photo|draw|paint|sketch|logo|wallpaper|video|clip|animat|song|music|sound|lyrics")),
+        (&["research"], g(r"research|compare|comparison|in.depth|report|pros and cons|\b(best|better|worse)\b|which (one )?(is|should)|\bvs\.?\b|versus")),
+        (&["market_quote"], g(r"stock|shares?\b|price|crypto|bitcoin|ethereum|currenc|exchange rate|\bmarkets?\b|\bindex\b|nasdaq|s&p|\bdow\b|\bgold\b|silver|\boil\b|forex")),
+        (&["create_document", "read_document"], g(r"document|\bword\b|docx|pdf|excel|xlsx|spreadsheet|powerpoint|pptx|slides?\b|resume|letter")),
+        (&["run_code"], g(r"chart|graph|plot|csv|json|\bdata\b|analy|\bcode\b|script|javascript|\bsort|\bcount|statistic|average|median")),
+        (&["app_status", "open_page", "connect_account"], g(r"sulcus|settings|connect|account|install|\bmodels?\b|feature")),
+        (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
+        (&["weather"], g(r"weather|forecast|temperature|\brain|snow|wind|sunny|\bhot\b|\bcold\b")),
+        (&["wikipedia"], g(r"who (is|was|are|were)|what (is|was|are|were)|wiki|history of|tell me about|meaning of")),
+        (&["remember", "search_memory"], g(r"remember|forget|recall|my name|about me|last time")),
+    ]
+});
+
+/// Whether a tool is one of a SPARE group's.
+pub fn in_group(name: &str, group: &[&str]) -> bool {
+    group.iter().any(|g| if g.ends_with('_') { name.starts_with(g) } else { name == *g })
 }
 
 /// Which group a tool belongs to; groups are offered only when available.
@@ -113,13 +152,14 @@ fn group(name: &str) -> &'static str {
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
         "create_task" | "list_tasks" | "complete_task" => "tasks",
-        "web_search" | "fetch_page" | "request_web" | "weather" => "web",
+        "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" => "web",
+        "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
         "create_document" | "read_document" => "documents",
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
-        "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" => "app",
+        "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" => "people",
         "search_chats" | "read_chat" | "message_chat" => "chats",
         _ => "files",
@@ -131,6 +171,12 @@ pub const TOOLS: &[ToolDef] = &[
         description: "What's set up in SulcusAI: connected email and calendar accounts, how many emails are copied, the internet mode and which features are on." },
     ToolDef { name: "connect_account", risk: Risk::Write, params: app::connect_account_params,
         description: "Connect the user's Gmail/Google Calendar or Outlook/Microsoft 365 by opening that sign-in page in their browser. The user is asked first and signs in themselves; wait for the result." },
+    ToolDef { name: "schedule_task", risk: Risk::Write, params: scheduled::schedule_task_params,
+        description: "Set up something to happen by itself at set times, when the user asks for that (\"every morning at 8 give me the news\", \"remind me Friday at 5 to…\"): a prompt that runs on a schedule, each run saved as a chat. The user approves it first." },
+    ToolDef { name: "calculate", risk: Risk::Read, params: compute::calculate_params,
+        description: "Work out math exactly: arithmetic, percentages, powers, roots, money and dates. Use it for every calculation instead of doing it in your head." },
+    ToolDef { name: "run_code", risk: Risk::Read, params: compute::run_code_params,
+        description: "Run JavaScript on this PC to work something out: longer calculations, counting, dates, sorting or analysing data (including CSV or JSON files in shared folders), and charts shown in the chat. No internet." },
     ToolDef { name: "open_page", risk: Risk::Read, params: app::open_page_params,
         description: "Show the user a page of SulcusAI, e.g. mail to add another kind of email account, or models to install models." },
     ToolDef { name: "list_dir", risk: Risk::Read, params: fs::list_dir_params,
@@ -193,10 +239,18 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Search the web for current information. Returns titles, addresses and snippets to cite." },
     ToolDef { name: "weather", risk: Risk::Read, params: web::weather_params,
         description: "Current weather and the forecast for a place, with exact temperatures. Use it for any weather question instead of web_search." },
+    ToolDef { name: "wikipedia", risk: Risk::Read, params: lookup::wikipedia_params,
+        description: "Look up a person, place, thing, event or term in Wikipedia: quick, reliable facts. Use it for who or what something is." },
+    ToolDef { name: "research", risk: Risk::Read, params: lookup::research_params,
+        description: "Research a question in depth: runs several web searches at once, reads the best pages and returns what they say with their addresses. Use it for questions that need more than one search (comparisons, reports, recommendations, recent events)." },
+    ToolDef { name: "market_quote", risk: Risk::Read, params: lookup::market_quote_params,
+        description: "Live prices for stocks, funds, indexes, crypto, currencies and commodities (with a chart of how they moved when given a range). Use it for any price or exchange rate instead of web_search." },
     ToolDef { name: "fetch_page", risk: Risk::Read, params: web::fetch_page_params,
         description: "Read a web page as text, by its address. Use it on search results to get the details." },
     ToolDef { name: "request_web", risk: Risk::Read, params: web::request_web_params,
         description: "Web access is off in this chat. If the task needs current information from the internet, or something the user mentions that you don't know or aren't sure about (a name, a game, a character, a term), call this: the user is asked in a popup. If they allow it, web_search, fetch_page and weather are available right away to finish the task; if not, answer without the web." },
+    ToolDef { name: "request_api_key", risk: Risk::Read, params: site::request_api_key_params,
+        description: "Only when a site you're building needs a service that requires an API key (the free sources under Live data need none): call this instead of writing a key or a placeholder into the files, or asking for it in the chat. The user is told what the site connects to and what it needs, and gives the key in a popup (or says no). SulcusAI keeps it and adds it to the site's requests to that service through /__sulcus/fetch." },
     ToolDef { name: "browser_open", risk: Risk::Read, params: browser::browser_open_params,
         description: "Open a website in the built-in browser, which the user can watch. Use it to use a site (fill in a search, click through pages); for just reading, web_search and fetch_page are quicker. Returns the page's text and its links, buttons and fields, numbered." },
     ToolDef { name: "browser_read", risk: Risk::Read, params: browser::browser_read_params,
@@ -328,7 +382,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -351,7 +405,8 @@ pub fn app_note(state: &crate::AppState, c: &Cipher) -> String {
 #[derive(Debug, Clone, Serialize)]
 pub struct Preview {
     pub title: String,
-    /// "diff", "command", "text" or "folder" (a folder request: detail is the reason, note the folder).
+    /// "diff", "command", "text", "folder" (a folder request: detail is the reason, note the folder)
+    /// or "key" (an API key request: detail is the reason, note the host).
     pub kind: &'static str,
     pub detail: Option<String>,
     pub note: Option<String>,
@@ -418,6 +473,7 @@ pub fn notes_preview(name: &str, args: &Value, db: &Mutex<Connection>, cipher: &
 pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, String> {
     match name {
         "connect_account" => app::preview(args),
+        "schedule_task" => scheduled::preview(args),
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         "ask_person" | "work_with_person" => Ok(people_preview(name, args)),
@@ -456,6 +512,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "message_chat" => Outcome::error("Ask another chat", "Other chats are asked from the chat itself."),
         // Asked of the user by the agent itself.
         "request_folder" => Outcome::error("Ask for a folder", "Folders are asked for in the chat."),
+        "request_api_key" => Outcome::error("Ask for a key", "Keys are asked for in the chat."),
         // Its assistant runs tools too, so the call is boxed.
         "work_with_person" => Box::pin(crate::sync::people::together::tool(args, ctx)).await,
         "run_command" => shell::run(args, ctx).await,
@@ -465,6 +522,18 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             notes::run(name, args, &ctx.memory)
         }
         "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory).await,
+        "wikipedia" | "research" | "market_quote" => {
+            let prepared = {
+                let conn = ctx.memory.db.lock().unwrap();
+                crate::web::prepare(&conn, ctx.memory.cipher, ctx.memory.chat_id)
+            };
+            match prepared {
+                Ok((client, settings, key)) => lookup::run(name, args, lookup::Web { client, settings, key }, &ctx.memory).await,
+                Err(e) => Outcome::error("Web access is off", e),
+            }
+        }
+        "calculate" | "run_code" => compute::run(name, args, ctx).await,
+        "schedule_task" => scheduled::run(args, ctx),
         "create_document" | "read_document" => {
             let name = name.to_string();
             let args = args.clone();
@@ -506,6 +575,12 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "web_search" => return "Couldn't search the web".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
         "weather" => return "Couldn't check the weather".into(),
+        "wikipedia" => return "Couldn't look it up on Wikipedia".into(),
+        "research" => return "Couldn't research that".into(),
+        "market_quote" => return "Couldn't check the prices".into(),
+        "calculate" => return "Couldn't calculate that".into(),
+        "run_code" => return "The code couldn't run".into(),
+        "schedule_task" => return "Couldn't schedule the task".into(),
         n if n.starts_with("browser_") => return "Couldn't use the browser".into(),
         "create_document" => return "Couldn't make the document".into(),
         "read_document" => return "Couldn't read the document".into(),
@@ -544,6 +619,23 @@ mod tests {
     }
 
     #[test]
+    fn a_small_memory_keeps_the_tools_a_request_names() {
+        let needed = |tool: &str, asked: &str| SPARE.iter().find(|(g, _)| in_group(tool, g)).is_some_and(|(_, re)| re.is_match(asked));
+        assert!(in_group("browser_open", &["browser_"]) && !in_group("open_page", &["browser_"]));
+        assert!(needed("market_quote", "What's Apple's stock price right now?"));
+        assert!(needed("email_search", "any new emails from Abby?"));
+        assert!(needed("schedule_task", "Every weekday at 8am, give me the news"));
+        assert!(needed("run_code", "make a bar chart of my sales"));
+        assert!(needed("research", "Which is better, the iPhone 17 or the Pixel 10?"));
+        assert!(!needed("email_search", "What's 18.5% of 2,340?"));
+        assert!(!needed("browser_open", "Who is Link from Zelda?"));
+        // Never left out.
+        for always in ["calculate", "web_search", "fetch_page", "read_file", "write_file", "run_command", "preview_site", "request_api_key"] {
+            assert!(!SPARE.iter().any(|(g, _)| in_group(always, g)), "{always}");
+        }
+    }
+
+    #[test]
     fn plan_mode_only_offers_read_tools() {
         let defs = definitions(Mode::Plan, true, true);
         let names: Vec<&str> = defs.as_array().unwrap().iter().map(|d| d["function"]["name"].as_str().unwrap()).collect();
@@ -551,7 +643,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 41);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 48);
     }
 
     #[test]

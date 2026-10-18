@@ -617,8 +617,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             waiting
           />
         ))}
-        {/* Asking for the web or a folder is a popup (WebPermission, FolderPermission), wherever the person is. */}
-        {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder").map((p) => (
+        {/* Asking for the web, a folder or an API key is a popup (WebPermission, FolderPermission, KeyPermission), wherever the person is. */}
+        {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder" && p.tool !== "request_api_key").map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
         {jobs.map((j) => (
@@ -936,7 +936,7 @@ function renderItems(
             }
             return (
               <Fragment key={c.id}>
-                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} />
+                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} toast={saveToast} />
                 {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={saveToast} />}
               </Fragment>
             );

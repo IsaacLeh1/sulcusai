@@ -44,6 +44,7 @@ mod hardware;
 mod hello;
 mod hub;
 mod inbox;
+mod jsrun;
 mod local;
 mod location;
 #[cfg(test)]
@@ -68,9 +69,11 @@ mod ports;
 mod preview;
 mod projects;
 mod quick;
+mod quotes;
 mod sandbox;
 mod schedule;
 mod security;
+mod sitekeys;
 mod speech;
 mod storage;
 mod sync;
@@ -258,6 +261,22 @@ fn app_info(state: AppStateRef) -> AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         data_dir: state.paths.data.display().to_string(),
     }
+}
+
+/// Saves a chart from a chat (run_code, market_quote) as an SVG file where the user picked.
+#[tauri::command(async)]
+fn save_chart(state: AppStateRef, path: String, svg: String) -> Result<(), String> {
+    state.cipher()?;
+    let p = std::path::PathBuf::from(&path);
+    if !p.is_absolute() || !p.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+        return Err("Save it as an .svg file.".into());
+    }
+    if !svg.trim_start().starts_with("<svg") || svg.len() > 4 * 1024 * 1024 {
+        return Err("That isn't a chart.".into());
+    }
+    std::fs::write(&p, svg).map_err(|e| format!("Couldn't save it: {e}"))?;
+    state.log("files", "Saved a chart from a chat");
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -2008,6 +2027,11 @@ pub fn run() {
             preview::preview_open,
             preview::preview_stop,
             preview::preview_open_external,
+            save_chart,
+            sitekeys::site_key_ask,
+            sitekeys::site_key_give,
+            sitekeys::site_keys,
+            sitekeys::site_key_forget,
             handoff_guard::handoffs_view,
             handoff_guard::handoff_revoke,
             handoff_guard::handoff_forget,

@@ -668,6 +668,11 @@ select, .input {
 
 .form label.check { flex-direction: row; align-items: center; gap: 8px; font-weight: 400; }
 .tool-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+/* Charts the assistant drew (run_code, market_quote). */
+.tool-charts { display: flex; flex-direction: column; gap: 10px; padding: 0 10px 10px; }
+.chart-view { margin: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 8px; max-width: 680px; }
+.chart-view svg { display: block; width: 100%; height: auto; }
+.chart-view figcaption { display: flex; justify-content: flex-end; }
 
 /* ---------- quick ask ---------- */
 html.quick-window, html.quick-window body { background: transparent; overflow: hidden; }

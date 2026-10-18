@@ -789,11 +789,23 @@ export interface SitePreview {
   web: boolean;
 }
 
+/** A chart the assistant drew (run_code's chart(), market_quote's price history). */
+export interface ChartSpec {
+  type: "bar" | "line" | "area" | "pie" | "scatter";
+  title: string;
+  x_label: string;
+  y_label: string;
+  labels: string[];
+  series: { name: string; data?: (number | null)[]; points?: [number, number][] }[];
+}
+
 export interface ToolMeta {
   title: string;
   status: "ok" | "error" | "denied";
   kind: "diff" | "command" | "text";
   detail?: string | null;
+  /** Charts to show with the result. */
+  charts?: ChartSpec[];
   tool?: string;
   /** On the note in a chat that continued elsewhere. */
   handoff_to?: string;
@@ -844,9 +856,27 @@ export interface QueueItem {
 
 export interface Preview {
   title: string;
-  kind: "diff" | "command" | "text" | "folder";
+  kind: "diff" | "command" | "text" | "folder" | "key";
   detail: string | null;
   note: string | null;
+}
+
+/** A site the assistant is building needs an API key for a data source. */
+export interface SiteKeyAsk {
+  platform: string;
+  host: string;
+  reason: string;
+  /** Where to get a key. */
+  signup: string | null;
+  /** A key for this host is saved already. */
+  saved: boolean;
+}
+
+/** A saved site key, as Settings lists it (never the key itself). */
+export interface SavedSiteKey {
+  host: string;
+  platform: string;
+  chats: number;
 }
 
 export interface PendingApproval {
@@ -1776,6 +1806,11 @@ export const api = {
   removeFolder: (path: string) => invoke<void>("remove_folder", { path }),
   /** Picks another folder for the assistant's folder request. */
   chooseFolder: (callId: string, path: string) => invoke<void>("choose_folder", { callId, path }),
+  saveChart: (path: string, svg: string) => invoke<void>("save_chart", { path, svg }),
+  siteKeyAsk: (callId: string) => invoke<SiteKeyAsk>("site_key_ask", { callId }),
+  siteKeyGive: (callId: string, key: string) => invoke<void>("site_key_give", { callId, key }),
+  siteKeys: () => invoke<SavedSiteKey[]>("site_keys"),
+  siteKeyForget: (host: string) => invoke<void>("site_key_forget", { host }),
   desktopAccess: () => invoke<DesktopAccess>("desktop_access"),
   setDesktopAccess: (on: boolean) => invoke<DesktopAccess>("set_desktop_access", { on }),
   setChatMode: (chatId: string, mode: RunMode) => invoke<void>("set_chat_mode", { chatId, mode }),
