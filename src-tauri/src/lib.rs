@@ -399,8 +399,9 @@ async fn hub_search(state: AppStateRef<'_>, query: String, sort: String, all: Op
 #[derive(serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum HubLink {
-    /// A GGUF chat model (installs with `hub_install`).
-    Chat { model: hub::HubModel, file: Option<String> },
+    /// A GGUF chat model (installs with `hub_install`). `found_for`: the model
+    /// the link named, when it had no GGUF file and this is a GGUF copy of it.
+    Chat { model: hub::HubModel, file: Option<String>, found_for: Option<String> },
     /// A picture, video or music model (installs with `media_hub_install`).
     Media { model: media::hub::HubMediaModel, media: &'static str, file: Option<String> },
 }
@@ -420,7 +421,11 @@ async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, Strin
             e
         }
     })?;
+    // Needs an account: a GGUF copy of it (they usually don't) is the way in.
     if !r.info["gated"].is_null() && r.info["gated"] != false {
+        if let Some(found) = gguf_copy_of(&state, &client, &repo_id).await {
+            return Ok(found);
+        }
         return Err("That model needs a Hugging Face account to download, which SulcusAI doesn't use.".into());
     }
     // The file the link named, when it's one SulcusAI can use (else all are shown).
@@ -434,10 +439,34 @@ async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, Strin
         let model = hub::describe(&r.info, &r, &state.budget(), true);
         if !model.files.is_empty() {
             let file = named(model.files.iter().map(|f| &f.file).collect());
-            return Ok(HubLink::Chat { file, model });
+            return Ok(HubLink::Chat { file, model, found_for: None });
+        }
+    }
+    // A chat model's original upload (no GGUF file): a GGUF copy of it.
+    if matches!(r.info["pipeline_tag"].as_str(), None | Some("text-generation" | "image-text-to-text")) {
+        if let Some(found) = gguf_copy_of(&state, &client, &repo_id).await {
+            return Ok(found);
         }
     }
     Err(hub_why_not(&r.info))
+}
+
+/// The most downloaded GGUF copy of a model that has a file SulcusAI can load
+/// (his brother pasted openai/gpt-oss-120b, which isn't in GGUF, and SulcusAI
+/// said it couldn't use it instead of finding ggml-org/gpt-oss-120b-GGUF).
+async fn gguf_copy_of(state: &AppState, client: &reqwest::Client, of: &str) -> Option<HubLink> {
+    for id in hub::gguf_copies(client, of).await.into_iter().take(6) {
+        let Ok(copy) = hub::repo(client, &id).await else { continue };
+        if !hub::is_chat(&copy) {
+            continue;
+        }
+        let model = hub::describe(&copy.info, &copy, &state.budget(), true);
+        if !model.files.is_empty() {
+            state.log("network", "Found a GGUF copy of a pasted Hugging Face model (huggingface.co)");
+            return Some(HubLink::Chat { file: None, model, found_for: Some(of.to_string()) });
+        }
+    }
+    None
 }
 
 /// Why a pasted model can't be used, by what kind of model it is (his

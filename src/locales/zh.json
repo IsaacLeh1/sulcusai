@@ -2796,5 +2796,6 @@
  "Didn't make it again": "没有再次生成",
  "It's ready: it's shown above, with a button to save it.": "已完成：显示在上方，并附有保存按钮。",
  "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI 暂时无法运行该音乐模型。基于 ACE-Step 1.5 的 Hugging Face 音乐模型可以使用。",
- "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI 暂时无法运行该视频模型。基于 Wan 2.2 5B 或 Wan 2.1 1.3B 的 Hugging Face 视频模型可以使用。"
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI 暂时无法运行该视频模型。基于 Wan 2.2 5B 或 Wan 2.1 1.3B 的 Hugging Face 视频模型可以使用。",
+ "{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.": "{original} 不是 GGUF 格式（SulcusAI 运行聊天模型所用的格式），这是它在 Hugging Face 上最受欢迎的 GGUF 版本。"
 }

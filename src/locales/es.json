@@ -2796,5 +2796,6 @@
  "Didn't make it again": "No se volvió a crear",
  "It's ready: it's shown above, with a button to save it.": "Ya está listo: aparece arriba, con un botón para guardarlo.",
  "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI todavía no puede usar ese modelo de música. Los modelos de música de Hugging Face funcionan cuando están basados en ACE-Step 1.5.",
- "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI todavía no puede usar ese modelo de vídeo. Los modelos de vídeo de Hugging Face funcionan cuando están basados en Wan 2.2 5B o Wan 2.1 1.3B."
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI todavía no puede usar ese modelo de vídeo. Los modelos de vídeo de Hugging Face funcionan cuando están basados en Wan 2.2 5B o Wan 2.1 1.3B.",
+ "{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.": "{original} no está en GGUF, el formato en el que SulcusAI ejecuta los modelos de chat, así que esta es su copia GGUF más popular en Hugging Face."
 }

@@ -950,6 +950,12 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - The media note asks for each description in full, on its own: what's wanted now, plus anything earlier the user asked to keep, nothing else; and edit_image for changes.
   - Five pictures in a row in one chat each matched only their own ask.
 - Verified by eye: four-step chain (portrait → red top hat → birthday party → night with string lights), the same face and hat throughout, about 22-26 s per edit on the card.
+- **GGUF copies of pasted originals:** his brother pasted openai/gpt-oss-120b (no GGUF) and got "has no GGUF file".
+  - `hub::gguf_copies` asks Hugging Face for `base_model:quantized:<id>` (most downloaded first, with GGUF, no account), and `gguf_copy_of` (lib.rs) offers the first that `is_chat`.
+  - `HubLink::Chat.found_for` names the original, and the window says it's a GGUF copy.
+  - It also runs for gated originals before the "needs an account" message.
+  - Live test (ignored): `an_original_upload_finds_its_gguf_copy`, which finds ggml-org/gpt-oss-120b-GGUF.
+  - Split GGUFs (…-00001-of-0000N) still aren't offered (`is_split`); unsloth's 120b is only split.
 
 ## Website (2026-10-12)
 

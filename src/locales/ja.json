@@ -2796,5 +2796,6 @@
  "Didn't make it again": "もう一度は作りませんでした",
  "It's ready: it's shown above, with a button to save it.": "できました。上に表示されていて、保存ボタンもあります。",
  "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI はまだその音楽モデルを実行できません。Hugging Face の音楽モデルは ACE-Step 1.5 をベースにしたものなら使えます。",
- "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI はまだその動画モデルを実行できません。Hugging Face の動画モデルは Wan 2.2 5B または Wan 2.1 1.3B をベースにしたものなら使えます。"
+ "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI はまだその動画モデルを実行できません。Hugging Face の動画モデルは Wan 2.2 5B または Wan 2.1 1.3B をベースにしたものなら使えます。",
+ "{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.": "{original} は SulcusAI がチャットモデルを動かす形式の GGUF ではないため、これは Hugging Face で最も人気のある GGUF 版です。"
 }

@@ -139,6 +139,11 @@ export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { prog
                 : t("Installs under Models → Pictures, video, music, and shows in the Studio.")}
             </span>
           </div>
+          {found.kind === "chat" && found.found_for && (
+            <p className="small muted">
+              {t("{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.", { original: found.found_for })}
+            </p>
+          )}
           {shown.map((r) => {
             const p = progress[r.modelId];
             const pct = p && p.total > 0 ? percent(p.received, p.total) : null;

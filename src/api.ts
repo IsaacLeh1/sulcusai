@@ -549,7 +549,7 @@ export interface FolderView {
 
 /** A pasted Hugging Face link, as the model it points at, and the file it named. */
 export type HubLinkResult =
-  | { kind: "chat"; model: HubModel; file: string | null }
+  | { kind: "chat"; model: HubModel; file: string | null; /** The model the link named, when this is a GGUF copy of it (it had none). */ found_for?: string | null }
   | { kind: "media"; model: HubMediaModel; media: "image" | "video" | "music"; file: string | null };
 
 export interface HubResults {

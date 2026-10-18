@@ -302,6 +302,27 @@ pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> Hu
     }
 }
 
+/// GGUF copies of a model that isn't in GGUF itself (an original upload like
+/// openai/gpt-oss-120b): the repositories Hugging Face lists as quantized
+/// from it, most downloaded first, that download without an account.
+pub(crate) async fn gguf_copies(client: &reqwest::Client, of: &str) -> Vec<String> {
+    let Ok(mut url) = reqwest::Url::parse(API) else { return Vec::new() };
+    url.query_pairs_mut()
+        .append_pair("filter", &format!("base_model:quantized:{of}"))
+        .append_pair("sort", "downloads")
+        .append_pair("direction", "-1")
+        .append_pair("limit", "12")
+        .append_pair("expand[]", "gguf")
+        .append_pair("expand[]", "gated");
+    let Ok(resp) = client.get(url).send().await else { return Vec::new() };
+    let found: Vec<Value> = resp.json().await.unwrap_or_default();
+    found
+        .into_iter()
+        .filter(|m| !m["gguf"].is_null() && (m["gated"].is_null() || m["gated"] == false))
+        .filter_map(|m| m["id"].as_str().map(str::to_string))
+        .collect()
+}
+
 /// A GGUF chat model: Hugging Face calls it a text model (or names no
 /// task) and it has a single-file model SulcusAI can load.
 pub(crate) fn is_chat(repo: &Repo) -> bool {
@@ -464,6 +485,19 @@ pub fn refine(state: &AppState, spec: &mut ModelSpec, file: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// His brother pasted openai/gpt-oss-120b (no GGUF in it): its GGUF
+    /// copies are found, and the most downloaded has a file to load. Live.
+    #[tokio::test]
+    #[ignore]
+    async fn an_original_upload_finds_its_gguf_copy() {
+        let client = reqwest::Client::builder().user_agent("SulcusAI test").build().unwrap();
+        let copies = gguf_copies(&client, "openai/gpt-oss-120b").await;
+        assert!(copies.iter().any(|c| c == "ggml-org/gpt-oss-120b-GGUF"), "{copies:?}");
+        let first = repo(&client, &copies[0]).await.unwrap();
+        assert!(is_chat(&first), "{} has a file SulcusAI can load", copies[0]);
+        assert!(gguf_copies(&client, "nobody/no-such-model-xyz").await.is_empty());
+    }
 
     #[test]
     fn file_names_tell_the_quantization() {
