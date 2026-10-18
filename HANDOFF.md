@@ -1024,9 +1024,11 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - **Live test** (dev mode, 14B): x^2 - 5x + 6 = 0 solved by calculate, the integral = 9, cafés near the user (Starbucks 0.3 mi…), gas near Provo, the nearest Walmart to Provo 2.1 mi, and a bar chart whose axis now reaches past the top bar. Test chats removed.
 - `e2e::a_chat_finds_and_reads_another_chat` now uses a 32K stand-in: with 8K, fit_small rightly left the chat tools out of "And the hotel?".
 
-## After 0.9.11 (2026-10-18, for 0.9.12): idle GPU, hidden chats, pictures that follow what's asked, wallpapers, long videos, audit fixes
+## 0.9.12 (2026-10-18): idle GPU, hidden chats, pictures that follow what's asked, wallpapers, long videos, audit fixes
 
-Not built or published yet. Uncommitted work is described here.
+**Published and installed 2026-10-18** (main = phase7 = c03278e). The release build took 6.8 min with 6 jobs at below-normal priority, after the card cooled to 38 °C. The processor load peaked at 45% and the card stayed at 33-37 °C. Notes are in `C:\dev	ools
+otes-0912.md`; the release body and latest.json were checked.
+- After the live test, a separate session timed Wan 2.2 at its trained 1280×704 size. A 5 s clip took 663 s there and 217 s at 832×480, so the default stays 832×480. Video now takes a requested width and height (b5818b4).
 
 - **The graphics card at idle** (`perf.rs`, `components/Performance.tsx`):
   - The 12% he saw at idle was Chrome (a site preview) and dwm at 160 Hz; it stayed with SulcusAI closed.
