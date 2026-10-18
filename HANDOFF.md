@@ -937,6 +937,8 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
 
 ## 0.9.9 (2026-10-17): pictures that don't drift
 
+**Published and installed 2026-10-17** (main = phase7 = 438989d). The release build took 5.3 min. Notes are in `C:\dev\tools\notes-099.md`; the body and latest.json were checked. His brother (Deathron96) was told on Discord, at his request.
+
 His brother: within a few prompts, pictures (edits and new ones) "lose what he wants". A live test in dev mode (Qwen2.5-Coder 14B, Z-Image Turbo, FLUX.2 klein 4B; test chats and klein removed afterwards) found three causes:
 - **Wrong picture edited:** the model passed `"<image-id>"` (copied from the parameter's wording), so the edit failed, and then kept passing the first picture's id, so every edit started over from the original.
   - `tools/media.rs edit_source`: the newest picture in the chat, unless the model named a real picture and the person's message points back ("first", "original", "earlier", "go back"…).
