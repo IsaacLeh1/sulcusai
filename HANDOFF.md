@@ -1127,6 +1127,13 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - The test chat was deleted. The test results are in his gallery: 3 pictures, 2 still and 2 moving wallpapers, and 2 clips.
 - **Not tested live**: "Set as wallpaper" (it would change his desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
 
+## After 0.9.12 (2026-10-18, for 0.9.13): faster video decoding
+
+- Video decodes with `--vae-tile-overlap 0.25 --vae-conv-direct` (`sd::clip_args`), found by the Wan size-test session.
+  - It measured 3.4× faster decoding at 1280×704 (225 s to 66 s for 49 frames), using 3 GB less of the card.
+  - Checked here at 832×480 with 25 frames, 10 steps and the same seed: decoding took 19 s against 47 s. The frames differed from the old settings by 0.15 of 255 on average and at most 4 levels, so there are no visible seams. Tile edges show up only as a 0.5-level bump at x=416.
+- Heat on the desktop: a full 121-frame Wan run reaches 80 °C at 100% within a minute on the stock fan curve. He asked to keep the card under about 75-80 °C, so test with short clips (25 frames, 10 steps peaked at 73 °C) and cool to 50 °C between runs.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
