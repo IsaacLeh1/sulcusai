@@ -1001,9 +1001,9 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - "Every weekday at 8am…" scheduled (removed afterwards).
 - Not done: FLUX.1 links and split GGUFs (as before), LaTeX math in replies, maps and places.
 
-## After 0.9.10 (2026-10-17, not released yet): math and places
+## 0.9.11 (2026-10-17): math and places
 
-Draft notes: `C:\dev\tools\notes-0911.md`.
+**Published and installed 2026-10-17** (main = phase7 = 8b87387). The release build took 6.2 min. Notes are in `C:\dev\tools\notes-0911.md`; the release assets and latest.json were checked.
 
 - **Math formulas in replies:**
   - KaTeX via remark-math and rehype-katex in `components/Markdown.tsx`, with the CSS and fonts bundled; the CSP already allowed them.
