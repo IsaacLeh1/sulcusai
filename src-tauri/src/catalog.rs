@@ -337,8 +337,48 @@ fn tps(bytes_per_token: f64, bw_gbs: f64) -> f64 {
     BANDWIDTH_EFFICIENCY * bw_gbs * 1e9 / bytes_per_token
 }
 
+/// K and V stored as q8_0 (`-ctk q8_0 -ctv q8_0`): 8.5 bits a value
+/// instead of 16. Needs flash attention, which the engine turns on by itself
+/// where the card supports it.
+pub fn kv_cache_bytes_q8(arch: &Arch, ctx: u32) -> u64 {
+    kv_cache_bytes(arch, ctx) * 17 / 32
+}
+
+/// The compressed cache when it gets more out of the graphics card: the
+/// whole model on the card where the normal cache leaves layers on the
+/// processor, or a 16K window where the normal cache allows only less. A
+/// model that already fits roomily keeps the normal cache, a few percent
+/// faster. Measured on a 12 GB RTX 5070 with Qwen2.5-Coder 14B at 8K: 47
+/// layers with the normal cache wrote 35.6 tokens/s, all 49 with the
+/// compressed one 49.4. Returns the window and layers to use it with.
+/// `grow`: the window may grow to 16K (not when the person chose one).
+pub fn with_q8_cache(model: &ModelSpec, quant: &str, b: &Budget, ctx: u32, layers: u32, grow: bool) -> Option<(u32, u32)> {
+    let v = model.variant(quant)?;
+    if b.vram == 0 || layers == 0 {
+        return None;
+    }
+    let all = model.arch.n_layer + 1;
+    if layers >= all {
+        if !grow {
+            return None;
+        }
+        let roomy = ROOMY_CTX.min(model.arch.max_ctx);
+        return (ctx < roomy && fit_with(model, v, roomy, b, true).placement == Some(Placement::Gpu)).then_some((roomy, all));
+    }
+    let f = fit_with(model, v, ctx, b, true);
+    match f.placement {
+        Some(Placement::Gpu) => Some((ctx, all)),
+        Some(Placement::Split) if f.gpu_layers > layers => Some((ctx, f.gpu_layers)),
+        _ => None,
+    }
+}
+
 pub fn fit_variant(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget) -> VariantFit {
-    let kv = kv_cache_bytes(&model.arch, ctx);
+    fit_with(model, v, ctx, b, false)
+}
+
+fn fit_with(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget, q8: bool) -> VariantFit {
+    let kv = if q8 { kv_cache_bytes_q8(&model.arch, ctx) } else { kv_cache_bytes(&model.arch, ctx) };
     let needed = v.size + kv + RUNTIME_OVERHEAD;
     let per_token = v.size as f64 * model.arch.active_fraction;
     let all_layers = model.arch.n_layer + 1; // +1 offloads the output layer too
@@ -673,6 +713,40 @@ mod tests {
         let dense = c.model("qwen3-14b").unwrap();
         assert_eq!(moe_offload(dense, "Q4_K_M", 20), None);
         assert!(moe_offload(c.model("gpt-oss-20b").unwrap(), "Q4_K_M", 10).is_some());
+    }
+
+    /// The compressed cache when it puts the whole model on the card, or
+    /// gives a 16K window the normal cache can't; not otherwise.
+    #[test]
+    fn the_compressed_cache_puts_the_whole_model_on_the_card() {
+        let c = catalog();
+        let m = c.model("qwen3-14b").unwrap();
+        let v = m.variant("Q4_K_M").unwrap();
+        let all = m.arch.n_layer + 1;
+        let card = |bytes: u64| Budget { vram: bytes + RUNTIME_OVERHEAD + 64 * MIB, ..budget(12, 32) };
+        // Room for the model and a compressed 8K cache, not a normal one
+        // (Qwen2.5-Coder 14B on his 12 GB card: 47 of 49 layers).
+        let tight = card(v.size + kv_cache_bytes_q8(&m.arch, 8192));
+        let f = fit_variant(m, v, 8192, &tight);
+        assert_eq!(f.placement, Some(Placement::Split));
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &tight, 8192, f.gpu_layers, true), Some((8192, all)));
+        // A 16K window he chose: kept, with more of the model on the card
+        // (his 14B: 39 layers with the normal cache).
+        let chosen = fit_variant(m, v, 16_384, &tight);
+        let (c, more) = with_q8_cache(m, "Q4_K_M", &tight, 16_384, chosen.gpu_layers, false).expect("more layers");
+        assert!(c == 16_384 && more > chosen.gpu_layers, "{} -> {more}", chosen.gpu_layers);
+        // Whole on the card at 8K, but no room for 16K either way: as it is.
+        let fits = card(v.size + kv_cache_bytes(&m.arch, 8192));
+        assert_eq!(fit_variant(m, v, 8192, &fits).placement, Some(Placement::Gpu));
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &fits, 8192, all, true), None);
+        // Room for a compressed 16K window: 16K.
+        let wide = card(v.size + kv_cache_bytes_q8(&m.arch, 16_384));
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 8192, all, true), Some((16_384, all)));
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 8192, all, false), None, "a window he chose stays as it is");
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 16_384, all, true), None, "already roomy: the faster normal cache");
+        // No card: nothing to gain.
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &budget(0, 32), 8192, 0, true), None);
+        assert_eq!(kv_cache_bytes_q8(&m.arch, 8192) * 32, kv_cache_bytes(&m.arch, 8192) * 17);
     }
 
     #[test]

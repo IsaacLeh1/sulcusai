@@ -779,12 +779,22 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) ->
         catalog::set_aside(&mut budget, &mut limits, encoder + catalog::VISION_OVERHEAD);
     }
     let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &budget, &limits);
+    let e = advanced::get(state).engine;
     // A bigger window, as far as this PC still runs the model (layers move
     // off the graphics card to make room).
-    if let Some(want) = chosen_window(state) {
+    let chosen = chosen_window(state);
+    if let Some(want) = chosen {
         (ctx, layers) = catalog::launch_at(spec, quant, &budget.with_limits(&limits), want, (ctx, layers), limits.gpu_share);
     }
-    let e = advanced::get(state).engine;
+    // The compressed cache, when it puts more of the model on the card (or,
+    // with no window chosen, gives a 16K one). Not with layers, a window in
+    // advanced mode or a GPU share set: those are kept as they are.
+    let mut kv_q8 = false;
+    if e.ctx.is_none() && e.gpu_layers.is_none() && limits.gpu_share >= 1.0 {
+        if let Some((c, l)) = catalog::with_q8_cache(spec, quant, &budget.with_limits(&limits), ctx, layers, chosen.is_none()) {
+            (ctx, layers, kv_q8) = (c.min(limits.max_ctx), l, true);
+        }
+    }
     if let Some(c) = e.ctx {
         ctx = c.clamp(512, spec.arch.max_ctx.max(512));
     }
@@ -804,7 +814,7 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) ->
         }
         None => limits.threads,
     };
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe } }
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8 } }
 }
 
 /// The versions of a model this PC can run, the best suited first.
@@ -1822,10 +1832,10 @@ pub(crate) async fn llm_endpoint(
         // Room for it right now (a game may be holding the memory)? The
         // engine isn't held while the person decides.
         let replacing = engine.loaded().map(|(pid, id, quant, ctx, layers)| {
-            (pid, state.model_spec(&id).map(|s| memcheck::need(&s, &quant, ctx, layers, 0)).unwrap_or_default())
+            (pid, state.model_spec(&id).map(|s| memcheck::need(&s, &quant, ctx, layers, 0, false)).unwrap_or_default())
         });
         drop(engine);
-        let want = memcheck::need(&spec, &installed.quant, plan.ctx, plan.gpu_layers, encoder_size);
+        let want = memcheck::need(&spec, &installed.quant, plan.ctx, plan.gpu_layers, encoder_size, plan.tuning.kv_q8);
         memcheck::before_loading(state, &spec, want, replacing).await?;
         let mut engine = state.engine.lock().await;
         // Another model was loaded, or a reply started, meanwhile (the

@@ -340,6 +340,9 @@ pub struct Tuning {
     /// system memory (--n-cpu-moe). `gpu_layers` then says how much of the
     /// model that is, in whole layers.
     pub cpu_moe: Option<u32>,
+    /// K and V kept as q8_0 (`catalog::with_q8_cache`): about half the
+    /// memory, so the whole model or a bigger window fits the card.
+    pub kv_q8: bool,
 }
 
 struct Running {
@@ -358,6 +361,7 @@ struct Running {
     batch: u32,
     lora: Option<PathBuf>,
     cpu_moe: Option<u32>,
+    kv_q8: bool,
 }
 
 impl Running {
@@ -490,6 +494,7 @@ impl Engine {
                     && r.batch == spec.batch
                     && r.lora.as_deref() == spec.lora
                     && r.cpu_moe == tuning.cpu_moe
+                    && r.kv_q8 == tuning.kv_q8
             })
     }
 
@@ -539,6 +544,7 @@ impl Engine {
             .args(["-np", "1", "--jinja", "--no-webui"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
+            .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })
             .args(spec.lora.map(|p| vec![std::ffi::OsString::from("--lora"), p.into()]).unwrap_or_default())
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
@@ -575,12 +581,13 @@ impl Engine {
             batch: spec.batch,
             lora: spec.lora.map(Path::to_path_buf),
             cpu_moe: tuning.cpu_moe,
+            kv_q8: tuning.kv_q8,
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
         let started = Instant::now();
         let what = format!(
-            "{} ({}, {} context, {}{}{})",
+            "{} ({}, {} context, {}{}{}{})",
             spec.model_id,
             spec.quant,
             spec.ctx,
@@ -588,6 +595,7 @@ impl Engine {
                 Some(n) => format!("every layer on the graphics card, the experts of {n} in memory"),
                 None => format!("{} layers on the graphics card", spec.gpu_layers),
             },
+            if tuning.kv_q8 { ", compressed cache" } else { "" },
             if devices.is_empty() { String::new() } else { format!(", device {}", devices.join(",")) },
             if spec.mmproj.is_some() { ", sees pictures" } else { "" }
         );

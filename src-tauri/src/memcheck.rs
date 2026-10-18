@@ -14,7 +14,7 @@ use serde::Serialize;
 use tauri::Emitter;
 use tokio::sync::oneshot;
 
-use crate::catalog::{kv_cache_bytes, ModelSpec, GIB, RUNTIME_OVERHEAD};
+use crate::catalog::{kv_cache_bytes, kv_cache_bytes_q8, ModelSpec, GIB, RUNTIME_OVERHEAD};
 use crate::AppState;
 
 const MIB: u64 = 1024 * 1024;
@@ -35,12 +35,13 @@ pub struct Need {
 }
 
 /// A model at this context with `layers` of its layers on the graphics card
-/// (`extra`: an image encoder, which goes where the layers do).
-pub fn need(spec: &ModelSpec, quant: &str, ctx: u32, layers: u32, extra: u64) -> Need {
+/// (`extra`: an image encoder, which goes where the layers do; `q8`: the
+/// compressed cache).
+pub fn need(spec: &ModelSpec, quant: &str, ctx: u32, layers: u32, extra: u64, q8: bool) -> Need {
     let size = spec.variant(quant).map_or(0, |v| v.size);
     let all = (spec.arch.n_layer + 1).max(1);
     let on_gpu = (layers.min(all) as f64 / all as f64).clamp(0.0, 1.0);
-    let kv = kv_cache_bytes(&spec.arch, ctx);
+    let kv = if q8 { kv_cache_bytes_q8(&spec.arch, ctx) } else { kv_cache_bytes(&spec.arch, ctx) };
     let weights_gpu = (size as f64 * on_gpu) as u64;
     if layers == 0 {
         Need { ram: size + kv + RUNTIME_OVERHEAD + extra, vram: 0 }
@@ -176,10 +177,13 @@ mod tests {
         m.variants[0].size = 5 * GIB;
         let all = m.arch.n_layer + 1;
         // All on the graphics card: little system memory, the rest on the card.
-        let on_card = need(&m, &quant, 8192, all, 0);
+        let on_card = need(&m, &quant, 8192, all, 0, false);
         assert!(on_card.ram < GIB && on_card.vram > 5 * GIB, "{on_card:?}");
+        // The compressed cache takes about half the room on the card.
+        let compressed = need(&m, &quant, 8192, all, 0, true);
+        assert!(compressed.vram < on_card.vram && compressed.vram > 5 * GIB, "{compressed:?}");
         // On the processor only: it all comes out of system memory.
-        let cpu = need(&m, &quant, 8192, 0, 0);
+        let cpu = need(&m, &quant, 8192, 0, 0, false);
         assert!(cpu.vram == 0 && cpu.ram > 5 * GIB, "{cpu:?}");
         // Plenty free: no warning. A game holding most of it: a warning.
         assert_eq!(short(cpu, 24 * GIB, None), (false, false));

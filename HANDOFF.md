@@ -1136,6 +1136,21 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - Checked here at 832×480 with 25 frames, 10 steps and the same seed: decoding took 19 s against 47 s. The frames differed from the old settings by 0.15 of 255 on average and at most 4 levels, so there are no visible seams. Tile edges show up only as a 0.5-level bump at x=416.
 - Heat on the desktop: a full 121-frame Wan run reaches 80 °C at 100% within a minute on the stock fan curve. He asked to keep the card under about 75-80 °C, so test with short clips (25 frames, 10 steps peaked at 73 °C) and cool to 50 °C between runs.
 
+## After 0.9.13 (2026-10-18): the compressed chat cache
+
+- `catalog::with_q8_cache` (used in `launch_plan`) starts llama-server with `-ctk q8_0 -ctv q8_0`, which needs flash attention. The b11450 Vulkan build turns it on by itself (`-fa auto`) on his RTX.
+  - It's used when it puts more of the model on the card at the same window, or when no window was chosen and it gives 16K where the normal cache can't.
+  - It's skipped when advanced mode sets the window or layers, or the GPU share is below 100%. `memcheck::need` and the engine's reuse check know about it, and the log says "compressed cache".
+- Why: his Qwen2.5-Coder 14B with his chosen 16K window had only 39 of 49 layers on the 12 GB card.
+- Measured with llama-bench (`-dev Vulkan0`, at 8K depth):
+  - 39 layers, normal cache: 15.5 tokens/s writing, 990 tokens/s reading.
+  - 47 layers, compressed cache: 33.8 writing, 1,520 reading.
+  - All 49 layers with the normal cache: 51.8 writing.
+  - With everything on the card, the compressed cache costs 3-9%, which is why roomy models keep the normal one.
+- Live in the dev app: the 14B loaded with "16384 context, 47 layers on the graphics card, compressed cache" and wrote at 30.7 tokens/s after a 9,327-token prompt.
+- Tried and not worth it: `-ub` 1024 or 2048 (under 1% faster reading). Not tried: `--cache-reuse`, and direct convolutions for picture decoding (only about 2 s a picture to gain).
+- The 14B chose to save a short story as Desktop/lighthouse_story.docx. The test declined it and nothing was written.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
