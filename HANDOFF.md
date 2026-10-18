@@ -1026,8 +1026,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 
 ## 0.9.12 (2026-10-18): idle GPU, hidden chats, pictures that follow what's asked, wallpapers, long videos, audit fixes
 
-**Published and installed 2026-10-18** (main = phase7 = c03278e). The release build took 6.8 min with 6 jobs at below-normal priority, after the card cooled to 38 °C. The processor load peaked at 45% and the card stayed at 33-37 °C. Notes are in `C:\dev	ools
-otes-0912.md`; the release body and latest.json were checked.
+**Published and installed 2026-10-18** (main = phase7 = c03278e). The release build took 6.8 min with 6 jobs at below-normal priority, after the card cooled to 38 °C. The processor load peaked at 45% and the card stayed at 33-37 °C. Notes are in `C:\dev\tools\notes-0912.md`; the release body and latest.json were checked.
 - After the live test, a separate session timed Wan 2.2 at its trained 1280×704 size. A 5 s clip took 663 s there and 217 s at 832×480, so the default stays 832×480. Video now takes a requested width and height (b5818b4).
 
 - **The graphics card at idle** (`perf.rs`, `components/Performance.tsx`):
