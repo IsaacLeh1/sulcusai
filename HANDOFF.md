@@ -1127,7 +1127,9 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - The test chat was deleted. The test results are in his gallery: 3 pictures, 2 still and 2 moving wallpapers, and 2 clips.
 - **Not tested live**: "Set as wallpaper" (it would change his desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
 
-## After 0.9.12 (2026-10-18, for 0.9.13): faster video decoding
+## 0.9.13 (2026-10-18): faster video decoding
+
+**Published and installed 2026-10-18** (main = phase7 = f7f7c26). The release build took 6.0 min with 6 jobs at below-normal priority, with no temperature warnings. Notes are in `C:\dev\tools\notes-0913.md`.
 
 - Video decodes with `--vae-tile-overlap 0.25 --vae-conv-direct` (`sd::clip_args`), found by the Wan size-test session.
   - It measured 3.4× faster decoding at 1280×704 (225 s to 66 s for 49 frames), using 3 GB less of the card.
