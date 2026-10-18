@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type Chat, type PendingApproval } from "../api";
+import { api, errorText, type Chat } from "../api";
+import { useWaitingApprovals } from "../approvals";
 import { confirmFolder } from "../folders";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
@@ -10,21 +11,10 @@ import { Modal } from "./Modal";
  * is in the app. They can allow the folder it suggests, pick another, or say
  * no (closing it says no too); the reply carries on either way. */
 export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useState<PendingApproval[]>([]);
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_folder");
   // The folder each request will share, once the person picked another.
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const subs = [
-      on("agent:approval", (p) => {
-        if (p.tool === "request_folder") setAsks((all) => [...all.filter((a) => a.call_id !== p.call_id), p]);
-      }),
-      on("agent:approval_done", (p) => setAsks((all) => all.filter((a) => a.call_id !== p.call_id))),
-    ];
-    return () => {
-      subs.forEach((s) => s.then((un) => un()));
-    };
-  }, []);
   const p = asks[0];
   if (!p) return null;
   const chat = chats.find((c) => c.id === p.chat_id);

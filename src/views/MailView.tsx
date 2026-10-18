@@ -3,7 +3,7 @@
 // searching work Offline. Syncing and sending need Local AI + Web. Laid out
 // like a webmail inbox: folders on the left, a list of rows, and the open
 // message in place of the list; writing happens in a panel at the bottom right.
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, errorText, on, type MailAccount, type MailConfig, type MailItem, type MailSecurity, type TriageItem, type TriageReport } from "../api";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
@@ -88,7 +88,10 @@ export function MailView({ toast }: { toast: PushToast }) {
   const [sorting, setSorting] = useState<{ done: number; total: number } | null>(null);
 
   const loadAccounts = () => api.mailAccounts().then(setAccounts).catch((e) => toast(errorText(e), "error"));
-  const loadItems = (q = query) => api.mailList(q).then(setItems).catch((e) => toast(errorText(e), "error"));
+  // The search as typed now: the event handlers set up once would otherwise reload with the first one.
+  const queryRef = useRef(query);
+  queryRef.current = query;
+  const loadItems = (q = queryRef.current) => api.mailList(q).then(setItems).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     loadAccounts();
     loadItems("");
@@ -227,7 +230,7 @@ export function MailView({ toast }: { toast: PushToast }) {
             onAdded={async () => {
               setAdding(false);
               await loadAccounts();
-              await loadItems("");
+              await loadItems();
             }}
           />
         </div>
@@ -278,7 +281,7 @@ export function MailView({ toast }: { toast: PushToast }) {
                       await api.removeMailAccount(a.id);
                       setOpenId(null);
                       await loadAccounts();
-                      await loadItems("");
+                      await loadItems();
                     } catch (e) {
                       toast(errorText(e), "error");
                     }

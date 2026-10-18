@@ -155,11 +155,11 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         let title = format!("⏰ {} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
         (db::profile(&conn, &cipher), title)
     };
-    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), false, || {}).await?;
-
+    // The chat and its reply are claimed before the model is loaded, so
+    // another chat can't swap the model out while this one starts.
     let (chat_id, turn_id) = {
         let conn = state.db.lock().unwrap();
-        let chat = db::create_chat_in(&conn, &cipher, Some(installed.model_id.clone()), s.project_id.clone(), false)?;
+        let chat = db::create_chat_in(&conn, &cipher, s.model_id.clone(), s.project_id.clone(), false)?;
         db::set_chat_title(&conn, &cipher, &chat.id, &title)?;
         db::set_chat_mode(&conn, &chat.id, if s.allow_changes { "bypass" } else { "plan" })?;
         let turn_id = uuid::Uuid::new_v4().to_string();
@@ -174,6 +174,8 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         (chat.id, turn_id)
     };
     let Some((cancel, _guard)) = crate::claim(&state.generations, &chat_id) else { return Err("Already running.".into()) };
+    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), false, || {}).await?;
+    db::set_chat_model(&state.db.lock().unwrap(), &chat_id, &installed.model_id)?;
     let today = Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
     let base = crate::advanced::get(&state).base_prompt(base);
@@ -191,6 +193,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         mode: if s.allow_changes { tools::Mode::Bypass } else { tools::Mode::Plan },
         use_tools: spec.tools,
         vision: false,
+        unattended: true,
         base,
         about,
         cancel,

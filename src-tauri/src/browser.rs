@@ -32,26 +32,57 @@ pub const MAX_TEXT: usize = 10_000;
 
 /// Whether the window may go to this address (checked on every navigation).
 pub fn navigable(url: &tauri::Url) -> bool {
-    navigable_with(url, allow_local())
+    navigable_with(url, allow_local(), lookup)
 }
 
-fn navigable_with(url: &tauri::Url, allow_local: bool) -> bool {
+/// A name's addresses (None when it can't be found within 2 seconds).
+/// This runs on the window's own thread, so answers are kept for a few
+/// minutes: the same site isn't looked up on every page.
+fn lookup(host: &str, port: u16) -> Option<Vec<IpAddr>> {
+    use std::net::ToSocketAddrs;
+    type Seen = std::collections::HashMap<String, (std::time::Instant, Vec<IpAddr>)>;
+    static SEEN: std::sync::LazyLock<std::sync::Mutex<Seen>> = std::sync::LazyLock::new(Default::default);
+    if let Some((at, addrs)) = SEEN.lock().unwrap().get(host) {
+        if at.elapsed() < Duration::from_secs(300) {
+            return Some(addrs.clone());
+        }
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let target = (host.to_string(), port);
+    std::thread::spawn(move || {
+        let _ = tx.send(target.to_socket_addrs().map(|a| a.map(|s| s.ip()).collect::<Vec<_>>()));
+    });
+    let addrs = rx.recv_timeout(Duration::from_secs(2)).ok()?.ok()?;
+    let mut seen = SEEN.lock().unwrap();
+    if seen.len() > 500 {
+        seen.clear();
+    }
+    seen.insert(host.to_string(), (std::time::Instant::now(), addrs.clone()));
+    Some(addrs)
+}
+
+fn navigable_with(url: &tauri::Url, allow_local: bool, lookup: impl Fn(&str, u16) -> Option<Vec<IpAddr>>) -> bool {
     if !matches!(url.scheme(), "http" | "https") {
         // about:blank is how a fresh window starts.
         return url.as_str() == "about:blank";
     }
     let Some(host) = url.host_str() else { return false };
-    let host = host.trim_matches(['[', ']']).to_ascii_lowercase();
+    let host = host.trim_matches(['[', ']']).trim_end_matches('.').to_ascii_lowercase();
     // A server on this PC the person chose to view, or the assistant started.
     if crate::ports::local_port(url.as_str()).is_some_and(crate::ports::previewable) {
         return true;
     }
-    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || !host.contains('.') && host.parse::<IpAddr>().is_err() {
+    if host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local") || host.ends_with(".internal") || !host.contains('.') && host.parse::<IpAddr>().is_err() {
         return allow_local;
     }
+    if allow_local {
+        return true;
+    }
     match host.parse::<IpAddr>() {
-        Ok(ip) => crate::web::is_public(ip) || allow_local,
-        Err(_) => true,
+        Ok(ip) => crate::web::is_public(ip),
+        // A name must point only at public addresses: some names lead into
+        // the home network (192-168-1-1.nip.io is the router).
+        Err(_) => lookup(&host, url.port_or_known_default().unwrap_or(443)).is_some_and(|addrs| !addrs.is_empty() && addrs.iter().all(|ip| crate::web::is_public(*ip))),
     }
 }
 
@@ -445,12 +476,28 @@ mod tests {
 
     #[test]
     fn only_the_open_web() {
-        let ok = |u: &str| navigable_with(&tauri::Url::parse(u).unwrap(), false);
+        // Names looked up as a resolver would answer them.
+        let dns = |host: &str, _port: u16| -> Option<Vec<IpAddr>> {
+            match host {
+                "example.com" => Some(vec!["93.184.215.14".parse().unwrap()]),
+                "192-168-1-1.nip.io" => Some(vec!["192.168.1.1".parse().unwrap()]),
+                "mixed.example" => Some(vec!["93.184.215.14".parse().unwrap(), "10.0.0.1".parse().unwrap()]),
+                "empty.example" => Some(vec![]),
+                _ => None,
+            }
+        };
+        let ok = |u: &str| navigable_with(&tauri::Url::parse(u).unwrap(), false, dns);
         assert!(ok("https://example.com/path"));
         assert!(!ok("http://192.168.1.1/"));
         assert!(!ok("http://router/"));
         assert!(!ok("http://localhost:1430/"));
+        assert!(!ok("http://localhost.:1430/"));
         assert!(!ok("http://[::1]/"));
+        // A name that leads into the home network, or partly does, or can't be found.
+        assert!(!ok("http://192-168-1-1.nip.io/"));
+        assert!(!ok("https://mixed.example/"));
+        assert!(!ok("https://empty.example/"));
+        assert!(!ok("https://nowhere.example/"));
         assert!(!navigable(&tauri::Url::parse("file:///C:/Windows/win.ini").unwrap()));
         assert!(!navigable(&tauri::Url::parse("javascript:alert(1)").unwrap()));
         assert!(navigable(&tauri::Url::parse("about:blank").unwrap()));

@@ -172,11 +172,9 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
   const [busy, setBusy] = useState(false);
   const answer = async (d: "allow" | "always" | "deny") => {
     setBusy(true);
-    try {
-      await api.answerApproval(p.call_id, d);
-    } finally {
-      onAnswered();
-    }
+    // An error means it's no longer waiting (answered elsewhere, or the reply stopped).
+    await api.answerApproval(p.call_id, d).catch(() => {});
+    onAnswered();
   };
   const always =
     p.risk === "execute"
@@ -188,10 +186,10 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
     <div className="approval" role="alert">
       <div className="approval-head">
         <span aria-hidden>{p.risk === "connector" ? "🔌" : TOOL_ICONS[p.tool] ?? "🔧"}</span>
-        <strong>{p.preview.title}</strong>
+        <strong>{tf(p.preview.title)}</strong>
       </div>
       {p.preview.detail && <Detail kind={p.preview.kind} detail={p.preview.detail} />}
-      {p.preview.note && <p className="muted small">{p.preview.note}</p>}
+      {p.preview.note && <p className="muted small">{tf(p.preview.note)}</p>}
       <div className="approval-actions">
         <button className="btn primary" disabled={busy} onClick={() => answer("allow")} autoFocus>
           {t("Allow")}

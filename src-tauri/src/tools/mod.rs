@@ -333,10 +333,23 @@ fn open_path_params() -> Value {
         "target": { "type": "string", "description": "A file or folder in a shared folder (e.g. site/index.html), or a web address starting with http:// or https://." } } })
 }
 
-/// Kinds of file that run something when opened: open_path refuses them.
-const RUNS: &[&str] = &[
-    "exe", "com", "bat", "cmd", "ps1", "psm1", "psd1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "hta", "msi", "msp", "scr", "pif", "lnk", "cpl", "reg", "jar", "appref-ms", "url", "sh",
-];
+/// Sound and video open_path may open too, beside the documents, pages and
+/// pictures the app's own Open allows (`docs::OPENABLE`).
+const OPENS_MEDIA: &[&str] = &["mp3", "wav", "ogg", "m4a", "flac", "mp4", "webm", "mov"];
+
+/// Why open_path won't open this file, if it won't: only folders and the
+/// kinds above. Anything else may run something when opened (programs,
+/// scripts, shortcuts, consoles, installers), however it's named.
+fn not_openable(path: &std::path::Path) -> Option<&'static str> {
+    if path.is_dir() {
+        return None;
+    }
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if crate::docs::OPENABLE.contains(&ext.as_str()) || OPENS_MEDIA.contains(&ext.as_str()) {
+        return None;
+    }
+    Some("Only folders, documents, web pages, pictures, sound and video can be opened. To run something, use run_command, where the user sees what runs.")
+}
 
 /// open_path: shows the user a file (in its usual app) or a web address
 /// (in their browser).
@@ -350,7 +363,15 @@ fn open_path(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         if let Err(e) = crate::offline::check(crate::offline::Keep::Web) {
             return Outcome::error("Open something", e);
         }
-        return match crate::open_with_system(std::ffi::OsStr::new(&target)) {
+        // The same rule as the browser tools: the connectivity level, or this chat's globe.
+        if !crate::browser::allowed_for_chat(&ctx.memory.db.lock().unwrap(), ctx.memory.chat_id) {
+            return Outcome::error(title, "This chat is offline, so web pages can't be opened from it. Give the user the address to open themselves.");
+        }
+        let url = match reqwest::Url::parse(&target) {
+            Ok(u) => u,
+            Err(_) => return Outcome::error(title, format!("That isn't a web address: {target}")),
+        };
+        return match crate::open_with_system(std::ffi::OsStr::new(url.as_str())) {
             Ok(()) => Outcome::ok(format!("Opened {target} in the user's browser."), title, "text", None),
             Err(e) => Outcome::error(title, e),
         };
@@ -359,12 +380,11 @@ fn open_path(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         Ok(p) => p,
         Err(e) => return Outcome::error(title, e),
     };
-    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    if RUNS.contains(&ext.as_str()) {
-        return Outcome::error(title, "That would run a program. Use run_command instead, where the user sees what runs.");
-    }
     if !path.exists() {
         return Outcome::error(title, format!("{} doesn't exist.", ctx.sandbox.display(&path)));
+    }
+    if let Some(why) = not_openable(&path) {
+        return Outcome::error(title, why);
     }
     match crate::open_with_system(path.as_os_str()) {
         Ok(()) => Outcome::ok(format!("Opened {} for the user.", ctx.sandbox.display(&path)), title, "text", None),
@@ -676,5 +696,18 @@ mod tests {
         for t in TOOLS {
             assert_eq!((t.params)()["type"], "object", "{}", t.name);
         }
+    }
+
+    #[test]
+    fn open_path_opens_documents_media_and_folders_only() {
+        use std::path::Path;
+        for ok in ["site/index.html", "report.DOCX", "chart.png", "notes.md", "song.mp3", "clip.mp4"] {
+            assert!(not_openable(Path::new(ok)).is_none(), "{ok}");
+        }
+        // Everything else, including what a block-list missed (Python, consoles, remote desktop, web queries).
+        for no in ["run.py", "run.pyw", "x.msc", "x.rdp", "x.iqy", "x.slk", "x.application", "x.appinstaller", "x.exe", "x.lnk", "x.url", "README", "x.html.exe"] {
+            assert!(not_openable(Path::new(no)).is_some(), "{no}");
+        }
+        assert!(not_openable(&std::env::temp_dir()).is_none(), "a folder opens in File Explorer");
     }
 }

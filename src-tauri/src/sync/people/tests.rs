@@ -15,6 +15,28 @@ fn names_and_file_names_are_made_safe() {
 }
 
 #[test]
+fn folders_for_someones_assistant_follow_the_sharing_rules() {
+    let d = std::env::temp_dir().join(format!("sulcus-people-folders-{}", uuid::Uuid::new_v4().simple()));
+    let (proj, data) = (d.join("proj"), d.join("appdata"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&data).unwrap();
+    let real = dunce::canonicalize(&proj).unwrap().display().to_string();
+    // Resolved, and once each.
+    let messy = format!("{}\\..\\proj", proj.display());
+    assert_eq!(ask::allowed_folders(&[proj.display().to_string(), messy], &data).unwrap(), vec![real]);
+    // Not the app's own data, a whole drive, a folder that isn't there, or a system folder.
+    assert!(ask::allowed_folders(&[data.display().to_string()], &data).is_err());
+    assert!(ask::allowed_folders(&["C:\\".into()], &data).is_err());
+    assert!(ask::allowed_folders(&[d.join("missing").display().to_string()], &data).is_err());
+    if let Some(win) = std::env::var_os("WINDIR") {
+        let inside = std::path::PathBuf::from(win).join("System32");
+        let e = ask::allowed_folders(&[inside.display().to_string()], &data).unwrap_err();
+        assert!(e.contains("system folder"), "{e}");
+    }
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn virtual_networks_are_named() {
     assert_eq!(network_label("Radmin VPN", Ipv4Addr::new(26, 1, 2, 3)), "Radmin VPN");
     assert_eq!(network_label("Ethernet 3", Ipv4Addr::new(100, 101, 1, 2)), "Tailscale");

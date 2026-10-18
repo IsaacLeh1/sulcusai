@@ -5,16 +5,58 @@ import { useEffect, useState } from "react";
 import { api, type MediaItem, type MediaOp } from "./api";
 import { t, tx } from "./i18n";
 
+// Newest last: one used again moves to the end.
 const cache = new Map<string, Promise<string>>();
+// How many views show each one now; those are never let go.
+const inUse = new Map<string, number>();
+// Full files (whole videos and songs) are let go beyond the newest few;
+// previews are small, so many more stay.
+const KEEP = { f: 8, t: 400 } as const;
 
 function url(key: string, load: () => Promise<ArrayBuffer>, mime: string): Promise<string> {
   let p = cache.get(key);
-  if (!p) {
-    p = load().then((buf) => URL.createObjectURL(new Blob([buf], { type: mime })));
-    p.catch(() => cache.delete(key));
+  if (p) {
+    cache.delete(key);
     cache.set(key, p);
+    return p;
   }
-  return p;
+  const made = load().then((buf) => URL.createObjectURL(new Blob([buf], { type: mime })));
+  made.catch(() => cache.get(key) === made && cache.delete(key));
+  cache.set(key, made);
+  trim(key.slice(0, 1) as keyof typeof KEEP);
+  return made;
+}
+
+function drop(key: string) {
+  cache.get(key)?.then((u) => URL.revokeObjectURL(u)).catch(() => {});
+  cache.delete(key);
+}
+
+/** Lets go of the oldest of a kind (full files "f", previews "t") that nothing shows, past its limit. */
+function trim(kind: keyof typeof KEEP) {
+  const keys = [...cache.keys()].filter((k) => k.startsWith(`${kind}:`));
+  let extra = keys.length - KEEP[kind];
+  for (const k of keys) {
+    if (extra <= 0) break;
+    if (inUse.get(k)) continue;
+    drop(k);
+    extra--;
+  }
+}
+
+/** Which cached file a view of this item shows. */
+function keyOf(item: Pick<MediaItem, "id" | "kind"> & { poster?: boolean }, thumb: boolean): string {
+  return thumb && (item.kind === "image" || (item.kind === "video" && item.poster)) ? `t:${item.id}` : `f:${item.id}`;
+}
+
+/** Keeps a cached file while it's used; the returned function lets it go. */
+function hold(key: string): () => void {
+  inUse.set(key, (inUse.get(key) ?? 0) + 1);
+  return () => {
+    const n = (inUse.get(key) ?? 1) - 1;
+    if (n > 0) inUse.set(key, n);
+    else inUse.delete(key);
+  };
 }
 
 /** The full file, as a blob: URL. */
@@ -24,7 +66,7 @@ export function fileUrl(item: Pick<MediaItem, "id" | "mime">): Promise<string> {
 
 /** A small preview (pictures, and videos with a still); other kinds fall back to the file itself. */
 export function thumbUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> & { poster?: boolean }): Promise<string> {
-  if (item.kind !== "image" && !(item.kind === "video" && item.poster)) return fileUrl(item);
+  if (keyOf(item, true).startsWith("f:")) return fileUrl(item);
   // Thumbnails are JPEG or PNG; the browser sniffs either from the bytes.
   return url(`t:${item.id}`, () => api.mediaThumb(item.id), "image/jpeg");
 }
@@ -33,8 +75,7 @@ export function thumbUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> & { poste
     decodes WebM), one at a time. */
 let stills: Promise<unknown> = Promise.resolve();
 export function makeStill(item: MediaItem): Promise<string | null> {
-  const run = async (): Promise<string | null> => {
-    const src = await fileUrl(item);
+  const capture = async (src: string): Promise<string | null> => {
     const video = document.createElement("video");
     video.muted = true;
     video.preload = "auto";
@@ -54,6 +95,15 @@ export function makeStill(item: MediaItem): Promise<string | null> {
     await api.mediaSetPoster(item.id, dataUrl.split(",")[1] ?? "");
     return dataUrl;
   };
+  // The clip is held meanwhile, so the cache doesn't let it go mid-read.
+  const run = async (): Promise<string | null> => {
+    const release = hold(keyOf(item, false));
+    try {
+      return await capture(await fileUrl(item));
+    } finally {
+      release();
+    }
+  };
   const next = stills.then(run, run).catch(() => null);
   stills = next;
   return next;
@@ -61,10 +111,8 @@ export function makeStill(item: MediaItem): Promise<string | null> {
 
 /** Forgets a deleted item's URLs. */
 export function forget(id: string) {
-  for (const k of [`f:${id}`, `t:${id}`]) {
-    cache.get(k)?.then((u) => URL.revokeObjectURL(u)).catch(() => {});
-    cache.delete(k);
-  }
+  drop(`f:${id}`);
+  drop(`t:${id}`);
 }
 
 export function useMediaUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> | null, thumb = false): string | null {
@@ -75,9 +123,12 @@ export function useMediaUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> | null
       return;
     }
     let live = true;
+    // Held while it's shown, so it isn't let go from under the view.
+    const release = hold(keyOf(item, thumb));
     (thumb ? thumbUrl(item) : fileUrl(item)).then((v) => live && setU(v)).catch(() => live && setU(null));
     return () => {
       live = false;
+      release();
     };
   }, [item?.id, thumb]); // eslint-disable-line react-hooks/exhaustive-deps
   return u;
@@ -104,6 +155,7 @@ export const OP_LABEL: Record<string, string> = {
   music: tx("Song"),
   sound: tx("Sound"),
   narrate: tx("Narration"),
+  wallpaper: tx("Wallpaper"),
   import: tx("Imported"),
   screenshot: tx("Screenshot"),
   trim: tx("Trimmed"),
@@ -123,6 +175,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   music: tx("Making a song"),
   sound: tx("Making a sound"),
   narrate: tx("Reading aloud"),
+  tune: tx("Teaching the prompt writer"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

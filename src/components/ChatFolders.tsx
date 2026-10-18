@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Chat folders in the sidebar: sort chats into folders, lock a folder so the
 // automatic cleanup keeps its chats, and share a whole folder with people.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { api, errorText, type Chat, type FolderView } from "../api";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
@@ -122,9 +122,48 @@ export function FolderSection({
   );
 }
 
-/** A small menu at the pointer; closes on a click elsewhere or Escape. */
+/** A small menu at the pointer, moved to stay in the window (a long one
+ * scrolls); closes on a click elsewhere, Escape or Tab. The arrow keys, Home
+ * and End move between its items, and focus goes back where it was. */
 export function FloatingMenu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState({ left: x, top: y });
+  const items = () => [...(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+  // Measured before it's painted: left of or above the pointer when there's no room past it.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const edge = 8;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(edge, Math.min(x, window.innerWidth - width - edge)),
+      top: Math.max(edge, Math.min(y, window.innerHeight - height - edge)),
+    });
+  }, [x, y]);
+  // The first item takes the focus; closing gives it back.
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    items()[0]?.focus({ preventScroll: true });
+    return () => {
+      if (el?.contains(document.activeElement) && before?.isConnected) before.focus({ preventScroll: true });
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    const list = items();
+    if (list.length === 0) return;
+    const at = list.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "ArrowDown" ? (at + 1) % list.length : e.key === "ArrowUp" ? (at <= 0 ? list.length : at) - 1 : e.key === "Home" ? 0 : e.key === "End" ? list.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    list[next].focus();
+  };
   useEffect(() => {
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) onClose();
@@ -140,15 +179,30 @@ export function FloatingMenu({ x, y, onClose, children }: { x: number; y: number
     };
   }, [onClose]);
   return (
-    <div ref={ref} className="context-menu" role="menu" style={{ left: Math.min(x, window.innerWidth - 260), top: Math.min(y, window.innerHeight - 260) }}>
+    <div ref={ref} className="context-menu" role="menu" style={pos} onKeyDown={onKeyDown}>
       {children}
     </div>
   );
 }
 
-/** Asks for a folder's name. */
-export function NameModal({ title, initial, onClose, onSave }: { title: string; initial: string; onClose: () => void; onSave: (name: string) => void }) {
+/** Asks for a name: a folder's, unless told what it names (`label`, already translated). */
+export function NameModal({
+  title,
+  initial,
+  label,
+  maxLength = 60,
+  onClose,
+  onSave,
+}: {
+  title: string;
+  initial: string;
+  label?: string;
+  maxLength?: number;
+  onClose: () => void;
+  onSave: (name: string) => void;
+}) {
   const [name, setName] = useState(initial);
+  const what = label ?? t("Folder name");
   return (
     <Modal title={title} onClose={onClose}>
       <form
@@ -157,7 +211,7 @@ export function NameModal({ title, initial, onClose, onSave }: { title: string; 
           if (name.trim()) onSave(name.trim());
         }}
       >
-        <input className="input" autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} placeholder={t("Folder name")} aria-label={t("Folder name")} />
+        <input className="input" autoFocus value={name} maxLength={maxLength} onChange={(e) => setName(e.target.value)} placeholder={what} aria-label={what} />
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="btn primary" disabled={!name.trim()}>{t("Save")}</button>

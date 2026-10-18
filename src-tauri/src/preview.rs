@@ -246,18 +246,42 @@ async fn page(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: U
         }
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     };
-    let Ok(bytes) = tokio::fs::read(&file).await else {
+    let Ok(f) = tokio::fs::File::open(&file).await else {
         return (StatusCode::NOT_FOUND, "Not found").into_response();
     };
-    let mut r = (StatusCode::OK, bytes).into_response();
+    let size = f.metadata().await.map(|m| m.len()).ok();
+    let mut r = (StatusCode::OK, file_body(f)).into_response();
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, kind_of(&file).parse().unwrap());
+    if let Some(n) = size {
+        h.insert(header::CONTENT_LENGTH, n.into());
+    }
     h.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     h.insert("x-content-type-options", "nosniff".parse().unwrap());
-    if let Some(p) = policy(ctx.web) {
+    // The chat's web setting as it is now: a chat switched offline after the
+    // site started serving gets the offline policy from its next page on.
+    let web = ctx.web && crate::web::allowed_for_chat(&ctx.state.db.lock().unwrap(), &ctx.chat_id);
+    if let Some(p) = policy(web) {
         h.insert(header::CONTENT_SECURITY_POLICY, p.parse().unwrap());
     }
     r
+}
+
+/// A file sent in pieces, so a site's big video never sits whole in memory.
+fn file_body(f: tokio::fs::File) -> axum::body::Body {
+    use tokio::io::AsyncReadExt;
+    axum::body::Body::from_stream(futures_util::stream::unfold(Some(f), |f| async move {
+        let mut f = f?;
+        let mut buf = vec![0u8; 64 * 1024];
+        match f.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(buf), Some(f)))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    }))
 }
 
 /// Most a live-data answer may be.
@@ -294,6 +318,17 @@ pub fn placeholder_key(value: &str) -> bool {
         regex::Regex::new(r"(?i)^(your|my|insert|enter|put|replace|add)[ _-]?.*(key|token)|^(api[_-]?)?(key|token)([_-]?here)?$|^<[^>]*>$|^\{[^}]*\}$|^x{6,}$|^demo$|^test$|^null$|^undefined$").unwrap()
     });
     FAKE.is_match(value.trim())
+}
+
+/// Where a request carrying a key may go: https only, so the key is never
+/// sent in the open. A plain-http address goes over https instead (but not
+/// one on a port of its own, where https isn't likely).
+fn keyed_url(mut url: reqwest::Url) -> Option<reqwest::Url> {
+    match url.scheme() {
+        "https" => Some(url),
+        "http" if url.port().is_none() => url.set_scheme("https").ok().map(|()| url),
+        _ => None,
+    }
 }
 
 /// A key that goes in the address, in place of any stand-in the page put there.
@@ -353,7 +388,16 @@ async fn fetch(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: 
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let what = shown(&url);
     let fake = url.query_pairs().find(|(_, v)| placeholder_key(v)).map(|(k, _)| k.into_owned());
-    let key = ctx.state.cipher().ok().and_then(|c| crate::sitekeys::for_request(&ctx.state.db.lock().unwrap(), &c, &ctx.chat_id, &host));
+    let mut key = ctx.state.cipher().ok().and_then(|c| crate::sitekeys::for_request(&ctx.state.db.lock().unwrap(), &c, &ctx.chat_id, &host));
+    if key.is_some() {
+        match keyed_url(url.clone()) {
+            Some(u) => url = u,
+            None => {
+                key = None;
+                note(&ctx, "live_failed", format!("{what}: the API key is only sent over https, so it was left out; use the https:// address"));
+            }
+        }
+    }
     if let Some(k) = &key {
         add_key(&mut url, k);
     }
@@ -673,6 +717,8 @@ const PROBE: &str = r##"(function () {
         ids: [].map.call(document.querySelectorAll('[id]'), function (e) { return e.id; }).slice(0, 30),
         labels: controls.concat([].slice.call(document.querySelectorAll('input:not([type=hidden]), select, textarea'))).map(function (el) { return el.placeholder || label(el); }).slice(0, 40),
         early_buttons: early, changes: changes };
+      // Clicking takes a while (up to 3 s a button): the checker waits for it.
+      send({ kind: 'clicking', message: String(Math.min(live.length, 8)) });
       tryClicks(live.slice(0, 8), function (quiet, popups) {
         summary.quiet = quiet.slice(0, 12);
         summary.popups = popups.slice(0, 12);
@@ -710,8 +756,17 @@ pub async fn check(app: &AppHandle, id: &str) -> Result<Vec<Report>, String> {
         .on_download(|_, _| false)
         .build()
         .map_err(|e| format!("Couldn't check the site: {e}"))?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut clicking = false;
     while tokio::time::Instant::now() < deadline {
+        // Loaded, and trying its buttons: time for each click (a page that
+        // loads data after a click got a false "endless loop" at 15 s).
+        if !clicking {
+            if let Some(n) = reports.lock().unwrap().iter().find(|r| r.kind == "clicking").map(|r| r.message.parse::<u64>().unwrap_or(8)) {
+                clicking = true;
+                deadline = tokio::time::Instant::now() + Duration::from_millis(n.min(8) * 3_300 + 3_000);
+            }
+        }
         if reports.lock().unwrap().iter().any(|r| r.kind == "summary") {
             // A moment for anything still being sent.
             tokio::time::sleep(Duration::from_millis(300)).await;
@@ -834,6 +889,10 @@ pub fn describe(reports: &[Report], web: bool, asked: &str) -> (Vec<String>, Str
     }
     let summary = reports.iter().rev().find(|r| r.kind == "summary");
     let text = match summary {
+        None if reports.iter().any(|r| r.kind == "clicking") => {
+            once("The page loaded, but clicking its buttons never finished: one of them may start an endless loop or wait forever".into(), &mut problems);
+            "It loaded, but trying its buttons never finished.".to_string()
+        }
         None => {
             once("The page didn't finish loading within 15 seconds (an endless loop or a script that never ends?)".into(), &mut problems);
             "It didn't finish loading.".to_string()
@@ -1193,6 +1252,11 @@ mod tests {
         let mut u = reqwest::Url::parse("https://finnhub.io/api/v1/quote?symbol=AAPL&token=YOUR_API_KEY").unwrap();
         add_key(&mut u, &k);
         assert_eq!(u.as_str(), "https://finnhub.io/api/v1/quote?symbol=AAPL&token=s3cr3t");
+        // A key never goes over plain http: the address goes over https instead, or the key stays here.
+        let keyed = |s: &str| keyed_url(reqwest::Url::parse(s).unwrap()).map(|u| u.to_string());
+        assert_eq!(keyed("http://finnhub.io/api/v1/quote?symbol=AAPL").as_deref(), Some("https://finnhub.io/api/v1/quote?symbol=AAPL"));
+        assert_eq!(keyed("https://finnhub.io/x").as_deref(), Some("https://finnhub.io/x"));
+        assert_eq!(keyed("http://api.example.com:8080/x"), None);
         assert_eq!(asked_url(&"/__sulcus/fetch?url=https%3A%2F%2Fa.io%2Fq%3Fs%3D1%26t%3D2".parse().unwrap()).as_deref(), Some("https://a.io/q?s=1&t=2"));
         assert_eq!(asked_url(&"/__sulcus/fetch".parse().unwrap()), None);
         // Not encoded (what Qwen2.5-Coder 14B wrote in the live test): the whole address still arrives.
@@ -1240,6 +1304,17 @@ mod tests {
         assert_ne!(s2.id, s.id);
         let r = client.get(&s2.url).send().await.unwrap();
         assert!(r.headers().get("content-security-policy").is_none());
+        // The chat goes offline while it's served: its next page gets the offline policy.
+        crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::WebSearch, false).unwrap();
+        let r = client.get(&s2.url).send().await.unwrap();
+        assert!(r.headers()["content-security-policy"].to_str().unwrap().contains("connect-src 'self'"));
+        crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::WebSearch, true).unwrap();
+        // A big file comes whole, sent in pieces.
+        let big: Vec<u8> = (0..3 * 1024 * 1024 + 5).map(|i| (i % 251) as u8).collect();
+        std::fs::write(dir.join("big.bin"), &big).unwrap();
+        let r = client.get(s2.url.replace("index.html", "big.bin")).send().await.unwrap();
+        assert_eq!(r.headers()["content-length"].to_str().unwrap(), big.len().to_string());
+        assert!(r.bytes().await.unwrap().as_ref() == big.as_slice(), "the same bytes");
         // Live data: only for the site's own pages, only public addresses, and an address is needed.
         let base = s2.url.trim_end_matches("index.html");
         let r = client.get(format!("{base}__sulcus/fetch?url=https%3A%2F%2Fexample.com%2F")).header("sec-fetch-site", "cross-site").send().await.unwrap();

@@ -1287,6 +1287,9 @@ export interface PerfSettings {
   cool_on_battery: boolean;
   heat_guard: boolean;
   adaptive: boolean;
+  gpu_limit?: number;
+  /** Unload an idle chat model after this many minutes (0 = never); null for the mode's own. */
+  unload_after_mins?: number | null;
 }
 
 export interface PerfLimits {
@@ -1385,7 +1388,7 @@ export interface MediaModelCard {
   can: string[];
   files: { role: string; file: string; size: number }[];
   quality: number;
-  defaults: { steps: number; width: number; height: number; fps: number; seconds: number };
+  defaults: { steps: number; width: number; height: number; fps: number; seconds: number; max_frames?: number };
   /** Installed from Hugging Face: its repository there ("owner/name"). */
   from_hub?: string | null;
   fit: MediaFit;
@@ -1526,7 +1529,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune";
 
 export interface DevModeView {
   on: boolean;
@@ -1593,6 +1596,47 @@ export interface MediaRequest {
   chat_id?: string | null;
   /** New pictures: a look from the Studio's list ("auto" by default). */
   style?: string | null;
+  /** Example pictures (gallery ids, at most 4) the new one should follow. */
+  examples?: string[];
+  /** What to take from them. */
+  example_use?: "style" | "subject" | "layout";
+  /** The prompt writer rewrites the description for this model. */
+  write_prompt?: boolean;
+  /** The picture reader checks the result and it's made again if things are missing. */
+  check?: boolean;
+  notes?: string | null;
+  /** A desktop wallpaper at this screen size. */
+  wallpaper?: WallpaperSpec | null;
+}
+
+export interface WallpaperSpec {
+  width: number;
+  height: number;
+  oled: boolean;
+}
+
+export interface Screen {
+  name: string;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  primary: boolean;
+}
+
+export interface WallpaperSet {
+  path: string;
+  how: "windows" | "lively" | "saved";
+}
+
+/** What the prompt writer knows about a picture model. */
+export interface PromptStatus {
+  family: string;
+  tuned: { at: number; model_id: string; baseline: number; score: number; pictures: number } | null;
+  /** The model brings its own language model to write with. */
+  own_writer: boolean;
+  /** What reads pictures here (checking, example pictures), if anything. */
+  reader: string | null;
 }
 
 /** Base64 of bytes (for sending files to the core). */
@@ -1807,6 +1851,9 @@ export const api = {
   /** Picks another folder for the assistant's folder request. */
   chooseFolder: (callId: string, path: string) => invoke<void>("choose_folder", { callId, path }),
   saveChart: (path: string, svg: string) => invoke<void>("save_chart", { path, svg }),
+  /** Chats hidden from the sidebar: own chats by id, shared ones as "contact:chat". */
+  hiddenChats: () => invoke<string[]>("hidden_chats"),
+  setChatHidden: (key: string, hidden: boolean) => invoke<string[]>("set_chat_hidden", { key, hidden }),
   siteKeyAsk: (callId: string) => invoke<SiteKeyAsk>("site_key_ask", { callId }),
   siteKeyGive: (callId: string, key: string) => invoke<void>("site_key_give", { callId, key }),
   siteKeys: () => invoke<SavedSiteKey[]>("site_keys"),
@@ -1816,6 +1863,8 @@ export const api = {
   setChatMode: (chatId: string, mode: RunMode) => invoke<void>("set_chat_mode", { chatId, mode }),
   answerApproval: (callId: string, decision: "allow" | "always" | "deny") => invoke<void>("answer_approval", { callId, decision }),
   pendingApprovals: (chatId: string) => invoke<PendingApproval[]>("pending_approvals", { chatId }),
+  /** Every approval waiting for an answer, in all chats. */
+  allPendingApprovals: () => invoke<PendingApproval[]>("all_pending_approvals"),
   undoableTurns: (chatId: string) => invoke<string[]>("undoable_turns", { chatId }),
   undoTurn: (chatId: string, turnId: string) => invoke<string[]>("undo_turn", { chatId, turnId }),
   projects: () => invoke<Project[]>("list_projects"),
@@ -1949,6 +1998,10 @@ export const api = {
   removeMedia: (modelId: string) => invoke<number>("remove_media_model", { modelId }),
   mediaStart: (request: MediaRequest) => invoke<string>("media_start", { request }),
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
+  mediaPromptStatus: (modelId: string) => invoke<PromptStatus>("media_prompt_status", { modelId }),
+  mediaForgetTuning: (modelId: string) => invoke<void>("media_forget_tuning", { modelId }),
+  wallpaperScreens: () => invoke<Screen[]>("wallpaper_screens"),
+  wallpaperSet: (id: string, x: number | null, y: number | null) => invoke<WallpaperSet>("wallpaper_set", { id, x, y }),
   mediaJobs: () => invoke<MediaJob[]>("media_jobs"),
   mediaList: (kind: string | null, before: number | null = null, limit = 60) => invoke<MediaItem[]>("media_list", { kind, before, limit }),
   /** A chat's pictures, video and music: made there or attached. */
@@ -2069,12 +2122,16 @@ export interface MemoryWarning {
 
 export interface GpuNow {
   name: string | null;
-  /** Percent busy. */
+  /** Percent busy (every app's use). */
   usage: number | null;
-  /** °C; only NVIDIA cards report it. */
+  /** °C; only NVIDIA cards report it, and only while SulcusAI is working. */
   temp: number | null;
   mem_used: number | null;
   mem_total: number | null;
+  /** SulcusAI's own share. */
+  ours: number | null;
+  /** SulcusAI is working now (a reply, a picture, listening). */
+  working: boolean;
 }
 
 export interface InstallProgress {
@@ -2097,10 +2154,11 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "looking_up" | "idle"; detail?: string };
+  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string };
   "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
+  "media:tuned": { family: string; baseline: number; score: number; pictures: number; demos: number; new_instructions: boolean };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };

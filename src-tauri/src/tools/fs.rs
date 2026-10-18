@@ -314,6 +314,9 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let text = read_text(&path)?;
                 let lines: Vec<&str> = text.lines().collect();
                 let start = args.get("start_line").and_then(Value::as_u64).map_or(1, |n| n.max(1) as usize);
+                if start > lines.len() && !lines.is_empty() {
+                    return Err(format!("The file has {} lines, so there's nothing from line {start} on.", lines.len()));
+                }
                 let end = args.get("end_line").and_then(Value::as_u64).map_or(start + DEFAULT_LINES - 1, |n| n as usize).min(lines.len());
                 let mut out = String::new();
                 for (i, line) in lines.iter().enumerate().take(end).skip(start - 1) {

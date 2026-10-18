@@ -890,7 +890,7 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
             let conn = state.db.lock().unwrap();
             insert(&conn, c, &e)?;
             let who = if e.data.attendees.is_empty() { String::new() } else { format!(" and invited {}", e.data.attendees.join(", ")) };
-            db::log_action(&conn, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
+            db::log_action_enc(&conn, c, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
             return Ok(e);
         }
         let url = event_url(&cal, &e.data.uid);
@@ -904,7 +904,7 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
     let conn = state.db.lock().unwrap();
     insert(&conn, c, &e)?;
     let who = if e.data.attendees.is_empty() { String::new() } else { format!(" and invited {}", e.data.attendees.join(", ")) };
-    db::log_action(&conn, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
+    db::log_action_enc(&conn, c, "calendar", &format!("Added “{}” to the calendar{who}", e.data.title));
     Ok(e)
 }
 
@@ -938,7 +938,7 @@ pub async fn delete(state: &AppState, c: &Cipher, id: &str) -> Result<(), String
     }
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM events WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
-    db::log_action(&conn, "calendar", &format!("Deleted “{}” from the calendar", e.data.title));
+    db::log_action_enc(&conn, c, "calendar", &format!("Deleted “{}” from the calendar", e.data.title));
     Ok(())
 }
 
@@ -1011,7 +1011,7 @@ pub async fn add_calendar_account(state: AppStateRef<'_>, account: CalAccount) -
     {
         let conn = state.db.lock().unwrap();
         store_account(&conn, &c, &id, &a)?;
-        db::log_action(&conn, "calendar", &format!("Connected the calendar account {} ({} calendars)", a.name, a.calendars.len()));
+        db::log_action_enc(&conn, &c, "calendar", &format!("Connected the calendar account {} ({} calendars)", a.name, a.calendars.len()));
     }
     sync_account(&state, &c, &id).await?;
     Ok(id)
@@ -1054,7 +1054,7 @@ pub async fn connect_oauth(state: &AppState, provider: crate::oauth::Provider, h
     {
         let conn = state.db.lock().unwrap();
         store_account(&conn, &c, &id, &a)?;
-        db::log_action(&conn, "calendar", &format!("Connected {} ({} calendars)", a.name, a.calendars.len()));
+        db::log_action_enc(&conn, &c, "calendar", &format!("Connected {} ({} calendars)", a.name, a.calendars.len()));
     }
     sync_account(state, &c, &id).await?;
     Ok((id, a.name))

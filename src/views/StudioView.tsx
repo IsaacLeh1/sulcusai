@@ -24,12 +24,13 @@ import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
+import { ExamplePicker, PromptHelpPanel, SetWallpaperButton, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 
-type Tab = "pictures" | "video" | "music" | "narrate";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate";
 type Shape = NonNullable<MediaRequest["shape"]>;
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", music: "music", narrate: "music" };
-const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", music: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music" };
+const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 
 const STYLES = [tx("Watercolor"), tx("Oil painting"), tx("Pencil sketch"), tx("Anime"), tx("3D render"), tx("Pixel art"), tx("Vintage photo"), tx("Comic book")];
 const LANGUAGES: [string, string][] = [
@@ -53,7 +54,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
   const [view, reloadView] = useMediaView();
   const jobs = useMediaJobs();
@@ -81,10 +82,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       if (d.ok && d.items?.length) {
         setFresh((s) => new Set([...s, ...d.items!.map((i) => i.id)]));
         load();
-      } else if (d.error) toast(d.error, "error");
+      } else if (d.error) toast(errorText(d.error), "error");
     });
+    const tuned = on("media:tuned", (r) =>
+      toast(t("The prompt writer learned this model: {before}% → {after}% of what was asked for showed up.", { before: Math.round(r.baseline * 100), after: Math.round(r.score * 100) }), "success"),
+    );
     return () => {
       sub.then((un) => un());
+      tuned.then((un) => un());
     };
   }, [load, toast]);
 
@@ -160,7 +165,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("🎨 Pictures"), video: t("🎬 Video"), music: t("🎵 Music and sound"), narrate: t("🗣 Narration") }[tb]}
+            {{ pictures: t("🎨 Pictures"), video: t("🎬 Video"), wallpaper: t("🖥 Wallpapers"), music: t("🎵 Music and sound"), narrate: t("🗣 Narration") }[tb]}
           </button>
         ))}
       </div>
@@ -187,6 +192,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             onEditPhoto={importFile}
             lifelike={view?.models.find((m) => m.id === "z-image-turbo" && !m.installed && m.fit.runnable) ?? null}
             onModels={() => setModels(["image"])}
+            gallery={items}
+            toast={toast}
           />
         ) : tab === "video" ? (
           <VideoComposer
@@ -198,7 +205,10 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             onPickSource={setSource}
             gallery={items}
             onStart={start}
+            toast={toast}
           />
+        ) : tab === "wallpaper" ? (
+          <WallpaperComposer imageModels={installedOf("image")} videoModels={features.has("video") ? installedOf("video") : []} gallery={items} onStart={start} toast={toast} />
         ) : tab === "music" ? (
           <MusicComposer key={view?.defaults?.music ?? "no-default"} models={installedOf("music")} defaultId={view?.defaults?.music ?? null} onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView).catch(() => {})} onStart={start} />
         ) : (
@@ -436,6 +446,8 @@ function PictureComposer({
   onModels,
   defaultId,
   onSetDefault,
+  gallery,
+  toast,
 }: {
   models: MediaModelCard[];
   onStart: (r: MediaRequest) => Promise<boolean>;
@@ -445,6 +457,8 @@ function PictureComposer({
   onModels: () => void;
   defaultId: string | null;
   onSetDefault: (id: string) => void;
+  gallery: MediaItem[];
+  toast: PushToast;
 }) {
   const [prompt, setPrompt] = useState("");
   const [shape, setShape] = useState<Shape>("square");
@@ -453,8 +467,16 @@ function PictureComposer({
   const [model, setModel] = useModelPick("image", models, defaultId);
   const m = models.find((x) => x.id === model) ?? models[0];
   const canEdit = models.some((x) => x.can.includes("edit"));
+  const [examples, setExamples] = useState<MediaItem[]>([]);
+  const [use, setUse] = useState<ExampleUse>("style");
+  const help = usePromptHelp(m?.id);
+  const local = !!m && !m.id.startsWith("cloud:");
   const go = async () => {
-    if (await onStart({ op: "generate", prompt, shape, count, style, model_id: m?.id })) setPrompt("");
+    const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check } : {};
+    if (await onStart({ op: "generate", prompt, shape, count, style, model_id: m?.id, ...extra })) {
+      setPrompt("");
+      setExamples([]);
+    }
   };
   return (
     <div className="form">
@@ -492,6 +514,8 @@ function PictureComposer({
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
         <button className="btn primary" disabled={!prompt.trim()} onClick={go}>{t("Create")}</button>
       </div>
+      {local && <ExamplePicker value={examples} onChange={setExamples} use={use} onUse={setUse} gallery={gallery} toast={toast} canRead={!!help.status?.reader} />}
+      <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} />
       {lifelike && (style === "auto" || style === "photo" || style === "phone_photo") && (
         <p className="small callout">
           {t("For the most lifelike photos, add {name}: it makes pictures that look like real photographs.", { name: lifelike.name })}{" "}
@@ -521,6 +545,7 @@ function VideoComposer({
   onPickSource,
   gallery,
   onStart,
+  toast,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -529,17 +554,38 @@ function VideoComposer({
   onPickSource: (i: MediaItem | null) => void;
   gallery: MediaItem[];
   onStart: (r: MediaRequest) => Promise<boolean>;
+  toast: PushToast;
 }) {
   const [prompt, setPrompt] = useState("");
   const [seconds, setSeconds] = useState(3);
+  const [customLength, setCustomLength] = useState(false);
   const [shape, setShape] = useState<Shape>("landscape");
   const [model, setModel] = useModelPick("video", models, defaultId);
   const [picking, setPicking] = useState(false);
   const usable = source ? models.filter((m) => m.can.includes("image")) : models;
   const m = usable.find((x) => x.id === model) ?? usable[0];
   const thumb = useMediaUrl(source, true);
+  const help = usePromptHelp(m?.id);
+  // What the model makes at once; longer clips are made in parts, each going
+  // on from the last frame of the one before (models that start from a picture).
+  const once = m ? Math.max(1, Math.floor(((m.defaults.max_frames || 81) - 1) / Math.max(8, m.defaults.fps || 16))) : 5;
+  const continues = !!m && m.can.includes("image") && !m.id.startsWith("cloud:");
+  const most = continues ? 600 : once;
+  const length = Math.min(Math.max(1, seconds), most);
+  const parts = Math.ceil(length / once);
+  const importPicture = async () => {
+    const picked = await openFile({ multiple: false, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    if (typeof picked !== "string") return;
+    try {
+      onPickSource(await api.mediaImport(picked));
+      setPicking(false);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const go = async () => {
-    if (await onStart({ op: "video", prompt, seconds, shape, source: source?.id ?? null, model_id: m?.id })) {
+    const write = m && !m.id.startsWith("cloud:") && prompt.trim() ? { write_prompt: help.write } : {};
+    if (await onStart({ op: "video", prompt, seconds: length, shape, source: source?.id ?? null, model_id: m?.id, ...write })) {
       setPrompt("");
       onPickSource(null);
     }
@@ -561,7 +607,7 @@ function VideoComposer({
             <button className="link" onClick={() => onPickSource(null)}>✕</button>
           </span>
         ) : (
-          <button className="btn small" onClick={() => setPicking(true)}>{t("Start from a picture…")}</button>
+          <button className="btn small" onClick={() => setPicking(true)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("🖼 Start from a picture…")}</button>
         )}
         {!source && (
           <div className="filters tight">
@@ -572,20 +618,47 @@ function VideoComposer({
             ))}
           </div>
         )}
-        <select value={seconds} onChange={(e) => setSeconds(+e.target.value)} title={t("Length")}>
-          {[2, 3, 5, 8].map((s) => (
-            <option key={s} value={s}>{t("{s} seconds", { s })}</option>
+        <select
+          value={customLength ? "custom" : String(length)}
+          onChange={(e) => {
+            if (e.target.value === "custom") return setCustomLength(true);
+            setCustomLength(false);
+            setSeconds(+e.target.value);
+          }}
+          title={t("Length")}
+        >
+          {[2, 3, 5, 10, 20, 30, 60, 120].filter((s) => s <= most).map((s) => (
+            <option key={s} value={s}>{s < 60 ? t("{s} seconds", { s }) : t("{m} min", { m: s / 60 })}</option>
           ))}
+          {![2, 3, 5, 10, 20, 30, 60, 120].includes(length) && !customLength && <option value={length}>{t("{s} seconds", { s: length })}</option>}
+          {continues && <option value="custom">{t("Any length…")}</option>}
         </select>
+        {customLength && (
+          <label className="check small">
+            <input className="input tiny" type="number" min={1} max={most} value={seconds} onChange={(e) => setSeconds(Math.max(1, Math.min(most, +e.target.value || 1)))} aria-label={t("Seconds")} />
+            {t("seconds")}
+          </label>
+        )}
         <ModelPick models={usable} value={m?.id ?? ""} onChange={setModel} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
-        {m && <span className="small muted">{waitLabel((m.fit.est_secs * seconds) / Math.max(1, m.defaults.seconds || 3))}</span>}
+        {m && <span className="small muted">{waitLabel((m.fit.est_secs * length) / Math.max(1, m.defaults.seconds || 3))}</span>}
         <button className="btn primary" disabled={(!prompt.trim() && !source) || !m} onClick={go}>{t("Make video")}</button>
       </div>
       {source && !m && <p className="small warn-text">{t("Bringing a picture to life needs Wan 2.2. Install it from Models.")}</p>}
+      {parts > 1 && (
+        <p className="small muted">
+          {t("{model} makes about {n} seconds at a time, so this is made in {parts} parts, each going on from the last frame of the one before, then joined into one video.", { model: m?.name ?? "", n: once, parts })}
+        </p>
+      )}
+      {!continues && m && seconds > once && <p className="small muted">{t("{model} makes clips up to {n} seconds. For longer ones, use Wan 2.2.", { model: m.name, n: once })}</p>}
+      <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} canCheck={false} />
       {picking && (
         <Modal title={t("Start from a picture")} onClose={() => setPicking(false)}>
+          <div className="row">
+            <button className="btn small" onClick={importPicture}>{t("From a file…")}</button>
+            <span className="small muted">{t("Or pick one from the gallery:")}</span>
+          </div>
           <div className="media-grid small-grid">
             {gallery.filter((i) => i.kind === "image").map((i) => (
               <MediaTile
@@ -877,9 +950,17 @@ function Viewer({
                 </div>
               )}
               <div className="row wrap">
-                <button className="btn small" onClick={() => run({ op: "upscale", prompt: "" })} title={t("Four times larger and sharper")}>{t("⤢ Upscale 4×")}</button>
+                <button
+                  className="btn small"
+                  disabled={Math.max(item.width, item.height) > 2048}
+                  onClick={() => run({ op: "upscale", prompt: "" })}
+                  title={Math.max(item.width, item.height) > 2048 ? t("It's already large. Upscaling is for pictures up to 2048 pixels across.") : t("Four times larger and sharper")}
+                >
+                  {t("⤢ Upscale 4×")}
+                </button>
                 <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>{t("✂ Remove background")}</button>
-                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)}>{t("🎬 Bring to life")}</button>}
+                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("🎬 Turn into a video")}</button>}
+                <SetWallpaperButton item={item} toast={toast} />
                 {item.op === "generate" && item.prompt && (
                   <button className="btn small" onClick={() => onStart({ op: "generate", prompt: item.prompt, model_id: item.model_id, shape: item.width > item.height ? "landscape" : item.width < item.height ? "portrait" : "square" })}>
                     {t("↻ More like this")}
@@ -889,6 +970,11 @@ function Viewer({
             </div>
           )}
 
+          {item.kind === "video" && item.op === "wallpaper" && (
+            <div className="row">
+              <SetWallpaperButton item={item} toast={toast} />
+            </div>
+          )}
           <span className="spacer" />
           <div className="row">
             <button

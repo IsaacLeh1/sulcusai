@@ -69,6 +69,11 @@ impl Approvals {
         self.waiting.lock().unwrap().values().map(|(p, _)| p.clone()).collect()
     }
 
+    /// Every approval waiting for an answer, in all chats.
+    pub fn all_waiting(&self) -> Vec<PendingApproval> {
+        self.waiting.lock().unwrap().values().map(|(p, _)| p.clone()).collect()
+    }
+
     pub fn answer(&self, call_id: &str, d: Decision) -> bool {
         match self.waiting.lock().unwrap().remove(call_id) {
             Some((p, tx)) => {
@@ -109,6 +114,9 @@ pub struct Turn {
     pub use_tools: bool,
     /// The model was started with its image encoder and can see pictures.
     pub vision: bool,
+    /// Nobody's watching (a scheduled task): nothing waits for an answer
+    /// to a popup; what would need one is declined.
+    pub unattended: bool,
     pub base: String,
     pub about: String,
     pub cancel: Arc<AtomicBool>,
@@ -200,6 +208,11 @@ fn fit_result(mut outcome: Outcome, ctx: u32) -> Outcome {
 }
 
 /// A tool call's name and arguments, with the arguments' formatting evened out.
+/// Tools that reach the internet: a failure is often the network, worth one retry.
+fn is_network_tool(name: &str) -> bool {
+    matches!(name, "web_search" | "fetch_page" | "wikipedia" | "research" | "market_quote" | "find_places" | "weather" | "news")
+}
+
 fn call_key(call: &ToolCall) -> String {
     let args = serde_json::from_str::<Value>(&call.arguments).map(|v| v.to_string()).unwrap_or_else(|_| call.arguments.clone());
     format!("{}{}", call.name, args)
@@ -385,6 +398,10 @@ impl Turn {
             let name = d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default();
             !adv.forbids(tools::find(name).map_or(Risk::Connector, |t| t.risk))
         });
+        // Unattended, the tools that ask the person for something aren't offered.
+        if self.unattended {
+            defs.retain(|d| !d.pointer("/function/name").and_then(Value::as_str).unwrap_or_default().starts_with("request_"));
+        }
         let mut tools = Some(Value::Array(defs)).filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
 
         let mut about = self.about.clone();
@@ -509,12 +526,34 @@ impl Turn {
             }
             self.rest_if_hot().await;
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
+            // The model can't see pictures: the picture reader describes the
+            // newest attached ones (once each; the words are kept with the picture).
+            let attached: Vec<String> = history
+                .iter()
+                .filter(|m| m.role == "user")
+                .filter_map(|m| m.meta.as_ref()?.get("images")?.as_array().cloned())
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            let described = if !self.vision && !attached.is_empty() && !crate::vision::readers(&self.state).is_empty() {
+                crate::vision::describe_attached(&self.state, &self.cipher, &attached, || {
+                    self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "reading_pictures" }));
+                })
+                .await
+            } else {
+                Vec::new()
+            };
             // When it doesn't all fit, files it already wrote aren't sent again
             // (it can read them back); when it does, it keeps seeing them, to edit them exactly.
             let (mut kept, mut info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
             let room = self.ep.ctx.saturating_sub(info.system_tokens + info.profile_tokens + info.tools_tokens + info.reply_reserve);
             if info.history_tokens > room || info.dropped_messages > 0 {
                 (kept, info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &chat::without_written(&history)).await?;
+            }
+            // Outputs removed to make room can be fetched again: the repeat
+            // guard lets those lookups through.
+            if kept.iter().any(chat::is_trimmed) || info.dropped_messages > 0 {
+                done_calls.retain(|k| !tools::find(k.split('{').next().unwrap_or_default()).is_some_and(|t| t.risk == Risk::Read));
             }
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
@@ -537,7 +576,7 @@ impl Turn {
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
                 let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
                 let can_edit = tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("edit_image")));
-                chat::attach_images(&mut messages, &kept, see, can_edit);
+                chat::attach_images(&mut messages, &kept, see, can_edit, &described);
                 if let Some((_, f)) = &forced {
                     messages.push(json!({ "role": "user", "content": f.nudge }));
                 }
@@ -587,6 +626,10 @@ impl Turn {
                             }
                             None if follow_up_try => {
                                 follow_ups_failed = true;
+                                // A call cut off half-way is JSON, not words for the user.
+                                if r.content.trim_start().starts_with('{') {
+                                    r.content.clear();
+                                }
                                 r
                             }
                             None => first,
@@ -620,8 +663,12 @@ impl Turn {
                 }
                 // Asked for a picture and answered without making one ("I can't
                 // generate images"): one more try that can only make it.
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_for_picture(asked) {
-                    if let Some(f) = tools.as_ref().and_then(chat::forced_picture) {
+                // A change asked for with a picture attached goes to edit_image
+                // (also when it says it can't change pictures).
+                let has_pictures = history.iter().rev().find(|m| m.role == "user").and_then(|m| m.meta.as_ref()?.get("images")?.as_array().map(|a| !a.is_empty())).unwrap_or(false);
+                let change = has_pictures && chat::asks_picture_change(asked);
+                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && (chat::asks_for_picture(asked) || (change && chat::denies_pictures(&finished.content))) {
+                    if let Some(f) = tools.as_ref().and_then(|t| chat::forced_picture(t, change)) {
                         let mut ep = self.ep.clone();
                         ep.extra["response_format"] = f.response_format.clone();
                         ep.extra["max_tokens"] = json!(600);
@@ -782,8 +829,14 @@ impl Turn {
             };
             for call in &calls {
                 let key = call_key(call);
-                let repeat = done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
-                let failed_before = failed_calls.iter().find(|(k, _)| *k == key).map(|(_, why)| why.clone());
+                // What a page or a running command shows changes between
+                // identical calls: those are never repeats.
+                let changes_by_itself = call.name.starts_with("browser_") || matches!(call.name.as_str(), "command_output" | "wait");
+                let repeat = !changes_by_itself && done_calls.contains(&key) && tools::find(&call.name).is_some_and(|t| t.risk == Risk::Read);
+                // A lookup that failed once (often the network) gets one more try.
+                let network = is_network_tool(&call.name);
+                let fails = failed_calls.iter().filter(|(k, _)| *k == key).count();
+                let failed_before = if network && fails < 2 { None } else { failed_calls.iter().find(|(k, _)| *k == key).map(|(_, why)| why.clone()) };
                 let mut outcome = if self.cancel.load(Ordering::Relaxed) {
                     Outcome::denied(call.name.clone()).with_text("Stopped by the user before this ran.")
                 } else if let Some(why) = failed_before {
@@ -836,7 +889,7 @@ impl Turn {
                         crate::applog::line("agent", &format!("The {} tool failed in a chat (model {})", call.name, self.ep.cloud.as_ref().map_or("on this PC", |_| "in the cloud")));
                         let why = o.meta["detail"].as_str().map(str::to_string).unwrap_or_else(|| o.text.clone());
                         failed_calls.push((key, why));
-                    } else if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute)) {
+                    } else if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute | Risk::Memory)) || changes_by_itself {
                         // Something changed (a file written, a command run): a call
                         // that failed before (previewing a page that wasn't there
                         // yet) may work now.
@@ -847,6 +900,12 @@ impl Turn {
                     }
                     o
                 };
+                // Declined: nothing more is pushed on them this turn (a declined
+                // file write came back up to 12 times).
+                if outcome.meta["status"] == "denied" {
+                    follow_ups_failed = true;
+                    follow_up = None;
+                }
                 // A change to the site since it was last previewed; what a preview found.
                 if matches!(call.name.as_str(), "write_file" | "edit_file") && outcome.meta["status"] != "error" {
                     previewed = false;
@@ -862,7 +921,7 @@ impl Turn {
                         follow_up = Some(f);
                     }
                 }
-                if call.name == "preview_site" && outcome.meta["preview_site"].is_string() {
+                if call.name == "preview_site" && (outcome.meta["preview_site"].is_string() || outcome.meta["preview_port"].is_u64()) {
                     previewed = true;
                     previews += 1;
                     let found = (outcome.meta["preview_problems"].as_u64().unwrap_or(0) > 0)
@@ -928,13 +987,18 @@ impl Turn {
             // The same failing call again and again: stop, and say what went wrong.
             if failed_repeats >= 2 {
                 let why = failed_calls.last().map(|(_, w)| w.clone()).unwrap_or_default();
+                let online = failed_calls.last().is_some_and(|(k, _)| is_network_tool(k.split('{').next().unwrap_or_default()));
                 let note = Message {
                     id: uuid::Uuid::new_v4().to_string(),
                     chat_id: self.chat_id.clone(),
                     role: "assistant".into(),
-                    content: format!(
-                        "I kept trying the same thing and it kept failing, so I stopped. The error was: {why}\n\nA larger model usually gets this right: pick one from the model menu (one with 7B or more), then ask again."
-                    ),
+                    content: if online {
+                        format!("I couldn't get that from the internet, even after trying again, so I stopped. The error was: {why}\n\nCheck that this PC is online (and that the site is up), then ask again.")
+                    } else {
+                        format!(
+                            "I kept trying the same thing and it kept failing, so I stopped. The error was: {why}\n\nA larger model usually gets this right: pick one from the model menu (one with 7B or more), then ask again."
+                        )
+                    },
                     created_at: now(),
                     ..Default::default()
                 };
@@ -1702,6 +1766,10 @@ impl Turn {
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {
+        if self.unattended {
+            self.log(&format!("Declined {} in a scheduled task: nobody was there to approve it", call.name));
+            return Decision::Deny;
+        }
         let (tx, mut rx) = oneshot::channel();
         let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview };
         self.state.approvals.waiting.lock().unwrap().insert(call.id.clone(), (pending.clone(), tx));

@@ -6,7 +6,8 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -331,11 +332,23 @@ pub struct LaunchSpec<'a> {
     pub lora: Option<&'a Path>,
 }
 
+/// Launch settings beyond `LaunchSpec`, from the fit plan.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tuning {
+    /// A mixture-of-experts model split with the graphics card: every layer
+    /// goes on the card, but the experts of the first N layers stay in
+    /// system memory (--n-cpu-moe). `gpu_layers` then says how much of the
+    /// model that is, in whole layers.
+    pub cpu_moe: Option<u32>,
+}
+
 struct Running {
     child: Child,
     port: u16,
     key: String,
     model_id: String,
+    /// What it was asked for: the model, or a taught model's own id.
+    asked: String,
     quant: String,
     ctx: u32,
     gpu_layers: u32,
@@ -344,6 +357,13 @@ struct Running {
     vision: bool,
     batch: u32,
     lora: Option<PathBuf>,
+    cpu_moe: Option<u32>,
+}
+
+impl Running {
+    fn endpoint(&self) -> Endpoint {
+        Endpoint { port: self.port, key: self.key.clone(), ctx: self.ctx, extra: serde_json::Value::Null, cloud: None }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -382,8 +402,12 @@ pub struct Engine {
 /// What a paused model needs to come back as it was.
 #[derive(Debug, Clone)]
 pub struct Paused {
+    /// What to ask for to bring it back: the model, or a taught model's own
+    /// id, so its adapter comes back with it.
     pub model_id: String,
     pub vision: bool,
+    base: String,
+    lora: Option<PathBuf>,
     port: u16,
     key: String,
 }
@@ -419,17 +443,41 @@ impl Engine {
         Some((r.child.id(), r.model_id.clone(), r.quant.clone(), r.ctx, r.gpu_layers))
     }
 
-    /// The running endpoint, if it is already serving this model.
-    pub fn endpoint_for(&mut self, model_id: &str) -> Option<Endpoint> {
+    /// The running endpoint, if it is already serving this model with this
+    /// taught adapter (or none): the base model doesn't answer for a taught
+    /// one, nor the other way round.
+    pub fn endpoint_for(&mut self, model_id: &str, lora: Option<&Path>) -> Option<Endpoint> {
         if !self.alive() {
             return None;
         }
         let r = self.running.as_ref()?;
-        (r.model_id == model_id).then(|| Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null, cloud: None })
+        (r.model_id == model_id && r.lora.as_deref() == lora).then(|| r.endpoint())
+    }
+
+    /// The model running now, whatever it is: its id and endpoint.
+    pub fn current(&mut self) -> Option<(String, Endpoint)> {
+        if !self.alive() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        Some((r.model_id.clone(), r.endpoint()))
+    }
+
+    /// Notes what the running model was asked for (a taught model's own id),
+    /// so a pause brings back the same thing.
+    pub fn asked_as(&mut self, id: &str) {
+        if let Some(r) = self.running.as_mut() {
+            r.asked = id.to_string();
+        }
     }
 
     /// Whether the running server already matches this launch exactly.
+    #[cfg(test)]
     pub fn matches(&mut self, spec: &LaunchSpec<'_>) -> bool {
+        self.matches_tuned(spec, Tuning::default())
+    }
+
+    pub fn matches_tuned(&mut self, spec: &LaunchSpec<'_>, tuning: Tuning) -> bool {
         self.alive()
             && self.running.as_ref().is_some_and(|r| {
                 r.model_id == spec.model_id
@@ -441,6 +489,7 @@ impl Engine {
                     && r.vision == spec.mmproj.is_some()
                     && r.batch == spec.batch
                     && r.lora.as_deref() == spec.lora
+                    && r.cpu_moe == tuning.cpu_moe
             })
     }
 
@@ -452,16 +501,23 @@ impl Engine {
     /// Starts the server for this model, replacing any other running model
     /// (or the same one launched with other limits).
     pub async fn ensure(&mut self, spec: LaunchSpec<'_>, job: Option<&JobRef>) -> Result<Endpoint, String> {
-        if self.matches(&spec) {
-            let r = self.running.as_ref().unwrap();
-            return Ok(Endpoint { port: r.port, key: r.key.clone(), ctx: r.ctx, extra: serde_json::Value::Null, cloud: None });
+        self.ensure_tuned(spec, Tuning::default(), job).await
+    }
+
+    pub async fn ensure_tuned(&mut self, spec: LaunchSpec<'_>, tuning: Tuning, job: Option<&JobRef>) -> Result<Endpoint, String> {
+        if self.matches_tuned(&spec, tuning) {
+            return Ok(self.running.as_ref().unwrap().endpoint());
         }
+        // The same model with other limits (mode, heat, its picture reader)
+        // keeps its address and key, so a reply holding them carries on.
+        let same = |model: &str, lora: Option<&Path>| model == spec.model_id && lora == spec.lora;
+        let relaunch = self.running.as_ref().filter(|r| same(&r.model_id, r.lora.as_deref())).map(|r| (r.port, r.key.clone()));
         self.stop().await;
 
-        // Coming back from a pause: the same address, if it's still free.
-        let back = self.paused.take().filter(|p| p.model_id == spec.model_id && std::net::TcpListener::bind(("127.0.0.1", p.port)).is_ok());
-        let (port, key) = match back {
-            Some(p) => (p.port, p.key),
+        // Coming back from a pause: the same address too, if it's still free.
+        let back = self.paused.take().filter(|p| same(&p.base, p.lora.as_deref())).map(|p| (p.port, p.key));
+        let (port, key) = match relaunch.or(back).filter(|(port, _)| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok()) {
+            Some(p) => p,
             None => (free_port()?, uuid::Uuid::new_v4().simple().to_string()),
         };
         let (log, log_err) = capped_log(spec.log).map_err(|e| e.to_string())?;
@@ -470,9 +526,15 @@ impl Engine {
         let devices = if spec.gpu_layers > 0 { dedicated_devices(spec.exe).await } else { Vec::new() };
         let mut cmd = Command::new(spec.exe);
         cmd.args(if devices.is_empty() { vec![] } else { vec!["--device".to_string(), devices.join(",")] });
+        // Experts kept in system memory: every layer on the card otherwise.
+        let layers = match tuning.cpu_moe {
+            Some(n) => vec!["-ngl".to_string(), "999".to_string(), "--n-cpu-moe".to_string(), n.to_string()],
+            None => vec!["-ngl".to_string(), spec.gpu_layers.to_string()],
+        };
         cmd.arg("-m").arg(spec.model_path)
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
-            .args(["-c", &spec.ctx.to_string(), "-ngl", &spec.gpu_layers.to_string()])
+            .args(["-c", &spec.ctx.to_string()])
+            .args(layers)
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
@@ -503,6 +565,7 @@ impl Engine {
             port,
             key: key.clone(),
             model_id: spec.model_id.to_string(),
+            asked: spec.model_id.to_string(),
             quant: spec.quant.to_string(),
             ctx: spec.ctx,
             gpu_layers: spec.gpu_layers,
@@ -511,16 +574,20 @@ impl Engine {
             vision: spec.mmproj.is_some(),
             batch: spec.batch,
             lora: spec.lora.map(Path::to_path_buf),
+            cpu_moe: tuning.cpu_moe,
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
         let started = Instant::now();
         let what = format!(
-            "{} ({}, {} context, {} layers on the graphics card{}{})",
+            "{} ({}, {} context, {}{}{})",
             spec.model_id,
             spec.quant,
             spec.ctx,
-            spec.gpu_layers,
+            match tuning.cpu_moe {
+                Some(n) => format!("every layer on the graphics card, the experts of {n} in memory"),
+                None => format!("{} layers on the graphics card", spec.gpu_layers),
+            },
             if devices.is_empty() { String::new() } else { format!(", device {}", devices.join(",")) },
             if spec.mmproj.is_some() { ", sees pictures" } else { "" }
         );
@@ -564,10 +631,67 @@ impl Engine {
             return None;
         }
         let r = self.running.as_ref()?;
-        let p = Paused { model_id: r.model_id.clone(), vision: r.vision, port: r.port, key: r.key.clone() };
+        let p = Paused { model_id: r.asked.clone(), vision: r.vision, base: r.model_id.clone(), lora: r.lora.clone(), port: r.port, key: r.key.clone() };
         self.stop().await;
         self.paused = Some(p.clone());
         Some(p)
+    }
+}
+
+/// Which replies were given which running model, so a request for another
+/// model doesn't stop it under them. A reply is known by its stop flag (the
+/// app's `generations`), a model by its key ("" for a cloud model).
+#[derive(Default)]
+pub struct Users(Vec<User>);
+
+struct User {
+    flag: Arc<AtomicBool>,
+    key: String,
+    /// The task that asked, whose own later requests don't wait on it.
+    task: Option<tokio::task::Id>,
+    /// It was the only reply waiting for a model when it was given this one;
+    /// otherwise any of them may have been the one asking.
+    sure: bool,
+}
+
+pub static USERS: std::sync::Mutex<Users> = std::sync::Mutex::new(Users(Vec::new()));
+
+impl Users {
+    fn has(&self, flag: &Arc<AtomicBool>) -> bool {
+        self.0.iter().any(|u| Arc::ptr_eq(&u.flag, flag))
+    }
+
+    /// Of the replies running now, the ones not given a model yet.
+    pub fn unplaced(&self, running: &[Arc<AtomicBool>]) -> Vec<Arc<AtomicBool>> {
+        running.iter().filter(|f| !self.has(f)).cloned().collect()
+    }
+
+    /// The model with `key` was given to `task`, asking for one of `before`
+    /// (the replies waiting for a model when it asked, as `unplaced` found
+    /// them), or for none. Replies that ended are forgotten.
+    pub fn place(&mut self, running: &[Arc<AtomicBool>], before: &[Arc<AtomicBool>], key: &str, task: Option<tokio::task::Id>) {
+        let alive = |f: &Arc<AtomicBool>| running.iter().any(|r| Arc::ptr_eq(r, f));
+        self.0.retain(|u| alive(&u.flag));
+        let fresh: Vec<&Arc<AtomicBool>> = before.iter().filter(|f| alive(f) && !self.has(f)).collect();
+        let sure = fresh.len() == 1;
+        for f in fresh {
+            self.0.push(User { flag: f.clone(), key: key.to_string(), task, sure });
+        }
+    }
+
+    /// Replies other than the asking one still using the model with `key`
+    /// (ones being stopped don't count). `task` and `before` are the asking
+    /// request's, as for `place`. A reply that may be the asking one's own
+    /// is let off, once: given the model along with others, or not given one
+    /// yet (a scheduled task or a reply to another chat runs on the model
+    /// loaded already).
+    pub fn others(&self, running: &[Arc<AtomicBool>], before: &[Arc<AtomicBool>], key: &str, task: Option<tokio::task::Id>) -> usize {
+        let live = |f: &Arc<AtomicBool>| !f.load(Ordering::Relaxed) && running.iter().any(|r| Arc::ptr_eq(r, f));
+        let mine = |u: &User| task.is_some() && u.task == task;
+        let on_it: Vec<&User> = self.0.iter().filter(|u| u.key == key && live(&u.flag) && !mine(u)).collect();
+        let sure = on_it.iter().filter(|u| u.sure).count();
+        let maybe = on_it.len() - sure + before.iter().filter(|f| live(f) && !self.has(f)).count();
+        sure + maybe.saturating_sub(1)
     }
 }
 
@@ -709,6 +833,67 @@ mod platform_tests {
         println!("reply ({deltas} deltas): {:?} · tps {:?}", done.content, done.tps);
         assert!(done.content.contains('4'));
         eng.stop().await;
+    }
+
+    /// A reply keeps the model it was given: a request for another model
+    /// waits for it, the reply's own later requests don't, and a reply that
+    /// was stopped or ended doesn't hold anything.
+    #[tokio::test]
+    async fn a_reply_keeps_the_model_it_was_given() {
+        let task = || async { tokio::spawn(async { tokio::task::id() }).await.unwrap() };
+        let (ta, tb, tc) = (Some(task().await), Some(task().await), Some(task().await));
+        let flag = || Arc::new(AtomicBool::new(false));
+        let (a, b) = (flag(), flag());
+        let mut users = Users::default();
+
+        // Chat A asks for model X and gets it.
+        let before_a = users.unplaced(&[a.clone()]);
+        users.place(&[a.clone()], &before_a, "x", ta);
+        // Chat B wants another model: A is still on X.
+        let running = [a.clone(), b.clone()];
+        let before_b = users.unplaced(&running);
+        assert_eq!(before_b.len(), 1);
+        assert_eq!(users.others(&running, &before_b, "x", tb), 1);
+        // A's own later request (a picture, say) doesn't wait on itself.
+        assert_eq!(users.others(&running, &[], "x", ta), 0);
+        // So does a request that isn't a chat (the Studio, a speed test).
+        assert_eq!(users.others(&[a.clone()], &[], "x", tc), 1);
+        // Another model's replies, and the cloud's, don't hold X.
+        assert_eq!(users.others(&running, &before_b, "y", tb), 0);
+        users.place(&running, &before_b, "", tb);
+        assert_eq!(users.others(&running, &[], "x", tc), 1, "B, on the cloud, doesn't count");
+        // A stopped, or finished: X is free.
+        a.store(true, Ordering::Relaxed);
+        assert_eq!(users.others(&running, &[], "x", tc), 0);
+        a.store(false, Ordering::Relaxed);
+        assert_eq!(users.others(&[b.clone()], &[], "x", tc), 0);
+    }
+
+    /// Two chats starting at once: either may be the one asking, so the
+    /// second waits only for the other one, never for itself.
+    #[tokio::test]
+    async fn two_chats_at_once_dont_wait_on_themselves() {
+        let task = || async { tokio::spawn(async { tokio::task::id() }).await.unwrap() };
+        let (ta, tb) = (Some(task().await), Some(task().await));
+        let (a, b) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
+        let mut users = Users::default();
+        let running = [a.clone(), b.clone()];
+        // A's request came in after both chats started: both look like A's.
+        let before_a = users.unplaced(&running);
+        users.place(&running, &before_a, "x", ta);
+        // B wants another model: it waits for A...
+        let before_b = users.unplaced(&running);
+        assert_eq!(users.others(&running, &before_b, "x", tb), 1);
+        // ...and only for A.
+        assert_eq!(users.others(&[b.clone()], &before_b, "x", tb), 0);
+        // A task that ran before the first chat got a model (a scheduled
+        // task, a reply to another chat) still holds it for a chat's request.
+        let s = Arc::new(AtomicBool::new(false));
+        let fresh = Users::default();
+        let running = [s.clone(), b.clone()];
+        let before = fresh.unplaced(&running);
+        assert_eq!(fresh.others(&running, &before, "x", tb), 1);
+        assert_eq!(fresh.others(&[b.clone()], &[b.clone()], "x", tb), 0);
     }
 
     #[test]

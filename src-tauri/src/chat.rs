@@ -115,7 +115,16 @@ async fn tokenize(ep: &Endpoint, text: &str) -> Result<u32, String> {
 }
 
 async fn message_tokens(ep: &Endpoint, m: &Message) -> Result<u32, String> {
-    let key = format!("{}:{}", ep.port, m.id);
+    // The text is part of the key: a shortened copy of a message is counted again.
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        m.content.hash(&mut h);
+        for c in m.tool_calls.iter().flatten() {
+            c.arguments.hash(&mut h);
+        }
+        format!("{}:{}:{:x}", ep.port, m.id, h.finish())
+    };
     if let Some(n) = cache().lock().unwrap().get(&key) {
         return Ok(*n);
     }
@@ -233,15 +242,18 @@ pub async fn fit_history(
             continue;
         }
         if newest {
-            // Shrink the current turn's oldest tool outputs until it fits.
+            // Shrink the current turn's oldest tool outputs until it fits. The
+            // results of the latest calls stay: without them the model runs
+            // the same calls again (and the repeat guard refuses them).
             let mut group = group.to_vec();
             let mut total = total;
+            let latest = group.iter().rposition(|m| m.role == "assistant" && m.tool_calls.as_ref().is_some_and(|c| !c.is_empty())).unwrap_or(group.len());
             let stub = count_tokens(ep, TRIMMED_TOOL_OUTPUT).await? + PER_MESSAGE_OVERHEAD;
-            for (m, size) in group.iter_mut().zip(sizes.iter()) {
+            for (i, (m, size)) in group.iter_mut().zip(sizes.iter()).enumerate() {
                 if total <= budget {
                     break;
                 }
-                if m.role == "tool" && *size > stub {
+                if i < latest && m.role == "tool" && *size > stub {
                     m.content = TRIMMED_TOOL_OUTPUT.into();
                     total = total - size + stub;
                 }
@@ -263,6 +275,29 @@ pub async fn fit_history(
                     total = total.saturating_sub(before.saturating_sub(after));
                 }
             }
+            // Still too big: the latest results are cut to what's left, the
+            // start and end of each kept (the biggest first).
+            if total > budget {
+                let mut order: Vec<usize> = (latest..group.len()).filter(|&i| group[i].role == "tool").collect();
+                order.sort_by_key(|&i| std::cmp::Reverse(group[i].content.len()));
+                for i in order {
+                    if total <= budget {
+                        break;
+                    }
+                    let before = message_tokens(ep, &group[i]).await?;
+                    let over = total - budget;
+                    let keep_tokens = before.saturating_sub(over).max(200);
+                    let chars = group[i].content.chars().count();
+                    // About 3 characters a token.
+                    let keep = (keep_tokens as usize * 3).min(chars);
+                    if keep >= chars {
+                        continue;
+                    }
+                    group[i].content = cut_middle(&group[i].content, keep);
+                    let after = message_tokens(ep, &group[i]).await?;
+                    total = total.saturating_sub(before.saturating_sub(after));
+                }
+            }
             used += total;
             kept.push(group);
         }
@@ -281,6 +316,22 @@ pub async fn fit_history(
         last_total: None,
     };
     Ok((kept, info))
+}
+
+/// The start and end of a long text, `keep` characters in all, with a note
+/// of what was left out.
+fn cut_middle(text: &str, keep: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let head = keep * 2 / 3;
+    let tail = keep - head;
+    let start: String = chars[..head.min(chars.len())].iter().collect();
+    let end: String = chars[chars.len().saturating_sub(tail)..].iter().collect();
+    format!("{start}\n…[{} characters left out to make room]…\n{end}", chars.len().saturating_sub(keep))
+}
+
+/// A tool output that was removed to make room (the model may run it again).
+pub fn is_trimmed(m: &Message) -> bool {
+    m.role == "tool" && m.content == TRIMMED_TOOL_OUTPUT
 }
 
 /// History in the OpenAI chat format the engine expects.
@@ -339,7 +390,9 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
 /// `see`, the model is told it can't see them, so it can say so; with
 /// `can_edit`, that it can still change them with edit_image (a model
 /// that can't see a photo told to say so refused "add a top hat to me").
-pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>, can_edit: bool) {
+/// `described`: what the picture reader saw in pictures (by id), for a model
+/// that can't see them: it gets those words instead.
+pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>, can_edit: bool, described: &[(String, String)]) {
     let mut left = 4usize;
     for (i, m) in history.iter().enumerate().rev() {
         if m.role != "user" {
@@ -350,6 +403,20 @@ pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn
         let Some(slot) = out.get_mut(i + 1) else { continue };
         let text = slot["content"].as_str().unwrap_or("").to_string();
         let n = ids.len();
+        let words: Vec<String> = ids
+            .iter()
+            .enumerate()
+            .filter_map(|(k, id)| described.iter().find(|(d, _)| d == id).map(|(_, w)| format!("Picture {} (id {id}): {w}", k + 1)))
+            .collect();
+        if see.is_none() && !words.is_empty() {
+            let edit = if can_edit { " To change one, call edit_image with its id and the change." } else { "" };
+            slot["content"] = json!(format!(
+                "{text}\n[The user attached {n} picture(s). You can't see pictures yourself, but the picture reader looked at them for you; \
+                 answer from what it saw as if you had seen them.{edit}\n{}]",
+                words.join("\n")
+            ));
+            continue;
+        }
         slot["content"] = match see {
             Some(see) if left > 0 => {
                 let mut parts = vec![json!({ "type": "text", "text": text })];
@@ -418,6 +485,26 @@ pub async fn stream(
     if let Some(t) = &ep.cloud {
         return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
     }
+    let (first, cut_off) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
+    // A thinking model that spent its whole allowance thinking and never
+    // answered: once more, without thinking.
+    if cut_off && first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled {
+        let mut quick = ep.clone();
+        quick.extra["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        quick.extra["reasoning_effort"] = json!("low");
+        let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
+        again.thinking = format!("{}{}", first.thinking, again.thinking);
+        if again.content.trim().is_empty() && again.tool_calls.is_empty() && !again.cancelled {
+            return Err("The model spent its whole reply thinking and never answered. Try again, or turn its thinking off in Advanced settings.".into());
+        }
+        return Ok(again);
+    }
+    Ok(first)
+}
+
+/// One reply from the engine on this PC, and whether it stopped at its
+/// length limit.
+async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<(Finished, bool), String> {
     // Saved cloud reply blocks are for cloud providers only.
     let messages: Vec<Value> = messages
         .into_iter()
@@ -476,18 +563,22 @@ pub async fn stream(
         cancelled: false,
         raw: None,
     };
-    let mut buf = String::new();
+    // Bytes until a whole line is in: a character split between two chunks
+    // would otherwise come out garbled.
+    let mut buf: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
     let offered = offered_names(tools);
+    let mut cut_off = false;
     'read: while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
             out.cancelled = true;
             break;
         }
         let chunk = chunk.map_err(|e| format!("The reply was interrupted: {e}"))?;
-        buf.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(nl) = buf.find('\n') {
-            let line: String = buf.drain(..=nl).collect();
+        buf.extend_from_slice(&chunk);
+        while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+            let bytes: Vec<u8> = buf.drain(..=nl).collect();
+            let line = String::from_utf8_lossy(&bytes);
             let line = line.trim();
             let Some(data) = line.strip_prefix("data:") else { continue };
             let data = data.trim();
@@ -495,6 +586,9 @@ pub async fn stream(
                 break 'read;
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            if v.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
+                cut_off = true;
+            }
             if let Some(delta) = v.pointer("/choices/0/delta") {
                 if let Some(t) = delta.get("reasoning_content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
                     out.thinking.push_str(t);
@@ -535,7 +629,7 @@ pub async fn stream(
         }
     }
     out.tool_calls.retain(|c| !c.name.is_empty());
-    Ok(out)
+    Ok((out, cut_off))
 }
 
 /// The last few finished lines are the same line (a small model stuck in a loop).
@@ -650,7 +744,7 @@ static PICTURE_ASK:std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
 });
 // Saying it can't make pictures (often right after making one).
 static NO_PICTURES: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)\b(can'?t|cannot|can not|unable to|not able to|don'?t have the ability to)\b[^.!?\n]{0,30}\b(generate|create|make|draw|produce|display|show)\b[^.!?\n]{0,20}\b(images?|pictures?|photos?|drawings?|art)").unwrap()
+    regex::Regex::new(r"(?i)\b(can'?t|cannot|can not|unable to|not able to|don'?t have the ability to)\b[^.!?\n]{0,30}\b(generate|create|make|draw|produce|display|show|edit|modify|change|alter)\b[^.!?\n]{0,20}\b(images?|pictures?|photos?|drawings?|art)").unwrap()
 });
 
 /// More than one picture (or clip, or song) asked for in one message.
@@ -671,10 +765,31 @@ pub fn denies_pictures(reply: &str) -> bool {
     NO_PICTURES.is_match(&reply.replace(['\u{2019}', '\u{2018}'], "'"))
 }
 
+// A change to an attached picture ("add a hat", "make me a cartoon", "remove the car").
+static PICTURE_CHANGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(add|put|give)\s+(a|an|some|the|me|him|her|them|us|it)\b|\b(remove|erase|replace)\s+(the|my|his|her|their|that|this)\b|\b(make|turn)\s+(it|this|me|him|her|them|us|the (photo|picture|image|background|sky))\b|\bchange\s+(the|my|his|her|their)\s+\w+|\b(restyle|edit (this|the|my) (photo|picture|image)|in the style of|as an? (cartoon|painting|drawing|anime))\b").unwrap()
+});
+
+/// The person asked for a change to a picture (with one attached).
+pub fn asks_picture_change(text: &str) -> bool {
+    PICTURE_CHANGE.is_match(text)
+}
+
 /// For a model that answered a picture request without making one: one call
-/// that makes it.
-pub fn forced_picture(tools: &Value) -> Option<ForcedLookup> {
-    let def = tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some("create_image"))?;
+/// that makes it, or, for a change to an attached picture, that changes it.
+pub fn forced_picture(tools: &Value, change: bool) -> Option<ForcedLookup> {
+    let find = |name: &str| tools.as_array()?.iter().find(|t| t.pointer("/function/name").and_then(Value::as_str) == Some(name)).cloned();
+    if change {
+        if let Some(def) = find("edit_image") {
+            let schema = json!({ "type": "object", "properties": { "name": { "const": "edit_image" }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
+            return Some(ForcedLookup {
+                names: vec!["edit_image".into()],
+                nudge: "(You can change pictures on this PC: change the picture I attached now with edit_image, with the change as the instruction. Reply with only one tool call as JSON, {\"name\": \"edit_image\", \"arguments\": {...}}.)".into(),
+                response_format: json!({ "type": "json_schema", "json_schema": { "name": "tool_call", "schema": schema } }),
+            });
+        }
+    }
+    let def = find("create_image")?;
     let schema = json!({ "type": "object", "properties": { "name": { "const": "create_image" }, "arguments": def["function"]["parameters"] }, "required": ["name", "arguments"] });
     Some(ForcedLookup {
         names: vec!["create_image".into()],
@@ -794,6 +909,21 @@ pub fn with_looks(prompt: &str, names: &[Named]) -> String {
     format!("{p}. {}.", added.join(". "))
 }
 
+/// The reply without its code (fenced blocks and `inline code`).
+fn without_code(reply: &str) -> String {
+    let mut out = String::with_capacity(reply.len());
+    for (i, part) in reply.split("```").enumerate() {
+        if i % 2 == 0 {
+            for (j, bit) in part.split('`').enumerate() {
+                if j % 2 == 0 {
+                    out.push_str(bit);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// A small model asked the user for details or permission about their own
 /// mail, calendar, notes, tasks or weather instead of using a tool to look.
 pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
@@ -801,8 +931,10 @@ pub fn stalls(user: &str, reply: &str, offered: &[String]) -> bool {
     if reply.is_empty() {
         return false;
     }
-    // Telling the user to "use email_search" instead of using it.
-    if offered.iter().any(|n| n.contains('_') && reply.contains(n.as_str())) {
+    // Telling the user to "use email_search" instead of using it. Not in
+    // code it wrote (a function of the same name) or as a call there ("name(").
+    let prose = without_code(&reply);
+    if offered.iter().any(|n| n.contains('_') && prose.match_indices(n.as_str()).any(|(i, _)| !prose[i + n.len()..].starts_with('('))) {
         return true;
     }
     // Saying it has no access is wrong however long the reply goes on.
@@ -829,7 +961,7 @@ static HANDS_OVER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(
 
 // "Do it for me" after asking for something to be made.
 static DO_IT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"(?i)\b(do (it|this|that|it all|all (of )?(it|this|that))|try again|go ahead|build it|make it|run it|for me|yourself|on my (pc|computer|laptop))\b").unwrap()
+    regex::Regex::new(r"(?i)\b(do (it|this|that|it all|all (of )?(it|this|that))|try again|go ahead|build it|make it|run it|on my (pc|computer|laptop))\b").unwrap()
 });
 // Saying it can't make or run things, which it can here.
 static CANT_DO: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
@@ -1350,6 +1482,9 @@ mod tests {
         assert!(stalls("Research which is better for battery life", said, &offered));
         // An answer that mentions looking things up along the way isn't one.
         assert!(!stalls("Who is Link?", "Link is the hero of The Legend of Zelda. Let me know if you'd like more details!", &offered));
+        // A tool's name in code it wrote isn't telling the user to use it.
+        assert!(!stalls("Write a search helper", "Here it is:\n```js\nfunction web_search(q) { return fetch(q); }\n```\nCall `web_search` with your query.", &offered));
+        assert!(stalls("Find the news", "You can use web_search to find it.", &offered));
         let tools = json!([
             { "type": "function", "function": { "name": "web_search", "description": "", "parameters": { "type": "object" } } },
             { "type": "function", "function": { "name": "research", "description": "", "parameters": { "type": "object" } } },
@@ -1502,8 +1637,18 @@ mod tests {
         assert!(denies_pictures("As a text model I am unable to create pictures."));
         assert!(!denies_pictures("Here's Link in pixel art, standing on a grassy hill."));
         let tools = json!([{ "type": "function", "function": { "name": "create_image", "description": "", "parameters": { "type": "object", "properties": { "prompt": { "type": "string" } } } } }]);
-        assert_eq!(forced_picture(&tools).unwrap().names, vec!["create_image".to_string()]);
-        assert!(forced_picture(&json!([])).is_none());
+        assert_eq!(forced_picture(&tools, false).unwrap().names, vec!["create_image".to_string()]);
+        assert!(forced_picture(&json!([]), false).is_none());
+        let both = json!([
+            { "type": "function", "function": { "name": "create_image", "description": "", "parameters": { "type": "object", "properties": { "prompt": { "type": "string" } } } } },
+            { "type": "function", "function": { "name": "edit_image", "description": "", "parameters": { "type": "object", "properties": { "instruction": { "type": "string" } } } } }
+        ]);
+        assert_eq!(forced_picture(&both, true).unwrap().names, vec!["edit_image".to_string()]);
+        assert_eq!(forced_picture(&tools, true).unwrap().names, vec!["create_image".to_string()], "no edit tool: make one instead");
+        assert!(asks_picture_change("can you add a pirate hat to me"));
+        assert!(asks_picture_change("Make me look like a cartoon"));
+        assert!(asks_picture_change("remove the car in the back"));
+        assert!(!asks_picture_change("what is in this picture?"));
         assert!(!wants_several("Make me a picture of Link from The Legend of Zelda in pixel art."));
         assert!(wants_several("make 3 pictures of a cat") && wants_several("show me a few versions of the logo"));
     }

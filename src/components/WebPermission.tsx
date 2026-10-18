@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
-import { api, on, type Chat, type PendingApproval } from "../api";
+import { api, type Chat } from "../api";
+import { useWaitingApprovals } from "../approvals";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
 
@@ -8,18 +8,7 @@ import { Modal } from "./Modal";
  * is in the app. A yes turns web on for that chat and the reply carries on;
  * a no (or closing it) lets the reply finish without the web. */
 export function WebPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useState<PendingApproval[]>([]);
-  useEffect(() => {
-    const subs = [
-      on("agent:approval", (p) => {
-        if (p.tool === "request_web") setAsks((all) => [...all.filter((a) => a.call_id !== p.call_id), p]);
-      }),
-      on("agent:approval_done", (p) => setAsks((all) => all.filter((a) => a.call_id !== p.call_id))),
-    ];
-    return () => {
-      subs.forEach((s) => s.then((un) => un()));
-    };
-  }, []);
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_web");
   const p = asks[0];
   if (!p) return null;
   const chat = chats.find((c) => c.id === p.chat_id);

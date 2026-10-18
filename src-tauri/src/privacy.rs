@@ -93,6 +93,22 @@ pub fn proxy_for(route: Route) -> Option<String> {
     }
 }
 
+/// Whether this kind of traffic goes through Tor (not the user's own proxy,
+/// which may look names up inside their network).
+pub fn tor_for(route: Route) -> bool {
+    goes_through_tor(&routes().read().unwrap(), route)
+}
+
+fn goes_through_tor(r: &Routes, route: Route) -> bool {
+    r.tor
+        && match route {
+            Route::Web => r.web.is_some(),
+            Route::Updates => r.updates.is_some(),
+            Route::Mail => r.mail.is_some(),
+            Route::Models => r.models.is_some(),
+        }
+}
+
 // ---------- Tor ----------
 
 struct Gateway {
@@ -523,6 +539,10 @@ mod tests {
         let r = routes_for(&PrivacySettings { enabled: true, via: Via::Proxy, web: false, mail: true, ..Default::default() }, via);
         assert_eq!((r.web.is_some(), r.mail.is_some()), (false, true));
         assert!(!r.tor, "the user's own proxy isn't Tor");
+        // Only Tor skips the web tools' own name check.
+        assert!(!goes_through_tor(&r, Route::Mail) && !goes_through_tor(&r, Route::Web));
+        let tor = routes_for(&PrivacySettings { enabled: true, ..Default::default() }, Some("socks5h://127.0.0.1:9".into()));
+        assert!(goes_through_tor(&tor, Route::Web) && !goes_through_tor(&tor, Route::Mail), "mail is off by default");
         let r = routes_for(&PrivacySettings::default(), None);
         assert!(r.web.is_none() && r.updates.is_none() && !r.tor, "off means direct");
     }

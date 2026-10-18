@@ -21,6 +21,14 @@ const COMFORTABLE_TPS: f64 = 15.0;
 const BANDWIDTH_EFFICIENCY: f64 = 0.6;
 /// Disk kept free after a download.
 const DISK_RESERVE: u64 = 2 * GIB;
+/// The window the suggested version leaves room for: agent work (tool
+/// output, documents) soon outgrows the default 8K.
+const ROOMY_CTX: u32 = 16_384;
+/// Below this share of its weights read per token, a model is a mixture of
+/// experts, whose experts can wait in system memory.
+const MOE_ACTIVE: f64 = 0.5;
+/// A picture reader's work buffers, on top of its file.
+pub const VISION_OVERHEAD: u64 = 300 * MIB;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Catalog {
@@ -199,27 +207,65 @@ pub fn launch_within(model: &ModelSpec, quant: &str, full: &Budget, l: &crate::p
     if layers == 0 && limited.vram > 0 {
         (ctx, layers) = launch_settings(model, quant, &Budget { ram: full.ram, ..limited });
     }
-    // A hot graphics card: move some layers to the processor, even when
-    // the whole model would fit, so the card does less of the work.
-    if l.gpu_share < 1.0 {
-        layers = (layers as f64 * l.gpu_share).floor() as u32;
+    (ctx.min(l.max_ctx), shared(layers, l.gpu_share))
+}
+
+/// A hot graphics card (or a GPU limit): some layers move to the processor,
+/// even when the whole model would fit, so the card does less of the work.
+fn shared(layers: u32, gpu_share: f64) -> u32 {
+    if gpu_share < 1.0 {
+        (layers as f64 * gpu_share).floor() as u32
+    } else {
+        layers
     }
-    (ctx.min(l.max_ctx), layers)
 }
 
 /// Context and GPU layers for a window the person chose: the largest up to
-/// `want` (halving) that this PC still runs, never less than `auto`.
-pub fn launch_at(model: &ModelSpec, quant: &str, b: &Budget, want: u32, auto: (u32, u32)) -> (u32, u32) {
+/// `want` (halving) that this PC still runs, never less than `auto`. The
+/// card keeps `gpu_share` of the layers, as at the automatic size.
+pub fn launch_at(model: &ModelSpec, quant: &str, b: &Budget, want: u32, auto: (u32, u32), gpu_share: f64) -> (u32, u32) {
     let Some(v) = model.variant(quant) else { return auto };
     let mut ctx = want.min(model.arch.max_ctx);
     while ctx > auto.0 {
         let f = fit_variant(model, v, ctx, b);
         if f.placement.is_some() {
-            return (ctx, f.gpu_layers);
+            return (ctx, shared(f.gpu_layers, gpu_share));
         }
         ctx /= 2;
     }
     auto
+}
+
+/// Sets `bytes` aside from the budget and the limits (a picture reader
+/// loaded beside the model): on the graphics card when there is one.
+pub fn set_aside(b: &mut Budget, l: &mut crate::perf::Limits, bytes: u64) {
+    if b.vram > 0 {
+        b.vram = b.vram.saturating_sub(bytes);
+        l.vram_bytes = l.vram_bytes.saturating_sub(bytes);
+    } else {
+        b.ram = b.ram.saturating_sub(bytes);
+        l.ram_bytes = l.ram_bytes.saturating_sub(bytes);
+    }
+}
+
+/// A mixture-of-experts model that doesn't fit the graphics card: rather
+/// than whole layers on the processor, only the experts of the first N
+/// layers wait in system memory (llama.cpp's --n-cpu-moe), so attention and
+/// the shared weights all run on the card. As many bytes stay on the card
+/// as with `gpu_layers` whole layers. None for other models, a model wholly
+/// on the card or the processor, or one whose experts alone don't make room.
+pub fn moe_offload(model: &ModelSpec, quant: &str, gpu_layers: u32) -> Option<u32> {
+    let a = &model.arch;
+    let all = a.n_layer + 1;
+    if a.active_fraction >= MOE_ACTIVE || a.n_layer == 0 || gpu_layers == 0 || gpu_layers >= all {
+        return None;
+    }
+    let size = model.variant(quant)?.size as f64;
+    let off_card = size * (all - gpu_layers) as f64 / all as f64;
+    // At least the weights a token doesn't read are experts.
+    let experts_per_layer = size * (1.0 - a.active_fraction) / a.n_layer as f64;
+    let n = (off_card / experts_per_layer).ceil() as u32;
+    (n <= a.n_layer).then_some(n.max(1))
 }
 
 /// Rough memory bandwidth by VRAM tier, replaced by a measured benchmark
@@ -327,7 +373,10 @@ pub fn fit_variant(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget) -> Vari
 pub fn fit_model(model: &ModelSpec, b: &Budget) -> ModelFit {
     let ctx = model.default_ctx.min(model.arch.max_ctx);
     let variants: Vec<VariantFit> = model.variants.iter().map(|v| fit_variant(model, v, ctx, b)).collect();
-    let recommended = recommend(&variants).map(|v| v.quant.clone());
+    // Which versions still run wholly on the card with a bigger window.
+    let roomy_ctx = ROOMY_CTX.min(model.arch.max_ctx).max(ctx);
+    let roomy: Vec<bool> = model.variants.iter().map(|v| fit_variant(model, v, roomy_ctx, b).placement == Some(Placement::Gpu)).collect();
+    let recommended = recommend(&variants, &roomy).map(|v| v.quant.clone());
     ModelFit { ctx, variants, recommended }
 }
 
@@ -351,22 +400,29 @@ pub fn launch_settings(model: &ModelSpec, quant: &str, b: &Budget) -> (u32, u32)
 }
 
 /// Catalog variants are ordered from smallest to largest (lowest to highest
-/// quality).
-fn recommend(variants: &[VariantFit]) -> Option<&VariantFit> {
-    let usable: Vec<&VariantFit> = variants.iter().filter(|v| v.runnable() && v.disk_ok).collect();
-    let on_gpu: Vec<&VariantFit> = usable.iter().copied().filter(|v| v.placement == Some(Placement::Gpu)).collect();
+/// quality). `roomy`: per variant, it still runs wholly on the graphics
+/// card with a 16K window.
+fn recommend<'a>(variants: &'a [VariantFit], roomy: &[bool]) -> Option<&'a VariantFit> {
+    let usable: Vec<(usize, &VariantFit)> = variants.iter().enumerate().filter(|(_, v)| v.runnable() && v.disk_ok).collect();
+    let on_gpu: Vec<(usize, &VariantFit)> = usable.iter().copied().filter(|(_, v)| v.placement == Some(Placement::Gpu)).collect();
     if !on_gpu.is_empty() {
-        // Highest quality that is still comfortable, else the fastest on GPU.
+        // Highest quality that is still comfortable and leaves room for a
+        // 16K window (the biggest that fits 8K gets only 8K: the window is
+        // worked out after the version), else the highest comfortable, else
+        // the fastest on GPU.
+        let comfortable = |v: &VariantFit| v.est_tps >= COMFORTABLE_TPS;
         return on_gpu
             .iter()
             .rev()
-            .find(|v| v.est_tps >= COMFORTABLE_TPS)
+            .find(|(i, v)| comfortable(v) && roomy.get(*i) == Some(&true))
+            .or_else(|| on_gpu.iter().rev().find(|(_, v)| comfortable(v)))
             .or(on_gpu.first())
-            .copied();
+            .map(|(_, v)| *v);
     }
     // Off the GPU every extra byte costs speed, so take the fastest.
     usable
         .into_iter()
+        .map(|(_, v)| v)
         .max_by(|a, b| a.est_tps.partial_cmp(&b.est_tps).unwrap_or(std::cmp::Ordering::Equal))
 }
 
@@ -522,17 +578,101 @@ mod tests {
         let q = "Q4_K_M";
         let b = budget(12, 24);
         let auto = launch_settings(m, q, &b);
-        let (ctx, layers) = launch_at(m, q, &b, 32_768, auto);
+        let (ctx, layers) = launch_at(m, q, &b, 32_768, auto, 1.0);
         assert_eq!(ctx, 32_768.min(m.arch.max_ctx));
         assert!(layers > 0);
-        let (huge, _) = launch_at(m, q, &b, 1 << 20, auto);
+        let (huge, _) = launch_at(m, q, &b, 1 << 20, auto, 1.0);
         assert!(huge <= m.arch.max_ctx, "never past what the model supports");
+        // A hot card keeps fewer layers at a chosen window too.
+        let (bigger, all) = launch_at(m, q, &b, 65_536, auto, 1.0);
+        assert!(bigger > auto.0);
+        assert_eq!(launch_at(m, q, &b, 65_536, auto, 0.5), (bigger, all / 2));
         // Little memory: the request shrinks until it runs, never below automatic.
         let small = budget(0, 8);
         let auto_small = launch_settings(m, q, &small);
-        let (ctx_small, _) = launch_at(m, q, &small, 131_072, auto_small);
+        let (ctx_small, _) = launch_at(m, q, &small, 131_072, auto_small, 1.0);
         assert!(ctx_small >= auto_small.0);
         assert!(ctx_small == auto_small.0 || fit_variant(m, m.variant(q).unwrap(), ctx_small, &small).placement.is_some());
+    }
+
+    /// The suggested version leaves room for a 16K window when one does: on
+    /// a 12 GB card Qwen3 8B's biggest version fits only 8K. When none does,
+    /// the choice is as before.
+    #[test]
+    fn the_suggested_version_leaves_room_for_a_bigger_window() {
+        let c = catalog();
+        let m = c.model("qwen3-8b").unwrap();
+        let b = pc(12, 32);
+        let fit = fit_model(m, &b);
+        assert_eq!(fit.variant("Q8_0").unwrap().placement, Some(Placement::Gpu), "the biggest still fits at 8K");
+        assert_eq!(launch_settings(m, "Q8_0", &b).0, 8192, "but gets only 8K");
+        let rec = fit.recommended.as_deref().unwrap();
+        assert_eq!(rec, "Q6_K");
+        assert!(launch_settings(m, rec, &b).0 >= 16_384);
+        let big = c.model("qwen3-14b").unwrap();
+        assert_eq!(fit_model(big, &b).recommended.as_deref(), Some("Q4_K_M"));
+        // A small model gets its best version with room to spare.
+        let small = c.model("qwen3-4b-2507").unwrap();
+        assert_eq!(fit_model(small, &b).recommended.as_deref(), Some("Q8_0"));
+    }
+
+    /// A picture reader takes room of its own: a vision model that just fit
+    /// the card with its window gets a smaller window (or fewer layers) when
+    /// the reader is loaded beside it.
+    #[test]
+    fn the_picture_reader_counts_in_the_plan() {
+        let c = catalog();
+        let m = c.model("qwen3-vl-8b").unwrap();
+        let reader = m.vision.as_ref().unwrap().size + VISION_OVERHEAD;
+        let full = pc(12, 32);
+        let l = crate::perf::Limits {
+            mode: crate::perf::Mode::Balanced,
+            on_battery: false,
+            threads: 8,
+            vram_bytes: full.vram,
+            ram_bytes: full.ram,
+            low_priority: false,
+            idle_unload_mins: 10,
+            max_ctx: 32_768,
+            gpu_temp_limit: 90.0,
+            cpu_temp_limit: 95.0,
+            heat_level: 0,
+            gpu_share: 1.0,
+        };
+        let without = launch_within(m, "Q8_0", &full, &l);
+        let (mut b, mut lw) = (full, l);
+        set_aside(&mut b, &mut lw, reader);
+        assert_eq!(b.vram, full.vram - reader);
+        let with = launch_within(m, "Q8_0", &b, &lw);
+        assert!(with.0 < without.0 || with.1 < without.1, "{without:?} vs {with:?}");
+        // Without a graphics card it comes out of system memory.
+        let (mut cpu, mut lc) = (budget(0, 16), crate::perf::Limits { vram_bytes: 0, ram_bytes: 16 * GIB, ..l });
+        set_aside(&mut cpu, &mut lc, reader);
+        assert_eq!((cpu.ram, lc.ram_bytes), (16 * GIB - reader, 16 * GIB - reader));
+    }
+
+    /// A mixture-of-experts model too big for the card keeps its experts,
+    /// not whole layers, in system memory, as many bytes as the split would.
+    #[test]
+    fn experts_wait_in_memory_rather_than_whole_layers() {
+        let c = catalog();
+        let moe = c.model("qwen3-30b-a3b-2507").unwrap();
+        let b = budget(12, 32);
+        let fit = fit_variant(moe, moe.variant("Q4_K_M").unwrap(), 8192, &b);
+        assert_eq!(fit.placement, Some(Placement::Split));
+        let n = moe_offload(moe, "Q4_K_M", fit.gpu_layers).expect("experts in memory");
+        assert!(n > 0 && n < moe.arch.n_layer, "{n}");
+        // The experts of n layers make at least as much room as the split.
+        let size = moe.variant("Q4_K_M").unwrap().size as f64;
+        let all = (moe.arch.n_layer + 1) as f64;
+        let freed = n as f64 * size * (1.0 - moe.arch.active_fraction) / moe.arch.n_layer as f64;
+        assert!(freed >= size * (all - fit.gpu_layers as f64) / all);
+        // Wholly on the card, on the processor alone, or not a mixture of experts: as before.
+        assert_eq!(moe_offload(moe, "Q4_K_M", moe.arch.n_layer + 1), None);
+        assert_eq!(moe_offload(moe, "Q4_K_M", 0), None);
+        let dense = c.model("qwen3-14b").unwrap();
+        assert_eq!(moe_offload(dense, "Q4_K_M", 20), None);
+        assert!(moe_offload(c.model("gpt-oss-20b").unwrap(), "Q4_K_M", 10).is_some());
     }
 
     #[test]

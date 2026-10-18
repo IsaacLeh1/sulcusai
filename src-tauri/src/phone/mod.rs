@@ -387,6 +387,10 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
         "approve" => {
             let call_id = arg(args, "call_id")?;
             let d = crate::agent::Decision::parse(arg(args, "decision")?).ok_or("Unknown answer.")?;
+            // A system folder needs the warning the PC shows, confirmed there.
+            if d != crate::agent::Decision::Deny {
+                crate::workspace::phone_may_allow(call_id)?;
+            }
             if !state.approvals.answer(call_id, d) {
                 return Err("That question was already answered.".into());
             }

@@ -53,7 +53,7 @@ export function QuickAsk() {
       })),
       on("chat:done", mine((p) => {
         setPhase("done");
-        if (p.error) setError(p.error);
+        if (p.error) setError(errorText(p.error));
         if (p.message?.content) setAnswer(p.message.content);
       })),
     ];

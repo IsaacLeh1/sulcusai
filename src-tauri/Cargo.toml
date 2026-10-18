@@ -104,6 +104,7 @@ windows = { version = "0.58", features = [
   "Win32_NetworkManagement",
   "Win32_NetworkManagement_IpHelper",
   "Win32_Media_Audio",
+  "Win32_Media_MediaFoundation",
   "Win32_Security",
   "Win32_Security_Cryptography",
   "Win32_System_Com",

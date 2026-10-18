@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
-import { api, errorText, on, type Chat, type PendingApproval, type SiteKeyAsk } from "../api";
+import { useState } from "react";
+import { api, errorText, type Chat, type SiteKeyAsk } from "../api";
+import { useWaitingApprovals } from "../approvals";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
 
@@ -9,24 +10,15 @@ import { Modal } from "./Modal";
  * would connect to and what it needs. They paste the key (or keep one saved
  * earlier) and connect it, or say no; the reply carries on either way. */
 export function KeyPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useState<PendingApproval[]>([]);
   const [info, setInfo] = useState<Record<string, SiteKeyAsk>>({});
+  const [asks, setAsks] = useWaitingApprovals(
+    chats,
+    (p) => p.tool === "request_api_key",
+    (p) => api.siteKeyAsk(p.call_id).then((a) => setInfo((all) => ({ ...all, [p.call_id]: a }))).catch(() => {}),
+  );
   const [key, setKey] = useState("");
   const [replace, setReplace] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const subs = [
-      on("agent:approval", (p) => {
-        if (p.tool !== "request_api_key") return;
-        setAsks((all) => [...all.filter((a) => a.call_id !== p.call_id), p]);
-        api.siteKeyAsk(p.call_id).then((a) => setInfo((all) => ({ ...all, [p.call_id]: a }))).catch(() => {});
-      }),
-      on("agent:approval_done", (p) => setAsks((all) => all.filter((a) => a.call_id !== p.call_id))),
-    ];
-    return () => {
-      subs.forEach((s) => s.then((un) => un()));
-    };
-  }, []);
   const p = asks[0];
   if (!p) return null;
   const a = info[p.call_id];

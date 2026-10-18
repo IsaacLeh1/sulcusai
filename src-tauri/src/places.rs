@@ -75,6 +75,25 @@ pub fn kind_of(query: &str) -> Option<(&'static str, &'static str)> {
     KINDS.iter().find(|(words, _, _)| regex::Regex::new(&format!(r"\b({words})\b")).is_ok_and(|re| re.is_match(&q))).map(|(_, filter, what)| (*filter, *what))
 }
 
+/// Words in a search beyond the kind of place and filler ("Pizza Hut" →
+/// ["hut"], "coffee near me" → []): a brand or a name, to search by name.
+pub fn extra_words(query: &str) -> Vec<String> {
+    const FILLER: &[&str] = &[
+        "near", "me", "nearby", "around", "here", "closest", "nearest", "close", "by", "the", "a", "an", "in", "at", "on", "of", "open", "now", "best", "good",
+        "cheap", "top", "find", "any", "some", "places", "place", "spots", "spot", "local", "my", "to", "for", "with", "area", "town", "within", "miles", "mile",
+        "km", "and", "or", "where", "is", "are", "there", "what", "s", "today", "tonight", "station", "stations", "shop", "shops", "store", "stores",
+        "restaurant", "restaurants", "joint", "joints",
+    ];
+    // Where ("in Provo", "near me") isn't part of the name.
+    let mut q = regex::Regex::new(r"\b(in|near|around|close to|by|at)\b.*$").map_or_else(|_| query.to_lowercase(), |re| re.replace(&query.to_lowercase(), "").into_owned());
+    if let Some((words, _, _)) = KINDS.iter().find(|(words, _, _)| regex::Regex::new(&format!(r"\b({words})\b")).is_ok_and(|re| re.is_match(&q))) {
+        if let Ok(re) = regex::Regex::new(&format!(r"\b({words})\b")) {
+            q = re.replace_all(&q, " ").into_owned();
+        }
+    }
+    q.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty() && !w.chars().all(|c| c.is_ascii_digit()) && !FILLER.contains(w)).map(str::to_string).collect()
+}
+
 /// Kilometers between two points.
 pub fn distance_km(a: (f64, f64), b: (f64, f64)) -> f64 {
     let (la1, lo1, la2, lo2) = (a.0.to_radians(), a.1.to_radians(), b.0.to_radians(), b.1.to_radians());
@@ -317,6 +336,12 @@ mod tests {
         assert_eq!(kind_of("an ATM").map(|k| k.1), Some("ATM"));
         assert_eq!(kind_of("Walmart"), None);
         assert_eq!(kind_of("Eiffel Tower"), None);
+        // A brand with a kind in its name is searched by name.
+        assert_eq!(extra_words("Pizza Hut"), vec!["hut"]);
+        assert_eq!(extra_words("Bank of America near me"), vec!["america"]);
+        assert!(extra_words("good pizza in Provo").is_empty(), "the city isn't a name");
+        assert!(extra_words("coffee near me").is_empty());
+        assert!(extra_words("Where's the closest gas station?").is_empty());
     }
 
     /// Live: OpenStreetMap's servers (run with --ignored).

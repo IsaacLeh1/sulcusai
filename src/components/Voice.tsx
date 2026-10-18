@@ -40,7 +40,7 @@ export function useDictation(onText: (text: string) => void, toast: PushToast) {
           idRef.current = null;
           setState("idle");
           setLevel(0);
-          toast(e.error, "error");
+          toast(errorText(e.error), "error");
           break;
       }
     });
@@ -143,7 +143,7 @@ export function VoicePanel({ chatId, onHeard, onEnd, toast }: { chatId: string; 
         setHeard(e.text);
         onHeardRef.current(e.text);
       } else if (e.state === "error") {
-        toast(e.error, "error");
+        toast(errorText(e.error), "error");
         onEndRef.current();
       } else if (e.state === "ended") {
         onEndRef.current();

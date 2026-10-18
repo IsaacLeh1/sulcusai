@@ -16,6 +16,30 @@ pub const CANCELLED: &str = "cancelled";
 /// Free space a download always leaves on its drive, so Windows and other
 /// apps (game downloads, updates) can still write.
 const KEEP_FREE: u64 = 2 * 1024 * 1024 * 1024;
+/// No data for this long: the connection is stuck (a dropped Wi-Fi, a
+/// server that stopped sending), and the download stops so it can resume.
+const STALL: Duration = Duration::from_secs(60);
+/// How often a waiting download checks whether it was stopped.
+const TICK: Duration = Duration::from_secs(1);
+
+/// Waits for `fut`, noticing a stop within a second, and giving up after
+/// `STALL` without a result.
+async fn waiting<T>(fut: impl std::future::Future<Output = T>, cancel: &AtomicBool) -> Result<T, String> {
+    tokio::pin!(fut);
+    let started = Instant::now();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(CANCELLED.into());
+        }
+        match tokio::time::timeout(TICK, &mut fut).await {
+            Ok(v) => return Ok(v),
+            Err(_) if started.elapsed() >= STALL => {
+                return Err("The download stalled: nothing arrived for a minute. Check the connection, then try again; it carries on from where it stopped.".into())
+            }
+            Err(_) => {}
+        }
+    }
+}
 
 /// Why a download of `more` bytes into `dir` mustn't go on, if so.
 fn too_full(dir: &Path, more: u64) -> Option<String> {
@@ -121,7 +145,7 @@ async fn fetch_verified_inner(
         if have > 0 {
             req = req.header(RANGE, format!("bytes={have}-"));
         }
-        let resp = req.send().await.map_err(|e| format!("Download failed: {e}"))?;
+        let resp = waiting(req.send(), cancel).await?.map_err(|e| format!("Download failed: {e}"))?;
         let resumed = resp.status() == StatusCode::PARTIAL_CONTENT && resp.headers().contains_key(CONTENT_RANGE);
         if !resp.status().is_success() {
             return Err(format!("Download failed: the server answered {}", resp.status()));
@@ -149,7 +173,16 @@ async fn fetch_verified_inner(
         let mut last = Instant::now();
         let mut checked = Instant::now();
         progress(have, size);
-        while let Some(chunk) = stream.next().await {
+        loop {
+            // Stopped, or stuck: what arrived is kept for the next try.
+            let next = match waiting(stream.next(), cancel).await {
+                Ok(next) => next,
+                Err(e) => {
+                    file.flush().await.ok();
+                    return Err(e);
+                }
+            };
+            let Some(chunk) = next else { break };
             // Something else filling the disk meanwhile: pause (it resumes later).
             if checked.elapsed() >= Duration::from_secs(5) {
                 checked = Instant::now();
@@ -157,10 +190,6 @@ async fn fetch_verified_inner(
                     file.flush().await.ok();
                     return Err(why);
                 }
-            }
-            if cancel.load(Ordering::Relaxed) {
-                file.flush().await.ok();
-                return Err(CANCELLED.into());
             }
             let chunk = chunk.map_err(|e| format!("Download interrupted: {e}"))?;
             have += chunk.len() as u64;
@@ -193,4 +222,26 @@ async fn fetch_verified_inner(
     }
     tokio::fs::rename(&part, dest).await.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A download stuck waiting for data notices a stop within a second,
+    /// instead of only when the next piece arrives (never, when stuck).
+    #[tokio::test]
+    async fn a_stuck_download_still_stops() {
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        assert_eq!(waiting(async { 7 }, &cancel).await, Ok(7));
+        let stop = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            stop.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let stuck = waiting(std::future::pending::<()>(), &cancel).await;
+        assert_eq!(stuck, Err(CANCELLED.to_string()));
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 }

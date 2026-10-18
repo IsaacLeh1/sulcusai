@@ -14,7 +14,9 @@ pub fn create_image_params() -> Value {
         "prompt": { "type": "string", "description": "A vivid description: subject, setting, lighting and mood. Write it in English." },
         "style": { "type": "string", "enum": ["auto", "photo", "phone_photo", "cinematic", "cartoon", "anime", "digital_art", "oil_painting", "watercolor", "sketch", "3d", "pixel_art"], "description": "The look. Default auto: a realistic photo unless they asked for another look. phone_photo: a candid phone snapshot, the most lifelike (for people and everyday scenes, or when they want it to look real)." },
         "shape": { "type": "string", "enum": ["square", "portrait", "landscape", "wide", "tall"], "description": "Default square." },
-        "count": { "type": "integer", "description": "How many versions (1-4, default 1)." } } })
+        "count": { "type": "integer", "description": "How many versions (1-4, default 1)." },
+        "examples": { "type": "array", "items": { "type": "string" }, "description": "Ids of pictures the new one should follow (the user's attached pictures are used on their own; give ids only for other pictures in this chat). At most 4." },
+        "example_use": { "type": "string", "enum": ["style", "subject", "layout"], "description": "What to take from the example pictures: their style, their subject (the same person, pet or thing in a new scene), or their layout and colors." } } })
 }
 
 pub fn edit_image_params() -> Value {
@@ -27,8 +29,8 @@ pub fn edit_image_params() -> Value {
 pub fn create_video_params() -> Value {
     json!({ "type": "object", "required": ["prompt"], "properties": {
         "prompt": { "type": "string", "description": "What happens in the clip: subject, motion, camera, style. Write it in English." },
-        "seconds": { "type": "number", "description": "Length, 1-8 seconds (default 3)." },
-        "image": { "type": "string", "description": "A picture's id to bring to life; leave out to make the clip from the description." } } })
+        "seconds": { "type": "number", "description": "Length in seconds (default 3). Longer than about 5 seconds is made in parts, each going on from the last; a few minutes per part." },
+        "image": { "type": "string", "description": "A picture's id to turn into a video (the user's attached picture is used on its own); leave out to make the clip from the description." } } })
 }
 
 pub fn create_music_params() -> Value {
@@ -72,20 +74,69 @@ fn edit_source(given: Option<String>, ctx: &Ctx<'_>) -> Option<String> {
     }
 }
 
+/// Pictures the newest message of the person's came with.
+fn newest_attached(ctx: &Ctx<'_>) -> (Vec<String>, String) {
+    let conn = ctx.memory.db.lock().unwrap();
+    let newest = crate::db::messages(&conn, ctx.memory.cipher, ctx.memory.chat_id).into_iter().rev().find(|m| m.role == "user");
+    let ids = newest
+        .as_ref()
+        .and_then(|m| m.meta.as_ref()?.get("images")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    (ids, newest.map(|m| m.content.to_lowercase()).unwrap_or_default())
+}
+
+/// The example pictures for a new picture: the ids the model gave that are
+/// real, else the ones attached to the newest message; at most four.
+fn examples_for(args: &Value, ctx: &Ctx<'_>) -> (Vec<String>, Option<String>) {
+    let given: Vec<String> = args.get("examples").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect();
+    let real: Vec<String> = {
+        let conn = ctx.memory.db.lock().unwrap();
+        given.into_iter().filter(|id| media::store::get(&conn, ctx.memory.cipher, id).is_some_and(|i| i.kind == "image")).take(4).collect()
+    };
+    let (attached, asked) = newest_attached(ctx);
+    let ids = if real.is_empty() { attached.into_iter().take(4).collect() } else { real };
+    if ids.is_empty() {
+        return (ids, None);
+    }
+    let given_use = args.get("example_use").and_then(Value::as_str).filter(|u| matches!(*u, "style" | "subject" | "layout")).map(str::to_string);
+    let guessed = if asked.contains("style") || asked.contains("look like this") || asked.contains("like this one") {
+        "style"
+    } else if asked.contains("layout") || asked.contains("composition") || asked.contains("same pose") {
+        "layout"
+    } else {
+        "subject"
+    };
+    (ids, Some(given_use.unwrap_or_else(|| guessed.into())))
+}
+
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let state: Arc<crate::AppState> = ctx.state.clone();
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
     let chat_id = Some(ctx.memory.chat_id.to_string());
     let req = match name {
-        "create_image" => Request {
-            op: "generate".into(),
-            prompt: s("prompt").unwrap_or_default(),
-            style: s("style"),
-            shape: s("shape"),
-            count: args.get("count").and_then(Value::as_u64).map(|n| n as u32),
-            chat_id,
-            ..Default::default()
-        },
+        "create_image" => {
+            let (examples, example_use) = examples_for(args, ctx);
+            let prompt = s("prompt").unwrap_or_default();
+            Request {
+                op: "generate".into(),
+                // Words to show in the picture: the model that writes them best, when it's here.
+                model_id: media::best_for_text(&state, &prompt),
+                prompt,
+                style: s("style"),
+                shape: s("shape"),
+                count: args.get("count").and_then(Value::as_u64).map(|n| n as u32),
+                chat_id,
+                examples,
+                example_use,
+                // The picture reader checks it, and it's made again when
+                // something asked for is missing (when something here reads pictures).
+                check: Some(true),
+                ..Default::default()
+            }
+        }
         "edit_image" => {
             let action = s("action").unwrap_or_else(|| "edit".into());
             let op = match action.as_str() {
@@ -98,14 +149,23 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             };
             Request { op, prompt: s("instruction").unwrap_or_default(), source: Some(source), chat_id, ..Default::default() }
         }
-        "create_video" => Request {
-            op: "video".into(),
-            prompt: s("prompt").unwrap_or_default(),
-            seconds: args.get("seconds").and_then(Value::as_f64).map(|v| v as f32),
-            source: s("image"),
-            chat_id,
-            ..Default::default()
-        },
+        "create_video" => {
+            // The picture to bring to life: the one named (when it's real), else
+            // the one attached to this message, else (when they ask to animate
+            // "it") the newest picture in the chat.
+            let (attached, asked) = newest_attached(ctx);
+            let named = s("image").filter(|id| media::store::get(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher, id).is_some_and(|i| i.kind == "image"));
+            let points = ["animate", "bring it to life", "bring this", "to life", "make it move", "this picture", "this photo", "this image", "into a video"].iter().any(|w| asked.contains(w));
+            let source = named.or_else(|| attached.first().cloned()).or_else(|| if points { edit_source(None, ctx) } else { None });
+            Request {
+                op: "video".into(),
+                prompt: s("prompt").unwrap_or_default(),
+                seconds: args.get("seconds").and_then(Value::as_f64).map(|v| v as f32),
+                source,
+                chat_id,
+                ..Default::default()
+            }
+        }
         "create_music" => Request {
             op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
             prompt: s("description").unwrap_or_default(),
@@ -139,6 +199,8 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             }
         }
     };
+    // The studio's job cards close (and its gallery updates) for chat jobs too.
+    media::job_done(&state, &job_id, &result);
     match result {
         Ok(items) => {
             let text = format!(

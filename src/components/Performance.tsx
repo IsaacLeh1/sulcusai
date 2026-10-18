@@ -13,6 +13,9 @@ const MODES: { id: PerfMode; icon: string; label: string; detail: string }[] = [
 
 export const MODE_LABEL: Record<PerfMode, string> = { cool: tx("Cool & quiet"), balanced: tx("Balanced"), turbo: tx("Turbo") };
 
+/** Minutes an idle model stays loaded in each mode (0 = never unloaded); perf.rs `limits`. */
+const MODE_UNLOAD: Record<PerfMode, number> = { cool: 5, balanced: 10, turbo: 0 };
+
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
 const deg = (temp: number | null | undefined) => (temp == null ? "—" : `${Math.round(temp)}°C`);
 
@@ -21,10 +24,14 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
   const load = () => api.perfView().then(setV).catch(() => {});
   useEffect(() => {
     load();
-    const t = setInterval(load, 10_000);
+    // Not while the window is hidden; caught up when it shows again.
+    const t = setInterval(() => !document.hidden && load(), 10_000);
+    const shown = () => !document.hidden && load();
+    document.addEventListener("visibilitychange", shown);
     const sub = on("perf:heat", () => load());
     return () => {
       clearInterval(t);
+      document.removeEventListener("visibilitychange", shown);
       sub.then((u) => u());
     };
   }, []);
@@ -117,6 +124,27 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
             onChange={(cool_on_battery) => save({ ...s, cool_on_battery })}
           />
         )}
+        <div className="toggle-row">
+          <div>
+            <strong>{t("Free the graphics card when idle")}</strong>
+            <span className="small muted block">
+              {t("A loaded model keeps the card's memory until it's unloaded. Unloading frees it for games and other apps; the next reply then waits a few seconds for the model to load again.")}
+            </span>
+          </div>
+          <select
+            value={s.unload_after_mins == null ? "mode" : String(s.unload_after_mins)}
+            aria-label={t("Free the graphics card when idle")}
+            onChange={(e) => save({ ...s, unload_after_mins: e.target.value === "mode" ? null : Number(e.target.value) })}
+          >
+            <option value="mode">{t("As the mode sets it ({n})", { n: MODE_UNLOAD[s.mode] === 0 ? t("never") : t("after {n} min", { n: MODE_UNLOAD[s.mode] }) })}</option>
+            {[1, 2, 5, 10, 30].map((m) => (
+              <option key={m} value={m}>
+                {t("After {n} minutes idle", { n: m })}
+              </option>
+            ))}
+            <option value="0">{t("Never (keep it loaded)")}</option>
+          </select>
+        </div>
       </div>
 
       <div className="perf-now small">
@@ -195,11 +223,16 @@ export function PerfPill({ onOpen }: { onOpen: () => void }) {
         })
         .catch(() => {});
     load();
-    const t = setInterval(load, 30_000);
+    // For the switch to Cool & quiet on battery. Not while the window is
+    // hidden (it reads the temperatures too); caught up when it shows again.
+    const t = setInterval(() => !document.hidden && load(), 30_000);
+    const shown = () => !document.hidden && load();
+    document.addEventListener("visibilitychange", shown);
     const sub = on("perf:heat", (h) => setLevel(Math.max(h.gpu_level, h.cpu_level)));
     window.addEventListener("perf-changed", load);
     return () => {
       clearInterval(t);
+      document.removeEventListener("visibilitychange", shown);
       window.removeEventListener("perf-changed", load);
       sub.then((u) => u());
     };
@@ -259,8 +292,11 @@ export function GpuLimitMenu({ toast }: { toast: PushToast }) {
   );
 }
 
-/** Bottom bar: how busy and hot the graphics card is, every few seconds
- * (not while the window is hidden). Amber from 80°C. */
+/** Bottom bar: how much SulcusAI is using the graphics card, every few
+ * seconds (not while the window is hidden), and, while it works, how busy
+ * and hot the whole card is. Amber from 80°C. At rest it reads Windows'
+ * counters only: the temperature comes from nvidia-smi, and starting that
+ * wakes the card from idle. */
 export function GpuPill({ onOpen }: { onOpen: () => void }) {
   const [g, setG] = useState<GpuNow | null>(null);
   useEffect(() => {
@@ -273,26 +309,30 @@ export function GpuPill({ onOpen }: { onOpen: () => void }) {
         .catch(() => {});
     };
     load();
-    // Each reading starts nvidia-smi: not too often (it costs some processor
-    // time and can keep a laptop's graphics card from idling).
     const timer = setInterval(load, 5000);
     return () => {
       alive = false;
       clearInterval(timer);
     };
   }, []);
-  if (!g || (g.usage === null && g.temp === null)) return null;
+  if (!g || (g.usage === null && g.temp === null && g.ours === null)) return null;
   const hot = (g.temp ?? 0) >= 80;
+  // SulcusAI's own use; the whole card's while it works (its own is most of it then).
+  const shown = g.working ? g.usage ?? g.ours : g.ours ?? g.usage;
+  const others = g.usage !== null && g.ours !== null ? Math.max(0, g.usage - g.ours) : null;
   const parts = [
-    g.usage !== null ? t("{n}% busy", { n: Math.round(g.usage) }) : null,
+    g.ours !== null ? t("SulcusAI: {n}%", { n: Math.round(g.ours) }) : null,
+    g.usage !== null ? t("all apps: {n}%", { n: Math.round(g.usage) }) : null,
     g.temp !== null ? `${Math.round(g.temp)}°C` : null,
     g.mem_used !== null && g.mem_total ? t("{used} of {total} memory in use", { used: bytes(g.mem_used), total: bytes(g.mem_total) }) : null,
+    !g.working && others !== null && others >= 5 ? t("Other apps are using the card; SulcusAI is resting.") : null,
   ].filter(Boolean);
   return (
     <button className={`status-item perf-pill gpu-pill ${hot ? "hot" : ""}`} onClick={onOpen} title={`${g.name ?? t("Graphics card")}: ${parts.join(" · ")}`}>
       <span aria-hidden>▦</span> {t("GPU")}
-      {g.usage !== null && <span className="gpu-num">{Math.round(g.usage)}%</span>}
+      {shown !== null && <span className="gpu-num">{Math.round(shown)}%</span>}
       {g.temp !== null && <span className="gpu-num">{Math.round(g.temp)}°C</span>}
+      {!g.working && <span className="gpu-num muted">{t("resting")}</span>}
     </button>
   );
 }

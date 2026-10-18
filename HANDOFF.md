@@ -1024,6 +1024,108 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - **Live test** (dev mode, 14B): x^2 - 5x + 6 = 0 solved by calculate, the integral = 9, cafés near the user (Starbucks 0.3 mi…), gas near Provo, the nearest Walmart to Provo 2.1 mi, and a bar chart whose axis now reaches past the top bar. Test chats removed.
 - `e2e::a_chat_finds_and_reads_another_chat` now uses a 32K stand-in: with 8K, fit_small rightly left the chat tools out of "And the hotel?".
 
+## After 0.9.11 (2026-10-18, for 0.9.12): idle GPU, hidden chats, pictures that follow what's asked, wallpapers, long videos, audit fixes
+
+Not built or published yet. Uncommitted work is described here.
+
+- **The graphics card at idle** (`perf.rs`, `components/Performance.tsx`):
+  - The 12% he saw at idle was Chrome (a site preview) and dwm at 160 Hz; it stayed with SulcusAI closed.
+  - SulcusAI's own idle costs were `nvidia-smi` every 5 s (the status pill), temperature reads every 10 s while a model was loaded, and a loaded model holding 11 GB for 30 minutes. Starting nvidia-smi wakes the card.
+  - Usage now comes from Windows' `\GPU Engine(*)\Utilization Percentage` counters per process (no wake). SulcusAI's share is its own process tree (`our_pids`, cached 10 s). nvidia-smi only runs while something is working (`perf::working`: a reply, a media job, speech, the engine lock, or the engine used in the last 20 s). Temperatures use the driver's sensor (`card_temp`, D3DKMT, NVIDIA too) before nvidia-smi.
+  - `perf_view` (the pill, every 30 s while visible) uses `quiet_temps` while idle: the driver's sensor or the last reading, never nvidia-smi.
+  - Balanced frees the card after 10 idle minutes (was 30); a "Free the graphics card when idle" setting (`unload_after_mins`: mode, 1-30 min, never).
+  - The pill shows SulcusAI's share, "resting" when idle, and the tooltip "SulcusAI: n% · all apps: n%".
+- **Hidden chats** (`hidden.rs`, `App.tsx`): own and shared chats can be hidden from the list ("Hide from the list"); "Hidden chats (n)" at the end of the list shows them, and "Show in the list again" brings one back. Stored under the `hidden_chats` setting.
+- **Projects**: right-click a project for Open, New chat in this project, Rename… (the name modal now says "Project name", 80 characters) and Delete project… (confirm; chats are kept and move out).
+- **Picture reader** (`vision.rs`): a chat model that can't see pictures gets the reader's description of attached pictures (status "The picture reader is looking at your picture…"; kept in `MediaItem.description`, read once). Readers: installed chat models with a vision file and picture models that bring one (Qwen-Image's Qwen3-VL 8B), Qwen3-VL first, then smallest. A `Helper` runs a model on an engine of its own, pausing the chat model only when both don't fit the card.
+- **Prompt writer, DSPy-style** (`media/prompts.rs`, `catalog/prompt_programs.json`):
+  - Signature `Ask` → `Written` (prompt, negative). A program per family (flux2, qwen-image, z-image, sdxl, sd15, wan, general): instructions, word limit, negative, demos.
+  - The writer is the picture model's own language model when it has one (Z-Image: Qwen3 4B, FLUX.2: Qwen3, Qwen-Image: Qwen3-VL 8B), else a reader, else the chat model.
+  - Metric: a checklist of what was asked (≤10 items) judged item by item by the reader. When a new picture shows under 85%, it's made once more with a revised prompt and the better one is kept (`made_well`).
+  - Optimizer (`tune`, Studio › Prompt writer › "Teach it this model…", job op `tune`): 8 practice requests × 3 prompts (the first with the bundled program as the baseline), 768 px practice pictures not kept, scored; best pairs become demos; new instructions from the misses are kept only if they score higher. Saved to `<data>/prompt_programs/<family>.json`; "Forget what it learned" deletes it.
+  - For everyone: `py -3.12 -I scripts/promote_prompt_programs.py [--write]` copies programs tuned on this PC into `catalog/prompt_programs.json` (only ones that beat the bundled score).
+  - Studio toggles (remembered): "Rewrite my description the way {model} follows best" (on) and "Check the picture and make it again…" (on when something reads pictures). Without a reader, an "Add Qwen3 VL 4B" link installs it.
+- **Example pictures**: up to 4 from the gallery or files, used for style, subject or layout. Models that edit (FLUX.2 klein, Qwen-Image) get them as references; otherwise the reader describes them for the writer, and "layout" starts the picture from the first one (strength 0.62). In chats, `create_image` uses the pictures attached to the message (or ids it names), and a picture with quoted text goes to Qwen-Image when installed (`best_for_text`).
+- **Wallpapers** (`media/wallpaper.rs`, `media/mp4.rs`, Studio tab "🖥 Wallpapers"):
+  - The screens come from `wallpaper_screens` (Tauri monitors, physical pixels), plus common sizes and a custom size.
+  - Still: made in the screen's shape (up to 2.4:1) at the model's size, enlarged with Real-ESRGAN when installed (else Lanczos), cut to the exact size. OLED-friendly: asked for on true black, then near-blacks (luma < 14, smooth to 42) become pure black; the log says what share of pixels is off.
+  - Moving: Wan's frames as PNGs, fitted to the screen (H.264 limits: 4096×2304), the last frames blended into the first so it loops without a jump, encoded to MP4 with Media Foundation (NV12, BT.709, hardware encoder when there is one).
+  - "🖥 Set as wallpaper" in the viewer (any picture, and moving wallpapers): copies it to Pictures\SulcusAI Wallpapers and sets it with IDesktopWallpaper on the chosen screen (or all). Moving ones go to Lively Wallpaper (`Lively.exe setwp --file`), or the person is told how.
+- **Videos of any length** (`media/longclip.rs`): up to 10 minutes. Longer than the model makes at once (Wan 2.2: 121 frames ≈ 5 s), it's made in parts, each from the last frame of the one before, with a heat check between parts. Later parts are color-matched to the first, then everything is joined into one MP4. The Video tab has "Any length…", "🖼 Start from a picture…" (gallery or a file), and the viewer's "🎬 Turn into a video". In chats, create_video uses an attached picture.
+- **Better video**: Wan's own Chinese negative prompt plus the English one, the frame limit per model (`max_frames`: Wan 2.2 121, Wan 2.1 81), `--cache-mode easycache`, `--temporal-tiling` (Wan 2.2), Wan 2.1 flow shift 8, steps 25 for Wan 2.2, and the writer's negative passed through. Still 832×480: 1280×704 (Wan 2.2's native size) wasn't timed yet.
+- **Pictures**: looks match whole words (`has_word`: "iconic" isn't "icon"); the SD negative's "cartoon, painting, 3d…" are dropped when a drawn look is chosen (`fit_negative`); extend keeps the original at full size; an edit that changes how people look (older, hair, cartoon, restyle) no longer sends the original faces back; cut-outs stay see-through when upscaled and get a white background for edits; upscaling works up to 2048 px sources (larger are refused, button disabled); song lyrics are written before the card is cleared; a queued job can be removed at once; chat-made jobs close their Studio cards (`job_done`).
+- **Chat fixes** (`agent.rs`, `chat.rs`):
+  - The latest tool results are never replaced to make room. They're cut in the middle instead (`cut_middle`), and lookups whose output was removed may run again.
+  - Repeats of browser actions and `command_output` aren't refused; Memory tools clear the repeat list too.
+  - A declined forced write stops the follow-ups (it came back up to 12 times).
+  - A cut-off forced call isn't shown as the reply.
+  - Token counts are keyed by the text too.
+  - Scheduled tasks are `unattended`: no request_* tools, and popups are declined, not waited on.
+  - The site check waits for its button clicks (`clicking` report).
+  - "for me" no longer turns follow-ups into build requests.
+  - `calculate` keeps function arguments (max(120,450)).
+  - find_places searches brands by name ("Pizza Hut", `extra_words`).
+  - A lookup that failed gets one retry, and the stop message says to check the connection.
+  - A tool's name in code isn't a stall.
+  - Split UTF-8 characters in streams and command output are kept whole.
+  - read_file past the end says how many lines there are.
+  - A dev-server preview counts as previewed.
+  - "Change this picture" with an attached picture goes to edit_image when the model says it can't.
+- **Security fixes** (outside review findings, from the audit):
+  - open_path opens only an allow-list (folders, docs::OPENABLE, audio and video) and respects the Offline level.
+  - people_set_allow needs the cipher and refuses system folders.
+  - Site keys only go over https.
+  - Browser host names must resolve to public addresses. Lookups are cached 5 minutes with a 2 s limit, since this runs on the window's thread.
+  - Calendar and mail logs are encrypted.
+  - The preview's web policy is checked per request; preview files are streamed.
+  - run_code output is capped while printing.
+  - Folders shared from the phone can't be system folders.
+  - Model file names copied from another device must be plain.
+  - check_url skips DNS only for Tor.
+- **Screen fixes**:
+  - Waiting approvals load on mount (`all_pending_approvals`, `approvals.ts`).
+  - ProjectView follows a rename.
+  - Markdown is memoized.
+  - MailView keeps its search.
+  - The sidebar scrolls, with Settings pinned.
+  - App events no longer resubscribe on catalog changes.
+  - Floating menus stay on screen and work with the keyboard.
+  - The perf pill doesn't poll while hidden.
+  - Scheduled list refreshes on schedule:ran.
+  - Approval text and errors are translated.
+  - Tasks keep the editor open on a failed save.
+  - Ctrl+Shift+W only on a chat.
+  - Header delete shows errors.
+  - The media cache keeps 8 full files.
+- **Model loading** (`engine.rs`, `catalog.rs`, `download.rs`, `lib.rs`, `local.rs`):
+  - A model another chat is answering with isn't swapped out: `llm_endpoint` waits for it, up to 3 minutes. The same model with new limits keeps its address; the install speed test skips while a reply runs.
+  - The vision file plus 300 MiB counts in the fit plan.
+  - The suggested quant is the highest that fits a 16K window (32K when that fits too): Qwen3 8B on 12 GB gets Q6_K at 16K, not Q8_0 at 8K. The KV cache stays f16, because quantized V on Vulkan wasn't verified.
+  - Thinking models get a bigger reply allowance. A reply cut off while still thinking is tried once more with thinking off (`chat::stream`), else a clear error.
+  - Idle unload counts work from `/slots`, every 15 s (`watch_work`): translation, meeting notes and the API count as use.
+  - `gpu_share` applies to a chosen window. Stalled downloads give up after 60 s and resume later. MoE models that don't fit use `-ngl 999 --n-cpu-moe N`. Cooling doesn't reload a model that's fully on the card. A LoRA survives reuse and pauses.
+  - Split GGUFs are listed once and sized from all their parts. With several mmproj files in a folder, the one whose projection_dim matches the model is picked.
+  - Left: the sliding-window KV estimate (memcheck and media share it); `schedule.rs` should claim its reply before `llm_endpoint`; installing a new version of a model mid-reply still stops it.
+- **Live test (dev build, 2026-10-18)**:
+  - Idle: SulcusAI's share of the card 0%, all apps about 0.1%, 29 °C, no nvidia-smi launches in 30 s.
+  - Z-Image with the writer: 26 s, every requested detail in the picture, the sign's "WELCOME" spelled right.
+  - OLED wallpaper at 3440×1440: the first try drew a fake taskbar and desktop icons, because the notes named them. Wallpapers are now described as "wide background art" with "no interface" (and a negative for SD). Second try: 95% of pixels off, checked 83%, made again, upscaled with Real-ESRGAN, 130 s.
+  - A style example copied the example's room and sign, because a non-edit model started from it. Now only "layout" (or no reader) starts from an example. The reader describes only the part asked for (`vision::as_example`). The writer keeps counts ("a keeper" is one person), and checklists don't pad short requests.
+  - Jobs now show up before `learn_devices` (it took seconds after a start).
+  - Wan 2.2 (installed for the test, with Qwen3 VL 4B and Real-ESRGAN, all removable from Models):
+    - A moving OLED wallpaper at 3440×1440 looped (4.4 s MP4). It came out soft (Wan makes about 1000×420).
+    - Real-ESRGAN on every frame took 8 s a frame (an engine start each), 16 min for one loop, so it was dropped. Enlarged frames now get an unsharp mask instead.
+    - The OLED cutoff (luma 14, fading up to 42) blacked out a dim aurora. It's now 8 and 24, and a test keeps a dim glow.
+    - Encoding at 3440×1440 took 8 min in the debug build; release is much faster.
+    - A 9 s clip from the cabin picture came out in 2 parts and joined without a visible jump. Part 2 took 21 min: Wan's 7 GB of weights stayed on the card and the frame decoder fell back to 64×64 tiles.
+    - Video now runs with `--offload-to-cpu` on cards under 20 GB (`card_friendly`). The same 5 s clip took 200 s: 74 s creating, 104 s decoding, no tile fallback.
+    - The card peaked at 83 °C during the slow decode.
+  - Video was off in Features; it was turned on for the test and turned off again afterwards.
+  - A chat with Qwen2.5 Coder 14B (no vision) and the cabin picture attached: Qwen3 VL 4B read it, and the answer was right ("one animal: a golden retriever; the sign says WELCOME"). 93 s, both models loaded.
+  - Teaching the prompt writer Z-Image: 24 practice pictures in 5.4 min, 95% → 100%, 4 demos saved on this PC. Not promoted to the catalog (`scripts/promote_prompt_programs.py --write` does it).
+  - The test chat was deleted. The test pictures and videos are in the gallery: 4 pictures, 3 wallpapers, 2 clips.
+- **Not tested live**: "Set as wallpaper" (it would change his desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

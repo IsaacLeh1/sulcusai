@@ -13,6 +13,8 @@ use serde_json::Value;
 const TIME_LIMIT: Duration = Duration::from_secs(10);
 const MEMORY_LIMIT: usize = 256 * 1024 * 1024;
 const OUTPUT_CHARS: usize = 12_000;
+/// Most of an error message kept (the prelude keeps 2,000, then the line).
+const ERROR_CHARS: usize = 2_100;
 const CHARTS: usize = 4;
 
 /// What the code did.
@@ -120,19 +122,29 @@ const PRELUDE: &str = r#"(function () {
     try { return JSON.stringify(v, function (k, x) { return typeof x === 'number' && !Number.isInteger(x) ? Number(x.toPrecision(12)) : typeof x === 'bigint' ? x.toString() : x; }, 2); } catch (e) { return String(v); }
   };
   g.__fmt = fmt;
-  var print = function () { g.__out([].map.call(arguments, function (a) { return fmt(a); }).join(' ')); };
+  // Text going back to the app is cut here first (it keeps 12,000 characters;
+  // a character may take two units here), so a huge string isn't copied out whole.
+  var clip = function (s, max) {
+    s = String(s);
+    max = max || 24002;
+    if (s.length <= max) return s;
+    s = s.slice(0, max);
+    var c = s.charCodeAt(s.length - 1);
+    return (c >= 0xD800 && c <= 0xDBFF ? s.slice(0, -1) : s) + '…';
+  };
+  var print = function () { g.__out(clip([].map.call(arguments, function (a) { return fmt(a); }).join(' '))); };
   g.print = print;
-  g.console = { log: print, info: print, warn: print, error: print, debug: print, table: function (rows) { g.__out(fmt(rows)); } };
+  g.console = { log: print, info: print, warn: print, error: print, debug: print, table: function (rows) { g.__out(clip(fmt(rows))); } };
   // A chart in the chat: chart({ type: 'bar' | 'line' | 'area' | 'pie' | 'scatter', title, labels, series: [{ name, data }] })
   // or chart({ type, title, labels, values }).
   g.chart = function (spec) { return g.__chart(JSON.stringify(spec)); };
   g.__run = function (src) {
     try {
       var v = (0, eval)(src);
-      return JSON.stringify({ ok: true, value: v === undefined ? null : fmt(v) });
+      return JSON.stringify({ ok: true, value: v === undefined ? null : clip(fmt(v)) });
     } catch (e) {
       var at = e && e.stack ? /<input>:(\d+)/.exec(String(e.stack)) : null;
-      return JSON.stringify({ ok: false, error: (e && e.name ? e.name + ': ' + e.message : String(e)) + (at ? ' (line ' + at[1] + ')' : '') });
+      return JSON.stringify({ ok: false, error: clip(e && e.name ? e.name + ': ' + e.message : String(e), 2000) + (at ? ' (line ' + at[1] + ')' : '') });
     }
   };
 })();"#;
@@ -206,18 +218,12 @@ pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) 
             return ran;
         }
     };
-    let out = Rc::new(RefCell::new(String::new()));
+    let out: Rc<RefCell<Printed>> = Rc::default();
     let charts: Rc<RefCell<Vec<Value>>> = Rc::default();
     let result: Result<String, String> = ctx.with(|ctx| {
         let g = ctx.globals();
         let o = out.clone();
-        let print = Function::new(ctx.clone(), move |line: String| {
-            let mut o = o.borrow_mut();
-            if o.chars().count() < OUTPUT_CHARS {
-                o.push_str(&line);
-                o.push('\n');
-            }
-        });
+        let print = Function::new(ctx.clone(), move |line: String| o.borrow_mut().push(&line));
         let c = charts.clone();
         let chart = Function::new(ctx.clone(), move |spec: String| -> String {
             let mut c = c.borrow_mut();
@@ -266,14 +272,49 @@ pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) 
             break;
         }
     }
-    ran.output = out.borrow().trim_end().to_string();
+    ran.output = out.borrow().text.trim_end().to_string();
     ran.charts = charts.borrow().clone();
     match result.and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| e.to_string())) {
-        Ok(v) if v["ok"] == true => ran.value = v["value"].as_str().map(str::to_string),
-        Ok(v) => ran.error = Some(v["error"].as_str().unwrap_or("It failed.").to_string()),
-        Err(e) => ran.error = Some(e),
+        Ok(v) if v["ok"] == true => ran.value = v["value"].as_str().map(|s| clip(s, OUTPUT_CHARS)),
+        Ok(v) => ran.error = Some(clip(v["error"].as_str().unwrap_or("It failed."), ERROR_CHARS)),
+        Err(e) => ran.error = Some(clip(&e, ERROR_CHARS)),
     }
     ran
+}
+
+/// What the code printed: up to OUTPUT_CHARS in all. Each print is cut to
+/// what's left, so one huge print (or very many) never piles up.
+#[derive(Default)]
+struct Printed {
+    text: String,
+    chars: usize,
+    cut: bool,
+}
+
+impl Printed {
+    fn push(&mut self, line: &str) {
+        if self.cut {
+            return;
+        }
+        let room = OUTPUT_CHARS.saturating_sub(self.chars);
+        if room == 0 || line.chars().nth(room).is_some() {
+            self.text.extend(line.chars().take(room));
+            self.text.push_str("\n[The rest of the output was cut.]");
+            self.cut = true;
+        } else {
+            self.text.push_str(line);
+            self.text.push('\n');
+            self.chars += line.chars().count() + 1;
+        }
+    }
+}
+
+/// Text cut to `max` characters, saying so.
+fn clip(s: &str, max: usize) -> String {
+    match s.char_indices().nth(max) {
+        Some((at, _)) => format!("{}… [cut: it was longer than {max} characters]", &s[..at]),
+        None => s.to_string(),
+    }
 }
 
 /// A math expression the way people write it, as JavaScript: ^ for powers,
@@ -283,10 +324,7 @@ pub fn as_js(expr: &str) -> String {
     for (from, to) in [("×", "*"), ("÷", "/"), ("−", "-"), ("–", "-"), ("^", "**"), ("√", "sqrt")] {
         s = s.replace(from, to);
     }
-    let thousands = regex_lite(r"(\d),(\d{3})\b");
-    while thousands.is_match(&s) {
-        s = thousands.replace_all(&s, "$1$2").into_owned();
-    }
+    s = without_thousands(&s);
     s = regex_lite(r"(?i)(\d+(?:\.\d+)?)\s*(?:%|percent)\s*of\s*").replace_all(&s, "($1/100)*").into_owned();
     s = regex_lite(r"(\d+(?:\.\d+)?)\s*%").replace_all(&s, "($1/100)").into_owned();
     s = regex_lite(r"(\d)\s*[xX]\s*(\d)").replace_all(&s, "$1*$2").into_owned();
@@ -299,6 +337,33 @@ pub fn as_js(expr: &str) -> String {
     s = implied_times(&s);
     s = quote_first_arg(&s);
     equation(&s).unwrap_or(s)
+}
+
+/// "1,234,567" → "1234567", but not the commas between a function's
+/// arguments: max(120,450) stays two numbers.
+fn without_thousands(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    // For each open bracket: whether it's a function call's.
+    let mut calls: Vec<bool> = Vec::new();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '(' | '[' => calls.push(c == '(' && i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_')),
+            ')' | ']' => {
+                calls.pop();
+            }
+            ',' if !calls.last().copied().unwrap_or(false) => {
+                let digit_before = i > 0 && chars[i - 1].is_ascii_digit();
+                let three_after = chars.get(i + 1..i + 4).is_some_and(|d| d.iter().all(char::is_ascii_digit)) && !chars.get(i + 4).is_some_and(char::is_ascii_digit);
+                if digit_before && three_after {
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Names that aren't unknowns in an equation.
@@ -453,6 +518,10 @@ mod tests {
             assert_eq!(as_js(said), js);
             assert_eq!(value(js), out);
         }
+        // A function's arguments aren't one big number; a grouped one still is.
+        assert_eq!(without_thousands("max(120,450)"), "max(120,450)");
+        assert_eq!(without_thousands("(2,000 + 3) * 1,500"), "(2000 + 3) * 1500");
+        assert_eq!(without_thousands("round2(1,234.5,2)"), "round2(1,234.5,2)");
     }
 
     #[test]
@@ -493,6 +562,26 @@ mod tests {
         assert_eq!(r.error.as_deref(), Some("Error: ../secret.txt isn't in a shared folder. (line 1)"));
         assert!(chart_of(r#"{"type":"radar","values":[1]}"#).is_err());
         assert!(chart_of(r#"{"type":"line","labels":["a"]}"#).is_err(), "no numbers");
+    }
+
+    #[test]
+    fn huge_prints_and_values_are_cut() {
+        // One huge print, then many: the output stays small and says it was cut.
+        let r = run("print('a'.repeat(5000000)); for (let i = 0; i < 100000; i++) print('more'); 'b'.repeat(3000000)", |_| Err("no".into()));
+        assert_eq!(r.error, None);
+        assert!(r.output.chars().count() < OUTPUT_CHARS + 100 && r.output.ends_with("[The rest of the output was cut.]"), "{}", r.output.len());
+        let v = r.value.unwrap();
+        assert!(v.chars().count() < OUTPUT_CHARS + 100 && v.contains("[cut:"), "{}", v.len());
+        // Many small prints fill it exactly as before.
+        let r = run("for (let i = 0; i < 3; i++) print('row', i)", |_| Err("no".into()));
+        assert_eq!(r.output, "row 0\nrow 1\nrow 2");
+        let r = run("throw new Error('x'.repeat(1000000))", |_| Err("no".into()));
+        let e = r.error.unwrap();
+        assert!(e.starts_with("Error: xxx") && e.chars().count() <= ERROR_CHARS + 60, "{}", e.len());
+        let mut p = Printed::default();
+        p.push(&"é".repeat(OUTPUT_CHARS));
+        p.push("");
+        assert!(p.cut && p.text.starts_with("éé"));
     }
 
     #[test]

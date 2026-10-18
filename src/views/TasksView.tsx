@@ -54,12 +54,15 @@ export function TasksView({ toast }: { toast: PushToast }) {
     };
   }, [tasks]);
 
+  /** Saves the task; false (and the error shown) if it didn't save. */
   const save = async (task: Task) => {
     try {
       await api.saveTask(task);
       load();
+      return true;
     } catch (e) {
       toast(errorText(e), "error");
+      return false;
     }
   };
 
@@ -84,7 +87,8 @@ export function TasksView({ toast }: { toast: PushToast }) {
       task.due = d.getTime();
     }
     setQuick("");
-    save(task);
+    // Not saved: the text comes back to try again.
+    if (!(await save(task))) setQuick((q) => q || text);
   };
 
   const shown = groups[list];
@@ -149,13 +153,17 @@ export function TasksView({ toast }: { toast: PushToast }) {
           task={editing}
           onClose={() => setEditing(null)}
           onSave={async (task) => {
-            await save(task);
-            setEditing(null);
+            // The editor stays open when it didn't save, so nothing typed is lost.
+            if (await save(task)) setEditing(null);
           }}
           onDelete={async () => {
-            await api.deleteTask(editing.id);
-            setEditing(null);
-            load();
+            try {
+              await api.deleteTask(editing.id);
+              setEditing(null);
+              load();
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
           }}
         />
       )}

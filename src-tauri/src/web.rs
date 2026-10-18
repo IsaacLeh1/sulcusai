@@ -95,9 +95,11 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
     let port = url.port_or_known_default().unwrap_or(443);
     let addrs: Vec<IpAddr> = match host.trim_matches(['[', ']']).parse::<IpAddr>() {
         Ok(ip) => vec![ip],
-        // Going the private way, the name is looked up at the far end, not
-        // here (a lookup here would tell this network which sites you open).
-        Err(_) if crate::privacy::proxy_for(net::Route::Web).is_some() => return Ok(url),
+        // Through Tor, the name is looked up at the far end, not here (a
+        // lookup here would tell this network which sites you open), and Tor
+        // can't reach this PC or the home network. The user's own proxy can,
+        // so its names are checked here too.
+        Err(_) if crate::privacy::tor_for(net::Route::Web) => return Ok(url),
         Err(_) => tokio::net::lookup_host((host.as_str(), port)).await.map_err(|_| format!("Couldn't find {host}."))?.map(|a| a.ip()).collect(),
     };
     if addrs.is_empty() || !addrs.iter().all(|ip| is_public(*ip)) {

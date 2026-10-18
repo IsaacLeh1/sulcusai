@@ -41,8 +41,27 @@ fn system_dirs() -> Vec<PathBuf> {
 pub const SYSTEM_WARNING: &str = "This folder is inside a Windows system folder (Windows, Program Files or ProgramData). The assistant could change or delete files there, which can break Windows or your apps. Share it only if you trust what you'll ask it to do.";
 
 /// A folder inside Windows, Program Files or ProgramData (not one of them).
+/// One that doesn't exist yet (it's made when it's shared) counts by where
+/// it would be.
 pub fn inside_system(path: &Path) -> bool {
-    canonical(path).is_some_and(|c| system_dirs().iter().any(|dir| is_inside(&c, dir) && key(&c) != key(dir)))
+    would_be(path).is_some_and(|c| system_dirs().iter().any(|dir| is_inside(&c, dir) && key(&c) != key(dir)))
+}
+
+/// Where a path is, or would be once made: its nearest folder that exists,
+/// resolved, with the rest added.
+fn would_be(path: &Path) -> Option<PathBuf> {
+    let (have, mut c) = path.ancestors().find_map(|a| canonical(a).map(|c| (a, c)))?;
+    for part in path.strip_prefix(have).ok()?.components() {
+        match part {
+            Component::Normal(n) => c.push(n),
+            Component::ParentDir => {
+                c.pop();
+            }
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    Some(c)
 }
 
 /// Folders that must never be granted: drive roots, system locations
@@ -269,6 +288,9 @@ mod tests {
                 assert_eq!(refuse_reason(&inside, &app_data, true), None);
                 assert!(!inside_system(&win), "Windows itself isn't 'inside' one");
             }
+            // One that isn't there yet (it'd be made when shared) counts by where it would be.
+            assert!(inside_system(&win.join("sulcus-not-here").join("site")));
+            assert!(!inside_system(&d.join("new").join("..").join("other")));
         }
         assert!(refuse_reason(&app_data, &app_data, true).is_some());
         assert!(refuse_reason(&d.join("proj"), &app_data, false).is_none());

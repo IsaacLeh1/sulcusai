@@ -198,11 +198,23 @@ impl Kept {
 fn collect(mut r: impl tokio::io::AsyncRead + Unpin + Send + 'static, out: Arc<Mutex<Kept>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut buf = [0u8; 8192];
+        // A character split between two reads waits for its other half.
+        let mut rest: Vec<u8> = Vec::new();
         while let Ok(n) = r.read(&mut buf).await {
             if n == 0 {
                 break;
             }
-            out.lock().unwrap().push(&String::from_utf8_lossy(&buf[..n]));
+            rest.extend_from_slice(&buf[..n]);
+            let whole = match std::str::from_utf8(&rest) {
+                Ok(_) => rest.len(),
+                Err(e) if e.error_len().is_none() => e.valid_up_to(),
+                Err(_) => rest.len(),
+            };
+            let done: Vec<u8> = rest.drain(..whole).collect();
+            out.lock().unwrap().push(&String::from_utf8_lossy(&done));
+        }
+        if !rest.is_empty() {
+            out.lock().unwrap().push(&String::from_utf8_lossy(&rest));
         }
     })
 }

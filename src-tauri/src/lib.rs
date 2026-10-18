@@ -42,6 +42,7 @@ mod handoff;
 mod handoff_guard;
 mod hardware;
 mod hello;
+mod hidden;
 mod hub;
 mod inbox;
 mod jsrun;
@@ -84,6 +85,7 @@ mod triage;
 mod tts;
 mod updates;
 mod vad;
+mod vision;
 mod voice;
 mod web;
 mod workspace;
@@ -639,29 +641,40 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
             let log = state.paths.engine_log();
             // Same settings a chat will use, so the first chat doesn't reload the model.
             let limits = state.limits();
-            let (ctx, gpu_layers, threads, batch) = launch_plan(&state, &spec, &variant.quant);
             let mmproj = vision_file(&state.paths, &spec);
+            let encoder_size = mmproj.as_ref().and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
+            let plan = launch_plan(&state, &spec, &variant.quant, encoder_size);
             let mut engine = state.engine.lock().await;
+            // Not while a reply runs or a model is being taught: loading this
+            // one would stop the model they use. The speed can be tested later
+            // on the Models page.
+            if !state.generations.lock().unwrap().is_empty() || finetune::training() {
+                drop(engine);
+                state.log("model", &format!("Skipped testing {}'s speed: the engine was busy", spec.name));
+                return Ok(());
+            }
             let measured = async {
                 let ep = engine
-                    .ensure(
+                    .ensure_tuned(
                         LaunchSpec {
                             exe: &exe,
                             model_path: &dest,
                             model_id: &spec.id,
                             quant: &variant.quant,
-                            ctx,
-                            gpu_layers,
-                            threads,
+                            ctx: plan.ctx,
+                            gpu_layers: plan.gpu_layers,
+                            threads: plan.threads,
                             low_priority: limits.low_priority,
                             log: &log,
                             mmproj: mmproj.as_deref(),
-                            batch,
+                            batch: plan.batch,
                             lora: None,
                         },
+                        plan.tuning,
                         state.job(),
                     )
                     .await?;
+                watch_work(&state, &ep);
                 emit("benchmark", 0, 0);
                 engine::measure(&ep).await
             }
@@ -748,13 +761,28 @@ fn chosen_window(state: &AppState) -> Option<u32> {
     db::get::<u32>(&state.db.lock().unwrap(), "context_window").filter(|n| *n >= 2048)
 }
 
-fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str) -> (u32, u32, usize, u32) {
-    let limits = state.limits();
-    let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &state.budget(), &limits);
+/// How to start a model (`launch_plan`).
+struct Plan {
+    ctx: u32,
+    gpu_layers: u32,
+    threads: usize,
+    batch: u32,
+    tuning: engine::Tuning,
+}
+
+/// `encoder`: the size of the picture reader loaded with the model (0: none).
+fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) -> Plan {
+    let mut limits = state.limits();
+    let mut budget = state.budget();
+    // The picture reader takes room of its own beside the model.
+    if encoder > 0 {
+        catalog::set_aside(&mut budget, &mut limits, encoder + catalog::VISION_OVERHEAD);
+    }
+    let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &budget, &limits);
     // A bigger window, as far as this PC still runs the model (layers move
     // off the graphics card to make room).
     if let Some(want) = chosen_window(state) {
-        (ctx, layers) = catalog::launch_at(spec, quant, &state.budget().with_limits(&limits), want, (ctx, layers));
+        (ctx, layers) = catalog::launch_at(spec, quant, &budget.with_limits(&limits), want, (ctx, layers), limits.gpu_share);
     }
     let e = advanced::get(state).engine;
     if let Some(c) = e.ctx {
@@ -763,8 +791,20 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str) -> (u32, u32, us
     if let Some(l) = e.gpu_layers {
         layers = l.min(spec.arch.n_layer + 1);
     }
-    let threads = e.threads.map_or(limits.threads, |t| t as usize);
-    (ctx, layers, threads, e.batch.unwrap_or(0))
+    // A mixture-of-experts model split with the card keeps experts, not
+    // whole layers, in system memory (unless advanced mode set the layers).
+    let cpu_moe = if e.gpu_layers.is_none() { catalog::moe_offload(spec, quant, layers) } else { None };
+    // Wholly on the card, the processor's threads barely matter: the mode's
+    // own count, so a cooling step doesn't reload the model for them.
+    let threads = match e.threads {
+        Some(t) => t as usize,
+        None if layers > spec.arch.n_layer => {
+            let s = perf::settings(&state.db.lock().unwrap());
+            perf::limits(&s, &state.hardware.read().unwrap(), hardware::on_battery() == Some(true)).threads
+        }
+        None => limits.threads,
+    };
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe } }
 }
 
 /// The versions of a model this PC can run, the best suited first.
@@ -1620,6 +1660,7 @@ async fn run_turn_with(
         mode,
         use_tools,
         vision,
+        unattended: false,
         base,
         about,
         cancel,
@@ -1651,14 +1692,28 @@ async fn run_turn_with(
     Ok(last)
 }
 
+/// How long a request for another model waits for the replies using the
+/// loaded one to finish (an agent task can take minutes).
+const WAIT_FOR_REPLIES: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// The stop flags of the replies running now.
+fn replies(state: &AppState) -> Vec<Arc<AtomicBool>> {
+    state.generations.lock().unwrap().values().cloned().collect()
+}
+
 /// Starts (or reuses) the engine for a model: the given one, else the
-/// default. Returns the endpoint and the model.
+/// default. Returns the endpoint and the model. Another model isn't stopped
+/// while replies are using it: this waits for them, then gives up.
 pub(crate) async fn llm_endpoint(
     state: &Arc<AppState>,
     model_id: Option<String>,
     pictures: bool,
     on_loading: impl FnOnce(),
 ) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
+    // Replies running before this request that weren't given a model yet:
+    // this request's own, when a chat makes it.
+    let before = engine::USERS.lock().unwrap().unplaced(&replies(state));
+    let task = tokio::task::try_id();
     let id = {
         let conn = state.db.lock().unwrap();
         let default = db::settings(&conn).default_model;
@@ -1672,7 +1727,9 @@ pub(crate) async fn llm_endpoint(
     };
     if cloud::is_cloud(&id) {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
-        return cloud::endpoint(state, &id, &state.cipher()?);
+        let found = cloud::endpoint(state, &id, &state.cipher()?)?;
+        engine::USERS.lock().unwrap().place(&replies(state), &before, "", task);
+        return Ok(found);
     }
     if finetune::training() {
         return Err("A model is being taught right now and has the graphics card. Chats on this PC's models work again when it's done (or stop it in Settings → Advanced). Cloud models still work.".into());
@@ -1690,10 +1747,8 @@ pub(crate) async fn llm_endpoint(
         spec.name = format!("{} + {}", spec.name, a.name);
     }
     let lora = taught.as_ref().map(|a| std::path::PathBuf::from(&a.path));
-    let budget = state.budget();
     let limits = state.limits();
-    let (ctx, gpu_layers, threads, batch) = launch_plan(state, &spec, &installed.quant);
-    let backend = engine::backend_for(&budget)?;
+    let backend = engine::backend_for(&state.budget())?;
     let exe = match engine::installed_server(&state.paths, &state.catalog.engine, backend) {
         Some(exe) => exe,
         // A model found on this PC before the engine was ever downloaded.
@@ -1716,49 +1771,153 @@ pub(crate) async fn llm_endpoint(
     *state.engine_used.lock().unwrap() = std::time::Instant::now();
     let model_path = model_file(&state.paths, &installed);
     let encoder = if pictures { ensure_vision(state, &spec).await? } else { vision_file(&state.paths, &spec) };
-    let mut engine = state.engine.lock().await;
-    // Keep the image encoder once it's loaded, so chats don't flip it on and off.
-    let keep = engine.endpoint_for(&installed.model_id).is_some() && engine.sees();
-    let mmproj = encoder.filter(|_| pictures || keep);
-    let launch = LaunchSpec {
-        exe: &exe,
-        model_path: &model_path,
-        model_id: &installed.model_id,
-        quant: &installed.quant,
-        ctx,
-        gpu_layers,
-        threads,
-        low_priority: limits.low_priority,
-        log: &state.paths.engine_log(),
-        mmproj: mmproj.as_deref(),
-        batch,
-        lora: lora.as_deref(),
-    };
-    let reuse = match engine.endpoint_for(&installed.model_id) {
-        // Same model: new limits (mode, heat) apply between replies, and only
-        // when no other chat is mid-reply on it.
-        Some(ep) if engine.matches(&launch) || state.generations.lock().unwrap().len() > 1 => Some(ep),
-        _ => None,
-    };
-    let mut ep = match reuse {
-        Some(ep) => ep,
-        None => {
-            // Room for it right now (a game may be holding the memory)? The
-            // engine isn't held while the person decides.
-            let replacing = engine.loaded().map(|(pid, id, quant, ctx, layers)| {
-                (pid, state.model_spec(&id).map(|s| memcheck::need(&s, &quant, ctx, layers, 0)).unwrap_or_default())
-            });
+    let mut on_loading = Some(on_loading);
+    let asked = std::time::Instant::now();
+    let mut ep = loop {
+        let mut engine = state.engine.lock().await;
+        // Keep the image encoder once it's loaded, so chats don't flip it on and off.
+        let keep = engine.endpoint_for(&installed.model_id, lora.as_deref()).is_some() && engine.sees();
+        let mmproj = encoder.as_deref().filter(|_| pictures || keep);
+        let encoder_size = mmproj.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
+        let plan = launch_plan(state, &spec, &installed.quant, encoder_size);
+        let launch = LaunchSpec {
+            exe: &exe,
+            model_path: &model_path,
+            model_id: &installed.model_id,
+            quant: &installed.quant,
+            ctx: plan.ctx,
+            gpu_layers: plan.gpu_layers,
+            threads: plan.threads,
+            low_priority: limits.low_priority,
+            log: &state.paths.engine_log(),
+            mmproj,
+            batch: plan.batch,
+            lora: lora.as_deref(),
+        };
+        // Other replies still using the model loaded now: it isn't stopped
+        // under them (they'd be cut off mid-reply).
+        let loaded = engine.current();
+        let busy = loaded.as_ref().map_or(0, |(_, ep)| engine::USERS.lock().unwrap().others(&replies(state), &before, &ep.key, task));
+        let was = loaded.as_ref().map(|(_, ep)| ep.key.clone());
+        if let Some(ep) = engine.endpoint_for(&installed.model_id, lora.as_deref()) {
+            // Same model: new limits (mode, heat) apply between replies.
+            if busy > 0 || engine.matches_tuned(&launch, plan.tuning) {
+                break ep;
+            }
+        } else if busy > 0 {
             drop(engine);
-            let encoder_size = launch.mmproj.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
-            let want = memcheck::need(&spec, &installed.quant, ctx, gpu_layers, encoder_size);
-            memcheck::before_loading(state, &spec, want, replacing).await?;
-            let mut engine = state.engine.lock().await;
-            on_loading();
-            engine.ensure(launch, state.job()).await?
+            if before.iter().any(|f| f.load(Ordering::Relaxed)) {
+                return Err("Stopped before the model loaded.".into());
+            }
+            if asked.elapsed() >= WAIT_FOR_REPLIES {
+                let other = loaded.map(|(id, _)| state.model_spec(&id).map_or(id, |s| s.name)).unwrap_or_default();
+                return Err(format!("Another chat is still answering with {other}, and stopping it would cut that reply off. Try again when it's done, or stop it first."));
+            }
+            if let Some(f) = on_loading.take() {
+                f();
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            continue;
         }
+        // Room for it right now (a game may be holding the memory)? The
+        // engine isn't held while the person decides.
+        let replacing = engine.loaded().map(|(pid, id, quant, ctx, layers)| {
+            (pid, state.model_spec(&id).map(|s| memcheck::need(&s, &quant, ctx, layers, 0)).unwrap_or_default())
+        });
+        drop(engine);
+        let want = memcheck::need(&spec, &installed.quant, plan.ctx, plan.gpu_layers, encoder_size);
+        memcheck::before_loading(state, &spec, want, replacing).await?;
+        let mut engine = state.engine.lock().await;
+        // Another model was loaded, or a reply started, meanwhile (the
+        // question can wait minutes): look again before stopping it.
+        let now = engine.current().map(|(_, ep)| ep.key);
+        if now != was || now.is_some_and(|key| engine::USERS.lock().unwrap().others(&replies(state), &before, &key, task) > 0) {
+            continue;
+        }
+        if let Some(f) = on_loading.take() {
+            f();
+        }
+        let ep = engine.ensure_tuned(launch, plan.tuning, state.job()).await?;
+        engine.asked_as(&id);
+        break ep;
     };
-    ep.extra = advanced::get(state).request_extra();
+    engine::USERS.lock().unwrap().place(&replies(state), &before, &ep.key, task);
+    watch_work(state, &ep);
+    let advanced = advanced::get(state);
+    ep.extra = advanced.request_extra();
+    // Thinking counts against the reply's allowance: a long think would
+    // otherwise use it all and leave an empty reply.
+    if thinks(&spec, advanced.processing.thinking) && ep.extra.get("max_tokens").is_none() {
+        ep.extra["max_tokens"] = json!((ep.ctx / 2).clamp(4096, 16_384));
+    }
     Ok((ep, spec, installed))
+}
+
+/// The model thinks before it answers (Qwen3, gpt-oss, DeepSeek R1, QwQ),
+/// as set in Advanced or, by default, as the model does.
+fn thinks(spec: &ModelSpec, setting: advanced::Thinking) -> bool {
+    match setting {
+        advanced::Thinking::Off => false,
+        advanced::Thinking::On => true,
+        advanced::Thinking::Auto => {
+            let name = format!("{} {}", spec.id, spec.name).to_lowercase();
+            // Qwen3's own models think unless they're an instruct-only version.
+            let hybrid = name.contains("qwen3") && !["instruct", "2507", "coder", "-vl", " vl"].iter().any(|w| name.contains(w));
+            spec.tags.iter().any(|t| t == "thinking") || hybrid || ["thinking", "reasoning", "qwq", "-r1", "gpt-oss", "magistral"].iter().any(|w| name.contains(w))
+        }
+    }
+}
+
+/// The loaded model `watch_work` watches (by its key).
+static WATCHING: Mutex<Option<String>> = Mutex::new(None);
+
+/// While a loaded model runs, checks every 15 seconds whether it's working
+/// (a reply, a translation, meeting notes, a program using the local API)
+/// and counts that as use, so the idle unload stops only a model nobody is
+/// using: a long job asks for the model once, then keeps it busy for many
+/// minutes.
+fn watch_work(state: &Arc<AppState>, ep: &engine::Endpoint) {
+    {
+        let mut w = WATCHING.lock().unwrap();
+        if w.as_deref() == Some(ep.key.as_str()) {
+            return;
+        }
+        *w = Some(ep.key.clone());
+    }
+    let (state, ep) = (state.clone(), ep.clone());
+    tauri::async_runtime::spawn(async move {
+        let client = net::local_client();
+        let mine = || WATCHING.lock().unwrap().as_deref() == Some(ep.key.as_str());
+        while mine() {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            let asked = client.get(ep.url("/slots")).bearer_auth(&ep.key).timeout(std::time::Duration::from_secs(5)).send().await;
+            let working = match asked.and_then(|r| r.error_for_status()) {
+                Ok(r) => r.json::<serde_json::Value>().await.ok().and_then(|v| v.as_array().map(|slots| slots.iter().any(|s| s["is_processing"] == true))),
+                // Too busy to answer at once: it's working.
+                Err(e) if e.is_timeout() => Some(true),
+                Err(_) => None,
+            };
+            match working {
+                Some(true) => *state.engine_used.lock().unwrap() = std::time::Instant::now(),
+                Some(false) => {}
+                // Not answering: stopped, unless it's starting again under
+                // the same key (new limits) or the engine is busy loading.
+                None => {
+                    let still = match state.engine.try_lock() {
+                        Ok(mut e) => e.current().is_some_and(|(_, now)| now.key == ep.key),
+                        Err(_) => true,
+                    };
+                    if !still {
+                        break;
+                    }
+                }
+            }
+        }
+        let mut w = WATCHING.lock().unwrap();
+        if w.as_deref() == Some(ep.key.as_str()) {
+            *w = None;
+        }
+    });
 }
 
 /// For background work (meeting notes, translation): the model already
@@ -1768,12 +1927,12 @@ pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine
     // could cut off a chat that is mid-reply.
     let loaded = {
         let mut engine = state.engine.lock().await;
-        let id = engine.status().model_id;
-        id.and_then(|id| Some((engine.endpoint_for(&id)?, state.model_spec(&id)?)))
+        engine.current().and_then(|(id, ep)| Some((ep, state.model_spec(&id)?)))
     };
-    if let Some(found) = loaded {
+    if let Some((ep, spec)) = loaded {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
-        return Ok(found);
+        watch_work(state, &ep);
+        return Ok((ep, spec));
     }
     let (ep, spec, _) = llm_endpoint(state, None, false, || {}).await?;
     Ok((ep, spec))
@@ -2009,6 +2168,10 @@ pub fn run() {
             media::remove_media_model,
             media::media_start,
             media::media_cancel,
+            media::media_prompt_status,
+            media::media_forget_tuning,
+            media::wallpaper_screens,
+            media::wallpaper_set,
             media::media_jobs,
             media::media_list,
             media::media_in_chat,
@@ -2029,6 +2192,8 @@ pub fn run() {
             preview::preview_stop,
             preview::preview_open_external,
             save_chart,
+            hidden::hidden_chats,
+            hidden::set_chat_hidden,
             sitekeys::site_key_ask,
             sitekeys::site_key_give,
             sitekeys::site_keys,
@@ -2220,6 +2385,7 @@ pub fn run() {
             workspace::set_chat_mode,
             workspace::answer_approval,
             workspace::pending_approvals,
+            workspace::all_pending_approvals,
             workspace::undoable_turns,
             workspace::undo_turn,
             projects::list_projects,

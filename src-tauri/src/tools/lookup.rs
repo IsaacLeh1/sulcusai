@@ -93,7 +93,15 @@ async fn find_places(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
     };
     let at = center.as_ref().map(|c| (c.0, c.1));
     let kind = crate::places::kind_of(&query);
+    // A brand or a name with the kind in it ("Pizza Hut", "Bank of America"):
+    // that one by name, nearby; the kind only when nothing's found.
+    let named = kind.is_some() && !crate::places::extra_words(&query).is_empty();
+    let by_name = match (named, at) {
+        (true, Some(c)) => crate::places::nearby_by_name(&w.client, &query, c, radius).await.ok().filter(|s| !s.is_empty()),
+        _ => None,
+    };
     let found = match (kind, at) {
+        _ if by_name.is_some() => Ok(by_name.unwrap_or_default()),
         // Overpass is often overloaded: Nominatim's search then.
         (Some((filter, what)), Some(c)) => match crate::places::nearby(&w.client, filter, what, c, radius).await {
             Ok(s) => Ok(s),

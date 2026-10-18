@@ -21,7 +21,7 @@ export function ModelStorage({ toast }: { toast: PushToast }) {
     const sub = on("models:moving", (p) => {
       if (p.error) {
         setMoving(null);
-        toast(t("The models couldn't be moved: {error}", { error: p.error }), "error");
+        toast(t("The models couldn't be moved: {error}", { error: errorText(p.error) }), "error");
         api.storageView().then(setV).catch(() => {});
       } else if (p.finished) {
         toast(t("Models moved. Restarting…"), "success");

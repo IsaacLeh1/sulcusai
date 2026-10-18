@@ -230,6 +230,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
             mode,
             use_tools: true,
             vision: false,
+            unattended: false,
             base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
             about: String::new(),
             cancel: Arc::new(AtomicBool::new(false)),
@@ -365,6 +366,7 @@ async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cip
         mode: crate::tools::Mode::Auto,
         use_tools: true,
         vision: false,
+        unattended: false,
         base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -2250,7 +2252,7 @@ async fn e2e_vision() {
     }];
     let mut messages = chat::api_messages("You are a helpful assistant.", &history);
     let see = |_: &str| Some(url.clone());
-    chat::attach_images(&mut messages, &history, Some(&see), false);
+    chat::attach_images(&mut messages, &history, Some(&see), false, &[]);
     assert!(messages[1]["content"].is_array(), "the picture went in as a content part");
     let started = std::time::Instant::now();
     let answer = chat::complete(&ep, messages, serde_json::json!({}), 120).await.unwrap();
@@ -2260,12 +2262,18 @@ async fn e2e_vision() {
 
     // Without its encoder the model is told it can't see, so it can say so.
     let mut blind = chat::api_messages("You are a helpful assistant.", &history);
-    chat::attach_images(&mut blind, &history, None, false);
+    chat::attach_images(&mut blind, &history, None, false, &[]);
     assert!(blind[1]["content"].as_str().unwrap().contains("can't see pictures"));
     // With picture editing at hand, it's told it can still change them.
     let mut editing = chat::api_messages("You are a helpful assistant.", &history);
-    chat::attach_images(&mut editing, &history, None, true);
+    chat::attach_images(&mut editing, &history, None, true, &[]);
     assert!(editing[1]["content"].as_str().unwrap().contains("edit_image"));
+    // What the picture reader saw stands in for the picture.
+    let mut read = chat::api_messages("You are a helpful assistant.", &history);
+    let id = history[0].meta.as_ref().unwrap()["images"][0].as_str().unwrap().to_string();
+    chat::attach_images(&mut read, &history, None, true, &[(id, "A red fox sitting in snow.".into())]);
+    let said = read[1]["content"].as_str().unwrap();
+    assert!(said.contains("A red fox sitting in snow.") && said.contains("picture reader") && said.contains("edit_image"), "{said}");
     eng.stop().await;
 }
 
@@ -2380,6 +2388,7 @@ async fn e2e_chat_real_photo_and_uploaded_edit() {
         mode: crate::tools::Mode::Auto,
         use_tools: true,
         vision: false,
+        unattended: false,
         base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),

@@ -161,6 +161,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   }, [refreshProjects]);
   const [settings, setSettings] = useState<Settings | null>(null);
   const [catalog, setCatalog] = useState<CatalogView | null>(null);
+  // Read by the app-wide event handlers, so they stay subscribed when the catalog changes.
+  const catalogRef = useRef(catalog);
+  catalogRef.current = catalog;
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
   const [running, setRunning] = useState<string[]>([]);
@@ -244,10 +247,10 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         refreshCatalog();
         refreshEngine();
         api.settings().then(setSettings);
-        const name = f.name ?? catalog?.models.find((m) => m.id === f.model_id)?.name ?? t("The model");
+        const name = f.name ?? catalogRef.current?.models.find((m) => m.id === f.model_id)?.name ?? t("The model");
         if (f.ok) toast(t("{name} is installed and ready.", { name }), "success");
         else if (f.paused) toast(t("Paused {name}. Resume it under Downloads on the Models page.", { name }), "info");
-        else if (!f.cancelled) toast(t("{name} didn't install: {error}", { name, error: String(f.error) }), "error");
+        else if (!f.cancelled) toast(t("{name} didn't install: {error}", { name, error: errorText(f.error) }), "error");
       }),
       on("chat:done", (p) => {
         setRunning((r) => r.filter((id) => id !== p.chat_id));
@@ -282,7 +285,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
       on("schedule:ran", (p) => {
         refreshChats();
-        if (p.error) toast(t("Scheduled task “{name}” didn't run: {error}", { name: p.name, error: p.error }), "error");
+        if (p.error) toast(t("Scheduled task “{name}” didn't run: {error}", { name: p.name, error: errorText(p.error) }), "error");
         else toast(t("Scheduled task “{name}” finished. Its result is in the sidebar.", { name: p.name }), "success");
       }),
       // A long chat continued in a new one: follow it.
@@ -302,13 +305,36 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       on("quick:hotkey_taken", (p) => toast(t("Another app already uses {hotkey}, so Quick ask can't use it.", { hotkey: p.hotkey }), "error")),
     ];
     return () => subs.forEach((s) => s.then((un) => un()));
-  }, [catalog, refreshCatalog, refreshChats, refreshEngine, toast]);
+  }, [refreshCatalog, refreshChats, refreshEngine, refreshProjects, setActiveChat, setView, toast]);
 
   const [started, setStarted] = useState<Set<string>>(new Set());
   const [chatMenu, setChatMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [sharedMenu, setSharedMenu] = useState<{ s: SharedHere; x: number; y: number } | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{ p: Project; x: number; y: number } | null>(null);
+  const [renamingProject, setRenamingProject] = useState<Project | null>(null);
+  const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
+  // Chats hidden from the list (own ones by id, shared ones as "contact:chat"), shown under "Hidden chats".
+  const [hidden, setHidden] = useState<string[]>([]);
+  const [showHidden, setShowHidden] = useState(false);
+  useEffect(() => {
+    api.hiddenChats().then(setHidden).catch(() => {});
+  }, []);
   // New chats stay out of the list until something is sent in them.
   const listed = chats.filter((c) => !c.empty || started.has(c.id) || running.includes(c.id));
+  const sharedKey = (s: SharedHere) => `${s.contact_id}:${s.chat.id}`;
+  const visible = listed.filter((c) => !hidden.includes(c.id));
+  const hiddenOwn = listed.filter((c) => hidden.includes(c.id));
+  const sharedVisible = sharedHere.filter((s) => !hidden.includes(sharedKey(s)));
+  const hiddenShared = sharedHere.filter((s) => hidden.includes(sharedKey(s)));
+  const hideChat = (key: string, hide: boolean) =>
+    api
+      .setChatHidden(key, hide)
+      .then((h) => {
+        setHidden(h);
+        toast(hide ? t("Hidden from the list. It's under Hidden chats at the bottom.") : t("Back in the list."), "success");
+      })
+      .catch((e) => toast(errorText(e), "error"));
   const foldered = new Set(folders.flatMap((f) => f.chats));
   const [folderFor, setFolderFor] = useState<string | null>(null);
   const installed = useMemo(() => (catalog?.models ?? []).filter((m) => m.installed), [catalog]);
@@ -352,21 +378,27 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
   const toggleChatWeb = useCallback(async () => {
     if (!current) return;
-    await api.setChatWeb(current.id, !current.web);
-    await refreshChats();
-  }, [current, refreshChats]);
+    try {
+      await api.setChatWeb(current.id, !current.web);
+      await refreshChats();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  }, [current, refreshChats, toast]);
 
-  // Ctrl+Shift+W toggles web for the open chat.
+  // Ctrl+Shift+W toggles web for the open chat, as its 🌐 button does: only
+  // on the chat page, and only Offline (other levels have web on for every chat).
+  const webKey = view === "chat" && !!current && settings?.connectivity === "offline";
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        toggleChatWeb();
+        if (webKey) toggleChatWeb();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleChatWeb]);
+  }, [toggleChatWeb, webKey]);
 
   const [loadingNow, setLoadingNow] = useState(false);
   // The engine itself, downloaded with the first chat when models came from another app.
@@ -432,6 +464,27 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
       {c.web && <span className="globe-mini" title={t("Web on for this chat")}>🌐</span>}
       {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
+    </button>
+  );
+  /** A chat someone shares with this user (People): right-click to hide it from the list, or show it again. */
+  const sharedItem = (s: SharedHere) => (
+    <button
+      key={sharedKey(s)}
+      role="listitem"
+      className={`chat-item shared ${view === "shared" && openShared?.chat.id === s.chat.id && openShared.contact_id === s.contact_id ? "active" : ""} ${s.online ? "" : "offline"}`}
+      onClick={() => {
+        setOpenShared(s);
+        setView("shared");
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setSharedMenu({ s, x: e.clientX, y: e.clientY });
+      }}
+      title={s.online ? t("{name} shares this chat with you", { name: s.contact_name }) : t("{name} shares this chat with you (not connected right now)", { name: s.contact_name })}
+    >
+      <span className="ellipsis">{s.chat.title}</span>
+      <span className="shared-from">👥 {s.contact_name}</span>
+      {s.chat.busy && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
     </button>
   );
   const picker = (label: ReactNode) => (
@@ -553,34 +606,35 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 setActiveProject(p.id);
                 setView("project");
               }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setProjectMenu({ p, x: e.clientX, y: e.clientY });
+              }}
             >
               <span aria-hidden>📚</span>
               <span className="ellipsis">{p.name}</span>
             </button>
           ))}
         </div>}
-        {(folders.length > 0 || listed.length > 0) && (
-          <FolderSection folders={folders} chats={listed} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
+        {(folders.length > 0 || visible.length > 0) && (
+          <FolderSection folders={folders} chats={visible} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
         )}
         <div className="chat-list" role="list">
           {listed.length === 0 && sharedHere.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
-          {sharedHere.map((s) => (
-            <button
-              key={`${s.contact_id}:${s.chat.id}`}
-              role="listitem"
-              className={`chat-item shared ${view === "shared" && openShared?.chat.id === s.chat.id && openShared.contact_id === s.contact_id ? "active" : ""} ${s.online ? "" : "offline"}`}
-              onClick={() => {
-                setOpenShared(s);
-                setView("shared");
-              }}
-              title={s.online ? t("{name} shares this chat with you", { name: s.contact_name }) : t("{name} shares this chat with you (not connected right now)", { name: s.contact_name })}
-            >
-              <span className="ellipsis">{s.chat.title}</span>
-              <span className="shared-from">👥 {s.contact_name}</span>
-              {s.chat.busy && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
+          {sharedVisible.map((s) => sharedItem(s))}
+          {visible.filter((c) => !foldered.has(c.id)).map((c) => chatItem(c, false))}
+          {hiddenOwn.length + hiddenShared.length > 0 && (
+            <button className="hidden-toggle small muted" onClick={() => setShowHidden((v) => !v)} aria-expanded={showHidden}>
+              {showHidden ? "▾" : "▸"} {t("Hidden chats ({n})", { n: hiddenOwn.length + hiddenShared.length })}
             </button>
-          ))}
-          {listed.filter((c) => !foldered.has(c.id)).map((c) => chatItem(c, false))}
+          )}
+          {showHidden && (
+            <div className="hidden-chats" role="list" aria-label={t("Hidden chats")}>
+              {hiddenShared.map((s) => sharedItem(s))}
+              {hiddenOwn.map((c) => chatItem(c, false))}
+              <p className="muted small pad">{t("Right-click a chat to show it in the list again.")}</p>
+            </div>
+          )}
         </div>
         </>)}
         <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
@@ -617,6 +671,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                   role="menuitem"
                   onClick={() => {
                     done();
+                    hideChat(id, !hidden.includes(id));
+                  }}
+                >
+                  {hidden.includes(id) ? `👁 ${t("Show in the list again")}` : `🙈 ${t("Hide from the list")}`}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    done();
                     api.setKept("chat", id, !kept).then(setLocks).catch((e) => toast(errorText(e), "error"));
                   }}
                 >
@@ -631,6 +694,120 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                   }}
                 >
                   {t("🗑 Delete chat")}
+                </button>
+              </>
+            );
+          })()}
+        </FloatingMenu>
+      )}
+      {projectMenu && (
+        <FloatingMenu x={projectMenu.x} y={projectMenu.y} onClose={() => setProjectMenu(null)}>
+          <button
+            role="menuitem"
+            onClick={() => {
+              setActiveProject(projectMenu.p.id);
+              setView("project");
+              setProjectMenu(null);
+            }}
+          >
+            📚 {t("Open")}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              newChat(projectMenu.p.id);
+              setProjectMenu(null);
+            }}
+          >
+            ＋ {t("New chat in this project")}
+          </button>
+          <button role="menuitem" onClick={() => (setRenamingProject(projectMenu.p), setProjectMenu(null))}>
+            ✏️ {t("Rename…")}
+          </button>
+          <hr />
+          <button role="menuitem" className="danger" onClick={() => (setDeletingProject(projectMenu.p), setProjectMenu(null))}>
+            🗑 {t("Delete project…")}
+          </button>
+        </FloatingMenu>
+      )}
+      {renamingProject && (
+        <NameModal
+          title={t("Rename project")}
+          initial={renamingProject.name}
+          label={t("Project name")}
+          maxLength={80}
+          onClose={() => setRenamingProject(null)}
+          onSave={async (name) => {
+            const p = renamingProject;
+            setRenamingProject(null);
+            try {
+              await api.updateProject(p.id, name, p.instructions);
+              await refreshProjects();
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
+          }}
+        />
+      )}
+      {deletingProject && (
+        <Modal title={t("Delete {name}?", { name: deletingProject.name })} onClose={() => setDeletingProject(null)}>
+          <p>{t("This deletes the project's instructions and memories. Its chats are kept and move out of the project. Files in its folders aren't touched.")}</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setDeletingProject(null)}>
+              {t("Cancel")}
+            </button>
+            <button
+              className="btn danger-fill"
+              autoFocus
+              onClick={async () => {
+                const p = deletingProject;
+                setDeletingProject(null);
+                try {
+                  await api.deleteProject(p.id);
+                  if (activeProject === p.id) {
+                    setActiveProject(null);
+                    setView("chat");
+                  }
+                  await refreshProjects();
+                  await refreshChats();
+                  toast(t("Deleted {name}.", { name: p.name }), "success");
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
+              }}
+            >
+              {t("Delete project")}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {sharedMenu && (
+        <FloatingMenu x={sharedMenu.x} y={sharedMenu.y} onClose={() => setSharedMenu(null)}>
+          {(() => {
+            const s = sharedMenu.s;
+            const key = sharedKey(s);
+            const done = () => setSharedMenu(null);
+            return (
+              <>
+                <span className="menu-label">{t("Shared by {name}", { name: s.contact_name })}</span>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    done();
+                    setOpenShared(s);
+                    setView("shared");
+                  }}
+                >
+                  💬 {t("Open")}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    done();
+                    hideChat(key, !hidden.includes(key));
+                  }}
+                >
+                  {hidden.includes(key) ? `👁 ${t("Show in the list again")}` : `🙈 ${t("Hide from the list")}`}
                 </button>
               </>
             );
@@ -695,6 +872,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             onDeleted={async () => {
               setActiveChat(null);
               await refreshChats();
+              // It leaves its folder (and the cleanup locks) too.
+              refreshFolders();
             }}
             onToggleWeb={toggleChatWeb}
             features={features ?? new Set()}
@@ -745,6 +924,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <ProjectView
             key={activeProject}
             projectId={activeProject}
+            listed={projects.find((p) => p.id === activeProject)}
             chats={chats}
             onOpenChat={openChat}
             onNewChat={() => newChat(activeProject)}

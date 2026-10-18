@@ -1,0 +1,117 @@
+{
+  "flux2": {
+    "family": "flux2",
+    "instructions": "You write prompts for FLUX.2, a picture model that reads plain, natural sentences with a strong language model. Write one flowing description in English. Start with the main subject and what it is doing, then where it is, then everything else in order of importance: every object with its color, material and position (left, right, foreground, background), exact counts written as numbers, the light (direction, time of day, color), the camera (shot size, angle, lens, depth of field) and the style or medium. Put any text that must appear in the picture in double quotes and say where it goes and how it looks. Be concrete and visual; never use vague praise words such as masterpiece, best quality, 8k or award-winning. Keep everything the person asked for and add only details that serve it. When reference pictures are given, refer to them as image 1, image 2 and say what to take from each.",
+    "negative": "",
+    "max_words": 140,
+    "demos": [
+      {
+        "ask": "What they want: a cozy reading nook in a treehouse at night\nLook: photo unless they named one\nShape: landscape (wider than tall)",
+        "prompt": "A small reading nook built inside a wooden treehouse at night, seen from just inside the doorway. A deep window seat with a thick cream cushion and three mismatched patterned pillows sits against the far wall under a round window that shows dark branches and a few stars. A brass reading lamp on the left casts warm amber light over an open hardcover book lying face down on a knitted gray blanket. Shelves on the right are packed with old books, a mug of tea and a sleeping orange cat. Rough plank walls, string lights along the ceiling beam. Realistic photograph, eye-level, 35mm lens, soft shadows, warm and cool contrast between lamp light and the blue night outside.",
+        "negative": ""
+      },
+      {
+        "ask": "What they want: a vintage travel poster for Mars that says VISIT MARS\nLook: poster\nShape: portrait (taller than wide)",
+        "prompt": "Vintage 1950s travel poster for Mars in flat screen-printed style with limited colors: rust red, burnt orange, cream and teal. A sleek silver rocket stands on a red desert plain in the lower third, three tiny astronauts in white suits walking toward it. Behind them rise layered red cliffs and a huge pale orange sun in a cream sky, with the small moon Phobos high on the right. The words \"VISIT MARS\" run across the top in bold cream art deco capital letters, and \"The Red Planet Awaits\" sits in smaller teal letters at the bottom. Grainy paper texture, clean geometric shapes, strong silhouettes.",
+        "negative": ""
+      },
+      {
+        "ask": "What they want: my dog as a medieval knight\nLook: oil painting\nShape: square\nExample pictures: 1) a golden retriever with a white patch on its chest, sitting on grass (use them for: the subject)",
+        "prompt": "Oil painting portrait of the golden retriever from image 1, keeping its face, golden coat and white chest patch, dressed as a medieval knight. It sits upright in polished steel plate armor with a deep blue surcoat embroidered with a gold paw crest, a red cape over one shoulder and a small round shield leaning against its leg. Behind it, a stone castle hall with a tall arched window and a hanging banner. Warm candlelight from the left, rich glazes, visible brush strokes, dark varnished background in the style of a Renaissance noble portrait.",
+        "negative": ""
+      }
+    ]
+  },
+  "qwen-image": {
+    "family": "qwen-image",
+    "instructions": "You write prompts for Qwen-Image, a picture model that follows long, precise descriptions and renders text very well. Write one detailed description in English (Chinese text inside quotes is fine when asked). Start with the main subject and scene, then lay out the composition explicitly: what is in the foreground, middle and background, what is on the left, center and right, with exact counts as numbers, colors, materials and sizes. For every piece of text that must appear, quote it exactly in double quotes and give its position, font style, size and color; spell it exactly as asked. Then describe the lighting, the camera or point of view and the style or medium. Use plain, concrete words; no praise words such as masterpiece or 8k. Keep everything asked for and add only details that serve it. When reference pictures are given, refer to them as image 1, image 2 and say what to keep from each.",
+    "negative": "",
+    "max_words": 180,
+    "demos": [
+      {
+        "ask": "What they want: a coffee shop menu board with 4 drinks and prices\nLook: photo unless they named one\nShape: landscape (wider than tall)",
+        "prompt": "A black chalkboard menu hanging on a red brick wall inside a cozy coffee shop, photographed straight on. At the top, \"FRESH BREW\" is written in large white hand-lettered capitals with a small chalk drawing of a steaming cup on the right. Below it, four lines in neat white chalk script, each with a price aligned on the right: \"Espresso $3.00\", \"Cappuccino $4.25\", \"Oat Latte $4.75\", \"Cold Brew $4.50\". Thin dotted chalk lines connect each drink to its price. Small doodles of coffee beans in the corners. Warm Edison bulbs hang in front of the board, slightly out of focus. Realistic photograph, soft warm light, shallow depth of field.",
+        "negative": ""
+      },
+      {
+        "ask": "What they want: an infographic about the water cycle for kids\nLook: flat illustration\nShape: portrait (taller than wide)",
+        "prompt": "A bright flat-vector infographic for children explaining the water cycle, on a light blue background. A big title \"THE WATER CYCLE\" in rounded bold navy letters across the top. In the center, a landscape: a green hill on the left, a blue lake and the sea on the right, a smiling yellow sun in the upper right and two puffy white clouds in the upper left. Four curved arrows form a loop, each with a white label box: \"1. Evaporation\" rising from the sea, \"2. Condensation\" at the clouds, \"3. Precipitation\" with blue raindrops falling on the hill, \"4. Collection\" at the lake. Simple shapes, thick outlines, cheerful colors, clear readable text.",
+        "negative": ""
+      }
+    ]
+  },
+  "z-image": {
+    "family": "z-image",
+    "instructions": "You write prompts for Z-Image Turbo, a fast picture model that is especially good at realistic photos and follows detailed natural sentences. Write one descriptive paragraph in English. Start with the main subject: who or what, their appearance (age, hair, skin, clothing, expression) and action. Then the setting and every object with color and position, exact counts as numbers, the light (source, direction, time of day), the camera (shot size, angle, lens, depth of field, film or phone look) and the overall style. Put text that must appear in double quotes with its placement. Concrete details make it better; never use praise words such as masterpiece, best quality or 8k. Keep everything asked for and add only details that serve it.",
+    "negative": "",
+    "max_words": 150,
+    "demos": [
+      {
+        "ask": "What they want: an old fisherman mending a net at dawn\nLook: photo unless they named one\nShape: portrait (taller than wide)",
+        "prompt": "Close-up portrait of an elderly fisherman in his seventies mending a green fishing net on a wooden dock at dawn. He has a weathered tanned face with deep wrinkles, a white stubble beard and pale blue eyes, wearing a faded yellow raincoat over a navy wool sweater and a knitted gray cap. His rough hands hold a wooden netting needle mid-knot. Behind him, two small blue fishing boats float on calm water under a pink and orange sky, slightly out of focus. Soft low golden light from the left rim-lights his profile. Realistic documentary photograph, 85mm lens, shallow depth of field, fine skin texture.",
+        "negative": ""
+      },
+      {
+        "ask": "What they want: a neon sign that says OPEN 24 HOURS in a rainy alley\nLook: cinematic\nShape: landscape (wider than tall)",
+        "prompt": "A narrow city alley at night in heavy rain, wet asphalt reflecting light. On the left brick wall, a glowing neon sign reads \"OPEN 24 HOURS\" in pink cursive letters above a small blue neon coffee cup. A lone person in a dark hooded raincoat walks away from the camera holding a clear umbrella, centered in the frame. Steam rises from a grate on the right, lit teal by a shop window. Puddles mirror the pink and blue glow. Cinematic film still, low angle, 35mm lens, light haze, deep shadows, rain streaks catching the light.",
+        "negative": ""
+      }
+    ]
+  },
+  "sdxl": {
+    "family": "sdxl",
+    "instructions": "You write prompts for an SDXL picture model (RealVisXL). It reads short comma-separated phrases and pays most attention to the first ones; long sentences get cut off after about 60 words. Write one line of comma-separated phrases in English: first the main subject and its key look, then the action, setting, the two or three most important objects with colors, the light, the camera (shot, lens, depth of field) and quality words suited to photos such as RAW photo, sharp focus, detailed skin texture. Use numbers for counts but keep scenes simple: SDXL can't place many objects or write text reliably, so drop minor details rather than crowd it. Also write a negative prompt listing what to avoid.",
+    "negative": "(worst quality, low quality, illustration, 3d, 2d, painting, cartoons, sketch), open mouth, deformed, blurry, bad anatomy, extra fingers, watermark, text",
+    "max_words": 60,
+    "demos": [
+      {
+        "ask": "What they want: a woman reading in a sunny cafe by the window\nLook: photo unless they named one\nShape: portrait (taller than wide)",
+        "prompt": "RAW photo, young woman with curly brown hair reading a paperback book, sitting by a large cafe window, cream knit sweater, cup of coffee on a small round marble table, warm morning sunlight through the window, soft shadows, plants in the background, 50mm lens, shallow depth of field, sharp focus, detailed skin texture, natural colors",
+        "negative": "(worst quality, low quality, illustration, 3d, 2d, painting, cartoons, sketch), open mouth, deformed, blurry, bad anatomy, extra fingers, watermark, text"
+      },
+      {
+        "ask": "What they want: a red sports car on a mountain road at sunset\nLook: photo unless they named one\nShape: landscape (wider than tall)",
+        "prompt": "RAW photo, glossy red sports car driving on a winding mountain road, golden sunset light, snow-capped peaks in the background, motion blur on the road, low angle three-quarter view, 35mm lens, sharp focus on the car, vivid but natural colors",
+        "negative": "(worst quality, low quality, illustration, 3d, 2d, painting, cartoons, sketch), deformed, blurry, watermark, text, extra wheels"
+      }
+    ]
+  },
+  "sd15": {
+    "family": "sd15",
+    "instructions": "You write prompts for a Stable Diffusion 1.5 picture model (Realistic Vision). It understands short comma-separated tags, only the first 75 tokens count, and it can't write text or handle many objects. Write one line of comma-separated tags in English: the subject and its key look first, then the action, the setting, at most two important objects, the light and photo terms such as RAW photo, 8k uhd, dslr, soft lighting, film grain, Fujifilm XT3. Keep it under 45 words; simplify the scene to its essentials. Also write a negative prompt listing what to avoid.",
+    "negative": "deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime, text, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, blurry, bad anatomy, bad proportions, extra limbs, disfigured, malformed limbs, missing arms, missing legs, fused fingers, too many fingers, long neck",
+    "max_words": 45,
+    "demos": [
+      {
+        "ask": "What they want: a portrait of a smiling old man with a beard in a workshop\nLook: photo unless they named one\nShape: portrait (taller than wide)",
+        "prompt": "RAW photo, portrait of a smiling old man with a gray beard, wearing a leather apron, woodworking workshop, tools on the wall, warm window light, 8k uhd, dslr, soft lighting, high quality, film grain, Fujifilm XT3",
+        "negative": "deformed iris, deformed pupils, semi-realistic, cgi, 3d, render, sketch, cartoon, drawing, anime, text, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, deformed, blurry, bad anatomy, bad proportions, extra limbs, disfigured, malformed limbs, fused fingers, too many fingers, long neck"
+      }
+    ]
+  },
+  "wan": {
+    "family": "wan",
+    "instructions": "You write prompts for Wan, a video model that makes one continuous shot of a few seconds. Write one paragraph in English, present tense, describing a single shot: the main subject and its look, what it does from start to end (clear, physically plausible motion with motion verbs), what else moves in the scene, the setting, the camera movement (static shot, slow dolly in, pan left, orbit, handheld) and speed, the light and the style. No cuts, no scene changes, no text in the picture. Keep the action simple enough to happen in about five seconds. When a starting picture is given, describe how it comes to life and keep its subject and look.",
+    "negative": "",
+    "max_words": 120,
+    "demos": [
+      {
+        "ask": "What they want: waves crashing on a lighthouse in a storm\nLook: cinematic\nShape: landscape (wider than tall)",
+        "prompt": "A white stone lighthouse stands on a black rocky point during a violent storm at dusk. Huge gray-green waves roll in from the left and crash against the rocks, throwing white spray high up the tower. The lighthouse beam sweeps slowly across the dark sky through driving rain, and low clouds race past. The camera holds a steady wide shot from a nearby cliff, then pushes in slowly toward the tower. Cold blue light, flashes of foam, cinematic and dramatic, realistic water motion.",
+        "negative": ""
+      },
+      {
+        "ask": "What they want: a cat knocking a cup off a table\nLook: photo unless they named one\nShape: landscape (wider than tall)",
+        "prompt": "A fluffy gray tabby cat sits on a wooden kitchen table next to a white ceramic mug. It stares at the camera, slowly reaches out one paw, taps the mug twice and pushes it over the edge; the mug tips and falls out of frame while the cat watches it go. Morning sunlight through a window on the right, a few crumbs on the table. Static close-up shot at table height, natural colors, realistic fur and motion, shallow depth of field.",
+        "negative": ""
+      }
+    ]
+  },
+  "general": {
+    "family": "general",
+    "instructions": "You write prompts for a picture model. Write one clear, concrete description in English: the main subject and what it is doing first, then the setting, every object with its color and position, exact counts as numbers, the light, the camera or point of view and the style. Put text that must appear in double quotes. No praise words such as masterpiece or 8k. Keep everything asked for and add only details that serve it.",
+    "negative": "",
+    "max_words": 120,
+    "demos": []
+  }
+}

@@ -74,7 +74,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               {job.status === "training" && `${t("round {n} of {total}", { n: job.epoch, total: job.epochs })}${job.eta ? ` · ${t("about {time} left", { time: job.eta })}` : ""}${job.loss !== null ? ` · ${t("loss {loss}", { loss: job.loss.toFixed(2) })}` : ""}`}
               {job.status === "done" && t("done. Pick it in a chat's model menu.")}
               {job.status === "cancelled" && t("stopped.")}
-              {job.status === "failed" && <span className="warn-text">{t("didn't finish: {error}", { error: job.error ?? "" })}</span>}
+              {job.status === "failed" && <span className="warn-text">{t("didn't finish: {error}", { error: errorText(job.error ?? "") })}</span>}
             </span>
             {running && (
               <button className="btn ghost small danger" onClick={() => api.cancelFinetune()}>

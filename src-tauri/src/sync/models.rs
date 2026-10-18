@@ -111,6 +111,13 @@ pub async fn receive_for_test(r: &mut OwnedReadHalf, inn: &mut Sealer, dest: &st
     receive(r, inn, dest, &AtomicBool::new(false), progress).await
 }
 
+/// Only a plain file name: nothing can reach outside the model's folder (no
+/// folders, "..", drive names like "C:x.dll", or ":" streams).
+fn plain_file_name(file: &str) -> bool {
+    let mut parts = std::path::Path::new(file).components();
+    matches!((parts.next(), parts.next()), (Some(std::path::Component::Normal(_)), None)) && !file.contains([':', '/', '\\']) && file != ".." && file != "."
+}
+
 #[derive(Serialize)]
 pub struct PeerModels {
     peer_id: String,
@@ -163,9 +170,10 @@ pub async fn copy_model_from(app: AppHandle, state: AppStateRef<'_>, peer_id: St
     let cancel = Arc::new(AtomicBool::new(false));
     state.log("sync", &format!("Copying {} from {} on this network", spec.name, p.name));
     let mut done = 0u64;
+    // Only the files the catalog lists for this model, as this PC offers them.
+    let listed = |f: &str| spec.variant(&offer.quant).is_some_and(|v| v.file == f) || spec.vision.as_ref().is_some_and(|v| v.file == f);
     for (file, size) in &offer.files {
-        // Only file names: nothing can reach outside the model's folder.
-        if file.contains(['/', '\\']) || file.contains("..") {
+        if !plain_file_name(file) || !listed(file) {
             return Err("The other PC offered an unexpected file.".into());
         }
         let dest = state.paths.models.join(&spec.id).join(file);
@@ -185,4 +193,17 @@ pub async fn copy_model_from(app: AppHandle, state: AppStateRef<'_>, peer_id: St
     // The usual install: it finds the files, checks their hashes, and measures speed.
     let st = app.state::<Arc<AppState>>();
     crate::install_model(app.clone(), st, model_id, offer.quant, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offered_files_are_plain_names() {
+        assert!(plain_file_name("Qwen3-8B-Q4_K_M.gguf") && plain_file_name("mmproj-F16.gguf"));
+        for bad in ["C:x.dll", "C:\\x.dll", "..", ".", "", "../x.gguf", "a/b.gguf", "a\\b.gguf", "\\\\server\\share\\x", "x.gguf:stream", "/x.gguf"] {
+            assert!(!plain_file_name(bad), "{bad}");
+        }
+    }
 }

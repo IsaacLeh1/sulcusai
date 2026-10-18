@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type Cadence, type ModelCard, type Project, type Schedule, type ScheduleView } from "../api";
+import { api, errorText, on, type Cadence, type ModelCard, type Project, type Schedule, type ScheduleView } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
@@ -27,6 +27,11 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
   useEffect(() => {
     load();
     api.projects().then(setProjects).catch(() => {});
+    // A task ran on its own: its last run, next run and result change.
+    const sub = on("schedule:ran", () => load());
+    return () => {
+      sub.then((un) => un());
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const blank = (): Schedule => ({

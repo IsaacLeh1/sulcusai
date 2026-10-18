@@ -134,6 +134,47 @@ pub fn composite(original: &DynamicImage, result: &DynamicImage, mask: &GrayImag
     }))
 }
 
+/// The picture scaled to cover `w`×`h` and cut to it from the middle, the way
+/// Windows fills the desktop with a wallpaper.
+pub fn fill_to(img: &DynamicImage, w: u32, h: u32) -> DynamicImage {
+    let (iw, ih) = img.dimensions();
+    if (iw, ih) == (w, h) {
+        return img.clone();
+    }
+    let k = (w as f64 / iw.max(1) as f64).max(h as f64 / ih.max(1) as f64);
+    let (sw, sh) = (((iw as f64 * k).ceil() as u32).max(w), ((ih as f64 * k).ceil() as u32).max(h));
+    img.resize_exact(sw, sh, FilterType::Lanczos3).crop_imm((sw - w) / 2, (sh - h) / 2, w, h)
+}
+
+/// The picture on a solid background where it's see-through (unchanged
+/// when it has no transparency).
+pub fn flatten(img: &DynamicImage, rgb: [u8; 3]) -> DynamicImage {
+    if !has_alpha(img) {
+        return img.clone();
+    }
+    let src = img.to_rgba8();
+    DynamicImage::ImageRgb8(image::RgbImage::from_fn(src.width(), src.height(), |x, y| {
+        let p = src.get_pixel(x, y);
+        let a = p[3] as f32 / 255.0;
+        image::Rgb([0, 1, 2].map(|i| (p[i] as f32 * a + rgb[i] as f32 * (1.0 - a)).round() as u8))
+    }))
+}
+
+/// `result` with `original`'s transparency, scaled to its size (an upscaled
+/// cut-out). Unchanged when the original has none.
+pub fn keep_alpha(original: &DynamicImage, result: DynamicImage) -> DynamicImage {
+    if !has_alpha(original) {
+        return result;
+    }
+    let (w, h) = result.dimensions();
+    let alpha = imageops::resize(&original.to_rgba8(), w, h, FilterType::Lanczos3);
+    let mut out = result.to_rgba8();
+    for (p, a) in out.pixels_mut().zip(alpha.pixels()) {
+        p[3] = a[3];
+    }
+    DynamicImage::ImageRgba8(out)
+}
+
 /// Keeps the longest side within `max` pixels.
 pub fn cap(img: DynamicImage, max: u32) -> DynamicImage {
     let (w, h) = img.dimensions();
@@ -155,6 +196,37 @@ mod tests {
         assert!(((w * h) as f64 / (1024.0 * 1024.0) - 1.0).abs() < 0.05);
         assert_eq!(work_size(4000, 3000, 1024 * 1024), (1184, 880));
         assert_eq!(work_size(640, 480, 1024 * 1024), (640, 480), "never enlarged");
+    }
+
+    #[test]
+    fn fill_covers_and_cuts_from_the_middle() {
+        // A wide picture for a square: the middle part, at the exact size.
+        let mut img = RgbaImage::from_pixel(300, 100, Rgba([0, 0, 0, 255]));
+        for y in 0..100 {
+            for x in 100..200 {
+                img.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        let out = fill_to(&DynamicImage::ImageRgba8(img), 50, 50);
+        assert_eq!(out.dimensions(), (50, 50));
+        assert!(out.to_rgba8().pixels().all(|p| p[0] > 200), "only the white middle is left");
+        // A small picture for a big screen: scaled up to cover it.
+        assert_eq!(fill_to(&DynamicImage::new_rgb8(160, 90), 3440, 1440).dimensions(), (3440, 1440));
+    }
+
+    #[test]
+    fn cut_outs_stay_see_through_and_get_a_white_background_for_models() {
+        let mut cut = RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0]));
+        cut.put_pixel(4, 4, Rgba([200, 30, 30, 255]));
+        let cut = DynamicImage::ImageRgba8(cut);
+        let flat = flatten(&cut, [255, 255, 255]).to_rgb8();
+        assert_eq!(flat.get_pixel(0, 0).0, [255, 255, 255], "see-through becomes white, not black");
+        assert_eq!(flat.get_pixel(4, 4).0, [200, 30, 30]);
+        let big = keep_alpha(&cut, DynamicImage::new_rgb8(32, 32)).to_rgba8();
+        assert_eq!(big.dimensions(), (32, 32));
+        assert_eq!(big.get_pixel(0, 0)[3], 0, "still see-through after enlarging");
+        let photo = DynamicImage::new_rgb8(4, 4);
+        assert!(!flatten(&photo, [255, 255, 255]).color().has_alpha());
     }
 
     #[test]

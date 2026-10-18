@@ -44,6 +44,10 @@ pub struct MediaItem {
     pub poster: bool,
     /// What making it took (made here or in the cloud).
     pub stats: Option<MadeStats>,
+    /// What the picture reader saw in it (pictures attached to a chat whose
+    /// model can't see them), read once and kept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// How long making an item took, and what it used.

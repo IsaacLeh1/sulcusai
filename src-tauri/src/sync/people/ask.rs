@@ -482,7 +482,8 @@ pub(super) async fn think(
         .collect();
     let defs = Value::Array(defs);
     let offer = defs.as_array().is_some_and(|a| !a.is_empty()).then_some(&defs);
-    let folders: Vec<String> = allow.folders.clone();
+    // Checked again here: folders saved before the rules applied to them.
+    let folders: Vec<String> = allow.folders.iter().filter(|f| crate::sandbox::refuse_reason(std::path::Path::new(f), &state.paths.data, false).is_none()).cloned().collect();
     let sandbox = crate::sandbox::Sandbox::new(&folders);
     let recorder = crate::checkpoint::Recorder { db: &state.db, cipher: &c, dir: state.paths.data.join("checkpoints"), chat_id: "people", turn_id: "people" };
     let ctx = tools::Ctx {
@@ -633,14 +634,38 @@ pub fn people_stop(id: String) {
 #[tauri::command(async)]
 pub fn people_set_allow(state: AppStateRef, id: String, allow: Allow) -> Result<(), String> {
     features::require(&state, Feature::People)?;
+    state.cipher()?;
     set_allow(&state, &id, allow)
+}
+
+/// The folders someone's assistant may read, resolved: the same folders as
+/// may be shared with this user's own assistant, and none inside a Windows
+/// system folder (there's no one here to confirm that for them).
+pub(super) fn allowed_folders(folders: &[String], app_data: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for f in folders {
+        let p = std::path::Path::new(f.trim());
+        if let Some(reason) = crate::sandbox::refuse_reason(p, app_data, false) {
+            return Err(if reason == crate::sandbox::SYSTEM_WARNING {
+                format!("{} is inside a Windows system folder, so it can't be shared with someone's assistant.", p.display())
+            } else {
+                format!("{}: {reason}", p.display())
+            });
+        }
+        let shown = dunce::canonicalize(p).map_err(|_| "That folder doesn't exist.".to_string())?.display().to_string();
+        if !out.iter().any(|o| o.eq_ignore_ascii_case(&shown)) {
+            out.push(shown);
+        }
+    }
+    Ok(out)
 }
 
 pub(super) fn set_allow(state: &AppState, id: &str, allow: Allow) -> Result<(), String> {
     let mode = if matches!(allow.mode.as_str(), "ask" | "auto" | "off") { allow.mode.clone() } else { "ask".into() };
+    let folders = allowed_folders(&allow.folders, &state.paths.data)?;
     let name = update(state, |b| {
         b.contacts.iter_mut().find(|x| x.id == id).map(|x| {
-            x.allow = Allow { mode, ..allow };
+            x.allow = Allow { mode, folders, ..allow };
             x.name.clone()
         })
     })?

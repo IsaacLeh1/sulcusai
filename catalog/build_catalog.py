@@ -355,7 +355,13 @@ UMT5 = mf("t5xxl", "city96/umt5-xxl-encoder-gguf", "umt5-xxl-encoder-Q4_K_M.gguf
 ACE = "Serveurperso/ACE-Step-1.5-GGUF"
 ACE_EMBED = mf("embedding", ACE, "Qwen3-Embedding-0.6B-Q8_0.gguf", 784144960, "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321")
 ACE_VAE = mf("vae", ACE, "vae-BF16.gguf", 337420928, "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8")
-NEGATIVE_VIDEO = "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+# Wan's own negative prompt (its text encoder reads Chinese best), then the
+# same in English.
+NEGATIVE_VIDEO = (
+    "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，"
+    "画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, "
+    "blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed"
+)
 
 # kind: image, video, music, upscale or background; can: what it does.
 # min_vram_gb: the smallest graphics card it's offered on; cpu: whether it
@@ -400,7 +406,8 @@ MEDIA_MODELS = [
             UMT5,
         ],
         "min_vram_gb": 8, "cpu": False, "secs": 360, "quality": 8,
-        "defaults": {"steps": 20, "cfg": 5.0, "sampler": "euler", "width": 832, "height": 480, "fps": 24, "seconds": 3, "flow_shift": 5.0, "negative": NEGATIVE_VIDEO},
+        "defaults": {"steps": 25, "cfg": 5.0, "sampler": "euler", "width": 832, "height": 480, "fps": 24, "seconds": 3, "flow_shift": 5.0, "negative": NEGATIVE_VIDEO,
+                     "max_frames": 121, "cache": "easycache", "temporal_tiling": True},
     },
     {
         "id": "wan2.1-t2v-1.3b", "name": "Wan 2.1 1.3B", "publisher": "Wan (Alibaba)",
@@ -413,7 +420,8 @@ MEDIA_MODELS = [
             UMT5,
         ],
         "min_vram_gb": 6, "cpu": False, "secs": 150, "quality": 5,
-        "defaults": {"steps": 20, "cfg": 6.0, "sampler": "euler", "width": 832, "height": 480, "fps": 16, "seconds": 3, "flow_shift": 3.0, "negative": NEGATIVE_VIDEO},
+        "defaults": {"steps": 20, "cfg": 6.0, "sampler": "euler", "width": 832, "height": 480, "fps": 16, "seconds": 3, "flow_shift": 8.0, "negative": NEGATIVE_VIDEO,
+                     "max_frames": 81, "cache": "easycache"},
     },
     {
         "id": "realesrgan-x4plus", "name": "Real-ESRGAN x4plus", "publisher": "Xintao Wang",

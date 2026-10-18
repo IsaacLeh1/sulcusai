@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Chat, type Memory, type Project } from "../api";
 import { Modal } from "../components/Modal";
@@ -9,6 +9,8 @@ import { confirmFolder } from "../folders";
 
 interface Props {
   projectId: string;
+  /** The project as the sidebar lists it: renamed there, this page follows. */
+  listed?: Project;
   chats: Chat[];
   onOpenChat: (id: string) => void;
   onNewChat: () => void;
@@ -17,25 +19,30 @@ interface Props {
   toast: PushToast;
 }
 
-export function ProjectView({ projectId, chats, onOpenChat, onNewChat, onChanged, onDeleted, toast }: Props) {
+export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, onChanged, onDeleted, toast }: Props) {
   const [project, setProject] = useState<Project | null>(null);
   const [name, setName] = useState("");
   const [instructions, setInstructions] = useState("");
   const [memories, setMemories] = useState<Memory[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The project as last loaded, to tell the person's unsaved edits from changes made elsewhere.
+  const shown = useRef<Project | null>(null);
 
   const load = async () => {
     const p = (await api.projects()).find((x) => x.id === projectId) ?? null;
+    const before = shown.current;
+    shown.current = p;
     setProject(p);
     if (p) {
-      setName(p.name);
-      setInstructions(p.instructions);
+      // A field being edited keeps the edit; the others take the saved value (a rename from the sidebar).
+      setName((n) => (before && n !== before.name ? n : p.name));
+      setInstructions((i) => (before && i !== before.instructions ? i : p.instructions));
     }
     setMemories((await api.memories()).filter((m) => m.project_id === projectId));
   };
   useEffect(() => {
     load();
-  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [projectId, listed?.name, listed?.instructions]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!project) return <div className="page"><p className="muted">{t("Loading…")}</p></div>;
   const dirty = name !== project.name || instructions !== project.instructions;

@@ -995,7 +995,7 @@ pub async fn send(state: &AppState, c: &Cipher, account_id: &str, d: &Draft) -> 
         }
     }
     let to = d.to.join(", ");
-    db::log_action(&state.db.lock().unwrap(), "email", &format!("Sent an email to {to}"));
+    db::log_action_enc(&state.db.lock().unwrap(), c, "email", &format!("Sent an email to {to}"));
     Ok(())
 }
 
@@ -1070,7 +1070,7 @@ pub async fn add_mail_account(state: AppStateRef<'_>, config: AccountConfig) -> 
     {
         let conn = state.db.lock().unwrap();
         store_account(&conn, &c, &id, &cfg)?;
-        db::log_action(&conn, "email", &format!("Added the email account {}", cfg.email));
+        db::log_action_enc(&conn, &c, "email", &format!("Added the email account {}", cfg.email));
     }
     sync_account(&state, &c, &id).await?;
     Ok(id)
@@ -1100,7 +1100,7 @@ pub async fn connect_oauth(state: &AppState, provider: crate::oauth::Provider, n
     {
         let conn = state.db.lock().unwrap();
         store_account(&conn, &c, &id, &cfg)?;
-        db::log_action(&conn, "email", &format!("Added the email account {} (signed in with {})", cfg.email, provider.name()));
+        db::log_action_enc(&conn, &c, "email", &format!("Added the email account {} (signed in with {})", cfg.email, provider.name()));
     }
     sync_account(state, &c, &id).await?;
     Ok((id, cfg.email))

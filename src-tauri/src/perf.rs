@@ -56,11 +56,15 @@ pub struct PerfSettings {
     /// rest runs on the processor; 0 = processor only). Set at the top of
     /// a chat.
     pub gpu_limit: u8,
+    /// Free the graphics card (unload the chat model) after this many idle
+    /// minutes, 0 for never; None for the mode's own (Cool 5, Balanced 10,
+    /// Turbo never).
+    pub unload_after_mins: Option<u64>,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100 }
+        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None }
     }
 }
 
@@ -141,7 +145,8 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             vram_bytes: balanced_vram,
             ram_bytes: balanced_ram,
             low_priority: false,
-            idle_unload_mins: 30,
+            // A loaded model holds the card's memory: not for long unused.
+            idle_unload_mins: 10,
             max_ctx: 32_768,
             gpu_temp_limit: gpu_t,
             cpu_temp_limit: cpu_t,
@@ -166,6 +171,9 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             }
         }
     };
+    if let Some(m) = s.unload_after_mins {
+        l.idle_unload_mins = m;
+    }
     // Never past the ceilings, whatever was stored.
     l.vram_bytes = l.vram_bytes.min((vram as f64 * c.gpu_percent as f64 / 100.0) as u64);
     l.ram_bytes = l.ram_bytes.min(ceiling_ram);
@@ -301,6 +309,13 @@ fn cache() -> &'static Mutex<Option<(Instant, Temps)>> {
 }
 
 async fn gpu_temp() -> Option<f32> {
+    // The driver's sensor first, as Task Manager reads it (NVIDIA cards
+    // report it too): starting nvidia-smi wakes the card from idle.
+    if let Some(luid) = crate::hardware::dedicated().and_then(|c| c.luid) {
+        if let Some(t) = tokio::task::spawn_blocking(move || card_temp(luid)).await.ok().flatten() {
+            return Some(t);
+        }
+    }
     let mut cmd = tokio::process::Command::new("nvidia-smi");
     cmd.args(["--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"]).kill_on_drop(true);
     #[cfg(windows)]
@@ -413,6 +428,25 @@ fn cpu_temp() -> Option<f32> {
 }
 
 /// Current temperatures, read at most every 5 seconds.
+/// Temperatures without waking the graphics card: the driver's sensor only
+/// (never nvidia-smi), or the last reading when it has none. For screens
+/// that show temperatures while nothing is working.
+pub async fn quiet_temps() -> Temps {
+    if let Some((at, t)) = *cache().lock().unwrap() {
+        if at.elapsed() < Duration::from_secs(5) {
+            return t;
+        }
+    }
+    let luid = crate::hardware::dedicated().and_then(|c| c.luid);
+    let gpu = match luid {
+        Some(l) => tokio::task::spawn_blocking(move || card_temp(l)).await.ok().flatten(),
+        None => None,
+    };
+    let gpu = gpu.or_else(|| cache().lock().unwrap().and_then(|(_, t)| t.gpu));
+    let cpu = tokio::task::spawn_blocking(cpu_temp).await.ok().flatten();
+    Temps { gpu, cpu }
+}
+
 pub async fn temps() -> Temps {
     if let Some((at, t)) = *cache().lock().unwrap() {
         if at.elapsed() < Duration::from_secs(5) {
@@ -432,12 +466,59 @@ pub async fn temps() -> Temps {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct GpuNow {
     pub name: Option<String>,
-    /// Percent busy.
+    /// Percent busy (every app's use).
     pub usage: Option<f32>,
     /// °C (NVIDIA cards; Windows has no general way to read others').
     pub temp: Option<f32>,
     pub mem_used: Option<u64>,
     pub mem_total: Option<u64>,
+    /// SulcusAI's own share: its window and the engines it started.
+    pub ours: Option<f32>,
+    /// SulcusAI is working (a reply, a picture, listening). While it isn't,
+    /// nvidia-smi isn't run: starting it wakes the card from idle.
+    pub working: bool,
+}
+
+/// SulcusAI is using the card for something now (or just was): a reply, a
+/// picture or video, the microphone, a model loading.
+pub fn working(state: &crate::AppState) -> bool {
+    !state.generations.lock().unwrap().is_empty()
+        || crate::media::any_job()
+        || state.speech.in_use()
+        || state.engine.try_lock().is_err()
+        || state.engine_idle() < Duration::from_secs(20)
+}
+
+/// SulcusAI's processes: this one and everything it started (its window's
+/// WebView2 processes, the engines), refreshed every 10 seconds.
+fn our_pids() -> std::collections::HashSet<u32> {
+    use std::collections::{HashMap, HashSet};
+    static C: Mutex<Option<(Instant, HashSet<u32>)>> = Mutex::new(None);
+    if let Some((at, s)) = C.lock().unwrap().as_ref() {
+        if at.elapsed() < Duration::from_secs(10) {
+            return s.clone();
+        }
+    }
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, p) in sys.processes() {
+        if let Some(parent) = p.parent() {
+            children.entry(parent.as_u32()).or_default().push(pid.as_u32());
+        }
+    }
+    let mut ours = HashSet::from([std::process::id()]);
+    let mut todo = vec![std::process::id()];
+    while let Some(p) = todo.pop() {
+        for c in children.get(&p).into_iter().flatten() {
+            if ours.insert(*c) {
+                todo.push(*c);
+            }
+        }
+    }
+    *C.lock().unwrap() = Some((Instant::now(), ours.clone()));
+    ours
 }
 
 /// nvidia-smi isn't there (no NVIDIA card): don't keep trying it.
@@ -474,16 +555,20 @@ pub(crate) async fn nvidia_now() -> Option<GpuNow> {
                 temp: num(2).map(|x| x as f32),
                 mem_used: num(3).map(|m| (m * mib) as u64),
                 mem_total: num(4).map(|m| (m * mib) as u64),
+                ours: None,
+                working: true,
             })
         })
         .max_by_key(|g| g.mem_total.unwrap_or(0))
 }
 
 /// A card on Windows: how busy it is, the way Task Manager counts it (its
-/// busiest kind of engine). `card` is its Windows id; without one, the
-/// busiest card. The query stays open, since a rate needs two readings.
+/// busiest kind of engine), for every app and for `ours` alone. `card` is
+/// its Windows id; without one, the busiest card. The query stays open,
+/// since a rate needs two readings. Reading these counters doesn't wake the
+/// card the way starting nvidia-smi does.
 #[cfg(windows)]
-fn windows_gpu_usage(card: Option<i64>) -> Option<f32> {
+fn windows_gpu_usage(card: Option<i64>, ours: &std::collections::HashSet<u32>) -> Option<(f32, f32)> {
     use std::collections::HashMap;
     use windows::Win32::System::Performance::*;
     static QUERY: Mutex<Option<(isize, isize)>> = Mutex::new(None);
@@ -520,6 +605,7 @@ fn windows_gpu_usage(card: Option<i64>) -> Option<f32> {
         // Instances look like "pid_1234_luid_0x00000000_0x0001A2B8_phys_0_eng_3_engtype_3D".
         let wanted = card.map(|l| format!("0x{:08x}_0x{:08x}", (l >> 32) as u32, l as u32));
         let mut sums: HashMap<String, f64> = HashMap::new();
+        let mut mine: HashMap<String, f64> = HashMap::new();
         for i in 0..count as usize {
             let item = &*items.add(i);
             if item.FmtValue.CStatus != 0 {
@@ -531,14 +617,24 @@ fn windows_gpu_usage(card: Option<i64>) -> Option<f32> {
                 continue;
             }
             let kind = name.rsplit("engtype_").next().unwrap_or("");
-            *sums.entry(format!("{card}/{kind}")).or_default() += item.FmtValue.Anonymous.doubleValue;
+            let value = item.FmtValue.Anonymous.doubleValue;
+            let key = format!("{card}/{kind}");
+            *sums.entry(key.clone()).or_default() += value;
+            let pid = name.strip_prefix("pid_").and_then(|r| r.split('_').next()).and_then(|p| p.parse::<u32>().ok());
+            if pid.is_some_and(|p| ours.contains(&p)) {
+                *mine.entry(key).or_default() += value;
+            }
         }
-        sums.into_values().reduce(f64::max).map(|v| v.clamp(0.0, 100.0) as f32)
+        let busiest = |m: HashMap<String, f64>| m.into_values().reduce(f64::max).map_or(0.0, |v| v.clamp(0.0, 100.0) as f32);
+        if sums.is_empty() {
+            return None;
+        }
+        Some((busiest(sums), busiest(mine)))
     }
 }
 
 #[cfg(not(windows))]
-fn windows_gpu_usage(_card: Option<i64>) -> Option<f32> {
+fn windows_gpu_usage(_card: Option<i64>, _ours: &std::collections::HashSet<u32>) -> Option<(f32, f32)> {
     None
 }
 
@@ -575,27 +671,39 @@ pub async fn gpu_reading(state: &crate::AppState) -> GpuNow {
     }
     // The dedicated card (the one models run on), never the integrated one.
     let best = state.hardware.read().unwrap().best_gpu().cloned();
+    let working = working(state);
+    let luid = best.as_ref().and_then(|c| c.luid);
+    let ours = our_pids();
+    let counted = tokio::task::spawn_blocking(move || windows_gpu_usage(luid, &ours)).await.ok().flatten();
+    // nvidia-smi (temperature, memory) only while SulcusAI is working: each
+    // start of it wakes the card from idle.
     let nvidia = match &best {
         Some(card) if card.vendor != "NVIDIA" => None,
-        _ => nvidia_now().await,
+        _ if working => nvidia_now().await,
+        _ => None,
     };
-    let g = match nvidia {
+    let mut g = match nvidia {
         Some(g) => g,
         None => {
             let Some(card) = best else { return GpuNow::default() };
-            let luid = card.luid;
             GpuNow {
                 name: Some(card.name.clone()),
-                usage: tokio::task::spawn_blocking(move || windows_gpu_usage(luid)).await.ok().flatten(),
+                usage: counted.map(|c| c.0),
+                // From the driver, as Task Manager reads it (NVIDIA cards too),
+                // which doesn't wake the card.
                 temp: match luid {
                     Some(l) => tokio::task::spawn_blocking(move || card_temp(l)).await.ok().flatten(),
                     None => None,
                 },
                 mem_used: None,
                 mem_total: Some(card.vram_bytes),
+                ours: None,
+                working,
             }
         }
     };
+    g.ours = counted.map(|c| c.1);
+    g.working = working;
     *gpu_cache().lock().unwrap() = Some((Instant::now(), g.clone()));
     g
 }
@@ -646,10 +754,11 @@ pub fn start_monitor(app: tauri::AppHandle) {
                 Ok(mut e) => e.status().model_id.is_some(),
                 Err(_) => true,
             };
-            let listening = state.speech.in_use();
             let busy = !state.generations.lock().unwrap().is_empty();
 
-            if settings.adaptive && (loaded || listening) {
+            // Temperatures only while it works: reading the card's (nvidia-smi)
+            // wakes it, and a loaded model at rest doesn't heat anything.
+            if settings.adaptive && working(&state) {
                 if let Some(h) = state.heat.update(temps().await, &base) {
                     let what = if h.level() == 0 { "back to full speed".to_string() } else { format!("stepped down to level {} of 3", h.level()) };
                     db::log_action(&state.db.lock().unwrap(), "performance", &format!("Adaptive cooling: {what}"));
@@ -701,7 +810,8 @@ pub async fn perf_view(state: AppStateRef<'_>) -> Result<PerfView, String> {
         base,
         limits: state.limits(),
         heat: state.heat.get(),
-        temps: temps().await,
+        // Read every 30 s while the window shows: it mustn't wake the card when nothing's working.
+        temps: if working(&state) { temps().await } else { quiet_temps().await },
         has_battery: crate::hardware::has_battery(),
         cores: hw.cpu_cores.unwrap_or(hw.cpu_threads / 2),
         ram_total_gb: hw.ram_total as f64 / GIB as f64,
@@ -853,6 +963,13 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_model_frees_the_card_when_asked() {
+        assert_eq!(limits(&PerfSettings::default(), &laptop(), false).idle_unload_mins, 10, "Balanced: after 10 minutes");
+        assert_eq!(limits(&PerfSettings { unload_after_mins: Some(2), ..Default::default() }, &laptop(), false).idle_unload_mins, 2);
+        assert_eq!(limits(&PerfSettings { mode: Mode::Cool, unload_after_mins: Some(0), ..Default::default() }, &laptop(), false).idle_unload_mins, 0, "never");
+    }
+
+    #[test]
     fn the_critical_limit_stays_on_without_the_heat_guard() {
         let s = PerfSettings { heat_guard: false, ..Default::default() };
         let l = limits(&s, &laptop(), false);
@@ -901,8 +1018,11 @@ mod gpu_tests {
         let card = crate::hardware::dedicated();
         eprintln!("dedicated card: {:?}", card.as_ref().map(|c| &c.name));
         let luid = card.and_then(|c| c.luid);
-        eprintln!("Windows counters, that card: {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid)).await.unwrap());
-        eprintln!("again: {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid)).await.unwrap());
+        let ours = super::our_pids();
+        eprintln!("our processes: {}", ours.len());
+        let again = ours.clone();
+        eprintln!("Windows counters, that card (all, ours): {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid, &ours)).await.unwrap());
+        eprintln!("again: {:?}", tokio::task::spawn_blocking(move || super::windows_gpu_usage(luid, &again)).await.unwrap());
         eprintln!("its temperature: {:?}", luid.and_then(super::card_temp));
     }
 }

@@ -127,6 +127,8 @@ pub fn picture_args(files: &[(String, PathBuf)], d: &Defaults, p: &Picture<'_>, 
 
 pub struct Clip<'a> {
     pub prompt: &'a str,
+    /// The prompt writer's negative; else the model's own.
+    pub negative: Option<&'a str>,
     pub width: u32,
     pub height: u32,
     pub frames: u32,
@@ -148,8 +150,8 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
     let mut a: Vec<OsString> = vec!["-M".into(), "vid_gen".into()];
     a.extend(model_args(files));
     a.extend(["-p".into(), c.prompt.into()]);
-    if !d.negative.is_empty() {
-        a.extend(["-n".into(), d.negative.as_str().into()]);
+    if let Some(n) = c.negative.filter(|n| !n.trim().is_empty()).or((!d.negative.is_empty()).then_some(d.negative.as_str())) {
+        a.extend(["-n".into(), n.into()]);
     }
     a.extend([
         "--cfg-scale".into(),
@@ -174,6 +176,12 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
     ]);
     if d.flow_shift > 0.0 {
         a.extend(["--flow-shift".into(), format!("{}", d.flow_shift).into()]);
+    }
+    if !d.cache.is_empty() {
+        a.extend(["--cache-mode".into(), d.cache.as_str().into()]);
+    }
+    if d.temporal_tiling {
+        a.push("--temporal-tiling".into());
     }
     if let Some(i) = c.init {
         a.extend(["-i".into(), i.into()]);

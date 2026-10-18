@@ -119,6 +119,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [cooling, setCooling] = useState<string | null>(null);
   // Before a picture of something named: checking (or looking up) its look.
   const [lookingUp, setLookingUp] = useState<string | null>(null);
+  // The picture reader is describing attached pictures for a model that can't see them.
+  const [readingPictures, setReadingPictures] = useState(false);
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
   const [handingOff, setHandingOff] = useState(false);
   const [compacting, setCompacting] = useState(false);
@@ -223,8 +225,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         else if (p.status === "idle") {
           setCompacting(false);
           setLookingUp(null);
+          setReadingPictures(false);
         } else if (p.status === "looking_up") {
           setLookingUp(p.detail ?? "");
+          setStatus("working");
+        } else if (p.status === "reading_pictures") {
+          setReadingPictures(true);
           setStatus("working");
         } else if (p.status === "cooling") {
           setCooling(p.detail ?? t("the PC"));
@@ -252,6 +258,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:start", mine((p) => {
         setCooling(null);
         setLookingUp(null);
+        setReadingPictures(false);
         setStatus("thinking");
         setStreaming({ id: p.message_id, content: "", thinking: "" });
       })),
@@ -273,7 +280,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("chat:done", mine((p) => {
         if (p.context) setContext(p.context);
         if (p.tps !== undefined) setTps(p.tps ?? null);
-        if (p.error) setError(p.error);
+        if (p.error) setError(errorText(p.error));
         setStreaming(null);
         setStatus("idle");
         setRunningCall(null);
@@ -633,7 +640,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           <p className="muted small pad">
             {cooling
               ? t("Letting the PC cool down before the next step ({what})…", { what: cooling })
-              : lookingUp
+              : readingPictures
+                ? t("The picture reader is looking at your picture, so the model knows what's in it…")
+                : lookingUp
                 ? t("Looking up what {what} looks like, so the picture matches…", { what: lookingUp })
                 : lookingUp === ""
                   ? t("Checking the names in the picture's description…")
@@ -855,9 +864,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <button
               className="btn danger-fill"
               onClick={async () => {
-                await api.deleteChat(chat.id);
                 setConfirmDelete(false);
-                onDeleted();
+                try {
+                  await api.deleteChat(chat.id);
+                  onDeleted();
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
               }}
             >
               {t("Delete")}

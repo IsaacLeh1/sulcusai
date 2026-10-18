@@ -13,9 +13,14 @@ mod cloud;
 pub mod hub;
 mod music;
 pub(crate) mod proc;
+pub mod prompts;
 pub mod screen;
 mod sd;
 pub mod store;
+pub mod wallpaper;
+mod longclip;
+#[cfg(windows)]
+mod mp4;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -94,6 +99,13 @@ pub struct Defaults {
     pub model_args: String,
     /// Sides must be a multiple of this (16 when not set).
     pub align: u32,
+    /// Video: the most frames the model was trained on (0: 81).
+    pub max_frames: u32,
+    /// Video: the engine's step cache ("easycache"), which skips work
+    /// between similar steps.
+    pub cache: String,
+    /// Video: decode the frames in overlapping groups (less memory).
+    pub temporal_tiling: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -154,7 +166,7 @@ pub fn feature_of(kind: Kind) -> Feature {
 
 fn op_kind(op: &str) -> Option<Kind> {
     Some(match op {
-        "generate" | "edit" | "fill" | "extend" | "restyle" => Kind::Image,
+        "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" => Kind::Image,
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
         "video" => Kind::Video,
@@ -309,6 +321,17 @@ fn file_path(paths: &Paths, m: &MediaModel, f: &MediaFile) -> PathBuf {
     model_dir(paths, m).join(&f.file)
 }
 
+/// A file of an installed media model, by its role ("llm", "llm_vision"),
+/// when it's whole on disk.
+pub fn installed_file(state: &AppState, m: &MediaModel, role: &str) -> Option<PathBuf> {
+    let f = m.file(role)?;
+    if !installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == m.id) {
+        return None;
+    }
+    let p = file_path(&state.paths, m, f);
+    p.metadata().is_ok_and(|md| md.len() == f.size).then_some(p)
+}
+
 fn missing_bytes(paths: &Paths, m: &MediaModel) -> u64 {
     m.files.iter().filter(|f| !file_path(paths, m, f).metadata().is_ok_and(|md| md.len() == f.size)).map(|f| f.size).sum()
 }
@@ -344,7 +367,7 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
     let list = installed(&state.db.lock().unwrap());
     let all = models(state);
     let ok = |m: &&MediaModel| {
-        m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(op)) && (!needs_image_input || kind != Kind::Video || m.can("image"))
+        m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(if op == "tune" { "generate" } else { op })) && (!needs_image_input || kind != Kind::Video || m.can("image"))
     };
     if let Some(id) = wanted.filter(|w| !w.is_empty()) {
         if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
@@ -551,6 +574,26 @@ pub struct Request {
     /// How a new picture looks (see `STYLES`); none or "auto": a realistic
     /// photo, unless the description itself names a look.
     pub style: Option<String>,
+    /// Example pictures (gallery ids) the new one should follow.
+    pub examples: Vec<String>,
+    /// What to take from them: "style", "subject" or "layout".
+    pub example_use: Option<String>,
+    /// The prompt writer turns the description into the one this model
+    /// follows best (None: only for models that need a special form, or
+    /// with example pictures).
+    pub write_prompt: Option<bool>,
+    /// The picture reader checks the picture against what was asked for and,
+    /// when things are missing, it's made once more with a better description.
+    pub check: Option<bool>,
+    /// What else the description must serve ("desktop wallpaper…").
+    pub notes: Option<String>,
+    /// A desktop wallpaper: made for this screen size (a still picture with
+    /// "generate", a looping clip with "video").
+    pub wallpaper: Option<wallpaper::Spec>,
+    /// The person's own words, when the prompt writer replaced the prompt
+    /// (kept with what's made).
+    #[serde(skip)]
+    pub asked: Option<String>,
 }
 
 /// Looks a new picture can have: id and the words added to its description.
@@ -584,7 +627,7 @@ pub fn styled(prompt: &str, style: Option<&str>) -> String {
     let style = style.unwrap_or("auto");
     let id = if style == "auto" {
         let low = prompt.to_lowercase();
-        if LOOK_WORDS.iter().any(|w| low.contains(w)) {
+        if LOOK_WORDS.iter().any(|w| has_word(&low, w)) {
             return prompt.to_string();
         }
         "photo"
@@ -595,6 +638,77 @@ pub fn styled(prompt: &str, style: Option<&str>) -> String {
         Some((_, words)) => format!("{}, {words}", prompt.trim_end_matches(['.', ','])),
         None => prompt.to_string(),
     }
+}
+
+/// The installed picture model best at writing words into pictures
+/// (Qwen-Image), for a description with text in quotes.
+pub fn best_for_text(state: &AppState, prompt: &str) -> Option<String> {
+    let quoted = prompt.split(['"', '\u{201c}', '\u{201d}']).skip(1).step_by(2).any(|q| q.trim().chars().count() >= 2);
+    if !quoted {
+        return None;
+    }
+    let list = installed(&state.db.lock().unwrap());
+    models(state)
+        .into_iter()
+        .find(|m| m.kind == Kind::Image && m.can("generate") && prompts::family(m) == "qwen-image" && list.iter().any(|i| i.model_id == m.id))
+        .map(|m| m.id)
+}
+
+/// An edit that changes how people look rather than what's around them.
+fn changes_how_people_look(instruction: &str) -> bool {
+    let low = instruction.to_lowercase();
+    [
+        "older", "younger", "age ", "aged", "years old", "hair", "bald", "beard", "mustache", "moustache", "makeup", "make-up", "face", "smile", "skin", "tattoo",
+        "cartoon", "anime", "painting", "drawing", "sketch", "style", "pixar", "disney", "3d", "zombie", "elf", "superhero", "turn me into", "turn him into",
+        "turn her into", "turn them into", "turn us into", "make me look", "make him look", "make her look", "make them look", "as a ",
+    ]
+    .iter()
+    .any(|w| low.contains(w))
+}
+
+/// `word` in `text` as a whole word (or its plural): "icon" isn't in
+/// "iconic", "photo" isn't in "photographer".
+fn has_word(text: &str, word: &str) -> bool {
+    let alnum = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    let mut from = 0;
+    while let Some(i) = text[from..].find(word) {
+        let at = from + i;
+        let end = at + word.len();
+        let before = text[..at].chars().next_back();
+        let mut after = text[end..].chars();
+        let next = after.next();
+        let ok_end = !alnum(next) || (next == Some('s') && !alnum(after.next()));
+        if !alnum(before) && ok_end {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// Looks that aren't photographs.
+const DRAWN_LOOKS: &[&str] = &["cartoon", "anime", "digital_art", "oil_painting", "watercolor", "sketch", "3d", "pixel_art"];
+const DRAWN_WORDS: &[&str] = &[
+    "cartoon", "anime", "manga", "illustration", "drawing", "drawn", "sketch", "painting", "painted", "watercolor", "watercolour", "oil paint", "3d",
+    "render", "pixel art", "comic", "vector", "chibi", "low poly", "claymation", "digital art", "concept art", "cel shading", "storybook",
+];
+
+/// The negative prompt without the words that would undo the chosen look
+/// (an SDXL negative lists "cartoon, painting, 3d" to keep photos real;
+/// for a cartoon, those have to go).
+pub fn fit_negative(negative: &str, look: Option<&str>, prompt: &str) -> String {
+    let low = prompt.to_lowercase();
+    let drawn = look.is_some_and(|l| DRAWN_LOOKS.contains(&l)) || DRAWN_WORDS.iter().any(|w| has_word(&low, w));
+    if !drawn {
+        return negative.to_string();
+    }
+    const UNDOES: &[&str] = &["illustration", "3d", "2d", "painting", "cartoon", "sketch", "drawing", "anime", "render", "cgi", "semi-realistic", "digital art", "comic"];
+    negative
+        .split(',')
+        .map(|t| t.trim().trim_matches(|c| c == '(' || c == ')').trim())
+        .filter(|t| !t.is_empty() && !UNDOES.iter().any(|u| has_word(&t.to_lowercase(), u)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -629,6 +743,11 @@ struct Job {
 fn jobs() -> &'static Mutex<Vec<Job>> {
     static J: OnceLock<Mutex<Vec<Job>>> = OnceLock::new();
     J.get_or_init(Default::default)
+}
+
+/// A picture, video or music job is queued or running.
+pub fn any_job() -> bool {
+    !jobs().lock().unwrap().is_empty()
 }
 
 /// One job at a time: they share the graphics card and memory.
@@ -714,14 +833,18 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     if req.op == "fill" && req.mask.is_none() {
         return Err("Paint over the part to change first.".into());
     }
+    if let Some(w) = &req.wallpaper {
+        w.checked()?;
+        if !matches!(req.op.as_str(), "generate" | "video") {
+            return Err("Wallpapers are new pictures or clips.".into());
+        }
+    }
     Ok(())
 }
 
 /// Queues a job and runs it when it's its turn. Returns what it made.
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
     check(state, &req)?;
-    // Which card is which, so every media engine runs on the dedicated one.
-    crate::engine::learn_devices(state).await;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
     let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok() };
@@ -759,8 +882,26 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         }
     }
     let _done = Done(id.clone());
+    // Which card is which, so every media engine runs on the dedicated one
+    // (after the job shows, as it can take a few seconds after a start).
+    crate::engine::learn_devices(state).await;
 
-    let _turn = turn().lock().await;
+    // Waiting for the job before it; removing it from the queue ends the wait
+    // (a chat's Stop hung until the job before finished).
+    let _turn = {
+        let lock = turn().lock();
+        tokio::pin!(lock);
+        loop {
+            tokio::select! {
+                g = &mut lock => break g,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(download::CANCELLED.into());
+                    }
+                }
+            }
+        }
+    };
     if cancel.load(Ordering::Relaxed) {
         return Err(download::CANCELLED.into());
     }
@@ -771,7 +912,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     });
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
-    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video")
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune")
         || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
@@ -947,6 +1088,10 @@ fn estimate(state: &AppState, m: &MediaModel, req: &Request) -> f64 {
     let hw = state.hardware.read().unwrap().clone();
     let measured = installed(&state.db.lock().unwrap()).into_iter().find(|i| i.model_id == m.id).and_then(|i| i.secs);
     let f = fit(m, &hw, &state.budget(), 0, measured);
+    if req.op == "tune" {
+        // About 27 practice pictures at 768 pixels, plus writing and checking them.
+        return f.est_secs * 27.0 * 0.6 + 300.0;
+    }
     (f.est_secs * job_scale(m, req)).max(3.0)
 }
 
@@ -1014,7 +1159,7 @@ struct RunCtx<'a> {
 /// Graphics memory the loaded chat model holds, estimated the way the
 /// catalog plans it. The engines can't see it reliably themselves: they
 /// read the card as nearly empty and run out partway through.
-async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
+pub(crate) async fn chat_model_vram(state: &Arc<AppState>) -> u64 {
     let (st, sees) = {
         let mut e = state.engine.lock().await;
         (e.status(), e.sees())
@@ -1096,6 +1241,12 @@ fn card_friendly(args: &[std::ffi::OsString], vram_gib: f64) -> Vec<std::ffi::Os
     let pixels = flag_value(args, "-W").and_then(|w| w.parse::<f64>().ok()).unwrap_or(0.0) * flag_value(args, "-H").and_then(|h| h.parse::<f64>().ok()).unwrap_or(0.0);
     if vram_gib < 12.0 || pixels > 1.2e6 {
         out = with_flag(&out, "--vae-tiling", None);
+    }
+    // Video: the weights wait in memory and go to the card only while
+    // they're used. Kept on the card, Wan's 7 GB left its frame decoder
+    // 2.6 GB of a 12 GB card, and decoding in tiny tiles took 19 minutes.
+    if vram_gib < 20.0 && args.iter().any(|a| a == "vid_gen") {
+        out = with_flag(&out, "--offload-to-cpu", None);
     }
     out
 }
@@ -1254,6 +1405,52 @@ impl RunCtx<'_> {
         .await
     }
 
+    /// A practice picture for prompt tuning: square, 768 pixels, not kept.
+    async fn render(&self, m: &MediaModel, prompt: &str, negative: &str, seed: i64, dir: &std::path::Path) -> Result<image::DynamicImage, String> {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let d = &m.defaults;
+        let side = if d.align > 16 { (768 / d.align) * d.align } else { 768 };
+        let out = dir.join("out_%d.png");
+        let args = sd::picture_args(
+            &self.files(m),
+            d,
+            &sd::Picture {
+                prompt,
+                negative: Some(negative).filter(|n| !n.trim().is_empty()).or((!d.negative.is_empty()).then_some(d.negative.as_str())),
+                width: side,
+                height: side,
+                steps: d.steps.clamp(1, 60),
+                seed,
+                count: 1,
+                init: None,
+                mask: None,
+                refs: vec![],
+                strength: None,
+                out: &out,
+            },
+            &self.limits(),
+        );
+        self.run_sd(args, dir).await?;
+        let made = std::fs::read_dir(dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("out_")));
+        imaging::decode(&std::fs::read(made.ok_or("The picture engine made nothing.")?).map_err(|e| e.to_string())?)
+    }
+
+    /// The request's example pictures (at most four).
+    fn examples(&self) -> Result<Vec<image::DynamicImage>, String> {
+        if self.req.examples.is_empty() {
+            return Ok(Vec::new());
+        }
+        let c = self.state.work_cipher()?;
+        Ok(self
+            .req
+            .examples
+            .iter()
+            .take(4)
+            .filter_map(|id| store::read(&self.state.paths, &c, id).ok())
+            .filter_map(|b| imaging::decode(&b).ok())
+            .collect())
+    }
+
     fn source(&self) -> Result<(MediaItem, image::DynamicImage), String> {
         let id = self.req.source.as_deref().ok_or("Pick a picture to work on first.")?;
         let c = self.state.work_cipher()?;
@@ -1262,7 +1459,12 @@ impl RunCtx<'_> {
             return Err("That isn't a picture.".into());
         }
         let bytes = store::read(&self.state.paths, &c, id)?;
-        Ok((item, imaging::decode(&bytes)?))
+        let img = imaging::decode(&bytes)?;
+        // A cut-out's see-through parts are black underneath, and the models
+        // read them as black: they get a plain white background instead.
+        // The upscaler keeps the transparency itself.
+        let img = if matches!(self.req.op.as_str(), "upscale" | "remove_background") { img } else { imaging::flatten(&img, [255, 255, 255]) };
+        Ok((item, img))
     }
 
     /// For a picture made by editing another (and that by editing another…),
@@ -1291,14 +1493,43 @@ impl RunCtx<'_> {
 
     /// Saves a made picture into the gallery.
     fn keep_picture(&self, img: &image::DynamicImage, m: Option<&MediaModel>, parent: Option<&str>, seed: Option<i64>) -> Result<MediaItem, String> {
+        self.keep_as(&self.req.op, img, m, parent, seed)
+    }
+
+    /// A picture enlarged to cover `w`×`h`: with the upscaler when one is
+    /// installed and it's much smaller, else smoothly resized.
+    async fn enlarge_for(&self, img: &image::DynamicImage, w: u32, h: u32, work: &std::path::Path) -> image::DynamicImage {
+        let (iw, ih) = img.dimensions();
+        let need = (w as f64 / iw as f64).max(h as f64 / ih as f64);
+        if need <= 1.25 {
+            return img.clone();
+        }
+        let Ok(up) = choose(self.state, "upscale", None, false) else { return img.clone() };
+        (self.progress)("Enlarging it to your screen's size", 0.95);
+        let (src, out) = (work.join("small.png"), work.join("big.png"));
+        let Ok(png) = imaging::png(img) else { return img.clone() };
+        if std::fs::write(&src, png).is_err() {
+            return img.clone();
+        }
+        let args = sd::upscale_args(&self.files(&up), &src, &out, &self.limits());
+        match self.run_sd(args, work).await {
+            Ok(()) => std::fs::read(&out).ok().and_then(|b| imaging::decode(&b).ok()).unwrap_or_else(|| img.clone()),
+            Err(e) => {
+                crate::applog::line("media", &format!("The upscaler failed ({e}); resizing the wallpaper instead"));
+                img.clone()
+            }
+        }
+    }
+
+    fn keep_as(&self, op: &str, img: &image::DynamicImage, m: Option<&MediaModel>, parent: Option<&str>, seed: Option<i64>) -> Result<MediaItem, String> {
         let c = self.state.work_cipher()?;
         let png = imaging::png(img)?;
         let thumb = imaging::thumbnail(img)?;
         let (w, h) = img.dimensions();
         let item = MediaItem {
             kind: "image".into(),
-            op: self.req.op.clone(),
-            prompt: self.req.prompt.trim().to_string(),
+            op: op.to_string(),
+            prompt: self.req.asked.as_deref().unwrap_or(&self.req.prompt).trim().to_string(),
             model_id: m.map(|m| m.id.clone()),
             mime: "image/png".into(),
             width: w,
@@ -1352,7 +1583,7 @@ async fn make_room(state: &Arc<AppState>, req: &Request, model: Option<&MediaMod
 
 /// Starts a model paused for a chat's picture again, at its old address, so
 /// the chat's reply carries on.
-async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paused) {
+pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paused) {
     match crate::llm_endpoint(state, Some(paused.model_id.clone()), paused.vision, || {}).await {
         Ok(_) => crate::applog::line("media", &format!("Started {} again after the picture", paused.model_id)),
         Err(e) => crate::applog::line("media", &format!("Couldn't start {} again after the picture: {e}", paused.model_id)),
@@ -1361,16 +1592,104 @@ async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paused) {
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
-    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video") {
+    // Lyrics come from the chat model: written before the card is cleared for
+    // the music engine, not after (that loaded the chat model again beside it).
+    let mut with_lyrics;
+    let req = if req.op == "music" && req.instrumental != Some(true) && req.lyrics.as_ref().is_none_or(|l| l.trim().is_empty()) {
+        progress("Writing lyrics", 0.02);
+        let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 240.0);
+        with_lyrics = req.clone();
+        with_lyrics.lyrics = write_lyrics(state, req.prompt.trim(), seconds, req.language.as_deref()).await;
+        if with_lyrics.lyrics.is_none() {
+            // Nothing written: the song is sung without set words, as before.
+            with_lyrics.lyrics = Some(String::new());
+        }
+        &with_lyrics
+    } else {
+        req
+    };
+    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune") {
         make_room(state, req, model).await
     } else {
         None
     };
-    let result = run_kind(state, id, req, model, cancel, progress).await;
+    let result = match model.filter(|m| matches!(req.op.as_str(), "generate" | "video") && m.kind != Kind::Upscale) {
+        Some(m) => made_well(state, id, req, m, cancel, progress).await,
+        None => run_kind(state, id, req, model, cancel, progress).await,
+    };
     if let Some(p) = paused {
         give_back(state, p).await;
     }
     result
+}
+
+/// A new picture or clip with the prompt writer and the picture reader at
+/// work: the description written for this model (with example pictures
+/// read), and, when asked, the picture checked against what was asked for
+/// and made once more with what was missing, keeping the better one.
+async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaModel, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
+    let prepared = match prompts::prepare(state, req, m, progress).await {
+        Ok(p) => p,
+        Err(e) if e == download::CANCELLED => return Err(e),
+        Err(e) => {
+            crate::applog::line("media", &format!("The prompt writer couldn't help ({e}); using the description as written"));
+            None
+        }
+    };
+    if cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
+    let Some(p) = prepared else { return run_kind(state, id, req, Some(m), cancel, progress).await };
+    let mut first_req = req.clone();
+    if let Some(w) = &p.written {
+        first_req.asked = Some(req.prompt.clone());
+        first_req.prompt = w.prompt.clone();
+        first_req.negative = (!w.negative.is_empty()).then(|| w.negative.clone());
+        // The writer already put the look in.
+        first_req.style = Some("as_written".into());
+    }
+    let items = run_kind(state, id, &first_req, Some(m), cancel, progress).await?;
+    // Checking: one picture, a checklist worth checking, and something to check with.
+    if p.checklist.len() < 3 || items.len() != 1 || items[0].kind != "image" || cancel.load(Ordering::Relaxed) {
+        return Ok(items);
+    }
+    let c = state.work_cipher()?;
+    let first = items[0].clone();
+    let img = store::read(&state.paths, &c, &first.id).and_then(|b| imaging::decode(&b))?;
+    progress("Checking the picture against what you asked for", 0.0);
+    let Ok(r) = prompts::reader(state, Some(m)).await else { return Ok(items) };
+    let verdict = prompts::judge(&r, &img, &p.checklist).await;
+    r.done(state).await;
+    let Ok(verdict) = verdict else { return Ok(items) };
+    crate::applog::line("media", &format!("The picture showed {:.0}% of what was asked for", verdict.score * 100.0));
+    if verdict.missing.is_empty() || verdict.score >= 0.85 || cancel.load(Ordering::Relaxed) {
+        return Ok(items);
+    }
+    // Once more, with a description that brings out what was missing.
+    progress("Making it again so it shows everything you asked for", 0.0);
+    let w = prompts::writer(state, m).await?;
+    let before = p.written.clone().unwrap_or(prompts::Written { prompt: req.prompt.clone(), negative: req.negative.clone().unwrap_or_default() });
+    let better = prompts::revise(&w, &p.program, &p.ask, &before, &verdict.missing).await;
+    w.done(state).await;
+    let Ok(better) = better else { return Ok(items) };
+    let mut again = first_req.clone();
+    again.prompt = better.prompt;
+    again.negative = (!better.negative.is_empty()).then_some(better.negative);
+    again.style = Some("as_written".into());
+    again.seed = None;
+    let second = match run_kind(state, &format!("{id}-again"), &again, Some(m), cancel, progress).await {
+        Ok(s) if s.len() == 1 => s,
+        _ => return Ok(items),
+    };
+    let img2 = store::read(&state.paths, &c, &second[0].id).and_then(|b| imaging::decode(&b))?;
+    let Ok(r) = prompts::reader(state, Some(m)).await else { return Ok(second) };
+    let verdict2 = prompts::judge(&r, &img2, &p.checklist).await.unwrap_or_default();
+    r.done(state).await;
+    crate::applog::line("media", &format!("Made again: it showed {:.0}% of what was asked for (the first {:.0}%)", verdict2.score * 100.0, verdict.score * 100.0));
+    // Keep the better one only.
+    let (keep, drop) = if verdict2.score > verdict.score { (second, first) } else { (items, second[0].clone()) };
+    let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &drop.id);
+    Ok(keep)
 }
 
 async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
@@ -1390,6 +1709,19 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         }
         "music" | "sound" => song(&ctx, model.ok_or("No music model.")?, &work.0).await,
         "narrate" => narrate(&ctx).await,
+        "tune" => {
+            let m = model.ok_or("No picture model.")?;
+            let n = std::sync::atomic::AtomicUsize::new(0);
+            let base = work.0.clone();
+            let render = |prompt: String, negative: String, seed: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
+                let dir = base.join(format!("t{}", n.fetch_add(1, Ordering::Relaxed)));
+                let ctx = &ctx;
+                Box::pin(async move { ctx.render(m, &prompt, &negative, seed as i64, &dir).await })
+            };
+            let report = prompts::tune(state, m, 3, &render, progress, cancel).await?;
+            emit(state, "media:tuned", json!(report));
+            Ok(Vec::new())
+        }
         _ => Err("Unknown kind of job.".into()),
     }
 }
@@ -1412,12 +1744,42 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
     let mut count = 1;
     let (prompt, w, h, init, mask, refs) = match req.op.as_str() {
         "generate" => {
-            count = req.count.unwrap_or(1).clamp(1, 4);
-            let (w, h) = al(match (req.width, req.height) {
-                (Some(w), Some(h)) => (imaging::round16(w.clamp(256, 2048) as f64), imaging::round16(h.clamp(256, 2048) as f64)),
+            count = if req.wallpaper.is_some() { 1 } else { req.count.unwrap_or(1).clamp(1, 4) };
+            let (w, h) = al(match (&req.wallpaper, req.width, req.height) {
+                (Some(spec), _, _) => wallpaper::make_size(spec, side, d.align),
+                (None, Some(w), Some(h)) => (imaging::round16(w.clamp(256, 2048) as f64), imaging::round16(h.clamp(256, 2048) as f64)),
                 _ => imaging::shape_size(req.shape.as_deref().unwrap_or("square"), side),
             });
-            (styled(&req.prompt, req.style.as_deref()), w, h, None, None, vec![])
+            // Example pictures: references for models that read them (image 1,
+            // image 2…); for the layout (or with nothing to read them), the
+            // picture starts from the first one and is redrawn partway.
+            let examples = ctx.examples()?;
+            let (mut init, mut refs) = (None, vec![]);
+            // For a style or a subject, a model that can't take them gets the
+            // picture reader's words only: starting from the example copied its
+            // room, layout and even its sign into a picture asked to share only
+            // its look. Without a reader, the layout is all that can be used.
+            let layout = req.example_use.as_deref() == Some("layout");
+            let words_only = !layout && (crate::vision::can_read(ctx.state, None) || installed_file(ctx.state, m, "llm_vision").is_some());
+            if !examples.is_empty() && !(words_only && !m.can("edit")) {
+                if m.can("edit") && !layout {
+                    for (i, img) in examples.iter().enumerate() {
+                        let (ew, eh) = imaging::work_size(img.width(), img.height(), w * h);
+                        let p = work.join(format!("example{i}.png"));
+                        std::fs::write(&p, imaging::png(&img.resize_exact(ew, eh, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+                        refs.push(p);
+                    }
+                } else {
+                    let p = work.join("start.png");
+                    std::fs::write(&p, imaging::png(&imaging::fill_to(&examples[0], w, h))?).map_err(|e| e.to_string())?;
+                    init = Some(p);
+                }
+            }
+            let mut prompt = styled(&req.prompt, req.style.as_deref());
+            if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.style.as_deref() != Some("as_written")) {
+                prompt.push_str(wallpaper::plain_words(spec));
+            }
+            (prompt, w, h, init, None, refs)
         }
         "edit" | "restyle" => {
             let s = ctx.source()?;
@@ -1433,7 +1795,10 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             // An edit of an edit: the first picture goes along too, so faces and
             // details don't drift a little further with every edit in a chain
             // (his brother's pictures lost what he wanted within a few edits).
-            if let Some(original) = ctx.original_of(&s.0)? {
+            // Not when the change is to how people look (older, a new hairdo,
+            // a cartoon of them): the original's faces would undo it.
+            let changes_looks = req.op == "restyle" || changes_how_people_look(&req.prompt);
+            if let Some(original) = if changes_looks { None } else { ctx.original_of(&s.0)? } {
                 let first = work.join("original.png");
                 std::fs::write(&first, imaging::png(&original.resize(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
                 refs.push(first);
@@ -1468,10 +1833,11 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             if l + t + r + b == 0 {
                 return Err("Choose which sides to extend.".into());
             }
-            let (canvas, mk) = imaging::extend(&s.1, l, t, r, b);
-            let (w, h) = al(imaging::work_size(canvas.width(), canvas.height(), side * side));
-            let canvas = image::DynamicImage::ImageRgba8(canvas).resize_exact(w, h, image::imageops::FilterType::Lanczos3);
-            let mk = image::imageops::resize(&mk, w, h, image::imageops::FilterType::Nearest);
+            let (full, full_mask) = imaging::extend(&s.1, l, t, r, b);
+            let (w, h) = al(imaging::work_size(full.width(), full.height(), side * side));
+            let full = image::DynamicImage::ImageRgba8(full);
+            let canvas = full.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+            let mk = image::imageops::resize(&full_mask, w, h, image::imageops::FilterType::Nearest);
             let (src, mpath) = (work.join("source.png"), work.join("mask.png"));
             std::fs::write(&src, imaging::png(&canvas)?).map_err(|e| e.to_string())?;
             std::fs::write(&mpath, imaging::png(&image::DynamicImage::ImageLuma8(mk))?).map_err(|e| e.to_string())?;
@@ -1480,17 +1846,29 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             } else {
                 req.prompt.trim().to_string()
             };
-            source = Some(s);
+            // The new edges go around the original at full size (it came
+            // back smaller than the picture it started from).
+            fill_mask = Some(full_mask);
+            source = Some((s.0, full));
             (prompt, w, h, Some(src), Some(mpath), vec![])
         }
         _ => return Err("Unknown kind of picture job.".into()),
     };
+    let negative = req
+        .negative
+        .as_deref()
+        .filter(|n| !n.trim().is_empty())
+        .or((!d.negative.is_empty()).then_some(d.negative.as_str()))
+        .map(|n| fit_negative(n, req.style.as_deref(), &prompt))
+        // A wallpaper is the scene alone, never a picture of a desktop.
+        .map(|n| if req.wallpaper.is_some() { format!("{n}, user interface, taskbar, desktop icons, window frame, text") } else { n })
+        .filter(|n| !n.is_empty());
     let args = sd::picture_args(
         &ctx.files(m),
         d,
         &sd::Picture {
             prompt: &prompt,
-            negative: req.negative.as_deref().filter(|n| !n.trim().is_empty()).or((!d.negative.is_empty()).then_some(d.negative.as_str())),
+            negative: negative.as_deref(),
             width: w,
             height: h,
             steps,
@@ -1499,7 +1877,12 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             init: init.as_deref(),
             mask: mask.as_deref(),
             refs: refs.iter().map(|p| p.as_path()).collect(),
-            strength: init.as_ref().map(|_| 1.0),
+            // Filling in redraws the masked area whole; starting from an example keeps its layout and colors.
+            strength: match (&init, &mask) {
+                (Some(_), Some(_)) => Some(1.0),
+                (Some(_), None) => Some(0.62),
+                _ => None,
+            },
             out: &out,
         },
         &ctx.limits(),
@@ -1522,6 +1905,15 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         if let (Some(mk), Some((_, orig))) = (&fill_mask, &source) {
             img = imaging::composite(orig, &img, mk);
         }
+        if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.op == "generate") {
+            let big = ctx.enlarge_for(&img, spec.width, spec.height, work).await;
+            let done = wallpaper::finish(&big, spec);
+            if spec.oled {
+                crate::applog::line("media", &format!("OLED wallpaper: {:.0}% of its pixels are off", wallpaper::black_share(&done.to_rgba8()) * 100.0));
+            }
+            items.push(ctx.keep_as("wallpaper", &done, Some(m), None, Some(seed))?);
+            continue;
+        }
         items.push(ctx.keep_picture(&img, Some(m), source.as_ref().map(|s| s.0.id.as_str()), Some(seed + i as i64))?);
     }
     Ok(items)
@@ -1529,14 +1921,19 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
 
 async fn upscale(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
     let (item, img) = ctx.source()?;
-    // 4x of a big picture is huge (and slow); start from at most 1024 px,
-    // which comes out at about 4096.
-    let img = imaging::cap(img, 1024);
+    // Four times a picture up to 2048 pixels, kept within 4096 (shrinking a
+    // big photo to 1024 first gave back no more detail than it had).
+    let long = img.width().max(img.height());
+    if long > 2048 {
+        return Err(format!("This picture is already large ({} × {}). Upscaling is for pictures up to 2048 pixels across.", img.width(), img.height()));
+    }
     let (src, out) = (work.join("source.png"), work.join("out.png"));
     std::fs::write(&src, imaging::png(&img)?).map_err(|e| e.to_string())?;
     let args = sd::upscale_args(&ctx.files(m), &src, &out, &ctx.limits());
     ctx.run_sd(args, work).await?;
     let big = imaging::cap(imaging::decode(&std::fs::read(&out).map_err(|_| "The upscaler didn't produce a picture.".to_string())?)?, 4096);
+    // A cut-out stays one: its transparency, enlarged to match.
+    let big = imaging::keep_alpha(&img, big);
     Ok(vec![ctx.keep_picture(&big, Some(m), Some(&item.id), None)?])
 }
 
@@ -1565,10 +1962,21 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     let req = ctx.req;
     let d = &m.defaults;
     let fps = d.fps.max(8);
-    let seconds = req.seconds.unwrap_or(d.seconds).clamp(1.0, 8.0);
-    let frames = sd::frames_for(seconds, fps);
+    // No longer than the model was trained on (Wan 2.2: 121 frames, Wan 2.1: 81).
+    let max_frames = if d.max_frames > 0 { d.max_frames } else { 81 };
+    let longest = (max_frames as f32 - 1.0) / fps as f32;
+    // Longer: in parts, each going on from the last frame of the one before
+    // (models that start from a picture; the parts are joined on Windows).
+    let can_continue = m.can("image") && cfg!(windows) && req.wallpaper.is_none();
+    let most = if can_continue { longclip::MAX_SECS } else { longest };
+    let seconds = req.seconds.unwrap_or(if req.wallpaper.is_some() { longest } else { d.seconds }).clamp(1.0, most.max(1.0));
+    let total = (seconds * fps as f32).round() as u32 + 1;
+    let parts = if can_continue { longclip::plan(total, max_frames) } else { vec![sd::frames_for(seconds, fps).min(max_frames)] };
+    let frames = parts[0];
     let (mut w, mut h) = (d.width.max(256), d.height.max(256));
-    if matches!(req.shape.as_deref(), Some("portrait" | "tall")) {
+    if let Some(spec) = &req.wallpaper {
+        (w, h) = wallpaper::make_size(spec, imaging::round16(((w * h) as f64).sqrt()), 32);
+    } else if matches!(req.shape.as_deref(), Some("portrait" | "tall")) {
         std::mem::swap(&mut w, &mut h);
     } else if req.shape.as_deref() == Some("square") {
         let s = imaging::round16(((w * h) as f64).sqrt());
@@ -1594,22 +2002,65 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         }
         None => None,
     };
-    let prompt = if req.prompt.trim().is_empty() { "Gentle natural motion, the scene comes to life.".to_string() } else { req.prompt.trim().to_string() };
+    let mut prompt = if req.prompt.trim().is_empty() { "Gentle natural motion, the scene comes to life.".to_string() } else { req.prompt.trim().to_string() };
+    if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.style.as_deref() != Some("as_written")) {
+        prompt.push_str(wallpaper::plain_words(spec));
+        prompt.push_str(", slow continuous gentle motion, camera nearly still");
+    }
     let seed = req.seed.unwrap_or_else(random_seed);
-    let out = work.join("out.webm");
+    if parts.len() > 1 {
+        return long_video(ctx, m, work, LongClip { prompt: &prompt, parts: &parts, total, fps, w, h, seed, init, parent, still }).await;
+    }
+    // A wallpaper's frames come out as pictures, to be fitted to the screen and looped.
+    let out = if req.wallpaper.is_some() && cfg!(windows) { work.join("frame_%03d.png") } else { work.join("out.webm") };
     let args = sd::clip_args(
         &ctx.files(m),
         d,
-        &sd::Clip { prompt: &prompt, width: w, height: h, frames, fps, steps: req.steps.unwrap_or(d.steps).clamp(4, 50), seed, init: init.as_deref(), out: &out },
+        &sd::Clip {
+            prompt: &prompt,
+            negative: req.negative.as_deref(),
+            width: w,
+            height: h,
+            frames,
+            fps,
+            steps: req.steps.unwrap_or(d.steps).clamp(4, 50),
+            seed,
+            init: init.as_deref(),
+            out: &out,
+        },
         &ctx.limits(),
     );
     ctx.run_sd(args, work).await?;
-    let bytes = std::fs::read(&out).map_err(|_| "The video engine didn't produce a clip.".to_string())?;
     let c = ctx.state.work_cipher()?;
+    if let Some(spec) = req.wallpaper.as_ref().filter(|_| cfg!(windows)) {
+        let files = wallpaper::frame_files(work);
+        (ctx.progress)("Fitting it to your screen and making it loop", 0.0);
+        let mp4 = work.join("wallpaper.mp4");
+        let (bytes, poster) = tokio::task::block_in_place(|| wallpaper::encode_loop(&files, spec, fps, &mp4, ctx.cancel, &|f| (ctx.progress)("Fitting it to your screen and making it loop", f)))?;
+        let (cw, ch) = wallpaper::clip_size(spec);
+        let shown = wallpaper::loop_plan(files.len()).len();
+        let item = MediaItem {
+            kind: "video".into(),
+            op: "wallpaper".into(),
+            prompt: req.asked.as_deref().unwrap_or(&req.prompt).trim().to_string(),
+            model_id: Some(m.id.clone()),
+            mime: "video/mp4".into(),
+            width: cw,
+            height: ch,
+            seconds: shown as f64 / fps as f64,
+            chat_id: req.chat_id.clone(),
+            seed: Some(seed),
+            poster: true,
+            ..Default::default()
+        };
+        let thumb = imaging::thumbnail(&poster)?;
+        return Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, Some(&thumb))?]);
+    }
+    let bytes = std::fs::read(&out).map_err(|_| "The video engine didn't produce a clip.".to_string())?;
     let item = MediaItem {
         kind: "video".into(),
         op: "video".into(),
-        prompt: req.prompt.trim().to_string(),
+        prompt: req.asked.as_deref().unwrap_or(&req.prompt).trim().to_string(),
         model_id: Some(m.id.clone()),
         mime: "video/webm".into(),
         width: w,
@@ -1622,6 +2073,103 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         ..Default::default()
     };
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, still.as_deref())?])
+}
+
+struct LongClip<'a> {
+    prompt: &'a str,
+    /// Frames for each part.
+    parts: &'a [u32],
+    /// Frames in the finished clip.
+    total: u32,
+    fps: u32,
+    w: u32,
+    h: u32,
+    seed: i64,
+    /// The picture it starts from, if any.
+    init: Option<PathBuf>,
+    parent: Option<String>,
+    still: Option<Vec<u8>>,
+}
+
+/// A clip longer than the model makes at once: part after part, each from
+/// the last frame of the one before (with a rest when the PC runs hot),
+/// then joined into one MP4.
+async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c: LongClip<'_>) -> Result<Vec<MediaItem>, String> {
+    let req = ctx.req;
+    let n = c.parts.len();
+    let mut start = c.init.clone();
+    let mut made: Vec<Vec<PathBuf>> = Vec::new();
+    for (i, frames) in c.parts.iter().enumerate() {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        if i > 0 {
+            crate::perf::cool_down(&ctx.state.limits(), |what| (ctx.progress)(&format!("Letting the {what} cool down before part {}", i + 1), i as f64 / n as f64)).await;
+        }
+        // The engine reports each of its stages from 0 to 1; across the whole
+        // clip, loading counts as the part's start and creating as most of it
+        // (loading at 100% read as half the clip done, "10 s left").
+        let stage = |s: &str, f: f64| {
+            let f = f.clamp(0.0, 1.0);
+            let within = match s {
+                "Loading the model" => 0.0,
+                "Creating" => f * 0.92,
+                _ => 0.92 + f * 0.08,
+            };
+            (ctx.progress)(&format!("Part {} of {n}: {s}", i + 1), ((i as f64 + within) / n as f64) * 0.97)
+        };
+        let part_ctx = RunCtx { state: ctx.state, req, cancel: ctx.cancel, progress: &stage, reserved: ctx.reserved };
+        let dir = work.join(format!("part{i:03}"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let out = dir.join("f_%04d.png");
+        let args = sd::clip_args(
+            &ctx.files(m),
+            &m.defaults,
+            &sd::Clip {
+                prompt: c.prompt,
+                negative: req.negative.as_deref(),
+                width: c.w,
+                height: c.h,
+                frames: *frames,
+                fps: c.fps,
+                steps: req.steps.unwrap_or(m.defaults.steps).clamp(4, 50),
+                seed: c.seed + i as i64,
+                init: start.as_deref(),
+                out: &out,
+            },
+            &part_ctx.limits(),
+        );
+        part_ctx.run_sd(args, &dir).await?;
+        let files = longclip::frames_in(&dir, "f_");
+        let last = files.last().cloned().ok_or("The video engine didn't produce any frames.")?;
+        crate::applog::line("media", &format!("Long clip: part {} of {n} made ({} frames)", i + 1, files.len()));
+        start = Some(last);
+        made.push(files);
+    }
+    (ctx.progress)("Joining the parts into one video", 0.97);
+    let mp4 = work.join("clip.mp4");
+    let (bytes, first) = tokio::task::block_in_place(|| longclip::join(&made, c.total as usize, c.fps, &mp4, ctx.cancel, &|f| (ctx.progress)("Joining the parts into one video", 0.97 + f * 0.03)))?;
+    let thumb = match c.still {
+        Some(s) => s,
+        None => imaging::thumbnail(&first)?,
+    };
+    let cipher = ctx.state.work_cipher()?;
+    let item = MediaItem {
+        kind: "video".into(),
+        op: "video".into(),
+        prompt: req.asked.as_deref().unwrap_or(&req.prompt).trim().to_string(),
+        model_id: Some(m.id.clone()),
+        mime: "video/mp4".into(),
+        width: first.width() / 2 * 2,
+        height: first.height() / 2 * 2,
+        seconds: (c.total.saturating_sub(1)) as f64 / c.fps as f64,
+        parent: c.parent,
+        chat_id: req.chat_id.clone(),
+        seed: Some(c.seed),
+        poster: true,
+        ..Default::default()
+    };
+    Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &cipher, item, &bytes, Some(&thumb))?])
 }
 
 /// Lyrics from the chat model, so a song with vocals has real words to sing.
@@ -1647,7 +2195,8 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     let seconds = if sound { req.seconds.unwrap_or(10.0).clamp(10.0, 30.0) } else { req.seconds.unwrap_or(m.defaults.seconds.max(30.0)).clamp(10.0, 240.0) };
     let lyrics = if sound || req.instrumental == Some(true) {
         "[Instrumental]".to_string()
-    } else if let Some(l) = req.lyrics.as_ref().filter(|l| !l.trim().is_empty()) {
+    } else if let Some(l) = req.lyrics.as_ref() {
+        // Given, or written before the job (empty: the writer had nothing).
         l.trim().to_string()
     } else {
         (ctx.progress)("Writing lyrics", 0.02);
@@ -1909,6 +2458,16 @@ pub(crate) fn remove_now(state: &AppState, model_id: &str) -> Result<u64, String
     Ok(freed)
 }
 
+/// Tells the window a job finished (its card closes; what it made shows).
+pub(crate) fn job_done(state: &AppState, job_id: &str, result: &Result<Vec<MediaItem>, String>) {
+    let payload = match result {
+        Ok(items) => json!({ "job_id": job_id, "ok": true, "items": items }),
+        Err(e) if e == download::CANCELLED => json!({ "job_id": job_id, "ok": false, "cancelled": true }),
+        Err(e) => json!({ "job_id": job_id, "ok": false, "error": e }),
+    };
+    emit(state, "media:done", payload);
+}
+
 #[tauri::command(async)]
 pub fn media_start(state: AppStateRef, request: Request) -> Result<String, String> {
     state.cipher()?;
@@ -1917,14 +2476,34 @@ pub fn media_start(state: AppStateRef, request: Request) -> Result<String, Strin
     let (state, job_id) = (state.inner().clone(), id.clone());
     tauri::async_runtime::spawn(async move {
         let result = run(&state, job_id.clone(), request).await;
-        let payload = match result {
-            Ok(items) => json!({ "job_id": job_id, "ok": true, "items": items }),
-            Err(e) if e == download::CANCELLED => json!({ "job_id": job_id, "ok": false, "cancelled": true }),
-            Err(e) => json!({ "job_id": job_id, "ok": false, "error": e }),
-        };
-        emit(&state, "media:done", payload);
+        job_done(&state, &job_id, &result);
     });
     Ok(id)
+}
+
+/// What the prompt writer knows about a picture model: its family, whether
+/// it was tuned on this PC (and how well that went), and which models write
+/// and check its pictures.
+#[tauri::command]
+pub async fn media_prompt_status(state: AppStateRef<'_>, model_id: String) -> Result<serde_json::Value, String> {
+    state.cipher()?;
+    let m = models(&state).into_iter().find(|m| m.id == model_id).ok_or("That model isn't in the list.")?;
+    let fam = prompts::family(&m);
+    let tuned = prompts::program(&state.paths, fam).tuned;
+    let own = installed_file(&state, &m, "llm").is_some();
+    let own_eyes = own && installed_file(&state, &m, "llm_vision").is_some();
+    let reader = if own_eyes { Some(m.name.clone()) } else { crate::vision::readers(&state).into_iter().next().map(|r| r.name) };
+    Ok(json!({ "family": fam, "tuned": tuned, "own_writer": own, "reader": reader }))
+}
+
+/// Goes back to the prompt writer's bundled instructions for a model's family.
+#[tauri::command(async)]
+pub fn media_forget_tuning(state: AppStateRef, model_id: String) -> Result<(), String> {
+    state.cipher()?;
+    let m = models(&state).into_iter().find(|m| m.id == model_id).ok_or("That model isn't in the list.")?;
+    prompts::forget_tuning(&state.paths, prompts::family(&m));
+    db::log_action(&state.db.lock().unwrap(), "model", &format!("Forgot the prompt writer's tuning for {}", m.name));
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1961,12 +2540,13 @@ pub async fn improve_media_prompt(state: AppStateRef<'_>, prompt: String, kind: 
     let messages = vec![
         json!({ "role": "system", "content": format!(
             "You write descriptions for a model that makes media. Rewrite the person's idea as one vivid, specific description of {guide}. \
-             Keep everything they asked for and add nothing that changes it. If they named a style, keep it. Write it in English, under 70 words, \
-             as plain text with no quotes, lists or explanations."
+             Keep everything they asked for, exactly: every count, color, position and relation, and any words to show in quotes, spelled as given. \
+             Add nothing that changes it. If they named a style, keep it. Write it in English, in plain sentences with no lists or explanations: \
+             about 40 words for a simple idea, up to 120 for a scene with many parts."
         ) }),
         json!({ "role": "user", "content": idea }),
     ];
-    let better = crate::chat::complete(&ep, messages, json!({}), 220).await?;
+    let better = crate::chat::complete(&ep, messages, json!({}), 400).await?;
     let better = better.trim().trim_matches('"').trim();
     Ok(if better.is_empty() { idea.to_string() } else { better.to_string() })
 }
@@ -2041,6 +2621,76 @@ pub fn media_export(state: AppStateRef, id: String, path: String) -> Result<(), 
     std::fs::write(&path, bytes).map_err(|e| format!("Couldn't save it there: {e}"))?;
     state.log("media", "Saved a copy of a gallery item outside the app");
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Screen {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    /// Top-left corner on the desktop (physical pixels).
+    pub x: i32,
+    pub y: i32,
+    pub primary: bool,
+}
+
+/// The screens connected now, at their real resolutions.
+#[tauri::command]
+pub fn wallpaper_screens(app: AppHandle) -> Vec<Screen> {
+    let primary = app.primary_monitor().ok().flatten().map(|m| *m.position());
+    app.available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| Screen {
+            name: m.name().cloned().filter(|n| !n.trim().is_empty() && !n.starts_with(r"\\.\")).unwrap_or_else(|| format!("Screen {}", i + 1)),
+            width: m.size().width,
+            height: m.size().height,
+            x: m.position().x,
+            y: m.position().y,
+            primary: primary == Some(*m.position()),
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WallpaperSet {
+    /// The copy Windows shows (Pictures\SulcusAI Wallpapers).
+    pub path: String,
+    /// "windows" (set), "lively" (handed to Lively Wallpaper) or "saved"
+    /// (a moving one, and Lively isn't installed).
+    pub how: String,
+}
+
+/// Sets a gallery picture (or looping clip) as the desktop wallpaper, on the
+/// screen at `x`,`y` or on all of them. A copy goes to Pictures\SulcusAI
+/// Wallpapers, since Windows shows a file, not the encrypted gallery.
+#[tauri::command(async)]
+pub fn wallpaper_set(state: AppStateRef, id: String, x: Option<i32>, y: Option<i32>) -> Result<WallpaperSet, String> {
+    let c = state.cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That's no longer in the gallery.")?;
+    let ext = match item.mime.as_str() {
+        "image/png" => "png",
+        "image/jpeg" => "jpg",
+        "image/webp" => "webp",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        _ => return Err("Only pictures and clips can be wallpapers.".into()),
+    };
+    let path = wallpaper::folder()?.join(format!("wallpaper-{}.{ext}", &id[..id.len().min(12)]));
+    std::fs::write(&path, store::read(&state.paths, &c, &id)?).map_err(|e| format!("Couldn't save the wallpaper: {e}"))?;
+    let how = if item.kind == "image" {
+        wallpaper::set_still(&path, x.zip(y))?;
+        "windows"
+    } else {
+        match wallpaper::set_moving(&path) {
+            Ok(()) => "lively",
+            Err(e) if e == "NO_LIVELY" => "saved",
+            Err(e) => return Err(e),
+        }
+    };
+    db::log_action(&state.db.lock().unwrap(), "media", "Set a desktop wallpaper from the gallery");
+    Ok(WallpaperSet { path: path.to_string_lossy().into_owned(), how: how.into() })
 }
 
 fn mime_for(name: &str) -> Option<(&'static str, &'static str)> {
@@ -2169,6 +2819,14 @@ mod tests {
         assert!(styled("A cute robot", Some("cartoon")).contains("cartoon illustration"));
         assert!(styled("A castle", Some("oil_painting")).contains("oil painting"));
         assert_eq!(styled("A castle", Some("nonsense")), "A castle");
+        // Whole words only: an iconic photographer still gets the photo look.
+        assert!(styled("An iconic photographer at work", None).contains("realistic photograph"));
+        assert!(has_word("two 3d icons", "icon") && !has_word("iconic", "icon"));
+        // A cartoon keeps its look: the photo-only negative words go.
+        let sdxl = "(worst quality, low quality, illustration, 3d, 2d, painting, cartoons, sketch), open mouth, deformed";
+        assert_eq!(fit_negative(sdxl, Some("cartoon"), "a cute robot"), "worst quality, low quality, open mouth, deformed");
+        assert_eq!(fit_negative(sdxl, Some("as_written"), "a cute robot, watercolor painting, soft washes"), "worst quality, low quality, open mouth, deformed");
+        assert_eq!(fit_negative(sdxl, Some("photo"), "a red fox"), sdxl, "photos keep it whole");
         assert!(!card_trouble("failed to load model"), "a broken file isn't the card's fault");
         assert!(card_trouble("ggml_vulkan: Device memory allocation failed: ErrorOutOfDeviceMemory"));
         assert!(card_trouble("diffusion model compute failed"));
@@ -2185,6 +2843,11 @@ mod tests {
         let capped: Vec<std::ffi::OsString> = ["-M", "img_gen", "--max-vram", "6.0", "-o", "x.png"].iter().map(Into::into).collect();
         assert!(s(&lighter_on_card(&capped, true)).contains("--max-vram 3.0"), "a set budget is halved");
         assert!(!s(&card_friendly(&job, 16.0)).contains("--vae-tiling"), "a big card decodes in one go");
+        // Video on a 12 GB card: the weights wait in memory, so decoding has room.
+        let clip: Vec<std::ffi::OsString> = ["-M", "vid_gen", "-W", "832", "-H", "480", "-o", "x.webm"].iter().map(Into::into).collect();
+        assert!(s(&card_friendly(&clip, 11.7)).contains("--offload-to-cpu"));
+        assert!(!s(&card_friendly(&clip, 24.0)).contains("--offload-to-cpu"), "a big card keeps them");
+        assert!(!s(&first).contains("--offload-to-cpu"), "pictures don't need it");
         // On the processor, a 1184x880 picture becomes 640x480 (the longer edge 640).
         let big: Vec<std::ffi::OsString> = ["-W", "1184", "-H", "880", "-o", "x.png"].iter().map(Into::into).collect();
         assert_eq!(smaller(&big, 640), ["-W", "640", "-H", "480", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());

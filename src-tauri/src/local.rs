@@ -113,7 +113,8 @@ fn candidates(entries: &[Entry]) -> Vec<Candidate> {
         }
     }
     for e in entries {
-        if e.app == "Ollama" || !e.name.ends_with(".gguf") || e.name.starts_with("mmproj") || e.size < MIN_SIZE {
+        // A model split into parts is listed once, by its first part.
+        if e.app == "Ollama" || !e.name.ends_with(".gguf") || e.name.starts_with("mmproj") || e.size < MIN_SIZE || later_part(&e.name.to_lowercase()) {
             continue;
         }
         out.push(Candidate { app: e.app, path: e.path.clone(), name: None, projector: projector_beside(&e.path) });
@@ -122,11 +123,59 @@ fn candidates(entries: &[Entry]) -> Vec<Candidate> {
 }
 
 /// LM Studio and Hugging Face keep the picture encoder beside the model.
+/// With several in one folder, the one whose output matches the model's
+/// width (a 4B's encoder doesn't fit an 8B).
 fn projector_beside(model: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(model.parent()?).ok()?.flatten().map(|f| f.path()).find(|p| {
-        let n = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-        n.starts_with("mmproj") && n.ends_with(".gguf")
-    })
+    let mut found: Vec<PathBuf> = std::fs::read_dir(model.parent()?)
+        .ok()?
+        .flatten()
+        .map(|f| f.path())
+        .filter(|p| {
+            let n = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+            n.starts_with("mmproj") && n.ends_with(".gguf")
+        })
+        .collect();
+    found.sort();
+    if found.len() > 1 {
+        let width = gguf::read(model).ok().and_then(|m| {
+            let arch = m.get("general.architecture").and_then(Value::str)?.to_string();
+            m.get(&format!("{arch}.embedding_length")).and_then(Value::int)
+        });
+        if let Some(w) = width {
+            if let Some(p) = found.iter().find(|p| gguf::read(p).ok().and_then(|m| m.get("clip.vision.projection_dim").and_then(Value::int)) == Some(w)) {
+                return Some(p.clone());
+            }
+        }
+    }
+    found.into_iter().next()
+}
+
+/// The size of a model on disk: all its parts when it's split
+/// ("…-00001-of-00003.gguf").
+fn size_with_parts(path: &Path) -> u64 {
+    let own = std::fs::metadata(path).map_or(0, |m| m.len());
+    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    let stem = name.trim_end_matches(".gguf");
+    let mut it = stem.rsplitn(4, '-');
+    let (Some(total), Some("of"), Some(part), Some(base)) = (it.next(), it.next(), it.next(), it.next()) else { return own };
+    if part.trim_start_matches('0') != "1" || !total.bytes().all(|b| b.is_ascii_digit()) {
+        return own;
+    }
+    let Some(dir) = path.parent() else { return own };
+    let prefix = format!("{base}-");
+    let suffix = format!("-of-{total}.gguf");
+    std::fs::read_dir(dir)
+        .map(|r| {
+            r.flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().to_lowercase();
+                    n.starts_with(&prefix) && n.ends_with(&suffix)
+                })
+                .filter_map(|e| e.metadata().ok().map(|m| m.len()))
+                .sum::<u64>()
+        })
+        .unwrap_or(own)
+        .max(own)
 }
 
 /// What a model file is, from its header (for a download, once it's here).
@@ -330,7 +379,8 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         (Some(n), Some(used)) if n > 0 => 0.1 + 0.9 * used as f64 / n as f64,
         _ => 1.0,
     };
-    let size = std::fs::metadata(&c.path).map_err(|e| e.to_string())?.len();
+    std::fs::metadata(&c.path).map_err(|e| e.to_string())?;
+    let size = size_with_parts(&c.path);
     let header = int("general.file_type").map_or("Unknown", gguf::quant_name);
     // A header saying full precision over quantized weights is a converter's
     // slip; the weights themselves say what they are.
@@ -470,6 +520,18 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_split_model_is_as_big_as_all_its_parts() {
+        let dir = std::env::temp_dir().join(format!("sulcus-split-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, len) in [("big-Q4_K_M-00001-of-00003.gguf", 10), ("big-Q4_K_M-00002-of-00003.gguf", 20), ("big-Q4_K_M-00003-of-00003.gguf", 5), ("other.gguf", 99)] {
+            std::fs::write(dir.join(name), vec![0u8; len]).unwrap();
+        }
+        assert_eq!(size_with_parts(&dir.join("big-Q4_K_M-00001-of-00003.gguf")), 35);
+        assert_eq!(size_with_parts(&dir.join("other.gguf")), 99);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn models_from_other_apps_rate_like_their_catalog_twins() {

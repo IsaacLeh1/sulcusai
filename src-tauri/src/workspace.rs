@@ -62,6 +62,21 @@ pub fn chosen_folder(call_id: &str) -> Option<PathBuf> {
     FOLDER_ASKS.lock().unwrap().remove(call_id)
 }
 
+/// The folder a request would share now (kept for the request).
+pub fn asked_folder(call_id: &str) -> Option<PathBuf> {
+    FOLDER_ASKS.lock().unwrap().get(call_id).cloned()
+}
+
+/// Whether a request can be allowed from the phone: not one for a folder
+/// inside Windows, Program Files or ProgramData, which needs the
+/// confirmation the PC shows.
+pub fn phone_may_allow(call_id: &str) -> Result<(), String> {
+    match asked_folder(call_id) {
+        Some(p) if sandbox::inside_system(&p) => Err("That folder is inside a Windows system folder. Allow it on the PC, where you can confirm it.".into()),
+        _ => Ok(()),
+    }
+}
+
 /// The user picked another folder for the assistant's request.
 #[tauri::command(async)]
 pub fn choose_folder(state: AppStateRef, call_id: String, path: String) -> Result<(), String> {
@@ -147,7 +162,9 @@ pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
 #[tauri::command(async)]
 pub fn folder_warning(state: AppStateRef, path: String) -> Option<String> {
     let p = Path::new(&path);
-    (sandbox::refuse_reason(p, &state.paths.data, true).is_none() && sandbox::inside_system(p)).then(|| sandbox::SYSTEM_WARNING.to_string())
+    // One that isn't there yet is made when it's shared: warned about by where it would be.
+    let refused = p.exists() && sandbox::refuse_reason(p, &state.paths.data, true).is_some();
+    (!refused && sandbox::inside_system(p)).then(|| sandbox::SYSTEM_WARNING.to_string())
 }
 
 /// Shares a folder; `allow_system` once the person confirmed the warning.
@@ -193,6 +210,14 @@ pub fn pending_approvals(state: AppStateRef, chat_id: String) -> Result<Vec<Pend
     Ok(state.approvals.pending(&chat_id))
 }
 
+/// Every approval waiting for an answer, in all chats (after unlocking, or
+/// when the window opens, so none is missed).
+#[tauri::command(async)]
+pub fn all_pending_approvals(state: AppStateRef) -> Result<Vec<PendingApproval>, String> {
+    state.cipher()?;
+    Ok(state.approvals.all_waiting())
+}
+
 #[tauri::command(async)]
 pub fn undoable_turns(state: AppStateRef, chat_id: String) -> Result<Vec<String>, String> {
     state.cipher()?;
@@ -211,4 +236,25 @@ pub fn undo_turn(state: AppStateRef, chat_id: String, turn_id: String) -> Result
     let notes = checkpoint::undo_turn(&conn, &c, &turn_id);
     db::log_action(&conn, "agent", "Undid the assistant's file changes from one reply");
     Ok(notes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_folders_cant_be_allowed_from_the_phone() {
+        let id = format!("call-{}", uuid::Uuid::new_v4().simple());
+        assert!(phone_may_allow(&id).is_ok(), "not a folder request");
+        offer_folder(&id, &std::env::temp_dir().join("portfolio-site"));
+        assert!(phone_may_allow(&id).is_ok(), "an ordinary folder");
+        if let Some(win) = std::env::var_os("WINDIR") {
+            // Inside Windows, whether it's there yet or not.
+            offer_folder(&id, &PathBuf::from(&win).join("System32"));
+            assert!(phone_may_allow(&id).is_err());
+            offer_folder(&id, &PathBuf::from(&win).join("sulcus-new-site"));
+            assert!(phone_may_allow(&id).is_err());
+        }
+        assert!(chosen_folder(&id).is_some());
+    }
 }
