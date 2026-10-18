@@ -935,6 +935,22 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
   - `hub_why_not` explains by kind: FLUX.1 not supported yet; picture repos only in diffusers folders (unet/, vae/) need a single file; video needs Wan, music ACE-Step; chat models need GGUF.
   - FLUX.1 (dev/schnell) support is the next step for picture links: it needs clip_l, t5xxl and ae files and a catalog base.
 
+## 0.9.9 (2026-10-17): pictures that don't drift
+
+His brother: within a few prompts, pictures (edits and new ones) "lose what he wants". A live test in dev mode (Qwen2.5-Coder 14B, Z-Image Turbo, FLUX.2 klein 4B; test chats and klein removed afterwards) found three causes:
+- **Wrong picture edited:** the model passed `"<image-id>"` (copied from the parameter's wording), so the edit failed, and then kept passing the first picture's id, so every edit started over from the original.
+  - `tools/media.rs edit_source`: the newest picture in the chat, unless the model named a real picture and the person's message points back ("first", "original", "earlier", "go back"…).
+  - The parameter's description now says to leave it out.
+- **The names check (0.9.8) took "him" as a name:** it looked up HIM, the Powerpuff Girls villain, and added lobster claws and red skin to the edit's description.
+  - `chat::real_names` keeps only names capitalized exactly as written in the ask or description, never everyday words.
+- **Edits of edits drift:** `RunCtx::original_of` walks `parent` back to the first picture (made or attached). From the second edit on, `picture` sends it as a second reference (`-r`), with "Work on the first picture and keep everything in it that isn't mentioned. The second picture is the original: keep every person's face and features exactly as there."
+  - An earlier wording ("keep anything not mentioned the same as the original") changed a top hat into a different hat; the current one keeps both the hat and the face.
+- **New pictures:**
+  - A picture ask on a small local model (ctx ≤ 16K) gets only `tools::for_pictures` (media and web), so more of the chat fits.
+  - The media note asks for each description in full, on its own: what's wanted now, plus anything earlier the user asked to keep, nothing else; and edit_image for changes.
+  - Five pictures in a row in one chat each matched only their own ask.
+- Verified by eye: four-step chain (portrait → red top hat → birthday party → night with string lights), the same face and hat throughout, about 22-26 s per edit on the card.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

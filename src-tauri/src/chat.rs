@@ -706,6 +706,29 @@ pub fn names_of(reply: &str) -> Vec<Named> {
     names
 }
 
+/// Only real names: capitalized as written in what the user asked or in the
+/// description, and not an everyday word. (Asked about "put him at a party",
+/// a small model listed "him", and the look it found on the web was HIM the
+/// cartoon villain's: lobster claws and red skin on the user's grandfather.)
+pub fn real_names(names: Vec<Named>, asked: &str, prompt: &str) -> Vec<Named> {
+    const COMMON: &[&str] = &[
+        "him", "her", "he", "she", "it", "they", "them", "his", "hers", "their", "me", "my", "you", "your", "we", "us", "our", "i",
+        "man", "woman", "boy", "girl", "person", "people", "guy", "kid", "child", "baby", "dog", "cat", "picture", "photo", "image",
+        "the man", "the woman", "old man", "old woman", "the picture", "this", "that", "someone", "everyone",
+    ];
+    names
+        .into_iter()
+        .filter(|n| {
+            let name = n.name.trim();
+            let lower = name.to_lowercase();
+            name.chars().count() >= 2
+                && !COMMON.contains(&lower.as_str())
+                && name.chars().any(char::is_uppercase)
+                && (asked.contains(name) || prompt.contains(name))
+        })
+        .collect()
+}
+
 /// Asks the model to describe a thing's look from web search results.
 pub fn looks_from(name: &str, found: &str) -> (String, Value) {
     let ask = format!(
@@ -1358,6 +1381,10 @@ mod tests {
         assert_eq!(with_looks("A dog on a beach", &[]), "A dog on a beach");
         assert!(names_of("not json").is_empty());
         assert_eq!(looks_of(r#"{"looks":" green tunic, pointed cap "}"#), "green tunic, pointed cap");
+        // "him" isn't a name; "Link" is, as written; "zelda" in lowercase only isn't.
+        let listed = names_of(r#"{"names":[{"name":"him","known":false,"looks":""},{"name":"HIM","known":true,"looks":"lobster claws, red skin, black lips, pink tulle"},{"name":"Link","known":true,"looks":"green tunic and cap, pointy ears, blond"},{"name":"Zelda","known":false,"looks":""}]}"#);
+        let kept = real_names(listed, "Now put him at a party with Link", "a party with balloons, the man smiling, Link beside him");
+        assert_eq!(kept.iter().map(|n| n.name.as_str()).collect::<Vec<_>>(), vec!["Link"]);
         let (ask, format) = names_check("draw link", "Link on a hill");
         assert!(ask.contains("draw link") && ask.contains("Link on a hill"));
         assert_eq!(format["json_schema"]["name"], "names");

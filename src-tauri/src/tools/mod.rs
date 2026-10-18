@@ -98,6 +98,13 @@ pub fn for_building(name: &str) -> bool {
     matches!(group(name), "files" | "web") || matches!(name, "request_folder" | "open_path")
 }
 
+/// Tools for making pictures, video and music (and looking up what things
+/// look like): what a small memory is offered for a picture request, so the
+/// conversation (what the person wanted from the start) still fits.
+pub fn for_pictures(name: &str) -> bool {
+    matches!(group(name), "media" | "web")
+}
+
 /// Which group a tool belongs to; groups are offered only when available.
 fn group(name: &str) -> &'static str {
     match name {

@@ -21,7 +21,7 @@ pub fn edit_image_params() -> Value {
     json!({ "type": "object", "required": ["instruction"], "properties": {
         "instruction": { "type": "string", "description": "What to change, e.g. \"make it night\", \"add a red scarf\". For restyle, the style." },
         "action": { "type": "string", "enum": ["edit", "restyle", "upscale", "remove_background"], "description": "Default edit." },
-        "image": { "type": "string", "description": "The picture's id. Leave it out for the newest picture in this chat." } } })
+        "image": { "type": "string", "description": "Leave it out to change the newest picture in this chat (the usual case: each change builds on the last). Give a picture's id only when the user points to an older one." } } })
 }
 
 pub fn create_video_params() -> Value {
@@ -52,6 +52,26 @@ fn summary(items: &[MediaItem]) -> String {
         .join(", ")
 }
 
+/// Which picture an edit works on. The newest in the chat, unless the model
+/// named another real picture and the person's message points back to an
+/// earlier one ("the first one", "the original"). Small models wrote
+/// "<image-id>" or kept passing the first picture's id, so each edit started
+/// over from the first picture and the earlier changes were lost.
+fn edit_source(given: Option<String>, ctx: &Ctx<'_>) -> Option<String> {
+    let (newest, given_exists, asked) = {
+        let conn = ctx.memory.db.lock().unwrap();
+        let newest = media::store::latest_in_chat(&conn, ctx.memory.cipher, ctx.memory.chat_id, "image").map(|i| i.id);
+        let exists = given.as_deref().is_some_and(|id| media::store::get(&conn, ctx.memory.cipher, id).is_some());
+        let asked = crate::db::messages(&conn, ctx.memory.cipher, ctx.memory.chat_id).iter().rev().find(|m| m.role == "user").map(|m| m.content.to_lowercase()).unwrap_or_default();
+        (newest, exists, asked)
+    };
+    let points_back = ["first", "original", "earlier", "previous", "before", "older", "other one", "that one", "the one with", "go back"].iter().any(|w| asked.contains(w));
+    match given {
+        Some(id) if given_exists && (points_back || newest.is_none()) => Some(id),
+        _ => newest.or(given.filter(|_| given_exists)),
+    }
+}
+
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let state: Arc<crate::AppState> = ctx.state.clone();
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
@@ -72,7 +92,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 "restyle" | "upscale" | "remove_background" => action,
                 _ => "edit".into(),
             };
-            let source = s("image").or_else(|| media::store::latest_in_chat(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher, ctx.memory.chat_id, "image").map(|i| i.id));
+            let source = edit_source(s("image"), ctx);
             let Some(source) = source else {
                 return Outcome::error("Couldn't edit a picture", "There's no picture in this chat yet. Make one with create_image, or ask the user to attach one.");
             };

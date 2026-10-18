@@ -1265,6 +1265,30 @@ impl RunCtx<'_> {
         Ok((item, imaging::decode(&bytes)?))
     }
 
+    /// For a picture made by editing another (and that by editing another…),
+    /// the first one in the chain: what was made or attached before any edit.
+    /// None when the picture isn't an edit, or its original is gone.
+    fn original_of(&self, item: &MediaItem) -> Result<Option<image::DynamicImage>, String> {
+        let c = self.state.work_cipher()?;
+        let edited = |i: &MediaItem| matches!(i.op.as_str(), "edit" | "restyle" | "fill" | "extend");
+        if !edited(item) {
+            return Ok(None);
+        }
+        let mut at = item.clone();
+        for _ in 0..20 {
+            let Some(parent) = at.parent.as_deref() else { break };
+            let Some(p) = store::get(&self.state.db.lock().unwrap(), &c, parent) else { break };
+            at = p;
+            if !edited(&at) {
+                break;
+            }
+        }
+        if at.id == item.id || at.kind != "image" {
+            return Ok(None);
+        }
+        Ok(store::read(&self.state.paths, &c, &at.id).ok().and_then(|b| imaging::decode(&b).ok()))
+    }
+
     /// Saves a made picture into the gallery.
     fn keep_picture(&self, img: &image::DynamicImage, m: Option<&MediaModel>, parent: Option<&str>, seed: Option<i64>) -> Result<MediaItem, String> {
         let c = self.state.work_cipher()?;
@@ -1400,13 +1424,26 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             let (w, h) = al(imaging::work_size(s.1.width(), s.1.height(), side * side));
             let src = work.join("source.png");
             std::fs::write(&src, imaging::png(&s.1.resize_exact(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
-            let prompt = if req.op == "restyle" {
+            let mut prompt = if req.op == "restyle" {
                 format!("Redraw this picture in this style: {}. Keep the same subject, layout and composition.", req.prompt.trim())
             } else {
                 req.prompt.trim().to_string()
             };
+            let mut refs = vec![src];
+            // An edit of an edit: the first picture goes along too, so faces and
+            // details don't drift a little further with every edit in a chain
+            // (his brother's pictures lost what he wanted within a few edits).
+            if let Some(original) = ctx.original_of(&s.0)? {
+                let first = work.join("original.png");
+                std::fs::write(&first, imaging::png(&original.resize(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+                refs.push(first);
+                prompt = format!(
+                    "{}. Work on the first picture and keep everything in it that isn't mentioned. The second picture is the original: keep every person's face and features exactly as there.",
+                    prompt.trim_end_matches('.')
+                );
+            }
             source = Some(s);
-            (prompt, w, h, None, None, vec![src])
+            (prompt, w, h, None, None, refs)
         }
         "fill" => {
             let s = ctx.source()?;

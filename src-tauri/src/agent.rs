@@ -333,11 +333,20 @@ impl Turn {
         // A small memory and a request to build: only the tools for building
         // (and none of the notes about pictures, people or other chats), so the
         // files it writes have room.
-        let lean = build_ask && self.ep.cloud.is_none() && self.ep.ctx <= 16_384;
+        let small = self.ep.cloud.is_none() && self.ep.ctx <= 16_384;
+        let lean = build_ask && small;
         if lean {
             extra.retain(|n| tools::for_building(n));
             defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_some_and(tools::for_building));
             media_note.clear();
+        }
+        // Likewise a picture request: the tools for pictures, so the chat (what
+        // the person asked for from the start) isn't pushed out of memory and
+        // the pictures keep to it.
+        let lean = lean || (small && !media_note.is_empty() && chat::asks_for_picture(&request));
+        if lean && !build_ask {
+            extra.retain(|n| tools::for_pictures(n));
+            defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_some_and(tools::for_pictures));
         }
         let people_note = people_note.filter(|_| !lean);
         let chats_note = chats_note && !lean;
@@ -374,6 +383,9 @@ impl Turn {
                  call edit_image with what to change. Picture models don't know names: when the request names a character, \
                  game, show, brand, person or place, describe exactly how it looks (colors, clothes, hair, shapes) in the \
                  description, and if you aren't sure how it looks, look it up first. \
+                 Write each description in full, on its own: what the user wants now, plus anything they asked for earlier that \
+                 should stay (the same character, the same style), and nothing from earlier pictures they didn't ask to keep. \
+                 To change a picture they already have, use edit_image rather than making a new one. \
                  The result appears in the chat by itself, with a button to save it, \
                  so don't paste links or ids; say in a sentence what you made. If making it fails, say so in a sentence and \
                  don't guess at causes or send them to other pages.",
@@ -1056,7 +1068,7 @@ impl Turn {
         self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "looking_up" }));
         let (ask, format) = chat::names_check(&asked, &prompt);
         let mut names = match self.quiet_json(ask, format, 500).await {
-            Some(reply) => chat::names_of(&reply),
+            Some(reply) => chat::real_names(chat::names_of(&reply), &asked, &prompt),
             None => Vec::new(),
         };
         if names.is_empty() {
