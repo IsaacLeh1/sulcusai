@@ -1123,7 +1123,7 @@ Not built or published yet. Uncommitted work is described here.
   - Video was off in Features; it was turned on for the test and turned off again afterwards.
   - A chat with Qwen2.5 Coder 14B (no vision) and the cabin picture attached: Qwen3 VL 4B read it, and the answer was right ("one animal: a golden retriever; the sign says WELCOME"). 93 s, both models loaded.
   - Teaching the prompt writer Z-Image: 24 practice pictures in 5.4 min, 95% → 100%, 4 demos saved on this PC. Not promoted to the catalog (`scripts/promote_prompt_programs.py --write` does it).
-  - The test chat was deleted. The test pictures and videos are in the gallery: 4 pictures, 3 wallpapers, 2 clips.
+  - The test chat was deleted. The test results are in his gallery: 3 pictures, 2 still and 2 moving wallpapers, and 2 clips.
 - **Not tested live**: "Set as wallpaper" (it would change his desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
 
 ## Website (2026-10-12)
