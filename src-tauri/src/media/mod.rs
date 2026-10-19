@@ -7,6 +7,7 @@
 //! engine program once, within the performance limits, one job at a time,
 //! and what it makes goes into the gallery, encrypted.
 
+pub mod clarify;
 mod cutout;
 pub(crate) mod imaging;
 mod cloud;
