@@ -178,7 +178,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
     db::set_chat_model(&state.db.lock().unwrap(), &chat_id, &installed.model_id)?;
     let today = Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
-    let base = crate::advanced::get(&state).base_prompt(base);
+    let base = format!("{}\n\n{}", crate::advanced::get(&state).base_prompt(base), chat::runs_where(&ep));
     let base = format!("{base}\n\nThis is a scheduled task (\"{}\") running on its own; the user isn't watching. Do the task and reply with the result.", s.name);
     let emitter = app.clone();
     let turn = agent::Turn {

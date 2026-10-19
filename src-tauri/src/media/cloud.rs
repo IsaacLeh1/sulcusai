@@ -40,7 +40,7 @@ async fn fail(resp: reqwest::Response, t: &MediaTarget) -> String {
 fn prompt_for(ctx: &RunCtx<'_>, t: &MediaTarget) -> (String, usize) {
     let p = ctx.req.prompt.trim();
     if t.redact {
-        let mut r = cloud::Redactor::default();
+        let mut r = cloud::Redactor::for_state(ctx.state);
         let out = r.redact(p);
         (out, r.used())
     } else {

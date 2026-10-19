@@ -54,7 +54,7 @@ pub struct Found {
 }
 
 /// A street address: a house number, a street name and a street word.
-static STREET: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static STREET: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Za-z0-9.'-]+\s+){1,4}(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|way|place|pl|circle|cir|parkway|pkwy|highway|hwy|terrace|ter|trail|trl)\b\.?").unwrap()
 });
 /// A password or key handed over in words: "password: hunter22", "my api key is …".

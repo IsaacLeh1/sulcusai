@@ -524,6 +524,7 @@ async fn answer_here(state: &Arc<AppState>, contact: &str, view: &SharedView, te
     let profile = db::profile(&state.db.lock().unwrap(), &state.work_cipher()?);
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, _) = crate::chat::system_prompt(&profile, &today);
+    let base = format!("{base}\n\n{}", crate::chat::runs_where(&ep));
     let system = format!(
         "{base}\n\nYou're {me}'s assistant, on {me}'s PC. {owner} shares one of their chats with {me}, and {me} is taking part in it. \
          The chat so far (the newest at the end):\n\n{transcript}Answer {me}'s new message below, in the context of that chat. \

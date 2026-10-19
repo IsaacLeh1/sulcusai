@@ -290,6 +290,9 @@ pub fn estimate_tokens(text: &str) -> u32 {
 
 pub(crate) static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     vec![
+        // Keys and passwords first: they can hold runs of digits the others would take.
+        ("secret", crate::practice::yourcode::SECRET_TEXT.clone()),
+        ("address", crate::outgoing::STREET.clone()),
         ("email", Regex::new(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b").unwrap()),
         ("card number", Regex::new(r"\b(?:\d[ -]?){12,18}\d\b").unwrap()),
         ("SSN", Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap()),
@@ -312,37 +315,69 @@ pub struct Redactor {
     /// Placeholder → original.
     map: HashMap<String, String>,
     count: HashMap<&'static str, usize>,
+    /// The user's own names, as whole words.
+    names: Option<Regex>,
 }
 
 impl Redactor {
+    /// Also swaps these names (the user's own: full, first and last).
+    pub fn with_names(names: &[String]) -> Redactor {
+        let mut words: Vec<String> = names.iter().map(|n| n.trim().to_string()).filter(|n| n.chars().count() >= 3).collect();
+        words.sort_by_key(|w| std::cmp::Reverse(w.len()));
+        words.dedup();
+        let names = if words.is_empty() {
+            None
+        } else {
+            Regex::new(&format!(r"(?i)\b(?:{})\b", words.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|"))).ok()
+        };
+        Redactor { names, ..Default::default() }
+    }
+
+    /// For a request from this PC: the user's name from the profile too.
+    pub fn for_state(state: &crate::AppState) -> Redactor {
+        let name = state.cipher().ok().map(|c| crate::db::profile(&state.db.lock().unwrap(), &c).name).unwrap_or_default();
+        let me = crate::outgoing::Me::new(&name, Vec::new(), "");
+        let mut names = vec![name];
+        names.extend(me.first);
+        names.extend(me.last);
+        Redactor::with_names(&names)
+    }
+
     pub fn redact(&mut self, text: &str) -> String {
         let mut out = text.to_string();
+        if let Some(re) = self.names.clone() {
+            out = self.swap(&out, "name", &re);
+        }
         for (label, re) in PATTERNS.iter() {
-            let mut next = String::with_capacity(out.len());
-            let mut last = 0;
-            for m in re.find_iter(&out) {
-                if *label == "card number" && !luhn(m.as_str()) {
-                    continue;
-                }
-                let original = m.as_str().to_string();
-                let placeholder = match self.map.iter().find(|(_, v)| **v == original) {
-                    Some((k, _)) => k.clone(),
-                    None => {
-                        let n = self.count.entry(label).or_default();
-                        *n += 1;
-                        let p = format!("[{label} {n}]");
-                        self.map.insert(p.clone(), original);
-                        p
-                    }
-                };
-                next.push_str(&out[last..m.start()]);
-                next.push_str(&placeholder);
-                last = m.end();
-            }
-            next.push_str(&out[last..]);
-            out = next;
+            out = self.swap(&out, label, re);
         }
         out
+    }
+
+    fn swap(&mut self, text: &str, label: &'static str, re: &Regex) -> String {
+        let mut next = String::with_capacity(text.len());
+        let mut last = 0;
+        for m in re.find_iter(text) {
+            if label == "card number" && !luhn(m.as_str()) {
+                continue;
+            }
+            let original = m.as_str().to_string();
+            let placeholder = match self.map.iter().find(|(_, v)| **v == original) {
+                Some((k, _)) => k.clone(),
+                None => {
+                    let n = self.count.entry(label).or_default();
+                    *n += 1;
+                    let p = format!("[{label} {n}]");
+                    self.map.insert(p.clone(), original);
+                    p
+                }
+            };
+            next.push_str(&text[last..m.start()]);
+            next.push_str(&placeholder);
+            last = m.end();
+        }
+        next.push_str(&text[last..]);
+        next
     }
 
     pub fn restore(&self, text: &str) -> String {
@@ -361,8 +396,13 @@ impl Redactor {
 /// Redacts the text of every message (system, user, tool) in place.
 fn redact_messages(messages: &mut [Value], r: &mut Redactor) {
     for m in messages.iter_mut() {
-        if m["role"] == "assistant" {
-            continue;
+        // Earlier replies and their tool calls hold the real values again
+        // (they were put back for the user), so they're swapped too. The
+        // provider's own blocks (cloud_blocks) were never put back.
+        for c in m.get_mut("tool_calls").and_then(Value::as_array_mut).into_iter().flatten() {
+            if let Some(Value::String(a)) = c.pointer_mut("/function/arguments") {
+                *a = r.redact(a);
+            }
         }
         match &mut m["content"] {
             Value::String(s) => *s = r.redact(s),
@@ -538,7 +578,7 @@ fn to_anthropic(messages: &[Value], tools: Option<&Value>) -> (String, Vec<Value
 
 /// Sends one chat to the provider and streams the reply back.
 pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, mut on_delta: impl FnMut(Delta)) -> Result<Finished, String> {
-    let mut redactor = Redactor::default();
+    let mut redactor = Redactor::for_state(&t.state);
     if t.redact {
         redact_messages(&mut messages, &mut redactor);
     }
@@ -1085,6 +1125,23 @@ mod tests {
         // The same detail gets the same placeholder.
         assert_eq!(r.redact("again jo@example.com"), "again [email 1]");
         assert_eq!(r.restore("I'll write to [email 1]."), "I'll write to jo@example.com.");
+    }
+
+    #[test]
+    fn names_keys_addresses_and_earlier_replies_are_redacted_too() {
+        let mut r = Redactor::with_names(&["Isaac Lehman".into(), "Isaac".into(), "Lehman".into()]);
+        let out = r.redact("Isaac Lehman lives at 1234 North Main Street; his key is sk-abc123DEF456ghi789JKL012mno. Isaacson isn't him.");
+        assert!(!out.contains("Lehman") && !out.contains("Main Street") && !out.contains("sk-abc"), "{out}");
+        assert!(out.contains("[name 1]") && out.contains("[address 1]") && out.contains("[secret 1]"), "{out}");
+        assert!(out.contains("Isaacson"), "only whole words: {out}");
+        assert_eq!(r.restore("Hi [name 1]!"), "Hi Isaac Lehman!");
+        // Earlier replies and tool calls are swapped too, so real values
+        // put back for the user don't go out again.
+        let mut messages = vec![json!({ "role": "assistant", "content": "Sent to jo@example.com.", "tool_calls": [{ "id": "t1", "type": "function", "function": { "name": "email_send", "arguments": "{\"to\":\"jo@example.com\"}" } }] })];
+        let mut r = Redactor::default();
+        redact_messages(&mut messages, &mut r);
+        assert_eq!(messages[0]["content"], "Sent to [email 1].");
+        assert_eq!(messages[0]["tool_calls"][0]["function"]["arguments"], "{\"to\":\"[email 1]\"}");
     }
 
     #[test]

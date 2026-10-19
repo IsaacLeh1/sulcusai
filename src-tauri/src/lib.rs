@@ -1681,7 +1681,7 @@ async fn run_turn_with(
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
-    let base = advanced::get(state).base_prompt(base);
+    let base = format!("{}\n\n{}", advanced::get(state).base_prompt(base), chat::runs_where(&ep));
 
     // Nearly full: compact it (summarize the earlier part and keep going
     // here), or continue in a fresh chat, as set in Advanced.

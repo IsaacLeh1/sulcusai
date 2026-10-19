@@ -21,8 +21,7 @@ const TRIMMED_TOOL_OUTPUT: &str = "[Earlier tool output removed to make room. Ru
 
 pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
-        "You are SulcusAI, a helpful assistant that runs privately on the user's own computer. \
-         Nothing in this conversation leaves their PC. Be clear, accurate and friendly. \
+        "You are SulcusAI, a helpful assistant. Be clear, accurate and friendly. \
          Use Markdown when it helps; write math formulas in LaTeX, $...$ in a sentence and $$...$$ on their own lines. \
          If you don't know something, say so.\n\n\
          When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
@@ -44,6 +43,22 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
         about.push_str(&format!("The user is in {}. Use this for weather and anything local unless they name another place.\n", profile.location.trim()));
     }
     (base, about)
+}
+
+/// Where the model answering runs, so it never tells the user something
+/// stays on their PC when it doesn't: on this PC (only what its online tools
+/// send leaves it), or at the cloud provider the user picked.
+pub fn runs_where(ep: &Endpoint) -> String {
+    match &ep.cloud {
+        Some(t) => format!(
+            "You run on {p}'s servers, an online AI service the user chose for this chat: everything in this conversation is sent to {p} to answer it. \
+             Never tell the user it stays on their PC.",
+            p = t.provider
+        ),
+        None => "You run privately on the user's own computer: this conversation stays on their PC. \
+                 Only what your online tools send (web searches, pages, email) leaves it."
+            .into(),
+    }
 }
 
 /// Context window usage for the meter.
