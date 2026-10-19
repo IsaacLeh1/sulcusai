@@ -1549,6 +1549,17 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.15 (2026-10-19): privacy mode, mail, practice that keeps what's better
+
+**Published and installed 2026-10-19**, built from 6df893a (main = phase7). The tag is on 6df893a, as the release script now checks. Notes are in `C:\dev\tools\notes-0915.md`.
+- Contents: practice skill by skill (the first kept improvement, writing 35 → 39), training that fits the card, privacy mode, the mail work below, the incognito icon.
+- The website redesign was deployed the same day (`npx -y wrangler@4.149.0 deploy` in `website/`). It's live at sulcusai.sseditor.com, with the home page, privacy, terms and 404 checked.
+- The build took 4 min with 6 jobs at below-normal priority. It was started with `cmd /c start /belownormal /wait /b powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release.ps1`; from cmd, without `-ExecutionPolicy Bypass`, Windows refuses to run the script.
+- **Gotcha that cost a build:** the first attempt failed with `ERR_PNPM_PACKAGE_MANAGER_REMOVE_MODULES_DIR`, after pnpm had deleted most of `node_modules`.
+  - Cause: a side session's worktree had linked its `node_modules` to this one with a junction and ran pnpm in it. That wrote `node_modules/.pnpm-workspace-state-v1.json` naming the worktree as the project.
+  - Fix: `pnpm install --frozen-lockfile` here (from the cache, under a second).
+  - In a junctioned worktree, run only `node node_modules/...` commands, never pnpm.
+
 ## Mail: Marked read, subscriptions, a report that sorts everything (2026-10-19, after 0.9.14)
 
 He asked for: "Auto unsubscribe to emails (Shows subscriptions). When I click mark read, it goes into a marked read tab automatically so I can quickly click repeatedly to speed mark read. Automatic calendar add button that works. The reply button within the ai report doesn't work. Within the report, have it label important missed emails that need replies and emails with to-do action items and work / promotional. Have it categorize everything."
