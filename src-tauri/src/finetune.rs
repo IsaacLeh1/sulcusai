@@ -558,15 +558,16 @@ fn bits(quant: &str) -> f64 {
 /// and its optimizer, the activations kept for the backward pass, the
 /// vocabulary's logits. Measured with the trainer's own counters on Qwen3
 /// 4B 2507 (2026-10-19): its Q4_0 copy (2.37 GB) held 7.95 GB of the card
-/// for a whole round; its Q8_0 copy (4.28 GB) held 9.8 GB. At step 8 of the
-/// Q8_0 run the card filled: the trainer's own use rose 1.1 GB, mostly in
-/// shared memory, while the rest of the card's rose 0.8 GB at the same
-/// moment, so another program may have been loading too. 1.8 covers the
-/// 1.1 GB. Both also keep about 0.7 GB in the computer's memory, which
-/// isn't the card's.
+/// through round 1, then 8.35 GB from round 2's second step (after the
+/// held-out check), flat through round 3. Its Q8_0 copy (4.28 GB) held
+/// 9.8 GB. At step 8 of the Q8_0 run the card filled: the trainer's own use
+/// rose 1.1 GB, mostly in shared memory, while the rest of the card's rose
+/// 0.8 GB at the same moment, so another program may have been loading too.
+/// 1.8 covers the 1.1 GB. Both also keep about 0.7 GB in the computer's
+/// memory, which isn't the card's.
 fn per_weight(target: &str) -> f64 {
     if target.eq_ignore_ascii_case("Q4_0") {
-        1.5
+        1.6
     } else {
         1.8
     }
@@ -1066,7 +1067,7 @@ mod tests {
         let q8 = training_need(Q4KM_4B, "Q4_K_M", "Q8_0");
         assert!(((9850 + 1029) * MB..11 * GB + GB / 2).contains(&q8), "Q8_0: 9.8 GB, then 1.1 GB more at step 8; got {q8}");
         let q4 = training_need(Q4KM_4B, "Q4_K_M", "Q4_0");
-        assert!((7954 * MB..8 * GB + GB / 2).contains(&q4), "Q4_0: 7.95 GB throughout; got {q4}");
+        assert!((8345 * MB..8 * GB + GB / 2).contains(&q4), "Q4_0: 7.95 GB, then 8.35 GB from round 2; got {q4}");
         // The same model installed as Q4_0 or Q8_0 needs the same.
         assert!(training_need(Q4_0_4B, "Q4_0", "Q4_0").abs_diff(q4) < 200 * MB);
         assert!(training_need(Q8_0_4B, "Q8_0", "Q8_0").abs_diff(q8) < 300 * MB);
