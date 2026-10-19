@@ -55,6 +55,8 @@ const ATTEMPTS: usize = 4;
 /// answer first, then two with a little randomness.
 const TEACHER_TRIES: [f64; 3] = [0.0, 0.7, 0.7];
 /// The share of tasks it gets right first time that it still learns from.
+/// The rest are kept aside, to replay for skills short of their share
+/// (`top_up`).
 const EASY_SHARE: f64 = 0.3;
 /// Too few right attempts to learn anything from.
 const MIN_EXAMPLES: usize = 10;
@@ -292,15 +294,17 @@ struct Missed {
 }
 
 struct Practised {
-    /// Training lines from its right attempts, with their tasks' skills.
+    /// Training lines from its right attempts, by skill.
     lines: Vec<(Skill, String)>,
+    /// First-try right answers it didn't pick to learn from, to replay.
+    spare: Vec<(Skill, String)>,
     /// Tasks it got right in all.
     solved: usize,
     missed: Vec<Missed>,
 }
 
 async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Task], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<Practised, String> {
-    let mut done = Practised { lines: Vec::new(), solved: 0, missed: Vec::new() };
+    let mut done = Practised { lines: Vec::new(), spare: Vec::new(), solved: 0, missed: Vec::new() };
     for (i, task) in tasks.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(crate::download::CANCELLED.into());
@@ -312,17 +316,20 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
         if room >= 24 {
             let right = |a: &Attempt| got_right(task, a);
             let mut solved = false;
-            let mut kept = None;
+            let (mut kept, mut spare) = (None, None);
             for attempt in 0..ATTEMPTS {
                 let a = model.attempt(task, &prompt, room, 0.8, rng.next()).await?;
                 if right(&a) {
                     solved = true;
                     // Right at once: it knows this already, and learning it
                     // again mostly narrows what it says. A few are kept so
-                    // it doesn't forget; the ones it got right only after
-                    // tries are what it learns from.
+                    // it doesn't forget, and the rest set aside to replay;
+                    // the ones it got right only after tries are what it
+                    // learns from.
                     if attempt > 0 || rng.chance(EASY_SHARE) {
                         kept = Some(a.learnt());
+                    } else {
+                        spare = Some(a.learnt());
                     }
                     break;
                 }
@@ -345,6 +352,9 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
             }
             if let Some(line) = kept.and_then(|text| example(&model.bos, &prompt, &text)) {
                 done.lines.push((task.skill, line));
+            }
+            if let Some(line) = spare.and_then(|text| example(&model.bos, &prompt, &text)) {
+                done.spare.push((task.skill, line));
             }
         }
         let kept = done.lines.len() as u32;
@@ -423,7 +433,7 @@ async fn in_students_words(student: &Model, tasks: &[Task], missed: &[Missed], a
         if !got_right(task, &Attempt { text: text.clone(), cut: false, all: None }) || student.tokens(&text).await? > m.room {
             continue;
         }
-        lines.extend(example(&student.bos, &m.prompt, &text).map(|l| (task.skill, l)));
+        lines.extend(example(&student.bos, &m.prompt, &text).map(|line| (task.skill, line)));
     }
     Ok(lines)
 }
@@ -462,12 +472,38 @@ fn make(skill: Skill, level: u32, rng: &mut Rng, code: Option<&Arc<yourcode::Ind
     }
 }
 
+/// A skill's weight in practice: coding (the emphasis) counts twice.
+fn weight(skill: Skill) -> usize {
+    if skill == Skill::Code {
+        2
+    } else {
+        1
+    }
+}
+
 /// How many practice tasks a skill gets: an even share, twice that for
-/// coding (the emphasis), 20 to 60.
+/// coding, 20 to 60.
 fn share(skills: &[Skill], skill: Skill) -> usize {
-    let weight = |s: &Skill| if *s == Skill::Code { 2 } else { 1 };
-    let total: usize = skills.iter().map(weight).sum();
-    (PRACTICE_TASKS * weight(&skill) / total.max(1)).clamp(20, 60)
+    let total: usize = skills.iter().map(|s| weight(*s)).sum();
+    (PRACTICE_TASKS * weight(skill) / total.max(1)).clamp(20, 60)
+}
+
+/// How many of each skill's spare right answers (first-try ones it didn't
+/// pick to learn from) to add back, so every skill has at least its share
+/// of the lines learnt from (by `weight`). Retried and taught answers bunch
+/// up in the skills it struggles with; replaying what it already gets right
+/// in the others keeps those from being pulled away (a teacher run went
+/// coding 8 → 11 and writing 8 → 10, but research 10 → 6 and tools 9 → 7).
+fn top_up(skills: &[Skill], lines: &[(Skill, String)], spare: &[(Skill, String)]) -> Vec<(Skill, usize)> {
+    let total: usize = skills.iter().map(|s| weight(*s)).sum();
+    let count = |xs: &[(Skill, String)], s: Skill| xs.iter().filter(|(k, _)| *k == s).count();
+    skills
+        .iter()
+        .map(|s| {
+            let fair = (lines.len() * weight(*s)).div_ceil(total.max(1));
+            (*s, fair.saturating_sub(count(lines, *s)).min(count(spare, *s)))
+        })
+        .collect()
 }
 
 /// How much practice each level of a skill gets, from the test before: most
@@ -642,9 +678,6 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         let theirs = theirs?;
         state.log("model", &format!("{} got {right} of the {} practice tasks {} missed right; it learns from {} of them", t.spec.name, practised.missed.len(), spec.name, theirs.len()));
         lines.extend(theirs);
-        // Mixed in with its own, so neither comes all at the end, where the
-        // learning rate has tapered off.
-        rng.shuffle(&mut lines);
     }
     if lines.len() < MIN_EXAMPLES {
         return Err(match r.teacher {
@@ -652,6 +685,23 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
             None => "It got too few practice tasks right to learn from. Try other skills, or a bigger model.".into(),
         });
     }
+    // Skills short of their share replay some of what it already got right.
+    let mut spare = practised.spare;
+    rng.shuffle(&mut spare);
+    let mut replayed = Vec::new();
+    for (skill, n) in top_up(r.skills, &lines, &spare) {
+        let picked: Vec<(Skill, String)> = spare.iter().filter(|(s, _)| *s == skill).take(n).cloned().collect();
+        if !picked.is_empty() {
+            replayed.push(format!("{} {}", skill.label(), picked.len()));
+        }
+        lines.extend(picked);
+    }
+    if !replayed.is_empty() {
+        state.log("model", &format!("It also replays some of its own first-try right answers, so each skill has its share: {}", replayed.join(", ")));
+    }
+    // Mixed together, so no kind comes all at the end, where the learning
+    // rate has tapered off.
+    rng.shuffle(&mut lines);
 
     // Learning: each skill on its own first, so a skill that gets worse
     // can't hide behind one that gets better.
@@ -662,19 +712,19 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     }
     let parts = firsts.len() + usize::from(firsts.len() >= 2);
     let (from, to) = spans[3];
-    let share = |i: usize| (from + (to - from) * i as f64 / parts as f64, from + (to - from) * (i + 1) as f64 / parts as f64);
+    let span_of = |i: usize| (from + (to - from) * i as f64 / parts as f64, from + (to - from) * (i + 1) as f64 / parts as f64);
     let ready = finetune::prepare(app, state, r.installed, &dir, from, r.cancel).await?;
     let learning = Learning { r, ready: &ready, think, test: &test_tasks, before: &before, parts: parts as u32 };
     let mut tried = Vec::new();
     for (i, (skills, mine)) in firsts.into_iter().enumerate() {
-        tried.push(learning.learn(skills, &mine, i, share(i)).await?);
+        tried.push(learning.learn(skills, &mine, i, span_of(i)).await?);
     }
     // Then together: the skills that went up on their own.
     let up: Vec<Skill> = tried.iter().filter(|t| went_up(&t.tally, &t.skills)).flat_map(|t| t.skills.clone()).collect();
     if tried.len() >= 2 && up.len() >= 2 {
         let mut together: Vec<String> = lines.iter().filter(|(k, _)| up.contains(k)).map(|(_, l)| l.clone()).collect();
         rng.shuffle(&mut together);
-        tried.push(learning.learn(up, &together, parts - 1, share(parts - 1)).await?);
+        tried.push(learning.learn(up, &together, parts - 1, span_of(parts - 1)).await?);
     }
     drop(ready);
     update(app, |j| {
@@ -1181,6 +1231,22 @@ mod tests {
         assert_eq!(firsts.len(), 1);
         assert_eq!(firsts[0].0, [Skill::Code, Skill::Writing, Skill::Tools]);
         assert_eq!(firsts[0].1.len(), 12);
+
+    /// Skills short of their share of the lines replay spare first-try
+    /// answers up to it, never more than they have, and never take any away.
+    #[test]
+    fn skills_short_of_their_share_replay_what_they_got_right() {
+        let four = [Skill::Code, Skill::Writing, Skill::Research, Skill::Tools];
+        let of = |counts: &[(Skill, usize)]| counts.iter().flat_map(|(s, n)| std::iter::repeat_n((*s, String::new()), *n)).collect::<Vec<_>>();
+        // As in a teacher run: most lines from coding and writing.
+        let lines = of(&[(Skill::Code, 25), (Skill::Writing, 15), (Skill::Research, 7), (Skill::Tools, 8)]);
+        let spare = of(&[(Skill::Code, 10), (Skill::Writing, 10), (Skill::Research, 2), (Skill::Tools, 20)]);
+        // 55 lines in shares of 2:1:1:1 → 22, 11, 11, 11.
+        assert_eq!(top_up(&four, &lines, &spare), vec![(Skill::Code, 0), (Skill::Writing, 0), (Skill::Research, 2), (Skill::Tools, 3)]);
+        // Already balanced, or nothing spare: nothing added.
+        let even = of(&[(Skill::Code, 10), (Skill::Writing, 5), (Skill::Research, 5), (Skill::Tools, 5)]);
+        assert!(top_up(&four, &even, &spare).iter().all(|(_, n)| *n == 0));
+        assert!(top_up(&four, &lines, &[]).iter().all(|(_, n)| *n == 0));
     }
 
     #[test]
