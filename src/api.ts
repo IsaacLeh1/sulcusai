@@ -98,7 +98,7 @@ export interface TaughtAdapter {
   created: number;
   final_loss: number | null;
   /** Taught by practice: test tasks right before and after, in all and skill by skill. */
-  scores: { before: number; after: number; out_of: number; skills?: SkillScore[] } | null;
+  scores: { before: number; after: number; out_of: number; skills?: SkillScore[]; second?: SecondTest | null } | null;
   /** Practice with a teacher: the model that answered the tasks it missed. */
   teacher?: string | null;
 }
@@ -128,6 +128,15 @@ export interface FinetuneJob {
   parts: number;
   /** Practice, at the end: the test skill by skill, for what was kept (or the best try). */
   skills: SkillScore[];
+  /** Practice: the second test, of new tasks, of the one it would keep. */
+  second: SecondTest | null;
+}
+
+/** Practice's second test, of new tasks, that confirms what's kept: right before and after. */
+export interface SecondTest {
+  before: number;
+  after: number;
+  out_of: number;
 }
 
 /** One skill's test tasks right before and after practice; `learnt`: the adapter learnt from this skill. */

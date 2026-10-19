@@ -130,6 +130,17 @@ pub struct Scores {
     /// Skill by skill (practice kept before this have none).
     #[serde(default)]
     pub skills: Vec<SkillScore>,
+    /// The second test, of new tasks, that confirmed it.
+    #[serde(default)]
+    pub second: Option<Second>,
+}
+
+/// Practice's second test, of new tasks: before and after, in all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Second {
+    pub before: u32,
+    pub after: u32,
+    pub out_of: u32,
 }
 
 /// How one skill's test tasks went, before and after.
@@ -212,6 +223,8 @@ pub struct Job {
     /// Practice, at the end: the test skill by skill, for what was kept (or
     /// the best try, when nothing was).
     pub skills: Vec<SkillScore>,
+    /// Practice: the second test, of new tasks, of the one it would keep.
+    pub second: Option<Second>,
 }
 
 impl Job {
@@ -237,6 +250,7 @@ impl Job {
             part_no: 0,
             parts: 0,
             skills: Vec::new(),
+            second: None,
         }
     }
 }

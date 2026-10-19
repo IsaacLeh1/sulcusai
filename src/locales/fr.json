@@ -3088,5 +3088,8 @@
  "learning {skills} ({n} of {total})": "apprentissage : {skills} ({n} sur {total})",
  "Skill by skill: {scores}.": "Par compétence : {scores}.",
  "learnt {scores}": "appris : {scores}",
- "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "Chaque compétence est d'abord apprise seule et testée sur toutes ; celles qui se sont améliorées sont ensuite apprises ensemble. Ce qui est conservé doit faire mieux sur ce qu'il a appris et sur l'ensemble du test, sans qu'aucune compétence ne perde plus de 2 tâches de test."
+ "it did better on the test ({before} → {after} of {total} right), but not on a second test of new tasks ({before2} → {after2} of {total2}), so nothing was kept.": "il a fait mieux au test ({before} → {after} réussies sur {total}), mais pas à un second test de nouvelles tâches ({before2} → {after2} sur {total2}), donc rien n'a été conservé.",
+ "On a second test of new tasks: {before} → {after} of {total}.": "À un second test de nouvelles tâches : {before} → {after} sur {total}.",
+ "second test {before} → {after} of {total}": "second test {before} → {after} sur {total}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse, and then do better on a second test of new tasks too.": "Chaque compétence est d'abord apprise seule et testée sur toutes ; celles qui se sont améliorées sont ensuite apprises ensemble. Ce qui est conservé doit faire mieux sur ce qu'il a appris et sur l'ensemble du test, sans qu'aucune compétence ne perde plus de 2 tâches de test, puis faire mieux aussi à un second test de nouvelles tâches."
 }

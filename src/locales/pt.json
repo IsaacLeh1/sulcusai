@@ -3088,5 +3088,8 @@
  "learning {skills} ({n} of {total})": "aprendendo {skills} ({n} de {total})",
  "Skill by skill: {scores}.": "Por habilidade: {scores}.",
  "learnt {scores}": "aprendeu {scores}",
- "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "Cada habilidade é aprendida primeiro sozinha e testada em todas; as que melhoraram são depois aprendidas juntas. O que é mantido precisa ir melhor no que aprendeu e no teste inteiro, sem que nenhuma habilidade piore em mais de 2 tarefas de teste."
+ "it did better on the test ({before} → {after} of {total} right), but not on a second test of new tasks ({before2} → {after2} of {total2}), so nothing was kept.": "ele foi melhor no teste ({before} → {after} de {total} certas), mas não num segundo teste com tarefas novas ({before2} → {after2} de {total2}), então nada foi mantido.",
+ "On a second test of new tasks: {before} → {after} of {total}.": "Num segundo teste com tarefas novas: {before} → {after} de {total}.",
+ "second test {before} → {after} of {total}": "segundo teste {before} → {after} de {total}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse, and then do better on a second test of new tasks too.": "Cada habilidade é aprendida primeiro sozinha e testada em todas; as que melhoraram são depois aprendidas juntas. O que é mantido precisa ir melhor no que aprendeu e no teste inteiro, sem que nenhuma habilidade piore em mais de 2 tarefas de teste, e depois ir melhor também num segundo teste com tarefas novas."
 }

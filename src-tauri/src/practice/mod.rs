@@ -40,7 +40,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::catalog::ModelSpec;
 use crate::engine::{self, Endpoint, LaunchSpec};
-use crate::finetune::{self, Adapter, Job, Scores, Setup};
+use crate::finetune::{self, Adapter, Job, Scores, Second, Setup};
 use crate::{db, AppState, AppStateRef};
 use tasks::{Reply, Rng, Skill, Task};
 
@@ -65,6 +65,8 @@ const MIN_SKILL: usize = 5;
 /// The test is made from this seed, so every practice run of a model is
 /// measured on the same tasks.
 const TEST_SEED: u64 = 0x5EED_7E57;
+/// The second test, which confirms the adapter picked on the first.
+const SECOND_SEED: u64 = 0xC0DE_5EC0;
 /// It must get at least this many more test tasks right to be kept: the
 /// test is small, and replies vary a little from run to run.
 const MARGIN: u32 = 2;
@@ -718,6 +720,8 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     if !replayed.is_empty() {
         state.log("model", &format!("It also replays some of its own first-try right answers, so each skill has its share: {}", replayed.join(", ")));
     }
+    // What's left is kept for the anchors.
+    spare.retain(|x| !lines.contains(x));
     // Mixed together, so no kind comes all at the end, where the learning
     // rate has tapered off.
     rng.shuffle(&mut lines);
@@ -731,19 +735,29 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     }
     let parts = firsts.len() + usize::from(firsts.len() >= 2);
     let (from, to) = spans[3];
-    let span_of = |i: usize| (from + (to - from) * i as f64 / parts as f64, from + (to - from) * (i + 1) as f64 / parts as f64);
+    // The tries, then the second test of the one to keep.
+    let check_at = to - (to - from) * 0.08;
+    let span_of = |i: usize| (from + (check_at - from) * i as f64 / parts as f64, from + (check_at - from) * (i + 1) as f64 / parts as f64);
     let ready = finetune::prepare(app, state, r.installed, &dir, from, r.cancel).await?;
     let learning = Learning { r, ready: &ready, think, test: &test_tasks, before: &before, parts: parts as u32 };
+    // A try's own lines, with anchors from the other skills, mixed.
+    let mut with_anchors = |skills: &[Skill], own: Vec<String>| {
+        let n = own.len();
+        let mut set = own;
+        set.extend(anchors(r.skills, skills, n, &spare));
+        rng.shuffle(&mut set);
+        (n, set)
+    };
     let mut tried = Vec::new();
     for (i, (skills, mine)) in firsts.into_iter().enumerate() {
-        tried.push(learning.learn(skills, &mine, i, span_of(i)).await?);
+        let (own, set) = with_anchors(&skills, mine);
+        tried.push(learning.learn(skills, own, &set, i, span_of(i)).await?);
     }
     // Then together: the skills that went up on their own.
     let up: Vec<Skill> = tried.iter().filter(|t| went_up(&t.tally, &t.skills)).flat_map(|t| t.skills.clone()).collect();
     if tried.len() >= 2 && up.len() >= 2 {
-        let mut together: Vec<String> = lines.iter().filter(|(k, _)| up.contains(k)).map(|(_, l)| l.clone()).collect();
-        rng.shuffle(&mut together);
-        tried.push(learning.learn(up, &together, parts - 1, span_of(parts - 1)).await?);
+        let (own, set) = with_anchors(&up, lines.iter().filter(|(k, _)| up.contains(k)).map(|(_, l)| l.clone()).collect());
+        tried.push(learning.learn(up, own, &set, parts - 1, span_of(parts - 1)).await?);
     }
     drop(ready);
     update(app, |j| {
@@ -768,6 +782,42 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         state.log("model", &format!("None of the {} adapters practice tried was better on the test, so nothing is kept", tried.len()));
         return Ok(None);
     };
+
+    // The best of several on one small test may just have been lucky, so
+    // it's kept only if it's better on a second test of new tasks too.
+    let trained: Vec<&str> = lines.iter().chain(&spare).map(|(_, l)| l.as_str()).collect();
+    let second = tokio::task::block_in_place(|| second_test(r.skills, r.code.as_ref(), &test_tasks, &trained));
+    let mid = check_at + (to - check_at) / 2.0;
+    update(app, |j| {
+        j.status = "checking".into();
+        j.part = kept.skills.clone();
+    });
+    let second_before = take_test(r, think, None, &second, (check_at, mid)).await?;
+    let second_after = take_test(r, think, Some(&kept.dir.join("adapter.gguf")), &second, (mid, to)).await?;
+    let second_tally = tallies(&second, &second_before, &second_after);
+    let confirmed = better(&second_tally, &kept.skills);
+    let scores = |t: &[Tally]| Second { before: t.iter().map(|x| x.before).sum(), after: t.iter().map(|x| x.after).sum(), out_of: t.iter().map(|x| x.out_of).sum() };
+    let second = scores(&second_tally);
+    state.log(
+        "model",
+        &format!(
+            "Second test (new tasks) for {} with the adapter that learnt {}: {} → {} of {} right ({}); {}",
+            spec.name,
+            labels(&kept.skills),
+            second.before,
+            second.after,
+            second.out_of,
+            by_skill(&second_tally, true),
+            if confirmed { "better here too" } else { "not better here, so nothing is kept" }
+        ),
+    );
+    update(app, |j| {
+        j.part.clear();
+        j.second = Some(second.clone());
+    });
+    if !confirmed {
+        return Ok(None);
+    }
     // Kept as the run's adapter; the other tries go.
     let adapter = dir.join("adapter.gguf");
     std::fs::rename(kept.dir.join("adapter.gguf"), &adapter).map_err(|e| e.to_string())?;
@@ -786,9 +836,63 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         epochs: r.epochs,
         created: db::now_ms(),
         final_loss: kept.loss,
-        scores: Some(Scores { before: before_score, after: kept.score(), out_of, skills: kept.scores() }),
+        scores: Some(Scores { before: before_score, after: kept.score(), out_of, skills: kept.scores(), second: Some(second) }),
         teacher: r.teacher.as_ref().map(|t| t.spec.name.clone()),
     }))
+}
+
+/// Takes a test with the model loaded, and `lora` on top, then stops it.
+async fn take_test(r: &Run<'_>, think: bool, lora: Option<&Path>, tasks: &[Task], span: (f64, f64)) -> Result<Vec<bool>, String> {
+    let mut engine = r.state.engine.lock().await;
+    let model = Model::new(load(r.state, &mut engine, r.installed, r.spec, lora).await?, think).await;
+    let right = test(r.app, r.state, &model, tasks, r.cancel, span).await;
+    engine.stop().await;
+    right
+}
+
+/// A second test like the first (the same skills and levels) of new tasks:
+/// none is in the first test, none was learnt from, and none repeats. So
+/// the adapter picked on the first test is checked on tasks it wasn't
+/// picked on. A level with nothing new left is left out (coding tasks come
+/// from a fixed set of problems).
+fn second_test(skills: &[Skill], code: Option<&Arc<yourcode::Index>>, first: &[Task], lines: &[&str]) -> Vec<Task> {
+    // A training line has its task's request in it, as JSON.
+    let learnt = |t: &Task| {
+        let quoted = json!(t.user).to_string();
+        lines.iter().any(|l| l.contains(&quoted[1..quoted.len() - 1]))
+    };
+    let mut rng = Rng::new(SECOND_SEED);
+    let mut tasks: Vec<Task> = Vec::new();
+    for skill in skills {
+        for level in TEST_LEVELS {
+            for _ in 0..10 {
+                let t = make(*skill, level, &mut rng, code);
+                if !first.iter().chain(&tasks).any(|x| x.user == t.user) && !learnt(&t) {
+                    tasks.push(t);
+                    break;
+                }
+            }
+        }
+    }
+    tasks
+}
+
+/// Anchors for a try that learns `learnt` from `own` lines: some of the
+/// model's own first-try right answers in the other chosen skills, so that
+/// learning one skill doesn't pull the others away with nothing to hold
+/// them (a teacher run that learnt every skill in one went coding +3 and
+/// writing +2, but research −4 and tools −2). About half as many as its
+/// own lines, shared out by `weight`, never more than are spare.
+fn anchors(skills: &[Skill], learnt: &[Skill], own: usize, spare: &[(Skill, String)]) -> Vec<String> {
+    let others: Vec<Skill> = skills.iter().copied().filter(|s| !learnt.contains(s)).collect();
+    let total: usize = others.iter().map(|s| weight(*s)).sum();
+    others
+        .iter()
+        .flat_map(|s| {
+            let n = (own * weight(*s)).div_ceil(2 * total.max(1));
+            spare.iter().filter(move |(k, _)| k == s).take(n).map(|(_, l)| l.clone())
+        })
+        .collect()
 }
 
 /// "coding, writing"
@@ -900,9 +1004,10 @@ struct Learning<'a> {
 }
 
 impl Learning<'_> {
-    /// Learns an adapter from `lines` (the right answers of `skills`), then
-    /// takes the test with it. `i`: which try this is.
-    async fn learn(&self, skills: Vec<Skill>, lines: &[String], i: usize, span: (f64, f64)) -> Result<Tried, String> {
+    /// Learns an adapter from `lines` (`own` of them right answers of
+    /// `skills`, the rest anchors from the other skills, mixed), then takes
+    /// the test with it. `i`: which try this is.
+    async fn learn(&self, skills: Vec<Skill>, own: usize, lines: &[String], i: usize, span: (f64, f64)) -> Result<Tried, String> {
         let (r, app, state) = (self.r, self.r.app, self.r.state);
         let key = skills.iter().map(|s| format!("{s:?}").to_lowercase()).collect::<Vec<_>>().join("-");
         let dir = state.paths.data.join("adapters").join(r.id).join(&key);
@@ -926,21 +1031,17 @@ impl Learning<'_> {
         std::fs::remove_dir_all(dir.join("checkpoints")).ok();
 
         update(app, |j| j.status = "checking".into());
-        let mut engine = state.engine.lock().await;
-        let model = Model::new(load(state, &mut engine, r.installed, r.spec, Some(&dir.join("adapter.gguf"))).await?, self.think).await;
-        let after = test(app, state, &model, self.test, r.cancel, (mid, span.1)).await;
-        engine.stop().await;
-        drop(engine);
-        let tally = tallies(self.test, self.before, &after?);
+        let after = take_test(r, self.think, Some(&dir.join("adapter.gguf")), self.test, (mid, span.1)).await?;
+        let tally = tallies(self.test, self.before, &after);
         let tried = Tried { skills, dir, examples: lines.len(), loss, tally };
         let before: u32 = tried.tally.iter().map(|t| t.before).sum();
         state.log(
             "model",
             &format!(
-                "Practice test for {} after learning {} ({} examples): {before} → {} of {} right ({}){}",
+                "Practice test for {} after learning {} ({own} examples, {} anchors): {before} → {} of {} right ({}){}",
                 r.spec.name,
                 labels(&tried.skills),
-                lines.len(),
+                lines.len() - own,
                 tried.score(),
                 self.test.len(),
                 by_skill(&tried.tally, true),
@@ -1250,6 +1351,42 @@ mod tests {
         assert_eq!(firsts.len(), 1);
         assert_eq!(firsts[0].0, [Skill::Code, Skill::Writing, Skill::Tools]);
         assert_eq!(firsts[0].1.len(), 12);
+    }
+
+    /// A try also learns some of the model's own first-try answers in the
+    /// other skills: about half as many as its own lines, by weight, never
+    /// more than are spare, none of the skills it learns.
+    #[test]
+    fn a_try_holds_the_other_skills_with_anchors() {
+        let four = [Skill::Code, Skill::Writing, Skill::Research, Skill::Tools];
+        let spare: Vec<(Skill, String)> = [(Skill::Code, 10), (Skill::Writing, 10), (Skill::Research, 1), (Skill::Tools, 10)].iter().flat_map(|(s, n)| (0..*n).map(move |i| (*s, format!("{s:?} {i}")))).collect();
+        let count = |a: &[String]| four.map(|s| a.iter().filter(|l| l.starts_with(&format!("{s:?} "))).count());
+        // Writing from 12 lines: 6 anchors, coding twice the others' share,
+        // research has only 1 spare.
+        assert_eq!(count(&anchors(&four, &[Skill::Writing], 12, &spare)), [3, 0, 1, 2]);
+        assert_eq!(count(&anchors(&four, &[Skill::Code, Skill::Writing], 20, &spare)), [0, 0, 1, 5]);
+        assert!(anchors(&four, &four, 20, &spare).is_empty(), "nothing else to hold");
+        assert!(anchors(&four, &[Skill::Code], 20, &[]).is_empty(), "nothing spare");
+    }
+
+    /// The second test has new tasks at the same levels: none from the
+    /// first test, none learnt from, none twice.
+    #[test]
+    fn the_second_test_is_new_tasks() {
+        let skills = [Skill::Code, Skill::Writing, Skill::Research];
+        let mut rng = Rng::new(TEST_SEED);
+        let first: Vec<Task> = skills.iter().flat_map(|s| TEST_LEVELS.map(|level| (*s, level))).map(|(s, level)| tasks::make(s, level, &mut rng)).collect();
+        let second = second_test(&skills, None, &first, &[]);
+        assert_eq!(second.len(), first.len());
+        let levels: Vec<(Skill, u32)> = second.iter().map(|t| (t.skill, t.level)).collect();
+        assert_eq!(levels, first.iter().map(|t| (t.skill, t.level)).collect::<Vec<_>>());
+        assert!(second.iter().all(|t| !first.iter().any(|f| f.user == t.user)), "nothing from the first test");
+        assert!(second.iter().enumerate().all(|(i, t)| !second[..i].iter().any(|x| x.user == t.user)), "nothing twice");
+        // A task learnt from is left out: its line has its request in it, as JSON.
+        let line = json!({ "messages": [{ "role": "user", "content": format!("<|im_start|>user\n{}<|im_end|>\n", second[13].user) }] }).to_string();
+        let without = second_test(&skills, None, &first, &[&line]);
+        assert!(!without.iter().any(|t| t.user == second[13].user));
+        assert_eq!(without.len(), first.len());
     }
 
     /// Skills short of their share of the lines replay spare first-try

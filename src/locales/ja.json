@@ -3088,5 +3088,8 @@
  "learning {skills} ({n} of {total})": "{skills}を学習中（{total} 件中 {n} 件目）",
  "Skill by skill: {scores}.": "スキル別：{scores}。",
  "learnt {scores}": "学習：{scores}",
- "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "各スキルはまず単独で学習し、すべてのスキルでテストします。改善したスキルはその後まとめて学習します。保存されるのは、学んだスキルとテスト全体の両方で成績が上がり、どのスキルもテスト課題 2 問を超えて悪化しなかった場合だけです。"
+ "it did better on the test ({before} → {after} of {total} right), but not on a second test of new tasks ({before2} → {after2} of {total2}), so nothing was kept.": "テストでは改善しました（{total} 問中 {before} → {after} 問正解）が、新しい課題による 2 回目のテストでは改善しませんでした（{total2} 問中 {before2} → {after2} 問）。何も保存していません。",
+ "On a second test of new tasks: {before} → {after} of {total}.": "新しい課題による 2 回目のテスト：{total} 問中 {before} → {after} 問。",
+ "second test {before} → {after} of {total}": "2 回目のテスト {total} 問中 {before} → {after} 問",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse, and then do better on a second test of new tasks too.": "各スキルはまず単独で学習し、すべてのスキルでテストします。改善したスキルはその後まとめて学習します。保存されるのは、学んだスキルとテスト全体の両方で成績が上がり、どのスキルもテスト課題 2 問を超えて悪化せず、さらに新しい課題による 2 回目のテストでも成績が上がった場合だけです。"
 }
