@@ -11,6 +11,7 @@
 //!   bridges such as Proton Mail Bridge and for tests.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -175,6 +176,17 @@ pub struct MailData {
     pub attachments: Vec<String>,
     /// Too big to copy; only the headers are here.
     pub partial: bool,
+    /// List-Unsubscribe: where to unsubscribe (mailto: and https: only).
+    pub unsubscribe: Vec<String>,
+    /// List-Unsubscribe-Post says "List-Unsubscribe=One-Click" (RFC 8058).
+    pub one_click: bool,
+    /// List-Id's identifier, lowercase ("news.example.com").
+    pub list_id: String,
+    /// List-Id's name ("Example News").
+    pub list_name: String,
+    /// The list headers above were read (new mail; older mail once they're
+    /// fetched from the server).
+    pub list_checked: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -184,8 +196,86 @@ pub struct MailItem {
     pub folder: String,
     pub date: i64,
     pub seen: bool,
+    /// When the user marked it read with the button (listed under Marked
+    /// read); cleared when it's unread again.
+    pub marked_at: Option<i64>,
     #[serde(flatten)]
     pub data: MailData,
+}
+
+/// A mailing list's headers: where to unsubscribe and which list it is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ListHeaders {
+    pub unsubscribe: Vec<String>,
+    pub one_click: bool,
+    pub list_id: String,
+    pub list_name: String,
+}
+
+impl ListHeaders {
+    fn apply(self, d: &mut MailData) {
+        d.unsubscribe = self.unsubscribe;
+        d.one_click = self.one_click;
+        d.list_id = self.list_id;
+        d.list_name = self.list_name;
+        d.list_checked = true;
+    }
+}
+
+/// The targets of a List-Unsubscribe header (RFC 2369: `<...>` items,
+/// comma-separated), keeping mailto: and https: ones. Folding whitespace
+/// inside the brackets is dropped.
+pub fn parse_list_unsubscribe(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = raw;
+    while let Some(start) = rest.find('<') {
+        let Some(len) = rest[start + 1..].find('>') else { break };
+        let target: String = rest[start + 1..start + 1 + len].chars().filter(|c| !c.is_whitespace()).collect();
+        rest = &rest[start + 1 + len + 1..];
+        let lower = target.to_ascii_lowercase();
+        let usable = (lower.starts_with("mailto:") && target.len() > 7) || (lower.starts_with("https://") && target.len() > 8);
+        if usable && target.len() <= 2000 && !out.contains(&target) && out.len() < 4 {
+            out.push(target);
+        }
+    }
+    out
+}
+
+/// List-Unsubscribe-Post asks for a one-click POST (RFC 8058).
+pub fn is_one_click(raw: &str) -> bool {
+    raw.split_whitespace().collect::<String>().eq_ignore_ascii_case("List-Unsubscribe=One-Click")
+}
+
+/// List-Id's identifier and name: `"Example News" <news.example.com>`.
+pub fn parse_list_id(raw: &str) -> (String, String) {
+    let raw = raw.trim();
+    match (raw.rfind('<'), raw.rfind('>')) {
+        (Some(a), Some(b)) if b > a => (raw[a + 1..b].trim().to_lowercase(), raw[..a].trim().trim_matches('"').trim().to_string()),
+        _ if !raw.is_empty() && !raw.contains(char::is_whitespace) => (raw.to_lowercase(), String::new()),
+        _ => (String::new(), String::new()),
+    }
+}
+
+fn list_headers(m: &mail_parser::Message<'_>) -> ListHeaders {
+    use mail_parser::HeaderName;
+    let (list_id, mut list_name) = parse_list_id(m.header_raw(HeaderName::ListId).unwrap_or(""));
+    // The parsed name, with encoded words ("=?UTF-8?...?=") decoded.
+    if let Some(name) = m.header(HeaderName::ListId).and_then(|v| v.as_address()).and_then(|a| a.first()).and_then(|a| a.name()) {
+        if !name.trim().is_empty() {
+            list_name = name.trim().to_string();
+        }
+    }
+    ListHeaders {
+        unsubscribe: parse_list_unsubscribe(m.header_raw(HeaderName::ListUnsubscribe).unwrap_or("")),
+        one_click: is_one_click(m.header_raw(HeaderName::ListUnsubscribePost).unwrap_or("")),
+        list_id,
+        list_name,
+    }
+}
+
+/// The list headers from a header-only fetch (BODY.PEEK[HEADER.FIELDS (…)]).
+pub fn list_headers_raw(raw: &[u8]) -> ListHeaders {
+    mail_parser::MessageParser::default().parse(raw).map(|m| list_headers(&m)).unwrap_or_default()
 }
 
 /// Text without the invisible characters marketing mail pads its preview
@@ -214,7 +304,7 @@ pub fn parse(raw: &[u8], partial: bool) -> (MailData, Option<i64>) {
     let list = |v: &mail_parser::HeaderValue<'_>| -> Vec<String> {
         v.as_text_list().map(|l| l.into_iter().map(|s| s.to_string()).collect()).unwrap_or_default()
     };
-    let data = MailData {
+    let mut data = MailData {
         from: first.and_then(|a| a.address()).unwrap_or("").to_string(),
         from_name: first.and_then(|a| a.name()).unwrap_or("").to_string(),
         to: addrs(m.to()),
@@ -227,7 +317,9 @@ pub fn parse(raw: &[u8], partial: bool) -> (MailData, Option<i64>) {
         references: list(m.references()),
         attachments: m.attachments().filter_map(|a| a.attachment_name().map(str::to_string)).collect(),
         partial,
+        ..Default::default()
     };
+    list_headers(&m).apply(&mut data);
     (data, m.date().map(|d| d.to_timestamp() * 1000))
 }
 
@@ -240,11 +332,12 @@ fn item_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Mail
             date: r.get(3)?,
             seen: r.get::<_, i64>(4)? != 0,
             data: c.decrypt(&r.get::<_, String>(5)?).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
+            marked_at: r.get(6)?,
         })
     }
 }
 
-const ITEM_COLS: &str = "id, account_id, folder, date, seen, data";
+const ITEM_COLS: &str = "id, account_id, folder, date, seen, data, marked_at";
 
 pub fn list(conn: &Connection, c: &Cipher, query: &str, limit: usize) -> Vec<MailItem> {
     let sql = format!("SELECT {ITEM_COLS} FROM mail_messages ORDER BY date DESC");
@@ -316,6 +409,18 @@ fn search_terms(query: &str) -> Vec<Term> {
 pub fn get(conn: &Connection, c: &Cipher, id: &str) -> Option<MailItem> {
     let sql = format!("SELECT {ITEM_COLS} FROM mail_messages WHERE id = ?1");
     conn.query_row(&sql, [id], item_from_row(c)).optional().ok().flatten()
+}
+
+/// Message-IDs the user's sent mail answers (its In-Reply-To and References).
+pub fn replied_ids(conn: &Connection, c: &Cipher) -> std::collections::HashSet<String> {
+    let sql = format!("SELECT {ITEM_COLS} FROM mail_messages WHERE folder NOT IN ('INBOX', '{ARCHIVE}')");
+    let Ok(mut stmt) = conn.prepare(&sql) else { return Default::default() };
+    let sent: Vec<MailItem> = stmt.query_map([], item_from_row(c)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default();
+    sent.into_iter()
+        .flat_map(|m| std::iter::once(m.data.in_reply_to).chain(m.data.references))
+        .map(|id| id.trim().trim_matches(['<', '>']).to_string())
+        .filter(|id| !id.is_empty())
+        .collect()
 }
 
 pub(crate) fn save_item(conn: &Connection, c: &Cipher, account_id: &str, folder: &str, uid: u32, date: i64, seen: bool, data: &MailData) -> Result<(), String> {
@@ -551,12 +656,63 @@ pub async fn sync_account(state: &AppState, c: &Cipher, id: &str) -> Result<usiz
             cfg.validity.insert(folder.clone(), v);
         }
     }
+    read_list_headers(state, c, &mut s, id).await.ok();
     pull_state(state, &mut s, id).await.ok();
     let _ = s.logout().await;
     let conn = state.db.lock().unwrap();
     store_account(&conn, c, id, &cfg)?;
     conn.execute("UPDATE mail_accounts SET synced_at = ?2 WHERE id = ?1", params![id, db::now_ms()]).map_err(|e| e.to_string())?;
     Ok(added)
+}
+
+/// Inbox mail looked at when the list headers are read for older mail.
+const LIST_BACKFILL: usize = 1000;
+
+fn lists_read_key(id: &str) -> String {
+    format!("mail_lists_read:{id}")
+}
+
+/// Once per account: the mailing-list headers (where to unsubscribe, which
+/// list) for inbox mail copied before they were kept, fetched on their own.
+async fn read_list_headers(state: &AppState, c: &Cipher, s: &mut Session, id: &str) -> Result<(), String> {
+    let missing: Vec<(String, u32, MailData)> = {
+        let conn = state.db.lock().unwrap();
+        if db::get::<bool>(&conn, &lists_read_key(id)).unwrap_or(false) {
+            return Ok(());
+        }
+        let mut stmt = conn.prepare("SELECT id, uid, data FROM mail_messages WHERE account_id = ?1 AND folder = 'INBOX' ORDER BY uid DESC LIMIT ?2").map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(params![id, LIST_BACKFILL as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?, r.get::<_, String>(2)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(Result::ok)
+            .filter_map(|(mid, uid, data)| Some((mid, uid, serde_json::from_str::<MailData>(&c.decrypt(&data).ok()?).ok()?)))
+            .filter(|(_, _, d)| !d.list_checked)
+            .collect();
+        rows
+    };
+    if !missing.is_empty() {
+        s.examine("INBOX").await.map_err(|e| e.to_string())?;
+        for chunk in missing.chunks(200) {
+            let set = chunk.iter().map(|(_, u, _)| u.to_string()).collect::<Vec<_>>().join(",");
+            let fetched: Vec<_> = s
+                .uid_fetch(&set, "(UID BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST LIST-ID)])")
+                .await
+                .map_err(|e| e.to_string())?
+                .try_collect()
+                .await
+                .map_err(|e| e.to_string())?;
+            let found: HashMap<u32, ListHeaders> = fetched.iter().filter_map(|f| Some((f.uid?, list_headers_raw(f.header()?)))).collect();
+            let conn = state.db.lock().unwrap();
+            for (mid, uid, data) in chunk {
+                let mut data = data.clone();
+                // Gone from the server: nothing to read, and nothing to ask again.
+                found.get(uid).cloned().unwrap_or_default().apply(&mut data);
+                let enc = c.encrypt(&serde_json::to_string(&data).map_err(|e| e.to_string())?);
+                conn.execute("UPDATE mail_messages SET data = ?2 WHERE id = ?1", params![mid, enc]).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+    db::set(&state.db.lock().unwrap(), &lists_read_key(id), &true)
 }
 
 // ---------- changes made here, sent to the mail server ----------
@@ -604,8 +760,12 @@ pub fn change(conn: &Connection, ids: &[String], what: Change) -> Result<(), Str
             .map_err(|e| e.to_string())?;
         let Some((account, folder, uid)) = row else { continue };
         match what {
-            Change::Seen | Change::Unseen => {
-                conn.execute("UPDATE mail_messages SET seen = ?2 WHERE id = ?1", params![id, (what == Change::Seen) as i64]).map_err(|e| e.to_string())?;
+            Change::Seen => {
+                conn.execute("UPDATE mail_messages SET seen = 1 WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
+            }
+            // Unread again: out of Marked read, back in the inbox.
+            Change::Unseen => {
+                conn.execute("UPDATE mail_messages SET seen = 0, marked_at = NULL WHERE id = ?1", [id]).map_err(|e| e.to_string())?;
             }
             Change::Archive => {
                 if folder == ARCHIVE {
@@ -629,6 +789,18 @@ pub fn change(conn: &Connection, ids: &[String], what: Change) -> Result<(), Str
             )
             .map_err(|e| e.to_string())?;
         }
+    }
+    Ok(())
+}
+
+/// The mark-read button: read here and on the server, and listed under
+/// Marked read (newest mark first) instead of the inbox, until it's unread
+/// again.
+pub fn mark_read(conn: &Connection, ids: &[String]) -> Result<(), String> {
+    change(conn, ids, Change::Seen)?;
+    let now = db::now_ms();
+    for (i, id) in ids.iter().enumerate() {
+        conn.execute("UPDATE mail_messages SET marked_at = ?2 WHERE id = ?1", params![id, now + i as i64]).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -774,8 +946,9 @@ async fn pull_state(state: &AppState, s: &mut Session, id: &str) -> Result<(), S
             continue;
         }
         match flags.get(&uid) {
+            // Unread again there: out of Marked read here too.
             Some(&now) if now != seen => {
-                conn.execute("UPDATE mail_messages SET seen = ?2 WHERE id = ?1", params![mid, now as i64]).ok();
+                conn.execute("UPDATE mail_messages SET seen = ?2, marked_at = CASE WHEN ?2 = 0 THEN NULL ELSE marked_at END WHERE id = ?1", params![mid, now as i64]).ok();
             }
             Some(_) => {}
             // Gone from the inbox there (archived or deleted elsewhere).
@@ -812,14 +985,47 @@ pub async fn flush_pending(state: &AppState, c: &Cipher) -> Result<(), String> {
     Ok(())
 }
 
-/// Sends queued changes in the background, if web access is on.
+/// Changes made within this long of each other go to the server together
+/// (marking read one message after another, quickly).
+const FLUSH_QUIET_MS: i64 = 1500;
+static FLUSH_ASKED: AtomicU64 = AtomicU64::new(0);
+static FLUSH_LAST: AtomicI64 = AtomicI64::new(0);
+static FLUSHING: AtomicBool = AtomicBool::new(false);
+
+/// Sends queued changes in the background, if web access is on: once the
+/// changes pause for a moment, and one sign-in at a time.
 pub fn flush_soon(state: Arc<AppState>) {
     if web_allowed(&state).is_err() {
         return;
     }
+    FLUSH_LAST.store(db::now_ms(), Ordering::SeqCst);
+    FLUSH_ASKED.fetch_add(1, Ordering::SeqCst);
+    if FLUSHING.swap(true, Ordering::SeqCst) {
+        // The one running sends this too.
+        return;
+    }
     tauri::async_runtime::spawn(async move {
-        if let Ok(c) = state.work_cipher() {
-            let _ = flush_pending(&state, &c).await;
+        loop {
+            loop {
+                let quiet = db::now_ms() - FLUSH_LAST.load(Ordering::SeqCst);
+                if quiet >= FLUSH_QUIET_MS {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis((FLUSH_QUIET_MS - quiet) as u64)).await;
+            }
+            let asked = FLUSH_ASKED.load(Ordering::SeqCst);
+            if let Ok(c) = state.work_cipher() {
+                let _ = flush_pending(&state, &c).await;
+            }
+            // More changes came while sending: send those too.
+            if FLUSH_ASKED.load(Ordering::SeqCst) != asked {
+                continue;
+            }
+            FLUSHING.store(false, Ordering::SeqCst);
+            // One asked just now saw this running and left it to this one.
+            if FLUSH_ASKED.load(Ordering::SeqCst) == asked || FLUSHING.swap(true, Ordering::SeqCst) {
+                break;
+            }
         }
     });
 }
@@ -842,7 +1048,7 @@ pub async fn sync_all(state: &AppState, c: &Cipher) -> Result<usize, String> {
 
 // ---------- sending ----------
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Draft {
     pub to: Vec<String>,
@@ -1112,6 +1318,7 @@ pub fn remove_mail_account(state: AppStateRef, id: String) -> Result<(), String>
     let conn = state.db.lock().unwrap();
     conn.execute("DELETE FROM mail_messages WHERE account_id = ?1", [&id]).map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM mail_accounts WHERE id = ?1", [&id]).map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM settings WHERE key = ?1", [lists_read_key(&id)]).ok();
     db::log_action(&conn, "email", "Removed an email account and its copied mail");
     Ok(())
 }
@@ -1162,11 +1369,17 @@ pub fn mail_set_seen(state: AppStateRef, id: String, seen: bool) -> Result<(), S
 }
 
 /// Read, unread, archive or trash for some messages: here at once, and on
-/// the mail server (now if online, else at the next sync).
+/// the mail server (now if online, else at the next sync). "mark_read" is
+/// the mark-read button (read, and listed under Marked read).
 #[tauri::command(async)]
 pub fn mail_action(state: AppStateRef, ids: Vec<String>, action: String) -> Result<(), String> {
     ensure_on(&state)?;
     state.cipher()?;
+    if action == "mark_read" {
+        mark_read(&state.db.lock().unwrap(), &ids)?;
+        flush_soon(state.inner().clone());
+        return Ok(());
+    }
     let what = Change::parse(&action).ok_or("Unknown mail action.")?;
     {
         let conn = state.db.lock().unwrap();
@@ -1231,6 +1444,63 @@ mod tests {
         // Trashed from the archive: nothing more to tell the server.
         change(&conn, &[m2.clone()], Change::Trash).unwrap();
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM mail_pending", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    }
+
+    #[test]
+    fn mark_read_lists_it_under_marked_read_until_unread_again() {
+        struct Plain;
+        impl crate::crypto::Protector for Plain {
+            fn protect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+            fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("sulcusai-mail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let c = crate::crypto::Vault::open(&dir.join("keys.json"), Box::new(Plain)).unwrap().cipher().unwrap();
+        let conn = db::open(&dir.join("t.db")).unwrap();
+        store_account(&conn, &c, "acc", &AccountConfig { email: "me@example.org".into(), ..Default::default() }).unwrap();
+        for uid in 1..=3 {
+            save_item(&conn, &c, "acc", "INBOX", uid, 1_000 * uid as i64, false, &MailData { subject: format!("m{uid}"), ..Default::default() }).unwrap();
+        }
+        let id = |subject: &str| list(&conn, &c, "", 10).into_iter().find(|m| m.data.subject == subject).unwrap().id;
+        let (m1, m2, m3) = (id("m1"), id("m2"), id("m3"));
+        assert!(get(&conn, &c, &m1).unwrap().marked_at.is_none());
+        mark_read(&conn, &[m1.clone(), m2.clone()]).unwrap();
+        let (a, b) = (get(&conn, &c, &m1).unwrap(), get(&conn, &c, &m2).unwrap());
+        assert!(a.seen && b.seen);
+        assert!(a.marked_at.is_some() && b.marked_at > a.marked_at, "marked in order");
+        // Opening a message reads it without listing it under Marked read.
+        change(&conn, std::slice::from_ref(&m3), Change::Seen).unwrap();
+        assert!(get(&conn, &c, &m3).unwrap().marked_at.is_none());
+        // Mark unread (or the AI's undo): back in the inbox.
+        change(&conn, std::slice::from_ref(&m1), Change::Unseen).unwrap();
+        let a = get(&conn, &c, &m1).unwrap();
+        assert!(!a.seen && a.marked_at.is_none());
+        let ops: Vec<String> = conn.prepare("SELECT op FROM mail_pending ORDER BY rowid").unwrap().query_map([], |r| r.get(0)).unwrap().filter_map(Result::ok).collect();
+        assert_eq!(ops, ["seen", "seen", "seen", "unseen"], "every mark goes to the server");
+    }
+
+    #[test]
+    fn list_headers_say_how_to_unsubscribe() {
+        let raw = b"From: The Paper <news@paper.example>\r\nTo: me@example.org\r\nSubject: Morning\r\nList-Id: \"The Morning\" <morning.paper.example>\r\nList-Unsubscribe: <mailto:leave@paper.example?subject=unsubscribe%20me>,\r\n <https://paper.example/u?id=1\r\n 23>, <http://plain.example/u>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click\r\nContent-Type: text/plain\r\n\r\nNews.\r\n";
+        let (m, _) = parse(raw, false);
+        assert_eq!(m.unsubscribe, vec!["mailto:leave@paper.example?subject=unsubscribe%20me", "https://paper.example/u?id=123"], "plain http is left out; folding is dropped");
+        assert!(m.one_click && m.list_checked);
+        assert_eq!((m.list_id.as_str(), m.list_name.as_str()), ("morning.paper.example", "The Morning"));
+        // Personal mail: none of it, but read.
+        let (p, _) = parse(RAW, false);
+        assert!(p.unsubscribe.is_empty() && !p.one_click && p.list_id.is_empty() && p.list_checked);
+        // Older mail: the headers fetched on their own.
+        let fields = b"List-Unsubscribe: <https://shop.example/out>\r\nList-Id: <deals.shop.example>\r\n\r\n";
+        let h = list_headers_raw(fields);
+        assert_eq!((h.unsubscribe, h.one_click, h.list_id.as_str(), h.list_name.as_str()), (vec!["https://shop.example/out".to_string()], false, "deals.shop.example", ""));
+        assert_eq!(list_headers_raw(b"\r\n"), ListHeaders::default());
+        assert!(is_one_click(" list-unsubscribe=one-click\r\n"));
+        assert!(!is_one_click("List-Unsubscribe=Later"));
+        assert_eq!(parse_list_id("news.example.com"), ("news.example.com".to_string(), String::new()));
     }
 
     #[test]

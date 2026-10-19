@@ -492,17 +492,53 @@ const dateInput = (ms: number) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { day: number; hour?: number; accounts: CalAccount[]; onClose: () => void; onCreated: () => void; toast: PushToast }) {
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState(dateInput(day));
-  const [allDay, setAllDay] = useState(false);
+/** What the event form starts with (an event read from an email). Empty
+ * times are left for the person to fill in. */
+export interface EventInitial {
+  title?: string;
+  /** YYYY-MM-DD */
+  date?: string;
+  /** HH:MM, or "" */
+  start?: string;
+  end?: string;
+  allDay?: boolean;
+  location?: string;
+  notes?: string;
+  /** A connected calendar's address; "" for this PC. */
+  calendar?: string;
+}
+
+/** The name of the calendar an event went to: "Work (iCloud)", or This PC. */
+export function calendarName(e: CalEvent, accounts: CalAccount[]): string {
+  for (const a of accounts) {
+    const c = a.calendars.find((x) => x.href === e.calendar);
+    if (c) return `${c.name || a.name} (${a.name})`;
+  }
+  return t("This PC");
+}
+
+export function NewEventDialog({ day, hour, initial, heading, note, accounts, onClose, onCreated, toast }: {
+  day: number;
+  hour?: number;
+  initial?: EventInitial;
+  heading?: string;
+  /** Shown above the form. */
+  note?: string;
+  accounts: CalAccount[];
+  onClose: () => void;
+  onCreated: (event: CalEvent) => void;
+  toast: PushToast;
+}) {
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [date, setDate] = useState(initial?.date || dateInput(day));
+  const [allDay, setAllDay] = useState(initial?.allDay ?? false);
   // A time slot that was clicked, else 9 to 10.
-  const [start, setStart] = useState(`${pad(hour ?? 9)}:00`);
-  const [end, setEnd] = useState(`${pad(Math.min((hour ?? 9) + 1, 23))}:${(hour ?? 9) >= 23 ? "59" : "00"}`);
-  const [location, setLocation] = useState("");
-  const [notes, setNotes] = useState("");
+  const [start, setStart] = useState(initial?.start ?? `${pad(hour ?? 9)}:00`);
+  const [end, setEnd] = useState(initial?.end ?? `${pad(Math.min((hour ?? 9) + 1, 23))}:${(hour ?? 9) >= 23 ? "59" : "00"}`);
+  const [location, setLocation] = useState(initial?.location ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
   const [attendees, setAttendees] = useState("");
-  const [calendar, setCalendar] = useState("");
+  const [calendar, setCalendar] = useState(initial?.calendar ?? "");
   const [busy, setBusy] = useState(false);
   const cals = accounts.flatMap((a) => a.calendars.map((c) => ({ href: c.href, label: `${c.name} (${a.name})` })));
 
@@ -513,10 +549,11 @@ function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { da
       return new Date(y, m - 1, d, h, mi).getTime();
     };
     const s = allDay ? new Date(y, m - 1, d).getTime() : at(start);
-    const e = allDay ? s + DAY : Math.max(at(end), s + 15 * 60_000);
+    // No end time: an hour.
+    const e = allDay ? s + DAY : Math.max(end ? at(end) : s + 3_600_000, s + 15 * 60_000);
     setBusy(true);
     try {
-      await api.createEvent({
+      const made = await api.createEvent({
         title,
         start: s,
         end: e,
@@ -526,7 +563,7 @@ function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { da
         attendees: attendees.split(/[,;]/).map((x) => x.trim()).filter(Boolean),
         calendar: calendar || null,
       });
-      onCreated();
+      onCreated(made);
     } catch (err) {
       toast(errorText(err), "error");
       setBusy(false);
@@ -534,7 +571,8 @@ function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { da
   };
 
   return (
-    <Modal title={t("New event")} onClose={onClose}>
+    <Modal title={heading ?? t("New event")} onClose={onClose}>
+      {note && <p className="small hint-box">{note}</p>}
       <div className="form">
         <label>{t("Title")}<input className="input" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus /></label>
         <div className="row">
@@ -559,7 +597,7 @@ function NewEventDialog({ day, hour, accounts, onClose, onCreated, toast }: { da
       </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>{t("Cancel")}</button>
-        <button className="btn primary" onClick={save} disabled={busy || !title.trim()}>{busy ? t("Saving…") : t("Add")}</button>
+        <button className="btn primary" onClick={save} disabled={busy || !title.trim() || !date || (!allDay && !start)} title={!allDay && !start ? t("Add a start time, or make it all day.") : undefined}>{busy ? t("Saving…") : t("Add")}</button>
       </div>
     </Modal>
   );

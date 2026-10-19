@@ -81,6 +81,7 @@ mod security;
 mod sitekeys;
 mod speech;
 mod storage;
+mod subscriptions;
 mod sync;
 mod tools;
 mod translate;
@@ -2327,6 +2328,9 @@ pub fn run() {
             triage::mail_triage_undo,
             triage::set_mail_auto_sort,
             triage::set_ui_language,
+            triage::mail_event_draft,
+            subscriptions::mail_subscriptions,
+            subscriptions::mail_unsubscribe,
             mail::send_mail,
             calendar::calendar_presets,
             calendar::calendar_accounts,
