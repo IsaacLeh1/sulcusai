@@ -1824,7 +1824,6 @@
  "Found free time ({1} openings)": "Se encontró tiempo libre ({1} huecos)",
  "Found {1} file{2} matching {pattern}": "Se encontraron {1} archivo{2} que coinciden con {pattern}",
  "Last sorted {n} unread emails {time} with {model}. This shows the past week.": "Última ordenación: {n} correos no leídos el {time} con {model}. Aquí ves la última semana.",
- "Listed shared folders": "Se listaron las carpetas compartidas",
  "Listed {label}": "Se listó {label}",
  "Loaded the {1} skill": "Se cargó la habilidad {1}",
  "Looked at the task list": "Se revisó la lista de tareas",
@@ -3348,5 +3347,11 @@
  "asks when unclear": "pregunta si algo no está claro",
  "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Antes de crear o cambiar una imagen, pregunta por cualquier cosa que cambiaría el resultado, como a qué persona te refieres o qué debe decir un cartel. Los chats también preguntan.",
  "Ask me when something's unclear": "Preguntarme cuando algo no esté claro",
- "Questions before the picture": "Preguntas antes de la imagen"
+ "Questions before the picture": "Preguntas antes de la imagen",
+ "A model is being taught right now. Coach the prompt writer once that's done.": "Ahora mismo se está enseñando a un modelo. Entrena al redactor de prompts cuando termine.",
+ "Coaching needs a model that reads pictures, to score the practice pictures. Install one with a picture reader (Qwen3 VL, for example) first.": "El entrenamiento necesita un modelo que lea imágenes para puntuar las imágenes de práctica. Instala primero uno con lector de imágenes (Qwen3 VL, por ejemplo).",
+ "Exit code 0.": "Código de salida 0.",
+ "Listed folders": "Carpetas listadas",
+ "The trainer finished without saving the prompt writer's adapter.": "El entrenador terminó sin guardar el adaptador del redactor de prompts.",
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "Este modelo de imágenes no trae su propio modelo de lenguaje, así que no hay redactor que entrenar."
 }

@@ -89,7 +89,14 @@ pub struct Processing {
     pub new_chat: bool,
     /// Most replies a helper agent gets for its task.
     pub helper_steps: Option<u32>,
+    /// How hard gpt-oss thinks before it acts: "low", "medium" or "high"
+    /// (None: `DEFAULT_REASONING`).
+    pub reasoning_effort: Option<String>,
 }
+
+/// gpt-oss's reasoning effort when Advanced doesn't set one: enough to plan
+/// a task of several steps ("low" left it explaining instead of doing).
+pub const DEFAULT_REASONING: &str = "medium";
 
 pub const DEFAULT_MAX_STEPS: usize = 30;
 pub const DEFAULT_HELPER_STEPS: usize = 12;
@@ -157,6 +164,14 @@ impl Advanced {
             Thinking::Off => put("chat_template_kwargs", Some(json!({ "enable_thinking": false }))),
         }
         Value::Object(m)
+    }
+
+    /// gpt-oss's reasoning effort: the one set here, else `DEFAULT_REASONING`.
+    pub fn reasoning_effort(&self) -> &str {
+        match self.processing.reasoning_effort.as_deref().map(str::trim) {
+            Some(e @ ("low" | "medium" | "high")) => e,
+            _ => DEFAULT_REASONING,
+        }
     }
 
     /// The instructions every chat starts with.

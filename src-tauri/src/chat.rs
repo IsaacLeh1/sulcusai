@@ -362,7 +362,15 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
                     .flatten()
                     .map(|c| json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.arguments } }))
                     .collect();
-                out.push(json!({ "role": "assistant", "content": m.content, "tool_calls": calls }));
+                let mut turn = json!({ "role": "assistant", "content": m.content, "tool_calls": calls });
+                // Its reasoning before the call goes back with it: gpt-oss's
+                // template shows it again for the steps of the current task,
+                // so the model keeps its plan between tool calls (the engine
+                // on this PC only; `stream` takes it out for online models).
+                if let Some(t) = m.thinking.as_deref().filter(|t| !t.trim().is_empty()) {
+                    turn["reasoning_content"] = json!(t);
+                }
+                out.push(turn);
             }
             // In a chat the user shares: someone it's shared with wrote this,
             // or their model answered them (on their PC, not this model).
@@ -498,6 +506,15 @@ pub async fn stream(
     mut on_delta: impl FnMut(Delta),
 ) -> Result<Finished, String> {
     if let Some(t) = &ep.cloud {
+        let messages = messages
+            .into_iter()
+            .map(|mut m| {
+                if let Some(o) = m.as_object_mut() {
+                    o.remove("reasoning_content");
+                }
+                m
+            })
+            .collect();
         return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
     }
     let (first, cut_off) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
@@ -638,6 +655,15 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         }
     }
     rescue_tool_calls(&mut out, tools);
+    // gpt-oss calling its built-in tools (browser.search, python): as ours.
+    let offered = offered_names(tools);
+    for c in out.tool_calls.iter_mut().filter(|c| !offered.contains(&c.name)) {
+        let args: Value = serde_json::from_str(&c.arguments).unwrap_or(Value::Null);
+        if let Some((name, args)) = harmony_alias(&c.name, &args).filter(|(n, _)| offered.contains(n)) {
+            c.name = name;
+            c.arguments = args.to_string();
+        }
+    }
     for (i, c) in out.tool_calls.iter_mut().enumerate() {
         if c.id.is_empty() {
             c.id = format!("call_{}_{i}", uuid::Uuid::new_v4().simple());
@@ -661,11 +687,116 @@ fn offered_names(tools: Option<&Value>) -> Vec<String> {
     tools.and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect()
 }
 
+/// gpt-oss's built-in tools, as SulcusAI's: it was trained to search and
+/// open pages with `browser` and to run code with `python`, and calls them
+/// even when they aren't offered.
+pub(crate) fn harmony_alias(name: &str, args: &Value) -> Option<(String, Value)> {
+    let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::to_string);
+    match name {
+        "browser.search" | "browser_search" => Some(("web_search".into(), json!({ "query": s("query")? }))),
+        "browser.open" | "browser_open_url" => Some(("fetch_page".into(), json!({ "url": s("url").or_else(|| s("id").filter(|i| i.starts_with("http")))? }))),
+        "python" => Some(("run_code".into(), json!({ "code": s("code").or_else(|| s("input"))? }))),
+        "container.exec" => {
+            let cmd = args.get("cmd").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).or_else(|| s("cmd"))?;
+            Some(("run_command".into(), json!({ "command": cmd })))
+        }
+        _ => None,
+    }
+}
+
+/// The JSON object starting at `text`'s first `{`, with braces inside
+/// strings ignored; and where it ends.
+fn json_object_at(text: &str) -> Option<(usize, usize)> {
+    let start = text.find('{')?;
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            _ if esc => esc = false,
+            '\\' if in_str => esc = true,
+            '"' => in_str = !in_str,
+            '{' if !in_str => depth += 1,
+            '}' if !in_str => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((start, start + i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+static HARMONY_CALL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"to=(?:functions\.)?([A-Za-z_][\w.\-]*)").unwrap());
+static HARMONY_TOKEN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"<\|(?:start|end|message|channel|constrain|call|return)\|>").unwrap());
+
+/// Tool calls written in gpt-oss's Harmony format as plain text
+/// (`<|channel|>commentary to=functions.find_files <|constrain|>json<|message|>{…}`,
+/// or the same with the special tokens left out), which the engine leaves
+/// in the reply when it doesn't parse them: run them, and keep the rest of
+/// the text without Harmony's markers.
+pub(crate) fn harmony_calls(text: &str, offered: &[String]) -> (Vec<ToolCall>, String) {
+    if !text.contains("to=") {
+        return (Vec::new(), text.to_string());
+    }
+    let mut calls = Vec::new();
+    let mut rest = String::new();
+    let mut at = 0;
+    while let Some(m) = HARMONY_CALL.captures(&text[at..]) {
+        let whole = m.get(0).unwrap();
+        let name = m[1].trim_end_matches('.').to_string();
+        let after = at + whole.end();
+        let Some((s, e)) = json_object_at(&text[after..]) else { break };
+        // Only the channel and format words may sit between the name and its arguments.
+        let between = HARMONY_TOKEN.replace_all(&text[after..after + s], " ");
+        if between.split_whitespace().any(|w| !matches!(w, "commentary" | "json" | "<|constrain|>json" | "code")) {
+            rest.push_str(&text[at..after]);
+            at = after;
+            continue;
+        }
+        let raw = &text[after + s..after + e];
+        let args: Value = serde_json::from_str(raw).unwrap_or(Value::Null);
+        let (name, args) = if offered.iter().any(|o| *o == name) {
+            (name, args)
+        } else if let Some((n, a)) = harmony_alias(&name, &args).filter(|(n, _)| offered.iter().any(|o| o == n)) {
+            (n, a)
+        } else {
+            rest.push_str(&text[at..after + e]);
+            at = after + e;
+            continue;
+        };
+        // The channel word just before the call goes with it.
+        let before = text[at..at + whole.start()].trim_end();
+        rest.push_str(before.strip_suffix("commentary").unwrap_or(before));
+        rest.push(' ');
+        calls.push(ToolCall { id: String::new(), name, arguments: if args.is_null() { raw.to_string() } else { args.to_string() } });
+        at = after + e;
+    }
+    rest.push_str(&text[at..]);
+    let rest = HARMONY_TOKEN.replace_all(&rest, " ");
+    let rest = rest.replace("assistantcommentary", " ").replace("assistantanalysis", " ").replace("assistantfinal", " ");
+    (calls, rest.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string())
+}
+
 /// Small models sometimes write a tool call into their thinking or their
 /// text instead of the tool-call channel; run it rather than lose it.
 pub(crate) fn rescue_tool_calls(out: &mut Finished, tools: Option<&Value>) {
     if out.tool_calls.is_empty() && !out.cancelled {
         let offered = offered_names(tools);
+        // gpt-oss's own format, left as text by the engine.
+        if !offered.is_empty() {
+            let (calls, rest) = harmony_calls(&out.content, &offered);
+            if !calls.is_empty() {
+                out.content = rest;
+                out.tool_calls = calls;
+                return;
+            }
+            let (calls, _) = harmony_calls(&out.thinking, &offered);
+            if !calls.is_empty() && out.content.trim().is_empty() {
+                out.tool_calls = calls;
+                return;
+            }
+        }
         if !offered.is_empty() {
             let (calls, rest) = salvage(&out.content, &offered);
             if !calls.is_empty() {
@@ -1012,6 +1143,31 @@ fn only_asks(reply: &str) -> bool {
 
 /// A request to make something answered with code, steps, "I can't" or
 /// questions in the chat, though tools to make it on the PC were offered.
+/// Said to a model that explained steps instead of carrying them out.
+pub const CARRY_ON: &str = "Don't explain the steps or ask whether to go ahead: you already have permission. Carry them out now with \
+     your tools, one after another, then say briefly what you did and what happened.";
+
+/// The person asked for something to be done (not explained): apply, run,
+/// install, follow, set up, fix, make…
+pub fn asks_to_act(user: &str) -> bool {
+    static ACT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(apply|applies|do (it|this|that|them|these|the steps)|run|execute|install|set (it |this |them )?up|setup|follow|carry (it |them )?out|implement|fix|change|update|configure|move|copy|rename|delete|download|open|launch|start|make|create|build|find (and|then)|go ahead)\b").unwrap()
+    });
+    ACT.is_match(user)
+}
+
+/// A reply that tells the user how to do it (numbered steps, "you'll need
+/// to", "run the following") or asks whether to go ahead, instead of doing it.
+pub fn explains_instead(reply: &str) -> bool {
+    static NUMBERED: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)^\s*(\*\*)?(1[.)]|step 1\b)").unwrap());
+    static TELLS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(you('ll| will)? (need|have) to|you (can|should|could) (run|open|create|install|copy|paste|type|edit|add|change|go|click|navigate|download|use)|run the following|follow these steps|here('s| is| are) (how|the steps)|steps to|open (a |your )?(terminal|command prompt|powershell|file explorer)|(should|shall|may|can) i (go ahead|proceed|start|run|do|apply|continue)|would you like me to|do you want me to|want me to (go ahead|proceed|run|do|apply)|let me know (if|when) you('d| would)? (like|want))\b").unwrap()
+    });
+    let prose = without_code(reply);
+    let numbered_steps = NUMBERED.is_match(&prose) && prose.lines().filter(|l| l.trim_start().starts_with("2.") || l.trim_start().starts_with("2)")).count() > 0;
+    numbered_steps || TELLS.is_match(&prose) || HANDS_OVER.is_match(&prose)
+}
+
 pub fn builds_in_chat(recent_user: &[&str], reply: &str, offered: &[String]) -> bool {
     let can_make = offered.iter().any(|n| n == "write_file" || n == "request_folder");
     let code_lines = reply.split("```").skip(1).step_by(2).map(|block| block.lines().count()).sum::<usize>();
@@ -1460,6 +1616,44 @@ pub fn title_from(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// gpt-oss's Harmony tool calls that reach the reply as text are run,
+    /// not shown to the user; its built-in tools become ours.
+    #[test]
+    fn harmony_tool_calls_written_as_text_are_run() {
+        let offered: Vec<String> = ["find_files", "run_command", "fetch_page"].map(String::from).to_vec();
+        let raw = "<|channel|>commentary to=functions.find_files <|constrain|>json<|message|>{\"pattern\": \"*hello*\"}<|call|>";
+        let (calls, rest) = harmony_calls(raw, &offered);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "find_files");
+        assert_eq!(serde_json::from_str::<Value>(&calls[0].arguments).unwrap()["pattern"], "*hello*");
+        assert!(rest.is_empty(), "{rest:?}");
+        // The special tokens left out, and words around the call kept.
+        let (calls, rest) = harmony_calls("Let me look. commentary to=functions.run_command json{\"command\": \"dir\"}", &offered);
+        assert_eq!(calls[0].name, "run_command");
+        assert_eq!(rest, "Let me look.");
+        // Built-in tools as ours.
+        let (calls, _) = harmony_calls("to=browser.open <|message|>{\"url\":\"https://example.com\"}", &offered);
+        assert_eq!(calls[0].name, "fetch_page");
+        assert_eq!(harmony_alias("python", &json!({ "code": "print(1)" })).unwrap().0, "run_code");
+        // Not calls: an unknown tool, or other words between the name and the JSON.
+        assert!(harmony_calls("to=functions.launch_rockets json{\"x\":1}", &offered).0.is_empty());
+        assert!(harmony_calls("I went to=functions.find_files and then {\"a\":1}", &offered).0.is_empty());
+        // Braces inside strings don't end the arguments.
+        let (calls, _) = harmony_calls("to=functions.run_command<|message|>{\"command\": \"echo }{\"}", &offered);
+        assert_eq!(serde_json::from_str::<Value>(&calls[0].arguments).unwrap()["command"], "echo }{");
+    }
+
+    #[test]
+    fn explaining_instead_of_doing_is_noticed() {
+        assert!(asks_to_act("Fetch this page and apply its instructions to my project folder"));
+        assert!(asks_to_act("find hello.bat and run it"));
+        assert!(!asks_to_act("What is the capital of France?"));
+        assert!(explains_instead("Here are the steps:\n1. Open a terminal\n2. Run npm install"));
+        assert!(explains_instead("Would you like me to go ahead and run it?"));
+        assert!(explains_instead("You'll need to run the installer first."));
+        assert!(!explains_instead("Done. I created notes.txt and ran the script; it printed 42."));
+    }
 
     fn m(role: &str, id: &str) -> Message {
         Message { id: id.into(), role: role.into(), content: id.into(), ..Default::default() }

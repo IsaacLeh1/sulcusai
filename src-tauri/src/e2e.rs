@@ -345,6 +345,197 @@ async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, ru
     (state, ep, cipher)
 }
 
+/// The model in SULCUSAI_TEST_GGUF loaded the way the app loads it for the
+/// agent: SULCUSAI_TEST_CTX (16384 unless set), every layer on the card
+/// except the experts of SULCUSAI_TEST_CPU_MOE layers (6 unless set: what
+/// lets a 20B mixture of experts run beside a 12 GB card), and for gpt-oss
+/// the request settings `llm_endpoint` adds (reasoning effort, a reply long
+/// enough to think in).
+async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
+    let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
+    let ctx: u32 = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(16_384);
+    let cpu_moe: u32 = std::env::var("SULCUSAI_TEST_CPU_MOE").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+    let real = Paths::new(app_data_dir()).unwrap();
+    let hw = hardware::detect(&real.models);
+    let budget = Budget::from_hardware(&hw);
+    let cat = Catalog::bundled();
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let name = gguf.file_name().unwrap().to_string_lossy().into_owned();
+    let log = std::env::temp_dir().join(format!("sulcusai-e2e-engine-{}.log", uuid::Uuid::new_v4().simple()));
+    let mut eng = engine::Engine::default();
+    let launch = engine::LaunchSpec { exe: &exe, model_path: &gguf, model_id: "test-agent", quant: "Q4_K_M", ctx, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
+    let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), kv_q8: false }, None).await.unwrap();
+    if name.to_lowercase().contains("gpt-oss") {
+        let effort = crate::advanced::DEFAULT_REASONING;
+        ep.extra = serde_json::json!({ "reasoning_effort": effort, "chat_template_kwargs": { "reasoning_effort": effort }, "max_tokens": (ctx / 2).clamp(4096, 16_384) });
+    }
+    (eng, ep, name)
+}
+
+/// Everything the agent did in a chat, for reading: each message with its
+/// thinking and tool calls (printed, and appended to SULCUSAI_TEST_LOG).
+fn transcript(state: &crate::AppState, cipher: &crate::crypto::Cipher, chat_id: &str, title: &str) -> (String, Vec<String>) {
+    use std::fmt::Write as _;
+    let mut out = format!("===== {title} =====\n");
+    let mut tools = Vec::new();
+    for m in crate::db::messages(&state.db.lock().unwrap(), cipher, chat_id) {
+        let _ = writeln!(out, "[{}] {}", m.role, m.content.chars().take(1500).collect::<String>());
+        if let Some(t) = m.thinking.as_deref().filter(|t| !t.trim().is_empty()) {
+            let _ = writeln!(out, "  (thinking) {}", t.chars().take(800).collect::<String>().replace('\n', " "));
+        }
+        for c in m.tool_calls.iter().flatten() {
+            let _ = writeln!(out, "  -> {}({})", c.name, c.arguments);
+            tools.push(c.name.clone());
+        }
+    }
+    println!("{out}");
+    if let Ok(path) = std::env::var("SULCUSAI_TEST_LOG") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = f.write_all(out.as_bytes());
+        }
+    }
+    (out, tools)
+}
+
+/// Watches for approval cards while the agent works: answers Allow (so a
+/// test never hangs) and returns what was asked.
+fn watch_approvals(state: &std::sync::Arc<crate::AppState>) -> (tokio::task::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let asked: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let (st, a) = (state.clone(), asked.clone());
+    let task = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                a.lock().unwrap().push(format!("{}: {}", p.tool, p.preview.title));
+                st.approvals.answer(&p.call_id, crate::agent::Decision::Allow);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    });
+    (task, asked)
+}
+
+/// The agent finds a file by name, runs it and reports what it printed,
+/// without asking anything (Auto mode). The file is in the home folder, not
+/// the shared one, so the search has to go on to the home folder.
+/// SULCUSAI_TEST_GGUF (the owner's: huihui-ai's gpt-oss-20b abliterated),
+/// see `test_model` for the rest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_agent_finds_runs_and_reports() {
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let home = crate::sandbox::home_folder().unwrap();
+    let hidden = home.join(format!("SulcusAI-e2e-{id}")).join("tools");
+    std::fs::create_dir_all(&hidden).unwrap();
+    let file = format!("hello_{id}.bat");
+    std::fs::write(hidden.join(&file), format!("@echo off\r\necho SULCUS-OK-{id}\r\n")).unwrap();
+    let project = std::env::temp_dir().join(format!("sulcusai-e2e-proj-{id}"));
+    std::fs::create_dir_all(&project).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&project).unwrap().display().to_string()).unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let (watch, asked) = watch_approvals(&state);
+    let started = std::time::Instant::now();
+    let reply = say(&state, &ep, &cipher, &chat.id, &format!("Find the file named {file} on this PC, run it, and tell me exactly what it printed.")).await;
+    watch.abort();
+    let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: find, run, report ({:.0}s)", started.elapsed().as_secs_f64()));
+    let _ = std::fs::remove_dir_all(home.join(format!("SulcusAI-e2e-{id}")));
+    let _ = std::fs::remove_dir_all(&project);
+    assert!(asked.lock().unwrap().is_empty(), "it asked: {:?}", asked.lock().unwrap());
+    assert!(tools.iter().any(|t| t == "find_files"), "found it by name: {tools:?}");
+    assert!(tools.iter().any(|t| t == "run_command"), "ran it: {tools:?}");
+    assert!(reply.contains(&format!("SULCUS-OK-{id}")), "reported what it printed: {reply}");
+}
+
+/// The owner's task: a page fetched and applied to a folder, without
+/// asking. The page is GitHub's Node .gitignore; applied, it becomes the
+/// folder's .gitignore. See `test_model` for the model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_agent_applies_a_page() {
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    crate::db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = crate::net::Connectivity::Web).unwrap();
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let project = std::env::temp_dir().join(format!("sulcusai-e2e-app-{id}"));
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("package.json"), "{ \"name\": \"demo\", \"version\": \"1.0.0\" }\n").unwrap();
+    let project = dunce::canonicalize(&project).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &project.display().to_string()).unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
+    let (watch, asked) = watch_approvals(&state);
+    let started = std::time::Instant::now();
+    let url = "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore";
+    let reply = say(&state, &ep, &cipher, &chat.id, &format!("Fetch {url} and apply it to the folder {}: it should become that folder's .gitignore.", project.display())).await;
+    watch.abort();
+    let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: fetch a page and apply it ({:.0}s)", started.elapsed().as_secs_f64()));
+    let written = std::fs::read_to_string(project.join(".gitignore")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&project);
+    println!("reply: {reply}");
+    assert!(asked.lock().unwrap().is_empty(), "it asked: {:?}", asked.lock().unwrap());
+    assert!(tools.iter().any(|t| t == "fetch_page"), "fetched it: {tools:?}");
+    assert!(written.contains("node_modules"), "the folder's .gitignore is the page's: {written:.200}");
+}
+
+/// What the model sends back for a tool task, before SulcusAI reads it:
+/// the raw reply (content, reasoning, tool calls) and whether its chat
+/// template is Harmony's. SULCUSAI_TEST_GGUF; written to SULCUSAI_TEST_LOG too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_harmony_raw() {
+    use std::io::Write as _;
+    let (_eng, ep, name) = test_model().await;
+    let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").unwrap());
+    let meta = crate::gguf::read(&gguf).unwrap();
+    let template = meta.get("tokenizer.chat_template").and_then(|v| v.str().map(str::to_string)).unwrap_or_default();
+    let digest = hex::encode(sha2::Digest::finalize(<sha2::Sha256 as sha2::Digest>::new_with_prefix(template.as_bytes())));
+    let mut out = format!(
+        "===== {name}: raw =====\narchitecture: {:?}\nchat template: {} characters, sha256 {}…; has <|channel|>: {}; has to=functions: {}; reads reasoning_effort: {}\n",
+        meta.get("general.architecture").and_then(|v| v.str().map(str::to_string)),
+        template.len(),
+        &digest[..16],
+        template.contains("<|channel|>"),
+        template.contains("to=functions"),
+        template.contains("reasoning_effort")
+    );
+    let tools = serde_json::json!([
+        { "type": "function", "function": { "name": "find_files", "description": crate::tools::find("find_files").unwrap().description, "parameters": (crate::tools::find("find_files").unwrap().params)() } },
+        { "type": "function", "function": { "name": "run_command", "description": crate::tools::find("run_command").unwrap().description, "parameters": (crate::tools::find("run_command").unwrap().params)() } },
+        { "type": "function", "function": { "name": "fetch_page", "description": crate::tools::find("fetch_page").unwrap().description, "parameters": (crate::tools::find("fetch_page").unwrap().params)() } },
+    ]);
+    for task in ["Find the file named hello_test.bat on this PC and run it.", "Fetch https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore and apply it to C:\\work\\demo as its .gitignore."] {
+        let mut body = serde_json::json!({
+            "messages": [{ "role": "system", "content": "You are SulcusAI, an assistant on the user's PC. The user has already given you permission to search the file system, read files, fetch web pages and run programs: do it, don't ask." }, { "role": "user", "content": task }],
+            "tools": tools, "stream": false, "temperature": 0.6, "max_tokens": 2048,
+        });
+        if let (Some(b), Some(e)) = (body.as_object_mut(), ep.extra.as_object()) {
+            for (k, v) in e {
+                b.insert(k.clone(), v.clone());
+            }
+        }
+        let raw: serde_json::Value = reqwest::Client::new().post(format!("http://127.0.0.1:{}/v1/chat/completions", ep.port)).bearer_auth(&ep.key).json(&body).send().await.unwrap().json().await.unwrap();
+        let msg = &raw["choices"][0]["message"];
+        let calls = msg["tool_calls"].as_array().cloned().unwrap_or_default();
+        let content = msg["content"].as_str().unwrap_or_default();
+        let offered: Vec<String> = ["find_files", "run_command", "fetch_page"].map(String::from).to_vec();
+        let in_text = chat::harmony_calls(content, &offered).0.len() + chat::harmony_calls(msg["reasoning_content"].as_str().unwrap_or_default(), &offered).0.len();
+        out.push_str(&format!(
+            "--- task: {task}\nfinish_reason: {}\ntool_calls parsed by the engine: {}\n{}\nHarmony calls left in the text: {in_text}\ncontent: {}\nreasoning: {}\n",
+            raw["choices"][0]["finish_reason"],
+            calls.len(),
+            calls.iter().map(|c| format!("  -> {}({})", c["function"]["name"], c["function"]["arguments"])).collect::<Vec<_>>().join("\n"),
+            content.chars().take(600).collect::<String>(),
+            msg["reasoning_content"].as_str().unwrap_or_default().chars().take(600).collect::<String>().replace('\n', " ")
+        ));
+    }
+    println!("{out}");
+    if let Ok(path) = std::env::var("SULCUSAI_TEST_LOG") {
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(out.as_bytes()));
+    }
+}
+
 async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cipher: &crate::crypto::Cipher, chat_id: &str, text: &str) -> String {
     let turn_id = uuid::Uuid::new_v4().to_string();
     crate::db::add_message(&state.db.lock().unwrap(), cipher, &Message {

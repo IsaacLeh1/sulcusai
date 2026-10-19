@@ -157,32 +157,71 @@ pub struct TurnResult {
     pub cancelled: bool,
 }
 
+/// What the person has already allowed, said plainly: models kept asking
+/// "may I search?" and "should I go ahead?", and explained a web page's
+/// steps instead of carrying them out.
+const ALLOWED: &str = "\n\n## You have permission\n\
+     The user has already given you permission to search the file system, read files, fetch web pages and run programs. \
+     Never ask for permission or confirmation to do these, and never ask \"should I go ahead?\": just do it.\n\
+     - When the user gives you instructions (in their message, in a file, or on a web page they point you to), carry them out \
+     step by step with your tools. Don't explain the steps or tell the user how to do them: do them, then say briefly what you did \
+     and what happened.\n\
+     - When a tool returns an error or \"Not found\", read what it says, change your approach and try again (another name or \
+     pattern, another folder, another command).\n\
+     - Ask the user only when your searches have failed, when something you need can't be found or worked out, or before deleting \
+     something.";
+
 /// Extra system-prompt text describing the tools and the current mode.
 pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
+    let home = sandbox.home().map(|h| h.display().to_string());
+    let finding = match &home {
+        Some(h) => format!(
+            "\n- Finding a file: call find_files with part of its name between stars (like *report*). It searches the shared folders \
+             first and then the home folder ({h}). If that finds nothing, try a broader pattern, list_dir, or search_files for text \
+             inside files, before asking the user.\n\
+             - Running a program or script: call run_command (it runs in the project folder unless you give folder; a program found \
+             in the home folder can be run by giving its folder). Read the output; if it fails, fix the cause and run it again."
+        ),
+        None => String::new(),
+    };
     if sandbox.is_empty() {
+        let look = match &home {
+            Some(h) => format!(
+                "\n\n## Working with files\nNo folders are shared with you yet, but you can search and read the home folder ({h}) \
+                 and run programs there.{finding}\n- To create or change files, call request_folder with a folder to work in (for \
+                 example a new folder on their Desktop) and say what it's for. When the user wants something made or changed on their \
+                 PC (a website, an app, a script, documents), don't just paste the code: request the folder, then create the files, \
+                 install what's needed and run it in this same reply."
+            ),
+            None => "\n\nNo folders are shared with you yet. When the user wants something made or changed on their PC (a website, \
+                     an app, a script, documents), don't just paste the code: call request_folder with a folder to work in (for example \
+                     a new folder on their Desktop) and say what it's for; then you can create the files, install what's needed and run \
+                     it in this same reply."
+                .to_string(),
+        };
         return if mode == Mode::Plan {
-            "\n\nNo folders are shared with you, so you can't open files yet. If you need to look at the user's files to plan, \
-             call request_folder with the folder you'd look in; they approve it in a popup."
+            "\n\nNo folders are shared with you, so you can't change files. If you need to look at the user's files to plan, search \
+             and read them, or call request_folder with the folder you'd look in."
                 .into()
         } else {
-            "\n\nNo folders are shared with you yet. When the user wants something made or changed on their PC (a website, an app, \
-             a script, documents), don't just paste the code: call request_folder with a folder to work in (for example a new folder \
-             on their Desktop) and say what it's for. They approve it in a popup; then you can create the files, install what's needed \
-             and run it in this same reply."
-                .into()
+            format!("{ALLOWED}{look}")
         };
     }
-    let folders: Vec<String> = sandbox.roots().iter().map(|r| format!("{}/", sandbox.display(r))).collect();
+    let folders: Vec<String> = sandbox.roots().iter().map(|r| format!("{}/ ({})", sandbox.display(r), r.display())).collect();
+    let project = sandbox.roots()[0].display().to_string();
     let mode_text = match mode {
         Mode::Plan => "You are in PLAN mode: you can look but not change anything. Investigate with the read-only tools, \
                        then reply with a short numbered plan of the changes you would make. The user approves the plan before anything changes.",
-        Mode::Auto => "The app asks the user before any change or command runs, so just call the tool when you need it. \
-                       If they decline, don't retry the same action.",
+        Mode::Auto => "Tools run without asking the user. Only deleting files, or a command that throws work away, shows the user a \
+                       confirmation first; if they decline it, don't retry the same action.",
         Mode::Bypass => "Changes and commands run without asking the user, so be careful and keep changes to what was asked.",
     };
+    let allowed = if mode == Mode::Plan { "" } else { ALLOWED };
+    let home_line = home.as_ref().map(|h| format!(" The home folder ({h}) can be searched and read, but not changed.")).unwrap_or_default();
     format!(
-        "\n\n## Working with files\nYou can use tools in these folders the user shared: {}. Write paths starting with the folder name, \
-         for example {}README.md.\n- Look before you change anything: list folders, read files, search.\n\
+        "{allowed}\n\n## Working with files\nThe project folder is {project}. You can change files in these folders the user shared: {}. \
+         Write paths starting with the folder name, for example {}README.md.{home_line}{finding}\n\
+         - Look before you change anything: list folders, read files, search.\n\
          - For small changes use edit_file, and read the file first so old_text matches exactly.\n\
          - After changing code, run its build or tests with run_command when that makes sense.\n\
          - When asked to build something (a website, an app, a script), do it on their PC: make the files, install what's needed and run it. \
@@ -194,10 +233,10 @@ pub fn tool_instructions(sandbox: &Sandbox, mode: Mode) -> String {
          file is written, call preview_site with the site's folder (or the port of a dev server you started): it opens the site in a \
          panel beside the chat and reports script errors, missing files and buttons that do nothing. Fix every problem it reports \
          and preview again before you say it's done.\n\
-         - Need a folder that isn't shared? Call request_folder.\n\
+         - Need to change a folder that isn't shared? Call request_folder.\n\
          - Finish with a short summary of what you did.\n{mode_text}",
         folders.join(", "),
-        folders[0]
+        format!("{}/", sandbox.display(&sandbox.roots()[0]))
     )
 }
 
@@ -295,10 +334,18 @@ impl Turn {
         // Asked to make a site, an app or code (not a document): the document
         // tool stays out, or small models reach for it and fail.
         let build_ask = chat::is_build_ask(&recent_asks.iter().map(String::as_str).collect::<Vec<_>>()) && !chat::wants_a_document(&request);
-        let mut sandbox = Sandbox::new(&folders);
-        let files = self.use_tools && !sandbox.is_empty();
+        // The home folder is open for searching and reading (the person
+        // allowed it); changes stay in the shared folders.
+        let file_feature = features.contains(&Feature::Files);
+        let mut sandbox = if file_feature { Sandbox::new(&folders).with_home() } else { Sandbox::new(&folders) };
+        let files = self.use_tools && file_feature && (!sandbox.is_empty() || sandbox.home().is_some());
         let memory_tools = self.use_tools && memory_on;
         let mut defs = tools::definitions(self.mode, files, memory_tools).as_array().cloned().unwrap_or_default();
+        // Nothing shared yet: finding, reading and running, but nothing that
+        // writes (that needs a shared folder: request_folder).
+        if sandbox.is_empty() {
+            defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_none_or(|n| tools::find(n).is_none_or(|t| t.risk != tools::Risk::Write) || tools::group(n) != "files"));
+        }
         let mut extras = Extras::default();
         if self.use_tools && features.contains(&Feature::Connectors) {
             let (mcp_defs, mcp_map, problems) = connectors::offer(&self.state, &self.cipher).await;
@@ -403,7 +450,7 @@ impl Turn {
         // A small memory and a request to build: only the tools for building
         // (and none of the notes about pictures, people or other chats), so the
         // files it writes have room.
-        let small = self.ep.cloud.is_none() && self.ep.ctx <= 16_384;
+        let small = self.ep.cloud.is_none() && self.ep.ctx < crate::TOOL_CTX;
         let lean = build_ask && small;
         if lean {
             extra.retain(|n| tools::for_building(n));
@@ -553,6 +600,8 @@ impl Turn {
         // Calls that failed this turn and why: the same call again won't do better.
         let mut failed_calls: Vec<(String, String)> = Vec::new();
         let mut failed_repeats = 0;
+        // Told once this turn to carry out steps it only explained.
+        let mut told_to_act = false;
         for step in 0..max_steps {
             // What the person added while it worked: part of the conversation from here.
             let added = crate::inbox::take(&self.chat_id);
@@ -614,9 +663,14 @@ impl Turn {
                 forced = Some((ep, f));
                 first = Some(chat::Finished { content: String::new(), thinking: String::new(), tool_calls: Vec::new(), prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None });
             }
+            // Set when its reply only explained what to do: the same step again, told to do it.
+            let mut carry_on: Option<&str> = None;
             let finished = loop {
                 self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
                 let mut messages = chat::api_messages(&system, &kept);
+                if let Some(n) = carry_on {
+                    messages.push(json!({ "role": "user", "content": n }));
+                }
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
                 let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
                 let can_edit = tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("edit_image")));
@@ -750,6 +804,19 @@ impl Turn {
                         self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
+                }
+                // Asked to do something, and at any step it explained the steps
+                // or asked "should I?" instead of doing them (often right after
+                // fetching a page of instructions): the reply is dropped and it's
+                // told to carry them out, once a turn, unless it already changed
+                // or ran something this turn (then the reply is its summary).
+                let acted = kept.iter().rev().take_while(|m| m.role != "user").any(|m| m.tool_calls.iter().flatten().any(|c| tools::find(&c.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute))));
+                if !told_to_act && !acted && tools.is_some() && self.mode != tools::Mode::Plan && forced.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_to_act(asked) && chat::explains_instead(&finished.content) {
+                    told_to_act = true;
+                    carry_on = Some(chat::CARRY_ON);
+                    message_id = uuid::Uuid::new_v4().to_string();
+                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                    continue;
                 }
                 if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &offered) {
                     let looks_only = |n: &str| n != "open_page" && n != "preview_site" && tools::find(n).is_some_and(|t| t.risk == Risk::Read);
@@ -1001,7 +1068,7 @@ impl Turn {
                         db::chat(&conn, &self.cipher, &self.chat_id).map(|c| projects::chat_folders(&conn, &c)).unwrap_or_default()
                     };
                     let before = tool_instructions(&sandbox, self.mode);
-                    sandbox = Sandbox::new(&folders);
+                    sandbox = Sandbox::new(&folders).with_home();
                     about = about.replacen(&before, &tool_instructions(&sandbox, self.mode), 1);
                     system = system_of(&about);
                     if let Some(Value::Array(defs)) = tools.as_mut() {
@@ -1125,7 +1192,7 @@ impl Turn {
             };
         }
         let Some(def) = tools::find(&call.name) else {
-            return Outcome::error(call.name.clone(), format!("There is no tool called {}.", call.name));
+            return Outcome::error(call.name.clone(), format!("There is no tool called {}. Call one of the tools you were given, by its exact name.", call.name));
         };
         let args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
             Ok(v) => v,
@@ -1172,6 +1239,13 @@ impl Turn {
             );
         }
         let mut permission = tools::permission(self.mode, risk, allowed);
+        // Auto: the person has already allowed changes and commands, so
+        // they run on their own; only a destructive one asks (deleting, or a
+        // command the guard flags). Asking before every step left tasks
+        // unfinished. What the guard refuses never runs at all.
+        if self.mode == tools::Mode::Auto && permission == Permission::Ask && matches!(risk, tools::Risk::Write | tools::Risk::Execute) && !tools::destructive_call(&call.name, &args) {
+            permission = Permission::Run;
+        }
         if permission == Permission::Run && adv.must_ask(risk) {
             permission = Permission::Ask;
         }
@@ -1691,20 +1765,27 @@ impl Turn {
     async fn request_web(&self, call: &ToolCall) -> Outcome {
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
         let reason = args.get("reason").and_then(Value::as_str).map(str::trim).filter(|r| !r.is_empty()).unwrap_or("this request").to_string();
-        let preview = Preview {
-            title: format!("Use the web for: {reason}"),
-            kind: "text",
-            detail: Some(reason.clone()),
-            note: Some("Turns on web access for this chat only. Searches and pages go out from this PC.".into()),
-        };
-        if self.ask(call, Risk::Read, preview).await == Decision::Deny {
-            self.log(&format!("Kept the web off (asked for: {reason})"));
-            return Outcome::ok(
-                "The user kept web access off. Answer as well as you can without it, and say in a sentence what you couldn't check.",
-                format!("Web stayed off: {reason}"),
-                "text",
-                None,
-            );
+        // The person has allowed fetching web pages, so this chat goes online
+        // without a popup (asking every time left tasks waiting). Still asked:
+        // with SulcusAI set to Offline (going online overrides their own
+        // choice), and in Plan mode. Fully offline, this tool isn't offered.
+        let offline = self.state.settings().connectivity == crate::net::Connectivity::Offline;
+        if self.mode == tools::Mode::Plan || offline {
+            let preview = Preview {
+                title: format!("Use the web for: {reason}"),
+                kind: "text",
+                detail: Some(reason.clone()),
+                note: Some("Turns on web access for this chat only. Searches and pages go out from this PC.".into()),
+            };
+            if self.ask(call, Risk::Read, preview).await == Decision::Deny {
+                self.log(&format!("Kept the web off (asked for: {reason})"));
+                return Outcome::ok(
+                    "The user kept web access off. Answer as well as you can without it, and say in a sentence what you couldn't check.",
+                    format!("Web stayed off: {reason}"),
+                    "text",
+                    None,
+                );
+            }
         }
         {
             let conn = self.state.db.lock().unwrap();
@@ -1715,7 +1796,7 @@ impl Turn {
         }
         self.emit("chat:web", json!({ "chat_id": self.chat_id, "web": true }));
         let mut o = Outcome::ok(
-            "The user turned on web access for this chat. Go ahead now: use web_search, fetch_page, wikipedia, research, market_quote, find_places or weather to finish what they asked.",
+            "Web access is on for this chat now. Go ahead: use web_search, fetch_page, wikipedia, research, market_quote, find_places or weather to finish what they asked.",
             format!("Web turned on: {reason}"),
             "text",
             None,
@@ -2098,6 +2179,19 @@ mod tests {
         // No folder: it asks for one rather than pasting code.
         assert!(tool_instructions(&Sandbox::new(&[]), Mode::Auto).contains("call request_folder"));
         assert!(tool_instructions(&Sandbox::new(&[]), Mode::Plan).contains("call request_folder"));
+        // Auto: what's already allowed, the project folder's full path, the
+        // home folder to search, and doing rather than explaining.
+        let auto = tool_instructions(&sb.clone().with_home(), Mode::Auto);
+        let project = dunce::canonicalize(d.join("proj")).unwrap().display().to_string();
+        assert!(auto.contains("already given you permission") && auto.contains("Never ask for permission"));
+        assert!(auto.contains(&format!("The project folder is {project}")), "{auto}");
+        assert!(auto.contains("find_files") && auto.contains("then the home folder"));
+        assert!(auto.contains("carry them out step by step"));
+        assert!(!auto.contains("asks the user before any change"), "changes and commands run on their own now");
+        assert!(!plan.contains("already given you permission"), "plan mode changes nothing");
+        // Nothing shared: the home folder can still be searched and read.
+        let bare = tool_instructions(&Sandbox::new(&[]).with_home(), Mode::Auto);
+        assert!(bare.contains("search and read the home folder") && bare.contains("call request_folder"));
     }
 
     #[test]

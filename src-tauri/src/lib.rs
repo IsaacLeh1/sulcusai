@@ -885,6 +885,9 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) ->
 /// `measured`: settings measured on this PC ("Optimize for this PC") are
 /// used where they apply; without, the automatic plan (what the optimizer
 /// starts from).
+/// The least context window a model that uses tools gets.
+pub(crate) const TOOL_CTX: u32 = 16_384;
+
 pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64, measured: bool) -> Plan {
     let mut limits = state.limits();
     let mut budget = state.budget();
@@ -899,6 +902,13 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     let chosen = chosen_window(state);
     if let Some(want) = chosen {
         (ctx, layers) = catalog::launch_at(spec, quant, &budget.with_limits(&limits), want, (ctx, layers), limits.gpu_share);
+    } else if spec.tools && e.ctx.is_none() && ctx < TOOL_CTX {
+        // A model that uses tools gets at least 16K: in 8K a task of a few
+        // steps (a page fetched, files listed, a command's output) ran out
+        // of room, and the agent cut tools and results to fit. Layers move
+        // off the card for it when they must (a mixture of experts keeps
+        // only experts in memory).
+        (ctx, layers) = catalog::launch_at(spec, quant, &budget.with_limits(&limits), TOOL_CTX, (ctx, layers), limits.gpu_share);
     }
     // The compressed cache, when it puts more of the model on the card (or,
     // with no window chosen, gives a 16K one). Not with layers, a window in
@@ -914,7 +924,7 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
             }
         }
         if let Some((c, l)) = catalog::with_q8_cache(spec, quant, &budget.with_limits(&limits), ctx, layers, chosen.is_none()) {
-            (ctx, layers, kv_q8) = (c.min(limits.max_ctx), l, true);
+            (ctx, layers, kv_q8) = (c.min(limits.max_ctx.max(if spec.tools { TOOL_CTX } else { 0 })), l, true);
         }
         // Measured on this PC for this window and this much of the card.
         let room = budget.with_limits(&limits).vram;
@@ -2030,7 +2040,23 @@ pub(crate) async fn llm_endpoint(
     if thinks(&spec, advanced.processing.thinking) && ep.extra.get("max_tokens").is_none() {
         ep.extra["max_tokens"] = json!((ep.ctx / 2).clamp(4096, 16_384));
     }
+    // gpt-oss (Harmony) reads its reasoning effort from the request: never
+    // sent before, so its template's default applied whatever was asked.
+    if harmony(&spec) {
+        let effort = advanced.reasoning_effort();
+        ep.extra["reasoning_effort"] = json!(effort);
+        if !ep.extra["chat_template_kwargs"].is_object() {
+            ep.extra["chat_template_kwargs"] = json!({});
+        }
+        ep.extra["chat_template_kwargs"]["reasoning_effort"] = json!(effort);
+    }
     Ok((ep, spec, installed))
+}
+
+/// gpt-oss, or a model built on it (huihui-ai's abliterated one): it speaks
+/// OpenAI's Harmony format, with channels and `to=functions.x` tool calls.
+pub(crate) fn harmony(spec: &ModelSpec) -> bool {
+    format!("{} {} {}", spec.id, spec.name, spec.source).to_lowercase().contains("gpt-oss")
 }
 
 /// The model thinks before it answers (Qwen3, gpt-oss, DeepSeek R1, QwQ),

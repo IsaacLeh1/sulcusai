@@ -367,9 +367,12 @@ async fn keep_running(mut child: tokio::process::Child, command: String, dir: st
 }
 
 fn workdir(args: &Value, sb: &Sandbox) -> Result<std::path::PathBuf, String> {
+    // A shared folder, or one in the home folder (to run a program found
+    // there); with nothing shared, the home folder. What a command may
+    // change is the guard's call (`guard::refuse`, `guard::destructive`).
     let dir = match args.get("folder").and_then(Value::as_str).filter(|f| !f.trim().is_empty()) {
-        Some(f) => sb.resolve(f)?,
-        None => sb.roots().first().cloned().ok_or("No folders are shared yet.")?,
+        Some(f) => sb.resolve_read(f)?,
+        None => sb.roots().first().cloned().or_else(|| sb.home().cloned()).ok_or("No folders are shared yet.")?,
     };
     if !dir.is_dir() {
         return Err(format!("{} isn't a folder.", sb.display(&dir)));
@@ -529,7 +532,9 @@ async fn run_to_end(mut child: tokio::process::Child, command: &str, dir: &std::
     let code = status.and_then(|s| s.code());
     let footer = match (stopped, code) {
         (Some(r), _) => format!("The command {r} after {}s.", started.elapsed().as_secs()),
-        (None, Some(c)) => format!("Exit code {c}."),
+        (None, Some(0)) => "Exit code 0.".to_string(),
+        // Said plainly, so the model tries again rather than carrying on.
+        (None, Some(c)) => format!("Exit code {c}: the command failed. Read the output above, fix the cause (a wrong path or name, a missing program, a typo) and run it again."),
         (None, None) => "The command ended without an exit code.".into(),
     };
     let text = if combined.is_empty() { format!("(no output)\n{footer}") } else { format!("{combined}\n{footer}") };

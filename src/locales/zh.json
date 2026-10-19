@@ -1824,7 +1824,6 @@
  "Found free time ({1} openings)": "找到空闲时间（{1} 个时段）",
  "Found {1} file{2} matching {pattern}": "找到 {1} 个匹配 {pattern} 的文件",
  "Last sorted {n} unread emails {time} with {model}. This shows the past week.": "上次于 {time} 用 {model} 整理了 {n} 封未读邮件。这里显示过去一周的结果。",
- "Listed shared folders": "已列出共享文件夹",
  "Listed {label}": "已列出 {label}",
  "Loaded the {1} skill": "已加载技能 {1}",
  "Looked at the task list": "已查看任务列表",
@@ -3348,5 +3347,11 @@
  "asks when unclear": "不清楚时会询问",
  "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "在生成或修改图片之前，会询问任何会改变结果的地方，比如你指的是哪个人，或招牌上该写什么。聊天中也会询问。",
  "Ask me when something's unclear": "有不清楚的地方时问我",
- "Questions before the picture": "生成图片前的问题"
+ "Questions before the picture": "生成图片前的问题",
+ "A model is being taught right now. Coach the prompt writer once that's done.": "正在训练一个模型。等它完成后再训练提示词撰写器。",
+ "Coaching needs a model that reads pictures, to score the practice pictures. Install one with a picture reader (Qwen3 VL, for example) first.": "训练需要一个能读图的模型来给练习图片打分。请先安装一个带图片读取器的模型（例如 Qwen3 VL）。",
+ "Exit code 0.": "退出代码 0。",
+ "Listed folders": "已列出文件夹",
+ "The trainer finished without saving the prompt writer's adapter.": "训练器结束了，但没有保存提示词撰写器的适配器。",
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "这个图片模型没有自带语言模型，所以没有可训练的撰写器。"
 }

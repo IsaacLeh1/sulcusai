@@ -1824,7 +1824,6 @@
  "Found free time ({1} openings)": "Freie Zeit gefunden ({1} Lücken)",
  "Found {1} file{2} matching {pattern}": "{1} Datei(en) zu {pattern} gefunden",
  "Last sorted {n} unread emails {time} with {model}. This shows the past week.": "Zuletzt {n} ungelesene E-Mails am {time} mit {model} sortiert. Hier siehst du die letzte Woche.",
- "Listed shared folders": "Freigegebene Ordner aufgelistet",
  "Listed {label}": "{label} aufgelistet",
  "Loaded the {1} skill": "Fähigkeit {1} geladen",
  "Looked at the task list": "Aufgabenliste angesehen",
@@ -3348,5 +3347,11 @@
  "asks when unclear": "fragt bei Unklarem nach",
  "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Bevor ein Bild erstellt oder geändert wird, fragt es nach allem, was das Ergebnis verändern würde, etwa welche Person du meinst oder was auf einem Schild stehen soll. Chats fragen ebenfalls.",
  "Ask me when something's unclear": "Nachfragen, wenn etwas unklar ist",
- "Questions before the picture": "Fragen vor dem Bild"
+ "Questions before the picture": "Fragen vor dem Bild",
+ "A model is being taught right now. Coach the prompt writer once that's done.": "Gerade wird ein Modell trainiert. Trainiere den Prompt-Schreiber, sobald das fertig ist.",
+ "Coaching needs a model that reads pictures, to score the practice pictures. Install one with a picture reader (Qwen3 VL, for example) first.": "Fürs Coaching braucht es ein Modell, das Bilder liest, um die Übungsbilder zu bewerten. Installiere zuerst eines mit Bildleser (zum Beispiel Qwen3 VL).",
+ "Exit code 0.": "Exitcode 0.",
+ "Listed folders": "Ordner aufgelistet",
+ "The trainer finished without saving the prompt writer's adapter.": "Der Trainer ist fertig geworden, ohne den Adapter des Prompt-Schreibers zu speichern.",
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "Dieses Bildmodell bringt kein eigenes Sprachmodell mit, also gibt es keinen Schreiber zum Trainieren."
 }

@@ -52,9 +52,26 @@ static NEVER: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
     .collect()
 });
 
-/// Words that delete, move or overwrite.
-static CHANGES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(^|[\s;|&(])(remove-item|ri|rm|rmdir|rd|del|erase|clear-content|clear-item|move-item|mv|move|robocopy|set-content|out-file|add-content|rimraf|icacls|attrib)(\.exe)?([\s;|&)]|$)")
+/// Words that delete, move or change permissions: every path such a command
+/// names must be inside the shared folders.
+static DESTROYS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(^|[\s;|&(])(remove-item|ri|rm|rmdir|rd|del|erase|clear-content|clear-item|move-item|mv|move|robocopy|rimraf|icacls|attrib)(\.exe)?([\s;|&)]|$)")
+        .expect("a valid pattern")
+});
+
+/// Words that write a file: only what they write to must be inside the
+/// shared folders (what they read may be anywhere: listing the home folder
+/// into a report in a shared folder is fine).
+static WRITES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(?:^|[\s;|&(])(?:set-content|out-file|add-content|tee-object|tee)(?:\.exe)?\s+(?:-(?:filepath|path|literalpath)\s+)?['"]?([^\s'";|&)<>]+)"#).expect("a valid pattern")
+});
+
+/// Output sent into any file, relative ones too: `> out.txt`.
+static ANY_REDIRECT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"[^2&]>>?\s*['"]?([^\s'";|&)<>]+)"#).expect("a valid pattern"));
+
+/// Other commands that throw work away: hard resets, force pushes, killing programs.
+static THROWS_AWAY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|push\s+[^\n]*(-f\b|--force)|checkout\s+--\s|restore\s)|\b(stop-process|taskkill|kill|pkill|killall)\b|\b(npm|pnpm|yarn|pip|winget|choco)\s+(uninstall|remove)\b")
         .expect("a valid pattern")
 });
 
@@ -67,12 +84,6 @@ static PATHS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(r#"(?i)(?:^|[\s'"=(,])({PATH}{unix})"#)).expect("a valid pattern")
 });
 
-/// Output sent into a file: `> path` or `>> path`.
-static REDIRECTS: LazyLock<Regex> = LazyLock::new(|| {
-    let unix = if cfg!(windows) { "" } else { r#"|/[^\s'";|&)<>]*"# };
-    Regex::new(&format!(r#"(?i)[^2&]>>?\s*['"]?({PATH}{unix})"#)).expect("a valid pattern")
-});
-
 /// Why the assistant may not run this command, if it may not.
 pub fn refuse(command: &str, dir: &Path, sandbox: &Sandbox) -> Option<String> {
     for (pattern, why) in NEVER.iter() {
@@ -83,22 +94,45 @@ pub fn refuse(command: &str, dir: &Path, sandbox: &Sandbox) -> Option<String> {
             ));
         }
     }
-    // Every path, when the command deletes or moves; else where output goes.
-    let paths = if CHANGES.is_match(command) { &PATHS } else { &REDIRECTS };
-    let outside: Vec<String> = paths
-        .captures_iter(command)
-        .filter_map(|c| c.get(1))
-        .map(|m| m.as_str().trim_end_matches([',']).to_string())
-        .filter(|p| !p.is_empty())
+    let destroys = DESTROYS.is_match(command);
+    let writes = WRITES.is_match(command) || ANY_REDIRECT.is_match(command);
+    // Running in a folder that isn't shared (a program found in the home
+    // folder): a command that deletes or writes there would change it.
+    if (destroys || writes) && !sandbox.holds(dir) {
+        return Some(format!(
+            "This command changes files, and it would run in {}, which isn't a shared folder, so SulcusAI can read there but not change anything. \
+             Run it in a shared folder, or call request_folder to share that folder first.",
+            dir.display()
+        ));
+    }
+    // Every path, when the command deletes or moves; else only what it writes to.
+    let named: Vec<String> = if destroys {
+        PATHS.captures_iter(command).filter_map(|c| c.get(1)).map(|m| m.as_str().to_string()).collect()
+    } else {
+        WRITES.captures_iter(command).chain(ANY_REDIRECT.captures_iter(command)).filter_map(|c| c.get(1)).map(|m| m.as_str().to_string()).collect()
+    };
+    let outside: Vec<String> = named
+        .into_iter()
+        .map(|p| p.trim_end_matches([',']).to_string())
+        // Output thrown away isn't written anywhere.
+        .filter(|p| !p.is_empty() && !p.eq_ignore_ascii_case("$null") && !p.eq_ignore_ascii_case("nul") && p != "/dev/null")
         .filter(|p| !sandbox.holds(&expand(p, dir)))
         .collect();
     (!outside.is_empty()).then(|| {
         format!(
             "This command could delete or overwrite things outside the shared folders ({}). Commands may only change \
-             things inside the shared folders. Use paths inside them, or ask the user to do that part themselves.",
+             things inside the shared folders. Use paths inside them, or call request_folder to share the folder first.",
             outside.join(", ")
         )
     })
+}
+
+/// A command the user should see before it runs: it deletes, moves or
+/// changes permissions on files, or throws work away (a hard reset, a force
+/// push, stopping programs, uninstalling). Everything else the guard lets
+/// through runs without asking.
+pub fn destructive(command: &str) -> bool {
+    DESTROYS.is_match(command) || THROWS_AWAY.is_match(command)
 }
 
 /// A path from a command, as the folder it names: variables filled in and
@@ -236,6 +270,42 @@ mod tests {
             "git status".to_string(),
         ] {
             assert_eq!(refuse(&c, &d, &sb), None, "{c}");
+        }
+    }
+
+    /// Writing a report into the shared folder from what's outside it is
+    /// fine; writing outside, or running a changing command in a folder
+    /// that isn't shared, isn't.
+    #[test]
+    fn only_what_a_command_writes_must_be_shared() {
+        let (sb, d) = shared();
+        let ok: &[&str] = if cfg!(windows) {
+            &["Get-ChildItem $env:USERPROFILE -Recurse -Filter *.txt | Out-File report.txt", "Get-Content C:\\Windows\\win.ini > copy.txt", "dir C:\\Users > nul", "Start-Process notepad.exe"]
+        } else {
+            &["ls -R ~ > report.txt", "cat /etc/hosts > hosts.txt", "ls / > /dev/null"]
+        };
+        for c in ok {
+            assert_eq!(refuse(c, &d, &sb), None, "{c}");
+        }
+        let written_outside = if cfg!(windows) { "Get-ChildItem | Out-File -FilePath C:\\Windows\\report.txt" } else { "ls | tee /etc/report.txt" };
+        assert!(refuse(written_outside, &d, &sb).is_some_and(|w| w.contains("outside the shared folders")));
+        // Running in a folder that isn't shared: reading is fine, changing isn't.
+        let elsewhere = std::env::temp_dir().join(format!("sulcusai-guard-out-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let elsewhere = dunce::canonicalize(elsewhere).unwrap();
+        assert_eq!(refuse("hello.bat", &elsewhere, &sb), None, "running a program found there");
+        assert!(refuse("echo hi > out.txt", &elsewhere, &sb).is_some_and(|w| w.contains("isn't a shared folder")));
+        assert!(refuse("del old.txt", &elsewhere, &sb).is_some());
+    }
+
+    /// What asks the user first in Auto mode: deleting, moving, and throwing work away.
+    #[test]
+    fn destructive_commands_are_told_apart() {
+        for c in ["Remove-Item build -Recurse", "rm -rf dist", "git reset --hard HEAD~1", "git push --force", "taskkill /im node.exe", "npm uninstall react", "move a.txt b.txt"] {
+            assert!(destructive(c), "{c}");
+        }
+        for c in ["npm install", "npm run build", "python script.py", "Start-Process notepad.exe", "git status", "Get-ChildItem -Recurse", "node build.js > out.txt", ".\\hello.bat"] {
+            assert!(!destructive(c), "{c}");
         }
     }
 

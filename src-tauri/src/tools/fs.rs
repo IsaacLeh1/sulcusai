@@ -310,7 +310,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         match name {
             "list_dir" => list_dir(sb, args.get("path").and_then(Value::as_str)),
             "read_file" => {
-                let path = sb.resolve(arg_str(args, "path")?)?;
+                let path = sb.resolve_read(arg_str(args, "path")?)?;
                 let text = read_text(&path)?;
                 let lines: Vec<&str> = text.lines().collect();
                 let start = args.get("start_line").and_then(Value::as_u64).map_or(1, |n| n.max(1) as usize);
@@ -430,13 +430,16 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
 
 fn list_dir(sb: &Sandbox, path: Option<&str>) -> Result<Outcome, String> {
     let Some(path) = path.filter(|p| !p.trim().is_empty() && p.trim() != ".") else {
-        if sb.is_empty() {
+        let mut lines: Vec<String> = sb.roots().iter().map(|r| format!("{}/ (shared: {})", sb.display(r), r.display())).collect();
+        if let Some(h) = sb.home() {
+            lines.push(format!("{} (the home folder: search and read only)", h.display()));
+        }
+        if lines.is_empty() {
             return Err("No folders are shared yet.".into());
         }
-        let names: Vec<String> = sb.roots().iter().map(|r| format!("{}/", sb.display(r))).collect();
-        return Ok(Outcome::ok(format!("Shared folders:\n{}", names.join("\n")), "Listed shared folders", "text", None));
+        return Ok(Outcome::ok(format!("Folders you can use:\n{}", lines.join("\n")), "Listed folders", "text", None));
     };
-    let dir = sb.resolve(path)?;
+    let dir = sb.resolve_read(path)?;
     let label = sb.display(&dir);
     let mut entries: Vec<(bool, String, u64)> = std::fs::read_dir(&dir)
         .map_err(|_| format!("{label} isn't a folder that can be read."))?
@@ -473,9 +476,9 @@ fn human(n: u64) -> String {
 
 fn search_roots(sb: &Sandbox, path: Option<&str>) -> Result<Vec<std::path::PathBuf>, String> {
     match path.filter(|p| !p.trim().is_empty()) {
-        Some(p) => Ok(vec![sb.resolve(p)?]),
-        None if sb.is_empty() => Err("No folders are shared yet.".into()),
-        None => Ok(sb.roots().to_vec()),
+        Some(p) => Ok(vec![sb.resolve_read(p)?]),
+        None if !sb.is_empty() => Ok(sb.roots().to_vec()),
+        None => sb.home().map(|h| vec![h.clone()]).ok_or_else(|| "No folders are shared yet.".to_string()),
     }
 }
 
@@ -485,9 +488,19 @@ pub(crate) fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit
     let mut files = Vec::new();
     for root in roots {
         let mut ov = ignore::overrides::OverrideBuilder::new(root);
+        // "*report*" finds Report.pdf: names are matched without regard to capitals.
+        ov.case_insensitive(true).map_err(|e| e.to_string())?;
         // Never descend into these, even without a .gitignore.
         for skip in ["!.git/", "!node_modules/", "!target/", "!.venv/", "!__pycache__/"] {
             ov.add(skip).map_err(|e| e.to_string())?;
+        }
+        // The home folder: not its app data and hidden folders (huge, and
+        // where keys and saved logins live).
+        let home = crate::sandbox::home_folder().is_some_and(|h| &h == root);
+        if home {
+            for skip in ["!/AppData/", "!/.*/"] {
+                ov.add(skip).map_err(|e| e.to_string())?;
+            }
         }
         if let Some(g) = glob {
             let g = g.replace('\\', "/");
@@ -502,6 +515,7 @@ pub(crate) fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit
             ov.add(&g).map_err(|e| format!("That glob isn't valid: {e}"))?;
         }
         let walk = ignore::WalkBuilder::new(root)
+            .max_depth(if home { Some(8) } else { None })
             .hidden(false)
             .git_ignore(true)
             .git_exclude(true)
@@ -523,9 +537,32 @@ pub(crate) fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit
 
 fn find_files(sb: &Sandbox, pattern: &str, path: Option<&str>) -> Result<Outcome, String> {
     let roots = search_roots(sb, path)?;
-    let found: Vec<String> = walk_files(&roots, Some(pattern), MAX_LIST)?.iter().map(|p| sb.display(p)).collect();
-    let text = if found.is_empty() { format!("No files match {pattern}.") } else { found.join("\n") };
-    Ok(Outcome::ok(text, format!("Found {} file{} matching {pattern}", found.len(), if found.len() == 1 { "" } else { "s" }), "text", None))
+    let mut found: Vec<std::path::PathBuf> = walk_files(&roots, Some(pattern), MAX_LIST)?;
+    let mut searched: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+    // Nothing in the shared folders: the home folder next, before giving up.
+    let mut from_home = false;
+    if found.is_empty() && path.is_none_or(|p| p.trim().is_empty()) {
+        if let Some(h) = sb.home().filter(|h| !roots.contains(h)) {
+            found = walk_files(std::slice::from_ref(h), Some(pattern), MAX_LIST)?;
+            searched.push(h.display().to_string());
+            from_home = !found.is_empty();
+        }
+    }
+    // Secrets in the home folder aren't listed (they can't be read either).
+    found.retain(|p| sb.holds(p) || !crate::sandbox::secret(p));
+    let shown: Vec<String> = found.iter().map(|p| if sb.holds(p) { sb.display(p) } else { p.display().to_string() }).collect();
+    let text = if shown.is_empty() {
+        let stem = pattern.trim_matches('*').split('.').next().unwrap_or(pattern);
+        format!(
+            "Not found: no file matches {pattern} in {}. Try a broader pattern (part of the name between stars, like *{stem}*), another folder with path, or search_files to look inside files.",
+            searched.join(" or ")
+        )
+    } else if from_home {
+        format!("Nothing in the shared folders; found in the home folder:\n{}", shown.join("\n"))
+    } else {
+        shown.join("\n")
+    };
+    Ok(Outcome::ok(text, format!("Found {} file{} matching {pattern}", shown.len(), if shown.len() == 1 { "" } else { "s" }), "text", None))
 }
 
 fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, String> {
@@ -545,6 +582,9 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
     let single_file = roots.len() == 1 && roots[0].is_file();
     let files: Vec<std::path::PathBuf> = if single_file { roots.clone() } else { walk_files(&roots, glob, 20_000)? };
     'files: for file in files {
+        if !sb.holds(&file) && crate::sandbox::secret(&file) {
+            continue;
+        }
         let Ok(text) = read_text(&file) else { continue };
         if !together && crate::handoff_guard::looks_like_handoff(&file, &text) && crate::handoff_guard::guarded(ctx.state, ctx.memory.cipher, ctx.memory.chat_id, &file).is_some() {
             continue;

@@ -87,6 +87,16 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
     }
 }
 
+/// A call the user sees before it runs even in Auto mode: deleting, or a
+/// command the guard flags as destructive (`guard::destructive`).
+pub fn destructive_call(name: &str, args: &Value) -> bool {
+    match name {
+        "delete_path" => true,
+        "run_command" => args.get("command").and_then(Value::as_str).is_none_or(guard::destructive),
+        _ => false,
+    }
+}
+
 pub struct ToolDef {
     pub name: &'static str,
     pub description: &'static str,
@@ -146,7 +156,7 @@ pub fn in_group(name: &str, group: &[&str]) -> bool {
 }
 
 /// Which group a tool belongs to; groups are offered only when available.
-fn group(name: &str) -> &'static str {
+pub(crate) fn group(name: &str) -> &'static str {
     match name {
         "remember" | "search_memory" => "memory",
         "load_skill" => "skills",

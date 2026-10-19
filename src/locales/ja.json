@@ -1824,7 +1824,6 @@
  "Found free time ({1} openings)": "空き時間が見つかりました ({1} 件)",
  "Found {1} file{2} matching {pattern}": "{pattern} に一致するファイルが {1} 件",
  "Last sorted {n} unread emails {time} with {model}. This shows the past week.": "{time} に {model} で未読メール {n} 件を整理しました。過去1週間分を表示しています。",
- "Listed shared folders": "共有フォルダーを一覧表示",
  "Listed {label}": "{label} を一覧表示",
  "Loaded the {1} skill": "スキル {1} を読み込み",
  "Looked at the task list": "タスク一覧を確認",
@@ -3348,5 +3347,11 @@
  "asks when unclear": "不明な点は確認",
  "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "画像を作成・変更する前に、どの人物のことか、看板に何と書くかなど、結果が変わる点を確認します。チャットでも確認します。",
  "Ask me when something's unclear": "不明な点があれば確認する",
- "Questions before the picture": "画像の前の確認"
+ "Questions before the picture": "画像の前の確認",
+ "A model is being taught right now. Coach the prompt writer once that's done.": "いまモデルを学習中です。それが終わってからプロンプトライターを鍛えてください。",
+ "Coaching needs a model that reads pictures, to score the practice pictures. Install one with a picture reader (Qwen3 VL, for example) first.": "鍛えるには、練習画像を採点するために画像を読めるモデルが必要です。先に画像リーダー付きのモデル（たとえば Qwen3 VL）をインストールしてください。",
+ "Exit code 0.": "終了コード 0。",
+ "Listed folders": "フォルダーを一覧表示しました",
+ "The trainer finished without saving the prompt writer's adapter.": "トレーナーはプロンプトライターのアダプターを保存せずに終了しました。",
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。"
 }

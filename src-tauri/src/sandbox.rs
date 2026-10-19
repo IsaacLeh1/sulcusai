@@ -7,6 +7,44 @@ use std::path::{Component, Path, PathBuf};
 #[derive(Debug, Clone, Default)]
 pub struct Sandbox {
     roots: Vec<PathBuf>,
+    /// Folders the agent may search and read but not change: the user's
+    /// home folder, which the person lets it look through (changes still
+    /// happen only in shared folders).
+    readable: Vec<PathBuf>,
+}
+
+/// Places in the home folder never read, even there: keys, saved
+/// passwords and logins, and SulcusAI's own data.
+const SECRET_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".tauri", ".password-store"];
+const SECRET_PATHS: &[&str] = &[
+    "appdata/local/google/chrome/user data",
+    "appdata/local/microsoft/edge/user data",
+    "appdata/local/bravesoftware",
+    "appdata/roaming/mozilla/firefox/profiles",
+    "appdata/roaming/microsoft/credentials",
+    "appdata/local/microsoft/credentials",
+    "appdata/roaming/microsoft/protect",
+    "appdata/local/app.sulcusai.desktop",
+    "appdata/roaming/app.sulcusai.desktop",
+];
+const SECRET_FILES: &[&str] = &[".env", ".pem", ".key", ".pfx", ".p12", ".kdbx"];
+
+/// A key, saved login or password store: never read from the home folder.
+pub fn secret(path: &Path) -> bool {
+    let k = key(path);
+    let parts: Vec<&str> = k.split('/').collect();
+    let name = parts.last().copied().unwrap_or_default();
+    parts.iter().any(|p| SECRET_DIRS.contains(p))
+        || SECRET_PATHS.iter().any(|s| k.contains(s))
+        || SECRET_FILES.iter().any(|ext| name.ends_with(ext))
+        || name.starts_with("id_rsa")
+        || name.starts_with("id_ed25519")
+        || name.contains("oauth.env")
+}
+
+/// The user's home folder.
+pub fn home_folder() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from).and_then(|d| canonical(&d))
 }
 
 fn canonical(p: &Path) -> Option<PathBuf> {
@@ -98,11 +136,31 @@ pub fn refuse_reason(path: &Path, app_data: &Path, allow_system: bool) -> Option
 
 impl Sandbox {
     pub fn new(folders: &[String]) -> Sandbox {
-        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect() }
+        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect(), readable: Vec::new() }
+    }
+
+    /// The same, with the user's home folder open for searching and reading.
+    pub fn with_home(mut self) -> Sandbox {
+        if let Some(h) = home_folder() {
+            self.readable.push(h);
+        }
+        self
     }
 
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
+    }
+
+    /// The same, with `dir` open for searching and reading (tests: a home folder of their own).
+    #[cfg(test)]
+    pub fn reading(mut self, dir: &Path) -> Sandbox {
+        self.readable.push(canonical(dir).expect("a folder"));
+        self
+    }
+
+    /// The home folder, when it may be searched and read.
+    pub fn home(&self) -> Option<&PathBuf> {
+        self.readable.first()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,19 +178,36 @@ impl Sandbox {
     /// granted folder). Refuses anything outside the granted folders,
     /// including `..` tricks and links that point elsewhere.
     pub fn resolve(&self, input: &str) -> Result<PathBuf, String> {
-        let r = self.resolve_as(input, false);
+        self.resolve_in(input, &self.roots)
+    }
+
+    /// A path to search or read: inside a shared folder, or in the home
+    /// folder when that's open for reading (but never a key or saved
+    /// login there). Relative paths start at the first shared folder, else
+    /// the home folder.
+    pub fn resolve_read(&self, input: &str) -> Result<PathBuf, String> {
+        let all: Vec<PathBuf> = self.roots.iter().chain(&self.readable).cloned().collect();
+        let p = self.resolve_in(input, &all)?;
+        if !self.roots.iter().any(|r| is_inside(&p, r)) && secret(&p) {
+            return Err(format!("{input} holds keys or saved logins, which SulcusAI doesn't read."));
+        }
+        Ok(p)
+    }
+
+    fn resolve_in(&self, input: &str, allowed: &[PathBuf]) -> Result<PathBuf, String> {
+        let r = self.resolve_as(input, false, allowed);
         // On macOS and Linux "/proj/x" is a real absolute path; when it isn't
         // inside a shared folder, read it the way it was shown ("proj/x").
         let head = input.trim().trim_start_matches('/').split('/').next().unwrap_or("").to_lowercase();
         let names_a_folder = self.roots.iter().any(|root| root.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase() == head));
         if r.is_err() && cfg!(not(windows)) && input.trim().starts_with('/') && names_a_folder {
-            return self.resolve_as(input, true).map_err(|_| r.unwrap_err());
+            return self.resolve_as(input, true, allowed).map_err(|_| r.unwrap_err());
         }
         r
     }
 
-    fn resolve_as(&self, input: &str, shown: bool) -> Result<PathBuf, String> {
-        let first = self.roots.first().ok_or("No folders are shared with SulcusAI yet. Add one with the folder button under the message box.")?;
+    fn resolve_as(&self, input: &str, shown: bool, allowed: &[PathBuf]) -> Result<PathBuf, String> {
+        let first = allowed.first().ok_or("No folders are shared with SulcusAI yet. Add one with the folder button under the message box.")?;
         let trimmed = input.trim();
         // "/proj/x" has no drive letter, so on Windows it means "proj/x".
         let raw = if Path::new(trimmed).is_absolute() && !shown {
@@ -148,7 +223,7 @@ impl Sandbox {
             // ("proj/src/main.rs"); map that name back to the folder.
             let mut parts = raw.components();
             let head = parts.next().map(|c| c.as_os_str().to_string_lossy().to_lowercase());
-            let named = self.roots.iter().find(|r| {
+            let named = allowed.iter().find(|r| {
                 r.file_name().map(|n| n.to_string_lossy().to_lowercase()) == head
             });
             match named {
@@ -183,8 +258,11 @@ impl Sandbox {
         for name in tail.into_iter().rev() {
             resolved.push(name);
         }
-        if self.roots.iter().any(|r| is_inside(&resolved, r)) {
+        if allowed.iter().any(|r| is_inside(&resolved, r)) {
             Ok(resolved)
+        } else if allowed.len() == self.roots.len() && self.readable.iter().any(|r| is_inside(&resolved, r)) {
+            // A change asked for in the home folder, outside the shared folders.
+            Err(format!("{input} is outside the folders you've shared with SulcusAI: it can be read but not changed. To change it, call request_folder with its folder."))
         } else {
             Err(format!("{input} is outside the folders you've shared with SulcusAI."))
         }
@@ -206,6 +284,32 @@ impl Sandbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The home folder can be searched and read, not changed, and its keys
+    /// and saved logins stay closed.
+    #[test]
+    fn the_home_folder_is_read_only_and_keeps_its_secrets() {
+        let d = std::env::temp_dir().join(format!("sulcusai-home-{}", uuid::Uuid::new_v4().simple()));
+        for f in ["proj", "home/Desktop", "home/.ssh", "home/AppData/Local/Google/Chrome/User Data"] {
+            std::fs::create_dir_all(d.join(f)).unwrap();
+        }
+        std::fs::write(d.join("home/Desktop/hello.bat"), "@echo hi").unwrap();
+        std::fs::write(d.join("home/.ssh/id_ed25519"), "secret").unwrap();
+        std::fs::write(d.join("home/Desktop/.env"), "KEY=1").unwrap();
+        let sb = Sandbox::new(&[d.join("proj").display().to_string()]).reading(&d.join("home"));
+        let bat = d.join("home/Desktop/hello.bat").display().to_string();
+        assert!(sb.resolve_read(&bat).is_ok(), "read anywhere in the home folder");
+        assert!(sb.resolve(&bat).unwrap_err().contains("can be read but not changed"), "changes only in shared folders");
+        for secret in ["home/.ssh/id_ed25519", "home/Desktop/.env", "home/AppData/Local/Google/Chrome/User Data"] {
+            let p = d.join(secret).display().to_string();
+            assert!(sb.resolve_read(&p).unwrap_err().contains("keys or saved logins"), "{secret}");
+        }
+        // Outside both: closed.
+        assert!(sb.resolve_read(&std::env::temp_dir().display().to_string()).is_err());
+        // Nothing shared: relative paths start at the home folder.
+        let bare = Sandbox::new(&[]).reading(&d.join("home"));
+        assert!(bare.resolve_read("Desktop/hello.bat").is_ok());
+    }
 
     /// Capitalization: one folder on Windows, two folders elsewhere.
     #[test]
