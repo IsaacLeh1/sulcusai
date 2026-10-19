@@ -1417,8 +1417,10 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
 
   The LoRA and its optimizer are small (45.6 MB adapter). Q8_0 alone then asks for 1.1 GB more at step 8, probably a buffer for using its weights the other way round in the backward pass; Q4_0 never did.
 - **No safe lever in the trainer's options** (QVAC b7349, read from its help text): no gradient checkpointing, no 16-bit activations, no training of only the last layers. `--lora-modules` only adds trainable weights. `-ub` below `-c` crashes it. A shorter window cuts the activations but drops the 512-token examples practice is built around. So on a 12 GB card a 4B trains on Q4_0.
-  - Untried: `-fa on`. ggml's flash attention may have no backward pass on Vulkan, in which case the trainer fails or falls back; if it works, it would save most of the attention matrices.
-  - Also untried: a Q5_1 or Q5_0 copy. It would be about 0.6-0.8 GB bigger than Q4_0 (about 9 GB with the 1 GB to spare), and it rounds the Q4_K_M weights much less than Q4_0 does. It's untested whether the trainer's backward pass runs Q5 formats on the card (K-quants fall back to the processor at 50 s a step). Testing it means a short 4B run at about 9 GB, so ask him first.
+  - Tried 2026-10-19 (he said "Run your experiments"; same 20 lines as the table above, killed if the card came within 1 GB of full; no driver events):
+    - `-fa on` doesn't train. The trainer stops before its first step with "ggml_compute_backward: unsupported ggml op for backward pass: FLASH_ATTN_EXT". So the attention matrices can't be saved this way.
+    - A Q5_1 copy (3.05 GB) trains, but on the processor: 80 s a step, with the card idle at 37-40 °C (Q4_0 13 s, Q8_0 5.5 s). Its memory is as the estimate says: 8,603 MB on the card (2,909 MB of weights plus the same 5,694 MB) and 660 MB shared. It's faithful: the step-2 loss was 5.348, against 5.335 for Q8_0 and 5.401 for Q4_0. But it's 6 times slower than Q4_0, so not used.
+  - So on a 12 GB card a 4B trains on Q4_0. Q8_0's quality there would need a trainer with gradient checkpointing, or flash attention with a backward pass.
 - Live check of a whole 4B practice run: the coordinating session had code-teacher's and perskill's practice runs (after merging this branch) stand in for a separate one.
 
 ## Website (2026-10-12)
