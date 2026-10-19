@@ -1410,7 +1410,16 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - `the_training_format_fits_the_free_card_memory`, which covers his card with 1.4 GB or 5.4 GB taken, 16 GB cards, 1.7B and 8B models, Q4_0/Q8_0/F16 files and no card;
   - `a_model_too_big_for_the_card_is_refused_at_the_start`;
   - `a_stalled_trainer_is_stopped`, `a_slowed_trainer_is_flagged` (the 7 → 37 s run) and `sleep_is_not_a_stall`.
-- Live check of a whole 4B practice run: not done yet. The card was put on hold after the driver reset.
+- **What the 5.6 GB beyond the weights is, and why Q8_0 can't fit a 4B on 12 GB.** Take the copy away and both runs hold exactly the same: Q4_0 7,954 − 2,260 MB and Q8_0 9,776 − 4,082 MB are both 5,694 MB. So it doesn't depend on the format. It's what a 512-token step keeps for the backward pass, all in 32-bit floats:
+  - the attention matrices (32 heads × 512 × 512 per layer, 32 MB each, ×36 layers), materialised because training runs with flash attention off (`-fa off` since the first version, with no reason recorded);
+  - the feed-forward activations (3 × 9,728 wide per token);
+  - the 152K-word logits and their gradients.
+
+  The LoRA and its optimizer are small (45.6 MB adapter). Q8_0 alone then asks for 1.1 GB more at step 8, probably a buffer for using its weights the other way round in the backward pass; Q4_0 never did.
+- **No safe lever in the trainer's options** (QVAC b7349, read from its help text): no gradient checkpointing, no 16-bit activations, no training of only the last layers. `--lora-modules` only adds trainable weights. `-ub` below `-c` crashes it. A shorter window cuts the activations but drops the 512-token examples practice is built around. So on a 12 GB card a 4B trains on Q4_0.
+  - Untried: `-fa on`. ggml's flash attention may have no backward pass on Vulkan, in which case the trainer fails or falls back; if it works, it would save most of the attention matrices.
+  - Also untried: a Q5_1 or Q5_0 copy. It would be about 0.6-0.8 GB bigger than Q4_0 (about 9 GB with the 1 GB to spare), and it rounds the Q4_K_M weights much less than Q4_0 does. It's untested whether the trainer's backward pass runs Q5 formats on the card (K-quants fall back to the processor at 50 s a step). Testing it means a short 4B run at about 9 GB, so ask him first.
+- Live check of a whole 4B practice run: the coordinating session had code-teacher's and perskill's practice runs (after merging this branch) stand in for a separate one.
 
 ## Website (2026-10-12)
 
