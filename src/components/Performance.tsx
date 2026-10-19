@@ -5,10 +5,10 @@ import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 
-const MODES: { id: PerfMode; icon: string; label: string; detail: string }[] = [
-  { id: "cool", icon: "🍃", label: tx("Cool & quiet"), detail: tx("About half the processor, less graphics memory, low priority. Models unload after 5 idle minutes. Best on a laptop.") },
-  { id: "balanced", icon: "⚖️", label: tx("Balanced"), detail: tx("Uses what the PC can comfortably spare and leaves room for your other apps.") },
-  { id: "turbo", icon: "🚀", label: tx("Turbo"), detail: tx("You choose how much it may use, up to what this PC can safely give.") },
+const MODES: { id: PerfMode; label: string; detail: string }[] = [
+  { id: "cool", label: tx("Cool & quiet"), detail: tx("About half the processor, less graphics memory, low priority. Models unload after 5 idle minutes. Best on a laptop.") },
+  { id: "balanced", label: tx("Balanced"), detail: tx("Uses what the PC can comfortably spare and leaves room for your other apps.") },
+  { id: "turbo", label: tx("Turbo"), detail: tx("You choose how much it may use, up to what this PC can safely give.") },
 ];
 
 export const MODE_LABEL: Record<PerfMode, string> = { cool: tx("Cool & quiet"), balanced: tx("Balanced"), turbo: tx("Turbo") };
@@ -58,7 +58,6 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
       <div className="levels" role="radiogroup" aria-label={t("Performance mode")}>
         {MODES.map((m) => (
           <button key={m.id} role="radio" aria-checked={s.mode === m.id} className={`level ${s.mode === m.id ? "active" : ""}`} onClick={() => save({ ...s, mode: m.id, turbo: m.id === "turbo" ? turbo : s.turbo })}>
-            <span className="conn-icon" aria-hidden>{m.icon}</span>
             <span>
               <strong>{t(m.label)}</strong>
               {m.id === "balanced" && <span className="badge subtle">{t("Default")}</span>}
@@ -238,10 +237,9 @@ export function PerfPill({ onOpen }: { onOpen: () => void }) {
     };
   }, []);
   if (!mode) return null;
-  const icon = MODES.find((m) => m.id === mode)?.icon;
   return (
     <button className={`status-item perf-pill ${level > 0 ? "hot" : ""}`} onClick={onOpen} title={level > 0 ? t("Running cooler to keep the PC's temperature down (level {n} of 3)", { n: level }) : t("Performance mode")}>
-      <span aria-hidden>{level > 0 ? "🌡️" : icon}</span> {t(MODE_LABEL[mode])}
+      {t(MODE_LABEL[mode])}
       {level > 0 && ` · ${t("cooling {n}/3", { n: level })}`}
     </button>
   );

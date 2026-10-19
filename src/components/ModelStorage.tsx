@@ -79,7 +79,7 @@ export function ModelStorage({ toast }: { toast: PushToast }) {
               return (
                 <div key={d.mount} className={`drive ${here ? "current" : ""}`}>
                   <div className="row between">
-                    <strong className="drive-name">💽 {d.mount.replace(/[\\/]+$/, "")}</strong>
+                    <strong className="drive-name">{d.mount.replace(/[\\/]+$/, "")}</strong>
                     {here && <span className="badge">{t("In use")}</span>}
                   </div>
                   <div className="drive-bar" aria-hidden>

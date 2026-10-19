@@ -25,7 +25,7 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
   return (
     <button className={`media-tile ${item.kind} ${selected ? "selected" : ""}`} onClick={onOpen} title={item.prompt || undefined}>
       {item.kind === "image" ? (
-        thumb ? <img src={thumb} alt={item.prompt || t("Picture")} loading="lazy" /> : <span className="media-ph" aria-hidden>🖼</span>
+        thumb ? <img src={thumb} alt={item.prompt || t("Picture")} loading="lazy" /> : <span className="media-ph" aria-hidden>{t("Picture")}</span>
       ) : videoStill ? (
         <>
           <img src={videoStill} alt={item.prompt || t("Video")} loading="lazy" />
@@ -33,7 +33,7 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
         </>
       ) : (
         <span className="media-ph" aria-hidden>
-          {item.kind === "video" ? "🎬" : item.op === "narrate" ? "🗣" : item.op === "sound" ? "🔔" : "🎵"}
+          {item.kind === "video" ? t("Video") : item.op === "narrate" ? t("Narration") : item.op === "sound" ? t("Sound effect") : t("Music")}
           <span className="small">{clock(item.seconds)}</span>
         </span>
       )}
@@ -72,7 +72,7 @@ export function JobCard({ job }: { job: MediaJob }) {
  * is and (the card) how warm; the card is shown too while the processor works. */
 function JobDevice({ job }: { job: MediaJob }) {
   if (!job.on) return null;
-  if (job.on === "cloud") return <div className="job-device small muted">☁ {t("Making it in the cloud with {model}", { model: job.device ?? t("a cloud model") })}</div>;
+  if (job.on === "cloud") return <div className="job-device small muted">{t("Making it in the cloud with {model}", { model: job.device ?? t("a cloud model") })}</div>;
   const card = job.gpu_usage != null || job.gpu_temp != null;
   return (
     <div className="job-device">
@@ -145,7 +145,7 @@ function took(secs: number): string {
 /** The line under something made: how long it took and what it used. */
 export function MadeStatsLine({ item }: { item: MediaItem }) {
   const line = madeLine(item.stats);
-  return line ? <p className="made-stats small muted">⏱ {line}</p> : null;
+  return line ? <p className="made-stats small muted">{line}</p> : null;
 }
 
 /** Running jobs, kept up to date from the core's events. */
@@ -311,7 +311,7 @@ export function MediaInline({ items, onOpen, toast }: { items: MediaItem[]; onOp
           <MadeStatsLine item={i} />
           {toast && (
             <button className="btn ghost small" onClick={() => saveAs(i, toast)}>
-              ⬇ {t("Save…")}
+              {t("Save…")}
             </button>
           )}
         </div>

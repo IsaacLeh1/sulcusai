@@ -36,6 +36,7 @@ import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
+import { GlobeIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
 
 interface Props {
   chat: Chat | null;
@@ -551,11 +552,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <div className="chat-actions">
           {previewTarget && (
             <button className={`btn ghost small ${showPreview ? "active" : ""}`} aria-pressed={showPreview} onClick={() => setShowPreview((v) => !v)} title={t("The site built in this chat, running beside it")}>
-              🖥 {t("Preview")}
+              {t("Preview")}
             </button>
           )}
           <button className={`btn ghost small ${showFiles ? "active" : ""}`} aria-pressed={showFiles} onClick={() => setShowFiles((v) => !v)} title={t("Pictures and files made in this chat")}>
-            🗂 {t("Files")}
+            {t("Files")}
           </button>
           {features.has("people") && !chat.incognito && <ShareChat chatId={chat.id} toast={toast} />}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
@@ -569,7 +570,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <>
               <IncognitoIcon /> {t("Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.")}
             </>
-          ) : projectName ? t("📚 In project {name}", { name: projectName }) : null}
+          ) : projectName ? t("In project {name}", { name: projectName }) : null}
           {chat.parent_id && (
             <button className="link" onClick={() => onOpenChat(chat.parent_id!)}>
               {t("↩ Continues an earlier chat")}
@@ -591,7 +592,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <p className="muted">
               {cloud ? (
                 <>
-                  {t("You're chatting with")} <strong>☁ {cloud.name}</strong>
+                  {t("You're chatting with")} <strong>{cloud.name}</strong>
                   {t(", which runs on {provider}'s servers. What you send goes to them.", { provider: cloud.provider })}
                 </>
               ) : (
@@ -607,7 +608,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 <button className="link" onClick={onGoModels}>{t("Find one in Models")}</button>
               </p>
             )}
-            {canTools && features.has("files") && <p className="muted small">{t("Share a folder with 📁 and it can read and change files there, or run commands to build and test code.")}</p>}
+            {canTools && features.has("files") && <p className="muted small">{t("Share a folder with the folder button below and it can read and change files there, or run commands to build and test code.")}</p>}
             {!features.has("files") && features.size === 0 && (
               <p className="muted small">
                 {t("Want dictation, voice chat, files or meetings?")} <button className="link" onClick={onGoFeatures}>{t("Add features")}</button>
@@ -715,7 +716,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           <div className="composer-bar">
             {canTools && features.has("files") && <FolderMenu toast={toast} />}
             <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one)") : t("Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
-              📎
+              <PaperclipIcon />
             </button>
             <button
               className={`globe ${webOn ? "on" : ""}`}
@@ -730,7 +731,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                     : t("Turn on web for this chat (Ctrl+Shift+W)")
               }
             >
-              🌐 {webOn ? t("Web on") : t("Web off")}
+              <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
             <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               {cloudChoices.length > 0 || cloudId || taught.length > 0 ? (
@@ -758,17 +759,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 </optgroup>
               )}
               {(cloudChoices.length > 0 || cloudId) && (
-                <optgroup label={connectivity === "cloud" ? t("☁ Cloud") : t("☁ Cloud (needs the Cloud level)")}>
+                <optgroup label={connectivity === "cloud" ? t("Cloud") : t("Cloud (needs the Cloud level)")}>
                   {cloudChoices.map((c) => (
                     <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
-                      ☁ {c.name} · {c.provider}
+                      {c.name} · {c.provider}
                     </option>
                   ))}
-                  {cloudId && !cloud && <option value={cloudId} disabled>{t("☁ (removed model)")}</option>}
+                  {cloudId && !cloud && <option value={cloudId} disabled>{t("(removed model)")}</option>}
                 </optgroup>
               )}
             </select>
-            {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("☁ Cloud")}</span>}
+            {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{t("{n} tokens/sec", { n: tps })}</span>}
             {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
@@ -781,7 +782,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 title={voice ? t("End voice chat") : t("Voice chat: talk, and hear the answers")}
                 aria-label={voice ? t("End voice chat") : t("Start voice chat")}
               >
-                🗣
+                <VoiceIcon />
               </button>
             )}
             {replying && (input.trim() || attached.length > 0) && (
@@ -1011,7 +1012,7 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
       {waiting && (
         <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>
-          ⏳ {t("Sent while it worked · waiting for the model to read it")}
+          {t("Sent while it worked · waiting for the model to read it")}
         </span>
       )}
       {m.role === "user" && (m.meta?.added || receipt) && (
@@ -1021,7 +1022,7 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
       )}
       {m.meta?.from_person && (
         <span className="added-note">
-          👥 {m.role === "user" ? t("From {name}", { name: m.meta.from_name ?? "" }) : t("{name}'s assistant", { name: m.meta.from_name ?? "" }) + (m.meta.model ? " · " + m.meta.model : "")}
+          {m.role === "user" ? t("From {name}", { name: m.meta.from_name ?? "" }) : t("{name}'s assistant", { name: m.meta.from_name ?? "" }) + (m.meta.model ? " · " + m.meta.model : "")}
         </span>
       )}
       {m.role === "user" && m.meta?.from_chat && (
@@ -1053,7 +1054,7 @@ function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void 
   const src = useMediaUrl(item, true);
   return (
     <span className="attach-chip">
-      {src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">🖼</span>}
+      {src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">…</span>}
       <button onClick={onRemove} aria-label={t("Remove picture")}>✕</button>
     </span>
   );
@@ -1063,7 +1064,7 @@ function WebRequestCard({ title, onEnable }: { title: string; onEnable: (() => v
   const reason = title.replace(/^Needs web access: /, "");
   return (
     <div className="web-request" role="note">
-      <span aria-hidden>🌐</span>
+      <GlobeIcon className="web-request-icon" />
       <div>
         <strong>{t("This needs web access")}</strong>
         <span className="small muted block">{t("To look up: {reason}. Only the search and the pages it opens go online; the AI stays on this PC.", { reason })}</span>

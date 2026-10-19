@@ -132,7 +132,7 @@ impl Sandbox {
     }
 
     fn resolve_as(&self, input: &str, shown: bool) -> Result<PathBuf, String> {
-        let first = self.roots.first().ok_or("No folders are shared with SulcusAI yet. Add one with the 📁 button.")?;
+        let first = self.roots.first().ok_or("No folders are shared with SulcusAI yet. Add one with the folder button under the message box.")?;
         let trimmed = input.trim();
         // "/proj/x" has no drive letter, so on Windows it means "proj/x".
         let raw = if Path::new(trimmed).is_absolute() && !shown {

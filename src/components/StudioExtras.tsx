@@ -475,7 +475,7 @@ export function SetWallpaperButton({ item, toast }: { item: MediaItem; toast: Pu
   };
   return (
     <>
-      <button className="btn small" disabled={busy} onClick={open}>{busy ? t("Setting…") : t("🖥 Set as wallpaper")}</button>
+      <button className="btn small" disabled={busy} onClick={open}>{busy ? t("Setting…") : t("Set as wallpaper")}</button>
       {screens && (
         <Modal title={t("Which screen?")} onClose={() => setScreens(null)}>
           <div className="row wrap">

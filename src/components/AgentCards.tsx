@@ -7,45 +7,7 @@ import type { PreviewTarget } from "./PreviewPanel";
 import { t, tf } from "../i18n";
 import { confirmFolder } from "../folders";
 import { ChartView } from "./ChartView";
-
-const TOOL_ICONS: Record<string, string> = {
-  search_chats: "💬",
-  read_chat: "💬",
-  message_chat: "💬",
-  list_dir: "📂",
-  read_file: "📄",
-  preview_site: "🖥",
-  request_api_key: "🔑",
-  calculate: "🧮",
-  run_code: "⚙️",
-  wikipedia: "📚",
-  research: "🔬",
-  market_quote: "📈",
-  find_places: "📍",
-  schedule_task: "⏰",
-  find_files: "🔎",
-  search_files: "🔎",
-  write_file: "✏️",
-  edit_file: "✏️",
-  move_path: "↪️",
-  make_folder: "📁",
-  delete_path: "🗑️",
-  run_command: "⌨️",
-  remember: "🧠",
-  search_memory: "🧠",
-  delegate: "🤖",
-  create_document: "📄",
-  read_document: "📄",
-  browser_open: "🧭",
-  browser_read: "🧭",
-  browser_click: "👆",
-  browser_type: "⌨️",
-  browser_back: "↩️",
-  create_image: "🎨",
-  edit_image: "🖌",
-  create_video: "🎬",
-  create_music: "🎵",
-};
+import { FolderIcon } from "./Icons";
 
 /** A unified diff with added/removed lines colored. */
 export function Diff({ text }: { text: string }) {
@@ -91,7 +53,6 @@ export function ToolCard({
 }) {
   const [open, setOpen] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const icon = call.name.startsWith("mcp__") ? "🔌" : TOOL_ICONS[call.name] ?? "🔧";
   const status = running ? "running" : meta?.status ?? "waiting";
   const title = meta?.title ? tf(meta.title) : describe(call);
   const detail = meta?.detail ?? (meta?.kind === "text" ? output : null);
@@ -99,7 +60,6 @@ export function ToolCard({
   return (
     <div className={`tool-card ${status}`}>
       <button className="tool-head" onClick={() => expandable && setOpen((o) => !o)} aria-expanded={open} disabled={!expandable}>
-        <span aria-hidden>{icon}</span>
         <span className="tool-title ellipsis">{title}</span>
         <span className={`tool-status ${status}`}>
           {status === "running" ? t("Running…") : status === "error" ? t("Failed") : status === "denied" ? t("Declined") : status === "waiting" ? t("Waiting") : ""}
@@ -126,7 +86,7 @@ export function ToolCard({
             className="btn small"
             onClick={() => onPreview({ url: meta.preview_url!, site: meta.preview_site, root: meta.preview_root, start: meta.preview_start, port: meta.preview_port })}
           >
-            🖥 {t("Show the preview")}
+            {t("Show the preview")}
           </button>
           {!!meta.preview_problems && <span className="warn-text small">{t("Its check found problems; the assistant was asked to fix them.")}</span>}
         </div>
@@ -185,7 +145,6 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
   return (
     <div className="approval" role="alert">
       <div className="approval-head">
-        <span aria-hidden>{p.risk === "connector" ? "🔌" : TOOL_ICONS[p.tool] ?? "🔧"}</span>
         <strong>{tf(p.preview.title)}</strong>
       </div>
       {p.preview.detail && <Detail kind={p.preview.kind} detail={p.preview.detail} />}
@@ -285,7 +244,7 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
   return (
     <div className="folder-menu" ref={ref}>
       <button className={`globe ${folders.length ? "on" : ""}`} onClick={() => setOpenMenu((o) => !o)} title={t("Folders the assistant can use")}>
-        📁 {folders.length ? (folders.length === 1 ? t("1 folder") : t("{n} folders", { n: folders.length })) : t("No folders")}
+        <FolderIcon /> {folders.length ? (folders.length === 1 ? t("1 folder") : t("{n} folders", { n: folders.length })) : t("No folders")}
       </button>
       {openMenu && (
         <div className="folder-pop">
@@ -295,7 +254,7 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
             {folders.map((f) => (
               <li key={f.path}>
                 <span className="ellipsis" title={f.path}>
-                  📁 {f.name} {!f.exists && <span className="warn small">{t("(missing)")}</span>}
+                  {f.name} {!f.exists && <span className="warn small">{t("(missing)")}</span>}
                 </span>
                 <button
                   className="link"
@@ -352,7 +311,7 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
       {folders.map((f) => (
         <div key={f.path} className="setting-row">
           <div>
-            <strong>📁 {f.name}</strong>
+            <strong>{f.name}</strong>
             <span className="small muted block ellipsis" title={f.path}>
               {f.path}
               {!f.exists && ` ${t("(missing)")}`}

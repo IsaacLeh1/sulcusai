@@ -4,24 +4,21 @@ import { api, errorText, on, type Connectivity, type OfflineKeep, type OfflineVi
 import { Modal } from "./Modal";
 import { t, tx } from "../i18n";
 
-export const LEVELS: { id: Connectivity; icon: string; label: string; short: string; detail: string }[] = [
+export const LEVELS: { id: Connectivity; label: string; short: string; detail: string }[] = [
   {
     id: "offline",
-    icon: "🔒",
     label: tx("Offline"),
     short: tx("Offline"),
     detail: tx("Nothing leaves this PC, except model downloads you start and the check for app updates (a switch in Settings)."),
   },
   {
     id: "web",
-    icon: "🌐",
     label: tx("Local AI + Web"),
     short: tx("Web"),
     detail: tx("Adds web search, the browser, and email/calendar sync. All AI still runs on this PC."),
   },
   {
     id: "cloud",
-    icon: "☁",
     label: tx("Cloud"),
     short: tx("Cloud"),
     detail: tx("Adds cloud AI models and cloud sync. Prompts sent to cloud models leave this PC."),
@@ -75,7 +72,7 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
   return (
     <div className="conn" ref={ref}>
       <button className={`conn-pill ${fully ? "fully" : level}`} onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
-        <span aria-hidden>{info.icon}</span> {t(info.short)}
+        {t(info.short)}
       </button>
       {open && (
         <div className="conn-menu" role="menu">
@@ -88,7 +85,6 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
               setChoosing(true);
             }}
           >
-            <span className="conn-icon" aria-hidden>{FULLY.icon}</span>
             <span>
               <strong>{t(FULLY.label)}</strong>
               <span className="small muted block">{fully ? t("On. Click to change what may still go out.") : t(FULLY.detail)}</span>
@@ -96,7 +92,6 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
           </button>
           {LEVELS.map((l) => (
             <button key={l.id} role="menuitemradio" aria-checked={!fully && l.id === level} className={!fully && l.id === level ? "active" : ""} onClick={() => pick(l.id)}>
-              <span className="conn-icon" aria-hidden>{l.icon}</span>
               <span>
                 <strong>{t(l.label)}</strong>
                 <span className="small muted block">{t(l.detail)}</span>
@@ -111,7 +106,7 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
                 openSettings("cloud");
               }}
             >
-              {t("☁ Cloud models and API keys…")}
+              {t("Cloud models and API keys…")}
             </button>
           )}
         </div>
@@ -133,7 +128,6 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
 }
 
 const FULLY = {
-  icon: "✈",
   label: tx("Fully offline"),
   short: tx("Fully offline"),
   detail: tx("Nothing goes out at all: no update checks, downloads, web or local network, except what you choose to keep."),
@@ -222,7 +216,7 @@ export function CloudConfirm({ onCancel, onConfirm }: { onCancel: () => void; on
       <p>{t("With Cloud on, you can choose cloud AI models and cloud sync. When you use them:")}</p>
       <ul>
         <li>{t("Your messages and any files you attach are sent to the provider you picked.")}</li>
-        <li>{t("Each cloud feature shows a ☁ badge, and you turn providers on one at a time.")}</li>
+        <li>{t("Each cloud feature shows a Cloud badge, and you turn providers on one at a time.")}</li>
         <li>{t("Local models stay the default unless you pick a cloud one.")}</li>
       </ul>
       <p className="muted small">{t("Cloud providers arrive in a later update; this setting is ready for them.")}</p>

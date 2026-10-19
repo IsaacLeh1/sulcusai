@@ -140,8 +140,7 @@ export function DownloadsPill({ progress, models, onOpen }: { progress: Record<s
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   return (
     <button className="status-item link-btn" onClick={onOpen} title={t("Downloads")}>
-      ⬇ {name}
-      {pct !== null ? ` · ${Math.round(pct)}%` : "…"}
+      {name} · {pct !== null ? t("Downloading · {n}%", { n: Math.round(pct) }) : t("Downloading…")}
     </button>
   );
 }

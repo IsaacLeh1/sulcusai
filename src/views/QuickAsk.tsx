@@ -6,6 +6,7 @@ import { api, errorText, on, type MediaItem } from "../api";
 import { Markdown } from "../components/Markdown";
 import { useMediaUrl } from "../media";
 import { t, tx } from "../i18n";
+import { CameraIcon } from "../components/Icons";
 
 const ACTIONS: { label: string; prompt: (t: string) => string }[] = [
   { label: tx("Summarize"), prompt: (x) => `Summarize this in a few bullet points:\n\n${x}` },
@@ -141,7 +142,7 @@ export function QuickAsk() {
           aria-label={t("Ask")}
         />
         <button className="icon-btn" onClick={takeShot} disabled={shooting} title={t("Ask about the screen: attaches a screenshot of the screen you're on")} aria-label={t("Ask about the screen")}>
-          📷
+          <CameraIcon />
         </button>
         <button className="icon-btn" onClick={() => api.quickHide()} title={t("Close (Esc)")} aria-label={t("Close")}>×</button>
       </div>

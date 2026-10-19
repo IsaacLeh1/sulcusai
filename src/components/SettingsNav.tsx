@@ -37,7 +37,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
   return all.filter((s) => s.show !== false);
 }
 
-/** The other pages under ⚙ that share this sidebar. */
+/** The other pages under the gear menu that share this sidebar. */
 const PAGES: { view: View; label: string }[] = [
   { view: "models", label: tx("Models") },
   { view: "features", label: tx("Features") },

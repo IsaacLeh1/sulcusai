@@ -42,7 +42,7 @@ export function ShareChat({ chatId, toast }: { chatId: string; toast: PushToast 
           setOpen(true);
         }}
       >
-        👥 {shared.length ? t("Shared · {n}", { n: shared.length }) : t("Share")}
+        {shared.length ? t("Shared · {n}", { n: shared.length }) : t("Share")}
       </button>
       {open && (
         <Modal title={t("Share this chat")} onClose={() => setOpen(false)}>

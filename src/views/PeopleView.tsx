@@ -10,6 +10,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
+import { PaperclipIcon } from "../components/Icons";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -182,7 +183,7 @@ export function PeopleView({ toast }: { toast: PushToast }) {
 
 function preview(m: PersonMessage): string {
   if (m.text.trim()) return m.text.replace(/\s+/g, " ").slice(0, 80);
-  return m.file ? "📎 " + m.file.name : "";
+  return m.file ? m.file.name : "";
 }
 
 /** One conversation: messages, and the box to write in. */
@@ -409,7 +410,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                   {m.text && <span className="ptext">{m.text}</span>}
                   {m.file && (
                     <span className="pfile">
-                      <span aria-hidden>📎</span>
+                      <PaperclipIcon />
                       <span className="ellipsis">{m.file.name}</span>
                       <span className="muted small">{bytes(m.file.size)}</span>
                       <button className="btn ghost small" onClick={() => saveFile(m)}>
@@ -440,7 +441,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
         <div className="composer">
           {fileName && (
             <div className="row small">
-              <span className="chip">📎 {fileName}</span>
+              <span className="chip"><PaperclipIcon /> {fileName}</span>
               <button className="link small" onClick={() => setFile(null)}>
                 {t("Remove")}
               </button>
@@ -461,7 +462,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
           />
           <div className="composer-bar">
             <button className="icon-btn" onClick={pick} title={t("Send a file (up to 16 MB)")} aria-label={t("Send a file")}>
-              📎
+              <PaperclipIcon />
             </button>
             <span className="small muted">{t("To {name} only. Never sent to a model.", { name: c.name })}</span>
             <button className="btn primary small push-right" disabled={sending || (!text.trim() && !file)} onClick={send}>
@@ -535,7 +536,7 @@ function SharedPanel({ contact: c, onOpen, toast }: { contact: PersonContact; on
       <section>
         <h3>{t("You share with {name}", { name: c.name })}</h3>
         {c.sharing.length === 0 ? (
-          <p className="muted small">{t("Nothing. To share a chat, open it and click 👥 Share at the top.")}</p>
+          <p className="muted small">{t("Nothing. To share a chat, open it and click Share at the top.")}</p>
         ) : (
           <ul className="shared-list">
             {c.sharing.map((s) => (
@@ -638,7 +639,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
         )}
         <strong className="ellipsis">{info.title}</strong>
         <span className="small muted">
-          👥 {t("{name}'s chat, shared with you", { name: c.name })}
+          {t("{name}'s chat, shared with you", { name: c.name })}
           {info.model && " · " + t("their replies by {model} on their PC", { model: info.model })}
         </span>
       </div>
@@ -654,7 +655,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
         {v?.messages.map((m) =>
           m.role === "step" ? (
             <div key={m.id} className="shared-step small muted">
-              🔧 {m.text}
+              {m.text}
             </div>
           ) : m.role === "note" ? (
             <div key={m.id} className="people-day small muted">
@@ -775,7 +776,7 @@ function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContac
   return (
     <div className={`ask-card ${a.from_me ? "mine" : ""}`}>
       <div className="small muted">
-        🤖 {head} · {time(a.at)}
+        {head} · {time(a.at)}
       </div>
       <div className="ask-q">{a.question}</div>
       {task && a.thread.length > 0 && (
@@ -783,7 +784,7 @@ function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContac
           {a.thread.map((turn, i) => (
             <li key={i} className={turn.from_me ? "mine" : ""}>
               <span className="small muted">{turn.from_me ? t("Your assistant") : t("{name}'s assistant", { name: c.name })}</span>
-              <span className="ptext">{turn.text.replace(/^\s*(\*\*)?DONE:(\*\*)?\s*/i, "✅ ")}</span>
+              <span className="ptext">{turn.text.replace(/^\s*(\*\*)?DONE:(\*\*)?\s*/i, "✓ ")}</span>
             </li>
           ))}
         </ol>

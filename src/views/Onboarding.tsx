@@ -253,9 +253,9 @@ function Finished({ onFinish, installing }: { onFinish: () => void; installing: 
       <h1>{t("You're all set")}</h1>
       <ul className="bullets">
         <li>{t("Start a chat with")} <strong>{t("+ New chat")}</strong>.</li>
-        <li>{t("The")} <strong>{t("🔒 Offline")}</strong> {t("switch at the bottom controls what may go online. 🌐 in a chat turns on web for that chat only.")}</li>
+        <li>{t("The")} <strong>{t("Offline")}</strong> {t("switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.")}</li>
         <li>{t("Settings has your profile, app lock and connectivity. Activity shows what the app has done.")}</li>
-        <li>{t("It starts simple. Add dictation, voice chat, meeting notes, files and more from")} <strong>{t("✨ Features")}</strong> {t("whenever you want them.")}</li>
+        <li>{t("It starts simple. Add dictation, voice chat, meeting notes, files and more from")} <strong>{t("Features")}</strong> {t("whenever you want them.")}</li>
         {installing && <li>{t("Your model is still downloading. Its progress shows on the Models page.")}</li>}
       </ul>
       <div className="onboarding-nav">

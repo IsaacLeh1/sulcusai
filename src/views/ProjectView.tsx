@@ -77,7 +77,7 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
       <div className="narrow">
         <header className="page-head">
           <div>
-            <h1>📚 {project.name}</h1>
+            <h1>{project.name}</h1>
             <p className="muted">{t("A project keeps its own instructions, folders and memories. Every chat in it uses them.")}</p>
           </div>
           <button className="btn primary" onClick={onNewChat}>{t("+ New chat in project")}</button>
@@ -110,7 +110,7 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
           {project.folders.length === 0 && <p className="small">{t("No folders yet.")}</p>}
           {project.folders.map((f) => (
             <div key={f} className="setting-row">
-              <span className="ellipsis small" title={f}>📁 {f}</span>
+              <span className="ellipsis small" title={f}>{f}</span>
               <button
                 className="btn ghost danger small"
                 onClick={async () => {

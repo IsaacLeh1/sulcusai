@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, on, type UpdateAvailable, type UpdateView } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
+import { WarningIcon } from "./Icons";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -174,14 +175,14 @@ export function UpdatePill({ toast }: { toast: PushToast }) {
   };
   const noteEl = note && (
     <span className={`status-item update-note ${note.error ? "warn-text" : "muted"}`} role="status" title={note.text}>
-      {note.error ? "⚠" : "✓"} {note.text}
+      {note.error ? <WarningIcon /> : "✓"} {note.text}
     </span>
   );
   if (found) {
     return (
       <>
         <button className="status-item update-pill" onClick={() => setOpen(true)} title={t("A newer version of SulcusAI is ready")}>
-          ⬆ {t("Update to {version}", { version: found.version })}
+          {t("Update to {version}", { version: found.version })}
         </button>
         {noteEl}
         {open && <InstallModal update={found} onClose={() => setOpen(false)} toast={toast} />}

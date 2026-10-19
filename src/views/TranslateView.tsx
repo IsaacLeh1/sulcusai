@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Language } from "../api";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
+import { SpeakerIcon } from "../components/Icons";
 
 const LAST_LANGUAGE = "sulcusai.translate.to";
 
@@ -92,7 +93,7 @@ export function TranslateView({ hasModel, onGoModels, toast }: { hasModel: boole
             <strong>{detected ? t("{language} (detected)", { language: detected }) : t("Any language")}</strong>
             <span className="spacer" />
             <button className="icon-btn" title={t("Read aloud")} aria-label={t("Read the original aloud")} disabled={!text.trim()} onClick={() => api.speak(text).catch((e) => toast(errorText(e), "error"))}>
-              🔊
+              <SpeakerIcon />
             </button>
           </div>
           <textarea
@@ -118,7 +119,7 @@ export function TranslateView({ hasModel, onGoModels, toast }: { hasModel: boole
             </select>
             <span className="spacer" />
             <button className="icon-btn" title={t("Read aloud")} aria-label={t("Read the translation aloud")} disabled={!result} onClick={() => api.speak(result, to).catch((e) => toast(errorText(e), "error"))}>
-              🔊
+              <SpeakerIcon />
             </button>
             <button className="btn ghost small" disabled={!result} onClick={() => navigator.clipboard.writeText(result).then(() => toast(t("Copied."), "success"))}>
               {t("Copy")}

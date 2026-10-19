@@ -101,7 +101,7 @@ export function VoiceSection({ toast }: { toast: PushToast }) {
         </div>
         <div className="row">
           <button className="btn small" onClick={() => api.speak(t("Hi! This is how I'll sound when I read replies aloud.")).catch((e) => toast(errorText(e), "error"))}>
-            {t("🔊 Test voice")}
+            {t("Test voice")}
           </button>
           <span className="muted small">{t("For natural voices, install them from Models › Speech.")}</span>
         </div>

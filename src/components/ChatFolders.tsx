@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { api, errorText, type Chat, type FolderView } from "../api";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
+import { FolderIcon, LockIcon, PeopleIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 
 /** The folders, each with its chats (when open). Chats can be dragged onto a folder. */
@@ -66,10 +67,10 @@ export function FolderSection({
               title={t("Right-click for more")}
             >
               <span aria-hidden className="folder-caret">{f.collapsed ? "▸" : "▾"}</span>
-              <span aria-hidden>📁</span>
+              <FolderIcon />
               <span className="ellipsis">{f.name}</span>
-              {f.locked && <span title={t("Locked: the automatic cleanup keeps these chats")}>🔒</span>}
-              {f.shared_with.length > 0 && <span title={t("Shared with {names}", { names: f.shared_with.map((p) => p.name).join(", ") })}>👥</span>}
+              {f.locked && <LockIcon className="folder-mark" title={t("Locked: the automatic cleanup keeps these chats")} />}
+              {f.shared_with.length > 0 && <PeopleIcon className="folder-mark" title={t("Shared with {names}", { names: f.shared_with.map((p) => p.name).join(", ") })} />}
               <span className="muted small folder-count">{inside.length}</span>
             </button>
             {!f.collapsed && (
@@ -83,16 +84,16 @@ export function FolderSection({
       {menu && (
         <FloatingMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
           <button role="menuitem" onClick={() => (setNaming({ folder: menu.folder }), setMenu(null))}>
-            ✏ {t("Rename")}
+            {t("Rename")}
           </button>
           <button role="menuitem" onClick={() => (act(api.setFolderFlags(menu.folder.id, { locked: !menu.folder.locked })), setMenu(null))}>
-            {menu.folder.locked ? `🔓 ${t("Unlock (the cleanup may remove its chats)")}` : `🔒 ${t("Lock (the cleanup keeps its chats)")}`}
+            {menu.folder.locked ? t("Unlock (the cleanup may remove its chats)") : t("Lock (the cleanup keeps its chats)")}
           </button>
           <button role="menuitem" onClick={() => (setSharing(menu.folder), setMenu(null))}>
-            👥 {t("Share folder…")}
+            {t("Share folder…")}
           </button>
           <button role="menuitem" className="danger" onClick={() => (setDeleting(menu.folder), setMenu(null))}>
-            🗑 {t("Delete folder")}
+            {t("Delete folder")}
           </button>
         </FloatingMenu>
       )}

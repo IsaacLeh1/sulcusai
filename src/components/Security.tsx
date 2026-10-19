@@ -239,7 +239,7 @@ export function SecuritySection({ status, onChanged, toast }: { status: Security
     <section className="card">
       <h2>{t("Privacy & security")}</h2>
       <p className="small">
-        {t("🔐 Your chats and profile are")} <strong>{t("encrypted on this PC")}</strong>.{" "}
+        {t("Your chats and profile are")} <strong>{t("encrypted on this PC")}</strong>.{" "}
         {status.lock_enabled ? t("Only your Windows account can open them, and only after you unlock with your PIN.") : t("Only your Windows account can open them.")}
       </p>
 

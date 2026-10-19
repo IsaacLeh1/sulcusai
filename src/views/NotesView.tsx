@@ -6,6 +6,7 @@ import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
+import { PinIcon } from "../components/Icons";
 
 const EMPTY: NoteBody = { title: "", body: "", folder: "", tags: [] };
 
@@ -48,7 +49,7 @@ export function NotesView({ toast }: { toast: PushToast }) {
           <div className="folder-chips">
             <button className={`chip ${folder === null ? "active" : ""}`} onClick={() => setFolder(null)}>{t("All")}</button>
             {folders.map((f) => (
-              <button key={f} className={`chip ${folder === f ? "active" : ""}`} onClick={() => setFolder(f)}>📂 {f}</button>
+              <button key={f} className={`chip ${folder === f ? "active" : ""}`} onClick={() => setFolder(f)}>{f}</button>
             ))}
           </div>
         )}
@@ -57,7 +58,7 @@ export function NotesView({ toast }: { toast: PushToast }) {
         {shown.map((n) => (
           <button key={n.id} className={`note-item ${openId === n.id ? "active" : ""}`} onClick={() => setOpenId(n.id)}>
             <span className="row">
-              {n.pinned && <span aria-label={t("Pinned")}>📌</span>}
+              {n.pinned && <PinIcon title={t("Pinned")} />}
               <strong className="ellipsis">{n.title}</strong>
             </span>
             <span className="small muted ellipsis">{n.body.replace(/[#*_`>]/g, "").slice(0, 120)}</span>
@@ -129,7 +130,7 @@ function Editor({ note, onSaved, onDeleted, onPinned, toast }: { note: Note | nu
         <button className="btn small" onClick={() => setPreview((p) => !p)}>{preview ? t("Edit") : t("Preview")}</button>
         {note && (
           <button className="btn ghost small" onClick={() => api.pinNote(note.id, !note.pinned).then(onPinned)} title={note.pinned ? t("Unpin") : t("Pin to the top")}>
-            {note.pinned ? t("Unpin") : t("📌 Pin")}
+            {note.pinned ? t("Unpin") : t("Pin")}
           </button>
         )}
         <button className="btn primary small" onClick={save} disabled={!dirty && !!note}>{t("Save")}</button>

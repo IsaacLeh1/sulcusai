@@ -68,7 +68,7 @@ export function KeyPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat
       )}
       {a?.saved && !replace ? (
         <div className="folder-ask-path">
-          <span>🔑 {t("Use the key you saved for {host}", { host })}</span>
+          <span>{t("Use the key you saved for {host}", { host })}</span>
           <button className="btn small" onClick={() => setReplace(true)}>
             {t("Use another key…")}
           </button>

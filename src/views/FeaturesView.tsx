@@ -8,81 +8,68 @@ import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { t, tx } from "../i18n";
 
 interface Info {
-  icon: string;
   name: string;
   detail: string;
 }
 
 export const FEATURES: Record<FeatureId, Info> = {
-  dictation: { icon: "🎤", name: tx("Dictation"), detail: tx("Type by talking: the 🎤 button in a chat, or Ctrl+Shift+Space.") },
-  voice_chat: { icon: "🗣", name: tx("Voice chat"), detail: tx("Talk with the assistant and hear its answers. Talk over it to interrupt.") },
-  read_aloud: { icon: "🔊", name: tx("Read aloud"), detail: tx("A 🔊 button on every reply, read by Windows' voices or natural voices.") },
-  meetings: { icon: "●", name: tx("Meeting notes"), detail: tx("Records your mic and your computer's sound during calls, then writes a transcript, notes and action items.") },
-  translate: { icon: "🌍", name: tx("Translation"), detail: tx("Translate text and documents with your chat model.") },
-  notes: { icon: "📝", name: tx("Notes"), detail: tx("Markdown notes with folders and tags. The assistant can save and find notes for you.") },
-  tasks: { icon: "✅", name: tx("Tasks"), detail: tx("A to-do list with due dates, reminders and subtasks. Meeting action items can become tasks.") },
+  dictation: { name: tx("Dictation"), detail: tx("Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.") },
+  voice_chat: { name: tx("Voice chat"), detail: tx("Talk with the assistant and hear its answers. Talk over it to interrupt.") },
+  read_aloud: { name: tx("Read aloud"), detail: tx("A speaker button on every reply, read by Windows' voices or natural voices.") },
+  meetings: { name: tx("Meeting notes"), detail: tx("Records your mic and your computer's sound during calls, then writes a transcript, notes and action items.") },
+  translate: { name: tx("Translation"), detail: tx("Translate text and documents with your chat model.") },
+  notes: { name: tx("Notes"), detail: tx("Markdown notes with folders and tags. The assistant can save and find notes for you.") },
+  tasks: { name: tx("Tasks"), detail: tx("A to-do list with due dates, reminders and subtasks. Meeting action items can become tasks.") },
   web_search: {
-    icon: "🔎",
     name: tx("Web search"),
     detail: tx("Search the web and read pages in every chat, even while Offline. Only the searches and the pages it opens go online; your messages and the AI stay on this PC. The browser, email and cloud still follow the connectivity level."),
   },
   browser: {
-    icon: "🧭",
     name: tx("Browser"),
     detail: tx("A built-in browser with its own sign-ins that the assistant can use while you watch. It asks before submitting forms or buying anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat)."),
   },
   email: {
-    icon: "✉️",
     name: tx("Email"),
     detail: tx("Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming."),
   },
   calendar: {
-    icon: "📅",
     name: tx("Calendar"),
     detail: tx("Events on this PC, plus iCloud, Fastmail or Nextcloud calendars. The assistant can check your schedule, find free time and add events; inviting people always asks you first."),
   },
   documents: {
-    icon: "📄",
     name: tx("Documents"),
     detail: tx("The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders."),
   },
   quick_ask: {
-    icon: "⚡",
     name: tx("Quick ask"),
     detail: tx("Press Ctrl+Alt+Space anywhere to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working."),
   },
   browser_control: {
-    icon: "🧩",
     name: tx("Browser control"),
     detail: tx("Lets the assistant use tabs in your own Chrome or Edge, with your sign-ins, through the SulcusAI extension. It works in one tab you can watch, asks before submitting, buying or sending anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat)."),
   },
   images: {
-    icon: "🎨",
     name: tx("Pictures"),
     detail: tx("Make pictures from a description and edit them: change things by instruction, paint over a spot to fill it in, extend the edges, restyle, make them bigger and sharper, or cut out the background. The assistant can make pictures in chats too."),
   },
   video: {
-    icon: "🎬",
     name: tx("Video"),
     detail: tx("Short clips (a few seconds) from a description, or bring a picture to life. The heaviest feature: it needs a graphics card with 6 GB or more, and a clip takes a few minutes."),
   },
   music: {
-    icon: "🎵",
     name: tx("Music and audio"),
     detail: tx("Songs from a description, with lyrics and vocals or instrumental, rough sound effects, and narration read by your voices. A player with trim, loop and save."),
   },
-  files: { icon: "📁", name: tx("Files and coding"), detail: tx("Share folders so the assistant can read and change files and run commands, with your approval.") },
-  memory: { icon: "🧠", name: tx("Memory"), detail: tx("Remembers facts across chats. You can see and edit everything it remembers.") },
-  projects: { icon: "📚", name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
-  scheduled: { icon: "⏰", name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },
-  connectors: { icon: "🔌", name: tx("Connectors and plugins"), detail: tx("Add tools from MCP servers and plugins on this PC.") },
+  files: { name: tx("Files and coding"), detail: tx("Share folders so the assistant can read and change files and run commands, with your approval.") },
+  memory: { name: tx("Memory"), detail: tx("Remembers facts across chats. You can see and edit everything it remembers.") },
+  projects: { name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
+  scheduled: { name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },
+  connectors: { name: tx("Connectors and plugins"), detail: tx("Add tools from MCP servers and plugins on this PC.") },
   chat_team: {
-    icon: "💬",
     name: tx("Chats working together"),
     detail: tx("The assistant can look through your other chats, read them, and hand another chat a question or a piece of work: it works on it there, with the same model, and the answer comes back. Incognito chats are never included."),
   },
   people: {
-    icon: "👥",
     name: tx("People"),
     detail: tx("Connect with someone else's SulcusAI by a code and chat with them directly: messages and files go straight between your PCs, encrypted, and never to a model. Works on the same network, or across the internet through a virtual network like Radmin VPN or Tailscale."),
   },
@@ -148,7 +135,6 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                 const needsInstall = !!f.need && !f.need.met && !f.enabled;
                 return (
                   <article key={id} className={`card feature ${f.enabled ? "on" : ""}`}>
-                    <span className="feature-icon" aria-hidden>{info.icon}</span>
                     <div className="feature-body">
                       <strong>{t(info.name)}</strong>
                       <span className="small muted block">{t(info.detail)}</span>

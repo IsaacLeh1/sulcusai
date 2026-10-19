@@ -6,6 +6,7 @@ import { bytes, percent } from "../format";
 import { t, tx } from "../i18n";
 import { waitLabel } from "../media";
 import { HubLinkBox } from "./HubLink";
+import { LockIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 
 const KINDS: { kind: MediaKind; title: string; per: string }[] = [
@@ -145,7 +146,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
     return (
       <section className="media-hub closed">
         <button className="btn ghost small" onClick={() => setOpen(true)}>
-          🤗 {t("More models from Hugging Face…")}
+          {t("More models from Hugging Face…")}
         </button>
       </section>
     );
@@ -165,7 +166,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
               {f.download < f.size ? t("{size} to download (shares files you have)", { size: bytes(f.download) }) : t("{size} download", { size: bytes(f.download) })}
             </span>
           ) : (
-            <span className="warn-text small block">⚠ {f.reason ? t("This PC can't run it: it {reason}.", { reason: f.reason }) : t("too much for this PC")}</span>
+            <span className="warn-text small block">{f.reason ? t("This PC can't run it: it {reason}.", { reason: f.reason }) : t("too much for this PC")}</span>
           )}
         </div>
         {p ? (
@@ -185,7 +186,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
     <section className="card hub media-hub">
       <div className="look-row">
         <div>
-          <strong>🤗 {t("Hugging Face")}</strong>
+          <strong>{t("Hugging Face")}</strong>
           <p className="muted small">
             {t("Picture, video and music models people share, built on the kinds SulcusAI runs (SDXL, Z-Image, FLUX.2 klein, Qwen Image, Wan and ACE-Step). Only versions this PC can run are shown. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}
           </p>
@@ -256,7 +257,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
                       <span className="badge subtle" title={t("Built on {model}", { model: m.base_model })}>{m.family}</span>
                     </div>
                     <span className="muted small">
-                      ⬇ {compact.format(m.downloads)} · ♥ {compact.format(m.likes)}
+                      {t("{n} downloads", { n: compact.format(m.downloads) })} · {t("{n} likes", { n: compact.format(m.likes) })}
                       {m.license && ` · ${m.license}`}
                     </span>
                   </div>
@@ -282,19 +283,19 @@ function abilities(m: MediaModelCard): string[] {
   switch (m.kind) {
     case "image":
       return [
-        can("generate") ? tx("🖼 Makes pictures") : null,
-        can("edit") ? tx("✏ Edits pictures") : null,
-        can("restyle") ? tx("🎨 Restyles pictures") : null,
-        can("fill") || can("extend") ? tx("🧩 Fills in and extends") : null,
+        can("generate") ? tx("Makes pictures") : null,
+        can("edit") ? tx("Edits pictures") : null,
+        can("restyle") ? tx("Restyles pictures") : null,
+        can("fill") || can("extend") ? tx("Fills in and extends") : null,
       ].filter((x): x is string => !!x);
     case "video":
-      return [tx("🎬 Makes video"), ...(can("image") ? [tx("🖼→🎬 Brings a picture to life")] : [])];
+      return [tx("Makes video"), ...(can("image") ? [tx("Brings a picture to life")] : [])];
     case "music":
-      return [tx("🎵 Makes music and sound")];
+      return [tx("Makes music and sound")];
     case "upscale":
-      return [tx("🔍 Makes pictures bigger and sharper")];
+      return [tx("Makes pictures bigger and sharper")];
     case "background":
-      return [tx("✂ Removes backgrounds")];
+      return [tx("Removes backgrounds")];
     default:
       return [];
   }
@@ -331,7 +332,7 @@ function MediaModelRow({
           <strong>{m.name}</strong> <span className="muted small">· {m.publisher}</span>
           {m.from_hub && (
             <a className="badge subtle" href={m.source} target="_blank" rel="noreferrer" title={m.from_hub}>
-              🤗 {t("From Hugging Face")}
+              {t("From Hugging Face")}
             </a>
           )}
           {!m.license.commercial && <span className="badge subtle" title={m.license.note ?? undefined}>{t("Non-commercial")}</span>}
@@ -343,7 +344,7 @@ function MediaModelRow({
               title={kept ? t("Locked: the automatic cleanup never removes it. Click to unlock.") : t("Lock it so the automatic cleanup never removes it")}
               onClick={() => api.setKept("model", m.id, !kept).then((l) => onKept(l.models)).catch((e) => toast(errorText(e), "error"))}
             >
-              {kept ? "🔒" : "🔓"}
+              <LockIcon open={!kept} />
             </button>
           )}
           <span className="cap-badges">

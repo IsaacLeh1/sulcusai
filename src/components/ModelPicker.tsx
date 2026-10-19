@@ -60,7 +60,7 @@ export function ModelPicker({ label, installed, current, onPick, onModels }: {
               onModels();
             }}
           >
-            🧩 {t("Models")} <span className="muted small">· {t("install, remove or compare")}</span>
+            {t("Models")} <span className="muted small">· {t("install, remove or compare")}</span>
           </button>
         </div>
       )}

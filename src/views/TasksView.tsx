@@ -5,6 +5,7 @@ import { api, errorText, on, type Task } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
+import { BellIcon } from "../components/Icons";
 
 type List = "today" | "upcoming" | "anytime" | "done";
 const PRIORITY = [tx("None"), tx("Low"), tx("Medium"), tx("High")];
@@ -139,7 +140,7 @@ export function TasksView({ toast }: { toast: PushToast }) {
                 </span>
                 <span className="small muted">
                   {task.due !== null && <span className={task.due < now && !task.done_at && !(!task.due_has_time && task.due >= new Date().setHours(0, 0, 0, 0)) ? "overdue" : ""}>{dueLabel(task)}</span>}
-                  {task.remind_at !== null && !task.done_at && " · 🔔"}
+                  {task.remind_at !== null && !task.done_at && <> · <BellIcon title={t("Has a reminder")} /></>}
                   {task.subtasks.length > 0 && ` · ${task.subtasks.filter((s) => s.done).length}/${task.subtasks.length}`}
                   {task.source && ` · ${t("from {label}", { label: task.source.label })}`}
                 </span>
