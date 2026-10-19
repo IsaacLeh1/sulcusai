@@ -283,7 +283,7 @@ export function CalendarView({ toast }: { toast: PushToast }) {
                 : `${new Date(shown.start).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} · ${time(shown.start)} – ${time(shown.end)}`}
               {shown.recurring && <span className="muted"> · {t("Repeats")}</span>}
             </p>
-            {shown.location && <p>📍 {shown.location}</p>}
+            {shown.location && <p className="row"><span className="muted">{t("Place")}</span> <span>{shown.location}</span></p>}
             {shown.attendees.length > 0 && <p className="muted small">{t("With {names}", { names: shown.attendees.join(", ") })}</p>}
             {shown.notes && <p className="pre-wrap">{shown.notes}</p>}
           </div>
@@ -396,7 +396,7 @@ function MonthGrid({ from, at, today, events, tasks, chipStyle, onDay, onCreate,
                     <span className="ellipsis">{it.e.title}</span>
                   </button>
                 ) : (
-                  <span key={it.task.id} className="cal-chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                  <span key={it.task.id} className="cal-chip task" title={it.task.title}><span className="cal-chip-box" aria-hidden /><span className="ellipsis">{it.task.title}</span></span>
                 ),
               )}
               {more > 0 && <button className="cal-chip more" onClick={(ev) => { ev.stopPropagation(); onDay(day); }}>{t("{n} more", { n: more + 1 })}</button>}
@@ -445,7 +445,7 @@ function TimeGrid({ days, today, events, tasks, chipStyle, onDay, onCreate, onEv
                 "e" in it ? (
                   <button key={it.e.id} className="cal-chip all-day" style={chipStyle(it.e)} onClick={() => onEvent(it.e)} title={it.e.title}><span className="ellipsis">{it.e.title}</span></button>
                 ) : (
-                  <span key={it.task.id} className="cal-chip task" title={it.task.title}>✅ <span className="ellipsis">{it.task.title}</span></span>
+                  <span key={it.task.id} className="cal-chip task" title={it.task.title}><span className="cal-chip-box" aria-hidden /><span className="ellipsis">{it.task.title}</span></span>
                 ),
               )}
             </div>

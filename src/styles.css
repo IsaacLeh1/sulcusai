@@ -1198,7 +1198,49 @@ button.next-chip:disabled { opacity: 0.7; cursor: progress; }
 .triage-empty { max-width: 520px; margin: 60px auto; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 16px; }
 .triage-empty h2 { margin: 6px 0 0; }
 .triage-empty p { margin: 0 0 10px; line-height: 1.55; }
-.triage-icon { font-size: 30px; }
+.triage-icon { font-size: 30px; color: var(--accent); display: inline-grid; place-items: center; }
+
+/* Mail icons: line drawings in the text's colour (no emoji). */
+.mail-icon { flex: none; display: inline-block; vertical-align: -0.2em; }
+.folder-icon { display: inline-grid; place-items: center; }
+.mail-clip { display: inline-grid; place-items: center; }
+.icon-btn .mail-icon { vertical-align: middle; }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; }
+.compose-note { margin: 0; padding: 6px 16px; background: var(--accent-soft); border-bottom: 1px solid var(--border); }
+/* A task on the calendar: an empty box, like a to-do. */
+.cal-chip-box { flex: none; width: 9px; height: 9px; border: 1.5px solid currentColor; border-radius: 2px; }
+
+/* An invitation in the open message. */
+.invite-card { margin: 0 0 20px 54px; max-width: 640px; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--panel-2); display: flex; flex-direction: column; gap: 8px; }
+.invite-kind { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); font-weight: 650; }
+.invite-title { font-size: 17px; font-weight: 600; margin: 0; }
+.invite-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 2px 0; font-size: 13.5px; }
+.invite-facts dt { color: var(--muted); }
+.invite-facts dd { margin: 0; overflow-wrap: anywhere; }
+.invite-facts a { color: var(--accent); }
+.invite-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.invite-row input[type="checkbox"] { accent-color: var(--accent); }
+.invite-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.invite-actions .btn { border-radius: 99px; padding: 7px 18px; }
+@media (max-width: 900px) {
+  .invite-card { margin-left: 0; }
+}
+
+/* AI report: its options, a group's bulk actions, and Undo for marking read. */
+.triage-options { display: flex; flex-wrap: wrap; gap: 0 10px; }
+.triage-options .auto-sort { flex: 1 1 300px; }
+.triage-group-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.triage-bulk { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.triage-undo { display: flex; padding: 4px 24px 0; }
+.triage-undo .undo-mark { max-width: 100%; }
+.triage-actions { flex-wrap: wrap; justify-content: flex-end; max-width: 55%; }
+.bulk-list { margin: 0 0 8px; padding-left: 20px; max-height: 220px; overflow-y: auto; }
+
+/* Subscriptions: lists never opened. */
+.subs-head-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.subs-unopened { color: var(--warn); font-weight: 600; }
+.never-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; margin: 6px 0 10px; }
+.never-list .check { min-width: 0; }
 
 /* ---------- main buttons: black with a violet edge and soft shading ---------- */
 .btn.primary, .compose-btn, .send-btn {

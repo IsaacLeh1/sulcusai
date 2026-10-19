@@ -1277,11 +1277,56 @@ export interface MailItem {
   partial: boolean;
   /** When the user marked it read with the button (it's under Marked read). */
   marked_at: number | null;
+  /** When the user last opened it here. */
+  opened_at: number | null;
   /** List-Unsubscribe targets (mailto: and https:). */
   unsubscribe: string[];
   one_click: boolean;
   list_id: string;
   list_name: string;
+  /** A calendar invitation in it (METHOD:REQUEST). */
+  invite: MailInvite | null;
+}
+
+export type PartStat = "ACCEPTED" | "TENTATIVE" | "DECLINED";
+
+/** A calendar invitation in an email. */
+export interface MailInvite {
+  method: string;
+  uid: string;
+  sequence: number;
+  title: string;
+  start: number;
+  end: number;
+  all_day: boolean;
+  location: string;
+  notes: string;
+  organizer: string;
+  organizer_name: string;
+  attendees: { email: string; name: string; partstat: string }[];
+  recurring: boolean;
+  /** What the user answered here. */
+  answer: { partstat: PartStat; at: number; sent: boolean; event_id: string | null } | null;
+}
+
+export interface InviteOutcome {
+  answer: NonNullable<MailInvite["answer"]>;
+  /** The event on the calendar: added now, or found there. */
+  event: CalEvent | null;
+  /** It was on the calendar already. */
+  already: boolean;
+  /** The answer couldn't be sent (the rest was done). */
+  send_error: string;
+}
+
+/** What a bulk action on a report group would act on. */
+export interface BulkPlan {
+  action: "mark_read" | "archive" | "unsubscribe";
+  ids: string[];
+  lists: { key: string; name: string }[];
+  count: number;
+  /** More than five: ask once first. */
+  ask: boolean;
 }
 
 export type MailCategory = "needs reply" | "to-do" | "work" | "personal" | "bills" | "travel" | "updates" | "newsletters" | "promotions" | "social";
@@ -1306,6 +1351,10 @@ export interface Subscription extends Unsub {
   latest: number;
   /** Its mail still in the inbox. */
   inbox_ids: string[];
+  /** When one of its emails was last opened here. */
+  opened_at: number | null;
+  /** Never opened: how many of its latest emails went unopened (else 0). */
+  unopened: number;
 }
 
 export interface UnsubscribeResult {
@@ -1352,6 +1401,10 @@ export interface TriageItem {
   /** Needs a reply from a person, with none sent after a day. */
   missed: boolean;
   unsubscribe: Unsub | null;
+  /** Still in the inbox. */
+  in_inbox: boolean;
+  /** A task to reply to it is open. */
+  reminder: boolean;
 }
 
 export interface TriageReport {
@@ -1361,6 +1414,8 @@ export interface TriageReport {
   items: TriageItem[];
   /** New mail is sorted as it arrives. */
   auto: boolean;
+  /** Missed replies a sort finds get a reminder by themselves. */
+  remind_missed: boolean;
 }
 
 export interface MailDraft {
@@ -2208,6 +2263,17 @@ export const api = {
   mailSubscriptions: () => invoke<Subscription[]>("mail_subscriptions"),
   mailUnsubscribe: (key: string) => invoke<UnsubscribeResult>("mail_unsubscribe", { key }),
   mailEventDraft: (id: string) => invoke<EventDraft>("mail_event_draft", { id }),
+  /** The AI's draft of a reply (only the body; nothing is sent). */
+  mailDraftReply: (id: string) => invoke<string>("mail_draft_reply", { id }),
+  /** A task to reply, due tomorrow at 9:00 with a reminder. */
+  mailRemindMissed: (id: string) => invoke<{ added: boolean }>("mail_remind_missed", { id }),
+  setMailRemindMissed: (on: boolean) => invoke<void>("set_mail_remind_missed", { on }),
+  mailBulkPlan: (ids: string[], action: BulkPlan["action"]) => invoke<BulkPlan>("mail_bulk_plan", { ids, action }),
+  /** The invitation's event if it's on a calendar here already. */
+  mailInviteStatus: (id: string) => invoke<CalEvent | null>("mail_invite_status", { id }),
+  /** Accept, Maybe or Decline; the reply is sent only with sendReply. */
+  mailInviteRespond: (id: string, answer: "accept" | "maybe" | "decline", calendar: string | null, sendReply: boolean) =>
+    invoke<InviteOutcome>("mail_invite_respond", { id, answer, calendar, sendReply }),
   setUiLanguage: (code: string) => invoke<void>("set_ui_language", { code }),
   sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
   calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
