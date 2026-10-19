@@ -720,8 +720,6 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     if !replayed.is_empty() {
         state.log("model", &format!("It also replays some of its own first-try right answers, so each skill has its share: {}", replayed.join(", ")));
     }
-    // What's left is kept for the anchors.
-    spare.retain(|x| !lines.contains(x));
     // Mixed together, so no kind comes all at the end, where the learning
     // rate has tapered off.
     rng.shuffle(&mut lines);
