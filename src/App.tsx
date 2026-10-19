@@ -23,6 +23,7 @@ import { t } from "./i18n";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
+import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ModelPicker } from "./components/ModelPicker";
@@ -998,6 +999,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </>
           )}
         </span>
+        <GpuPicker engine={engine} onEngineChanged={refreshEngine} toast={toast} />
         {liveMeeting && (
           <button className="status-item rec-pill" onClick={() => setView("meetings")} title={t("A meeting is being recorded")}>
             <span className="rec-dot on" /> {t("Recording meeting")}

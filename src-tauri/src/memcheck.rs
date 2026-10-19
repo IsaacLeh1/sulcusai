@@ -147,10 +147,19 @@ pub async fn before_loading(state: &Arc<AppState>, spec: &ModelSpec, want: Need,
     if go {
         Ok(())
     } else {
-        Err(format!(
-            "{} wasn't loaded: the PC is short of memory right now. Close apps you aren't using (the window listed the biggest), pick a smaller model, or lower the GPU limit at the top of the chat, then try again.",
-            spec.name
-        ))
+        Err(advice(&spec.name, short_ram, short_vram))
+    }
+}
+
+/// What to do when a model wasn't loaded for want of memory. Closing apps
+/// and a smaller window come first: a lower GPU limit moves the model to
+/// the processor (slower, and hot on a laptop), and doesn't help at all
+/// when system memory is what's short.
+fn advice(model: &str, short_ram: bool, short_vram: bool) -> String {
+    if short_vram && !short_ram {
+        format!("{model} wasn't loaded: the graphics card's memory is in use right now. Close apps using the card (a game, a video editor), or choose a smaller context window (click the meter at the top of the chat), then try again. A smaller model also fits. Lowering the GPU limit at the top of the chat works too, but runs part of the model on the processor: slower and hotter.")
+    } else {
+        format!("{model} wasn't loaded: the PC is short of memory right now. Close apps you aren't using (the window listed the biggest), or choose a smaller context window (click the meter at the top of the chat), then try again. A smaller model also fits.")
     }
 }
 
@@ -193,5 +202,19 @@ mod tests {
         assert_eq!(short(on_card, 24 * GIB, Some(3 * GIB)), (false, true));
         // No readout of the card's memory (not NVIDIA): only system memory counts.
         assert_eq!(short(on_card, 24 * GIB, None), (false, false));
+    }
+
+    /// The advice puts closing apps and a smaller window before the GPU
+    /// limit, and leaves the limit out when system memory is short (moving
+    /// the model to the processor needs more of it, not less).
+    #[test]
+    fn the_advice_puts_the_gpu_limit_last() {
+        let card = advice("Qwen3 8B", false, true);
+        let (apps, window, limit) = (card.find("Close apps").unwrap(), card.find("smaller context window").unwrap(), card.find("GPU limit").unwrap());
+        assert!(apps < limit && window < limit, "{card}");
+        assert!(card.contains("slower and hotter"));
+        let ram = advice("Qwen3 8B", true, false);
+        assert!(ram.contains("Close apps") && ram.contains("smaller context window") && !ram.contains("GPU limit"), "{ram}");
+        assert_eq!(advice("Qwen3 8B", true, true), ram);
     }
 }

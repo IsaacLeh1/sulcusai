@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
+import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -63,7 +63,8 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   if (!catalog) return <div className="page"><p className="muted">{t("Checking this PC…")}</p></div>;
 
   const { hardware: hw, hints } = catalog;
-  const gpu = hw.gpus.filter((g) => !g.integrated).sort((a, b) => b.vram_bytes - a.vram_bytes)[0];
+  // The card models use: the one picked in the status bar, else the one with the most memory.
+  const gpu = mainGpu(hw);
   // Rank among the models this PC can run, least capable = 1.
   // Models from other apps have no ratings, so they aren't ranked.
   const byCapability = catalog.models.filter((m) => !m.local).sort((a, b) => a.ratings.overall - b.ratings.overall);
@@ -114,7 +115,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       <section className="card hw">
         <div className="hw-grid">
-          <Spec label={t("Graphics card")} value={gpu ? `${gpu.name}` : t("None usable")} sub={gpu ? t("{size} video memory", { size: bytes(gpu.vram_bytes) }) : t("Models run on the processor")} />
+          <Spec label={t("Graphics card")} value={gpu ? `${gpu.name}` : t("None usable")} sub={gpu ? t("{size} video memory", { size: bytes(gpu.vram_bytes) }) : hw.broken_cards?.length ? t("A graphics card was found without a working driver. Update its driver, then click Check again.") : t("Models run on the processor")} />
           <Spec label={t("Memory")} value={bytes(hw.ram_total)} sub={t("{size} free now", { size: bytes(hw.ram_available) })} />
           <Spec label={t("Processor")} value={hw.cpu_name || t("Unknown")} sub={t("{cores} cores · {threads} threads", { cores: hw.cpu_cores ?? "?", threads: hw.cpu_threads })} />
           <Spec label={t("Disk")} value={t("{size} free", { size: bytes(hw.disk_free) })} sub={hw.models_drive ? t("on {drive}", { drive: hw.models_drive }) : t("on the models drive")} />

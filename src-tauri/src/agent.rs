@@ -252,11 +252,18 @@ impl Turn {
     }
 
     /// Before each step: wait out the heat guard while the PC is over its
-    /// limit, and rest briefly while adaptive cooling has stepped down.
+    /// limit, and rest briefly while adaptive cooling has stepped down. A hot
+    /// processor while the model runs on it, on a PC with a graphics card,
+    /// comes with the reason ("the GPU limit is Off").
     async fn rest_if_hot(&self) {
         let limits = self.state.limits();
         crate::perf::cool_down(&limits, |what| {
-            self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "cooling", "detail": what }));
+            let note = if what.starts_with("processor") { crate::placement::processor_note(&self.state) } else { None };
+            let detail = match note {
+                Some(n) => format!("{what}; {n}"),
+                None => what.to_string(),
+            };
+            self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "cooling", "detail": detail }));
         })
         .await;
         let pause = crate::perf::step_pause(&self.state.heat.get());

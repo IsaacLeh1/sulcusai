@@ -106,8 +106,33 @@ pub fn tie_to_app(cmd: &mut Command) {
 }
 
 /// The graphics devices an engine sees, as `--list-devices` prints them:
-/// ("Vulkan0", "NVIDIA GeForce RTX 4070"), in the engine's own order.
+/// ("Vulkan0", "NVIDIA GeForce RTX 4070"), in the engine's own order. Asked
+/// once, and asked again after the PC is checked again ("Check again", a new
+/// power source) or when a model ran on another card than the one picked by
+/// name: the numbers are the engine's own and can change with the drivers.
 static DEVICES: std::sync::Mutex<Option<(PathBuf, Vec<(String, String)>)>> = std::sync::Mutex::new(None);
+
+/// Forgets which devices the engines see, so the next model asks again.
+pub fn forget_devices() {
+    *DEVICES.lock().unwrap() = None;
+}
+
+/// The devices the engine listed last (None: not asked since the PC was
+/// last checked).
+pub fn devices_seen() -> Option<Vec<(String, String)>> {
+    DEVICES.lock().unwrap().as_ref().map(|(_, d)| d.clone())
+}
+
+/// The engine sees a graphics card it may use: a device that isn't the
+/// integrated graphics. None until it was asked.
+pub fn sees_a_card(devices: &[(String, String)], cards: &[crate::hardware::Gpu]) -> bool {
+    devices.iter().any(|(_, name)| !cards.iter().any(|c| c.integrated && same_card(name, &c.name)))
+}
+
+fn same_card(a: &str, b: &str) -> bool {
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    a == b || a.contains(&b) || b.contains(&a)
+}
 
 fn parse_devices(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -120,43 +145,77 @@ fn parse_devices(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Of the devices an engine sees, the dedicated graphics cards, when the PC
-/// also has integrated graphics the engine could otherwise use. Matched by
-/// name against the cards Windows reports.
-fn dedicated_of(devices: &[(String, String)], cards: &[crate::hardware::Gpu]) -> Vec<String> {
-    let same = |a: &str, b: &str| {
-        let (a, b) = (a.to_lowercase(), b.to_lowercase());
-        a == b || a.contains(&b) || b.contains(&a)
-    };
-    let is_integrated = |name: &str| cards.iter().any(|c| c.integrated && same(name, &c.name));
-    let is_dedicated = |name: &str| cards.iter().any(|c| !c.integrated && same(name, &c.name));
-    let dedicated: Vec<String> = devices.iter().filter(|(_, n)| is_dedicated(n) && !is_integrated(n)).map(|(id, _)| id.clone()).collect();
+/// Of the devices an engine sees, the dedicated graphics cards (number and
+/// name), when the PC also has integrated graphics the engine could
+/// otherwise use. Matched by name against the cards Windows reports.
+fn dedicated_of(devices: &[(String, String)], cards: &[crate::hardware::Gpu]) -> Vec<(String, String)> {
+    let is_integrated = |name: &str| cards.iter().any(|c| c.integrated && same_card(name, &c.name));
+    let is_dedicated = |name: &str| cards.iter().any(|c| !c.integrated && same_card(name, &c.name));
+    let dedicated: Vec<(String, String)> = devices.iter().filter(|(_, n)| is_dedicated(n) && !is_integrated(n)).cloned().collect();
     if dedicated.is_empty() || dedicated.len() == devices.len() {
         return Vec::new();
     }
     dedicated
 }
 
-/// The dedicated cards for `exe` (a llama.cpp program), asked once per engine.
-async fn dedicated_devices(exe: &Path) -> Vec<String> {
+/// The devices `exe` (a llama.cpp program) sees, asked once until the PC is
+/// checked again. A fresh list goes in the app log: when a model runs on the
+/// processor, it says whether the engine saw the card at all.
+async fn list_devices(exe: &Path) -> Vec<(String, String)> {
     let known = DEVICES.lock().unwrap().as_ref().filter(|(p, _)| p == exe).map(|(_, d)| d.clone());
-    let devices = match known {
-        Some(d) => d,
-        None => {
-            let mut cmd = Command::new(exe);
-            cmd.arg("--list-devices").stdin(Stdio::null()).kill_on_drop(true);
-            #[cfg(windows)]
-            cmd.creation_flags(0x0800_0000);
-            let out = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
-                Ok(Ok(o)) => format!("{}\n{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
-                _ => String::new(),
-            };
-            let d = parse_devices(&out);
-            *DEVICES.lock().unwrap() = Some((exe.to_path_buf(), d.clone()));
-            d
-        }
+    if let Some(d) = known {
+        return d;
+    }
+    let mut cmd = Command::new(exe);
+    cmd.arg("--list-devices").stdin(Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let out = match tokio::time::timeout(Duration::from_secs(20), cmd.output()).await {
+        Ok(Ok(o)) => format!("{}\n{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
+        _ => String::new(),
     };
-    dedicated_of(&devices, &crate::hardware::cards())
+    let d = parse_devices(&out);
+    crate::applog::line("engine", &devices_line(&d));
+    *DEVICES.lock().unwrap() = Some((exe.to_path_buf(), d.clone()));
+    d
+}
+
+/// The app log's line for what `--list-devices` found.
+fn devices_line(d: &[(String, String)]) -> String {
+    // A log line, not a message for the window (so not `.into()`, which
+    // the translation check would pick up).
+    if d.is_empty() {
+        return String::from("Graphics devices the engines see: none (models run on the processor; if this PC has a graphics card, its driver may be missing or too old)");
+    }
+    format!("Graphics devices the engines see: {}", d.iter().map(|(id, name)| format!("{id} {name}")).collect::<Vec<_>>().join(", "))
+}
+
+/// The device(s) to run on: the main card (picked by the person, else the
+/// dedicated card with the most memory, whose memory the model was fitted
+/// to), found among the engine's devices by name. When the engine names it
+/// differently, the dedicated cards when there's integrated graphics to
+/// keep it off, as before; else the engine decides.
+fn pick_devices(devices: &[(String, String)], cards: &[crate::hardware::Gpu], main: Option<&crate::hardware::Gpu>) -> Vec<(String, String)> {
+    if let Some(card) = main.filter(|c| !c.integrated) {
+        let integrated = |name: &str| cards.iter().any(|c| c.integrated && same_card(name, &c.name));
+        // The exact name first: "RTX 4060" mustn't pick a "RTX 4060 Ti" beside it.
+        let exact = devices.iter().find(|(_, n)| n.eq_ignore_ascii_case(&card.name) && !integrated(n));
+        if let Some(d) = exact.or_else(|| devices.iter().find(|(_, n)| same_card(n, &card.name) && !integrated(n))) {
+            return vec![d.clone()];
+        }
+    }
+    dedicated_of(devices, cards)
+}
+
+/// The main graphics card's name, which a running model is tied to.
+fn main_card() -> Option<String> {
+    crate::hardware::dedicated().map(|g| g.name)
+}
+
+/// The device(s) for `exe` (`pick_devices`).
+async fn dedicated_devices(exe: &Path) -> Vec<(String, String)> {
+    let devices = list_devices(exe).await;
+    pick_devices(&devices, &crate::hardware::cards(), crate::hardware::dedicated().as_ref())
 }
 
 /// Keeps a graphics engine (pictures, speech, training) on the dedicated
@@ -177,7 +236,9 @@ fn dedicated_indexes() -> Option<String> {
     if devices.len() != cards.len() || std::env::var_os("GGML_VK_VISIBLE_DEVICES").is_some() {
         return None;
     }
-    let picked: Vec<String> = dedicated_of(&devices, &cards).iter().filter_map(|id| id.strip_prefix("Vulkan").map(str::to_string)).collect();
+    // A card the person picked; else the dedicated ones beside integrated graphics, as before.
+    let chosen = crate::hardware::main_choice().and(crate::hardware::dedicated());
+    let picked: Vec<String> = pick_devices(&devices, &cards, chosen.as_ref()).iter().filter_map(|(id, _)| id.strip_prefix("Vulkan").map(str::to_string)).collect();
     (!picked.is_empty()).then(|| picked.join(","))
 }
 
@@ -190,13 +251,127 @@ pub async fn learn_devices(state: &crate::AppState) -> bool {
     if !known {
         let exe = backend_for(&state.budget()).ok().and_then(|b| installed_server(&state.paths, &state.catalog.engine, b));
         if let Some(exe) = exe {
-            dedicated_devices(&exe).await;
-            if let Some((_, d)) = DEVICES.lock().unwrap().as_ref() {
-                crate::applog::line("engine", &format!("Graphics devices the engines see: {}", d.iter().map(|(id, name)| format!("{id} {name}")).collect::<Vec<_>>().join(", ")));
-            }
+            list_devices(&exe).await;
         }
     }
     dedicated_indexes().is_some()
+}
+
+/// Where a loaded model really runs, from the engine's own log (llama.cpp
+/// at verbosity 4): the layers it put on a graphics card, the devices it
+/// used, and how much of the model's weights went to cards and to system
+/// memory. What the app planned can differ: an engine that doesn't see the
+/// card (an old driver) runs everything on the processor.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct Placed {
+    /// "offloaded 37/37 layers to GPU": layers on a card, layers in all.
+    pub layers: Option<(u32, u32)>,
+    /// The devices it used: ("Vulkan0", "NVIDIA GeForce RTX 5070").
+    pub devices: Vec<(String, String)>,
+    /// The weights on graphics cards and in system memory (MiB), from the
+    /// "model buffer size" lines; both 0 when there were none.
+    pub card_mib: f64,
+    pub memory_mib: f64,
+}
+
+impl Placed {
+    /// Layers really on a graphics card: none when no weights went to one,
+    /// whatever the count says (an engine with no card to use still counts
+    /// the layers it was asked for).
+    pub fn on_card(&self) -> Option<u32> {
+        let buffers = self.card_mib + self.memory_mib > 0.0;
+        if buffers && self.card_mib == 0.0 {
+            return Some(0);
+        }
+        match self.layers {
+            Some((n, _)) => Some(if self.devices.is_empty() && !buffers { 0 } else { n }),
+            // No count but weights in memory only (a processor build): none.
+            None if buffers => Some(0),
+            None => None,
+        }
+    }
+
+    pub fn total(&self) -> Option<u32> {
+        self.layers.map(|(_, all)| all)
+    }
+
+    /// The card's name as the engine reported it ("NVIDIA GeForce RTX 5070"),
+    /// when it used one.
+    pub fn device(&self) -> Option<String> {
+        if self.devices.is_empty() || self.on_card() == Some(0) {
+            return None;
+        }
+        Some(self.devices.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(" + "))
+    }
+
+    /// For the app log: "running 37/37 layers on NVIDIA GeForce RTX 5070".
+    pub fn describe(&self) -> String {
+        match (self.on_card(), self.total()) {
+            (Some(0), Some(all)) => format!("running 0/{all} layers on the graphics card: all on the processor"),
+            (Some(0), None) => "running on the processor only".to_string(),
+            (Some(n), Some(all)) if n >= all => format!("running {n}/{all} layers on {}", self.device().unwrap_or_else(|| "the graphics card".into())),
+            (Some(n), Some(all)) => format!("running {n}/{all} layers on {}, the rest on the processor", self.device().unwrap_or_else(|| "the graphics card".into())),
+            _ => "the engine's log didn't say where it runs".to_string(),
+        }
+    }
+}
+
+/// Reads where the model went from an engine log. When the log holds more
+/// than one load (the engine tries settings before the real load), the last.
+pub fn parse_placed(log: &str) -> Placed {
+    let mut p = Placed::default();
+    for line in log.lines() {
+        if let Some(rest) = line.split_once("using device ").map(|(_, r)| r) {
+            // A new load: what came before was a trial.
+            if p.layers.is_some() || p.card_mib + p.memory_mib > 0.0 {
+                p = Placed::default();
+            }
+            if let Some(d) = device_of(rest) {
+                if !p.devices.contains(&d) {
+                    p.devices.push(d);
+                }
+            }
+        } else if let Some(rest) = line.split_once("offloaded ").map(|(_, r)| r).filter(|r| r.contains(" layers to GPU")) {
+            let counts = rest.split_whitespace().next().and_then(|c| c.split_once('/'));
+            if let Some((n, all)) = counts.and_then(|(n, all)| Some((n.parse().ok()?, all.parse().ok()?))) {
+                p.layers = Some((n, all));
+            }
+        } else if let Some((before, after)) = line.split_once(" model buffer size") {
+            let Some(name) = before.split_whitespace().last() else { continue };
+            let mib = after.trim_start_matches([' ', '=']).split_whitespace().next().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            // System memory: the processor's buffers and the card's pinned
+            // host memory ("CPU_Mapped", "CPU_REPACK", "Vulkan_Host").
+            if name.starts_with("CPU") || name.ends_with("_Host") {
+                p.memory_mib += mib;
+            } else {
+                p.card_mib += mib;
+            }
+        }
+    }
+    p
+}
+
+/// "Vulkan0 (NVIDIA GeForce RTX 5070) (0000:01:00.0) - 11175 MiB free" →
+/// ("Vulkan0", "NVIDIA GeForce RTX 5070"). Names can hold brackets
+/// ("Intel(R) UHD Graphics 770").
+fn device_of(rest: &str) -> Option<(String, String)> {
+    let (id, after) = rest.trim().split_once(' ')?;
+    let after = after.trim_start().strip_prefix('(')?;
+    let mut depth = 1;
+    for (i, c) in after.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let name = after[..i].trim();
+                    return (!id.is_empty() && !name.is_empty()).then(|| (id.to_string(), name.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Finds a program by file name anywhere under `dir`.
@@ -362,6 +537,11 @@ struct Running {
     lora: Option<PathBuf>,
     cpu_moe: Option<u32>,
     kv_q8: bool,
+    /// Where it really runs, from the engine's log once it loaded.
+    placed: Placed,
+    /// The main graphics card when it started (`hardware::dedicated`): picking
+    /// another one starts it again there.
+    card: Option<String>,
 }
 
 impl Running {
@@ -375,7 +555,13 @@ pub struct EngineStatus {
     pub model_id: Option<String>,
     pub quant: Option<String>,
     pub ctx: Option<u32>,
+    /// The layers planned for the graphics card.
     pub gpu_layers: Option<u32>,
+    /// What the engine reported once it loaded: layers really on a graphics
+    /// card, the model's layers in all, and the card's name (None: not known).
+    pub layers_on_card: Option<u32>,
+    pub layers_total: Option<u32>,
+    pub device: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -434,7 +620,20 @@ impl Engine {
             quant: r.map(|r| r.quant.clone()),
             ctx: r.map(|r| r.ctx),
             gpu_layers: r.map(|r| r.gpu_layers),
+            layers_on_card: r.and_then(|r| r.placed.on_card()),
+            layers_total: r.and_then(|r| r.placed.total()),
+            device: r.and_then(|r| r.placed.device()),
         }
+    }
+
+    /// The running model: what was planned for it (GPU layers, experts kept
+    /// in system memory) and where the engine really put it.
+    pub fn placement(&mut self) -> Option<(String, String, u32, Option<u32>, Placed)> {
+        if !self.alive() {
+            return None;
+        }
+        let r = self.running.as_ref()?;
+        Some((r.model_id.clone(), r.quant.clone(), r.gpu_layers, r.cpu_moe, r.placed.clone()))
     }
 
     /// The model running now, as launched: (process id, model, quantization,
@@ -467,6 +666,15 @@ impl Engine {
         Some((r.model_id.clone(), r.endpoint()))
     }
 
+    /// What the running model was asked for (a model, or a taught model's
+    /// own id): what to ask for to start it again elsewhere.
+    pub fn asked(&mut self) -> Option<String> {
+        if !self.alive() {
+            return None;
+        }
+        self.running.as_ref().map(|r| r.asked.clone())
+    }
+
     /// Notes what the running model was asked for (a taught model's own id),
     /// so a pause brings back the same thing.
     pub fn asked_as(&mut self, id: &str) {
@@ -495,6 +703,7 @@ impl Engine {
                     && r.lora.as_deref() == spec.lora
                     && r.cpu_moe == tuning.cpu_moe
                     && r.kv_q8 == tuning.kv_q8
+                    && r.card == main_card()
             })
     }
 
@@ -527,10 +736,18 @@ impl Engine {
         };
         let (log, log_err) = capped_log(spec.log).map_err(|e| e.to_string())?;
 
-        // On a PC with integrated graphics too, the model goes on the dedicated card.
-        let devices = if spec.gpu_layers > 0 { dedicated_devices(spec.exe).await } else { Vec::new() };
+        // On a PC with integrated graphics too, the model goes on the
+        // dedicated card. The devices are listed (and logged) for a model on
+        // the processor too: whether the engine sees the card explains it.
+        let dedicated = dedicated_devices(spec.exe).await;
+        let devices: Vec<(String, String)> = if spec.gpu_layers > 0 { dedicated } else { Vec::new() };
+        let ids: Vec<&str> = devices.iter().map(|(id, _)| id.as_str()).collect();
         let mut cmd = Command::new(spec.exe);
-        cmd.args(if devices.is_empty() { vec![] } else { vec!["--device".to_string(), devices.join(",")] });
+        cmd.args(if ids.is_empty() { vec![] } else { vec!["--device".to_string(), ids.join(",")] });
+        // Verbosity 4 puts llama.cpp's own loading lines in the log ("using
+        // device …", "offloaded 37/37 layers to GPU"): where the model really
+        // went. The default (3) leaves them out.
+        cmd.args(["-lv", "4"]);
         // Experts kept in system memory: every layer on the card otherwise.
         let layers = match tuning.cpu_moe {
             Some(n) => vec!["-ngl".to_string(), "999".to_string(), "--n-cpu-moe".to_string(), n.to_string()],
@@ -582,6 +799,8 @@ impl Engine {
             lora: spec.lora.map(Path::to_path_buf),
             cpu_moe: tuning.cpu_moe,
             kv_q8: tuning.kv_q8,
+            placed: Placed::default(),
+            card: main_card(),
         });
 
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
@@ -592,11 +811,11 @@ impl Engine {
             spec.quant,
             spec.ctx,
             match tuning.cpu_moe {
-                Some(n) => format!("every layer on the graphics card, the experts of {n} in memory"),
-                None => format!("{} layers on the graphics card", spec.gpu_layers),
+                Some(n) => format!("planned every layer on the graphics card, the experts of {n} in memory"),
+                None => format!("planned {} layers on the graphics card", spec.gpu_layers),
             },
             if tuning.kv_q8 { ", compressed cache" } else { "" },
-            if devices.is_empty() { String::new() } else { format!(", device {}", devices.join(",")) },
+            if devices.is_empty() { String::new() } else { format!(", device {}", devices.iter().map(|(id, name)| format!("{id} {name}")).collect::<Vec<_>>().join(",")) },
             if spec.mmproj.is_some() { ", sees pictures" } else { "" }
         );
         if let Err(e) = self.wait_ready(&endpoint, spec.log).await {
@@ -604,7 +823,17 @@ impl Engine {
             self.stop().await;
             return Err(e);
         }
-        crate::applog::line("engine", &format!("Loaded {what} in {:.1} s", started.elapsed().as_secs_f64()));
+        let placed = read_placed(spec.log).await;
+        crate::applog::line("engine", &format!("Loaded {what} in {:.1} s; {}", started.elapsed().as_secs_f64(), placed.describe()));
+        // The card picked by name isn't the one the engine used under that
+        // number (drivers renumber cards): the devices are asked again next time.
+        if !devices.is_empty() && !placed.devices.is_empty() && !placed.devices.iter().any(|(_, n)| devices.iter().any(|(_, want)| same_card(n, want))) {
+            crate::applog::line("engine", &format!("The engine used {} instead of {}; it will look for the cards again", placed.devices.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", "), devices.iter().map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ")));
+            forget_devices();
+        }
+        if let Some(r) = self.running.as_mut() {
+            r.placed = placed;
+        }
         Ok(endpoint)
     }
 
@@ -713,6 +942,21 @@ pub fn free_port() -> Result<u16, String> {
     Ok(listener.local_addr().map_err(|e| e.to_string())?.port())
 }
 
+/// Where the model went, from its log. The engine writes its log from a
+/// thread of its own, so it's read again for a moment if the loading lines
+/// aren't there yet.
+async fn read_placed(log: &Path) -> Placed {
+    let read = || parse_placed(&String::from_utf8_lossy(&std::fs::read(log).unwrap_or_default()));
+    for _ in 0..4 {
+        let p = read();
+        if p.layers.is_some() || p.card_mib + p.memory_mib > 0.0 {
+            return p;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    read()
+}
+
 pub fn log_tail(path: &Path, lines: usize) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let all: Vec<&str> = text.lines().collect();
@@ -788,12 +1032,111 @@ mod platform_tests {
         assert_eq!(listed[1], ("Vulkan1".to_string(), "Intel(R) Graphics".to_string()));
         let card = |name: &str, integrated: bool| Gpu { name: name.into(), integrated, ..Default::default() };
         let laptop = [card("NVIDIA GeForce RTX 5070 Ti Laptop GPU", false), card("Intel(R) Graphics", true)];
-        assert_eq!(dedicated_of(&listed, &laptop), vec!["Vulkan0"]);
+        assert_eq!(dedicated_of(&listed, &laptop), vec![("Vulkan0".to_string(), "NVIDIA GeForce RTX 5070 Ti Laptop GPU".to_string())]);
         // Only a dedicated card, or only integrated graphics: nothing to choose.
         assert!(dedicated_of(&listed[..1], &laptop[..1]).is_empty());
         assert!(dedicated_of(&listed[1..], &laptop[1..]).is_empty());
         // Names that don't match what Windows reports: the engine decides.
         assert!(dedicated_of(&listed, &[card("Some other card", false)]).is_empty());
+        // Whether the engine sees a card it may use: not when it lists only
+        // the integrated graphics, or nothing at all (an old driver).
+        assert!(sees_a_card(&listed, &laptop));
+        assert!(!sees_a_card(&listed[1..], &laptop));
+        assert!(!sees_a_card(&[], &laptop));
+        assert!(devices_line(&[]).contains("none"));
+        assert!(devices_line(&listed).contains("Vulkan1 Intel(R) Graphics"));
+    }
+
+    /// The card picked as the main one is the device the model runs on,
+    /// found by its name whatever number the engine gives it.
+    #[test]
+    fn the_main_card_is_found_by_name() {
+        use crate::hardware::Gpu;
+        let card = |name: &str, integrated: bool| Gpu { name: name.into(), integrated, ..Default::default() };
+        let listed = parse_devices("  Vulkan0: Intel(R) UHD Graphics 770 (16239 MiB, 15471 MiB free)\n  Vulkan1: NVIDIA GeForce RTX 3060 (12288 MiB, 11000 MiB free)\n  Vulkan2: NVIDIA GeForce RTX 4060 (8188 MiB, 7900 MiB free)\n");
+        let cards = [card("Intel(R) UHD Graphics 770", true), card("NVIDIA GeForce RTX 3060", false), card("NVIDIA GeForce RTX 4060", false)];
+        let pick = |main: usize| pick_devices(&listed, &cards, Some(&cards[main]));
+        assert_eq!(pick(2), vec![("Vulkan2".to_string(), "NVIDIA GeForce RTX 4060".to_string())]);
+        assert_eq!(pick(1)[0].0, "Vulkan1");
+        // Renumbered by a driver update: still the same card.
+        let renumbered = parse_devices("  Vulkan0: NVIDIA GeForce RTX 4060 (8188 MiB, 7900 MiB free)\n  Vulkan1: NVIDIA GeForce RTX 3060 (12288 MiB, 11000 MiB free)\n  Vulkan2: Intel(R) UHD Graphics 770 (16239 MiB, 15471 MiB free)\n");
+        assert_eq!(pick_devices(&renumbered, &cards, Some(&cards[2]))[0].0, "Vulkan0");
+        // Two cards whose names start alike: the exact one.
+        let ti = [card("NVIDIA GeForce RTX 4060 Ti", false), card("NVIDIA GeForce RTX 4060", false)];
+        let both = parse_devices("  Vulkan0: NVIDIA GeForce RTX 4060 Ti (16380 MiB, 16000 MiB free)\n  Vulkan1: NVIDIA GeForce RTX 4060 (8188 MiB, 7900 MiB free)\n");
+        assert_eq!(pick_devices(&both, &ti, Some(&ti[1]))[0].0, "Vulkan1");
+        // The engine names the card differently: every dedicated card, as before.
+        assert_eq!(pick_devices(&listed, &cards, Some(&card("Radeon RX 7600", false))).len(), 2);
+        // Never the integrated graphics, even when asked.
+        assert_ne!(pick_devices(&listed, &cards, Some(&cards[0])).first().map(|d| d.1.as_str()), Some("Intel(R) UHD Graphics 770"));
+    }
+
+    /// llama.cpp b11450 at verbosity 4, as it logs a load: the layers it
+    /// put on the card and where the weights went.
+    #[test]
+    fn the_engine_log_says_where_the_model_runs() {
+        let on_card = "\
+0.00.252.757 I srv  llama_server: initializing ...
+0.00.270.019 I srv    load_model: loading model 'C:\\models\\qwen3-4b.gguf'
+0.00.301.100 I llama_model_load_from_file_impl: using device Vulkan0 (NVIDIA GeForce RTX 5070) (0000:01:00.0) - 11175 MiB free
+0.00.600.000 I load_tensors: offloading 36 repeating layers to GPU
+0.00.600.001 I load_tensors: offloading output layer to GPU
+0.00.600.002 I load_tensors: offloaded 37/37 layers to GPU
+0.00.600.003 I load_tensors:      Vulkan0 model buffer size =  2254.10 MiB
+0.00.600.004 I load_tensors:  Vulkan_Host model buffer size =   304.28 MiB
+0.01.000.000 I llama_kv_cache:    Vulkan0 KV buffer size =  1152.00 MiB
+0.01.945.286 I srv  llama_server: model loaded
+";
+        let p = parse_placed(on_card);
+        assert_eq!(p.layers, Some((37, 37)));
+        assert_eq!(p.devices, vec![("Vulkan0".to_string(), "NVIDIA GeForce RTX 5070".to_string())]);
+        assert_eq!((p.on_card(), p.total()), (Some(37), Some(37)));
+        assert_eq!(p.device().as_deref(), Some("NVIDIA GeForce RTX 5070"));
+        assert!((p.card_mib - 2254.10).abs() < 0.01 && (p.memory_mib - 304.28).abs() < 0.01, "{p:?}");
+        assert_eq!(p.describe(), "running 37/37 layers on NVIDIA GeForce RTX 5070");
+
+        // Part of it on the card (the older programs' prefix, a name with brackets).
+        let split = "\
+llama_model_load_from_file_impl: using device Vulkan1 (Intel(R) Arc(TM) A370M Graphics) (0000:03:00.0) - 3900 MiB free
+print_backend_buffers_info: offloaded 12/37 layers to GPU
+print_backend_buffers_info:      Vulkan1 model buffer size =   800.00 MiB
+print_backend_buffers_info:   CPU_Mapped model buffer size =  1700.00 MiB
+";
+        let p = parse_placed(split);
+        assert_eq!(p.devices[0].1, "Intel(R) Arc(TM) A370M Graphics");
+        assert_eq!((p.on_card(), p.total()), (Some(12), Some(37)));
+        assert!(p.describe().ends_with("the rest on the processor"), "{}", p.describe());
+
+        // Asked for 33 layers, but the engine had no card to use: it still
+        // counts them, while every weight sits in system memory.
+        let no_card = "\
+0.00.600.002 I load_tensors: offloaded 33/37 layers to GPU
+0.00.600.003 I load_tensors:   CPU_Mapped model buffer size =  2500.00 MiB
+";
+        let p = parse_placed(no_card);
+        assert_eq!(p.on_card(), Some(0));
+        assert_eq!(p.device(), None);
+        assert_eq!(p.describe(), "running 0/37 layers on the graphics card: all on the processor");
+
+        // The card listed but no layers given to it (GPU limit Off).
+        let off = "\
+I llama_model_load_from_file_impl: using device Vulkan0 (NVIDIA GeForce GTX 1650) (0000:01:00.0) - 3500 MiB free
+I load_tensors: offloaded 0/37 layers to GPU
+I load_tensors:   CPU_Mapped model buffer size =  2500.00 MiB
+";
+        assert_eq!(parse_placed(off).on_card(), Some(0));
+
+        // A trial load before the real one: the last counts.
+        let trial = format!("{split}{on_card}");
+        assert_eq!(parse_placed(&trial).on_card(), Some(37));
+
+        // Nothing about loading in the log (an older engine at verbosity 3).
+        let quiet = "0.00.252.757 I srv  llama_server: initializing ...\n0.01.945.286 I srv  llama_server: model loaded\n";
+        let p = parse_placed(quiet);
+        assert_eq!((p.on_card(), p.total()), (None, None));
+        assert_eq!(p.describe(), "the engine's log didn't say where it runs");
+        // Lines that look alike but aren't about layers.
+        assert_eq!(parse_placed("I llama_context: sampler 'dist' for seq_id = 0, cannot be offloaded to the backend\n").layers, None);
     }
 
     /// On any system: downloads this system's engine build into

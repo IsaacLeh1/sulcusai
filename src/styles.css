@@ -1479,6 +1479,27 @@ button.ctx:hover { background: var(--hover); }
 .install-row select { min-width: 0; max-width: 100%; }
 .hub-file { flex-wrap: wrap; }
 .gpu-pill .gpu-num { font-variant-numeric: tabular-nums; }
+/* Status bar: the graphics card the model runs on, and its menu. */
+.gpu-picker { position: relative; }
+.statusbar > .gpu-picker { flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.gpu-pick { max-width: 100%; }
+.gpu-pick-name { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.gpu-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; width: 380px; max-width: calc(100vw - 24px); max-height: 70vh; overflow-y: auto; z-index: 20;
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 6px; white-space: normal;
+}
+.gpu-menu-head { padding: 4px 10px 8px; }
+.gpu-card { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: none; color: inherit; font: inherit; border-radius: 8px; padding: 8px 10px; }
+button.gpu-card { cursor: pointer; }
+button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
+.gpu-card.active { border-color: var(--accent); background: var(--accent-soft); }
+.gpu-card.off strong { color: var(--muted); }
+.gpu-menu-note { padding: 4px 10px; margin: 0; }
+.gpu-reasons { border-top: 1px solid var(--border); margin-top: 6px; padding: 8px 10px 0; }
+.gpu-reasons ul { margin: 6px 0 4px; padding-left: 18px; }
+.gpu-reasons li { margin-bottom: 6px; line-height: 1.45; }
+.gpu-reasons li .link { margin-left: 4px; }
+.gpu-menu-foot { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; display: flex; justify-content: flex-end; }
 /* Dialogs never run off the window. */
 .modal { max-height: calc(100vh - 32px); overflow-y: auto; }
 /* People › Connect: codes, who used them, and the firewall. */
