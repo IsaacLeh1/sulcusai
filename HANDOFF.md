@@ -1219,7 +1219,34 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - Q8_0 copy learning from 51 hard-won answers: 35 → 33.
 
   A run takes about 20 minutes on a 4B (the trainer about 15 of them). The card peaked at 76 °C while practising and 69 °C while training.
-- Next lever: a teacher. An installed bigger model (his Qwen2.5-Coder 14B) solves the tasks the small one fails, its answers are checked the same way, and the small one learns from those. Distillation like this, not self-practice, is where real gains come from. A few dozen of a model's own answers barely move a well-tuned instruct model.
+- **Teacher (2026-10-18, commit 188f3bc).** The practice form's "Teacher" menu picks another model on this PC to answer the tasks the student misses. Only the student must be Qwen3 or Gemma; "None" is the default. The idea: distillation, since a few dozen of a model's own answers barely move a well-tuned instruct model.
+  - Tasks the student never gets right (4 tries, then the told-answer try) go to the teacher (`teach`). It tries its most likely answer, then two at temperature 0.7, then once being told the answer (`TEACHER_TRIES`). The same programmatic checks decide (`tasks::passes`). A teacher that can't use tools skips the tool tasks. It answers with thinking off; a model that may think gets 2,048 tokens, others 1.25× the student's room.
+  - Its answers are trained in the student's format (`in_students_words`):
+    - The request is the student's own `/apply-template` layout from practice, and a plain answer is appended as it is.
+    - Tool calls are laid out by the student's own template. llama-server won't lay out a last assistant turn with tool calls ("Cannot continue an assistant message that contains tool calls"), so a short user turn follows and `turn_in` cuts the assistant turn out. On Qwen3 4B 2507 that comes out exactly as the 4B writes calls itself.
+    - Each rewritten answer is checked again, and must fit the 512-token window by the student's own count.
+  - One model on the card at a time:
+    1. the student's test and practice, then it stops;
+    2. the teacher loads for its turn, then stops;
+    3. the student reloads (3 s) only to write the answers its way, then stops;
+    4. training as before (Q8_0 copy, 2e-5 cosine, 512 tokens), and the test with the adapter.
+
+    The student's and the teacher's examples are shuffled together, so neither comes all at the end, where the rate has tapered off.
+  - Also fixed: a word-problem, counting or date task the student got right first time but didn't pick for learning (`EASY_SHARE`) still got the told-answer try. So it counted twice and was learnt from anyway.
+  - While it runs, the job says "{teacher} is answering the tasks it got wrong: n of total, k right answers kept". A kept adapter says "practised with {teacher} teaching". The new texts are in all six languages.
+  - **Live run** (2026-10-18; Qwen3 4B 2507 taught by his qwen2.5-coder:14b; coding, writing, research, tools; 2 rounds, normal strength):
+    - Before: 35 of 48, as in every run (coding 8, writing 8, research 10, tools 9).
+    - Practice: 118 of 156 right, and it learns from 42 of its own answers. 30 missed tasks went to the teacher. 8 more had requests too long to leave room for a reply.
+    - Teacher: 13 of the 30 right. All 13 were still right, and within 512 tokens, in the student's format (5 of the 55 training lines had tool calls, all in the 4B's own layout). Its turn took 4.3 minutes, after a 64 s load.
+    - Training: 55 examples, 2 rounds, 55 minutes. The loss was 0.39 late in round 1 and 0.11 at the end, with 97.6% of tokens right, which looks like memorising.
+    - **After: 35 → 34 of 48, so nothing was kept.** Coding went 8 → 11 and writing 8 → 10; with self-practice alone both stayed at 8. But research fell 10 → 6 and tools 9 → 7 (self-practice alone: 10 → 9 and 9 → 8).
+    - The whole run took 65 minutes. The card peaked at 77 °C during the student's practice (adaptive cooling stepped down once), 52 °C in the teacher's turn and 68 °C while training.
+  - What the run showed:
+    - The teacher's answers improve the skills they cover. The losses elsewhere look like the small, narrow set pulling the model: 55 examples, two rounds, loss down to 0.11.
+    - Training ran at 34 s an example, not the 6 s measured earlier. Windows' desktop compositor (dwm.exe) held 2.7 GB of the card, so the trainer had 9.3 GB on the card and 2.8 GB in shared memory (1.8 GB when 6 s was measured). Other open windows can make training several times slower.
+    - The teacher loaded with only 33 of its 49 layers on the card, and the normal cache. Adaptive cooling had stepped down during practice, and its "back to full speed" came 3 s after the teacher's load was planned. Practice also plans layers for the model's chat window (16K here), not its own 4K one, where all 49 would fit. Here that kept the card cool (52 °C) at about 8 s a task.
+  - Next to try, one run each (ask him first): 1 round, or "Lightly", to stop the memorising; and keeping more of the student's own right answers for the skills that fell, so they're replayed alongside the teacher's.
+  - Live runs while another session edits this folder: `tauri dev` restarts the app on any save under `src-tauri`, which ends a run. Instead, run a copy of `target\debug\sulcusai.exe` with your own vite on port 1430 (`C:\dev\tools\teacher-run\start.cmd`, through Explorer for his real data).
 - Not built, on purpose: training on his own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. A better follow-up is practising code navigation on his real projects, checked against the files.
 
 ## Website (2026-10-12)
