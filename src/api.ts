@@ -122,6 +122,8 @@ export interface FinetuneJob {
   after: number | null;
   /** Practice with a teacher: its name. */
   teacher: string | null;
+  /** Training doesn't fit the card's free memory, or has slowed down as if it didn't. */
+  low_memory: boolean;
 }
 
 export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools" | "project";

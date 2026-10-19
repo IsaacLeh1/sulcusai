@@ -44,6 +44,19 @@ fn is_error_line(l: &str) -> bool {
 }
 
 pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str)) -> Result<(), String> {
+    run_watched(r, cancel, |line| {
+        if let Some(l) = line {
+            on_line(l);
+        }
+        None
+    })
+    .await
+}
+
+/// `run`, with a watcher that sees each line and is also called every
+/// quarter second while the program is quiet (`None`). When it gives a
+/// reason, the program is stopped and the run fails with that reason.
+pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>) -> Option<String>) -> Result<(), String> {
     let mut cmd = Command::new(r.exe);
     cmd.args(&r.args).current_dir(r.cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(windows)]
@@ -100,7 +113,7 @@ pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str))
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
             return Err(CANCELLED.into());
         }
-        tokio::select! {
+        let why = tokio::select! {
             line = rx.recv() => match line {
                 Some(l) => {
                     if let Some(f) = log.as_mut() {
@@ -113,11 +126,16 @@ pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str))
                     if last.len() > 6 {
                         last.remove(0);
                     }
-                    on_line(&l);
+                    watch(Some(&l))
                 }
                 None => break,
             },
-            _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+            _ = tokio::time::sleep(Duration::from_millis(250)) => watch(None),
+        };
+        if let Some(why) = why {
+            child.start_kill().ok();
+            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            return Err(why);
         }
     }
     let status = child.wait().await.map_err(|e| e.to_string())?;

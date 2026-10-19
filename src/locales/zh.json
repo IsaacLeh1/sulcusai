@@ -3076,5 +3076,10 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "它的评分为 {theirs}，而你目前最好的 {current} 为 {ours}，并且在这里运行流畅。你的聊天和其他模型保持不变。",
  "(documents only)": "（仅限文档）",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "此模型只能从文档（.txt 或 .md）学习：训练器无法在它的聊天格式中找到它的回复（Llama 和 Gemma 4）。",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "此模型暂不能练习：练习适用于 Qwen3、Qwen3.5、Qwen3.6 和 Gemma 3 模型。"
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "此模型暂不能练习：练习适用于 Qwen3、Qwen3.5、Qwen3.6 和 Gemma 3 模型。",
+ "The trainer stopped making progress, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.": "训练器不再有进展，很可能是因为显卡内存不足。请关闭其他使用显卡的应用（如游戏、浏览器和视频播放器），然后重试。",
+ "The trainer quit partway through, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.": "训练器中途退出，很可能是因为显卡内存不足。请关闭其他使用显卡的应用（如游戏、浏览器和视频播放器），然后重试。",
+ "The graphics card is short of free memory for training. Closing other apps that use it, such as games, browsers and video players, helps.": "显卡的可用内存不足以进行训练。关闭其他使用显卡的应用（如游戏、浏览器和视频播放器）会有帮助。",
+ "There isn't enough free memory on the graphics card to teach this model safely. Close other apps that use it, such as games, browsers and video players, and try again.": "显卡的可用内存不足，无法安全地训练此模型。请关闭其他使用显卡的应用（如游戏、浏览器和视频播放器），然后重试。",
+ "This model is too big to teach on this graphics card. Pick a smaller model.": "此模型太大，无法在这块显卡上训练。请选择更小的模型。"
 }
