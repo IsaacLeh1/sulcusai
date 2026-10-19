@@ -24,10 +24,27 @@ export interface Hardware {
   ram_total: number;
   ram_available: number;
   gpus: Gpu[];
+  /** Cards Windows lists that aren't working (no driver, stopped, turned off). */
+  broken_cards: BrokenCard[];
   models_drive: string;
   disk_free: number;
   disk_total: number;
   on_battery: boolean | null;
+  /** The card picked for models, by name (null: the one with the most memory). */
+  main: string | null;
+}
+
+export interface BrokenCard {
+  name: string;
+  vendor: string;
+  /** Device Manager's problem code: 0 none (Windows' stand-in driver), 22 turned off, 28 no driver, 43 stopped. */
+  code: number;
+}
+
+/** The card models use: the one picked, else the dedicated card with the most memory (hardware.rs `main_of`). */
+export function mainGpu(hw: Hardware): Gpu | undefined {
+  const dedicated = hw.gpus.filter((g) => !g.integrated);
+  return dedicated.find((g) => g.name === hw.main) ?? [...dedicated].sort((a, b) => b.vram_bytes - a.vram_bytes)[0];
 }
 
 export interface Budget {
@@ -1010,7 +1027,52 @@ export interface EngineStatus {
   model_id: string | null;
   quant: string | null;
   ctx: number | null;
+  /** Layers planned for the graphics card. */
   gpu_layers: number | null;
+  /** As the engine reported them once loaded (null: not known). */
+  layers_on_card: number | null;
+  layers_total: number | null;
+  device: string | null;
+}
+
+/** Why some or all of the model runs on the processor (placement.rs `reasons`). */
+export interface PlaceReason {
+  code: "no_card" | "no_driver" | "engine_no_card" | "gpu_layers" | "gpu_limit" | "cool_on_battery" | "cool_mode" | "cooling" | "too_small";
+  /** In English, for when the window has no wording for the code. */
+  message: string;
+  fix: "gpu_full" | "recheck" | "perf_settings" | "advanced_settings" | null;
+  card: string | null;
+  maker: string | null;
+  number: number | null;
+}
+
+export interface WhereItRuns {
+  /** null while no model is loaded. */
+  place: "card" | "partly" | "processor" | null;
+  model_id: string | null;
+  layers_on_card: number | null;
+  layers_total: number | null;
+  /** The engine's own report, not just the plan. */
+  reported: boolean;
+  device: string | null;
+  reasons: PlaceReason[];
+}
+
+export interface CardView {
+  name: string;
+  vendor: string;
+  memory: number;
+  kind: "card" | "built_in" | "no_driver";
+  /** The card models use. */
+  main: boolean;
+  code: number | null;
+}
+
+export interface GpuMenu {
+  cards: CardView[];
+  /** The card picked by name (null: automatic). */
+  chosen: string | null;
+  runs: WhereItRuns;
 }
 
 export interface AppInfo {
@@ -2305,6 +2367,10 @@ export const api = {
   gpuNow: () => invoke<GpuNow>("gpu_now"),
   /** How much of the model may run on the graphics card (percent). */
   gpuLimit: () => invoke<GpuLimit>("gpu_limit"),
+  /** The status bar's graphics card menu: every card found, the one in use, where the model runs and why. */
+  gpuMenu: () => invoke<GpuMenu>("gpu_menu"),
+  /** Makes a card the one models run on (null: automatic); a loaded model starts again on it. */
+  setMainGpu: (name: string | null) => invoke<GpuMenu>("set_main_gpu", { name }),
   setGpuLimit: (percent: number) => invoke<GpuLimit>("set_gpu_limit", { percent }),
   answerMemoryWarning: (id: string, go: boolean) => invoke<void>("answer_memory_warning", { id, go }),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
@@ -2431,6 +2497,10 @@ export interface ChatEvents {
   /** The model has read this chat's messages up to then (it started answering). */
   "chat:read": { chat_id: string; up_to: number };
   "gpu:limit": { percent: number };
+  /** A card was picked for models; `reloaded` once the loaded model started again on it. */
+  "gpu:main": { reloading?: boolean; reloaded?: boolean };
+  /** The PC's graphics cards changed (a driver installed, a card switched on or off). */
+  "hardware:changed": null;
   "offline:changed": { on: boolean };
   "engine:memory": MemoryWarning;
   "engine:memory_done": { id: string };
