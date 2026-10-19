@@ -66,6 +66,7 @@ mod outgoing;
 mod oauth;
 mod paths;
 mod perf;
+mod placement;
 mod places;
 mod practice;
 mod privacy;
@@ -188,6 +189,27 @@ impl AppState {
         self.engine_used.lock().unwrap().elapsed()
     }
 
+    /// Checks the PC again (graphics cards, memory, power). When the cards
+    /// changed (a driver installed, a laptop that switched its card on or
+    /// off), the engines are asked for their devices again, the app log
+    /// says so and the window is told. True when the cards changed.
+    fn recheck_hardware(&self, why: &str) -> bool {
+        let hw = hardware::detect(&self.paths.models);
+        let cards = |h: &Hardware| (h.gpus.iter().map(|g| (g.name.clone(), g.vram_bytes, g.integrated)).collect::<Vec<_>>(), h.broken_cards.clone());
+        let changed = cards(&self.hardware.read().unwrap()) != cards(&hw);
+        if changed {
+            engine::forget_devices();
+            applog::line("app", &format!("Graphics after {why}: {}", graphics_line(&hw)));
+        }
+        *self.hardware.write().unwrap() = hw;
+        if changed {
+            if let Some(app) = self.app.get() {
+                app.emit("hardware:changed", ()).ok();
+            }
+        }
+        changed
+    }
+
     fn settings(&self) -> Settings {
         db::settings(&self.db.lock().unwrap())
     }
@@ -286,11 +308,58 @@ fn save_chart(state: AppStateRef, path: String, svg: String) -> Result<(), Strin
     Ok(())
 }
 
+/// "Check again" on the Models page and in the status bar: the cards, and
+/// what the engine sees of them, are looked at afresh.
 #[tauri::command(async)]
 fn refresh_hardware(state: AppStateRef) -> Hardware {
-    let hw = hardware::detect(&state.paths.models);
-    *state.hardware.write().unwrap() = hw.clone();
-    hw
+    engine::forget_devices();
+    if !state.recheck_hardware("checking again") {
+        applog::line("app", &format!("Checked the graphics again: {}", graphics_line(&state.hardware.read().unwrap())));
+    }
+    state.hardware.read().unwrap().clone()
+}
+
+/// The PC's graphics for the app log: "NVIDIA GeForce RTX 3050 Laptop GPU
+/// (4.3 GB), Intel(R) UHD Graphics (0.1 GB, built-in)", and any card that
+/// isn't working.
+fn graphics_line(hw: &Hardware) -> String {
+    let gpus: Vec<String> = hw.gpus.iter().map(|g| format!("{} ({:.1} GB{})", g.name, g.vram_bytes as f64 / 1e9, if g.integrated { ", built-in" } else { "" })).collect();
+    let broken: Vec<String> = hw
+        .broken_cards
+        .iter()
+        .map(|b| {
+            let what = match b.code {
+                0 | 28 => "no driver".to_string(),
+                22 => "turned off".to_string(),
+                c => format!("stopped, code {c}"),
+            };
+            format!("{}{} ({what})", if b.vendor.is_empty() { String::new() } else { format!("{} card shown as ", b.vendor) }, b.name)
+        })
+        .collect();
+    let mut line = if gpus.is_empty() { "none found".to_string() } else { gpus.join(", ") };
+    if !broken.is_empty() {
+        line.push_str(&format!("; not working: {}", broken.join(", ")));
+    }
+    line
+}
+
+/// No dedicated card at the last check: looked for again before a model
+/// loads (at most once a minute), in case a driver was installed or the
+/// laptop switched its card on since.
+async fn recheck_if_card_missing(state: &Arc<AppState>) {
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    if state.hardware.read().unwrap().best_gpu().is_some() {
+        return;
+    }
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(60)) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let s = state.clone();
+    tokio::task::spawn_blocking(move || s.recheck_hardware("looking for a graphics card again")).await.ok();
 }
 
 // ---------- catalog ----------
@@ -1856,6 +1925,7 @@ pub(crate) async fn llm_endpoint(
         spec.name = format!("{} + {}", spec.name, a.name);
     }
     let lora = taught.as_ref().map(|a| std::path::PathBuf::from(&a.path));
+    recheck_if_card_missing(state).await;
     let limits = state.limits();
     let backend = engine::backend_for(&state.budget())?;
     let exe = match engine::installed_server(&state.paths, &state.catalog.engine, backend) {
@@ -2141,6 +2211,8 @@ pub fn run() {
             backup::apply_pending(&paths.data)?;
             let conn = db::open(&paths.db)?;
             let vault = open_vault(&paths)?;
+            // The graphics card picked for models (by name), before the PC is checked.
+            hardware::set_main(db::get::<Option<String>>(&conn, "main_gpu").flatten());
             let hardware = hardware::detect(&paths.models);
             let catalog = Catalog::bundled();
             natural::refresh(&paths, &catalog.voices);
@@ -2182,7 +2254,6 @@ pub fn run() {
             applog::init(&state.paths.logs);
             {
                 let hw = state.hardware.read().unwrap();
-                let gpus: Vec<String> = hw.gpus.iter().map(|g| format!("{} ({:.1} GB{})", g.name, g.vram_bytes as f64 / 1e9, if g.integrated { ", built-in" } else { "" })).collect();
                 applog::line(
                     "app",
                     &format!(
@@ -2192,7 +2263,7 @@ pub fn run() {
                         hw.cpu_name,
                         hw.cpu_threads,
                         hw.ram_total as f64 / 1e9,
-                        if gpus.is_empty() { "none found".to_string() } else { gpus.join(", ") },
+                        graphics_line(&hw),
                         state.paths.models.display()
                     ),
                 );
@@ -2238,6 +2309,8 @@ pub fn run() {
             offline::set_fully_offline,
             perf::set_gpu_limit,
             memcheck::answer_memory_warning,
+            placement::gpu_menu,
+            placement::set_main_gpu,
             security::set_keep_working,
             browser::open_browser,
             browsers::browsers_view,

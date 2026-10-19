@@ -859,8 +859,18 @@ pub fn start_monitor(app: tauri::AppHandle) {
     use tauri::{Emitter, Manager};
     tauri::async_runtime::spawn(async move {
         let state = app.state::<std::sync::Arc<crate::AppState>>().inner().clone();
+        let mut power = crate::hardware::on_battery();
         loop {
             tokio::time::sleep(WATCH_EVERY).await;
+            // Plugged in or unplugged: some laptops turn their graphics card
+            // on or off with the power source, so the PC is checked again.
+            let now = crate::hardware::on_battery();
+            if now != power {
+                power = now;
+                let s = state.clone();
+                let why = if now == Some(true) { "unplugging" } else { "plugging in" };
+                tokio::task::spawn_blocking(move || s.recheck_hardware(why)).await.ok();
+            }
             let settings = settings(&state.db.lock().unwrap());
             let base = {
                 let hw = state.hardware.read().unwrap();
