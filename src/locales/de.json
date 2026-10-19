@@ -3219,5 +3219,7 @@
  "latest {date}": "zuletzt {date}",
  "{n} emails": "{n} E-Mails",
  "{n} missed": "{n} unbeantwortet",
- "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "{n} Abmeldeseiten sind in deinem Browser geöffnet. Die Seiten fragen eventuell nach einer Bestätigung."
+ "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "{n} Abmeldeseiten sind in deinem Browser geöffnet. Die Seiten fragen eventuell nach einer Bestätigung.",
+ "1 email": "1 E-Mail",
+ "Archive its email": "Seine E-Mail archivieren"
 }

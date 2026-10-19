@@ -3219,5 +3219,7 @@
  "latest {date}": "最新 {date}",
  "{n} emails": "{n} 件のメール",
  "{n} missed": "未返信 {n} 件",
- "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "{n} 件の配信停止ページをブラウザーで開きました。サイトで確認を求められる場合があります。"
+ "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "{n} 件の配信停止ページをブラウザーで開きました。サイトで確認を求められる場合があります。",
+ "1 email": "メール 1 通",
+ "Archive its email": "このメールをアーカイブ"
 }

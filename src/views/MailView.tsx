@@ -676,7 +676,7 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
             <div className="grow subs-who">
               <div className="ellipsis"><strong>{s.name}</strong> <span className="muted small">{s.address}</span></div>
               <div className="muted small ellipsis">
-                {t("{n} emails", { n: s.count })} · {t("latest {date}", { date: when(s.latest) })}
+                {s.count === 1 ? t("1 email") : t("{n} emails", { n: s.count })} · {t("latest {date}", { date: when(s.latest) })}
                 {showAccount && ` · ${accounts.find((a) => a.id === s.account_id)?.email ?? ""}`}
                 {!done && ` · ${how(s)}`}
               </div>
@@ -689,7 +689,7 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
                   </span>
                   {s.inbox_ids.length > 0 && (
                     <button className="btn small" onClick={async () => { await onArchive(s.inbox_ids); load(); }}>
-                      {t("Archive its {n} emails", { n: s.inbox_ids.length })}
+                      {s.inbox_ids.length === 1 ? t("Archive its email") : t("Archive its {n} emails", { n: s.inbox_ids.length })}
                     </button>
                   )}
                 </>

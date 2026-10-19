@@ -1549,6 +1549,32 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## Mail: Marked read, subscriptions, a report that sorts everything (2026-10-19, after 0.9.14)
+
+He asked for: "Auto unsubscribe to emails (Shows subscriptions). When I click mark read, it goes into a marked read tab automatically so I can quickly click repeatedly to speed mark read. Automatic calendar add button that works. The reply button within the ai report doesn't work. Within the report, have it label important missed emails that need replies and emails with to-do action items and work / promotional. Have it categorize everything."
+
+- **Marked read**:
+  - `mail_messages.marked_at` is set by the ✓ button and cleared by marking unread, or when the server says it's unread again.
+  - A Marked read tab lists them, newest first. Inbox and Unread leave them out, so the next row moves up under the pointer.
+  - ✓ sits in a fixed column on every unread row, with an 8 s Undo.
+  - Server changes are batched after a 1.5 s pause, with one IMAP flush at a time. This applies to every queued change, not just marks.
+- **Subscriptions** (`subscriptions.rs`):
+  - At sync, MailData keeps List-Unsubscribe (https and mailto), the RFC 8058 one-click flag and List-Id. Older inbox mail gets them once per account (header-only fetch of the newest 1,000). That fetch hasn't been run against a real server yet; the pymap test server would confirm it.
+  - The tab groups by List-Id, else by sender.
+  - Unsubscribe uses one-click first: a POST through `web::check_url`, `web::builder` (no redirects home) and `PublicOnly` DNS, https only. Next it tries the mailto email from the account the mail came to, after the click; line breaks are stripped against header injection. Last, it opens the https page in the browser.
+  - It's recorded per list, with an "Archive its N emails" button afterwards. Newsletters and promotions in the report get Unsubscribe too.
+- **Report** (`triage.rs`):
+  - The verdict gains a category: needs reply, to-do, work, personal, bills, travel, updates, newsletters, promotions, social. Unknown values become updates, and old items get one derived from `next`.
+  - "Missed": needs reply, from a person, over 24 h old, and no Sent message replies to it (matched on in_reply_to/references).
+  - The report is grouped by category with counts, coloured chips and filter chips, missed first.
+  - The next-step chips are real buttons now (the Reply bug: they were `<span>`s). Reply fetches the message and composes from its account (`account_id` added to the report items). Calendar opens the event form; the others open the message.
+- **Add to calendar**:
+  - On an open message and on calendar items. The model reads the event (JSON schema), falling back to `notes::parse_due`, then today.
+  - It uses CalendarView's form, now exported with `initial`, defaulting to the first connected calendar.
+  - The form is single-day, so a multi-day end is dropped.
+- **Checked** in the UI mock: two ✓ clicks in one spot marked two messages, and the Marked read tab, report grouping, Missed label, Reply composer (right account, quoted), the prefilled event form and Subscriptions all work. Not run against his real mail.
+- Translations were added as one sorted run at the end of each table rather than re-sorting it (re-sorting rewrites about 1,400 lines and clashes with other branches).
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

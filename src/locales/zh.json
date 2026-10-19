@@ -3219,5 +3219,7 @@
  "latest {date}": "最近 {date}",
  "{n} emails": "{n} 封邮件",
  "{n} missed": "{n} 封未回复",
- "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "已在浏览器中打开 {n} 个退订页面。网站可能会要求你确认。"
+ "{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.": "已在浏览器中打开 {n} 个退订页面。网站可能会要求你确认。",
+ "1 email": "1 封邮件",
+ "Archive its email": "归档这封邮件"
 }
