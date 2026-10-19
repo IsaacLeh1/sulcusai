@@ -1406,7 +1406,7 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
 
   | Copy | File | Card (dedicated) | Shared | Step | Card total |
   |---|---|---|---|---|---|
-  | Q4_0 | 2.37 GB | 7,954 MB, flat for all 19 steps | 660 MB, flat | 13 s (two compiles were running) | 9,354 of 12,227 MB |
+  | Q4_0 | 2.37 GB | 7,954 MB, flat for all 19 steps (one round; see below for round 2) | 660 MB, flat | 13 s (two compiles were running) | 9,354 of 12,227 MB |
   | Q8_0 | 4.28 GB | 9,776 MB, then 9,850 at step 8 | 741 → 1,770 MB at step 8 | 5.5 s | 11,174, then 12,087 of 12,227 MB at step 8 |
 
   The shared 0.66-0.74 GB is there from the first step in both: it's part of how the trainer works, not a spill.
@@ -1416,7 +1416,7 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - It takes the most faithful format that leaves **1 GB free** beyond that (`HEADROOM`):
     - a file the card trains as it is (Q4_0, Q8_0, F16) stays as it is, and is only ever copied smaller;
     - otherwise a Q8_0 copy, else a Q4_0 copy.
-  - On his card, with the desktop holding about 1.4 GB, a 4B trains on Q4_0 (estimated 7.9 GB, against 7.8 measured, plus the 1 GB). Q8_0 is estimated at 10.9 GB, so it takes a card with about 12 GB free, such as a 16 GB one.
+  - On his card, with the desktop holding about 1.4 GB, a 4B trains on Q4_0 (estimated 8.3 GB, against 8.15 measured at its peak, plus the 1 GB). Q8_0 is estimated at 10.9 GB, so it takes a card with about 12 GB free, such as a 16 GB one.
   - `card_free` reads the card until the count stops falling, since Windows' count lags a moment behind a server that has just quit.
 - **When nothing fits** at training time:
   - It waits up to 3 minutes, reading the card again every 5 s. The job shows "The graphics card is short of free memory for training. Closing other apps…" (`Job.low_memory`).
@@ -1438,11 +1438,20 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - Checkpoints are saved only every 50 steps (the app's `--checkpoint-save-steps`), so not there.
   - The loss's labels and masks are each 152K words × 512 tokens of f32 (297 MB each), but they're the same every step.
 
-  So nothing in the trainer's code explains a jump mid-round 2. **Not settled; medium-low confidence either way.** Every reading of a jump so far was of the card's total, except the Q8_0 by-hand run above. There, the trainer's own use rose 1.1 GB (74 MB on the card, the rest in shared memory) while the rest of the card's rose 0.8 GB at the same moment. And 9.7-10.1 GB stayed in use for a few seconds after the trainer died, during the driver reset. The desktop alone has held from 1.2 to 2.7 GB of this card. So the jumps may be the trainer, another program, or both.
-  - Next time it happens, the card-watch log line says whose it was. If it's the trainer, the next things to try are:
-    1. run each round as its own trainer process (`--num-epochs 1`, then `--resume-from` the round's checkpoint), in case the switch to the held-out check and back is the cause;
-    2. or raise `per_weight` for Q4_0 to about 2.0, which would make a 4B need about 9.7 GB + 1 GB and so refuse it on his card.
-  - A by-hand 2-round Q4_0 run on the 4B, sampling the trainer's own memory and killed at the card's total − 1 GB, would settle it in about 8 minutes. Ask first.
+  So nothing in the trainer's code explained a jump mid-round 2. Every reading of a jump had been of the card's total, except the Q8_0 by-hand run above. There, the trainer's own use rose 1.1 GB (74 MB on the card, the rest in shared memory) while the rest of the card's rose 0.8 GB at the same moment. And 9.7-10.1 GB stayed in use for a few seconds after the trainer died, during the driver reset.
+- **Settled by hand** (2026-10-19, 10:46-10:56). Setup: the app's arguments (one visible card, `--checkpoint-save-steps 50`, the join template), 18 practice-shaped "your code" lines (418-496 tokens), 3 rounds (51 steps). Sampled every quarter second: the card's total and the trainer's own counters. Every 3 s, and at any 200 MB move: the top 6 programs on the RTX 5070's adapter.
+
+  | When | Card total | Trainer's own (card / shared) |
+  |---|---|---|
+  | Round 1, all 17 steps | 9,524-9,527 MB | 7,954 / 651 MB |
+  | Round 2, step 2-3 (just after round 1's held-out check) | 9,916 MB | 8,345 / 664 MB |
+  | The rest of round 2 and all of round 3, to step 51 | at most 9,937 MB | 8,345 MB, flat |
+
+  - So the trainer itself grows once, by 391 MB, when training resumes after the first held-out check, most likely because the memory planner lays out the training graph again after the forward-only one. It then levels off, and there was no second jump. code-teacher's run rose by exactly the same 391 MB at the same point (9,525 → 9,916).
+  - Its further 1.5 GB (to 11,461) was another program. It didn't happen here with the same setup, and perskill's four practice runs held 9.5-9.9 GB with no jump. Nothing else on the card moved by 200 MB during this run. The card peaked at 74 °C.
+  - `per_weight` for Q4_0 went from 1.5 to 1.6, so the estimate (8.3 GB) covers the 8.15 GB peak. It changes no decision on his card: a 4B needs 9.3 GB with the margin, against about 10.5 GB free. One trainer process per round isn't worth it for a one-time 0.39 GB.
+  - The card watch (`CardWatch`) logs a rise like this one as the trainer's own. A rise from another program is logged as the card's, and the run stops 0.5 GB before the card is full.
+  - The NVIDIA Overlay's own counter reads an impossible 270,000-390,000 MB on this card since the driver reset, and grows. Leave it out of any per-program total. The adapter-wide counter the app reads isn't affected.
 - **Limits of the estimate:** `per_weight` comes from one model. For bigger models, the memory beyond the weights grows more slowly than the weights (activations go with layers × width), so it asks too much for 8B and up: safe, but an 8B on a 16 GB card may be refused when it would just fit. A small model with a big vocabulary (Gemma 3's 262K) may need more per weight than it says.
 - Five new texts, in all six languages: the window's short-of-memory line, and the core's `NO_ROOM`, `TOO_BIG`, `TRAINER_STALLED` and `TRAINER_QUIT`.
 - Tests (`finetune::tests`):
