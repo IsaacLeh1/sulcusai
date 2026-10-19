@@ -166,8 +166,9 @@ pub async fn connect_through(host: &str, port: u16, proxy: Option<&str>) -> Resu
         .map_err(|e| format!("Couldn't reach {addr} through the private connection: {e}"))
 }
 
-/// A user name or password as typed (URLs keep them %-encoded).
-fn percent_decode(s: &str) -> String {
+/// A user name or password as typed (URLs keep them %-encoded). Only %XX
+/// is decoded ("+" stays, as mailto: addresses need).
+pub(crate) fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

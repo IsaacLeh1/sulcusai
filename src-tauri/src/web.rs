@@ -111,8 +111,9 @@ pub async fn check_url(raw: &str) -> Result<reqwest::Url, String> {
 /// Name lookups for the web tools that leave out addresses on this PC or the
 /// local network, at the moment of connecting: a page that redirects to a
 /// name pointing inside the network, or a name whose answer changes after
-/// the first check, can't steer a fetch there.
-struct PublicOnly;
+/// the first check, can't steer a fetch there. (Mail's one-click
+/// unsubscribe uses it too.)
+pub(crate) struct PublicOnly;
 
 impl reqwest::dns::Resolve for PublicOnly {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
@@ -156,7 +157,9 @@ fn searxng_client() -> Result<reqwest::Client, String> {
     builder()?.build().map_err(|e| e.to_string())
 }
 
-fn builder() -> Result<reqwest::ClientBuilder, String> {
+/// A client for the web tools: the private way when that's on, and no
+/// redirects to this PC or the local network.
+pub(crate) fn builder() -> Result<reqwest::ClientBuilder, String> {
     // Tor is slower to connect; give it longer.
     let private = crate::privacy::proxy_for(net::Route::Web).is_some();
     let b = reqwest::Client::builder()

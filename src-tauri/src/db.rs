@@ -236,6 +236,8 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("installed_models", "prompt_tps", "REAL"),
     // This user's messages the other person has read (their read receipt).
     ("people_messages", "seen", "INTEGER NOT NULL DEFAULT 0"),
+    // When the user marked a message read with the button (Marked read).
+    ("mail_messages", "marked_at", "INTEGER"),
 ];
 
 fn has_column(conn: &Connection, table: &str, column: &str) -> bool {
