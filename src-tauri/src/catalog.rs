@@ -643,10 +643,13 @@ mod tests {
     fn the_suggestion_grows_with_the_graphics_card() {
         let c = catalog();
         let best = |vram, ram| best_for(&c.models, &pc(vram, ram)).unwrap();
-        assert_eq!(best(12, 32), "qwen3-14b");
-        assert_eq!(best(16, 32), "gpt-oss-20b");
-        assert_eq!(best(24, 64), "qwen3-32b");
-        assert_eq!(best(8, 16), "qwen3-8b");
+        // The newest generation where it fits: Qwen3.5 9B beats Qwen3 14B
+        // on the same 12 GB card, and Qwen3.6 27B takes a 24 GB one.
+        assert_eq!(best(12, 32), "qwen3.5-9b");
+        assert_eq!(best(16, 32), "qwen3.5-9b");
+        assert_eq!(best(24, 64), "qwen3.6-27b");
+        assert_eq!(best(8, 16), "qwen3.5-9b");
+        assert_eq!(best(6, 16), "qwen3.5-4b");
         // No graphics card: something comfortable on the processor, never a big model.
         let cpu = best(0, 16);
         let spec = c.model(&cpu).unwrap();
