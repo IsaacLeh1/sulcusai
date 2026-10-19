@@ -8,7 +8,9 @@ import {
   api,
   errorText,
   on,
+  type BulkPlan,
   type CalAccount,
+  type CalEvent,
   type EventDraft,
   type MailAccount,
   type MailCategory,
@@ -20,6 +22,8 @@ import {
   type TriageReport,
   type UnsubscribeResult,
 } from "../api";
+import { MailIcon, type MailIconName } from "../components/MailIcons";
+import { Modal } from "../components/Modal";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
@@ -49,15 +53,19 @@ function Avatar({ name, email, size = 32 }: { name: string; email: string; size?
 }
 
 type Folder = "inbox" | "unread" | "marked" | "sent" | "all" | "subscriptions" | "report";
-const FOLDERS: { id: Folder; icon: string; label: string }[] = [
-  { id: "inbox", icon: "📥", label: tx("Inbox") },
-  { id: "unread", icon: "✉", label: tx("Unread") },
-  { id: "marked", icon: "✓", label: tx("Marked read") },
-  { id: "sent", icon: "➤", label: tx("Sent") },
-  { id: "all", icon: "🗂", label: tx("All mail") },
-  { id: "subscriptions", icon: "📰", label: tx("Subscriptions") },
-  { id: "report", icon: "✨", label: tx("AI report") },
+const FOLDERS: { id: Folder; icon: MailIconName; label: string }[] = [
+  { id: "inbox", icon: "inbox", label: tx("Inbox") },
+  { id: "unread", icon: "unread", label: tx("Unread") },
+  { id: "marked", icon: "marked", label: tx("Marked read") },
+  { id: "sent", icon: "sent", label: tx("Sent") },
+  { id: "all", icon: "all", label: tx("All mail") },
+  { id: "subscriptions", icon: "subscriptions", label: tx("Subscriptions") },
+  { id: "report", icon: "report", label: tx("AI report") },
 ];
+/** Newsletters and promotions: their groups in the report can be archived and left in one go. */
+const BULK_LEAVE: MailCategory[] = ["newsletters", "promotions"];
+/** 9:00 (when reminders to reply are due), as this PC writes times. */
+const nineAm = () => new Date(2000, 0, 1, 9).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const NEXT_LABEL: Record<TriageItem["next"], string> = {
   reply: tx("Reply"),
   calendar: tx("Add to calendar"),
@@ -95,6 +103,8 @@ interface Compose {
   reply_to: string | null;
   /** The account it goes from (a reply: the one the message came to). */
   account_id: string | null;
+  /** Written by the AI, for the user to check. */
+  drafted?: boolean;
 }
 
 /** Web links in a message, clickable (they open in the browser). */
@@ -123,12 +133,16 @@ export function MailView({ toast }: { toast: PushToast }) {
   const [managing, setManaging] = useState(false);
   const [report, setReport] = useState<TriageReport | null>(null);
   const [sorting, setSorting] = useState<{ done: number; total: number } | null>(null);
-  // The last mark-read click, for Undo.
-  const [lastMarked, setLastMarked] = useState<{ id: string; subject: string } | null>(null);
+  // The last mark-read click (one message, or a report group), for Undo.
+  const [lastMarked, setLastMarked] = useState<{ ids: string[]; subject: string } | null>(null);
   // A message the report or the message view is fetching or reading for an event.
   const [busy, setBusy] = useState<string | null>(null);
+  // A message the AI is writing a reply to.
+  const [drafting, setDrafting] = useState<string | null>(null);
   const [event, setEvent] = useState<{ draft: EventDraft; calendars: CalAccount[] } | null>(null);
   const [subsVersion, setSubsVersion] = useState(0);
+  // A bulk action in the report waiting for the user's go-ahead.
+  const [bulkAsk, setBulkAsk] = useState<BulkPlan | null>(null);
 
   const loadAccounts = () => api.mailAccounts().then(setAccounts).catch((e) => toast(errorText(e), "error"));
   // The search as typed now: the event handlers set up once would otherwise reload with the first one.
@@ -236,14 +250,15 @@ export function MailView({ toast }: { toast: PushToast }) {
   };
   // The mark-read button: the row moves to Marked read at once, so the next
   // one comes up under the pointer. The server hears in one batch.
-  const markRead = async (m: { id: string; subject: string }) => {
-    showSeen([m.id], true, Date.now());
-    setLastMarked({ id: m.id, subject: m.subject });
+  const markRead = async (m: { id: string; subject: string }) => markReadMany([m.id], m.subject);
+  const markReadMany = async (ids: string[], subject: string) => {
+    showSeen(ids, true, Date.now());
+    setLastMarked({ ids, subject });
     try {
-      await api.mailAction([m.id], "mark_read");
+      await api.mailAction(ids, "mark_read");
     } catch (e) {
-      showSeen([m.id], false, null);
-      setLastMarked((l) => (l?.id === m.id ? null : l));
+      showSeen(ids, false, null);
+      setLastMarked((l) => (l && l.ids.some((id) => ids.includes(id)) ? null : l));
       toast(errorText(e), "error");
     }
   };
@@ -251,7 +266,7 @@ export function MailView({ toast }: { toast: PushToast }) {
   const markUnread = async (ids: string[]) => {
     const before = items.filter((x) => ids.includes(x.id));
     showSeen(ids, false, null);
-    setLastMarked((l) => (l && ids.includes(l.id) ? null : l));
+    setLastMarked((l) => (l && l.ids.some((id) => ids.includes(id)) ? null : l));
     try {
       await api.mailAction(ids, "unseen");
     } catch (e) {
@@ -276,14 +291,16 @@ export function MailView({ toast }: { toast: PushToast }) {
   const unread = mine.filter((m) => isInbox(m) && !m.seen).length;
   const waiting = report?.items.filter((i) => i.important && !i.seen).length ?? 0;
 
-  const reply = (m: MailItem) =>
+  // `text`: the reply itself (the AI's draft), above the quoted message.
+  const reply = (m: MailItem, text = "") =>
     setCompose({
-      to: isInbox(m) ? m.from : m.to.join(", "),
+      to: !isSent(m) ? m.from : m.to.join(", "),
       cc: "",
       subject: m.subject.toLowerCase().startsWith("re:") ? m.subject : `Re: ${m.subject}`,
-      body: `\n\nOn ${new Date(m.date).toLocaleString()}, ${m.from_name || m.from} wrote:\n${m.body.split("\n").map((l) => `> ${l}`).join("\n")}`,
+      body: `${text}\n\nOn ${new Date(m.date).toLocaleString()}, ${m.from_name || m.from} wrote:\n${m.body.split("\n").map((l) => `> ${l}`).join("\n")}`,
       reply_to: m.id,
       account_id: m.account_id,
+      drafted: !!text,
     });
   const forward = (m: MailItem) =>
     setCompose({
@@ -306,6 +323,76 @@ export function MailView({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     } finally {
       setBusy(null);
+    }
+  };
+
+  // Draft reply: the AI writes it in the reply form, from the account the
+  // message came to. Nothing is sent until the user clicks Send.
+  const draftReply = async (id: string) => {
+    setDrafting(id);
+    try {
+      const shownNow = open && open.id === id ? open : null;
+      const [m, text] = await Promise.all([shownNow ? Promise.resolve(shownNow) : api.mailGet(id), api.mailDraftReply(id)]);
+      showSeen([id], true, m.marked_at);
+      reply(m, text);
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setDrafting(null);
+    }
+  };
+
+  // Remind me: a task to reply, due tomorrow at 9:00 with a reminder.
+  const remind = async (i: TriageItem) => {
+    try {
+      await api.mailRemindMissed(i.id);
+      setReport((r) => (r ? { ...r, items: r.items.map((x) => (x.id === i.id ? { ...x, reminder: true } : x)) } : r));
+      toast(t("Reminder set for tomorrow at {time}.", { time: nineAm() }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const setRemindAuto = async (on: boolean) => {
+    setReport((r) => (r ? { ...r, remind_missed: on } : r));
+    try {
+      await api.setMailRemindMissed(on);
+    } catch (e) {
+      setReport((r) => (r ? { ...r, remind_missed: !on } : r));
+      toast(errorText(e), "error");
+    }
+  };
+
+  // A report group's Mark all read, Archive all or Unsubscribe from all:
+  // what it acts on comes from the core, which says when to ask first (over 5).
+  const bulk = async (ids: string[], action: BulkPlan["action"]) => {
+    try {
+      const plan = await api.mailBulkPlan(ids, action);
+      if (plan.count === 0) toast(t("Nothing left to do here."), "info");
+      else if (plan.ask) setBulkAsk(plan);
+      else await runBulk(plan);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const runBulk = async (plan: BulkPlan) => {
+    setBulkAsk(null);
+    if (plan.action === "mark_read") {
+      await markReadMany(plan.ids, plan.count === 1 ? t("1 email") : t("{n} emails", { n: plan.count }));
+    } else if (plan.action === "archive") {
+      setReport((r) => (r ? { ...r, items: r.items.map((x) => (plan.ids.includes(x.id) ? { ...x, in_inbox: false, seen: true } : x)) } : r));
+      await move(plan.ids, "archive");
+      api.mailTriageReport().then(setReport).catch(() => {});
+    } else {
+      let left = 0;
+      let pages = 0;
+      for (const l of plan.lists) {
+        const r = await unsubscribe(l.key, l.name, true);
+        if (r?.method === "link") pages++;
+        else if (r) left++;
+      }
+      if (left > 0) toast(t("Unsubscribed from {n} of {total}.", { n: left, total: plan.lists.length }), left === plan.lists.length ? "success" : "info");
+      if (pages > 0) toast(t("{n} unsubscribe pages are open in your browser. The sites may ask you to confirm.", { n: pages }), "info");
+      setSubsVersion((v) => v + 1);
     }
   };
 
@@ -373,16 +460,22 @@ export function MailView({ toast }: { toast: PushToast }) {
   }
 
   const fromAccount = accounts.find((a) => a.id === compose?.account_id) ?? accounts.find((a) => a.id === (open?.account_id ?? account)) ?? accounts[0];
+  const undoMark = lastMarked && (
+    <span className="undo-mark" role="status">
+      <span className="ellipsis">{t("Marked read: {subject}", { subject: lastMarked.subject || t("(no subject)") })}</span>
+      <button className="link small" onClick={() => markUnread(lastMarked.ids)}>{t("Undo")}</button>
+    </span>
+  );
   return (
     <div className="inbox">
       <aside className="inbox-rail">
         <button className="compose-btn" onClick={() => setCompose({ to: "", cc: "", subject: "", body: "", reply_to: null, account_id: account })}>
-          <span aria-hidden>✎</span> {t("Compose")}
+          <MailIcon name="compose" /> {t("Compose")}
         </button>
         <nav className="inbox-folders" aria-label={t("Folders")}>
           {FOLDERS.map((f) => (
             <button key={f.id} className={folder === f.id && !open ? "active" : ""} onClick={() => { setFolder(f.id); setOpenId(null); }}>
-              <span className="folder-icon" aria-hidden>{f.icon}</span>
+              <span className="folder-icon"><MailIcon name={f.icon} /></span>
               <span className="grow">{t(f.label)}</span>
               {(f.id === "inbox" || f.id === "unread") && unread > 0 && <span className="folder-count">{unread}</span>}
               {f.id === "report" && waiting > 0 && <span className="folder-count">{waiting}</span>}
@@ -431,32 +524,40 @@ export function MailView({ toast }: { toast: PushToast }) {
       <section className="inbox-main">
         <header className="inbox-top">
           <label className="mail-search">
-            <span aria-hidden>🔍</span>
+            <span className="muted"><MailIcon name="search" /></span>
             <input value={query} onChange={(e) => { setQuery(e.target.value); setOpenId(null); }} placeholder={t("Search mail")} aria-label={t("Search mail")} />
             {query && <button className="icon-btn" onClick={() => setQuery("")} aria-label={t("Clear search")}>×</button>}
           </label>
           <button className={`icon-btn round ${syncing ? "spin" : ""}`} onClick={sync} disabled={syncing} title={syncing ? t("Syncing…") : t("Check for new mail")} aria-label={t("Check for new mail")}>↻</button>
           <button className="btn" onClick={sortUnread} disabled={!!sorting || unread === 0} title={t("Your AI reads your unread mail and marks what doesn't need you as read. You can undo it in the AI report.")}>
-            {sorting ? (sorting.total ? t("Sorting {done} of {total}…", sorting) : t("Starting…")) : `✨ ${t("Sort unread")}`}
+            {sorting ? (sorting.total ? t("Sorting {done} of {total}…", sorting) : t("Starting…")) : t("Sort unread")}
           </button>
         </header>
         {sorting && sorting.total > 0 && <div className="sort-progress"><span style={{ width: `${(sorting.done / sorting.total) * 100}%` }} /></div>}
 
         {!open && folder === "report" ? (
-          <TriageView
-            report={report}
-            sorting={!!sorting}
-            unread={unread}
-            busy={busy}
-            onSort={sortUnread}
-            onOpen={setOpenId}
-            onRead={markRead}
-            onUndo={undo}
-            onAuto={setAuto}
-            onReply={(i) => replyTo(i.id)}
-            onCalendar={(i) => addToCalendar(i.id)}
-            onUnsubscribe={(i) => i.unsubscribe && unsubscribe(i.unsubscribe.key, i.from_name || i.from)}
-          />
+          <>
+            {lastMarked && <div className="triage-undo small">{undoMark}</div>}
+            <TriageView
+              report={report}
+              sorting={!!sorting}
+              unread={unread}
+              busy={busy}
+              drafting={drafting}
+              onSort={sortUnread}
+              onOpen={setOpenId}
+              onRead={markRead}
+              onUndo={undo}
+              onAuto={setAuto}
+              onRemindAuto={setRemindAuto}
+              onReply={(i) => replyTo(i.id)}
+              onDraft={(i) => draftReply(i.id)}
+              onRemind={remind}
+              onCalendar={(i) => addToCalendar(i.id)}
+              onUnsubscribe={(i) => i.unsubscribe && unsubscribe(i.unsubscribe.key, i.from_name || i.from)}
+              onBulk={bulk}
+            />
+          </>
         ) : !open && folder === "subscriptions" ? (
           <SubscriptionsView
             toast={toast}
@@ -474,8 +575,8 @@ export function MailView({ toast }: { toast: PushToast }) {
             <div className="message-bar">
               <button className="icon-btn round" onClick={() => setOpenId(null)} title={t("Back")} aria-label={t("Back")}>←</button>
               <span className="spacer" />
-              {!isArchived(open) && <button className="btn ghost small" onClick={() => move([open.id], "archive")} title={t("Take it out of the inbox (it stays in All mail)")}>🗄 {t("Archive")}</button>}
-              <button className="btn ghost small" onClick={() => move([open.id], "trash")} title={t("Move it to the trash")}>🗑 {t("Delete")}</button>
+              {!isArchived(open) && <button className="btn ghost small" onClick={() => move([open.id], "archive")} title={t("Take it out of the inbox (it stays in All mail)")}>{t("Archive")}</button>}
+              <button className="btn ghost small" onClick={() => move([open.id], "trash")} title={t("Move it to the trash")}>{t("Delete")}</button>
               <button className="btn ghost small" onClick={() => { markUnread([open.id]); setOpenId(null); }}>{t("Mark as unread")}</button>
             </div>
             <h1 className="message-subject">{open.subject || t("(no subject)")}{isInbox(open) && <span className="badge subtle">{t("Inbox")}</span>}</h1>
@@ -489,28 +590,39 @@ export function MailView({ toast }: { toast: PushToast }) {
             </div>
             {open.attachments.length > 0 && (
               <div className="message-files">
-                {open.attachments.map((f) => <span key={f} className="file-chip" title={t("Left on the server")}>📎 {f}</span>)}
+                {open.attachments.map((f) => <span key={f} className="file-chip" title={t("Left on the server")}><MailIcon name="clip" size={14} /> {f}</span>)}
               </div>
+            )}
+            {open.invite && !isSent(open) && (
+              <InviteCard
+                key={open.id}
+                message={open}
+                myEmail={accounts.find((a) => a.id === open.account_id)?.email ?? ""}
+                toast={toast}
+                onChange={(m) => setOpen(m)}
+              />
             )}
             <div className="message-body">{open.body ? linkify(open.body) : open.partial ? t("This message is large, so only its headers were copied.") : ""}</div>
             <div className="message-actions">
               <button className="btn" onClick={() => reply(open)}>↩ {t("Reply")}</button>
+              {!isSent(open) && (
+                <button className="btn" onClick={() => draftReply(open.id)} disabled={drafting === open.id} title={t("Your AI writes a reply in the reply form for you to check. Nothing is sent until you click Send.")}>
+                  {drafting === open.id ? t("Writing a reply…") : t("Draft reply")}
+                </button>
+              )}
               <button className="btn" onClick={() => forward(open)}>↪ {t("Forward")}</button>
-              <button className="btn" onClick={() => addToCalendar(open.id)} disabled={busy === open.id} title={t("Your AI reads the date, time and place, and you check them before it's saved.")}>
-                📅 {busy === open.id ? t("Reading the email…") : t("Add to calendar")}
-              </button>
+              {!open.invite && (
+                <button className="btn" onClick={() => addToCalendar(open.id)} disabled={busy === open.id} title={t("Your AI reads the date, time and place, and you check them before it's saved.")}>
+                  {busy === open.id ? t("Reading the email…") : t("Add to calendar")}
+                </button>
+              )}
             </div>
           </article>
         ) : (
           <>
             <div className="list-bar small muted">
               <span>{t(FOLDERS.find((f) => f.id === folder)!.label)}</span>
-              {lastMarked && (
-                <span className="undo-mark" role="status">
-                  <span className="ellipsis">{t("Marked read: {subject}", { subject: lastMarked.subject || t("(no subject)") })}</span>
-                  <button className="link small" onClick={() => markUnread([lastMarked.id])}>{t("Undo")}</button>
-                </span>
-              )}
+              {undoMark}
               <span className="spacer" />
               {shown.length > 0 && <span>{t("{n} messages", { n: shown.length })}</span>}
             </div>
@@ -536,7 +648,7 @@ export function MailView({ toast }: { toast: PushToast }) {
                       <span className="mail-subject">{m.subject || t("(no subject)")}</span>
                       {m.snippet && <span className="mail-snippet"> — {m.snippet}</span>}
                     </span>
-                    {m.attachments.length > 0 ? <span className="mail-clip" title={m.attachments.join(", ")} aria-label={t("Has attachments")}>📎</span> : <span className="mail-clip" />}
+                    {m.attachments.length > 0 ? <span className="mail-clip" title={m.attachments.join(", ")}><MailIcon name="clip" size={15} title={t("Has attachments")} /></span> : <span className="mail-clip" />}
                     <span className="mail-date">{when(m.date)}</span>
                     {/* Always in the same place, so marking one after another is quick. */}
                     <span className="mail-mark" onClick={(e) => e.stopPropagation()}>
@@ -548,11 +660,11 @@ export function MailView({ toast }: { toast: PushToast }) {
                     </span>
                     <span className="mail-hover" onClick={(e) => e.stopPropagation()}>
                       {!isArchived(m) && (
-                        <button className="icon-btn" title={t("Archive")} aria-label={t("Archive")} onClick={() => move([m.id], "archive")}>🗄</button>
+                        <button className="icon-btn" title={t("Archive")} aria-label={t("Archive")} onClick={() => move([m.id], "archive")}><MailIcon name="archive" size={17} /></button>
                       )}
-                      <button className="icon-btn" title={t("Delete")} aria-label={t("Delete")} onClick={() => move([m.id], "trash")}>🗑</button>
+                      <button className="icon-btn" title={t("Delete")} aria-label={t("Delete")} onClick={() => move([m.id], "trash")}><MailIcon name="trash" size={17} /></button>
                       {m.seen && !isMarked(m) && (
-                        <button className="icon-btn" title={t("Mark as unread")} aria-label={t("Mark as unread")} onClick={() => markUnread([m.id])}>✉</button>
+                        <button className="icon-btn" title={t("Mark as unread")} aria-label={t("Mark as unread")} onClick={() => markUnread([m.id])}><MailIcon name="unread" size={17} /></button>
                       )}
                     </span>
                   </div>
@@ -589,7 +701,157 @@ export function MailView({ toast }: { toast: PushToast }) {
           toast={toast}
         />
       )}
+      {bulkAsk && (
+        <Modal
+          title={
+            bulkAsk.action === "mark_read"
+              ? t("Mark {n} emails as read?", { n: bulkAsk.count })
+              : bulkAsk.action === "archive"
+                ? t("Archive {n} emails?", { n: bulkAsk.count })
+                : t("Unsubscribe from {n} lists?", { n: bulkAsk.count })
+          }
+          onClose={() => setBulkAsk(null)}
+        >
+          <p className="muted">
+            {bulkAsk.action === "mark_read"
+              ? t("They move to Marked read. You can undo it right after.")
+              : bulkAsk.action === "archive"
+                ? t("They leave the inbox and stay in All mail.")
+                : t("Each list is left the way it allows: one click, an unsubscribe email from your account, or its page in your browser.")}
+          </p>
+          {bulkAsk.action === "unsubscribe" && (
+            <ul className="bulk-list small">
+              {bulkAsk.lists.map((l) => <li key={l.key}>{l.name}</li>)}
+            </ul>
+          )}
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setBulkAsk(null)}>{t("Cancel")}</button>
+            <button className="btn primary" onClick={() => runBulk(bulkAsk)}>
+              {bulkAsk.action === "mark_read" ? t("Mark as read") : bulkAsk.action === "archive" ? t("Archive") : t("Unsubscribe")}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
+  );
+}
+
+/** An invitation in the open message: what, when and where, who sent it,
+ * the user's answer, and Accept, Maybe and Decline. Accept and Maybe put it
+ * on a calendar (unless it's there already); the answer goes to the
+ * organizer only with the tick. */
+function InviteCard({ message, myEmail, toast, onChange }: { message: MailItem; myEmail: string; toast: PushToast; onChange: (m: MailItem) => void }) {
+  const inv = message.invite!;
+  const [calendars, setCalendars] = useState<CalAccount[]>([]);
+  const [onCalendar, setOnCalendar] = useState<CalEvent | null>(null);
+  const [calendar, setCalendar] = useState("");
+  const [send, setSend] = useState(true);
+  const [working, setWorking] = useState<"accept" | "maybe" | "decline" | null>(null);
+  useEffect(() => {
+    api.calendarAccounts().then((a) => {
+      setCalendars(a);
+      // The first connected calendar, else this PC (as Add to calendar does).
+      setCalendar(a[0]?.calendars[0]?.href ?? "");
+    }).catch(() => {});
+    api.mailInviteStatus(message.id).then(setOnCalendar).catch(() => setOnCalendar(null));
+  }, [message.id]);
+  const organizer = inv.organizer_name || inv.organizer;
+  const day = (ms: number) => new Date(ms).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  // All-day events end at the next midnight.
+  const lastDay = inv.end - 1;
+  const whenText = inv.all_day
+    ? new Date(inv.start).toDateString() === new Date(lastDay).toDateString() ? day(inv.start) : `${day(inv.start)} – ${day(lastDay)}`
+    : new Date(inv.start).toDateString() === new Date(inv.end).toDateString()
+      ? `${day(inv.start)} · ${clock(inv.start)} – ${clock(inv.end)}`
+      : `${day(inv.start)} ${clock(inv.start)} – ${day(inv.end)} ${clock(inv.end)}`;
+  const mine = inv.attendees.find((a) => a.email.toLowerCase() === myEmail.trim().toLowerCase());
+  const a = inv.answer;
+  const status = a
+    ? `${a.partstat === "ACCEPTED" ? t("You accepted {date}", { date: when(a.at) }) : a.partstat === "TENTATIVE" ? t("You said maybe {date}", { date: when(a.at) }) : t("You declined {date}", { date: when(a.at) })} · ${a.sent ? t("sent to the organizer") : t("not sent to the organizer")}`
+    : mine?.partstat === "ACCEPTED"
+      ? t("Accepted")
+      : mine?.partstat === "TENTATIVE"
+        ? t("Maybe")
+        : mine?.partstat === "DECLINED"
+          ? t("Declined")
+          : t("Not answered yet");
+  const answer = async (choice: "accept" | "maybe" | "decline") => {
+    setWorking(choice);
+    const reply = send && !!inv.organizer;
+    try {
+      const r = await api.mailInviteRespond(message.id, choice, calendar || null, reply);
+      onChange({ ...message, invite: { ...inv, answer: r.answer } });
+      if (r.event) setOnCalendar(r.event);
+      if (choice !== "decline") {
+        toast(
+          r.already
+            ? t("It was on your calendar already, so it wasn't added again.")
+            : t("Added “{title}” to {calendar}.", { title: inv.title || message.subject, calendar: r.event ? calendarName(r.event, calendars) : t("This PC") }),
+          "success",
+        );
+      }
+      if (r.send_error) toast(t("Your answer couldn't be sent: {error}", { error: r.send_error }), "error");
+      else if (r.answer.sent) toast(t("Your answer was sent to {name}.", { name: organizer }), "success");
+      else if (choice === "decline") toast(t("Declined here. Nothing was sent."), "info");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setWorking(null);
+    }
+  };
+  const cals = calendars.flatMap((acc) => acc.calendars.map((c) => ({ href: c.href, label: `${c.name} (${acc.name})` })));
+  const picked = (p: "ACCEPTED" | "TENTATIVE" | "DECLINED") => (a?.partstat === p ? "btn primary" : "btn");
+  return (
+    <section className="invite-card" aria-label={t("Invitation")}>
+      <div className="invite-kind small"><MailIcon name="calendar" size={16} /> {t("Invitation")}</div>
+      <h2 className="invite-title">{inv.title || message.subject || t("(no subject)")}</h2>
+      <dl className="invite-facts">
+        <dt>{t("When")}</dt>
+        <dd>
+          {whenText}
+          {inv.recurring && <span className="muted"> · {t("Repeats; only this time is added here")}</span>}
+        </dd>
+        {inv.location && (
+          <>
+            <dt>{t("Where")}</dt>
+            <dd>{linkify(inv.location)}</dd>
+          </>
+        )}
+        {organizer && (
+          <>
+            <dt>{t("Organizer")}</dt>
+            <dd>{organizer}{inv.organizer_name && inv.organizer ? <span className="muted"> &lt;{inv.organizer}&gt;</span> : null}</dd>
+          </>
+        )}
+        <dt>{t("Your answer")}</dt>
+        <dd>{status}</dd>
+      </dl>
+      {onCalendar ? (
+        <p className="small hint-box">{t("It's on your calendar already: {calendar}.", { calendar: calendarName(onCalendar, calendars) })}</p>
+      ) : (
+        cals.length > 0 && (
+          <label className="invite-row small">
+            <span className="muted">{t("Accept or Maybe adds it to")}</span>
+            <select value={calendar} onChange={(e) => setCalendar(e.target.value)}>
+              <option value="">{t("This PC only")}</option>
+              {cals.map((c) => <option key={c.href} value={c.href}>{c.label}</option>)}
+            </select>
+          </label>
+        )
+      )}
+      {inv.organizer && (
+        <label className="invite-row small">
+          <input type="checkbox" checked={send} onChange={(e) => setSend(e.target.checked)} />
+          <span>{t("Send my reply to {organizer}", { organizer })}</span>
+        </label>
+      )}
+      <div className="invite-actions">
+        <button className={picked("ACCEPTED")} onClick={() => answer("accept")} disabled={!!working}>{working === "accept" ? t("Answering…") : t("Accept")}</button>
+        <button className={picked("TENTATIVE")} onClick={() => answer("maybe")} disabled={!!working}>{working === "maybe" ? t("Answering…") : t("Maybe")}</button>
+        <button className={picked("DECLINED")} onClick={() => answer("decline")} disabled={!!working}>{working === "decline" ? t("Answering…") : t("Decline")}</button>
+      </div>
+    </section>
   );
 }
 
@@ -606,6 +868,8 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
   const [subs, setSubs] = useState<Subscription[] | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState<Set<string>>(new Set());
+  // "Leave all you never open": the lists ticked in its dialog.
+  const [leaving, setLeaving] = useState<Set<string> | null>(null);
   const load = () => api.mailSubscriptions().then(setSubs).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     load();
@@ -643,6 +907,8 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
           ? t("Opens its unsubscribe page in your browser")
           : t("No unsubscribe link in its mail");
   const selected = mine.filter((s) => picked.has(s.key) && can(s));
+  // Lists the user never opens (none opened in 60 days, at least 3 unopened).
+  const never = mine.filter((s) => s.unopened > 0 && can(s));
   if (!subs) return <p className="muted center pad-lg">{t("Loading…")}</p>;
   return (
     <div className="subs">
@@ -651,10 +917,54 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
           <h2>{t("Subscriptions")}</h2>
           <p className="muted small">{t("Newsletters, stores and other mailing lists in your inbox, from their unsubscribe headers. Unsubscribe does it for you when the list allows it.")}</p>
         </div>
-        <button className="btn" onClick={() => leave(selected)} disabled={selected.length === 0 || working.size > 0}>
-          {t("Unsubscribe from selected ({n})", { n: selected.length })}
-        </button>
+        <div className="subs-head-actions">
+          {never.length > 0 && (
+            <button className="btn" onClick={() => setLeaving(new Set(never.map((s) => s.key)))} disabled={working.size > 0}>
+              {never.length === 1 ? t("Leave the one you never open") : t("Leave all {n} you never open", { n: never.length })}
+            </button>
+          )}
+          <button className="btn" onClick={() => leave(selected)} disabled={selected.length === 0 || working.size > 0}>
+            {t("Unsubscribe from selected ({n})", { n: selected.length })}
+          </button>
+        </div>
       </div>
+      {leaving && (
+        <Modal title={t("Unsubscribe from lists you never open?")} onClose={() => setLeaving(null)}>
+          <p className="muted small">{t("You haven't opened any of their emails in the last 60 days. Each is left the way it allows: one click, an unsubscribe email from your account, or its page in your browser.")}</p>
+          <div className="never-list">
+            {never.map((s) => (
+              <label key={s.key} className="check">
+                <input
+                  type="checkbox"
+                  checked={leaving.has(s.key)}
+                  onChange={(e) => setLeaving((l) => {
+                    const n = new Set(l ?? []);
+                    if (e.target.checked) n.add(s.key);
+                    else n.delete(s.key);
+                    return n;
+                  })}
+                />
+                <span className="grow ellipsis"><strong>{s.name}</strong> <span className="muted small">{t("You haven't opened any of its last {n} emails", { n: s.unopened })}</span></span>
+              </label>
+            ))}
+          </div>
+          <p className="muted small">{t("Only emails you open in SulcusAI count. Reading them in another mail app isn't seen here.")}</p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setLeaving(null)}>{t("Cancel")}</button>
+            <button
+              className="btn primary"
+              disabled={never.every((s) => !leaving.has(s.key))}
+              onClick={() => {
+                const list = never.filter((s) => leaving.has(s.key));
+                setLeaving(null);
+                leave(list);
+              }}
+            >
+              {t("Unsubscribe from {n}", { n: never.filter((s) => leaving.has(s.key)).length })}
+            </button>
+          </div>
+        </Modal>
+      )}
       {mine.length === 0 && <p className="muted center pad-lg">{t("No subscriptions found in your inbox yet.")}</p>}
       {mine.map((s) => {
         const done = s.unsubscribed;
@@ -675,6 +985,9 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
             <Avatar name={s.name} email={s.address} size={32} />
             <div className="grow subs-who">
               <div className="ellipsis"><strong>{s.name}</strong> <span className="muted small">{s.address}</span></div>
+              {!done && s.unopened > 0 && (
+                <div className="subs-unopened small">{t("You haven't opened any of its last {n} emails", { n: s.unopened })}</div>
+              )}
               <div className="muted small ellipsis">
                 {s.count === 1 ? t("1 email") : t("{n} emails", { n: s.count })} · {t("latest {date}", { date: when(s.latest) })}
                 {showAccount && ` · ${accounts.find((a) => a.id === s.account_id)?.email ?? ""}`}
@@ -708,20 +1021,26 @@ function SubscriptionsView({ toast, account, version, showAccount, accounts, onU
 
 /** What the AI did with the unread mail: what it left for you and why, and
  * what it marked read (each can be put back), grouped by kind of mail. */
-function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onUndo, onAuto, onReply, onCalendar, onUnsubscribe }: {
+function TriageView({ report, sorting, unread, busy, drafting, onSort, onOpen, onRead, onUndo, onAuto, onRemindAuto, onReply, onDraft, onRemind, onCalendar, onUnsubscribe, onBulk }: {
   report: TriageReport | null;
   sorting: boolean;
   unread: number;
   /** A message being fetched for a reply or read for an event. */
   busy: string | null;
+  /** A message the AI is writing a reply to. */
+  drafting: string | null;
   onSort: () => void;
   onOpen: (id: string) => void;
   onRead: (item: TriageItem) => void;
   onUndo: (ids: string[]) => void;
   onAuto: (on: boolean) => void;
+  onRemindAuto: (on: boolean) => void;
   onReply: (item: TriageItem) => void;
+  onDraft: (item: TriageItem) => void;
+  onRemind: (item: TriageItem) => void;
   onCalendar: (item: TriageItem) => void;
   onUnsubscribe: (item: TriageItem) => void;
+  onBulk: (ids: string[], action: BulkPlan["action"]) => void;
 }) {
   const [filter, setFilter] = useState<MailCategory | "all">("all");
   const auto = (
@@ -733,10 +1052,19 @@ function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onU
       </span>
     </label>
   );
+  const remindAuto = (
+    <label className="auto-sort small">
+      <input type="checkbox" checked={!!report?.remind_missed} onChange={(e) => onRemindAuto(e.target.checked)} />
+      <span>
+        <strong>{t("Remind me about missed replies")}</strong>
+        <span className="muted block">{t("Each missed reply a sort finds gets a task for the next day at {time}, with a reminder. Once per email.", { time: nineAm() })}</span>
+      </span>
+    </label>
+  );
   if (!report?.run_at) {
     return (
       <div className="triage-empty">
-        <span className="triage-icon" aria-hidden>✨</span>
+        <span className="triage-icon"><MailIcon name="report" size={34} /></span>
         <h2>{t("Let your AI sort your unread mail")}</h2>
         <p className="muted">{t("It reads each unread email, keeps the ones that need you, and marks newsletters, promotions and notices that need nothing as read. This report shows what it did and why, and anything can be put back.")}</p>
         <button className="btn primary" onClick={onSort} disabled={sorting || unread === 0}>{unread === 0 ? t("No unread mail") : t("Sort {n} unread emails", { n: unread })}</button>
@@ -770,6 +1098,39 @@ function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onU
     const how = u.method === "email" ? t("Sends an email to {to} with the subject “{subject}”", { to: u.email_to, subject: u.email_subject }) : u.method === "link" ? t("Opens its unsubscribe page in your browser") : t("One click: done for you");
     return <button className="btn ghost small" onClick={() => onUnsubscribe(i)} title={how}>{t("Unsubscribe")}</button>;
   };
+  // Needs a reply: the AI can write one for the reply form.
+  const draft = (i: TriageItem) =>
+    i.category === "needs reply" && (
+      <button className="btn ghost small" onClick={() => onDraft(i)} disabled={drafting === i.id} title={t("Your AI writes a reply in the reply form for you to check. Nothing is sent until you click Send.")}>
+        {drafting === i.id ? t("Writing a reply…") : t("Draft reply")}
+      </button>
+    );
+  // Missed: a task to reply tomorrow morning.
+  const reminder = (i: TriageItem) =>
+    i.missed &&
+    (i.reminder ? (
+      <span className="muted small nowrap">{t("Reminder set")}</span>
+    ) : (
+      <button className="btn ghost small" onClick={() => onRemind(i)} title={t("Adds a task to reply, due tomorrow at {time}, with a reminder.", { time: nineAm() })}>
+        {t("Remind me")}
+      </button>
+    ));
+  // A group's bulk actions, with how many each would change.
+  const bulkButtons = (g: { id: MailCategory; items: TriageItem[] }) => {
+    const ids = g.items.map((i) => i.id);
+    const unreadN = g.items.filter((i) => !i.seen).length;
+    const inboxN = g.items.filter((i) => i.in_inbox).length;
+    const lists = new Set(g.items.flatMap((i) => (i.unsubscribe && !i.unsubscribe.unsubscribed && i.unsubscribe.method !== "none" ? [i.unsubscribe.key] : []))).size;
+    const leaveToo = BULK_LEAVE.includes(g.id);
+    if (unreadN === 0 && !(leaveToo && (inboxN > 0 || lists > 0))) return null;
+    return (
+      <span className="triage-bulk">
+        {unreadN > 0 && <button className="btn ghost small" onClick={() => onBulk(ids, "mark_read")}>{t("Mark all read ({n})", { n: unreadN })}</button>}
+        {leaveToo && inboxN > 0 && <button className="btn ghost small" onClick={() => onBulk(ids, "archive")}>{t("Archive all ({n})", { n: inboxN })}</button>}
+        {leaveToo && lists > 0 && <button className="btn ghost small" onClick={() => onBulk(ids, "unsubscribe")}>{t("Unsubscribe from all ({n})", { n: lists })}</button>}
+      </span>
+    );
+  };
   const row = (i: TriageItem, actions: ReactNode) => (
     <div key={i.id} className={`triage-row ${i.seen && i.important ? "done" : ""} ${i.missed ? "missed" : ""}`}>
       <Avatar name={i.from_name} email={i.from} size={32} />
@@ -786,6 +1147,8 @@ function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onU
       </div>
       <div className="triage-actions">
         {next(i)}
+        {draft(i)}
+        {reminder(i)}
         {leave(i)}
         {actions}
       </div>
@@ -796,10 +1159,13 @@ function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onU
       const missed = g.items.filter((i) => i.missed).length;
       return (
         <div key={g.id} className="triage-group">
-          <h4 className="triage-group-head">
-            <span className={categoryClass(g.id)}>{t(g.label)}</span> <span className="muted">{g.items.length}</span>
-            {missed > 0 && <span className="missed-chip">{t("{n} missed", { n: missed })}</span>}
-          </h4>
+          <div className="triage-group-bar">
+            <h4 className="triage-group-head">
+              <span className={categoryClass(g.id)}>{t(g.label)}</span> <span className="muted">{g.items.length}</span>
+              {missed > 0 && <span className="missed-chip">{t("{n} missed", { n: missed })}</span>}
+            </h4>
+            {bulkButtons(g)}
+          </div>
           {g.items.map((i) => row(i, actions(i)))}
         </div>
       );
@@ -815,7 +1181,10 @@ function TriageView({ report, sorting, unread, busy, onSort, onOpen, onRead, onU
         </div>
         <button className="btn" onClick={onSort} disabled={sorting || unread === 0}>{t("Sort again")}</button>
       </div>
-      {auto}
+      <div className="triage-options">
+        {auto}
+        {remindAuto}
+      </div>
 
       <div className="cat-filters" role="group" aria-label={t("Show")}>
         <button className={filter === "all" ? "active" : ""} aria-pressed={filter === "all"} onClick={() => setFilter("all")}>
@@ -888,6 +1257,7 @@ function ComposePanel({ draft, from, onClose, toast, onSent }: { draft: Compose;
       {!small && (
         <>
           <div className="compose-field muted small">{t("From {email}", { email: from.email })}</div>
+          {d.drafted && <p className="compose-note small">{t("Drafted by your AI. Check it and fill in anything in [brackets] before you send it.")}</p>}
           <label className="compose-field">
             <span className="muted">{t("To")}</span>
             <input value={d.to} onChange={(e) => setD({ ...d, to: e.target.value })} placeholder="name@example.com" autoFocus={!d.reply_to} />
@@ -906,7 +1276,7 @@ function ComposePanel({ draft, from, onClose, toast, onSent }: { draft: Compose;
           <footer className="compose-foot">
             <button className="send-btn" onClick={send} disabled={sending || !d.to.trim()}>{sending ? t("Sending…") : t("Send")}</button>
             <span className="spacer" />
-            <button className="icon-btn" onClick={onClose} title={t("Discard")} aria-label={t("Discard")}>🗑</button>
+            <button className="icon-btn" onClick={onClose} title={t("Discard")} aria-label={t("Discard")}><MailIcon name="trash" size={17} /></button>
           </footer>
         </>
       )}

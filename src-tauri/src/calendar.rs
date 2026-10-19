@@ -259,6 +259,210 @@ fn ics_stamp(ms: i64) -> String {
     Utc.timestamp_millis_opt(ms).single().unwrap_or_default().format("%Y%m%dT%H%M%SZ").to_string()
 }
 
+// ---------- invitations (iTIP, RFC 5546) ----------
+
+/// The raw invitation kept with a message, at most this many bytes.
+pub const MAX_ICS: usize = 64 * 1024;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Attendee {
+    pub email: String,
+    pub name: String,
+    /// NEEDS-ACTION, ACCEPTED, TENTATIVE, DECLINED…
+    pub partstat: String,
+}
+
+/// What the user answered an invitation with, here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct InviteAnswer {
+    /// ACCEPTED, TENTATIVE or DECLINED.
+    pub partstat: String,
+    pub at: i64,
+    /// The reply went to the organizer by email.
+    pub sent: bool,
+    /// The calendar event it was added as, or found as.
+    pub event_id: Option<String>,
+}
+
+/// An invitation in an email (METHOD:REQUEST).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Invite {
+    pub method: String,
+    pub uid: String,
+    pub sequence: u32,
+    /// One occurrence of a repeating event: its RECURRENCE-ID line.
+    pub recurrence_id: String,
+    pub title: String,
+    pub start: i64,
+    pub end: i64,
+    pub all_day: bool,
+    pub location: String,
+    pub notes: String,
+    pub organizer: String,
+    pub organizer_name: String,
+    pub attendees: Vec<Attendee>,
+    pub recurring: bool,
+    /// The invitation as it came (left out above MAX_ICS).
+    pub ics: String,
+    pub answer: Option<InviteAnswer>,
+}
+
+/// "mailto:ana@example.com" → "ana@example.com" (no control characters).
+fn mailto(v: &str) -> String {
+    let v = v.trim();
+    let v = if v.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("mailto:")) { &v[7..] } else { v };
+    v.chars().filter(|c| !c.is_control() && !c.is_whitespace()).take(320).collect()
+}
+
+/// The invitation in an iCalendar text: the first event (read with
+/// `parse_ics`), with its METHOD, ORGANIZER, ATTENDEEs and SEQUENCE.
+pub fn parse_invite(text: &str) -> Option<Invite> {
+    let (start, end, all_day, data) = parse_ics(text).into_iter().next()?;
+    if data.uid.trim().is_empty() {
+        return None;
+    }
+    let mut inv = Invite {
+        uid: data.uid.clone(),
+        title: data.title.chars().take(500).collect(),
+        start,
+        end,
+        all_day,
+        location: data.location.chars().take(500).collect(),
+        notes: data.notes.chars().take(4000).collect(),
+        recurring: data.recurring,
+        ..Default::default()
+    };
+    let mut block: Option<Vec<(String, HashMap<String, String>, String)>> = None;
+    // Inside an alarm (VALARM) within the event: its lines aren't the event's.
+    let mut nested = 0u32;
+    let mut found = false;
+    for (name, params, value) in ical_lines(text) {
+        match name.as_str() {
+            "BEGIN" if value.eq_ignore_ascii_case("VEVENT") => {
+                block = Some(Vec::new());
+                nested = 0;
+            }
+            "BEGIN" if block.is_some() => nested += 1,
+            "END" if block.is_some() && !value.eq_ignore_ascii_case("VEVENT") => nested = nested.saturating_sub(1),
+            "END" if value.eq_ignore_ascii_case("VEVENT") => {
+                let Some(lines) = block.take() else { continue };
+                let this = lines.iter().any(|(n, _, v)| n == "UID" && *v == inv.uid) && !lines.iter().any(|(n, _, v)| n == "STATUS" && v.eq_ignore_ascii_case("CANCELLED"));
+                if found || !this {
+                    continue;
+                }
+                found = true;
+                for (n, p, v) in lines {
+                    match n.as_str() {
+                        "SEQUENCE" => inv.sequence = v.trim().parse().unwrap_or(0),
+                        "ORGANIZER" => {
+                            inv.organizer = mailto(&v);
+                            inv.organizer_name = p.get("CN").map(|s| unescape(s).trim().chars().take(200).collect()).unwrap_or_default();
+                        }
+                        "ATTENDEE" if inv.attendees.len() < 200 => {
+                            let email = mailto(&v);
+                            if !email.is_empty() {
+                                inv.attendees.push(Attendee {
+                                    email,
+                                    name: p.get("CN").map(|s| unescape(s).trim().chars().take(200).collect()).unwrap_or_default(),
+                                    partstat: p.get("PARTSTAT").map(|s| s.to_ascii_uppercase()).unwrap_or_else(|| "NEEDS-ACTION".into()),
+                                });
+                            }
+                        }
+                        "RECURRENCE-ID" => {
+                            let params: String = p.iter().map(|(k, x)| format!(";{k}={x}")).collect();
+                            inv.recurrence_id = format!("RECURRENCE-ID{params}:{v}");
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "METHOD" if block.is_none() => inv.method = value.trim().to_ascii_uppercase(),
+            _ => {
+                if let Some(lines) = block.as_mut().filter(|_| nested == 0) {
+                    lines.push((name, params, value));
+                }
+            }
+        }
+    }
+    Some(inv)
+}
+
+/// Long lines folded at 75 bytes (RFC 5545 3.1).
+fn fold(line: &str) -> String {
+    let mut out = String::with_capacity(line.len() + 8);
+    let mut len = 0;
+    for ch in line.chars() {
+        let w = ch.len_utf8();
+        if len + w > 75 {
+            out.push_str("\r\n ");
+            len = 1;
+        }
+        out.push(ch);
+        len += w;
+    }
+    out
+}
+
+/// A CN parameter: quoted, without quotes or control characters inside.
+fn cn(name: &str) -> String {
+    let clean: String = name.chars().filter(|c| *c != '"' && !c.is_control()).collect();
+    if clean.trim().is_empty() { String::new() } else { format!(";CN=\"{}\"", clean.trim()) }
+}
+
+/// The reply to an invitation (METHOD:REPLY): its UID and SEQUENCE, with the
+/// user (`me`) as the one ATTENDEE and their answer as PARTSTAT.
+pub fn reply_ics(inv: &Invite, me: &str, my_name: &str, partstat: &str, now: i64) -> String {
+    let mut lines = vec![
+        "BEGIN:VCALENDAR".to_string(),
+        "VERSION:2.0".into(),
+        "PRODID:-//SulcusAI//Mail//EN".into(),
+        "METHOD:REPLY".into(),
+        "BEGIN:VEVENT".into(),
+        format!("UID:{}", inv.uid),
+        format!("SEQUENCE:{}", inv.sequence),
+        format!("DTSTAMP:{}", ics_stamp(now)),
+    ];
+    if !inv.recurrence_id.is_empty() {
+        lines.push(inv.recurrence_id.clone());
+    }
+    if inv.all_day {
+        let day = |ms: i64| Local.timestamp_millis_opt(ms).earliest().unwrap_or_default().format("%Y%m%d").to_string();
+        lines.push(format!("DTSTART;VALUE=DATE:{}", day(inv.start)));
+        lines.push(format!("DTEND;VALUE=DATE:{}", day(inv.end)));
+    } else {
+        lines.push(format!("DTSTART:{}", ics_stamp(inv.start)));
+        lines.push(format!("DTEND:{}", ics_stamp(inv.end)));
+    }
+    if !inv.title.is_empty() {
+        lines.push(format!("SUMMARY:{}", escape(&inv.title)));
+    }
+    lines.push(format!("ORGANIZER{}:mailto:{}", cn(&inv.organizer_name), mailto(&inv.organizer)));
+    lines.push(format!("ATTENDEE;PARTSTAT={partstat}{}:mailto:{}", cn(my_name), mailto(me)));
+    lines.push("END:VEVENT".into());
+    lines.push("END:VCALENDAR".into());
+    lines.iter().map(|l| fold(l)).collect::<Vec<_>>().join("\r\n") + "\r\n"
+}
+
+/// An event already on a calendar here with this UID. Gmail and Outlook
+/// often put invitations on their calendars themselves, under the
+/// invitation's UID.
+pub fn find_by_uid(conn: &Connection, c: &Cipher, uid: &str) -> Option<Event> {
+    let uid = uid.trim();
+    if uid.is_empty() {
+        return None;
+    }
+    let sql = format!("SELECT {COLS} FROM events ORDER BY start");
+    let mut stmt = conn.prepare(&sql).ok()?;
+    let found = stmt.query_map([], from_row(c)).ok()?.filter_map(Result::ok).find(|e| e.data.uid.trim() == uid);
+    found
+}
+
+/// A calendar server already has an event under this UID.
+pub const ALREADY_ON_CALENDAR: &str = "That event is already on this calendar.";
+
 /// One event as an iCalendar file.
 pub fn to_ics(e: &Event, organizer: Option<&str>) -> String {
     let mut lines = vec![
@@ -562,6 +766,10 @@ impl Dav {
             None => req.header("If-None-Match", "*"),
         };
         let resp = req.send().await.map_err(|e| format!("Couldn't reach the calendar server: {e}"))?;
+        // A new event whose name (its UID) is taken: it's there already.
+        if etag.is_none() && resp.status().as_u16() == 412 {
+            return Err(ALREADY_ON_CALENDAR.into());
+        }
         if !resp.status().is_success() {
             return Err(format!("The calendar server refused the event ({}).", resp.status()));
         }
@@ -859,11 +1067,31 @@ pub struct NewEvent {
 
 /// Saves an event on this PC, or on the account that owns the calendar.
 pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, String> {
+    create_as(state, c, n, None).await
+}
+
+/// The calendar account a calendar (by its address) belongs to.
+fn owner_of(conn: &Connection, c: &Cipher, cal: &str) -> Option<(String, CalAccount)> {
+    accounts(conn, c).into_iter().find(|(_, a, _)| a.calendars.iter().any(|x| x.href == cal)).map(|(id, a, _)| (id, a))
+}
+
+/// Copies the latest events of the account a calendar belongs to, when web
+/// access is on (so one the mail service put there itself is seen).
+pub async fn refresh_owner(state: &AppState, c: &Cipher, cal: &str) -> Result<(), String> {
+    web_allowed(state)?;
+    let (id, _) = owner_of(&state.db.lock().unwrap(), c, cal).ok_or("That calendar isn't connected anymore.")?;
+    sync_account(state, c, &id).await.map(|_| ())
+}
+
+/// `create`, under a given UID (an invitation's), so the same event isn't
+/// added twice. Outlook (Graph) gives events its own UID; the copy here
+/// keeps the given one until the next sync.
+pub async fn create_as(state: &AppState, c: &Cipher, n: NewEvent, uid: Option<String>) -> Result<Event, String> {
     if n.title.trim().is_empty() {
         return Err("Give the event a title.".into());
     }
     let end = if n.end > n.start { n.end } else if n.all_day { n.start + DAY_MS } else { n.start + 3_600_000 };
-    let uid = format!("{}@sulcusai", uuid::Uuid::new_v4());
+    let uid = uid.filter(|u| !u.trim().is_empty()).unwrap_or_else(|| format!("{}@sulcusai", uuid::Uuid::new_v4()));
     let mut e = Event {
         id: uuid::Uuid::new_v4().simple().to_string(),
         account_id: None,
@@ -875,11 +1103,7 @@ pub async fn create(state: &AppState, c: &Cipher, n: NewEvent) -> Result<Event, 
     };
     if let Some(cal) = n.calendar.filter(|c| !c.is_empty()) {
         web_allowed(state)?;
-        let (id, mut a) = accounts(&state.db.lock().unwrap(), c)
-            .into_iter()
-            .find(|(_, a, _)| a.calendars.iter().any(|x| x.href == cal))
-            .map(|(id, a, _)| (id, a))
-            .ok_or("That calendar isn't connected anymore.")?;
+        let (id, mut a) = owner_of(&state.db.lock().unwrap(), c, &cal).ok_or("That calendar isn't connected anymore.")?;
         refresh(state, c, &id, &mut a).await?;
         if a.graph() {
             let made = Graph::new(&a.oauth.as_ref().map(|t| t.access_token.clone()).unwrap_or_default())?.create(&cal, &e).await?;
@@ -1185,6 +1409,71 @@ mod tests {
         assert_eq!(back[0].3.notes, e.data.notes);
         assert_eq!(back[0].3.attendees, vec!["bo@x.com"]);
         assert!(ics.contains("ORGANIZER:mailto:me@x.com"));
+    }
+
+    const INVITE: &str ="BEGIN:VCALENDAR\r\nPRODID:-//Google Inc//Google Calendar 70.9054//EN\r\nVERSION:2.0\r\nCALSCALE:GREGORIAN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nDTSTART:20261023T210000Z\r\nDTEND:20261023T220000Z\r\nDTSTAMP:20261019T150000Z\r\nORGANIZER;CN=\"Ruiz, Ana\":mailto:ana@example.com\r\nUID:7kq2c4ab@google.com\r\nATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=\"Ruiz, Ana\";X-NUM-GUESTS=0:mailto:ana@example.com\r\nATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=Isaac Lehman:mailto:isaac@example.org\r\nSEQUENCE:2\r\nSUMMARY:Budget review\r\nLOCATION:Room 2\r\nDESCRIPTION:Bring the numbers\r\nSTATUS:CONFIRMED\r\nBEGIN:VALARM\r\nACTION:EMAIL\r\nATTENDEE:mailto:alarm@example.com\r\nTRIGGER:-P0DT0H30M0S\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn invitations_are_read() {
+        let inv = parse_invite(INVITE).unwrap();
+        assert_eq!((inv.method.as_str(), inv.uid.as_str(), inv.sequence), ("REQUEST", "7kq2c4ab@google.com", 2));
+        assert_eq!((inv.title.as_str(), inv.location.as_str(), inv.notes.as_str()), ("Budget review", "Room 2", "Bring the numbers"));
+        assert_eq!(inv.start, Utc.with_ymd_and_hms(2026, 10, 23, 21, 0, 0).unwrap().timestamp_millis());
+        assert_eq!(inv.end - inv.start, 3_600_000);
+        assert_eq!((inv.organizer.as_str(), inv.organizer_name.as_str()), ("ana@example.com", "Ruiz, Ana"));
+        let people: Vec<(&str, &str, &str)> = inv.attendees.iter().map(|a| (a.email.as_str(), a.name.as_str(), a.partstat.as_str())).collect();
+        assert_eq!(people, vec![("ana@example.com", "Ruiz, Ana", "ACCEPTED"), ("isaac@example.org", "Isaac Lehman", "NEEDS-ACTION")], "the alarm's address isn't a guest");
+        assert!(!inv.recurring && inv.recurrence_id.is_empty());
+        // No METHOD in the text: left empty (the mail part's own method= decides).
+        assert_eq!(parse_invite(&INVITE.replace("METHOD:REQUEST\r\n", "")).unwrap().method, "");
+        assert!(parse_invite("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n").is_none());
+    }
+
+    #[test]
+    fn invitation_replies_carry_the_uid_and_answer() {
+        let inv = parse_invite(INVITE).unwrap();
+        let ics = reply_ics(&inv, "isaac@example.org", "Isaac Lehman", "ACCEPTED", 1_000);
+        assert!(ics.contains("METHOD:REPLY\r\n") && ics.contains("UID:7kq2c4ab@google.com\r\n") && ics.contains("SEQUENCE:2\r\n"), "{ics}");
+        assert!(ics.contains("ATTENDEE;PARTSTAT=ACCEPTED;CN=\"Isaac Lehman\":mailto:isaac@example.org"), "{ics}");
+        assert!(ics.contains("ORGANIZER;CN=\"Ruiz, Ana\":mailto:ana@example.com"), "{ics}");
+        assert!(ics.lines().all(|l| l.len() <= 76), "folded at 75 bytes");
+        // Read back: the same event, with only the user's answer.
+        let back = parse_invite(&ics).unwrap();
+        assert_eq!((back.method.as_str(), back.uid.as_str(), back.start, back.end), ("REPLY", inv.uid.as_str(), inv.start, inv.end));
+        let people: Vec<(&str, &str)> = back.attendees.iter().map(|a| (a.email.as_str(), a.partstat.as_str())).collect();
+        assert_eq!(people, vec![("isaac@example.org", "ACCEPTED")]);
+        for (answer, want) in [("TENTATIVE", "PARTSTAT=TENTATIVE"), ("DECLINED", "PARTSTAT=DECLINED")] {
+            assert!(reply_ics(&inv, "isaac@example.org", "", answer, 1_000).contains(&format!("ATTENDEE;{want}:mailto:isaac@example.org")));
+        }
+        // A long title is folded, and unfolds back whole.
+        let long = Invite { title: "A ".repeat(80) + "end", ..inv.clone() };
+        let ics = reply_ics(&long, "isaac@example.org", "Isaac", "ACCEPTED", 1_000);
+        assert!(ics.lines().all(|l| l.len() <= 76));
+        assert_eq!(parse_invite(&ics).unwrap().title, long.title);
+    }
+
+    #[test]
+    fn events_are_found_by_uid() {
+        struct Plain;
+        impl crate::crypto::Protector for Plain {
+            fn protect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+            fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("sulcusai-cal-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let c = crate::crypto::Vault::open(&dir.join("keys.json"), Box::new(Plain)).unwrap().cipher().unwrap();
+        let conn = db::open(&dir.join("t.db")).unwrap();
+        let ev = |id: &str, uid: &str| Event { id: id.into(), account_id: None, calendar: None, start: 1_000, end: 2_000, all_day: false, data: EventData { title: id.into(), uid: uid.into(), ..Default::default() } };
+        insert(&conn, &c, &ev("mine", "1234@sulcusai")).unwrap();
+        assert!(find_by_uid(&conn, &c, "7kq2c4ab@google.com").is_none(), "not on the calendar yet: it's added");
+        // Gmail put the invitation on the calendar itself (seen after a sync).
+        insert(&conn, &c, &ev("gmail", "7kq2c4ab@google.com")).unwrap();
+        assert_eq!(find_by_uid(&conn, &c, " 7kq2c4ab@google.com ").unwrap().id, "gmail", "there already: not added twice");
+        assert!(find_by_uid(&conn, &c, "").is_none());
     }
 
     #[test]

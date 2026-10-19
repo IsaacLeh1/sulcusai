@@ -187,6 +187,9 @@ pub struct MailData {
     /// The list headers above were read (new mail; older mail once they're
     /// fetched from the server).
     pub list_checked: bool,
+    /// A calendar invitation in it (text/calendar or an .ics file with
+    /// METHOD:REQUEST).
+    pub invite: Option<crate::calendar::Invite>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,6 +202,8 @@ pub struct MailItem {
     /// When the user marked it read with the button (listed under Marked
     /// read); cleared when it's unread again.
     pub marked_at: Option<i64>,
+    /// When the user last opened it here (not marking it read, and not the AI).
+    pub opened_at: Option<i64>,
     #[serde(flatten)]
     pub data: MailData,
 }
@@ -317,10 +322,42 @@ pub fn parse(raw: &[u8], partial: bool) -> (MailData, Option<i64>) {
         references: list(m.references()),
         attachments: m.attachments().filter_map(|a| a.attachment_name().map(str::to_string)).collect(),
         partial,
+        invite: invite_of(&m),
         ..Default::default()
     };
     list_headers(&m).apply(&mut data);
     (data, m.date().map(|d| d.to_timestamp() * 1000))
+}
+
+/// Calendar parts bigger than this aren't read.
+const MAX_ICS_READ: usize = 1024 * 1024;
+
+/// The invitation in a message: its text/calendar part (or an attached
+/// .ics) when that's a request (METHOD:REQUEST), with the raw text kept
+/// up to `calendar::MAX_ICS`.
+fn invite_of(m: &mail_parser::Message<'_>) -> Option<crate::calendar::Invite> {
+    use mail_parser::MimeHeaders;
+    for part in &m.parts {
+        let ct = part.content_type();
+        let is = |t: &str, s: &str| ct.is_some_and(|c| c.ctype().eq_ignore_ascii_case(t) && c.subtype().is_some_and(|x| x.eq_ignore_ascii_case(s)));
+        let ics_file = part.attachment_name().is_some_and(|n| n.to_ascii_lowercase().ends_with(".ics"));
+        if !(is("text", "calendar") || is("application", "ics") || ics_file) || part.len() > MAX_ICS_READ {
+            continue;
+        }
+        let Some(text) = part.text_contents() else { continue };
+        let Some(mut inv) = crate::calendar::parse_invite(text) else { continue };
+        if inv.method.is_empty() {
+            inv.method = ct.and_then(|c| c.attribute("method")).unwrap_or("").trim().to_ascii_uppercase();
+        }
+        if inv.method != "REQUEST" {
+            continue;
+        }
+        if text.len() <= crate::calendar::MAX_ICS {
+            inv.ics = text.to_string();
+        }
+        return Some(inv);
+    }
+    None
 }
 
 fn item_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<MailItem> + '_ {
@@ -333,11 +370,12 @@ fn item_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Mail
             seen: r.get::<_, i64>(4)? != 0,
             data: c.decrypt(&r.get::<_, String>(5)?).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default(),
             marked_at: r.get(6)?,
+            opened_at: r.get(7)?,
         })
     }
 }
 
-const ITEM_COLS: &str = "id, account_id, folder, date, seen, data, marked_at";
+const ITEM_COLS: &str = "id, account_id, folder, date, seen, data, marked_at, opened_at";
 
 pub fn list(conn: &Connection, c: &Cipher, query: &str, limit: usize) -> Vec<MailItem> {
     let sql = format!("SELECT {ITEM_COLS} FROM mail_messages ORDER BY date DESC");
@@ -421,6 +459,52 @@ pub fn replied_ids(conn: &Connection, c: &Cipher) -> std::collections::HashSet<S
         .map(|id| id.trim().trim_matches(['<', '>']).to_string())
         .filter(|id| !id.is_empty())
         .collect()
+}
+
+/// Messages kept for a thread's context, at most.
+const THREAD_MAX: usize = 6;
+
+fn bare_id(id: &str) -> String {
+    id.trim().trim_matches(['<', '>']).to_string()
+}
+
+/// The rest of a message's conversation here (any folder, sent mail too),
+/// oldest first: messages its References and In-Reply-To name, and others
+/// answering the same ones. The last THREAD_MAX.
+pub fn thread(conn: &Connection, c: &Cipher, m: &MailItem) -> Vec<MailItem> {
+    let ids: std::collections::HashSet<String> = std::iter::once(&m.data.message_id)
+        .chain(std::iter::once(&m.data.in_reply_to))
+        .chain(m.data.references.iter())
+        .map(|i| bare_id(i))
+        .filter(|i| !i.is_empty())
+        .collect();
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let mut found: Vec<MailItem> = list(conn, c, "", usize::MAX)
+        .into_iter()
+        .filter(|x| x.id != m.id)
+        .filter(|x| {
+            let d = &x.data;
+            let own = bare_id(&d.message_id);
+            // The same message in two folders (Gmail's Sent and Inbox) counts once, as this one.
+            (own.is_empty() || own != bare_id(&m.data.message_id))
+                && (ids.contains(&own) || ids.contains(&bare_id(&d.in_reply_to)) || d.references.iter().any(|r| ids.contains(&bare_id(r))))
+        })
+        .collect();
+    found.sort_by_key(|x| x.date);
+    found.dedup_by(|a, b| !a.data.message_id.is_empty() && a.data.message_id == b.data.message_id);
+    let skip = found.len().saturating_sub(THREAD_MAX);
+    found.into_iter().skip(skip).collect()
+}
+
+/// Changes a message's stored (encrypted) data.
+pub(crate) fn update_data(conn: &Connection, c: &Cipher, id: &str, f: impl FnOnce(&mut MailData)) -> Result<(), String> {
+    let mut m = get(conn, c, id).ok_or("That message is no longer here.")?;
+    f(&mut m.data);
+    let enc = c.encrypt(&serde_json::to_string(&m.data).map_err(|e| e.to_string())?);
+    conn.execute("UPDATE mail_messages SET data = ?2 WHERE id = ?1", params![id, enc]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub(crate) fn save_item(conn: &Connection, c: &Cipher, account_id: &str, folder: &str, uid: u32, date: i64, seen: bool, data: &MailData) -> Result<(), String> {
@@ -1064,8 +1148,11 @@ pub fn addresses(s: &str) -> Vec<String> {
     s.split([',', ';']).map(str::trim).filter(|a| !a.is_empty()).map(str::to_string).collect()
 }
 
-pub fn build(cfg: &AccountConfig, d: &Draft, replying: Option<&MailData>) -> Result<lettre::Message, String> {
-    use lettre::message::{header::ContentType, Mailbox};
+/// A message to send (a reply threads under `replying`), with a calendar
+/// reply (METHOD:REPLY) next to the text when `calendar` is given, as mail
+/// apps send invitation answers.
+pub fn build_with(cfg: &AccountConfig, d: &Draft, replying: Option<&MailData>, calendar: Option<&str>) -> Result<lettre::Message, String> {
+    use lettre::message::{header::ContentType, Mailbox, MultiPart, SinglePart};
     if d.to.is_empty() {
         return Err("Add at least one recipient.".into());
     }
@@ -1085,7 +1172,14 @@ pub fn build(cfg: &AccountConfig, d: &Draft, replying: Option<&MailData>) -> Res
         refs.push(id);
         b = b.references(refs.join(" "));
     }
-    b.header(ContentType::TEXT_PLAIN).body(d.body.clone()).map_err(|e| e.to_string())
+    match calendar {
+        None => b.header(ContentType::TEXT_PLAIN).body(d.body.clone()),
+        Some(ics) => {
+            let kind = ContentType::parse("text/calendar; charset=utf-8; method=REPLY").map_err(|e| e.to_string())?;
+            b.multipart(MultiPart::alternative().singlepart(SinglePart::plain(d.body.clone())).singlepart(SinglePart::builder().header(kind).body(ics.to_string())))
+        }
+    }
+    .map_err(|e| e.to_string())
 }
 
 async fn smtp_send(cfg: &AccountConfig, msg: &lettre::Message) -> Result<(), String> {
@@ -1180,6 +1274,11 @@ async fn smtp_send_private(
 /// Sends a message and files a copy in Sent. Only ever called after the
 /// user said so (the Send button, or approving the assistant's draft).
 pub async fn send(state: &AppState, c: &Cipher, account_id: &str, d: &Draft) -> Result<(), String> {
+    send_with(state, c, account_id, d, None).await
+}
+
+/// `send`, with a calendar reply part (an invitation's answer).
+pub async fn send_with(state: &AppState, c: &Cipher, account_id: &str, d: &Draft, calendar: Option<&str>) -> Result<(), String> {
     web_allowed(state)?;
     let (mut cfg, replying) = {
         let conn = state.db.lock().unwrap();
@@ -1188,7 +1287,7 @@ pub async fn send(state: &AppState, c: &Cipher, account_id: &str, d: &Draft) -> 
         (cfg, replying)
     };
     refresh(state, c, Some(account_id), &mut cfg).await?;
-    let msg = build(&cfg, d, replying.as_ref())?;
+    let msg = build_with(&cfg, d, replying.as_ref(), calendar)?;
     smtp_send(&cfg, &msg).await?;
     // Gmail and Outlook file sent mail themselves; others need a copy.
     let host = cfg.smtp_host.to_lowercase();
@@ -1340,20 +1439,30 @@ pub fn mail_list(state: AppStateRef, query: Option<String>, limit: Option<usize>
     ensure_on(&state)?;
     let c = state.cipher()?;
     let mut items = list(&state.db.lock().unwrap(), &c, query.as_deref().unwrap_or(""), limit.unwrap_or(200));
-    // The list doesn't need whole bodies.
+    // The list doesn't need whole bodies (or invitations' raw text).
     for m in &mut items {
         m.data.body.clear();
         m.data.snippet = visible(&m.data.snippet);
+        if let Some(i) = m.data.invite.as_mut() {
+            i.ics.clear();
+            i.notes.clear();
+        }
     }
     Ok(items)
 }
 
+/// Opens a message: the user is reading it (noted in `opened_at`, which
+/// Subscriptions uses to spot lists never read), and it's read.
 #[tauri::command(async)]
 pub fn mail_get(state: AppStateRef, id: String) -> Result<MailItem, String> {
     ensure_on(&state)?;
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let m = get(&conn, &c, &id).ok_or("That message is no longer here.")?;
+    let mut m = get(&conn, &c, &id).ok_or("That message is no longer here.")?;
+    let now = db::now_ms();
+    crate::subscriptions::opens_since(&conn);
+    conn.execute("UPDATE mail_messages SET opened_at = ?2 WHERE id = ?1", params![id, now]).map_err(|e| e.to_string())?;
+    m.opened_at = Some(now);
     if !m.seen {
         change(&conn, std::slice::from_ref(&id), Change::Seen)?;
         drop(conn);
@@ -1398,6 +1507,147 @@ pub async fn send_mail(state: AppStateRef<'_>, account_id: String, draft: Draft)
     ensure_on(&state)?;
     let c = state.cipher()?;
     send(&state, &c, &account_id, &draft).await
+}
+
+// ---------- invitations ----------
+
+/// ACCEPTED, TENTATIVE or DECLINED, from the window's word for it.
+pub fn partstat(answer: &str) -> Option<&'static str> {
+    Some(match answer.to_ascii_lowercase().as_str() {
+        "accept" | "accepted" | "yes" => "ACCEPTED",
+        "tentative" | "maybe" => "TENTATIVE",
+        "decline" | "declined" | "no" => "DECLINED",
+        _ => return None,
+    })
+}
+
+/// The address the user was invited at: one of the invitation's attendees
+/// that is this account's address, else the account's address.
+pub fn invited_as(inv: &crate::calendar::Invite, account_email: &str) -> String {
+    inv.attendees.iter().find(|a| a.email.eq_ignore_ascii_case(account_email.trim())).map(|a| a.email.clone()).unwrap_or_else(|| account_email.trim().to_string())
+}
+
+/// The email that carries an invitation's answer to its organizer.
+pub fn invite_reply_draft(inv: &crate::calendar::Invite, partstat: &str, name: &str, reply_to: &str) -> Draft {
+    let (word, says) = match partstat {
+        "ACCEPTED" => ("Accepted", "accepted"),
+        "TENTATIVE" => ("Tentative", "tentatively accepted"),
+        _ => ("Declined", "declined"),
+    };
+    let who = if name.trim().is_empty() { "The invitee".to_string() } else { name.trim().to_string() };
+    // The title comes from someone else's invitation: one line, so it can't add header lines.
+    let title: String = inv.title.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect();
+    Draft {
+        to: vec![inv.organizer.clone()],
+        cc: Vec::new(),
+        subject: format!("{word}: {title}"),
+        body: format!("{who} has {says} this invitation."),
+        reply_to: Some(reply_to.to_string()),
+    }
+}
+
+/// An invitation's event already on a calendar here (same UID), if any.
+#[tauri::command(async)]
+pub fn mail_invite_status(state: AppStateRef, id: String) -> Result<Option<crate::calendar::Event>, String> {
+    ensure_on(&state)?;
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let m = get(&conn, &c, &id).ok_or("That message is no longer here.")?;
+    let inv = m.data.invite.ok_or("This email has no invitation in it.")?;
+    Ok(crate::calendar::find_by_uid(&conn, &c, &inv.uid))
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InviteOutcome {
+    pub answer: crate::calendar::InviteAnswer,
+    /// The event on the calendar: added now, or found there.
+    pub event: Option<crate::calendar::Event>,
+    /// It was on the calendar already (the mail service may have put it there).
+    pub already: bool,
+    /// The answer couldn't be sent (everything else was done).
+    pub send_error: String,
+}
+
+/// Answers an invitation (the user clicked Accept, Maybe or Decline):
+/// Accept and Maybe put the event on `calendar` (a connected calendar's
+/// address, or this PC when empty) unless it's on a calendar already, by
+/// UID; with `send_reply` (the user's tick) the answer goes to the
+/// organizer as an iTIP reply. Nothing is sent without that tick.
+#[tauri::command]
+pub async fn mail_invite_respond(state: AppStateRef<'_>, id: String, answer: String, calendar: Option<String>, send_reply: bool) -> Result<InviteOutcome, String> {
+    use crate::calendar;
+    ensure_on(&state)?;
+    let c = state.cipher()?;
+    let partstat = partstat(&answer).ok_or("Unknown answer.")?;
+    let (m, cfg, profile_name) = {
+        let conn = state.db.lock().unwrap();
+        let m = get(&conn, &c, &id).ok_or("That message is no longer here.")?;
+        let cfg = account(&conn, &c, &m.account_id).ok_or("That account no longer exists.")?;
+        (m, cfg, db::profile(&conn, &c).name)
+    };
+    let inv = m.data.invite.clone().ok_or("This email has no invitation in it.")?;
+    if send_reply {
+        web_allowed(&state)?;
+        if !inv.organizer.contains('@') {
+            return Err("The invitation doesn't say who sent it, so there's no one to send your answer to.".into());
+        }
+    }
+    let target = calendar.filter(|h| !h.trim().is_empty());
+    if partstat != "DECLINED" {
+        crate::features::require(&state, Feature::Calendar)?;
+        // The calendar's latest first: Gmail and Outlook often add invitations themselves.
+        if let Some(cal) = &target {
+            calendar::refresh_owner(&state, &c, cal).await.ok();
+        }
+    }
+    let mut event = calendar::find_by_uid(&state.db.lock().unwrap(), &c, &inv.uid);
+    // Added by an earlier answer here (Outlook gives it its own UID after a sync).
+    let added_before = inv.answer.as_ref().is_some_and(|a| a.event_id.is_some() && a.partstat != "DECLINED");
+    let mut already = event.is_some() || added_before;
+    if partstat != "DECLINED" && !already {
+        let n = calendar::NewEvent {
+            title: if inv.title.trim().is_empty() { m.data.subject.clone() } else { inv.title.clone() },
+            start: inv.start,
+            end: inv.end,
+            all_day: inv.all_day,
+            location: inv.location.clone(),
+            notes: inv.notes.clone(),
+            // No attendees: adding it here must not invite anyone.
+            attendees: Vec::new(),
+            calendar: target.clone(),
+        };
+        match calendar::create_as(&state, &c, n, Some(inv.uid.clone())).await {
+            Ok(e) => event = Some(e),
+            Err(e) if e == calendar::ALREADY_ON_CALENDAR => already = true,
+            Err(e) => return Err(e),
+        }
+    }
+    let mut send_error = String::new();
+    let mut sent = false;
+    if send_reply {
+        let name = if cfg.name.trim().is_empty() { profile_name } else { cfg.name.clone() };
+        let ics = calendar::reply_ics(&inv, &invited_as(&inv, &cfg.email), &name, partstat, db::now_ms());
+        match send_with(&state, &c, &m.account_id, &invite_reply_draft(&inv, partstat, &name, &m.id), Some(&ics)).await {
+            Ok(()) => sent = true,
+            Err(e) => send_error = e,
+        }
+    }
+    let event_id = event.as_ref().map(|e| e.id.clone()).or_else(|| inv.answer.as_ref().and_then(|a| a.event_id.clone()));
+    let answer = calendar::InviteAnswer { partstat: partstat.into(), at: db::now_ms(), sent, event_id };
+    let conn = state.db.lock().unwrap();
+    let saved = answer.clone();
+    update_data(&conn, &c, &m.id, move |d| {
+        if let Some(i) = d.invite.as_mut() {
+            i.answer = Some(saved);
+        }
+    })?;
+    let what = match partstat {
+        "ACCEPTED" => "Accepted",
+        "TENTATIVE" => "Answered maybe to",
+        _ => "Declined",
+    };
+    db::log_action_enc(&conn, &c, "email", &format!("{what} the invitation “{}”{}", inv.title, if sent { " and sent the answer to the organizer" } else { "" }));
+    Ok(InviteOutcome { answer, event, already, send_error })
 }
 
 #[cfg(test)]
@@ -1562,12 +1812,107 @@ mod tests {
         let cfg = AccountConfig { name: "Me".into(), email: "me@example.org".into(), ..Default::default() };
         let (orig, _) = parse(RAW, false);
         let d = Draft { to: vec!["ana@example.com".into()], subject: "Re: Budget review on Friday".into(), body: "Friday works.".into(), ..Default::default() };
-        let msg = String::from_utf8(build(&cfg, &d, Some(&orig)).unwrap().formatted()).unwrap();
+        let msg = String::from_utf8(build_with(&cfg, &d, Some(&orig), None).unwrap().formatted()).unwrap();
         assert!(msg.contains("In-Reply-To: <abc123@example.com>") && msg.contains("Friday works."), "{msg}");
         let bad = Draft { to: vec!["not an address".into()], ..d.clone() };
-        assert!(build(&cfg, &bad, None).is_err());
-        assert!(build(&cfg, &Draft { to: vec![], ..d }, None).is_err());
+        assert!(build_with(&cfg, &bad, None, None).is_err());
+        assert!(build_with(&cfg, &Draft { to: vec![], ..d }, None, None).is_err());
         assert_eq!(addresses("a@x.com, Bo <b@y.com>; "), vec!["a@x.com", "Bo <b@y.com>"]);
+    }
+
+    fn invite_mail(method: &str, how: &str) -> Vec<u8> {
+        let ics = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:{method}\r\nBEGIN:VEVENT\r\nUID:inv-1@example.com\r\nSEQUENCE:0\r\nDTSTART:20261023T210000Z\r\nDTEND:20261023T220000Z\r\nSUMMARY:Lunch\r\nORGANIZER;CN=Ana Ruiz:mailto:ana@example.com\r\nATTENDEE;PARTSTAT=NEEDS-ACTION;CN=Me:mailto:me@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        );
+        let part = match how {
+            // Inline, as Gmail and Outlook send it.
+            "inline" => format!("Content-Type: text/calendar; charset=utf-8; method={method}\r\n\r\n{ics}"),
+            // Only as a file.
+            _ => format!("Content-Type: application/octet-stream; name=invite.ics\r\nContent-Disposition: attachment; filename=invite.ics\r\n\r\n{ics}"),
+        };
+        format!(
+            "From: Ana Ruiz <ana@example.com>\r\nTo: me@example.org\r\nSubject: Invitation: Lunch\r\nMessage-ID: <inv-mail@example.com>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b1\"\r\n\r\n--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nYou're invited to lunch.\r\n--b1\r\n{part}\r\n--b1--\r\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn invitations_are_kept_with_the_message() {
+        for how in ["inline", "file"] {
+            let (m, _) = parse(&invite_mail("REQUEST", how), false);
+            let inv = m.invite.unwrap_or_else(|| panic!("{how}: no invitation"));
+            assert_eq!((inv.method.as_str(), inv.uid.as_str(), inv.title.as_str(), inv.organizer.as_str()), ("REQUEST", "inv-1@example.com", "Lunch", "ana@example.com"), "{how}");
+            assert!(inv.ics.contains("UID:inv-1@example.com"), "{how}: the raw text is kept");
+            assert!(m.body.contains("invited to lunch"), "{how}: {}", m.body);
+        }
+        // A cancellation or a reply isn't an invitation to answer.
+        for method in ["CANCEL", "REPLY"] {
+            assert!(parse(&invite_mail(method, "inline"), false).0.invite.is_none(), "{method}");
+        }
+        assert!(parse(RAW, false).0.invite.is_none());
+        // Over the size cap: the event is kept, the raw text isn't.
+        let big = String::from_utf8(invite_mail("REQUEST", "inline")).unwrap().replace("SUMMARY:Lunch", &format!("SUMMARY:Lunch\r\nDESCRIPTION:{}", "x".repeat(crate::calendar::MAX_ICS)));
+        let inv = parse(big.as_bytes(), false).0.invite.unwrap();
+        assert!(inv.ics.is_empty() && inv.title == "Lunch");
+    }
+
+    #[test]
+    fn invitation_answers_go_to_the_organizer_with_a_calendar_reply() {
+        let (m, _) = parse(&invite_mail("REQUEST", "inline"), false);
+        let inv = m.invite.clone().unwrap();
+        assert_eq!(partstat("accept"), Some("ACCEPTED"));
+        assert_eq!(partstat("maybe"), Some("TENTATIVE"));
+        assert_eq!(partstat("decline"), Some("DECLINED"));
+        assert_eq!(partstat("later"), None);
+        assert_eq!(invited_as(&inv, "ME@example.org"), "me@example.org", "the address on the invitation");
+        assert_eq!(invited_as(&inv, "other@example.org"), "other@example.org");
+        let d = invite_reply_draft(&inv, "TENTATIVE", "Isaac", "local-id");
+        assert_eq!((d.to.clone(), d.subject.as_str(), d.body.as_str()), (vec!["ana@example.com".to_string()], "Tentative: Lunch", "Isaac has tentatively accepted this invitation."));
+        // A title can't add header lines.
+        let sneaky = crate::calendar::Invite { title: "Lunch\r\nBcc: x@evil.example".into(), ..inv.clone() };
+        assert_eq!(invite_reply_draft(&sneaky, "ACCEPTED", "", "id").subject, "Accepted: Lunch Bcc: x@evil.example");
+        let cfg = AccountConfig { name: "Isaac".into(), email: "me@example.org".into(), ..Default::default() };
+        let ics = crate::calendar::reply_ics(&inv, "me@example.org", "Isaac", "TENTATIVE", 1_000);
+        let msg = String::from_utf8(build_with(&cfg, &d, Some(&m), Some(&ics)).unwrap().formatted()).unwrap();
+        assert!(msg.contains("multipart/alternative") && msg.contains("text/calendar") && msg.contains("method=REPLY"), "{msg}");
+        assert!(msg.contains("In-Reply-To: <inv-mail@example.com>"), "{msg}");
+        // Plain mail stays plain.
+        let plain = String::from_utf8(build_with(&cfg, &d, None, None).unwrap().formatted()).unwrap();
+        assert!(!plain.contains("text/calendar"));
+    }
+
+    #[test]
+    fn a_thread_is_the_mail_it_answers_and_answers_to_it() {
+        struct Plain;
+        impl crate::crypto::Protector for Plain {
+            fn protect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+            fn unprotect(&self, d: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(d.to_vec())
+            }
+        }
+        let dir = std::env::temp_dir().join(format!("sulcusai-mail-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let c = crate::crypto::Vault::open(&dir.join("keys.json"), Box::new(Plain)).unwrap().cipher().unwrap();
+        let conn = db::open(&dir.join("t.db")).unwrap();
+        store_account(&conn, &c, "acc", &AccountConfig { email: "me@example.org".into(), ..Default::default() }).unwrap();
+        let msg = |id: &str, irt: &str, refs: &[&str], subject: &str| MailData {
+            message_id: id.into(),
+            in_reply_to: irt.into(),
+            references: refs.iter().map(|r| r.to_string()).collect(),
+            subject: subject.into(),
+            ..Default::default()
+        };
+        save_item(&conn, &c, "acc", "INBOX", 1, 100, true, &msg("a@x", "", &[], "Trip")).unwrap();
+        save_item(&conn, &c, "acc", "Sent", 1, 200, true, &msg("b@x", "a@x", &["a@x"], "Re: Trip")).unwrap();
+        save_item(&conn, &c, "acc", "INBOX", 2, 300, false, &msg("c@x", "b@x", &["a@x", "b@x"], "Re: Trip")).unwrap();
+        save_item(&conn, &c, "acc", "INBOX", 3, 250, true, &msg("z@x", "", &[], "Other")).unwrap();
+        let all = list(&conn, &c, "", 10);
+        let last = all.iter().find(|m| m.data.message_id == "c@x").unwrap();
+        let subjects: Vec<String> = thread(&conn, &c, last).into_iter().map(|m| m.data.message_id).collect();
+        assert_eq!(subjects, vec!["a@x", "b@x"], "oldest first, the unrelated one left out");
+        assert!(thread(&conn, &c, all.iter().find(|m| m.data.message_id == "z@x").unwrap()).is_empty());
     }
 
     #[tokio::test]
@@ -1618,7 +1963,7 @@ mod live {
         assert!(again.is_empty(), "nothing new on the second sync");
 
         let d = Draft { to: vec!["ana@example.com".into()], subject: "Re: hello".into(), body: "Sounds good.\nThanks!".into(), ..Default::default() };
-        let msg = build(&cfg, &d, Some(&inbox[0].data)).unwrap();
+        let msg = build_with(&cfg, &d, Some(&inbox[0].data), None).unwrap();
         smtp_send(&cfg, &msg).await.unwrap();
         println!("sent over SMTP");
         let sent = sent.expect("demo data has a Sent folder");
