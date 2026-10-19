@@ -1549,6 +1549,24 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## Mail round 2 and no emoji (2026-10-19, for 0.9.16)
+
+- **No emoji in the window.** He asked for "remove all emoji's used for explanation".
+  - Icon-only buttons and markers use drawn icons: `src/components/Icons.tsx` (lock, globe, folder, people, book, pin, bell, paperclip, microphone, speaker, stop, voice, camera, gear, theme shapes, warning), and `MailIcons.tsx` for the mail folders, compose, search and row actions. Tooltips and aria-labels are unchanged.
+  - Emoji that sat in front of words were dropped. Plain marks (✓ ✕ ↩ ▾ ★ ●) stay.
+  - Left on purpose: `preview.rs` 🗑/🔍 (checked on buttons in sites the assistant builds), `natural.rs` ♥ (stripped before reading aloud), and test data.
+  - **New UI text must not use emoji.**
+- **Mail** (`mail.rs`, `triage.rs`, `subscriptions.rs`, `calendar.rs`, `MailView.tsx`):
+  - **Draft reply:** the model gets the email plus up to 6 earlier thread messages, with quotes stripped. It answers in the email's language, signs with the profile name, invents nothing, and marks blanks with [brackets]. The draft opens in the reply form and is never sent by itself.
+  - **"Remind me"** on Missed items adds a task due tomorrow at 9:00, never twice while one is open. The report setting "Remind me about missed replies" (off by default) does this for every new Missed item, once per message.
+  - **Invitations:** a METHOD:REQUEST calendar part or .ics is kept at sync (raw text if under 64 KB) and shown as a card with Accept, Maybe and Decline.
+    - Accepting syncs the target calendar, checks the UID and adds the event without guests.
+    - The METHOD:REPLY (same UID and SEQUENCE) goes to the organizer only with the "Send my reply" tick.
+    - Untrusted invitation values are kept to one line (`calendar::escape`, `one_line`, test `invitation_replies_carry_the_uid_and_answer`). Recurring invitations add only the first occurrence. Invitations synced before this update aren't detected.
+  - **Bulk actions** on report groups: Mark all read (with Undo); Archive all and Unsubscribe from all for newsletters and promotions. They ask above 5.
+  - **`opened_at`** is set only when a message is opened. A list counts as never opened with no open in 60 days and at least 3 received since the update. "Leave all" shows the list before acting.
+  - **Needs a real server to confirm:** replies to invitations reaching Gmail, Outlook and CalDAV, and the 412 duplicate check.
+
 ## After 0.9.15 (2026-10-19): honest prompts, real calendar events, wider redaction, privacy for cloud chats
 
 - **Where the model runs** (`chat::runs_where`): `system_prompt` no longer says "runs privately… nothing leaves their PC". Each turn appends a line saying where this model really runs: on this PC (only what online tools send leaves it), or at the cloud provider ("never tell the user it stays on their PC"). Used by chats, scheduled tasks and People answers; it's added after any custom base prompt from Advanced.

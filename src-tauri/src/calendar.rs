@@ -168,7 +168,15 @@ fn unescape(v: &str) -> String {
 }
 
 fn escape(v: &str) -> String {
-    v.replace('\\', "\\\\").replace('\n', "\\n").replace(',', "\\,").replace(';', "\\;")
+    let v = v.replace('\\', "\\\\").replace("\r\n", "\\n").replace('\n', "\\n");
+    // Other control characters (a bare carriage return) could end the line early.
+    let v: String = v.chars().filter(|c| !c.is_control()).collect();
+    v.replace(',', "\\,").replace(';', "\\;")
+}
+
+/// A value copied from someone else's invitation, kept to one line.
+fn one_line(v: &str) -> String {
+    v.chars().filter(|c| !c.is_control()).take(1000).collect()
 }
 
 /// A DTSTART/DTEND value as milliseconds, and whether it's a whole day.
@@ -421,12 +429,12 @@ pub fn reply_ics(inv: &Invite, me: &str, my_name: &str, partstat: &str, now: i64
         "PRODID:-//SulcusAI//Mail//EN".into(),
         "METHOD:REPLY".into(),
         "BEGIN:VEVENT".into(),
-        format!("UID:{}", inv.uid),
+        format!("UID:{}", one_line(&inv.uid)),
         format!("SEQUENCE:{}", inv.sequence),
         format!("DTSTAMP:{}", ics_stamp(now)),
     ];
     if !inv.recurrence_id.is_empty() {
-        lines.push(inv.recurrence_id.clone());
+        lines.push(one_line(&inv.recurrence_id));
     }
     if inv.all_day {
         let day = |ms: i64| Local.timestamp_millis_opt(ms).earliest().unwrap_or_default().format("%Y%m%d").to_string();
@@ -1437,6 +1445,13 @@ mod tests {
         assert!(ics.contains("ATTENDEE;PARTSTAT=ACCEPTED;CN=\"Isaac Lehman\":mailto:isaac@example.org"), "{ics}");
         assert!(ics.contains("ORGANIZER;CN=\"Ruiz, Ana\":mailto:ana@example.com"), "{ics}");
         assert!(ics.lines().all(|l| l.len() <= 76), "folded at 75 bytes");
+        // Someone else's title, UID or recurrence can't add lines to the reply.
+        let mut sneaky = inv.clone();
+        sneaky.title = "Lunch\rATTENDEE:mailto:x@evil.example".into();
+        sneaky.uid = "u1\r\nATTENDEE:mailto:y@evil.example".into();
+        let bad = reply_ics(&sneaky, "isaac@example.org", "Isaac Lehman", "ACCEPTED", 1_000);
+        assert!(!bad.contains("\rATTENDEE:mailto:x@") && !bad.contains("\nATTENDEE:mailto:y@"), "{bad}");
+        assert_eq!(bad.lines().filter(|l| l.starts_with("ATTENDEE")).count(), 1, "only the user's own line: {bad}");
         // Read back: the same event, with only the user's answer.
         let back = parse_invite(&ics).unwrap();
         assert_eq!((back.method.as_str(), back.uid.as_str(), back.start, back.end), ("REPLY", inv.uid.as_str(), inv.start, inv.end));
