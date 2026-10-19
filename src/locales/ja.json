@@ -3075,5 +3075,10 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "評価は {theirs}（今いちばん良い {current} は {ours}）で、この PC で快適に動きます。チャットや他のモデルはそのままです。",
  "(documents only)": "（文書のみ）",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "このモデルは文書（.txt または .md）からしか学習できません。トレーナーがこのモデルのチャット形式から返答を見つけられないためです（Llama と Gemma 4）。",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "このモデルはまだ練習できません。練習は Qwen3、Qwen3.5、Qwen3.6、Gemma 3 のモデルで使えます。"
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "このモデルはまだ練習できません。練習は Qwen3、Qwen3.5、Qwen3.6、Gemma 3 のモデルで使えます。",
+ "The trainer stopped making progress, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.": "グラフィックカードのメモリが足りなくなったため、トレーナーが先に進まなくなったようです。ゲーム、ブラウザー、動画プレーヤーなど、カードを使う他のアプリを閉じてから、もう一度お試しください。",
+ "The trainer quit partway through, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.": "グラフィックカードのメモリが足りなくなったため、トレーナーが途中で終了したようです。ゲーム、ブラウザー、動画プレーヤーなど、カードを使う他のアプリを閉じてから、もう一度お試しください。",
+ "The graphics card is short of free memory for training. Closing other apps that use it, such as games, browsers and video players, helps.": "グラフィックカードの空きメモリが学習には足りません。ゲーム、ブラウザー、動画プレーヤーなど、カードを使う他のアプリを閉じると改善します。",
+ "There isn't enough free memory on the graphics card to teach this model safely. Close other apps that use it, such as games, browsers and video players, and try again.": "グラフィックカードの空きメモリが足りないため、このモデルを安全に学習させられません。ゲーム、ブラウザー、動画プレーヤーなど、カードを使う他のアプリを閉じてから、もう一度お試しください。",
+ "This model is too big to teach on this graphics card. Pick a smaller model.": "このモデルはこのグラフィックカードで学習させるには大きすぎます。もっと小さいモデルを選んでください。"
 }
