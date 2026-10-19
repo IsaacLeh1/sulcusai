@@ -1364,6 +1364,7 @@ mod live {
     /// Read, archive and trash done here reach the server, and what the
     /// server changed (read on a phone, archived on the web) comes back.
     /// Needs pymap on 11430, as above (start it fresh: it changes the demo data).
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn mail_changes_reach_the_server_and_back() {

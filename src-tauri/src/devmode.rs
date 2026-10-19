@@ -230,6 +230,7 @@ mod tests {
 
     /// Sends one real report to the developer's inbox (marked as a test),
     /// with only the engine side of the log, and keeps a copy in dev-sent.log.
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn a_report_reaches_the_inbox() {

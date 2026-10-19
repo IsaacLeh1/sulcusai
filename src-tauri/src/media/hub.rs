@@ -588,6 +588,7 @@ mod tests {
         assert_eq!(m.license.name, "creativeml-openrail-m");
     }
 
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn pasted_links_find_the_right_kind_of_model() {
@@ -612,6 +613,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn search_hugging_face_for_media_models() {

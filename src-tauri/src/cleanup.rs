@@ -618,6 +618,7 @@ mod tests {
         assert!(summary(&[item("chat"), item("model")], 5_000_000_000).starts_with("Removed 1 unused chat and 1 unused model ("));
     }
 
+    #[cfg(windows)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn the_cleanup_keeps_locked_chats_and_removes_old_ones() {

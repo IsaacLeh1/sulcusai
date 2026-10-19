@@ -1363,6 +1363,13 @@ He went to bed and left free rein to add and refine things, then build and publi
 - **After the merge**: the training copy is Q8_0 only when 2.8 times its size fits the card's free memory (`finetune::q8_fits`; the "your code" session saw a 4B's Q8_0 training peak at 11.4 GB and spill). Llama and Gemma 4 learn from documents only (`finetune::conversations_ok`), and practice leaves out Gemma 4.
 - Found, not fixable here: the trainer (QVAC b7349, its latest release, March 2026) finds turns only in ChatML and Gemma 3 formats. Gemma 4 (`<|turn>model`) and Llama 3 can't be taught from conversations or practise; documents still work.
 
+## 0.9.14 (2026-10-19): newer models, practice, Optimize for this PC, FLUX.1
+
+**Published and installed 2026-10-19**, built from phase7 at 9abc781 (6 jobs, below-normal priority). Notes are in `C:\dev\tools\notes-0914.md`. It carries everything from "After 0.9.13" through "Overnight batch" above. Installed on the desktop through WMI, and the exe reports 0.9.14.
+
+- Practice result to remember: on Qwen3 4B 2507, neither self-practice nor a teacher improved the 12-task test overall (teacher 35 → 34: coding +3, writing +2, research −4, tools −2), so nothing was kept, as designed. "Your code" went 5 → 5, with too few tries fitting in 512 tokens. A possible next step is one adapter per skill, or training only on the skills that went up.
+- CI on Mac and Linux had failed since 2026-10-14: five `#[ignore]` live tests (cleanup, devmode, mail, media/hub ×2) called `crate::e2e::scratch_state()`, and `e2e` exists only on Windows (`#[cfg(all(test, windows))]`). They now carry `#[cfg(windows)]` like the other live tests. **Any new test that uses `crate::e2e` needs `#[cfg(windows)]`.**
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
