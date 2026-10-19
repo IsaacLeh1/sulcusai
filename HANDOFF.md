@@ -1549,6 +1549,10 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.16 (2026-10-19): mail round 2, privacy for cloud chats, no emoji
+
+**Published and installed 2026-10-19**, built from ea8f980 (main = phase7, tag checked). Notes are in `C:\dev\tools\notes-0916.md`. It carries the sections "Mail round 2 and no emoji" and "After 0.9.15" below. The build took 4 min.
+
 ## Mail round 2 and no emoji (2026-10-19, for 0.9.16)
 
 - **No emoji in the window.** He asked for "remove all emoji's used for explanation".
