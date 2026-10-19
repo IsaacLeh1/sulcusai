@@ -1260,7 +1260,7 @@ async fn a_chat_finds_and_reads_another_chat() {
 async fn e2e_web_search_and_read() {
     let (state, ep, cipher) = agent_harness().await;
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some("qwen3-1.7b".into())).unwrap();
-    // Offline and no 🌐: the model can only ask for web access (the popup
+    // Offline and web off: the model can only ask for web access (the popup
     // is answered no here; the stand-in test covers a yes).
     let st = state.clone();
     let answering = tokio::spawn(async move {
@@ -2365,7 +2365,7 @@ async fn e2e_chat_real_photo_and_uploaded_edit() {
     let made = crate::media::store::latest_in_chat(&state.db.lock().unwrap(), &cipher, &chat.id, "image").expect("a picture was made");
     keep(&made, "chat-1-frisbee");
 
-    // The person attaches a photo, as the 📎 button does.
+    // The person attaches a photo, as the paperclip button does.
     let bytes = std::fs::read(std::env::var("SULCUSAI_TEST_PHOTO").expect("SULCUSAI_TEST_PHOTO")).unwrap();
     let photo = crate::media::add(&state, &cipher, bytes, "image", "image/png", "attach", "photo", None, Some(chat.id.clone()), true).unwrap();
     crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Your main browser: where links and the 🌐 button open. The built-in
+//! Your main browser: where links and the globe button open. The built-in
 //! browser (the one the assistant can use), Windows' default, or any
 //! browser Windows has registered (Chrome, Edge, DuckDuckGo, Firefox…).
 //!
