@@ -787,7 +787,7 @@ impl Engine {
             // memory: on Windows llama.cpp keeps a mapped file in memory after
             // copying it to the card, so RAM filled by the model's size for
             // nothing. Memory is for what the card can't hold.
-            .args(if spec.gpu_layers > 0 { vec!["--no-mmap"] } else { vec![] })
+            .args(if spec.gpu_layers > 0 { vec!["--load-mode", "none"] } else { vec![] })
             .args(spec.lora.map(|p| vec![std::ffi::OsString::from("--lora"), p.into()]).unwrap_or_default())
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
