@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::catalog::{self, Budget, ModelSpec};
 use crate::hardware::{BrokenCard, Hardware};
-use crate::perf::{self, HeatState, Mode, PerfSettings};
+use crate::perf::{self, Mode, PerfSettings};
 use crate::{AppState, AppStateRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -26,7 +26,7 @@ pub enum Place {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Reason {
     /// "no_card", "no_driver", "engine_no_card", "gpu_layers", "gpu_limit",
-    /// "cool_on_battery", "cool_mode", "cooling" or "too_small".
+    /// "cool_on_battery", "cool_mode" or "too_small".
     pub code: &'static str,
     /// In English, for the app log; the window words it from `code`.
     pub message: String,
@@ -59,8 +59,6 @@ pub struct Facts {
     pub cool_on_battery: bool,
     /// Cool & quiet was chosen, and keeps layers off the card.
     pub cool_mode: bool,
-    /// Adaptive cooling moved layers off the hot card.
-    pub cooling: bool,
     /// Layers set in Advanced.
     pub advanced_layers: Option<u32>,
     /// The most layers this PC's card takes of this model with nothing
@@ -159,9 +157,6 @@ pub fn reasons(f: &Facts) -> Vec<Reason> {
     } else if f.cool_mode {
         out.push(reason("cool_mode", "Cool & quiet mode leaves part of the graphics card free.", Some("perf_settings")));
     }
-    if f.cooling {
-        out.push(reason("cooling", "Adaptive cooling moved layers from the hot graphics card to the processor; they move back once it cools.", Some("perf_settings")));
-    }
     if let Some(can) = f.card_can_take.filter(|n| *n < f.total || f.experts_in_memory) {
         let mut r = reason(
             "too_small",
@@ -193,7 +188,6 @@ pub fn short(r: &Reason) -> String {
         "gpu_limit" => format!("the GPU limit is {}%", r.number.unwrap_or(0)),
         "cool_on_battery" => "Cool & quiet runs on battery".into(),
         "cool_mode" => "Cool & quiet mode is on".into(),
-        "cooling" => "adaptive cooling moved layers off the hot graphics card".into(),
         _ => "the graphics card is too small for this model".into(),
     }
 }
@@ -226,8 +220,8 @@ pub fn card_can_take(spec: &ModelSpec, quant: &str, hw: &Hardware) -> u32 {
 }
 
 /// The settings' part in where it runs: Cool & quiet (on battery or
-/// chosen) and adaptive cooling, when they cost layers.
-fn setting_facts(f: &mut Facts, spec: &ModelSpec, quant: &str, hw: &Hardware, s: &PerfSettings, on_battery: bool, heat: &HeatState) {
+/// chosen), when it costs layers. (Heat never moves layers off the card.)
+fn setting_facts(f: &mut Facts, spec: &ModelSpec, quant: &str, hw: &Hardware, s: &PerfSettings, on_battery: bool) {
     let full = PerfSettings { gpu_limit: 100, ..s.clone() };
     let cool_now = perf::limits(&full, hw, on_battery).mode == Mode::Cool;
     if cool_now {
@@ -239,7 +233,6 @@ fn setting_facts(f: &mut Facts, spec: &ModelSpec, quant: &str, hw: &Hardware, s:
             f.cool_on_battery = costs;
         }
     }
-    f.cooling = s.adaptive && perf::cooling_moves_layers(heat);
 }
 
 /// Everything `reasons` needs, for the model loaded now.
@@ -262,7 +255,7 @@ fn facts(state: &AppState, spec: &ModelSpec, quant: &str, planned: u32, experts:
         ..Default::default()
     };
     if f.card.is_some() {
-        setting_facts(&mut f, spec, quant, &hw, &s, on_battery, &state.heat.get());
+        setting_facts(&mut f, spec, quant, &hw, &s, on_battery);
         f.card_can_take = Some(card_can_take(spec, quant, &hw));
     }
     f
@@ -494,9 +487,9 @@ mod tests {
         assert_eq!(place(&half), Place::Partly);
         assert_eq!(short(&reasons(&half)[0]), "the GPU limit is 50%");
 
-        // Cool & quiet on battery, and adaptive cooling.
-        let battery = Facts { cool_on_battery: true, cooling: true, planned: 25, actual: Some(25), ..laptop() };
-        assert_eq!(codes(&battery), ["cool_on_battery", "cooling"]);
+        // Cool & quiet on battery.
+        let battery = Facts { cool_on_battery: true, planned: 25, actual: Some(25), ..laptop() };
+        assert_eq!(codes(&battery), ["cool_on_battery"]);
         assert_eq!(reasons(&battery)[0].fix, Some("perf_settings"));
 
         // A 2 GB card: nothing of a 8B model fits.
@@ -537,33 +530,13 @@ mod tests {
             ..Default::default()
         };
         let s = PerfSettings::default();
-        let heat = HeatState::default();
-        // 8 GB: Cool's 70% leaves layers off.
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &s, true, &heat);
-        assert!(f.cool_on_battery && !f.cool_mode && !f.cooling);
-        // Plugged in, or the switch off: not a reason.
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &s, false, &heat);
-        assert!(!f.cool_on_battery);
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &PerfSettings { cool_on_battery: false, ..s.clone() }, true, &heat);
-        assert!(!f.cool_on_battery);
-        // 24 GB: the whole model fits even in Cool & quiet.
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(24), &s, true, &heat);
-        assert!(!f.cool_on_battery);
-        // Chosen rather than from the battery.
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &PerfSettings { mode: Mode::Cool, ..s.clone() }, false, &heat);
-        assert!(f.cool_mode && !f.cool_on_battery);
-        // A hot card moves layers; not while the processor is hot too.
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &s, false, &HeatState { gpu_level: 1, ..Default::default() });
-        assert!(f.cooling);
-        let mut f = Facts::default();
-        setting_facts(&mut f, m, "Q4_K_M", &card(8), &s, false, &HeatState { gpu_level: 1, cpu_level: 1, ..Default::default() });
-        assert!(!f.cooling);
+        // Cool & quiet (on battery or chosen) uses the whole card now, as
+        // Balanced does: it never costs layers, so it's never a reason.
+        for (hw, mode, battery) in [(card(8), Mode::Balanced, true), (card(8), Mode::Cool, false), (card(24), Mode::Balanced, true)] {
+            let mut f = Facts::default();
+            setting_facts(&mut f, m, "Q4_K_M", &hw, &PerfSettings { mode, ..s.clone() }, battery);
+            assert!(!f.cool_on_battery && !f.cool_mode);
+        }
         // What the card takes with nothing holding it back: all on 12 GB,
         // some on 4 GB, and a few even on 2 GB (compressed cache).
         let all = m.arch.n_layer + 1;

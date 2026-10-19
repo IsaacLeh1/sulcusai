@@ -149,13 +149,34 @@ fn parse_devices(text: &str) -> Vec<(String, String)> {
 /// name), when the PC also has integrated graphics the engine could
 /// otherwise use. Matched by name against the cards Windows reports.
 fn dedicated_of(devices: &[(String, String)], cards: &[crate::hardware::Gpu]) -> Vec<(String, String)> {
-    let is_integrated = |name: &str| cards.iter().any(|c| c.integrated && same_card(name, &c.name));
+    let is_integrated = |name: &str| built_in(name, cards);
     let is_dedicated = |name: &str| cards.iter().any(|c| !c.integrated && same_card(name, &c.name));
-    let dedicated: Vec<(String, String)> = devices.iter().filter(|(_, n)| is_dedicated(n) && !is_integrated(n)).cloned().collect();
+    let mut dedicated: Vec<(String, String)> = devices.iter().filter(|(_, n)| is_dedicated(n) && !is_integrated(n)).cloned().collect();
+    // The engine names the card differently from Windows: everything but
+    // the built-in graphics, which would put the model in system memory
+    // (their memory is the PC's RAM).
+    if dedicated.is_empty() && cards.iter().any(|c| !c.integrated) {
+        dedicated = devices.iter().filter(|(_, n)| !is_integrated(n)).cloned().collect();
+    }
     if dedicated.is_empty() || dedicated.len() == devices.len() {
         return Vec::new();
     }
     dedicated
+}
+
+/// A device that is built-in graphics: named like an integrated card Windows
+/// reports, or, beside a separate card from another maker, Intel or AMD
+/// graphics without a model of their own ("Intel(R) Arc(TM) Graphics" and
+/// "AMD Radeon(TM) Graphics" are the processor's; Windows may call them
+/// just "Intel(R) Graphics").
+fn built_in(name: &str, cards: &[crate::hardware::Gpu]) -> bool {
+    if cards.iter().any(|c| c.integrated && same_card(name, &c.name)) {
+        return true;
+    }
+    let low = name.to_lowercase();
+    let maker = |c: &crate::hardware::Gpu| format!("{} {}", c.vendor, c.name).to_lowercase();
+    let separate_other = |m: &str| cards.iter().any(|c| !c.integrated && !maker(c).contains(m));
+    (low.contains("intel") && separate_other("intel")) || ((low.contains("radeon(tm) graphics") || low == "amd radeon graphics") && separate_other("amd"))
 }
 
 /// The devices `exe` (a llama.cpp program) sees, asked once until the PC is
@@ -762,6 +783,11 @@ impl Engine {
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })
+            // With the model on the card, its file isn't also kept in system
+            // memory: on Windows llama.cpp keeps a mapped file in memory after
+            // copying it to the card, so RAM filled by the model's size for
+            // nothing. Memory is for what the card can't hold.
+            .args(if spec.gpu_layers > 0 { vec!["--no-mmap"] } else { vec![] })
             .args(spec.lora.map(|p| vec![std::ffi::OsString::from("--lora"), p.into()]).unwrap_or_default())
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
@@ -1036,8 +1062,16 @@ mod platform_tests {
         // Only a dedicated card, or only integrated graphics: nothing to choose.
         assert!(dedicated_of(&listed[..1], &laptop[..1]).is_empty());
         assert!(dedicated_of(&listed[1..], &laptop[1..]).is_empty());
-        // Names that don't match what Windows reports: the engine decides.
-        assert!(dedicated_of(&listed, &[card("Some other card", false)]).is_empty());
+        // Names that don't match what Windows reports: still never the
+        // built-in Intel graphics (its memory is the PC's RAM) while there's
+        // a separate card.
+        assert_eq!(dedicated_of(&listed, &[card("Some other card", false)]), vec![listed[0].clone()]);
+        let renamed = parse_devices("  Vulkan0: Intel(R) Arc(TM) Graphics (18347 MiB, 17579 MiB free)\n  Vulkan1: NVIDIA RTX 5070 Ti (11944 MiB, 11176 MiB free)\n");
+        assert_eq!(dedicated_of(&renamed, &laptop), vec![renamed[1].clone()], "the engine's names differ from Windows' for both");
+        // An Intel Arc card on its own, beside Intel built-in graphics, is found by name as before.
+        let arc = [card("Intel(R) Arc(TM) A770 Graphics", false), card("Intel(R) UHD Graphics", true)];
+        let both_intel = parse_devices("  Vulkan0: Intel(R) UHD Graphics (8000 MiB)\n  Vulkan1: Intel(R) Arc(TM) A770 Graphics (16000 MiB)\n");
+        assert_eq!(dedicated_of(&both_intel, &arc), vec![both_intel[1].clone()]);
         // Whether the engine sees a card it may use: not when it lists only
         // the integrated graphics, or nothing at all (an old driver).
         assert!(sees_a_card(&listed, &laptop));

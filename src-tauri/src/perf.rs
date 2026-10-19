@@ -128,7 +128,10 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             mode,
             on_battery,
             threads: (c.threads / 2).clamp(1, 6),
-            vram_bytes: (vram as f64 * 0.7) as u64,
+            // The whole card, as in Balanced: a smaller share only moved
+            // layers into system memory and onto the processor. Fewer
+            // threads, a smaller window and low priority keep it quiet.
+            vram_bytes: balanced_vram,
             ram_bytes: ((hw.ram_total as f64 * 0.4) as u64).min(balanced_ram),
             low_priority: true,
             idle_unload_mins: 5,
@@ -276,25 +279,16 @@ fn step_level(current: u8, headroom: Option<f32>, may_ease: bool) -> u8 {
 }
 
 const THREAD_SCALE: [f64; 4] = [1.0, 0.75, 0.5, 0.35];
-const GPU_SCALE: [f64; 4] = [1.0, 0.85, 0.7, 0.55];
 
-/// The limits stepped down for heat. A hot card gives layers to the
-/// processor, but not while the processor is near its own limit too: in a
-/// laptop both share one cooler, so that only heats the processor (and the
-/// card with it) while running slower. The pauses between steps do the
-/// cooling then (`step_pause`).
+/// The limits stepped down for heat: fewer processor threads when the
+/// processor is hot. A hot card keeps its layers, and the pauses between
+/// steps cool it (`step_pause`). Moving layers to the processor filled the
+/// memory and left the card idle (his laptop: RAM at 100%, the card at
+/// 13%), and in a laptop it only heats the shared cooler from the other side.
 pub fn scaled(mut l: Limits, h: &HeatState) -> Limits {
     l.threads = ((l.threads as f64 * THREAD_SCALE[h.cpu_level.min(3) as usize]).round() as usize).max(1);
-    if h.cpu_level == 0 {
-        l.gpu_share = l.gpu_share.min(GPU_SCALE[h.gpu_level.min(3) as usize]);
-    }
     l.heat_level = h.level();
     l
-}
-
-/// Adaptive cooling moved layers off the card for heat (not the GPU limit).
-pub fn cooling_moves_layers(h: &HeatState) -> bool {
-    h.gpu_level > 0 && h.cpu_level == 0
 }
 
 /// A short rest between agent steps while the PC runs hot; longer while the
@@ -302,7 +296,9 @@ pub fn cooling_moves_layers(h: &HeatState) -> bool {
 pub fn step_pause(h: &HeatState) -> Duration {
     let both = h.gpu_level > 0 && h.cpu_level > 0;
     match h.level() + u8::from(both) {
-        0 | 1 => Duration::ZERO,
+        0 => Duration::ZERO,
+        // A warm card keeps its layers, so it rests a moment from the first level.
+        1 => Duration::from_secs(1),
         2 => Duration::from_secs(2),
         _ => Duration::from_secs(5),
     }
@@ -1051,7 +1047,7 @@ mod tests {
         let balanced = limits(&PerfSettings::default(), &hw, false);
         let on_battery = limits(&PerfSettings::default(), &hw, true);
         assert_eq!(on_battery.mode, Mode::Cool);
-        assert!(on_battery.threads < balanced.threads && on_battery.vram_bytes < balanced.vram_bytes && on_battery.ram_bytes < balanced.ram_bytes);
+        assert!(on_battery.threads < balanced.threads && on_battery.vram_bytes == balanced.vram_bytes && on_battery.ram_bytes < balanced.ram_bytes);
         assert!(on_battery.low_priority && on_battery.max_ctx == 8192);
         let s = PerfSettings { cool_on_battery: false, ..Default::default() };
         assert_eq!(limits(&s, &hw, true).mode, Mode::Balanced);
@@ -1071,7 +1067,7 @@ mod tests {
         let h = HeatState { gpu_level: 2, cpu_level: 0, ..Default::default() };
         let s = scaled(l, &h);
         assert_eq!(s.threads, l.threads, "a hot graphics card doesn't cut processor threads");
-        assert!(s.gpu_share < 1.0 && s.heat_level == 2);
+        assert!(s.gpu_share == 1.0 && s.heat_level == 2, "a hot card keeps its layers; pauses cool it");
         assert_eq!(step_pause(&h), Duration::from_secs(2));
 
         let heat = Heat::default();
@@ -1080,30 +1076,23 @@ mod tests {
         assert!(heat.update(Temps { gpu: Some(82.0), cpu: Some(60.0) }, &l).is_none(), "no change, no event");
     }
 
-    /// A laptop's card and processor share one cooler: while the processor
-    /// is near its limit too, a hot card keeps its layers (moving them would
-    /// only heat the processor more), and the pauses between steps grow.
+    /// Heat never moves layers off the card (into system memory, onto the
+    /// processor): the processor steps down and the pauses grow instead.
     #[test]
-    fn a_hot_card_keeps_its_layers_while_the_processor_is_hot_too() {
+    fn heat_never_moves_layers_off_the_card() {
         let l = limits(&PerfSettings::default(), &laptop(), false);
-        let card_hot = HeatState { gpu_level: 2, cpu_level: 0, ..Default::default() };
+        let card_hot = HeatState { gpu_level: 3, cpu_level: 0, ..Default::default() };
         let both_hot = HeatState { gpu_level: 2, cpu_level: 1, ..Default::default() };
-        assert!(scaled(l, &card_hot).gpu_share < 1.0 && cooling_moves_layers(&card_hot));
+        assert_eq!(scaled(l, &card_hot).gpu_share, 1.0);
         assert_eq!(scaled(l, &both_hot).gpu_share, 1.0);
-        assert!(!cooling_moves_layers(&both_hot));
         assert!(scaled(l, &both_hot).threads < l.threads, "the processor still steps down");
-        assert!(step_pause(&both_hot) > step_pause(&card_hot));
-        assert_eq!(step_pause(&HeatState { gpu_level: 1, cpu_level: 1, ..Default::default() }), Duration::from_secs(2), "both warm: a pause even at level 1");
+        assert!(step_pause(&card_hot) > Duration::ZERO, "a hot card gets pauses");
+        assert!(step_pause(&both_hot) > step_pause(&HeatState { gpu_level: 2, cpu_level: 0, ..Default::default() }));
         // A GPU limit the person set still holds.
         let half = limits(&PerfSettings { gpu_limit: 50, ..Default::default() }, &laptop(), false);
-        assert_eq!(scaled(half, &both_hot).gpu_share, 0.5);
-        // Cool & quiet (a laptop on battery): layers would move from 63 C on.
-        let cool = limits(&PerfSettings::default(), &laptop(), true);
-        let heat = Heat::default();
-        heat.update(Temps { gpu: Some(64.0), cpu: Some(80.0) }, &cool);
-        let h = heat.get();
-        assert!(h.gpu_level > 0 && h.cpu_level > 0, "{h:?}");
-        assert_eq!(scaled(cool, &h).gpu_share, 1.0, "the processor is near its 85 C too: no layers moved");
+        assert_eq!(scaled(half, &card_hot).gpu_share, 0.5);
+        // Cool & quiet on battery uses the whole card too.
+        assert_eq!(limits(&PerfSettings::default(), &laptop(), true).vram_bytes, l.vram_bytes);
     }
 
     /// Reads this PC's sensors: `cargo test --lib reads_temperatures -- --ignored --nocapture`
@@ -1140,8 +1129,8 @@ mod tests {
         let half = limits(&PerfSettings { gpu_limit: 50, ..Default::default() }, &laptop(), false);
         assert_eq!(half.gpu_share, 0.5);
         let warm = HeatState { gpu_level: 1, cpu_level: 0, temps: Temps::default(), changed: None };
-        assert_eq!(scaled(half, &warm).gpu_share, 0.5, "the lower of the two");
-        assert_eq!(scaled(full, &warm).gpu_share, GPU_SCALE[1]);
+        assert_eq!(scaled(half, &warm).gpu_share, 0.5);
+        assert_eq!(scaled(full, &warm).gpu_share, 1.0, "heat doesn't lower it");
         // The processor is held back to match, so it doesn't run hot instead.
         assert!(!full.low_priority);
         assert_eq!(half.threads, ((full.threads as f64) * 0.5).round() as usize);

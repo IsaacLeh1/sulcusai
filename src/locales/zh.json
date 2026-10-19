@@ -74,7 +74,6 @@
  "AI runs only on this PC": "AI 只在这台电脑上运行",
  "API key": "API 密钥",
  "API permissions IMAP.AccessAsUser.All and SMTP.Send (Office 365 Exchange Online) and Calendars.ReadWrite (Microsoft Graph).": "API 权限 IMAP.AccessAsUser.All 和 SMTP.Send（Office 365 Exchange Online）以及 Calendars.ReadWrite（Microsoft Graph）。",
- "About half the processor, less graphics memory, low priority. Models unload after 5 idle minutes. Best on a laptop.": "约一半处理器、更少显存、低优先级。模型闲置 5 分钟后卸载。最适合笔记本电脑。",
  "About you": "关于你",
  "About {app}": "关于 {app}",
  "About {speed} on this PC (estimated)": "在这台电脑上约 {speed}（估计值）",
@@ -1409,7 +1408,6 @@
  "Waiting for the extension… It connects by itself once added, while SulcusAI is running.": "正在等待扩展… 添加后，只要 SulcusAI 在运行，它就会自动连接。",
  "Waiting for the job before it · takes {time}": "正在等待前一个任务 · 需要 {time}",
  "Want dictation, voice chat, files or meetings?": "想要听写、语音聊天、文件或会议功能？",
- "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, less on the graphics card when it is. Steps back up once it cools.": "监测温度，并在电脑变热时降档：处理器过热时减少处理器线程，显卡过热时减少显卡负载。冷却后再恢复。",
  "Watercolor": "水彩",
  "Waveform: click to jump": "波形：点击跳转",
  "Web": "网络",
@@ -3299,7 +3297,6 @@
  "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "在你打完一个单词时，用 Windows 自带的拼写检查修正拼错的单词，仅在确定时修正。紧接着按退格键可撤销修正。仅限 Windows。",
  "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "回复完成后，消息框会显示你接下来可能要问的内容。按 Tab 键使用，或直接输入让它消失。由这台电脑上的模型猜测，绝不使用在线模型。",
  "A graphics card was found without a working driver. Update its driver, then click Check again.": "发现了一块没有可用驱动程序的显卡。请更新它的驱动程序，然后点击“再次检查”。",
- "Adaptive cooling moved layers from the hot graphics card to the processor; they move back once it cools.": "自适应散热已将部分层从过热的显卡移到处理器上；显卡降温后会移回。",
  "Advanced settings put {n} of the model's layers on the graphics card.": "高级设置只将模型的 {n} 层放在显卡上。",
  "Automatic": "自动",
  "Built-in graphics: it shares system memory and isn't used for models.": "集成显卡：与系统共用内存，不用于运行模型。",
@@ -3340,5 +3337,8 @@
  "{card} is too small for this model. A smaller model, or a smaller context window, fits it.": "{card} 对此模型来说太小。更小的模型或更小的上下文窗口可以放入。",
  "{card} is turned off in Device Manager, so models run on the processor. Turn it on there, then scan again.": "{card} 已在设备管理器中禁用，因此模型在处理器上运行。请在那里启用它，然后重新扫描。",
  "{maker} graphics card ({name})": "{maker} 显卡（{name}）",
- "{size} memory": "{size} 显存"
+ "{size} memory": "{size} 显存",
+ "The planner gave back no changes.": "规划器没有返回任何更改。",
+ "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "监测温度，电脑变热时降低负荷：处理器过热时减少处理器线程，显卡过热时短暂休息。模型始终留在显卡上。冷却后恢复。",
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "大约一半的处理器、更小的上下文窗口、低优先级，仍使用整张显卡。闲置 5 分钟后卸载模型。最适合笔记本电脑。"
 }

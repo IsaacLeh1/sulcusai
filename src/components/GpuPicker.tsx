@@ -247,8 +247,6 @@ function reasonText(r: PlaceReason, total: number | null): string {
       return t("Cool & quiet runs while the laptop is on battery and leaves part of the graphics card free.");
     case "cool_mode":
       return t("Cool & quiet mode leaves part of the graphics card free.");
-    case "cooling":
-      return t("Adaptive cooling moved layers from the hot graphics card to the processor; they move back once it cools.");
     case "too_small":
       if (n === 0) return t("{card} is too small for this model. A smaller model, or a smaller context window, fits it.", { card });
       if (total !== null && n >= total) return t("{card} holds every layer of this model but not all its experts; those wait in system memory. A smaller model fits it whole.", { card });

@@ -74,7 +74,6 @@
  "AI runs only on this PC": "AIはこのPCだけで動作します",
  "API key": "APIキー",
  "API permissions IMAP.AccessAsUser.All and SMTP.Send (Office 365 Exchange Online) and Calendars.ReadWrite (Microsoft Graph).": "API のアクセス許可 IMAP.AccessAsUser.All と SMTP.Send（Office 365 Exchange Online）、Calendars.ReadWrite（Microsoft Graph）。",
- "About half the processor, less graphics memory, low priority. Models unload after 5 idle minutes. Best on a laptop.": "プロセッサーの約半分を使い、グラフィックメモリの使用を抑え、優先度を下げます。5分間使わないとモデルを解放します。ノートPCに最適です。",
  "About you": "あなたについて",
  "About {app}": "{app}について",
  "About {speed} on this PC (estimated)": "このPCで約 {speed}（推定）",
@@ -1409,7 +1408,6 @@
  "Waiting for the extension… It connects by itself once added, while SulcusAI is running.": "拡張機能を待っています… 追加すると、SulcusAIの実行中に自動で接続されます。",
  "Waiting for the job before it · takes {time}": "前のジョブを待機中 · 所要時間 {time}",
  "Want dictation, voice chat, files or meetings?": "音声入力、音声チャット、ファイル、会議を使いたいですか？",
- "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, less on the graphics card when it is. Steps back up once it cools.": "温度を監視し、PCが熱くなると段階的に負荷を下げます: プロセッサーが熱いときはスレッド数を、グラフィックカードが熱いときはその使用量を減らします。冷えると元に戻ります。",
  "Watercolor": "水彩画",
  "Waveform: click to jump": "波形: クリックで移動",
  "Web": "Web",
@@ -3299,7 +3297,6 @@
  "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "単語を打ち終えたときにつづりの誤りを Windows のスペルチェッカーで修正します。確実な場合だけです。直後に Backspace キーを押すと修正を取り消せます。Windows のみ。",
  "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "返信が終わると、次に尋ねそうな内容がメッセージ欄に表示されます。Tab キーで使うか、そのまま入力すると消えます。この PC 上のモデルが推測し、オンラインのモデルは使いません。",
  "A graphics card was found without a working driver. Update its driver, then click Check again.": "正常に動作するドライバーのないグラフィックカードが見つかりました。ドライバーを更新してから「再確認」をクリックしてください。",
- "Adaptive cooling moved layers from the hot graphics card to the processor; they move back once it cools.": "適応冷却により、熱くなったグラフィックカードから一部のレイヤーがプロセッサーに移されました。冷えると元に戻ります。",
  "Advanced settings put {n} of the model's layers on the graphics card.": "詳細設定で、モデルの {n} レイヤーをグラフィックカードに置くよう指定されています。",
  "Automatic": "自動",
  "Built-in graphics: it shares system memory and isn't used for models.": "内蔵グラフィックス: システムメモリを共有するため、モデルには使われません。",
@@ -3340,5 +3337,8 @@
  "{card} is too small for this model. A smaller model, or a smaller context window, fits it.": "{card} はこのモデルには小さすぎます。より小さなモデルか、より小さなコンテキスト ウィンドウなら収まります。",
  "{card} is turned off in Device Manager, so models run on the processor. Turn it on there, then scan again.": "{card} はデバイス マネージャーで無効になっているため、モデルはプロセッサーで動作します。そこで有効にしてから、もう一度検索してください。",
  "{maker} graphics card ({name})": "{maker} のグラフィックカード（{name}）",
- "{size} memory": "メモリ {size}"
+ "{size} memory": "メモリ {size}",
+ "The planner gave back no changes.": "プランナーから変更が返されませんでした。",
+ "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "温度を見守り、PC が熱くなると負荷を下げます。プロセッサーが熱いときはスレッド数を減らし、グラフィックカードが熱いときは短い休憩を入れます。モデルはグラフィックカードに載ったままです。冷えたら元に戻ります。",
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "プロセッサーの約半分、小さめのコンテキストウィンドウ、低い優先度で、グラフィックカードはすべて使います。使われないまま 5 分たつとモデルを解放します。ノート PC に最適です。"
 }

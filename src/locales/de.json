@@ -74,7 +74,6 @@
  "AI runs only on this PC": "KI läuft nur auf diesem PC",
  "API key": "API-Schlüssel",
  "API permissions IMAP.AccessAsUser.All and SMTP.Send (Office 365 Exchange Online) and Calendars.ReadWrite (Microsoft Graph).": "API-Berechtigungen IMAP.AccessAsUser.All und SMTP.Send (Office 365 Exchange Online) sowie Calendars.ReadWrite (Microsoft Graph).",
- "About half the processor, less graphics memory, low priority. Models unload after 5 idle minutes. Best on a laptop.": "Etwa der halbe Prozessor, weniger Grafikspeicher, niedrige Priorität. Modelle werden nach 5 Minuten Leerlauf entladen. Ideal für Laptops.",
  "About you": "Über dich",
  "About {app}": "Über {app}",
  "About {speed} on this PC (estimated)": "Etwa {speed} auf diesem PC (geschätzt)",
@@ -1409,7 +1408,6 @@
  "Waiting for the extension… It connects by itself once added, while SulcusAI is running.": "Warte auf die Erweiterung… Sie verbindet sich von selbst, sobald sie hinzugefügt ist, während SulcusAI läuft.",
  "Waiting for the job before it · takes {time}": "Wartet auf den vorherigen Auftrag · dauert {time}",
  "Want dictation, voice chat, files or meetings?": "Möchtest du Diktieren, Sprachchat, Dateien oder Meetings?",
- "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, less on the graphics card when it is. Steps back up once it cools.": "Überwacht die Temperaturen und regelt herunter, wenn der PC heiß wird: weniger Prozessor-Threads, wenn der Prozessor heiß ist, weniger Last auf der Grafikkarte, wenn sie es ist. Regelt wieder hoch, sobald er abkühlt.",
  "Watercolor": "Aquarell",
  "Waveform: click to jump": "Wellenform: zum Springen klicken",
  "Web": "Web",
@@ -3299,7 +3297,6 @@
  "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "Korrigiert ein falsch geschriebenes Wort, sobald du es beendest, mit der Rechtschreibprüfung von Windows, und nur, wenn sie sich sicher ist. Drücke direkt danach die Rücktaste, um eine Korrektur rückgängig zu machen. Nur unter Windows.",
  "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "Wenn eine Antwort fertig ist, zeigt das Nachrichtenfeld, was du wahrscheinlich als Nächstes fragst. Drücke Tab, um es zu verwenden, oder tippe einfach weiter, damit es verschwindet. Vom Modell auf diesem PC erraten, nie mit einem Online-Modell.",
  "A graphics card was found without a working driver. Update its driver, then click Check again.": "Es wurde eine Grafikkarte ohne funktionierenden Treiber gefunden. Aktualisiere ihren Treiber und klicke dann auf „Erneut prüfen“.",
- "Adaptive cooling moved layers from the hot graphics card to the processor; they move back once it cools.": "Die adaptive Kühlung hat Schichten von der heißen Grafikkarte auf den Prozessor verlegt; sie wandern zurück, sobald sie abgekühlt ist.",
  "Advanced settings put {n} of the model's layers on the graphics card.": "Die erweiterten Einstellungen legen {n} Schichten des Modells auf die Grafikkarte.",
  "Automatic": "Automatisch",
  "Built-in graphics: it shares system memory and isn't used for models.": "Integrierte Grafik: Sie teilt sich den Arbeitsspeicher und wird nicht für Modelle verwendet.",
@@ -3340,5 +3337,8 @@
  "{card} is too small for this model. A smaller model, or a smaller context window, fits it.": "{card} ist zu klein für dieses Modell. Ein kleineres Modell oder ein kleineres Kontextfenster passt darauf.",
  "{card} is turned off in Device Manager, so models run on the processor. Turn it on there, then scan again.": "{card} ist im Geräte-Manager ausgeschaltet, daher laufen Modelle auf dem Prozessor. Schalte sie dort ein und suche dann erneut.",
  "{maker} graphics card ({name})": "Grafikkarte von {maker} ({name})",
- "{size} memory": "{size} Speicher"
+ "{size} memory": "{size} Speicher",
+ "The planner gave back no changes.": "Der Planer hat keine Änderungen zurückgegeben.",
+ "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "Beobachtet die Temperaturen und fährt herunter, wenn der PC warm wird: weniger Prozessor-Threads, wenn der Prozessor heiß ist, kurze Pausen, wenn die Grafikkarte heiß ist. Das Modell bleibt auf der Grafikkarte. Fährt wieder hoch, sobald es abgekühlt ist.",
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Etwa der halbe Prozessor, ein kleineres Kontextfenster, niedrige Priorität und weiterhin die ganze Grafikkarte. Modelle werden nach 5 Minuten ohne Nutzung entladen. Am besten auf einem Laptop."
 }
