@@ -93,6 +93,13 @@ pub(crate) fn supported(arch: &str) -> bool {
     SUPPORTED.contains(&arch)
 }
 
+/// Families whose replies the trainer can find in a conversation (it looks
+/// for ChatML's and Gemma 3's turn markers). Llama 3 and Gemma 4 lay out
+/// turns their own way, so they learn from documents only.
+pub(crate) fn conversations_ok(arch: &str) -> bool {
+    matches!(arch, "qwen3" | "qwen35" | "qwen35moe" | "gemma3")
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adapter {
     pub id: String,
@@ -330,6 +337,8 @@ pub struct Base {
     name: String,
     /// The trainer can teach this kind of model.
     supported: bool,
+    /// It can learn from conversations (chats, .jsonl), not just documents.
+    conversations: bool,
     /// It can practise (its chat format is one the trainer reads).
     practice: bool,
     /// It can use tools, so it practises that too.
@@ -357,6 +366,7 @@ pub fn finetune_view(state: AppStateRef) -> FinetuneView {
             Base {
                 name: spec.as_ref().map_or(m.model_id.clone(), |s| s.name.clone()),
                 supported: arch.as_deref().is_some_and(supported),
+                conversations: arch.as_deref().is_some_and(conversations_ok),
                 practice: arch.as_deref().is_some_and(crate::practice::can_practise),
                 tools: spec.is_some_and(|s| s.tools),
                 id: m.model_id.clone(),
@@ -399,6 +409,10 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
     }
     let installed = db::installed_model(&state.db.lock().unwrap(), &base).ok_or("Pick a model that's installed.")?;
     let base_name = state.model_spec(&base).map_or(base.clone(), |s| s.name);
+    let documents = matches!(&source, Source::File { path } if !path.to_lowercase().ends_with(".jsonl"));
+    if !documents && !arch_of(&state, &installed).is_some_and(|a| conversations_ok(&a)) {
+        return Err("This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).".into());
+    }
     let id = format!("{}", uuid::Uuid::new_v4().simple());
     let dir = state.paths.data.join("adapters").join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -515,6 +529,25 @@ fn trains_on_card(quant: &str) -> bool {
     matches!(quant.to_ascii_uppercase().as_str(), "Q4_0" | "Q8_0" | "F16" | "BF16" | "F32")
 }
 
+/// What the graphics card has free now (the chat model is already
+/// stopped): its size less what Windows, the desktop and other apps hold.
+fn card_free(state: &AppState) -> u64 {
+    let total = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
+    let card = crate::hardware::dedicated().and_then(|c| c.luid);
+    let used = crate::perf::card_memory_used(card).unwrap_or(3 * 1024 * 1024 * 1024 / 2);
+    total.saturating_sub(used)
+}
+
+/// Whether training a Q8_0 copy of a model whose installed file is `size`
+/// bytes fits `free` card memory. Measured at 512 tokens: a 4B's Q8_0 copy
+/// (4.1 GB) peaked at 11.4 GB, about 2.8 times the copy; with the desktop
+/// holding 1.2-1.5 GB of a 12 GB card it spilled into shared memory and
+/// slowed from 7 s a step to 37 s, or crashed. Its Q4_0 copy took 8.3 GB.
+fn q8_fits(size: u64, free: u64) -> bool {
+    let copy = size as f64 * 1.8;
+    copy * 2.8 + 512.0 * 1024.0 * 1024.0 <= free as f64
+}
+
 /// The model file to train on: the installed one, or a copy in a format the
 /// card trains fast, made next to the training data and deleted after.
 ///
@@ -522,20 +555,17 @@ fn trains_on_card(quant: &str) -> bool {
 /// weights, so what's learnt carries over. A Q4_0 copy rounds them again
 /// onto another grid: on a 4B its loss on the model's own replies started
 /// at 0.94 instead of 0.67, so part of training went into undoing that, and
-/// the adapter did worse on the real model. Q4_0 is kept for models whose
-/// Q8_0 copy wouldn't fit (the before/after test still decides).
+/// the adapter did worse on the real model. Q4_0 is kept for when the Q8_0
+/// copy's training wouldn't fit the card's free memory (the before/after
+/// test still decides).
 async fn training_copy(state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
     let model = crate::model_file(&state.paths, installed);
     if trains_on_card(&installed.quant) {
         return Ok(model);
     }
-    let params = state.model_spec(&installed.model_id).map_or(0.0, |s| s.params_b);
-    let vram = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
-    // Measured: a 4B's Q8_0 copy trained in 10.3 GB of a 12 GB card (1.8 GB
-    // more in shared memory), at 6 s an example against 10 for Q4_0.
-    let q8 = params > 0.0 && (params <= 2.5 || (params <= 4.5 && vram >= 11 * 1024 * 1024 * 1024));
-    let (target, growth) = if q8 { ("Q8_0", 1.8) } else { ("Q4_0", 1.0) };
     let size = std::fs::metadata(&model).map_or(0, |m| m.len());
+    let q8 = q8_fits(size, card_free(state));
+    let (target, growth) = if q8 { ("Q8_0", 1.8) } else { ("Q4_0", 1.0) };
     let need = (size as f64 * growth) as u64 + 512 * 1024 * 1024;
     if crate::storage::free_on(out_dir).is_some_and(|free| free < need) {
         return Err("There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.".into());
@@ -686,6 +716,17 @@ mod tests {
         assert_eq!(parse_progress(line), Some((11, 38, 4.71471, "00:13:39".to_string())));
         assert_eq!(parse_progress("llama_model_loader: loaded meta data"), None);
         assert_eq!(parse_epoch("Starting epoch 1 (step 37, lr=1.0000e-04)"), Some(1));
+    }
+
+    /// The faithful Q8_0 copy only where its training fits the card's free
+    /// memory: not a 4B on a 12 GB card with the desktop on it.
+    #[test]
+    fn the_q8_copy_only_when_it_fits() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        let q4km_4b = 2_497_281_120;
+        assert!(!q8_fits(q4km_4b, 10 * GB + GB / 2), "12 GB card, desktop holding 1.5 GB");
+        assert!(q8_fits(q4km_4b, 15 * GB), "16 GB card");
+        assert!(q8_fits(1_100_000_000, 10 * GB), "a 1.7B on a 12 GB card");
     }
 
     #[test]

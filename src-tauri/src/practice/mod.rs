@@ -76,7 +76,7 @@ const TRAIN_CTX: u32 = 512;
 /// The trainer only finds the model's turns in these chat formats
 /// (ChatML, as Qwen writes it, and Gemma's).
 pub fn can_practise(arch: &str) -> bool {
-    matches!(arch, "qwen3" | "qwen35" | "qwen35moe" | "gemma3" | "gemma4")
+    crate::finetune::conversations_ok(arch)
 }
 
 /// Where a chat template begins and ends the model's turn.
@@ -729,7 +729,7 @@ pub async fn start_practice(
     let installed = db::installed_model(&state.db.lock().unwrap(), &base).ok_or("Pick a model that's installed.")?;
     let spec = state.model_spec(&base).ok_or("That model isn't available anymore.")?;
     if !finetune::arch_of(&state, &installed).is_some_and(|a| can_practise(&a)) {
-        return Err("This model can't practise yet: practice works with Qwen3 and Gemma models.".into());
+        return Err("This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.".into());
     }
     let mut chosen: Vec<Skill> = Skill::ALL.into_iter().filter(|s| skills.contains(s) && (!matches!(s, Skill::Tools | Skill::Project) || spec.tools)).collect();
     chosen.dedup();
@@ -940,5 +940,6 @@ mod tests {
     fn only_formats_the_trainer_reads_can_practise() {
         assert!(can_practise("qwen3") && can_practise("gemma3"));
         assert!(!can_practise("llama") && !can_practise("qwen2") && !can_practise("qwen3vl"));
+        assert!(can_practise("qwen35") && !can_practise("gemma4"), "Gemma 4 marks turns <|turn>model, which the trainer doesn't find");
     }
 }

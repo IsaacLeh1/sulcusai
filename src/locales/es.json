@@ -3034,7 +3034,6 @@
  "Practised": "Practicado",
  "Start practice": "Empezar la práctica",
  "The engine didn't lay out the request.": "El motor no preparó la solicitud.",
- "This model can't practise yet: practice works with Qwen3 and Gemma models.": "Este modelo aún no puede practicar: la práctica funciona con modelos Qwen3 y Gemma.",
  "This model can't use tools": "Este modelo no puede usar herramientas",
  "Using tools": "Usar herramientas",
  "Wait for the reply to finish, then start practice.": "Espera a que termine la respuesta y luego empieza la práctica.",
@@ -3074,5 +3073,8 @@
  "That's a folder. Use find_files to see what's in it.": "Eso es una carpeta. Usa find_files para ver qué contiene.",
  "Waiting for a reply that uses this model to finish": "Esperando a que termine una respuesta que usa este modelo",
  "A smarter model fits this PC: {name}": "Un modelo más inteligente cabe en este PC: {name}",
- "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tiene una puntuación de {theirs} frente a {ours} de {current}, el mejor que tienes ahora, y funciona bien aquí. Tus chats y otros modelos se quedan como están."
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tiene una puntuación de {theirs} frente a {ours} de {current}, el mejor que tienes ahora, y funciona bien aquí. Tus chats y otros modelos se quedan como están.",
+ "(documents only)": "(solo documentos)",
+ "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Este modelo solo puede aprender de documentos (.txt o .md): el entrenador no encuentra sus respuestas en su formato de chat (Llama y Gemma 4).",
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Este modelo aún no puede practicar: la práctica funciona con modelos Qwen3, Qwen3.5, Qwen3.6 y Gemma 3."
 }

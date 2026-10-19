@@ -3034,7 +3034,6 @@
  "Practised": "Entraîné",
  "Start practice": "Lancer l'entraînement",
  "The engine didn't lay out the request.": "Le moteur n'a pas mis en forme la demande.",
- "This model can't practise yet: practice works with Qwen3 and Gemma models.": "Ce modèle ne peut pas encore s'entraîner : l'entraînement fonctionne avec les modèles Qwen3 et Gemma.",
  "This model can't use tools": "Ce modèle ne peut pas utiliser d'outils",
  "Using tools": "Utiliser des outils",
  "Wait for the reply to finish, then start practice.": "Attendez la fin de la réponse, puis lancez l'entraînement.",
@@ -3074,5 +3073,8 @@
  "That's a folder. Use find_files to see what's in it.": "C'est un dossier. Utilisez find_files pour voir ce qu'il contient.",
  "Waiting for a reply that uses this model to finish": "En attente de la fin d'une réponse qui utilise ce modèle",
  "A smarter model fits this PC: {name}": "Un modèle plus intelligent tient sur ce PC : {name}",
- "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Il obtient {theirs} contre {ours} pour {current}, le meilleur que vous avez actuellement, et tourne sans peine ici. Vos discussions et autres modèles restent tels quels."
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Il obtient {theirs} contre {ours} pour {current}, le meilleur que vous avez actuellement, et tourne sans peine ici. Vos discussions et autres modèles restent tels quels.",
+ "(documents only)": "(documents uniquement)",
+ "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Ce modèle ne peut apprendre qu'à partir de documents (.txt ou .md) : l'entraîneur ne trouve pas ses réponses dans son format de discussion (Llama et Gemma 4).",
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Ce modèle ne peut pas encore s'entraîner : l'entraînement fonctionne avec les modèles Qwen3, Qwen3.5, Qwen3.6 et Gemma 3."
 }

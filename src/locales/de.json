@@ -3034,7 +3034,6 @@
  "Practised": "Geübt",
  "Start practice": "Üben starten",
  "The engine didn't lay out the request.": "Die Engine hat die Anfrage nicht aufbereitet.",
- "This model can't practise yet: practice works with Qwen3 and Gemma models.": "Dieses Modell kann noch nicht üben: Üben funktioniert mit Qwen3- und Gemma-Modellen.",
  "This model can't use tools": "Dieses Modell kann keine Werkzeuge nutzen",
  "Using tools": "Werkzeuge nutzen",
  "Wait for the reply to finish, then start practice.": "Warte, bis die Antwort fertig ist, und starte dann das Üben.",
@@ -3074,5 +3073,8 @@
  "That's a folder. Use find_files to see what's in it.": "Das ist ein Ordner. Nutze find_files, um zu sehen, was darin ist.",
  "Waiting for a reply that uses this model to finish": "Wartet, bis eine Antwort, die dieses Modell nutzt, fertig ist",
  "A smarter model fits this PC: {name}": "Ein klügeres Modell passt auf diesen PC: {name}",
- "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Es hat {theirs} Punkte gegenüber {ours} für {current}, dein bisher bestes, und läuft hier gut. Deine Chats und anderen Modelle bleiben, wie sie sind."
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Es hat {theirs} Punkte gegenüber {ours} für {current}, dein bisher bestes, und läuft hier gut. Deine Chats und anderen Modelle bleiben, wie sie sind.",
+ "(documents only)": "(nur Dokumente)",
+ "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Dieses Modell kann nur aus Dokumenten (.txt oder .md) lernen: Der Trainer findet seine Antworten in seinem Chat-Format nicht (Llama und Gemma 4).",
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Dieses Modell kann noch nicht üben: Üben funktioniert mit Qwen3-, Qwen3.5-, Qwen3.6- und Gemma-3-Modellen."
 }

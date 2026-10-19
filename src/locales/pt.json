@@ -3034,7 +3034,6 @@
  "Practised": "Praticado",
  "Start practice": "Começar a prática",
  "The engine didn't lay out the request.": "O motor não preparou o pedido.",
- "This model can't practise yet: practice works with Qwen3 and Gemma models.": "Este modelo ainda não pode praticar: a prática funciona com modelos Qwen3 e Gemma.",
  "This model can't use tools": "Este modelo não pode usar ferramentas",
  "Using tools": "Usar ferramentas",
  "Wait for the reply to finish, then start practice.": "Espere a resposta terminar e depois comece a prática.",
@@ -3074,5 +3073,8 @@
  "That's a folder. Use find_files to see what's in it.": "Isso é uma pasta. Use find_files para ver o que tem nela.",
  "Waiting for a reply that uses this model to finish": "Aguardando terminar uma resposta que usa este modelo",
  "A smarter model fits this PC: {name}": "Um modelo mais inteligente cabe neste PC: {name}",
- "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tem nota {theirs} contra {ours} de {current}, o melhor que você tem agora, e roda bem aqui. Seus chats e outros modelos continuam como estão."
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tem nota {theirs} contra {ours} de {current}, o melhor que você tem agora, e roda bem aqui. Seus chats e outros modelos continuam como estão.",
+ "(documents only)": "(só documentos)",
+ "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Este modelo só pode aprender com documentos (.txt ou .md): o treinador não encontra as respostas dele no seu formato de chat (Llama e Gemma 4).",
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Este modelo ainda não pode praticar: a prática funciona com modelos Qwen3, Qwen3.5, Qwen3.6 e Gemma 3."
 }

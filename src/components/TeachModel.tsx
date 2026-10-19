@@ -79,7 +79,9 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const supported = v.bases.filter((b) => b.supported);
   const practising = form.kind === "practice";
   const base = v.bases.find((b) => b.id === form.base);
-  const usable = (b: { supported: boolean; practice: boolean }) => (practising ? b.practice : b.supported);
+  // Documents teach any supported model; chats and .jsonl need a chat format the trainer reads.
+  const documents = form.kind === "file" && !!form.file && !form.file.toLowerCase().endsWith(".jsonl");
+  const usable = (b: { supported: boolean; conversations: boolean; practice: boolean }) => (practising ? b.practice : documents ? b.supported : b.conversations);
   const skills = form.skills.filter((s) => !needsTools(s) || base?.tools);
   const onCode = skills.includes("project");
   const addFolders = async () => {
@@ -92,7 +94,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const teacher = teachers.find((b) => b.id === form.teacher);
   /** Opens the form, practising or learning from examples. */
   const openForm = (kind: SourceKind) => {
-    const fits = (b: { supported: boolean; practice: boolean }) => (kind === "practice" ? b.practice : b.supported);
+    const fits = (b: { supported: boolean; conversations: boolean; practice: boolean }) => (kind === "practice" ? b.practice : kind === "chats" ? b.conversations : b.supported);
     const keep = v.bases.find((b) => b.id === form.base && fits(b));
     setForm({
       ...form,
@@ -223,7 +225,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               {v.bases.map((b) => (
                 <option key={b.id} value={b.id} disabled={!usable(b)}>
                   {b.name}
-                  {usable(b) ? "" : " " + (practising ? t("(can't practise yet)") : t("(can't be taught yet)"))}
+                  {usable(b) ? "" : " " + (practising ? t("(can't practise yet)") : b.supported ? t("(documents only)") : t("(can't be taught yet)"))}
                 </option>
               ))}
             </select>

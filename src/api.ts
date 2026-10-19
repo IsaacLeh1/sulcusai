@@ -127,7 +127,7 @@ export interface FinetuneJob {
 export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools" | "project";
 
 export interface FinetuneView {
-  bases: { id: string; name: string; supported: boolean; practice: boolean; tools: boolean }[];
+  bases: { id: string; name: string; supported: boolean; conversations: boolean; practice: boolean; tools: boolean }[];
   adapters: TaughtAdapter[];
   job: FinetuneJob | null;
   trainer_installed: boolean;
