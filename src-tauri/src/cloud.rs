@@ -272,7 +272,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         arch: Arch { n_layer: 1, n_kv_heads: 1, head_dim: 1, max_ctx: ctx, active_fraction: 1.0 },
         default_ctx: ctx,
         tools: true,
-        variants: vec![Variant { quant: "cloud".into(), quality: "Cloud".into(), file: String::new(), url: String::new(), size: 0, sha256: String::new() }],
+        variants: vec![Variant { quant: "cloud".into(), quality: "Cloud".into(), file: String::new(), url: String::new(), size: 0, sha256: String::new(), parts: Vec::new() }],
         ratings: Ratings::default(),
         vision: m.vision.then(|| VisionFile { file: String::new(), url: String::new(), size: 0, sha256: String::new() }),
         local: None,

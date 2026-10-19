@@ -84,6 +84,20 @@ pub struct Variant {
     pub url: String,
     pub size: u64,
     pub sha256: String,
+    /// A model split across files ("…-00001-of-00003.gguf"): every part,
+    /// the first one included, in order. `file`, `url` and `sha256` are then
+    /// the first part's, and `size` is all of them together.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<Part>,
+}
+
+/// One file of a split model.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Part {
+    pub file: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

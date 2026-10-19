@@ -279,6 +279,26 @@ fn gguf_files(dir: &Path, min_size: u64) -> Vec<PathBuf> {
     out
 }
 
+/// Deletes a model file and, when it's the first part of a split model, its
+/// other parts too.
+pub fn remove_with_parts(path: &Path) {
+    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    let stem = name.trim_end_matches(".gguf");
+    let mut it = stem.rsplitn(4, '-');
+    if let (Some(total), Some("of"), Some(part), Some(base), Some(dir)) = (it.next(), it.next(), it.next(), it.next(), path.parent()) {
+        if part.trim_start_matches('0') == "1" && total.bytes().all(|b| b.is_ascii_digit()) {
+            let (prefix, suffix) = (format!("{base}-"), format!("-of-{total}.gguf"));
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let n = e.file_name().to_string_lossy().to_lowercase();
+                if n.starts_with(&prefix) && n.ends_with(&suffix) && later_part(&n) {
+                    std::fs::remove_file(e.path()).ok();
+                }
+            }
+        }
+    }
+    std::fs::remove_file(path).ok();
+}
+
 /// "…-00002-of-00003.gguf": the second or a later part of a split model.
 fn later_part(name: &str) -> bool {
     let stem = name.trim_end_matches(".gguf");
@@ -424,6 +444,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
             url: String::new(),
             size,
             sha256: String::new(),
+            parts: Vec::new(),
         }],
         ratings: known_ratings(c.name.as_deref().unwrap_or(&c.path.display().to_string()), params_b),
         vision,
@@ -530,6 +551,10 @@ mod tests {
         }
         assert_eq!(size_with_parts(&dir.join("big-Q4_K_M-00001-of-00003.gguf")), 35);
         assert_eq!(size_with_parts(&dir.join("other.gguf")), 99);
+        // Replacing it with another version deletes every part, not just the first.
+        remove_with_parts(&dir.join("big-Q4_K_M-00001-of-00003.gguf"));
+        let left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["other.gguf"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

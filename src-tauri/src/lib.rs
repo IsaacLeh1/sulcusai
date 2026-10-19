@@ -452,7 +452,9 @@ async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, Strin
         }
         return Err("That model needs a Hugging Face account to download, which SulcusAI doesn't use.".into());
     }
-    // The file the link named, when it's one SulcusAI can use (else all are shown).
+    // The file the link named, when it's one SulcusAI can use (else all are
+    // shown); a split model's later part names the whole model.
+    let file = file.map(|f| hub::listed_file(&f));
     let named = |files: Vec<&String>| file.clone().filter(|f| files.contains(&f));
     // Picture, video and music models first: their files are GGUF too.
     if let Some((model, kind)) = media::hub::from_link(&state, &r) {
@@ -596,10 +598,18 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 );
             }
             let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
-            download::fetch_verified(&client, &variant.url, &dest, variant.size, &variant.sha256, &cancel, |r, t| {
-                emit("download", r, t)
-            })
-            .await?;
+            if variant.parts.is_empty() {
+                download::fetch_verified(&client, &variant.url, &dest, variant.size, &variant.sha256, &cancel, |r, t| emit("download", r, t)).await?;
+            } else {
+                // A split model: every part, into the same folder (the engine
+                // loads the first and finds the rest beside it).
+                let mut done = 0;
+                for p in &variant.parts {
+                    let to = state.paths.models.join(&spec.id).join(&p.file);
+                    download::fetch_verified(&client, &p.url, &to, p.size, &p.sha256, &cancel, |r, _| emit("download", done + r, variant.size)).await?;
+                    done += p.size;
+                }
+            }
             // Models that can see pictures also get their image encoder.
             if let Some(v) = &spec.vision {
                 let vdest = state.paths.models.join(&spec.id).join(&v.file);
@@ -635,7 +645,7 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 if engine.status().model_id.as_deref() == Some(&spec.id) {
                     engine.stop().await;
                 }
-                std::fs::remove_file(&old.path).ok();
+                local::remove_with_parts(std::path::Path::new(&old.path));
             }
 
             // Trying it out: loading it (the longest part for a big model), then timing a short reply.
