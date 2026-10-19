@@ -5,40 +5,368 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SulcusAI</title>
 <meta name="description" content="A private AI workspace that runs on your own computer.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="logo-120.png">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
-<header class="top">
-  <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"> SulcusAI</a>
-  <nav><a href="./" aria-current="page">Home</a> <a href="privacy">Privacy</a> <a href="terms">Terms</a></nav>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"><span>SulcusAI</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <ul class="nav-links">
+        <li><a href="#features">Features</a></li>
+        <li><a href="privacy">Privacy</a></li>
+        <li><a href="terms">Terms</a></li>
+        <li><a href="https://github.com/IsaacLeh1/sulcusai">GitHub</a></li>
+      </ul>
+      <a class="btn btn-primary btn-sm" href="https://github.com/IsaacLeh1/sulcusai/releases/latest">Download</a>
+    </nav>
+  </div>
 </header>
-<main>
-<h1>SulcusAI</h1>
-<p class="lead">A private AI workspace that runs on your own computer. It finds the AI models your
-PC can actually run, installs them with one click, and keeps everything local unless you choose otherwise.</p>
-<p><a class="button" href="https://github.com/IsaacLeh1/sulcusai/releases/latest">Download for Windows, macOS or Linux</a></p>
 
-<div class="cards">
-  <div class="card"><h3>Chat and agents</h3><p>Chat with local models, let the assistant work in folders you share, and undo its changes.</p></div>
-  <div class="card"><h3>Mail and calendar</h3><p>Connect Gmail, Outlook or any IMAP account and your calendars. Read, search and write mail with the assistant's help.</p></div>
-  <div class="card"><h3>Voice and meetings</h3><p>Dictation, voice chats, and meeting transcripts with speakers and action items, all on your PC.</p></div>
-  <div class="card"><h3>Pictures, music and video</h3><p>Make and edit images, music and short videos with models that run on your graphics card.</p></div>
-</div>
+<main id="main">
 
-<h2>Private by design</h2>
-<ul>
-  <li>No SulcusAI account, servers, analytics or tracking.</li>
-  <li>Chats, mail and calendars are encrypted on your computer.</li>
-  <li>Offline by default. Web access and online AI providers are switches you turn on yourself, and every request is logged.</li>
-  <li>Signing in with Google or Microsoft happens in your own browser; SulcusAI never sees your password.</li>
-</ul>
-<p>Read the full <a href="privacy">privacy policy</a>.</p>
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="container">
+      <h1 id="hero-title">Private AI that runs <span class="grad">on your own computer.</span></h1>
+      <p class="hero-sub">SulcusAI finds the AI models your PC can actually run, installs them in one click, and keeps everything local unless you choose otherwise.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/IsaacLeh1/sulcusai/releases/latest">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
+          Download
+        </a>
+        <a class="link-arrow" href="https://github.com/IsaacLeh1/sulcusai">
+          View on GitHub
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        </a>
+      </div>
+      <p class="hero-note">Free and open source · Windows, macOS, Linux</p>
 
-<h2>Open source</h2>
-<p>SulcusAI's code is available under the GNU AGPL v3.0 on
-<a href="https://github.com/IsaacLeh1/sulcusai">GitHub</a>.</p>
+      <div class="hero-visual">
+        <div class="window" role="img" aria-label="Illustration of the SulcusAI app: a sidebar of chats and shared folders, and a chat in which a local model, running offline, summarizes files from a Projects folder.">
+          <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">SulcusAI</span></div>
+          <div class="app">
+            <div class="app-side">
+              <div class="app-new"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New chat</div>
+              <div class="app-label">Chats</div>
+              <div class="app-item is-active">Meeting notes</div>
+              <div class="app-item">Trip ideas</div>
+              <div class="app-item">Inbox summary</div>
+              <div class="app-item">Garden plan</div>
+              <div class="app-label">Shared folders</div>
+              <div class="app-item"><svg class="i" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>Projects</div>
+              <div class="app-item"><svg class="i" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>Photos</div>
+            </div>
+            <div class="app-main">
+              <div class="app-top">
+                <span class="app-model">Local model <svg class="i" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+                <span class="app-status"><span class="dot"></span>Offline</span>
+              </div>
+              <div class="app-chat">
+                <div class="msg-user">Summarize this week's meeting notes in my Projects folder.</div>
+                <div class="msg-ai">
+                  <img class="avatar" src="logo.svg" alt="" width="28" height="28">
+                  <div class="msg-body">
+                    <span class="msg-tool"><svg class="i" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></svg>Read 3 files in Projects</span>
+                    <p>Here are the main points from this week:</p>
+                    <div class="bullets">
+                      <span>The launch moves to the 24th.</span>
+                      <span>Sam is reviewing the budget by Friday.</span>
+                      <span>The next check-in is Thursday at 10:00.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="app-composer">
+                <span>Ask anything…</span>
+                <span class="composer-tools">
+                  <svg class="i" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+                  <span class="send"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" class="section" aria-labelledby="features-title">
+    <div class="container">
+      <div class="section-head">
+        <p class="eyebrow">Features</p>
+        <h2 id="features-title">One app for chat, mail, voice and media.</h2>
+        <p>By default, the AI in every part of SulcusAI runs on your own hardware.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-copy">
+          <p class="eyebrow">Local models</p>
+          <h3>Models that fit your PC, installed in one click.</h3>
+          <p>SulcusAI finds the AI models your computer can actually run and installs the one you pick with a single click. They run on your own hardware, with no internet needed.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="window" role="img" aria-label="Illustration: a list of AI models with a bar showing how much memory each needs. Models that fit can be installed with one click; one is marked as too large for this PC.">
+            <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">Models</span></div>
+            <div class="pane">
+              <div class="pane-head"><b>Recommended for this PC</b><span>Memory needed</span></div>
+              <div class="model-row">
+                <span class="model-icon m1"></span>
+                <span><span class="model-name">Chat</span><span class="meter"><span style="width:44%"></span></span></span>
+                <span class="chip chip-ok"><svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>Installed</span>
+              </div>
+              <div class="model-row">
+                <span class="model-icon m3"></span>
+                <span><span class="model-name">Speech to text</span><span class="meter"><span style="width:16%"></span></span></span>
+                <span class="chip chip-primary">Install</span>
+              </div>
+              <div class="model-row">
+                <span class="model-icon m2"></span>
+                <span><span class="model-name">Pictures</span><span class="meter"><span style="width:62%"></span></span></span>
+                <span class="chip chip-primary">Install</span>
+              </div>
+              <div class="model-row is-dim">
+                <span class="model-icon m4"></span>
+                <span><span class="model-name">Large chat</span><span class="meter is-over"><span style="width:100%"></span></span></span>
+                <span class="chip chip-quiet">Too large</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature feature-flip">
+        <div class="feature-copy">
+          <p class="eyebrow">Chat and agents</p>
+          <h3>An assistant that works in your folders, with undo.</h3>
+          <p>Chat with local models, or share a folder and let the assistant work in it. See what it changed, and undo anything you'd rather not keep.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="window agent" role="img" aria-label="Illustration: the assistant reports the files it moved in a shared folder, with an Undo button.">
+            <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">Taxes · shared folder</span></div>
+            <div class="pane">
+              <div class="msg-user">Sort the receipts in this folder by month.</div>
+              <div class="msg-ai">
+                <img class="avatar" src="logo.svg" alt="" width="28" height="28">
+                <div class="msg-body">
+                  <p>Done. I moved 24 receipts into a folder for each month.</p>
+                  <div class="changes">
+                    <div class="change"><span class="tag tag-new">New</span><code>2026-01/</code></div>
+                    <div class="change"><span class="tag tag-move">Moved</span><code>receipt-0142.pdf</code></div>
+                    <div class="change"><span class="tag tag-move">Moved</span><code>receipt-0143.pdf</code></div>
+                    <div class="changes-foot"><span>24 files changed</span><span class="undo"><svg class="i" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>Undo</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-copy">
+          <p class="eyebrow">Mail and calendar</p>
+          <h3>Your inbox and calendar, with help.</h3>
+          <p>Connect Gmail, Outlook or any IMAP account, and your calendars. Read, search and write mail with the assistant's help. It asks before sending anything.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="window" role="img" aria-label="Illustration: an inbox with tabs for Gmail, Outlook and IMAP accounts, a reply drafted by the assistant waiting for review, and today's calendar events.">
+            <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">Mail</span></div>
+            <div class="mail">
+              <div class="mail-list">
+                <div class="mail-tabs"><span class="mail-tab is-on">All</span><span class="mail-tab">Gmail</span><span class="mail-tab">Outlook</span><span class="mail-tab">IMAP</span></div>
+                <div class="mail-row">
+                  <span class="av av1">S</span>
+                  <span><span class="mail-from">Sam</span><span class="skel" style="width:88%"></span><span class="skel" style="width:60%"></span></span>
+                  <span class="mail-time">9:41</span>
+                </div>
+                <div class="mail-row">
+                  <span class="av av2">J</span>
+                  <span><span class="mail-from">Jordan</span><span class="skel" style="width:76%"></span></span>
+                  <span class="mail-time">8:15</span>
+                </div>
+                <div class="mail-row is-read">
+                  <span class="av av3">A</span>
+                  <span><span class="mail-from">Alex</span><span class="skel" style="width:68%"></span></span>
+                  <span class="mail-time">Mon</span>
+                </div>
+                <div class="draft">
+                  <div class="draft-label"><svg class="i" viewBox="0 0 24 24"><path d="M12 5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/></svg>Draft reply to Sam</div>
+                  <span class="skel" style="width:94%"></span>
+                  <span class="skel" style="width:72%"></span>
+                  <div class="draft-foot"><span class="chip chip-primary">Review and send</span></div>
+                </div>
+              </div>
+              <div class="agenda">
+                <div class="agenda-day">Today <span>3 events</span></div>
+                <div class="event"><b>Team check-in</b><span>9:30</span></div>
+                <div class="event e2"><b>Lunch with Sam</b><span>12:00</span></div>
+                <div class="event e3"><b>Dentist</b><span>15:30</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature feature-flip">
+        <div class="feature-copy">
+          <p class="eyebrow">Voice and meetings</p>
+          <h3>Talk to it, and let it take the meeting notes.</h3>
+          <p>Dictation, voice chats, and meeting transcripts with speakers and action items, all on your PC.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="window" role="img" aria-label="Illustration: a meeting being recorded on this PC, with a waveform, a transcript split by speaker, and a list of action items.">
+            <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">Meeting</span></div>
+            <div class="pane">
+              <div class="rec"><span class="rec-dot"></span>Recording on this PC<span class="rec-time">12:48</span></div>
+              <svg class="wave" viewBox="0 0 384 48" preserveAspectRatio="none"><path d="M3 17v14M9 15.5v17M15 14v20M21 11.5v25M27 14v20M33 14v20M39 15v18M45 18.5v11M51 12v24M57 9.5v29M63 11v26M69 6v36M75 7.5v33M81 11v26M87 10.5v27M93 17v14M99 13.5v21M105 8v32M111 10v28M117 5.5v37M123 5v38M129 12.5v23M135 10v28M141 15v18M147 19.5v9M153 11.5v25M159 11v26M165 10v28M171 6v36M177 10.5v27M183 10.5v27M189 11.5v25M195 20.5v7M201 12v24M207 8v32M213 10v28M219 3v42M225 4.5v39M231 8.5v31M237 7.5v33M243 14v20M249 14v20M255 7.5v33M261 9v30M267 4.5v39M273 3.5v41M279 10v28M285 7.5v33M291 11.5v25M297 18.5v11M303 11.5v25M309 11v26M315 10.5v27M321 7.5v33M327 11v26M333 12v24M339 13.5v21M345 20v8M351 18v12M357 16v16M363 18v12M369 14.5v19M375 16v16M381 18.5v11"/></svg>
+              <div class="turn"><span class="spk">Speaker 1</span><div><span class="skel" style="width:92%"></span><span class="skel" style="width:58%"></span></div></div>
+              <div class="turn"><span class="spk s2">Speaker 2</span><div><span class="skel" style="width:80%"></span></div></div>
+              <div class="todo-title">Action items</div>
+              <div class="todo"><span class="box is-done"><svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span><span class="skel" style="max-width:64%"></span></div>
+              <div class="todo"><span class="box"></span><span class="skel" style="max-width:46%"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature-copy">
+          <p class="eyebrow">Pictures, music and video</p>
+          <h3>Create pictures, music and video.</h3>
+          <p>Make and edit images, music and short videos with models that run on your graphics card.</p>
+        </div>
+        <div class="feature-visual">
+          <div class="window" role="img" aria-label="Illustration: a prompt for a watercolor lighthouse at dusk, a grid of generated pictures and a short video, and a music track with a play button.">
+            <div class="window-bar"><span class="dots"><i></i><i></i><i></i></span><span class="window-title">Create</span></div>
+            <div class="pane">
+              <div class="prompt">
+                <svg class="i" viewBox="0 0 24 24"><path d="M12 5l1.9 5.1 5.1 1.9-5.1 1.9-1.9 5.1-1.9-5.1-5.1-1.9 5.1-1.9z"/></svg>
+                <span class="prompt-text">A lighthouse at dusk, watercolor</span>
+                <span class="chip chip-primary">Create</span>
+              </div>
+              <div class="gallery">
+                <span class="art art-1"></span>
+                <span class="art art-2"></span>
+                <span class="art art-3"></span>
+                <span class="art art-4"><span><svg class="i i-fill" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span></span>
+                <span class="art art-5"></span>
+              </div>
+              <div class="track">
+                <span class="play"><svg class="i i-fill" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg></span>
+                <svg class="wave" viewBox="0 0 264 28" preserveAspectRatio="none"><path d="M3 9.5v9M9 8.5v11M15 10.5v7M21 10.5v7M27 9.5v9M33 10v8M39 6.5v15M45 6v16M51 7.5v13M57 6v16M63 8.5v11M69 10.5v7M75 10.5v7M81 10.5v7M87 7.5v13M93 5.5v17M99 7.5v13M105 5v18M111 5.5v17M117 9.5v9M123 8.5v11M129 8.5v11M135 7.5v13M141 3.5v21M147 4.5v19M153 4v20M159 3.5v21M165 7v14M171 7.5v13M177 8.5v11M183 9v10M189 5v18M195 4.5v19M201 5.5v17M207 4v20M213 6.5v15M219 8.5v11M225 9v10M231 10.5v7M237 8.5v11M243 7.5v13M249 9.5v9M255 8.5v11M261 10v8"/></svg>
+                <span class="track-time">0:30</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section band" aria-labelledby="privacy-title">
+    <div class="container privacy-grid">
+      <div>
+        <p class="eyebrow">Private by design</p>
+        <h2 id="privacy-title">Your work stays on your computer.</h2>
+        <p class="lede">By default the AI runs on your own PC, and your chats, files, mail and calendars stay there.</p>
+        <a class="link-arrow" href="privacy">
+          Read the privacy policy
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        </a>
+      </div>
+      <ul class="points">
+        <li>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.3 7.5 9.5 4.4-1.2 7.5-4.9 7.5-9.5V6z"/><path d="M9 12l2 2 4-4"/></svg>
+          <h3>No account, no tracking</h3>
+          <p>No SulcusAI account, servers, analytics or tracking.</p>
+        </li>
+        <li>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5v-3a4 4 0 0 1 8 0v3"/></svg>
+          <h3>Encrypted on your PC</h3>
+          <p>Chats, mail and calendars are encrypted on your computer.</p>
+        </li>
+        <li>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="12" rx="2.5"/><path d="M8.5 20h7M12 16v4"/></svg>
+          <h3>Offline by default</h3>
+          <p>Web access and online AI providers are switches you turn on yourself, and every request is logged.</p>
+        </li>
+        <li>
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="8" cy="15" r="4"/><path d="M10.9 12.1 19.5 3.5M16.5 6.5 19 9M14 9l2 2"/></svg>
+          <h3>Your password stays with you</h3>
+          <p>Signing in with Google or Microsoft happens in your own browser. SulcusAI never sees your password.</p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="section cta" aria-labelledby="oss-title">
+    <div class="container">
+      <img class="cta-logo" src="logo.svg" alt="" width="60" height="60">
+      <p class="eyebrow">Open source</p>
+      <h2 id="oss-title">Free to use. Open to read.</h2>
+      <p class="lede">SulcusAI's code is available under the GNU AGPL v3.0 on GitHub, so you can read the code that runs on your computer.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="https://github.com/IsaacLeh1/sulcusai/releases/latest">
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>
+          Download SulcusAI
+        </a>
+        <a class="link-arrow" href="https://github.com/IsaacLeh1/sulcusai">
+          View the source on GitHub
+          <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        </a>
+      </div>
+      <p class="hero-note">Windows, macOS and Linux</p>
+    </div>
+  </section>
+
 </main>
-<footer>SulcusAI by Isaac Lehman · <a href="privacy">Privacy</a> · <a href="terms">Terms</a> · <a href="mailto:isaacleh1@gmail.com">Contact</a></footer>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"><span>SulcusAI</span></a>
+        <p>A private AI workspace that runs on your own computer.</p>
+      </div>
+      <nav class="footer-cols" aria-label="Footer">
+        <div>
+          <h2>Product</h2>
+          <ul>
+            <li><a href="#features">Features</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/releases/latest">Download</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/releases">All releases</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Legal</h2>
+          <ul>
+            <li><a href="privacy">Privacy policy</a></li>
+            <li><a href="terms">Terms of use</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai">GitHub</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/issues">Report an issue</a></li>
+            <li><a href="mailto:isaacleh1@gmail.com">Contact</a></li>
+          </ul>
+        </div>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 Isaac Lehman</p>
+      <p>SulcusAI is free and open source under the GNU AGPL v3.0.</p>
+    </div>
+  </div>
+</footer>
 </body>
 </html>

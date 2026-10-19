@@ -4,15 +4,32 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SulcusAI Terms of Use</title>
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0d12" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="logo-120.png">
 <link rel="stylesheet" href="site.css">
 </head>
-<body>
-<header class="top">
-  <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"> SulcusAI</a>
-  <nav><a href="./">Home</a> <a href="privacy">Privacy</a> <a href="terms" aria-current="page">Terms</a></nav>
+<body class="legal">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"><span>SulcusAI</span></a>
+    <nav class="site-nav" aria-label="Main">
+      <ul class="nav-links">
+        <li><a href="./#features">Features</a></li>
+        <li><a href="privacy">Privacy</a></li>
+        <li><a href="terms" aria-current="page">Terms</a></li>
+        <li><a href="https://github.com/IsaacLeh1/sulcusai">GitHub</a></li>
+      </ul>
+      <a class="btn btn-primary btn-sm" href="https://github.com/IsaacLeh1/sulcusai/releases/latest">Download</a>
+    </nav>
+  </div>
 </header>
-<main>
+
+<main id="main">
 <h1>Terms of Use</h1>
 <p class="muted">Effective October 12, 2026</p>
 
@@ -41,5 +58,46 @@ their own terms, which you accept with them.</p>
 <h2>Contact</h2>
 <p><a href="mailto:isaacleh1@gmail.com">isaacleh1@gmail.com</a></p>
 </main>
+
+<footer class="site-footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a class="brand" href="./"><img src="logo.svg" alt="" width="28" height="28"><span>SulcusAI</span></a>
+        <p>A private AI workspace that runs on your own computer.</p>
+      </div>
+      <nav class="footer-cols" aria-label="Footer">
+        <div>
+          <h2>Product</h2>
+          <ul>
+            <li><a href="./#features">Features</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/releases/latest">Download</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/releases">All releases</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Legal</h2>
+          <ul>
+            <li><a href="privacy">Privacy policy</a></li>
+            <li><a href="terms" aria-current="page">Terms of use</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/blob/main/LICENSE">License (AGPL-3.0)</a></li>
+          </ul>
+        </div>
+        <div>
+          <h2>Project</h2>
+          <ul>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai">GitHub</a></li>
+            <li><a href="https://github.com/IsaacLeh1/sulcusai/issues">Report an issue</a></li>
+            <li><a href="mailto:isaacleh1@gmail.com">Contact</a></li>
+          </ul>
+        </div>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 Isaac Lehman</p>
+      <p>SulcusAI is free and open source under the GNU AGPL v3.0.</p>
+    </div>
+  </div>
+</footer>
 </body>
 </html>
