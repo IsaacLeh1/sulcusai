@@ -1256,7 +1256,7 @@ static EMPTY_WRAPPER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::n
 /// code fence or not. Returns it and the words before it. Only the first:
 /// what a model writes after a call it can't see the result of is made up
 /// (it "imagines" the result and goes on calling tools with invented details).
-fn salvage(text: &str, offered: &[String]) -> (Vec<ToolCall>, String) {
+pub(crate) fn salvage(text: &str, offered: &[String]) -> (Vec<ToolCall>, String) {
     let mut i = 0;
     while let Some(off) = text[i..].find('{') {
         let start = i + off;
