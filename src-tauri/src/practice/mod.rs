@@ -636,7 +636,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     let (app, state, spec) = (r.app, r.state, r.spec);
     let spans = spans(r.teacher.is_some());
     let dir = state.paths.data.join("adapters").join(r.id);
-    finetune::ensure_trainer(app, state, r.cancel, 0.03).await?;
+    finetune::ensure_trainer(state, r.cancel, 0.03).await?;
     // Without thinking: a model's thinking doesn't fit a 512-token example.
     let think = false;
     if crate::thinks(spec, crate::advanced::get(state).processing.thinking) {
@@ -768,7 +768,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     // The tries, then the second test of the one to keep.
     let check_at = to - (to - from) * 0.08;
     let span_of = |i: usize| (from + (check_at - from) * i as f64 / parts as f64, from + (check_at - from) * (i + 1) as f64 / parts as f64);
-    let ready = finetune::prepare(app, state, r.installed, &dir, from, r.cancel).await?;
+    let ready = finetune::prepare(state, r.installed, &dir, from, r.cancel).await?;
     let learning = Learning { r, ready: &ready, think, test: &test_tasks, before: &before, parts: parts as u32 };
     // A try's own lines, with anchors from the other skills, mixed.
     let mut with_anchors = |skills: &[Skill], own: Vec<String>| {
@@ -1087,7 +1087,7 @@ impl Learning<'_> {
         // Training takes most of the time, the test the rest.
         let mid = span.0 + (span.1 - span.0) * 0.85;
         let setup = Setup { conversations: true, epochs: r.epochs, strength: r.strength, own_words: true, ctx: TRAIN_CTX, template: Some(&template), span: (span.0, mid) };
-        let trained = self.ready.train(app, state, &format!("{}-{key}", r.id), &data, &setup, r.cancel).await;
+        let trained = self.ready.train(state, &format!("{}-{key}", r.id), &data, &setup, r.cancel).await;
         std::fs::remove_file(&data).ok();
         let loss = trained?;
         std::fs::remove_dir_all(dir.join("checkpoints")).ok();

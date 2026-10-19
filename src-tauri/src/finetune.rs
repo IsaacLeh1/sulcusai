@@ -277,6 +277,14 @@ pub(crate) fn begin(job: Job) -> Result<Arc<AtomicBool>, String> {
     Ok(cancel)
 }
 
+/// The same, for code that has the app's state rather than its handle (the
+/// trainer's steps, which also run from picture jobs and tests).
+pub(crate) fn update_in(state: &AppState, f: impl FnOnce(&mut Job)) {
+    if let Some(app) = state.app.get() {
+        update(app, f);
+    }
+}
+
 pub(crate) fn update(app: &AppHandle, f: impl FnOnce(&mut Job)) {
     let snapshot = {
         let mut g = JOB.lock().unwrap();
@@ -485,7 +493,7 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
     state.log("model", &format!("Started teaching {base_name} “{name}” from {described} ({examples} examples)"));
     tauri::async_runtime::spawn(async move {
         let setup = Setup { conversations, epochs, strength: strength.as_deref().unwrap_or("normal"), own_words: false, ctx: 512, template: None, span: (0.0, 1.0) };
-        let result = train(&app, &state, &id, &installed, &data, &setup, &cancel).await;
+        let result = train(&state, &id, &installed, &data, &setup, &cancel).await;
         // The training data was plain text: don't keep it.
         std::fs::remove_file(&data).ok();
         match result {
@@ -536,14 +544,14 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
 
 /// The trainer, downloaded the first time. `span`: the share of the job's
 /// progress bar the download fills.
-pub(crate) async fn ensure_trainer(app: &AppHandle, state: &Arc<AppState>, cancel: &AtomicBool, span: f64) -> Result<std::path::PathBuf, String> {
+pub(crate) async fn ensure_trainer(state: &Arc<AppState>, cancel: &AtomicBool, span: f64) -> Result<std::path::PathBuf, String> {
     let dir_name = trainer_dir(state)?;
     let dir = state.paths.engines.join(&dir_name);
     if engine::find_exe(&dir, TRAINER_EXE).is_none() {
-        update(app, |j| j.status = "downloading".into());
+        update_in(state, |j| j.status = "downloading".into());
         state.log("network", "Downloading the QVAC Fabric trainer (llama.cpp with LoRA training) from github.com");
     }
-    let progress = |r: u64, t: u64| update(app, |j| j.fraction = if t > 0 { r as f64 / t as f64 * span } else { 0.0 });
+    let progress = |r: u64, t: u64| update_in(state, |j| j.fraction = if t > 0 { r as f64 / t as f64 * span } else { 0.0 });
     engine::ensure_unpacked(&state.paths, &dir_name, &trainer_asset(state)?, TRAINER_EXE, cancel, progress).await
 }
 
@@ -721,7 +729,7 @@ async fn card_free(state: &AppState) -> Option<u64> {
 /// 37 s), then can reset the graphics driver (`HEADROOM`). So when nothing
 /// fits with room to spare, it waits a few minutes for other apps to give
 /// memory back, and then doesn't start.
-async fn training_copy(app: &AppHandle, state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
+async fn training_copy(state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
     let model = crate::model_file(&state.paths, installed);
     let size = model_size(state, installed);
     let mut free = card_free(state).await;
@@ -731,7 +739,7 @@ async fn training_copy(app: &AppHandle, state: &Arc<AppState>, installed: &db::I
         let format = chosen.copy.unwrap_or(&installed.quant);
         let (need, free) = (crate::size_label(chosen.need), crate::size_label(free.unwrap_or(0)));
         state.log("model", &format!("Training as {format} needs about {need} of the graphics card's memory and 1 GB to spare, but only {free} is free; waiting up to 3 minutes for other apps to give some back"));
-        update(app, |j| j.low_memory = true);
+        update_in(state, |j| j.low_memory = true);
     }
     while !chosen.fits {
         if waiting.elapsed() > ROOM_WAIT {
@@ -747,7 +755,7 @@ async fn training_copy(app: &AppHandle, state: &Arc<AppState>, installed: &db::I
         free = card_free(state).await;
         chosen = plan(size, &installed.quant, free);
         if chosen.fits {
-            update(app, |j| j.low_memory = false);
+            update_in(state, |j| j.low_memory = false);
         }
     }
     if let Some(free) = free {
@@ -773,11 +781,11 @@ async fn training_copy(app: &AppHandle, state: &Arc<AppState>, installed: &db::I
     Ok(copy)
 }
 
-pub(crate) async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+pub(crate) async fn train(state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     let (from, to) = setup.span;
     let out_dir = data.parent().unwrap_or(Path::new("."));
-    let ready = prepare(app, state, installed, out_dir, from + (to - from) * 0.05, cancel).await?;
-    ready.train(app, state, id, data, setup, cancel).await
+    let ready = prepare(state, installed, out_dir, from + (to - from) * 0.05, cancel).await?;
+    ready.train(state, id, data, setup, cancel).await
 }
 
 /// The trainer and the model file it trains, ready for one training run or
@@ -799,21 +807,21 @@ impl Drop for Ready {
 
 impl Ready {
     /// Trains an adapter on `data`, saved next to it as adapter.gguf.
-    pub(crate) async fn train(&self, app: &AppHandle, state: &Arc<AppState>, id: &str, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+    pub(crate) async fn train(&self, state: &Arc<AppState>, id: &str, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
         // The chat model gives the graphics card back for the training run.
         state.engine.lock().await.stop().await;
-        run_trainer(app, state, id, &self.exe, &self.model, data, setup, cancel).await
+        run_trainer(state, id, &self.exe, &self.model, data, setup, cancel).await
     }
 }
 
 /// Downloads the trainer the first time (filling the progress bar up to
 /// `span`) and makes the model's training copy in `out_dir`.
-pub(crate) async fn prepare(app: &AppHandle, state: &Arc<AppState>, installed: &db::InstalledModel, out_dir: &Path, span: f64, cancel: &AtomicBool) -> Result<Ready, String> {
-    let exe = ensure_trainer(app, state, cancel, span).await?;
+pub(crate) async fn prepare(state: &Arc<AppState>, installed: &db::InstalledModel, out_dir: &Path, span: f64, cancel: &AtomicBool) -> Result<Ready, String> {
+    let exe = ensure_trainer(state, cancel, span).await?;
     // The chat model gives the graphics card back, so its free memory can be measured.
     state.engine.lock().await.stop().await;
     // One plan and one copy, for every adapter trained from it.
-    let model = training_copy(app, state, installed, &exe, out_dir, cancel).await?;
+    let model = training_copy(state, installed, &exe, out_dir, cancel).await?;
     let copy = model.starts_with(out_dir);
     Ok(Ready { exe, model, copy })
 }
@@ -956,7 +964,7 @@ impl CardWatch {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Path, model: &Path, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+async fn run_trainer(state: &Arc<AppState>, id: &str, exe: &Path, model: &Path, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     let (from, to) = setup.span;
     let out_dir = data.parent().unwrap_or(Path::new(".")).to_path_buf();
     let mut args: Vec<std::ffi::OsString> = vec!["-m".into(), model.as_os_str().to_owned(), "-f".into(), data.as_os_str().to_owned()];
@@ -984,7 +992,7 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
     args.push("--checkpoint-save-dir".into());
     args.push(out_dir.join("checkpoints").into_os_string());
 
-    update(app, |j| j.status = "training".into());
+    update_in(state, |j| j.status = "training".into());
     let start = from + (to - from) * 0.05;
     let mut epoch = 1u32;
     // Training batches per epoch; the smaller counts are the held-out check.
@@ -1011,7 +1019,7 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
                     Seen::Rose(a, b) => {
                         state.log("model", &format!("During training the graphics card's use rose from {} to {}; the trainer's own went from {} to {} on the card and {} to {} in shared memory", gb(a.card), gb(b.card), gb(a.own), gb(b.own), gb(a.shared), gb(b.shared)));
                         if b.card + HEADROOM >= card.size {
-                            update(app, |j| j.low_memory = true);
+                            update_in(state, |j| j.low_memory = true);
                         }
                     }
                     Seen::Full(r) => {
@@ -1033,12 +1041,12 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
             let training = batches == train_batches;
             if let Some(slowed) = pace.step(now, training) {
                 state.log("model", &format!("Training slowed from about {:.0} s a step to {:.0} s: the graphics card looks short of memory", slowed.0, slowed.1));
-                update(app, |j| j.low_memory = true);
+                update_in(state, |j| j.low_memory = true);
             }
             if training {
                 loss = Some(l);
                 let done = (epoch - 1) as f64 + batch as f64 / batches.max(1) as f64;
-                update(app, |j| {
+                update_in(state, |j| {
                     j.epoch = epoch.min(epochs);
                     j.loss = Some(l);
                     j.fraction = start + (to - start) * (done / epochs as f64).min(1.0);

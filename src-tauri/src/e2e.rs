@@ -1940,6 +1940,77 @@ async fn e2e_realistic_picture_and_edits() {
     }
 }
 
+/// An edit of a real photo, planned and checked by the picture reader (the
+/// barbell photo: asked to have the child lift the barbell overhead, the
+/// edit model drew a second barbell and left the first on the floor).
+/// SULCUSAI_EDIT_SOURCE: the photo; SULCUSAI_EDIT_PROMPT: the request;
+/// SULCUSAI_MEDIA_OUT: where the result goes; SULCUSAI_EDIT_MODEL: the edit
+/// model (FLUX.2 klein 4B unless set); SULCUSAI_READER: the installed chat
+/// model that reads pictures (Qwen3.5 9B unless set); SULCUSAI_PLAN_ONLY:
+/// print the plan and stop (the edit model isn't needed for that).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_edit_a_photo() {
+    use crate::media::{self, prompts, store, Request};
+    let state = media_state();
+    // What the job says about its checks, printed at the end.
+    crate::applog::init(&state.paths.logs);
+    let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("set {k}"));
+    let out = std::path::PathBuf::from(var("SULCUSAI_MEDIA_OUT"));
+    std::fs::create_dir_all(&out).unwrap();
+    let c = state.cipher().unwrap();
+    let model = std::env::var("SULCUSAI_EDIT_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
+    let reader = std::env::var("SULCUSAI_READER").unwrap_or_else(|_| "qwen3.5-9b".into());
+    let file = std::fs::read_dir(state.paths.models.join(&reader))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"))
+        .expect("the reader's model file");
+    let size = std::fs::metadata(state.paths.models.join(&reader).join(&file)).unwrap().len();
+    crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: reader.clone(), quant: "Q4_K_M".into(), path: file, size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+    assert!(crate::vision::can_read(&state, None), "{reader} reads pictures");
+    let photo = var("SULCUSAI_EDIT_SOURCE");
+    let request = var("SULCUSAI_EDIT_PROMPT");
+    let img = media::imaging::decode(&std::fs::read(&photo).unwrap()).unwrap();
+    let m = media::models(&state).into_iter().find(|x| x.id == model).expect("a known edit model");
+
+    // The plan, as the job makes it.
+    let started = std::time::Instant::now();
+    let (w, h) = media::imaging::work_size(img.width(), img.height(), 1024 * 1024);
+    let before = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+    let r = prompts::reader(&state, Some(&m)).await.unwrap();
+    let plan = prompts::plan_edit(&r, &before, &request).await;
+    r.done(&state).await;
+    let plan = plan.unwrap();
+    println!("planned in {:.1}s", started.elapsed().as_secs_f64());
+    for (i, s) in plan.steps.iter().enumerate() {
+        println!("step {}: {s}", i + 1);
+    }
+    for x in &plan.checklist {
+        println!("check: {x}");
+    }
+    if std::env::var("SULCUSAI_PLAN_ONLY").is_ok() {
+        return;
+    }
+
+    media::install_for_test(&state, &model).await.unwrap();
+    let bytes = std::fs::read(&photo).unwrap();
+    let mime = if photo.ends_with(".webp") { "image/webp" } else if photo.ends_with(".png") { "image/png" } else { "image/jpeg" };
+    let source = media::add(&state, &c, bytes, "image", mime, "import", "photo", None, None, false).unwrap();
+    let started = std::time::Instant::now();
+    let req = Request { op: "edit".into(), prompt: request, source: Some(source.id.clone()), model_id: Some(model.clone()), ..Default::default() };
+    let made = media::run(&state, store::new_id(), req).await.unwrap();
+    let item = &made[0];
+    std::fs::write(out.join("edited.png"), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+    println!("edited in {:.1}s: {}x{} (the photo is {}x{})", started.elapsed().as_secs_f64(), item.width, item.height, img.width(), img.height());
+    let log = std::fs::read_to_string(state.paths.logs.join(crate::applog::APP_LOG)).unwrap_or_default();
+    for l in log.lines().filter(|l| l.contains("[media]")) {
+        println!("{l}");
+    }
+    assert_eq!((item.width, item.height), (img.width(), img.height()), "the photo's own size");
+}
+
 /// A model from Hugging Face, installed the way the Studio installs one
 /// (sharing the catalog model's text reader and decoder), makes a picture.
 /// SULCUSAI_HUB_REPO / SULCUSAI_HUB_FILE pick it (a FLUX.2 klein 4B

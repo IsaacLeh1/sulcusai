@@ -295,6 +295,314 @@ pub async fn judge(reader: &Helper, img: &image::DynamicImage, items: &[String])
     Ok(Verdict { score: 1.0 - missing.len() as f32 / items.len() as f32, missing })
 }
 
+/// An edit, planned by a model that sees the picture: the steps for the
+/// edit model, what to check afterwards, and the planner's own list of
+/// changes (to show it when planning again).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct EditPlan {
+    pub steps: Vec<String>,
+    pub checklist: Vec<String>,
+    pub changes: Value,
+    /// The main word of each thing that moves ("barbell"): there must be one of each after.
+    pub moved: Vec<String>,
+    /// How many people the edit takes away.
+    pub people_gone: usize,
+}
+
+/// Words for a person, to count the people an edit takes away.
+const PEOPLE: &[&str] = &["adult", "woman", "man", "person", "girl", "boy", "child", "baby", "toddler", "kid", "lady", "guy", "people", "mother", "father", "mom", "dad", "parent", "teenager", "men", "women", "player", "worker"];
+
+/// What the planner knows about FLUX.2 klein's edits. Asked to have a child
+/// lift the barbell in front of her overhead, it drew a second barbell
+/// above her and left the first on the floor, with fewer plates or another
+/// kind. Asked to plan steps itself, the planner (Qwen3.5 9B) wrote the
+/// request back as one step; asked to sort changes into kinds, it called
+/// the lift a pose. So it answers two plain questions: what will no longer
+/// be where it is now, and how the changed part looks after. The steps are
+/// built from that: whatever leaves goes first, then the finished scene.
+pub(crate) const EDIT_PLANNER: &str = "You plan a change to a picture for an edit model. The edit model redraws the picture from a plain description. \
+But asked to move something, or to have someone lift or pick it up, it draws a second copy and leaves the first where it was, and it \
+redraws moved things smaller or with different parts. So you answer two questions, and the instructions are built from your answers.\n\n\
+Look at the picture.\n\
+- \"leaving\": every person or thing that will no longer be where it is now. That is whatever the request removes, and also whatever \
+it has someone lift, pick up, hold up, carry or move: it leaves its place now and is drawn again where it goes. For each: \"what\", \
+the thing alone described exactly as it looks (size, colors, its parts and how many of each, any writing on it), not what it rests \
+on or what's near it; \"where_now\"; and \"left_behind\": what shows in that place once it's gone (the floor, wall or room behind it).\n\
+- \"result\": the changed part of the finished picture in one or two sentences: who and what, where, and the pose (where the arms, \
+hands and legs are), with anything from \"leaving\" that ends up somewhere else described exactly as in \"what\". Empty when the \
+request only removes things.\n\
+- \"checklist\": 3 to 8 short things to check by looking at the finished picture, including what must be gone (\"no …\").\n\
+Name people and things by how they look, never \"she\", \"he\" or \"it\". Only what the request asks for: add no ideas of your own. \
+Reply with only JSON.";
+
+/// A worked example for the planner (a request and its plan, without the picture).
+fn plan_demo() -> [Value; 2] {
+    [
+        json!({ "role": "user", "content": "The request: have the man pick up the guitar and play it, and take the dog out. \
+            (The picture: a man with a grey beard on a wooden stool; a brown acoustic guitar with a black strap leaning on the white wall to the right; a small white dog lying on a striped rug.)" }),
+        json!({ "role": "assistant", "content": json!({
+            "leaving": [
+                { "what": "the small white dog", "where_now": "lying on the striped rug", "left_behind": "the striped rug" },
+                { "what": "the brown acoustic guitar with a black strap", "where_now": "leaning on the white wall to the right", "left_behind": "the plain white wall and the wooden floor" }
+            ],
+            "result": "The man with the grey beard sits on the wooden stool playing the brown acoustic guitar with the black strap, his left hand on its neck and his right hand over the strings.",
+            "checklist": ["no dog in the picture", "no guitar left leaning on the wall", "the man holds the guitar and plays it", "the guitar is brown with a black strap"]
+        }).to_string() }),
+    ]
+}
+
+fn plan_schema() -> Value {
+    let text = json!({ "type": "string" });
+    json!({ "type": "object", "properties": {
+        "leaving": { "type": "array", "maxItems": 4, "items": { "type": "object", "properties": { "what": text, "where_now": text, "left_behind": text },
+            "required": ["what", "where_now", "left_behind"] } },
+        "result": text,
+        "checklist": { "type": "array", "items": { "type": "string" }, "maxItems": 8 } }, "required": ["leaving", "result", "checklist"] })
+}
+
+/// "adult woman" for "the adult woman": a thing's description without its article.
+fn bare(what: &str) -> &str {
+    let low = what.to_lowercase();
+    ["the ", "a ", "an "].iter().find(|a| low.starts_with(*a)).and_then(|a| what.get(a.len()..)).unwrap_or(what)
+}
+
+/// The main word of a description: "barbell" for "the long silver barbell with three black plates".
+fn head_word(what: &str) -> String {
+    let low = bare(what).to_lowercase();
+    let cut = [" with ", " in ", " on ", " wearing ", " holding ", " that ", " which ", ",", " of "].iter().filter_map(|w| low.find(w)).min().unwrap_or(low.len());
+    low[..cut].split_whitespace().last().unwrap_or_default().trim_matches(|c: char| !c.is_alphanumeric()).to_string()
+}
+
+/// The thing a request has someone lift, pick up, hold up, carry or move,
+/// by its main word ("barbell" in "she is lifting the barbell overhead").
+pub fn moved_thing(request: &str) -> Option<String> {
+    let low = request.to_lowercase();
+    let words: Vec<&str> = low.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).collect();
+    const VERBS: &[&str] = &["lift", "lifts", "lifting", "lifted", "pick", "picks", "picking", "hold", "holds", "holding", "carry", "carries", "carrying", "raise", "raises", "raising", "move", "moves", "moving", "grab", "grabs", "grabbing", "hoist", "hoisting", "press", "pressing"];
+    const SKIP: &[&str] = &["up", "the", "her", "his", "their", "its", "a", "an", "that", "this", "it", "them"];
+    let at = words.iter().position(|w| VERBS.contains(w))?;
+    let thing = words[at + 1..].iter().take(4).find(|w| !SKIP.contains(w) && w.len() > 2)?;
+    // "lifting her arms" moves nothing.
+    (!["arm", "arms", "hand", "hands", "head", "leg", "legs", "foot", "feet"].contains(thing)).then(|| thing.to_string())
+}
+
+/// A description kept short: its first sentence, at most `words` words,
+/// with "A …"/"The …" in lower case so it reads inside a sentence.
+fn short(s: &str, words: usize) -> String {
+    let s = s.trim();
+    let first = [". ", "; ", "\n"].iter().filter_map(|d| s.find(d)).min().map_or(s, |i| &s[..i]);
+    let mut out = first.split_whitespace().take(words).collect::<Vec<_>>().join(" ");
+    out = out.trim_end_matches(['.', ',', ';', ':', ' ']).to_string();
+    for (big, small) in [("A ", "a "), ("An ", "an "), ("The ", "the ")] {
+        if let Some(rest) = out.strip_prefix(big) {
+            out = format!("{small}{rest}");
+        }
+    }
+    out
+}
+
+/// The plan built from the planner's answers: a step for each thing leaving
+/// its place (saying what shows there instead), then one with how the
+/// changed part looks after, each ending by keeping the rest. The checklist starts with what must be gone. None when nothing
+/// usable came back.
+pub fn parse_plan(v: &Value) -> Option<EditPlan> {
+    let text = |c: &Value, k: &str, words: usize| short(c[k].as_str().unwrap_or_default(), words);
+    let result = cut_words(v["result"].as_str().unwrap_or_default().trim().trim_end_matches(['.', ' ']), 80);
+    let result_low = result.to_lowercase();
+    let (mut gone, mut checks, mut moved, mut people_gone) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    // Where things were taken from, so the planner's own "no …" items about them aren't checked twice.
+    let mut emptied: Vec<String> = Vec::new();
+    for c in v["leaving"].as_array().into_iter().flatten().take(4) {
+        let (what, now, left) = (text(c, "what", 30), text(c, "where_now", 15), text(c, "left_behind", 15));
+        if what.is_empty() {
+            continue;
+        }
+        let place = if now.is_empty() { String::new() } else { format!(" {now}") };
+        let fill = if left.is_empty() { "fill the space so it matches its surroundings".to_string() } else { format!("show {left} there instead") };
+        gone.push(format!("Remove {what}{place}, and {fill}."));
+        if !now.is_empty() {
+            emptied.push(now.to_lowercase());
+        }
+        // Drawn again somewhere else: it mustn't stay here too.
+        let head = head_word(&what);
+        let moves = head.len() > 2 && result_low.contains(&head);
+        if moves {
+            moved.push(head.clone());
+        } else if PEOPLE.contains(&head.as_str()) {
+            people_gone += 1;
+        }
+        checks.push(if moves { format!("no {} left{place}", bare(&what)) } else { format!("no {}{place}", bare(&what)) });
+    }
+    let then = if result.split_whitespace().count() >= 3 { vec![format!("{result}.")] } else { Vec::new() };
+    let keep = "Keep everything else as it is.";
+    // One removal per step: given two in one instruction, klein made the
+    // first and ignored the second.
+    let steps: Vec<String> = gone.into_iter().map(|g| vec![g]).chain([then]).filter(|s| !s.is_empty()).map(|s| cut_words(&format!("{} {keep}", s.join(" ")), 140)).collect();
+    if steps.is_empty() {
+        return None;
+    }
+    for x in v["checklist"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::trim) {
+        let low = x.to_lowercase();
+        let again = checks.iter().any(|c: &String| c.eq_ignore_ascii_case(x)) || (low.starts_with("no ") && emptied.iter().any(|p| low.ends_with(p.as_str())));
+        if x.split_whitespace().count() >= 2 && !again {
+            checks.push(x.to_string());
+        }
+    }
+    checks.truncate(8);
+    Some(EditPlan { steps, checklist: checks, changes: v.clone(), moved, people_gone })
+}
+
+/// When the request moves something the planner didn't list as leaving its
+/// place, the reader is asked where that thing is now, and it's added.
+async fn add_moved_thing(h: &Helper, img: &image::DynamicImage, request: &str, mut v: Value) -> Value {
+    let Some(thing) = moved_thing(request) else { return v };
+    let listed = v["leaving"].as_array().into_iter().flatten().any(|c| c["what"].as_str().is_some_and(|w| w.to_lowercase().contains(&thing)));
+    if listed {
+        return v;
+    }
+    let Ok(url) = crate::vision::data_url(img) else { return v };
+    let msgs = vec![
+        json!({ "role": "system", "content": "You describe things in a picture exactly as they look. Reply with only JSON." }),
+        json!({ "role": "user", "content": [
+            { "type": "text", "text": format!(
+                "Is there a {thing} in this picture? If there is: \"what\": the {thing} itself exactly as it looks (size, colors, its parts and how \
+                 many of each, any writing on it), in one sentence of at most 25 words, nothing about people or other things; \"where_now\": where \
+                 it is, in a few words; \"left_behind\": what would show in that place if it were taken away, in a few words (the floor, wall or room behind it)."
+            ) },
+            { "type": "image_url", "image_url": { "url": url } },
+        ] }),
+    ];
+    let text = |max: u32| json!({ "type": "string", "maxLength": max });
+    let schema = json!({ "type": "object", "properties": { "there": { "type": "boolean" }, "what": text(200), "where_now": text(100), "left_behind": text(100) }, "required": ["there", "what", "where_now", "left_behind"] });
+    let Ok(a) = h.ask_json(msgs, schema, 400, 0.1).await else { return v };
+    if a["there"].as_bool() != Some(true) || a["what"].as_str().is_none_or(|w| w.trim().is_empty()) {
+        return v;
+    }
+    let looks = short(a["what"].as_str().unwrap_or_default(), 30);
+    let what = if looks.to_lowercase().contains(&thing) { looks.clone() } else { format!("the {thing}, {looks}") };
+    // The result describes it the planner's way; this says how it really looks.
+    let result = v["result"].as_str().unwrap_or_default().trim().trim_end_matches('.').to_string();
+    if !result.is_empty() {
+        v["result"] = json!(format!("{result}. The {thing} looks exactly as before: {looks}."));
+    }
+    let entry = json!({ "what": what, "where_now": short(a["where_now"].as_str().unwrap_or_default(), 15), "left_behind": short(a["left_behind"].as_str().unwrap_or_default(), 15) });
+    match v["leaving"].as_array_mut() {
+        Some(list) => list.push(entry),
+        None => v["leaving"] = json!([entry]),
+    }
+    v
+}
+
+/// Plans an edit, looking at the picture.
+pub async fn plan_edit(h: &Helper, img: &image::DynamicImage, request: &str) -> Result<EditPlan, String> {
+    if !h.sees {
+        return Err(format!("{} can't see pictures.", h.name));
+    }
+    let mut msgs = vec![json!({ "role": "system", "content": EDIT_PLANNER })];
+    msgs.extend(plan_demo());
+    msgs.push(json!({ "role": "user", "content": [
+        { "type": "text", "text": format!("The request: {}", request.trim()) },
+        { "type": "image_url", "image_url": { "url": crate::vision::data_url(img)? } },
+    ] }));
+    let v = h.ask_json(msgs, plan_schema(), 1200, 0.2).await?;
+    let v = add_moved_thing(h, img, request, v).await;
+    parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())
+}
+
+/// Plans an edit again after its result fell short: the planner sees the
+/// picture before, the result, and what was wrong with it. The checklist
+/// stays the first one, so both results are scored the same way.
+pub async fn replan_edit(h: &Helper, before: &image::DynamicImage, after: &image::DynamicImage, request: &str, plan: &EditPlan, wrong: &[String]) -> Result<EditPlan, String> {
+    let mut msgs = vec![json!({ "role": "system", "content": EDIT_PLANNER })];
+    msgs.extend(plan_demo());
+    msgs.push(json!({ "role": "user", "content": [
+        { "type": "text", "text": format!("The request: {}", request.trim()) },
+        { "type": "image_url", "image_url": { "url": crate::vision::data_url(before)? } },
+    ] }));
+    msgs.push(json!({ "role": "assistant", "content": plan.changes.to_string() }));
+    msgs.push(json!({ "role": "user", "content": [
+        { "type": "text", "text": format!(
+            "The edit model made this picture from that, and it fell short: {}. List the changes again so each of these comes out right: \
+             describe more exactly what must go and what shows there instead, where each thing ends up, and how it looks. Reply with only the JSON.",
+            wrong.join("; ")
+        ) },
+        { "type": "image_url", "image_url": { "url": crate::vision::data_url(after)? } },
+    ] }));
+    let v = h.ask_json(msgs, plan_schema(), 1200, 0.4).await?;
+    let v = add_moved_thing(h, before, request, v).await;
+    let again = parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())?;
+    Ok(EditPlan { checklist: plan.checklist.clone(), ..again })
+}
+
+/// A checklist item as a yes-or-no question about the finished picture, and
+/// the answer it should get: "no barbell left on the floor" asks whether
+/// there's a barbell on the floor (it should be no).
+pub fn item_question(item: &str) -> (String, bool) {
+    let t = item.trim().trim_end_matches('.');
+    match t.get(..3).filter(|p| p.eq_ignore_ascii_case("no ")) {
+        Some(_) => (format!("Is there any {} in this picture?", t[3..].trim()), false),
+        None => (format!("Is this true of this picture: \"{t}\"?"), true),
+    }
+}
+
+/// One question about one picture, answered in JSON. The picture comes
+/// first, so the engine reuses it from one question to the next.
+async fn ask_about(reader: &Helper, url: &str, question: &str, schema: Value) -> Result<Value, String> {
+    let msgs = vec![
+        json!({ "role": "system", "content": "You look at a picture and answer a question about it strictly and literally. When unsure, answer no. Reply with only JSON." }),
+        json!({ "role": "user", "content": [
+            { "type": "image_url", "image_url": { "url": url } },
+            { "type": "text", "text": question },
+        ] }),
+    ];
+    reader.ask_json(msgs, schema, 60, 0.0).await
+}
+
+fn count_schema() -> Value {
+    json!({ "type": "object", "properties": { "count": { "type": "integer", "minimum": 0, "maximum": 30 } }, "required": ["count"] })
+}
+
+/// The metric for an edit. Asked to compare two pictures in one go, the
+/// reader (Qwen3.5 9B) passed an edit that left the barbell on the floor
+/// and added two people. So it answers one plain question at a time about
+/// the finished picture: each checklist item, how many of each moved thing
+/// there are (one, not two), and how many people there are against the
+/// picture before (none added).
+pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &image::DynamicImage, plan: &EditPlan) -> Result<Verdict, String> {
+    if !reader.sees {
+        return Err(format!("{} can't see pictures.", reader.name));
+    }
+    let after_url = crate::vision::data_url(after)?;
+    let yes_no = json!({ "type": "object", "properties": { "answer": { "type": "string", "enum": ["yes", "no"] } }, "required": ["answer"] });
+    let (mut missing, mut total) = (Vec::new(), 0usize);
+    for item in &plan.checklist {
+        let (q, want) = item_question(item);
+        let v = ask_about(reader, &after_url, &format!("{q} Answer yes or no."), yes_no.clone()).await?;
+        total += 1;
+        if (v["answer"].as_str() == Some("yes")) != want {
+            missing.push(item.clone());
+        }
+    }
+    for thing in &plan.moved {
+        let v = ask_about(reader, &after_url, &format!("How many of these can you see in this picture: {thing}? Count each one, even one partly hidden."), count_schema()).await?;
+        total += 1;
+        let n = v["count"].as_u64().unwrap_or(0);
+        if n > 1 {
+            missing.push(format!("only one {thing}, not {n}"));
+        }
+    }
+    let people = "How many people can you see in this picture? Count every person, even one shown only in part (just legs, arms or a hand).";
+    let before_url = crate::vision::data_url(before)?;
+    let n0 = ask_about(reader, &before_url, people, count_schema()).await?["count"].as_u64().unwrap_or(0);
+    let n1 = ask_about(reader, &after_url, people, count_schema()).await?["count"].as_u64().unwrap_or(0);
+    total += 1;
+    let expected = n0.saturating_sub(plan.people_gone as u64);
+    if n1 > expected {
+        missing.push(format!("no people added ({n1} people where there should be {expected})"));
+    }
+    Ok(Verdict { score: 1.0 - missing.len() as f32 / total.max(1) as f32, missing })
+}
+
 /// The language model that writes prompts for `m`: its own (the text reader
 /// it ships with), else a vision model on this PC, else the chat model.
 pub async fn writer(state: &Arc<AppState>, m: &MediaModel) -> Result<Helper, String> {
@@ -425,7 +733,7 @@ pub async fn prepare(state: &Arc<AppState>, req: &super::Request, m: &MediaModel
 
 /// Requests the optimizer practices on: varied, each with things that are
 /// easy to get wrong (counts, positions, text, light).
-const PRACTICE: &[(&str, &str, &str)] = &[
+pub(crate) const PRACTICE: &[(&str, &str, &str)] = &[
     ("three red apples and one green pear in a wooden bowl on a white kitchen table, morning light from the left", "photo", "landscape (wider than tall)"),
     ("a bakery storefront with a striped awning and a sign that says \"SUNRISE BAKERY\"", "photo", "landscape (wider than tall)"),
     ("an astronaut riding a horse across a desert at sunset, two moons in the sky", "cinematic", "landscape (wider than tall)"),
@@ -672,6 +980,66 @@ mod tests {
         assert_eq!(msgs.len(), 2 + 2 * bundled("flux2").demos.len().min(4));
         assert!(msgs[0]["content"].as_str().unwrap().contains("leave \"negative\" empty"));
         assert!(messages(&bundled("sd15"), &ask)[0]["content"].as_str().unwrap().contains("Also write \"negative\""));
+    }
+
+    #[test]
+    fn a_move_is_planned_as_taken_away_then_put_in_its_new_place() {
+        let v = json!({
+            "leaving": [
+                { "what": "the woman in a black sweatshirt", "where_now": "standing behind the girl", "left_behind": "the weight bench and the black floor mats" },
+                { "what": "the long silver barbell with three black plates on each end", "where_now": "on the floor in front of the girl", "left_behind": "the black rubber floor mat" },
+                { "what": "", "where_now": "x", "left_behind": "y" }
+            ],
+            "result": "The little girl in the red dress kneels and holds the long silver barbell with three black plates on each end above her head, arms straight up.",
+            "checklist": ["No barbell left on the floor in front of the girl", "both arms straight up", "x"]
+        });
+        let p = parse_plan(&v).unwrap();
+        assert_eq!(p.steps.len(), 3, "each thing that goes on its own, then how the changed part looks");
+        assert_eq!(p.steps[0], "Remove the woman in a black sweatshirt standing behind the girl, and show the weight bench and the black floor mats there instead. Keep everything else as it is.");
+        assert_eq!(p.steps[1], "Remove the long silver barbell with three black plates on each end on the floor in front of the girl, and show the black rubber floor mat there instead. Keep everything else as it is.");
+        assert!(p.steps[2].starts_with("The little girl in the red dress kneels and holds the long silver barbell"));
+        assert!(p.steps[2].ends_with("arms straight up. Keep everything else as it is."));
+        assert_eq!(
+            p.checklist,
+            vec!["no woman in a black sweatshirt standing behind the girl", "no long silver barbell with three black plates on each end left on the floor in front of the girl", "both arms straight up"],
+            "what must be gone comes first, once; the barbell is drawn again, so it mustn't be *left* there"
+        );
+        // Only taking things away: one step.
+        let v = json!({ "leaving": [{ "what": "the red car", "where_now": "in the driveway", "left_behind": "the grey driveway" }], "result": "", "checklist": [] });
+        assert_eq!(parse_plan(&v).unwrap().steps, vec!["Remove the red car in the driveway, and show the grey driveway there instead. Keep everything else as it is."]);
+        assert!(parse_plan(&json!({ "leaving": [], "result": "", "checklist": ["a b"] })).is_none());
+        assert_eq!(bare("The red cup"), "red cup");
+        assert_eq!(bare("Anna"), "Anna");
+        assert_eq!(head_word("the long silver barbell with three black plates"), "barbell");
+        assert_eq!(head_word("an adult woman, standing"), "woman");
+    }
+
+    #[test]
+    fn what_a_request_moves_is_found_by_its_verb() {
+        let ask = "Change the baby's pose so she is lifting the barbell overhead in a clean motion, with her arms extended upward.";
+        assert_eq!(moved_thing(ask).as_deref(), Some("barbell"));
+        assert_eq!(moved_thing("have him pick up the red guitar").as_deref(), Some("red"), "the first word after the verb; the reader is asked about it");
+        assert_eq!(moved_thing("make her raise her arms").as_deref(), None, "arms aren't things in the picture to move");
+        assert_eq!(moved_thing("make it night").as_deref(), None);
+    }
+
+    #[test]
+    fn checks_become_plain_questions_about_the_finished_picture() {
+        assert_eq!(item_question("No barbell left on the floor in front of the girl"), ("Is there any barbell left on the floor in front of the girl in this picture?".into(), false));
+        assert_eq!(item_question("both arms straight up."), ("Is this true of this picture: \"both arms straight up\"?".into(), true));
+        assert_eq!(item_question("north light").1, true, "only \"no \" with its space is an absence");
+        // The plan knows what moves (one of each after) and how many people go.
+        let v = json!({
+            "leaving": [
+                { "what": "the adult woman in black", "where_now": "behind the girl", "left_behind": "the bench" },
+                { "what": "the silver barbell with black plates", "where_now": "on the floor", "left_behind": "the mat" }
+            ],
+            "result": "The girl holds the silver barbell above her head.",
+            "checklist": []
+        });
+        let p = parse_plan(&v).unwrap();
+        assert_eq!(p.moved, vec!["barbell"]);
+        assert_eq!(p.people_gone, 1);
     }
 
     #[test]

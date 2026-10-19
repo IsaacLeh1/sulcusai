@@ -1617,9 +1617,13 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     } else {
         None
     };
-    let result = match model.filter(|m| matches!(req.op.as_str(), "generate" | "video") && m.kind != Kind::Upscale) {
-        Some(m) => made_well(state, id, req, m, cancel, progress).await,
-        None => run_kind(state, id, req, model, cancel, progress).await,
+    let result = match model.filter(|m| m.kind != Kind::Upscale) {
+        Some(m) if matches!(req.op.as_str(), "generate" | "video") => made_well(state, id, req, m, cancel, progress).await,
+        // Edits are planned and checked unless that's turned off, when something here reads pictures.
+        Some(m) if req.op == "edit" && req.check != Some(false) && (crate::vision::can_read(state, None) || installed_file(state, m, "llm_vision").is_some()) => {
+            edited_well(state, id, req, m, cancel, progress).await
+        }
+        _ => run_kind(state, id, req, model, cancel, progress).await,
     };
     if let Some(p) = paused {
         give_back(state, p).await;
@@ -1696,6 +1700,169 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
     Ok(keep)
 }
 
+/// An edit with the picture reader at work. Asked to have a child lift the
+/// barbell in front of her overhead, the edit model drew a second barbell
+/// above her and left the first on the floor, with plates missing or of
+/// another kind, and the result came back smaller than the photo. So:
+/// - the reader looks at the picture and plans the request as steps the
+///   edit model makes well (a move as "take it away", then "put it there,
+///   looking like this"), with a checklist that includes what must be gone;
+/// - the steps run one after another, each on the last one's result;
+/// - the reader checks the result against the picture before, and when it
+///   falls short the steps are planned again from what was wrong and made
+///   once more, keeping the better of the two;
+/// - the result goes back into the full-size original, so whatever the edit
+///   didn't change keeps its own pixels.
+async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaModel, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
+    let reserved = chat_model_vram(state).await;
+    let ctx = RunCtx { state, req, cancel, progress, reserved };
+    let work = work_dir(&state.paths, id)?;
+    let (item, full) = ctx.source()?;
+    let d = &m.defaults;
+    let hw = state.hardware.read().unwrap().clone();
+    let on_gpu = fit(m, &hw, &state.budget(), 0, None).on_gpu;
+    let side = if on_gpu { d.width.max(d.height).max(512) } else { 640 };
+    let (w, h) = imaging::work_size(full.width(), full.height(), side * side);
+    let (w, h) = if d.align > 16 { ((w / d.align).max(1) * d.align, (h / d.align).max(1) * d.align) } else { (w, h) };
+    let before = full.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+    // The first picture of an edit chain keeps faces from drifting (see picture()).
+    let original = if changes_how_people_look(&req.prompt) { None } else { ctx.original_of(&item)? };
+    let stopped = || cancel.load(Ordering::Relaxed);
+
+    progress("Looking at the picture and planning the change", 0.0);
+    let plan = match prompts::reader(state, Some(m)).await {
+        Ok(r) => {
+            let p = prompts::plan_edit(&r, &before, &req.prompt).await;
+            r.done(state).await;
+            p.map_err(|e| crate::applog::line("media", &format!("Couldn't plan the edit ({e}); using the instruction as written"))).ok()
+        }
+        Err(e) => {
+            crate::applog::line("media", &format!("Nothing could look at the picture ({e}); using the instruction as written"));
+            None
+        }
+    };
+    let plan = plan.unwrap_or_else(|| prompts::EditPlan { steps: vec![req.prompt.trim().to_string()], ..Default::default() });
+    crate::applog::line("media", &format!("Edit planned as {} step(s) with {} things to check", plan.steps.len(), plan.checklist.len()));
+    if stopped() {
+        return Err(download::CANCELLED.into());
+    }
+    let seed = req.seed.unwrap_or_else(random_seed);
+    // Something taken away or moved: a change in one place, so the rest stays put.
+    let local = plan.changes["leaving"].as_array().is_some_and(|l| !l.is_empty());
+    let first = edit_steps(&ctx, m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a")).await?;
+    // Back into the full-size original, when it fits (None: the edit model redrew the whole scene).
+    let first_kept = imaging::keep_unchanged(&full, &before, &first);
+    if local && first_kept.is_none() {
+        crate::applog::line("media", "The edit redrew the whole scene, so it doesn't fit back into the original");
+    }
+    let mut v1 = None;
+    let mut steps_again = None;
+    if plan.checklist.len() >= 2 && !stopped() {
+        progress("Checking the change against what you asked for", 0.0);
+        if let Ok(r) = prompts::reader(state, Some(m)).await {
+            if let Ok(v) = prompts::judge_edit(&r, &before, &first, &plan).await {
+                crate::applog::line("media", &format!("The edit did {:.0}% of what was asked for", v.score * 100.0));
+                if v.score < 0.85 && !v.missing.is_empty() && !stopped() {
+                    steps_again = prompts::replan_edit(&r, &before, &first, &req.prompt, &plan, &v.missing).await.ok().map(|p| p.steps);
+                }
+                v1 = Some(v);
+            }
+            r.done(state).await;
+        }
+    }
+    // Once more: with better steps when things were missing, or the same
+    // steps with a new seed when it redrew the whole scene.
+    if steps_again.is_none() && local && first_kept.is_none() {
+        steps_again = Some(plan.steps.clone());
+    }
+    let mut result = first_kept.clone().unwrap_or_else(|| first.clone());
+    if let Some(steps) = steps_again.filter(|_| !stopped()) {
+        progress("Making it again so it shows everything you asked for", 0.0);
+        if let Ok(second) = edit_steps(&ctx, m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b")).await {
+            let second_kept = imaging::keep_unchanged(&full, &before, &second);
+            let mut v2 = None;
+            if v1.is_some() {
+                if let Ok(r) = prompts::reader(state, Some(m)).await {
+                    v2 = prompts::judge_edit(&r, &before, &second, &plan).await.ok();
+                    r.done(state).await;
+                }
+            }
+            // The better one, with a little extra for one that fits back into the original.
+            let fits = |k: &Option<image::DynamicImage>| if local && k.is_some() { 0.1 } else { 0.0 };
+            let s1 = v1.as_ref().map_or(0.0, |v| v.score) + fits(&first_kept);
+            let s2 = v2.as_ref().map_or(0.0, |v| v.score) + fits(&second_kept);
+            crate::applog::line("media", &format!("Made again: {:.0} points against {:.0} for the first", s2 * 100.0, s1 * 100.0));
+            if s2 > s1 {
+                result = second_kept.unwrap_or(second);
+            }
+        }
+    }
+    if stopped() {
+        return Err(download::CANCELLED.into());
+    }
+    Ok(vec![ctx.keep_picture(&result, Some(m), Some(&item.id), Some(seed))?])
+}
+
+/// Runs an edit's steps in order, each on the last one's result, at the
+/// size of `before`. Nothing is kept in the gallery.
+async fn edit_steps(ctx: &RunCtx<'_>, m: &MediaModel, before: &image::DynamicImage, original: Option<&image::DynamicImage>, steps: &[String], seed: i64, dir: &std::path::Path) -> Result<image::DynamicImage, String> {
+    let d = &m.defaults;
+    let (w, h) = (before.width(), before.height());
+    let mut img = before.clone();
+    for (i, step) in steps.iter().enumerate() {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        let dir = dir.join(i.to_string());
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let src = dir.join("source.png");
+        std::fs::write(&src, imaging::png(&img)?).map_err(|e| e.to_string())?;
+        let mut refs = vec![src];
+        let mut prompt = step.trim().to_string();
+        if let Some(o) = original {
+            let first = dir.join("original.png");
+            std::fs::write(&first, imaging::png(&o.resize(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+            refs.push(first);
+            prompt = format!(
+                "{}. Work on the first picture and keep everything in it that isn't mentioned. The second picture is the original: keep every person's face and features exactly as there.",
+                prompt.trim_end_matches('.')
+            );
+        }
+        let negative = (!d.negative.is_empty()).then(|| fit_negative(&d.negative, None, &prompt)).filter(|n| !n.is_empty());
+        let out = dir.join("out_%d.png");
+        let args = sd::picture_args(
+            &ctx.files(m),
+            d,
+            &sd::Picture {
+                prompt: &prompt,
+                negative: negative.as_deref(),
+                width: w,
+                height: h,
+                steps: ctx.req.steps.unwrap_or(d.steps).clamp(1, 60),
+                seed: seed + i as i64,
+                count: 1,
+                init: None,
+                mask: None,
+                refs: refs.iter().map(|p| p.as_path()).collect(),
+                strength: None,
+                out: &out,
+            },
+            &ctx.limits(),
+        );
+        ctx.run_sd(args, &dir).await?;
+        let made = std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("out_")));
+        let next = imaging::decode(&std::fs::read(made.ok_or("The picture engine finished without making a picture.")?).map_err(|e| e.to_string())?)?;
+        // A run that fell back to a smaller size: back to this size for the next step.
+        img = if next.dimensions() == (w, h) { next } else { next.resize_exact(w, h, image::imageops::FilterType::Lanczos3) };
+        // Each step's picture, to look at while testing (SULCUSAI_EDIT_STEPS: a folder).
+        if let Some(out) = std::env::var_os("SULCUSAI_EDIT_STEPS") {
+            let attempt = dir.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let _ = std::fs::write(std::path::Path::new(&out).join(format!("{attempt}-{}.png", i + 1)), imaging::png(&img).unwrap_or_default());
+        }
+    }
+    Ok(img)
+}
+
 async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let reserved = chat_model_vram(state).await;
     let ctx = RunCtx { state, req, cancel, progress, reserved };
@@ -1745,6 +1912,8 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
     let al = |(w, h): (u32, u32)| if d.align > 16 { ((w / d.align).max(1) * d.align, (h / d.align).max(1) * d.align) } else { (w, h) };
     let mut source: Option<(MediaItem, image::DynamicImage)> = None;
     let mut fill_mask: Option<image::GrayImage> = None;
+    // An edit: the picture as the model got it, to find what it changed.
+    let mut edit_before: Option<image::DynamicImage> = None;
     let mut count = 1;
     let (prompt, w, h, init, mask, refs) = match req.op.as_str() {
         "generate" => {
@@ -1789,7 +1958,11 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             let s = ctx.source()?;
             let (w, h) = al(imaging::work_size(s.1.width(), s.1.height(), side * side));
             let src = work.join("source.png");
-            std::fs::write(&src, imaging::png(&s.1.resize_exact(w, h, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+            let small = s.1.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+            std::fs::write(&src, imaging::png(&small)?).map_err(|e| e.to_string())?;
+            if req.op == "edit" {
+                edit_before = Some(small);
+            }
             let mut prompt = if req.op == "restyle" {
                 format!("Redraw this picture in this style: {}. Keep the same subject, layout and composition.", req.prompt.trim())
             } else {
@@ -1908,6 +2081,11 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         // Filling in: put the new area into the full-size original.
         if let (Some(mk), Some((_, orig))) = (&fill_mask, &source) {
             img = imaging::composite(orig, &img, mk);
+        } else if let (Some(b), Some((_, orig))) = (&edit_before, &source) {
+            // An edit: what it didn't change stays the original's, at its size.
+            if let Some(kept) = imaging::keep_unchanged(orig, b, &img) {
+                img = kept;
+            }
         }
         if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.op == "generate") {
             let big = ctx.enlarge_for(&img, spec.width, spec.height, work).await;

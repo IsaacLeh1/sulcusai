@@ -143,6 +143,11 @@ pub struct Helper {
 impl Helper {
     /// Starts `model` (with `mmproj`, it reads pictures) on an engine of its own.
     pub async fn start(state: &Arc<AppState>, name: &str, model: &std::path::Path, mmproj: Option<&std::path::Path>) -> Result<Helper, String> {
+        Self::start_tuned(state, name, model, mmproj, None).await
+    }
+
+    /// The same, with a trained adapter on top (the prompt coach's).
+    pub async fn start_tuned(state: &Arc<AppState>, name: &str, model: &std::path::Path, mmproj: Option<&std::path::Path>, lora: Option<&std::path::Path>) -> Result<Helper, String> {
         let turn = turn().lock().await;
         let backend = engine::backend_for(&state.budget())?;
         let exe = engine::installed_server(&state.paths, &state.catalog.engine, backend).ok_or("The AI engine isn't installed yet: send a chat message once first.")?;
@@ -171,7 +176,7 @@ impl Helper {
                     log: &log,
                     mmproj,
                     batch: 0,
-                    lora: None,
+                    lora,
                 },
                 state.job(),
             )
