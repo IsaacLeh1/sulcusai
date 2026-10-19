@@ -1314,13 +1314,37 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
 
     So it learns the lookups it practises, but a 4B gets too few right in 512 tokens to move a test it already half passes.
 - **Where gains would come from:**
-  1. A teacher for code tasks. Run the teacher through the same episode, then lay its turns out in the student's template, as `in_students_words` does for single tool calls. Only that teaches L4-L6.
+  1. A teacher for code tasks: built 2026-10-19 (next bullet).
   2. Training the part of a right try that fits (the request and its first searches) when the whole try doesn't. This breaks the whole-try rule this was built to, so it's his call.
   3. Checking free card memory before picking the Q8_0 copy, or using Q4_0 when the desktop holds too much (done: "Training that fits the card").
 
   Picked with other skills, "your code" adds its lookup tries to theirs.
 - The test's code tasks come from the same seeded random source as the other skills' tasks, after them. So "your code" alone (5 of 12) and with "using tools" (3 of 12) are different tasks, each the same on every run.
-- A teacher answers in one reply, so tasks about the person's code never go to it (they stay out of `missed`). The form says so when both are picked.
+- **A teacher for code tasks** (2026-10-19). Code tasks the student misses go to the teacher like the others.
+  - The teacher works each one as a whole try, as the student did (`yourcode::teach`): its tool calls carried out on the scanned folders, read only, at the teacher's temperatures (0, 0.7, 0.7) until one is right. Its room is a little over the student's.
+  - Its right try is written the student's way (`yourcode::in_students_words`). For each turn, the student's `/apply-template` lays out the conversation so far with that turn's calls as structured tool calls and the same tool results after them. The text from that turn's start (`last_turn`: the latest turn of the model's, the generation prompt at the end left aside, an empty thinking block dropped) is appended; the answer comes last.
+  - It's kept only if the teacher looked (a tool call that worked), the answer is still right, and the whole text fits the student's room by the student's own count.
+  - Check: the 4B's own right tries, re-laid this way, came out byte-for-byte as it wrote them (5 of 5, `e2e_a_relaid_try_matches_the_original`).
+  - `enum Answer { Said, Looked }` carries either kind of answer to `in_students_words` in mod.rs. A teacher that can't use tools skips code tasks, and the form's "can't use tools" note now covers them.
+  - **A teacher's calls written as text count.** qwen2.5-coder 14B doesn't use the tool-call form:
+    - on code tasks it writes a ```json block with "name" and "arguments", then copies the answer line's placeholder ("Answer: <path>");
+    - on regular tool tasks it puts the JSON in `<tools>…</tools>`.
+
+    Practice only read `<tool_call>`, so in the first live run (practice-next 581e9dd, "your code" alone) the 14B got 0 of the 51 tasks the 4B missed, with no tool calls in 153 tries. With the 4B's own 3 right tries kept, the run stopped under `MIN_EXAMPLES`, before training.
+
+    Now a teacher's reply is read as chats read one (`rescued`, using `chat::salvage`): the first call written into the text, for a tool that was offered, becomes a call. That covers teach()'s one-reply path (`teacher_right`) and its whole tries for code tasks.
+    - The calls are still written out again in the student's form and checked again.
+    - The student's own replies are read as before, since they're learnt as written.
+    - Only the first call is taken, so two-call tasks (`Check::Calls`) still never count for a teacher.
+  - With the rescue, on 12 code tasks with the full window: 61 tool calls in 57 tries, 31 answered after looking, 3 of 12 right (L1 1/2, L2 0/2, L3 2/2, L4-L6 0/6), 3 of 12 right inside practice's room. Both of its real tool-task replies (`set_timer`, `get_weather`) are read right (unit test).
+  - Live run with the rescue (dev app, 5f4e86d = practice-next dd931ff code, "your code" alone, 2 rounds, normal):
+    - Test before: 5 of 12.
+    - Student: 10 of 60 right, 6 kept (159 of 213 tries out of room).
+    - Teacher: 12 of the 50 tasks it missed right, all 12 kept after being written the student's way.
+    - All 18 training lines are in Qwen3's own form (no ```json, no `<tools>` left). The teacher's are short, precise tries, e.g. search_files `fn has_alpha\(` → one match → "Answer: sulcusai/src-tauri/src/media/imaging.rs". The student's own often open with a wasted find_files.
+    - Training copy Q4_0 ("needs about 7.9 GB, 10.3 GB free"). It ran at about 9.5 GB, 12 s a step, loss 0.93 → 0.81 in round 1.
+    - In round 2, at step 7, card memory jumped from 9.9 to 11.46 of 12.23 GB, the same jump as Q8_0's at step 8 earlier. Steps kept their speed, but that's inside the agreed 1 GB margin, so the watcher stopped the run: no after-test, nothing kept. Card peak 75 °C. The trainer log and card readings are in C:\dev\tools\yourcode-run\jump-data\ (README.md).
+    - So the teacher works end to end for code tasks, but whether it moves the test is still unmeasured. Next: the same run once training fits the card all the way through.
 - The app log gets one line per stage: "Tries at your code: N; … answered after looking, … without looking, … ran out of room, … never answered; … tool calls; requests up to … tokens" (`Index::tally`).
 - Tests (`practice::yourcode::tests`):
   - a small project in all three languages, beside a `node_modules`, a `target`, a `.env`, a key file, a file with a token in it, a lockfile and a gitignored folder;
@@ -1329,7 +1353,9 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
   - the ways answers get written;
   - the tools' limits and refusals, secret names, and the layout tail.
 
-  Three ignored tests:
+  `a_turn_is_taken_from_the_students_layout` covers the teacher's re-layout: Qwen3 with and without an empty thinking block, two rounds joining up, and Gemma.
+
+  Four ignored tests (the fourth, `e2e_a_relaid_try_matches_the_original`, is above):
   - `scan_a_real_folder` scans `SULCUSAI_SCAN` and prints a task of each level.
   - `e2e_code_tries` runs real tries on it against a llama-server started with `--jinja` (`SULCUSAI_TEST_PORT`/`_KEY`, `SULCUSAI_TRIES` a level, `SULCUSAI_SHOW` for transcripts). With `SULCUSAI_DUMP` it writes the lines practice would keep, for running the trainer by hand.
   - `e2e_code_test` runs practice's 12-task test against a server with or without `--lora`; `SULCUSAI_TOOLS` swaps in other tool definitions.
