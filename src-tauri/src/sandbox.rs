@@ -31,7 +31,8 @@ const SECRET_FILES: &[&str] = &[".env", ".pem", ".key", ".pfx", ".p12", ".kdbx"]
 
 /// A key, saved login or password store: never read from the home folder.
 pub fn secret(path: &Path) -> bool {
-    let k = key(path);
+    // Without regard to capitals everywhere: "AppData/.../Chrome/User Data" on a Mac too.
+    let k = key(path).to_lowercase();
     let parts: Vec<&str> = k.split('/').collect();
     let name = parts.last().copied().unwrap_or_default();
     parts.iter().any(|p| SECRET_DIRS.contains(p))

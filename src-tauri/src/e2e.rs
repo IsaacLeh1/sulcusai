@@ -442,7 +442,8 @@ async fn e2e_agent_finds_runs_and_reports() {
     let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: find, run, report ({:.0}s)", started.elapsed().as_secs_f64()));
     let _ = std::fs::remove_dir_all(home.join(format!("SulcusAI-e2e-{id}")));
     let _ = std::fs::remove_dir_all(&project);
-    assert!(asked.lock().unwrap().is_empty(), "it asked: {:?}", asked.lock().unwrap());
+    let asked = asked.lock().unwrap().clone();
+    assert!(asked.is_empty(), "it asked: {asked:?}");
     assert!(tools.iter().any(|t| t == "find_files"), "found it by name: {tools:?}");
     assert!(tools.iter().any(|t| t == "run_command"), "ran it: {tools:?}");
     assert!(reply.contains(&format!("SULCUS-OK-{id}")), "reported what it printed: {reply}");
@@ -474,7 +475,8 @@ async fn e2e_agent_applies_a_page() {
     let written = std::fs::read_to_string(project.join(".gitignore")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&project);
     println!("reply: {reply}");
-    assert!(asked.lock().unwrap().is_empty(), "it asked: {:?}", asked.lock().unwrap());
+    let asked = asked.lock().unwrap().clone();
+    assert!(asked.is_empty(), "it asked: {asked:?}");
     assert!(tools.iter().any(|t| t == "fetch_page"), "fetched it: {tools:?}");
     assert!(written.contains("node_modules"), "the folder's .gitignore is the page's: {written:.200}");
 }
