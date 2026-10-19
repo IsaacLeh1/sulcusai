@@ -418,6 +418,12 @@ fn known_ratings(name: &str, params_b: f64) -> Ratings {
     if let Some(m) = models.iter().find(|m| m.id == base || m.id.starts_with(&format!("{base}-"))) {
         return m.ratings.clone();
     }
+    // Other apps spell the same model differently: Ollama's "gemma3:12b"
+    // is the catalog's "gemma-3-12b", "qwen3.5:9b" its "qwen3.5-9b".
+    let bare = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    if let Some(m) = models.iter().find(|m| bare(&m.id) == bare(&base)) {
+        return m.ratings.clone();
+    }
     let fam = family(&base);
     if fam.is_empty() {
         return Ratings::default();
@@ -659,6 +665,8 @@ mod tests {
         assert_eq!(known_ratings("qwen3-coder:30b", 30.5).agents, 8);
         assert_eq!(known_ratings("qwen2.5-coder:14b", 14.8).agents, 4, "same family, nearest size");
         assert_eq!(known_ratings("qwen3:8b", 8.2).agents, 7);
+        assert_eq!(known_ratings("gemma3:12b", 12.0).writing, 8, "Ollama leaves out the catalog's dashes");
+        assert_eq!(known_ratings("qwen3.5:9b", 9.0).overall, 74);
         assert_eq!(known_ratings(r"C:\models\qwen3-14b-Q4_K_M.gguf", 14.8).agents, 8);
         assert_eq!(known_ratings("some-new-model:7b", 7.0).agents, 0, "unknown: no ratings");
     }
