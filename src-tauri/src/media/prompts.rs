@@ -74,7 +74,13 @@ const BUNDLED: &str = include_str!("../../../catalog/prompt_programs.json");
 
 /// The family a picture or video model belongs to, which decides how its prompts are written.
 pub fn family(m: &MediaModel) -> &'static str {
-    let id = m.id.to_lowercase();
+    // A model from Hugging Face: the family of the one it's built on (one
+    // installed before that was kept names it in its description).
+    let id = match (&m.built_on, &m.from_hub) {
+        (Some(b), _) => b.to_lowercase(),
+        (None, Some(_)) => m.description.split("built on ").nth(1).unwrap_or(&m.id).to_lowercase(),
+        _ => m.id.to_lowercase(),
+    };
     let hub = m.hub.as_ref().map(|h| h.name.to_lowercase()).unwrap_or_default();
     let any = |words: &[&str]| words.iter().any(|w| id.contains(w) || hub.contains(w));
     if m.kind == Kind::Video {

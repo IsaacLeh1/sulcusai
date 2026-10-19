@@ -668,6 +668,7 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
     benchmark: t("Testing speed on this PC"),
     optimizing: t("Trying setups to find the fastest on this PC"),
     vision: t("Downloading the picture reader"),
+    waiting: t("Waiting for a reply that uses this model to finish"),
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   const testing = TESTING.has(p.phase);

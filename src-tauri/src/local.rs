@@ -399,6 +399,10 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         (Some(n), Some(used)) if n > 0 => 0.1 + 0.9 * used as f64 / n as f64,
         _ => 1.0,
     };
+    // Layers that keep only a sliding window of the conversation.
+    let swa_every = crate::catalog::swa_every(&arch);
+    let swa_window = if swa_every > 0 { a("attention.sliding_window").unwrap_or(0).max(0) as u32 } else { 0 };
+    let swa_every = if swa_window > 0 { swa_every } else { 0 };
     std::fs::metadata(&c.path).map_err(|e| e.to_string())?;
     let size = size_with_parts(&c.path);
     let header = int("general.file_type").map_or("Unknown", gguf::quant_name);
@@ -434,7 +438,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         },
         tags: if vision.is_some() { vec!["vision".into()] } else { Vec::new() },
         params_b,
-        arch: Arch { n_layer: n_layer as u32, n_kv_heads: kv_heads as u32, head_dim: head_dim as u32, max_ctx, active_fraction },
+        arch: Arch { n_layer: n_layer as u32, n_kv_heads: kv_heads as u32, head_dim: head_dim as u32, max_ctx, active_fraction, swa_window, swa_every },
         default_ctx: 8192.min(max_ctx),
         tools: template.contains("tools"),
         variants: vec![Variant {

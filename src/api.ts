@@ -2179,7 +2179,7 @@ export interface GpuNow {
 export interface InstallProgress {
   model_id: string;
   /** "loading" and "benchmark": the model is tried out on this PC (its speed is measured). */
-  phase: "engine" | "verify" | "download" | "loading" | "benchmark" | "vision" | "optimizing";
+  phase: "engine" | "verify" | "download" | "loading" | "benchmark" | "vision" | "optimizing" | "waiting";
   received: number;
   total: number;
 }

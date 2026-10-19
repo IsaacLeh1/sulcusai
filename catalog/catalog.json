@@ -279,7 +279,9 @@
         "n_kv_heads": 4,
         "head_dim": 256,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "swa_every": 6
       },
       "default_ctx": 8192,
       "tools": false,
@@ -492,7 +494,9 @@
         "n_kv_heads": 8,
         "head_dim": 256,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "swa_every": 6
       },
       "default_ctx": 8192,
       "tools": false,
@@ -636,7 +640,9 @@
         "n_kv_heads": 8,
         "head_dim": 64,
         "max_ctx": 131072,
-        "active_fraction": 0.25
+        "active_fraction": 0.25,
+        "swa_window": 128,
+        "swa_every": 2
       },
       "default_ctx": 8192,
       "tools": true,
@@ -977,7 +983,9 @@
         "n_kv_heads": 16,
         "head_dim": 128,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "swa_every": 6
       },
       "default_ctx": 8192,
       "tools": false,
@@ -1848,6 +1856,161 @@
             "z-image",
             "z_image",
             "zimage"
+          ]
+        }
+      },
+      {
+        "id": "flux1-schnell",
+        "name": "FLUX.1 schnell",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+        "description": "Detailed pictures in 4 quick steps, and the base of many FLUX.1 fine-tunes you can open from a Hugging Face link. Creates and fills in; for edits from instructions, use FLUX.2 klein.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux1-schnell-Q4_K_S.gguf",
+            "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_K_S.gguf",
+            "size": 6783943712,
+            "sha256": "4fd16477b3a5296d0cf722c4b92a9fd7f30d09ac7495826e4465d8de9c9fd973"
+          },
+          {
+            "role": "clip_l",
+            "file": "clip_l.safetensors",
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+            "size": 246144152,
+            "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+          },
+          {
+            "role": "t5xxl",
+            "file": "t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "size": 2896123072,
+            "sha256": "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4"
+          },
+          {
+            "role": "vae",
+            "file": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "size": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 25,
+        "quality": 7,
+        "defaults": {
+          "steps": 4,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.1 schnell",
+          "bases": [
+            "black-forest-labs/FLUX.1-schnell"
+          ],
+          "role": "diffusion",
+          "min_size": 3000000000,
+          "max_size": 25000000000,
+          "avoid": [
+            "fill",
+            "kontext",
+            "redux",
+            "depth",
+            "canny",
+            "fp8",
+            "dev"
+          ]
+        }
+      },
+      {
+        "id": "flux1-dev",
+        "name": "FLUX.1 dev",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.1-dev",
+        "description": "Sharper, more detailed pictures than FLUX.1 schnell, in 20 steps, and the base of most FLUX.1 fine-tunes on Hugging Face (paste a link to one in the Studio). Creates and fills in.",
+        "license": {
+          "name": "FLUX.1 [dev] Non-Commercial License",
+          "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md",
+          "commercial": false,
+          "note": "Non-commercial use only. Read the license before using what it makes for work."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux1-dev-Q4_K_S.gguf",
+            "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
+            "size": 6805988640,
+            "sha256": "75bb19459b5240c9f373b5af527584af15b675867fa142efadf7478d6abbf62b"
+          },
+          {
+            "role": "clip_l",
+            "file": "clip_l.safetensors",
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+            "size": 246144152,
+            "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+          },
+          {
+            "role": "t5xxl",
+            "file": "t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "size": 2896123072,
+            "sha256": "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4"
+          },
+          {
+            "role": "vae",
+            "file": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "size": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 80,
+        "quality": 8,
+        "defaults": {
+          "steps": 20,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.1 dev",
+          "bases": [
+            "black-forest-labs/FLUX.1-dev"
+          ],
+          "role": "diffusion",
+          "min_size": 3000000000,
+          "max_size": 25000000000,
+          "avoid": [
+            "fill",
+            "kontext",
+            "redux",
+            "depth",
+            "canny",
+            "fp8",
+            "schnell"
           ]
         }
       },

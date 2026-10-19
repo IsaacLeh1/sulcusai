@@ -504,13 +504,15 @@ fn hub_why_not(info: &serde_json::Value) -> String {
     let tags: Vec<String> = info["tags"].as_array().into_iter().flatten().map(text).collect();
     let bases = text(&info["cardData"]["base_model"]) + &info["cardData"]["base_model"].as_array().into_iter().flatten().map(text).collect::<Vec<_>>().join(" ");
     let picture = matches!(pipeline.as_str(), "text-to-image" | "image-to-image") || tags.iter().any(|t| t.starts_with("diffusers"));
-    let works = "Picture models from Hugging Face work when they're built on SDXL (for example Juggernaut XL or RealVisXL), Stable Diffusion 1.5 (for example Realistic Vision), Z-Image, FLUX.2 klein or Qwen Image.";
+    let works = "Picture models from Hugging Face work when they're built on SDXL (for example Juggernaut XL or RealVisXL), Stable Diffusion 1.5 (for example Realistic Vision), FLUX.1, FLUX.2 klein, Z-Image or Qwen Image.";
     // Only the folders Python's diffusers library reads (unet/, vae/…), no single file.
     let files: Vec<String> = info["siblings"].as_array().into_iter().flatten().map(|s| text(&s["rfilename"])).collect();
     let one_file = files.iter().any(|f| !f.contains('/') && (f.ends_with(".safetensors") || f.ends_with(".ckpt") || f.ends_with(".gguf")));
     let split = files.iter().any(|f| f.starts_with("unet/") || f.starts_with("transformer/")) && !one_file;
     if (id.contains("flux.1") || bases.contains("flux.1")) && !id.contains("flux.2") {
-        format!("FLUX.1 models (dev and schnell) don't run in SulcusAI yet; the newer FLUX.2 klein does. {works}")
+        format!(
+            "That FLUX.1 model isn't in a form SulcusAI runs: it needs the model as one .gguf or .safetensors file (city96's GGUF versions work), and FLUX.1 Fill, Kontext, Redux, Depth and Canny aren't supported. {works}"
+        )
     } else if picture && split {
         format!(
             "That model is only there split into folders (unet, vae, text_encoder), the way Python tools load it. SulcusAI needs it as one .safetensors or .gguf file: \
@@ -641,6 +643,16 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
             }
             // Replacing another version of the same model: drop the old file.
             if let Some(old) = previous.filter(|p| p.path != dest.display().to_string()) {
+                // A reply still using it finishes first (up to 3 minutes):
+                // stopping the engine now would cut it off.
+                let asked = std::time::Instant::now();
+                while !state.generations.lock().unwrap().is_empty() && asked.elapsed() < WAIT_FOR_REPLIES {
+                    if state.engine.lock().await.status().model_id.as_deref() != Some(&spec.id) {
+                        break;
+                    }
+                    emit("waiting", 0, 0);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
                 let mut engine = state.engine.lock().await;
                 if engine.status().model_id.as_deref() == Some(&spec.id) {
                     engine.stop().await;
@@ -2597,7 +2609,7 @@ mod hub_link_tests {
     #[test]
     fn a_model_that_cant_be_used_says_why_in_plain_words() {
         let flux = super::hub_why_not(&json!({ "id": "city96/FLUX.1-schnell-gguf", "pipeline_tag": "text-to-image", "cardData": { "base_model": "black-forest-labs/FLUX.1-schnell" } }));
-        assert!(flux.starts_with("FLUX.1 models") && flux.contains("Juggernaut XL"), "{flux}");
+        assert!(flux.starts_with("That FLUX.1 model") && flux.contains("Juggernaut XL"), "{flux}");
         let sd3 = super::hub_why_not(&json!({ "id": "stabilityai/stable-diffusion-3.5-large", "pipeline_tag": "text-to-image", "tags": ["diffusers"] }));
         assert!(sd3.contains("picture model") && !sd3.contains("GGUF"), "{sd3}");
         let split = super::hub_why_not(&json!({ "id": "Lykon/dreamshaper-8", "pipeline_tag": "text-to-image", "siblings": [{ "rfilename": "unet/diffusion_pytorch_model.safetensors" }, { "rfilename": "vae/diffusion_pytorch_model.safetensors" }] }));

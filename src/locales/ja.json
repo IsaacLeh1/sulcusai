@@ -3053,5 +3053,6 @@
  "Making the model's training copy failed. Its log is in the app's logs folder.": "学習用のモデルのコピーを作れませんでした。ログはアプリのログフォルダーにあります。",
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "トレーナーのモデル変換ツールが見つかりません。アプリのエンジンフォルダーにあるトレーナーのフォルダーを削除すると、再ダウンロードされます。",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "学習用のモデルのコピーを置く空き容量が足りません。アプリのデータがあるドライブを数 GB 空けてから、もう一度お試しください。",
- "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "練習した種類の課題が得意になりますが、すべてが良くなるわけではなく、新しい知識も覚えません。グラフィックカードで通常 20～90 分かかります。"
+ "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "練習した種類の課題が得意になりますが、すべてが良くなるわけではなく、新しい知識も覚えません。グラフィックカードで通常 20～90 分かかります。",
+ "Waiting for a reply that uses this model to finish": "このモデルを使っている返答が終わるのを待っています"
 }

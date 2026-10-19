@@ -74,6 +74,25 @@ pub struct Arch {
     pub max_ctx: u32,
     /// Share of the weights read per token (below 1.0 for mixture-of-experts).
     pub active_fraction: f64,
+    /// Sliding-window attention: most layers keep only the last `swa_window`
+    /// tokens, and one in every `swa_every` keeps the whole window (Gemma 3:
+    /// 1024 and 6; gpt-oss: 128 and 2). 0: every layer keeps everything.
+    #[serde(default)]
+    pub swa_window: u32,
+    #[serde(default)]
+    pub swa_every: u32,
+}
+
+/// One in how many layers keeps the whole window, for families whose other
+/// layers slide (llama.cpp sets these per architecture). 0: unknown, so
+/// planned as if every layer kept everything.
+pub fn swa_every(architecture: &str) -> u32 {
+    match architecture {
+        "gemma3" => 6,
+        "gemma2" | "gpt-oss" => 2,
+        "cohere2" => 4,
+        _ => 0,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -341,7 +360,18 @@ impl ModelFit {
 
 /// f16 K and V for every layer at the given context length.
 pub fn kv_cache_bytes(arch: &Arch, ctx: u32) -> u64 {
-    2 * arch.n_layer as u64 * arch.n_kv_heads as u64 * arch.head_dim as u64 * ctx as u64 * 2
+    let per_token = 2 * arch.n_kv_heads as u64 * arch.head_dim as u64 * 2;
+    let tokens = if arch.swa_window > 0 && arch.swa_every > 0 {
+        // llama.cpp: layer i keeps everything when i % every == every - 1.
+        let whole = (arch.n_layer / arch.swa_every) as u64;
+        // A sliding layer keeps its window plus one batch (llama.cpp:
+        // n_swa + n_ubatch), never more than the whole window.
+        let sliding = (arch.swa_window + 512).min(ctx) as u64;
+        whole * ctx as u64 + (arch.n_layer as u64 - whole) * sliding
+    } else {
+        arch.n_layer as u64 * ctx as u64
+    };
+    per_token * tokens
 }
 
 fn tps(bytes_per_token: f64, bw_gbs: f64) -> f64 {
@@ -731,6 +761,19 @@ mod tests {
 
     /// The compressed cache when it puts the whole model on the card, or
     /// gives a 16K window the normal cache can't; not otherwise.
+    #[test]
+    fn sliding_window_layers_keep_only_their_window() {
+        // Gemma 3 4B at 16K, as llama.cpp b11450 allocated it: 5 layers of
+        // 16384 cells (320 MiB) and 29 of 1536 (174 MiB).
+        let c = Catalog::bundled();
+        let gemma = &c.model("gemma-3-4b").unwrap().arch;
+        assert_eq!(kv_cache_bytes(gemma, 16384), (320 + 174) * 1024 * 1024);
+        let full = Arch { swa_window: 0, swa_every: 0, ..gemma.clone() };
+        assert!(kv_cache_bytes(&full, 16384) > 4 * kv_cache_bytes(gemma, 16384), "the old estimate was 4.6 times too big");
+        // A window smaller than the slide keeps everything everywhere.
+        assert_eq!(kv_cache_bytes(gemma, 1024), kv_cache_bytes(&full, 1024));
+    }
+
     #[test]
     fn the_compressed_cache_puts_the_whole_model_on_the_card() {
         let c = catalog();

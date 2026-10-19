@@ -3053,5 +3053,6 @@
  "Making the model's training copy failed. Its log is in the app's logs folder.": "No se pudo crear la copia de entrenamiento del modelo. Su registro está en la carpeta de registros de la app.",
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "Falta el conversor de modelos del entrenador. Elimina la carpeta del entrenador en la carpeta de motores de la app para descargarlo de nuevo.",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "No hay suficiente espacio libre para la copia de entrenamiento del modelo. Libera unos gigabytes en la unidad donde la app guarda sus datos e inténtalo de nuevo.",
- "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "Mejora en los tipos de tareas que practica, no en todo, y no aprende datos nuevos. Suele tardar entre 20 y 90 minutos en la tarjeta gráfica."
+ "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "Mejora en los tipos de tareas que practica, no en todo, y no aprende datos nuevos. Suele tardar entre 20 y 90 minutos en la tarjeta gráfica.",
+ "Waiting for a reply that uses this model to finish": "Esperando a que termine una respuesta que usa este modelo"
 }

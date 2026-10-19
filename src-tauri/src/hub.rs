@@ -272,7 +272,7 @@ fn estimate_arch(params_b: f64, architecture: &str, repo_id: &str, ctx_len: u32)
         Some(a) if params_b > 0.0 && a < params_b => 0.1 + 0.9 * a / params_b,
         _ => 1.0,
     };
-    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 131_072), active_fraction }
+    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 131_072), active_fraction, swa_window: 0, swa_every: 0 }
 }
 
 /// A short name from the repository's: "unsloth/gpt-oss-20b-GGUF" → "gpt-oss-20b".
