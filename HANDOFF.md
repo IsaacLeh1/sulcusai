@@ -1169,6 +1169,59 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - Lesson: Windows quietly moves what doesn't fit to shared memory. His 14B with 49 layers and the normal cache at 16K "fit", with 2.1 GB in shared memory, and llama.cpp logged "failed to fit params". A short test still looked fast (51 tokens/s), so the first version wrongly chose it. The spill check fixed that.
 - Live on his 14B at 16K: the automatic setup (47 layers, compressed) stays at 46.5 tokens/s. The other setups were rejected (spill; 591 MB free). It offered a 12K window with everything on the card at 58.9 tokens/s. A run takes 99 s and the card stayed under 40 °C.
 
+## Practice: making a model better at checkable skills (2026-10-18, for 0.9.14)
+
+- Settings → Advanced → Model work → "Make a model better by practice…" (in `TeachModel.tsx`, command `start_practice`, `practice/`). The person picks what it should become an expert in:
+  - coding;
+  - writing;
+  - research from sources;
+  - word problems;
+  - careful counting;
+  - dates and times;
+  - following instructions;
+  - using tools.
+- How a run goes (it reuses the teaching job, so chats on this PC's models wait, as for teaching):
+  1. A test before: 12 tasks a skill, made from a fixed seed, so every run of a model gets the same test.
+  2. Practice: 160 tasks shared out (coding gets twice a share, 20-60 each), weighted toward the levels it got partly right. Each task gets up to 4 tries at temperature 0.8, and the first right one is kept. Word-problem, counting and date tasks it never gets right get one more try being told the answer; that try is kept only if it then works it out without mentioning the hint.
+  3. The QVAC trainer learns from the kept attempts (LoRA rank 16, 1,024-token examples, `--assistant-loss-only`).
+  4. The same test again with the adapter loaded. It's kept only if it gets at least 2 more tasks right; otherwise the folder is deleted and nothing changes.
+- Every task is checked by a program, never by another model:
+  - `tasks.rs`: answer lines, times, dates (leap years, years required when asked), sorted lists, shape rules (exact word or sentence counts, JSON, bullets), and tool calls in both Qwen forms (`<tool_call>` JSON and `<function=…>`).
+  - `coding.rs`: 34 JavaScript problems. The reply's function runs on fresh cases in the QuickJS sandbox (`jsrun::run_within`, 3 s) and must match the reference answers on every case.
+  - `writing.rs`: summaries must keep the facts asked for, add no number the report doesn't have, and stay within the word and sentence limits. Proofreading must give back the exact original. Emails need every detail and the signature.
+  - `research.rs`: made-up towns and bridges, so the model can't answer from memory. Look-alike sources share a name. The answer must cite exactly the sources used, or say "not in the sources".
+- Each skill has 6 levels, and the test (12 tasks a skill) is weighted to the hard end: levels 1, 2, 3, 3, 4, 4, 5, 5, 5, 6, 6, 6. Levels 5-6 (`hard.rs` and the level 5-6 parts of the others) are meant to trip up 8-14B models too:
+  - remainders of big powers, grid paths, primes;
+  - lists changed 6-10 times, balls swapped 8-12 times;
+  - working-day deadlines, flights across time zones and midnight;
+  - acrostics, no letter "e", exact words per bullet;
+  - two-report summaries in exactly two sentences;
+  - research with a correction source;
+  - two tool calls at once;
+  - number-to-words, text justification, regex matching, an LRU cache, Dijkstra and topological order in code.
+
+  The first version had only level-1 tasks, and Qwen3 4B 2507 got 59 of 60 right.
+- Training window: 512 tokens, measured on his 12 GB card with the 4B. 512 takes 8.3 GB; 768 spills 4.6 GB into shared memory; 1,024 spilled 6.9 GB and didn't finish a step in 3 minutes; `-ub` below `-c` crashes the trainer (GGML_ASSERT ggml_can_repeat). So tool tasks offer at most 4 tools (Qwen's tool instructions are long), coding replies are asked for without explanation, and practice runs with thinking off.
+- Training copy: the trainer's Vulkan backward pass handles Q4_0, Q8_0 and F16 on the card, but falls back to the processor for K-quants. Per 512-token example on the 4B: Q4_K_M 50 s, Q4_0 10 s, Q8_0 6 s (Q8_0 also spilled 1.8 GB). `finetune::training_copy` makes the copy with the trainer's own `llama-quantize --allow-requantize` before training, checks free disk space first, and deletes the copy after. "Teach a model" gets the same speed-up.
+  - Q8_0 is used where it fits (2.5B or less, or up to 4.5B on cards of 11 GB or more). Copied from the installed Q4_K_M it keeps the same weights.
+  - A Q4_0 copy rounds the weights again. On the model's own replies its loss started at 0.94, against 0.67 for Q8_0, so the adapter partly learns to undo Q4_0's rounding, and that hurt on the real model. Q4_0 stays as the fallback for bigger models; the before/after test still decides whether to keep the result.
+- Learning rate: the model's own replies need a much gentler rate. At 1e-4 constant, the 4B's loss climbed to 1.8 by the end of round 2, and it then got 0 of 48 test tasks right (nothing kept). Practice now uses 2e-5 (1e-5 light, 5e-5 strong) with a cosine schedule and 10% warm-up (`Setup::own_words`). "Teach a model" keeps 1e-4 for the person's own examples. A short Q8_0 run at 1e-4 on practice data did fall (0.67 to 0.2 in 20 steps), so the climb came from the rate over two rounds.
+- What it learns from: every task solved after a retry or with the hint, but only 30% of those solved first time (`EASY_SHARE`). Learning everything it already knew made it no better (35 to 31 of 48). The test answers at temperature 0, so before and after differ only by the adapter.
+- Attempts are trained exactly as the model saw and wrote them. llama-server's `/apply-template` lays out the request with the model's own template (tools and thinking included), and `/completion` gives the raw reply. Each training line is that prompt up to the model's turn, then the turn as written. A one-line Jinja template (`{% for message in messages %}{{ message.content }}{% endfor %}`) makes the trainer join them back unchanged.
+- Limits:
+  - The trainer finds the model's turns only in ChatML (Qwen) and Gemma formats, so practice works with Qwen3 and Gemma 3/4. Llama can't practise, and teaching Llama from chats fails the same way (documents still work).
+  - The trainer silently leaves out examples longer than its window. `finetune::train` now logs how many it left out.
+  - Coding practice is JavaScript only: it's the language the app can run safely. Python would need a sandbox.
+- Live runs on Qwen3 4B 2507 (coding, writing, research, tools), 2026-10-18. None was kept, which is the safety check working, not a bug:
+  - easy tasks only: 59 of 60 before, so it stopped early;
+  - harder tasks at 1e-4: 35 → 0;
+  - gentler rate on a Q4_0 copy: 35 → 31;
+  - Q8_0 copy learning from 51 hard-won answers: 35 → 33.
+
+  A run takes about 20 minutes on a 4B (the trainer about 15 of them). The card peaked at 76 °C while practising and 69 °C while training.
+- Next lever: a teacher. An installed bigger model (his Qwen2.5-Coder 14B) solves the tasks the small one fails, its answers are checked the same way, and the small one learns from those. Distillation like this, not self-practice, is where real gains come from. A few dozen of a model's own answers barely move a well-tuned instruct model.
+- Not built, on purpose: training on his own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. A better follow-up is practising code navigation on his real projects, checked against the files.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

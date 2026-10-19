@@ -66,6 +66,7 @@ mod oauth;
 mod paths;
 mod perf;
 mod places;
+mod practice;
 mod privacy;
 mod phone;
 mod ports;
@@ -1931,7 +1932,7 @@ pub(crate) async fn llm_endpoint(
 
 /// The model thinks before it answers (Qwen3, gpt-oss, DeepSeek R1, QwQ),
 /// as set in Advanced or, by default, as the model does.
-fn thinks(spec: &ModelSpec, setting: advanced::Thinking) -> bool {
+pub(crate) fn thinks(spec: &ModelSpec, setting: advanced::Thinking) -> bool {
     match setting {
         advanced::Thinking::Off => false,
         advanced::Thinking::On => true,
@@ -2401,6 +2402,7 @@ pub fn run() {
             finetune::start_finetune,
             finetune::cancel_finetune,
             finetune::remove_adapter,
+            practice::start_practice,
             updates::update_view,
             updates::check_for_update,
             updates::set_update_auto,

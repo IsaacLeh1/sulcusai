@@ -199,6 +199,11 @@ pub fn chart_of(raw: &str) -> Result<Value, String> {
 
 /// Runs JavaScript. `read` gives a file's text by the path the code names (or says why not).
 pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) -> Ran {
+    run_within(code, read, TIME_LIMIT)
+}
+
+/// `run`, stopped after `limit` instead of 10 seconds.
+pub fn run_within(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static, limit: Duration) -> Ran {
     let mut ran = Ran::default();
     let rt = match Runtime::new() {
         Ok(rt) => rt,
@@ -209,7 +214,7 @@ pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) 
     };
     rt.set_memory_limit(MEMORY_LIMIT);
     rt.set_max_stack_size(1024 * 1024);
-    let deadline = Instant::now() + TIME_LIMIT;
+    let deadline = Instant::now() + limit;
     rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
     let ctx = match Context::full(&rt) {
         Ok(c) => c,
@@ -258,7 +263,7 @@ pub fn run(code: &str, read: impl Fn(&str) -> Result<String, String> + 'static) 
         let runner: Function = g.get("__run").map_err(|e| e.to_string())?;
         match runner.call::<_, String>((code.to_string(),)) {
             Ok(s) => Ok(s),
-            Err(_) if Instant::now() > deadline => Err(format!("It ran longer than {} seconds and was stopped (an endless loop?).", TIME_LIMIT.as_secs())),
+            Err(_) if Instant::now() > deadline => Err(format!("It ran longer than {} seconds and was stopped (an endless loop?).", limit.as_secs().max(1))),
             Err(e) => {
                 let caught = ctx.catch();
                 let msg = caught.as_object().and_then(|o| o.get::<_, String>("message").ok()).unwrap_or_else(|| e.to_string());

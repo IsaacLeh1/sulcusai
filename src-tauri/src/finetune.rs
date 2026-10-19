@@ -38,6 +38,7 @@ pub fn clean_leftovers(paths: &crate::paths::Paths) {
             }
             if dir.join("adapter.gguf").exists() {
                 std::fs::remove_file(dir.join("training-data")).ok();
+                std::fs::remove_file(dir.join("train-model.gguf")).ok();
             } else {
                 std::fs::remove_dir_all(&dir).ok();
             }
@@ -82,6 +83,16 @@ fn trainer_asset(state: &AppState) -> Result<Asset, String> {
 /// Model families the trainer supports (GGUF `general.architecture`).
 const SUPPORTED: &[&str] = &["qwen3", "qwen35", "qwen35moe", "gemma3", "gemma4", "llama"];
 
+/// The model file's family (GGUF `general.architecture`).
+pub(crate) fn arch_of(state: &AppState, m: &db::InstalledModel) -> Option<String> {
+    let path = crate::model_file(&state.paths, m);
+    crate::gguf::read(&path).ok().and_then(|meta| meta.get("general.architecture").and_then(|v| v.str().map(str::to_string)))
+}
+
+pub(crate) fn supported(arch: &str) -> bool {
+    SUPPORTED.contains(&arch)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Adapter {
     pub id: String,
@@ -96,13 +107,23 @@ pub struct Adapter {
     pub epochs: u32,
     pub created: i64,
     pub final_loss: Option<f64>,
+    /// Taught by practice: how it did on the test before and after.
+    #[serde(default)]
+    pub scores: Option<Scores>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Scores {
+    pub before: u32,
+    pub after: u32,
+    pub out_of: u32,
 }
 
 pub fn adapters(state: &AppState) -> Vec<Adapter> {
     db::get(&state.db.lock().unwrap(), KEY).unwrap_or_default()
 }
 
-fn save(state: &AppState, list: &[Adapter]) -> Result<(), String> {
+pub(crate) fn save(state: &AppState, list: &[Adapter]) -> Result<(), String> {
     db::set(&state.db.lock().unwrap(), KEY, &list)
 }
 
@@ -141,7 +162,8 @@ pub struct Job {
     pub id: String,
     pub name: String,
     pub base_name: String,
-    /// preparing, downloading, training, saving, done, failed, cancelled
+    /// preparing, downloading, training, saving, done, failed, cancelled;
+    /// practice adds testing, practising, checking and not_better.
     pub status: String,
     pub fraction: f64,
     pub epoch: u32,
@@ -149,16 +171,56 @@ pub struct Job {
     pub loss: Option<f64>,
     pub eta: Option<String>,
     pub error: Option<String>,
+    /// Practice: tasks done of this stage's total, examples kept so far,
+    /// and the test's scores before and after.
+    pub done: u32,
+    pub total: u32,
+    pub kept: u32,
+    pub before: Option<u32>,
+    pub after: Option<u32>,
+}
+
+impl Job {
+    pub(crate) fn new(id: &str, name: &str, base_name: &str, epochs: u32) -> Job {
+        Job {
+            id: id.into(),
+            name: name.into(),
+            base_name: base_name.into(),
+            status: "preparing".into(),
+            fraction: 0.0,
+            epoch: 1,
+            epochs,
+            loss: None,
+            eta: None,
+            error: None,
+            done: 0,
+            total: 0,
+            kept: 0,
+            before: None,
+            after: None,
+        }
+    }
 }
 
 static JOB: Mutex<Option<(Job, Arc<AtomicBool>)>> = Mutex::new(None);
 
 /// A model is being taught right now (it has the graphics card).
 pub fn training() -> bool {
-    JOB.lock().unwrap().as_ref().is_some_and(|(j, _)| !matches!(j.status.as_str(), "done" | "failed" | "cancelled"))
+    JOB.lock().unwrap().as_ref().is_some_and(|(j, _)| !matches!(j.status.as_str(), "done" | "failed" | "cancelled" | "not_better"))
 }
 
-fn update(app: &AppHandle, f: impl FnOnce(&mut Job)) {
+/// Starts a teaching job, unless one is running. Its stop flag.
+pub(crate) fn begin(job: Job) -> Result<Arc<AtomicBool>, String> {
+    let mut g = JOB.lock().unwrap();
+    if g.as_ref().is_some_and(|(j, _)| !matches!(j.status.as_str(), "done" | "failed" | "cancelled" | "not_better")) {
+        return Err("A model is already being taught. Wait for it or stop it first.".into());
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    *g = Some((job, cancel.clone()));
+    Ok(cancel)
+}
+
+pub(crate) fn update(app: &AppHandle, f: impl FnOnce(&mut Job)) {
     let snapshot = {
         let mut g = JOB.lock().unwrap();
         let Some((job, _)) = g.as_mut() else { return };
@@ -262,6 +324,10 @@ pub struct Base {
     name: String,
     /// The trainer can teach this kind of model.
     supported: bool,
+    /// It can practise (its chat format is one the trainer reads).
+    practice: bool,
+    /// It can use tools, so it practises that too.
+    tools: bool,
 }
 
 #[derive(Serialize)]
@@ -280,11 +346,13 @@ pub fn finetune_view(state: AppStateRef) -> FinetuneView {
         .iter()
         .filter(|m| !crate::cloud::is_cloud(&m.model_id))
         .map(|m| {
-            let path = crate::model_file(&state.paths, m);
-            let arch = crate::gguf::read(&path).ok().and_then(|meta| meta.get("general.architecture").and_then(|v| v.str().map(str::to_string)));
+            let arch = arch_of(&state, m);
+            let spec = state.model_spec(&m.model_id);
             Base {
-                name: state.model_spec(&m.model_id).map_or(m.model_id.clone(), |s| s.name),
-                supported: arch.is_some_and(|a| SUPPORTED.contains(&a.as_str())),
+                name: spec.as_ref().map_or(m.model_id.clone(), |s| s.name.clone()),
+                supported: arch.as_deref().is_some_and(supported),
+                practice: arch.as_deref().is_some_and(crate::practice::can_practise),
+                tools: spec.is_some_and(|s| s.tools),
                 id: m.model_id.clone(),
             }
         })
@@ -299,10 +367,16 @@ pub fn finetune_view(state: AppStateRef) -> FinetuneView {
 }
 
 /// How strongly the examples change the model.
-fn learning_rate(strength: &str) -> &'static str {
-    match strength {
-        "light" => "5e-5",
-        "strong" => "2e-4",
+fn learning_rate(strength: &str, own_words: bool) -> &'static str {
+    // A model's own replies are already likely to it, so learning from them
+    // needs a much gentler rate: at 1e-4 a 4B's loss on them climbed from
+    // 0.12 to 1.8 over two rounds and it lost every test task.
+    match (strength, own_words) {
+        ("light", true) => "1e-5",
+        ("strong", true) => "5e-5",
+        (_, true) => "2e-5",
+        ("light", _) => "5e-5",
+        ("strong", _) => "2e-4",
         _ => "1e-4",
     }
 }
@@ -335,22 +409,37 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
         return Err(format!("That's {examples} example{}; it needs at least {MIN_EXAMPLES} to learn anything. Pick more chats or a bigger file.", if examples == 1 { "" } else { "s" }));
     }
     let epochs = epochs.unwrap_or(3).clamp(1, 10);
-    let cancel = Arc::new(AtomicBool::new(false));
-    *JOB.lock().unwrap() = Some((
-        Job { id: id.clone(), name: name.clone(), base_name: base_name.clone(), status: "preparing".into(), fraction: 0.0, epoch: 1, epochs, loss: None, eta: None, error: None },
-        cancel.clone(),
-    ));
+    let cancel = match begin(Job::new(&id, &name, &base_name, epochs)) {
+        Ok(c) => c,
+        Err(e) => {
+            std::fs::remove_dir_all(&dir).ok();
+            return Err(e);
+        }
+    };
     let state = state.inner().clone();
     state.log("model", &format!("Started teaching {base_name} “{name}” from {described} ({examples} examples)"));
     tauri::async_runtime::spawn(async move {
-        let result = train(&app, &state, &id, &installed, &data, conversations, epochs, strength.as_deref().unwrap_or("normal"), &cancel).await;
+        let setup = Setup { conversations, epochs, strength: strength.as_deref().unwrap_or("normal"), own_words: false, ctx: 512, template: None, span: (0.0, 1.0) };
+        let result = train(&app, &state, &id, &installed, &data, &setup, &cancel).await;
         // The training data was plain text: don't keep it.
         std::fs::remove_file(&data).ok();
         match result {
             Ok(loss) => {
                 let path = dir.join("adapter.gguf");
                 let mut list = adapters(&state);
-                list.push(Adapter { id: id.clone(), name: name.clone(), base: base.clone(), base_name: base_name.clone(), path: path.display().to_string(), source: described, examples, epochs, created: db::now_ms(), final_loss: loss });
+                list.push(Adapter {
+                    id: id.clone(),
+                    name: name.clone(),
+                    base: base.clone(),
+                    base_name: base_name.clone(),
+                    path: path.display().to_string(),
+                    source: described,
+                    examples,
+                    epochs,
+                    created: db::now_ms(),
+                    final_loss: loss,
+                    scores: None,
+                });
                 let _ = save(&state, &list);
                 std::fs::remove_dir_all(dir.join("checkpoints")).ok();
                 state.log("model", &format!("Finished teaching {base_name} “{name}”; pick “{base_name} + {name}” in a chat's model menu"));
@@ -379,30 +468,123 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, conversations: bool, epochs: u32, strength: &str, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+/// The trainer, downloaded the first time. `span`: the share of the job's
+/// progress bar the download fills.
+pub(crate) async fn ensure_trainer(app: &AppHandle, state: &Arc<AppState>, cancel: &AtomicBool, span: f64) -> Result<std::path::PathBuf, String> {
     let dir_name = trainer_dir(state)?;
     let dir = state.paths.engines.join(&dir_name);
     if engine::find_exe(&dir, TRAINER_EXE).is_none() {
         update(app, |j| j.status = "downloading".into());
         state.log("network", "Downloading the QVAC Fabric trainer (llama.cpp with LoRA training) from github.com");
     }
-    let progress = |r: u64, t: u64| update(app, |j| j.fraction = if t > 0 { r as f64 / t as f64 * 0.05 } else { 0.0 });
-    let exe = engine::ensure_unpacked(&state.paths, &dir_name, &trainer_asset(state)?, TRAINER_EXE, cancel, progress).await?;
+    let progress = |r: u64, t: u64| update(app, |j| j.fraction = if t > 0 { r as f64 / t as f64 * span } else { 0.0 });
+    engine::ensure_unpacked(&state.paths, &dir_name, &trainer_asset(state)?, TRAINER_EXE, cancel, progress).await
+}
+
+/// How a training run goes.
+pub(crate) struct Setup<'a> {
+    /// Conversations (`{"messages": …}` lines, trained on the replies only)
+    /// rather than documents.
+    pub conversations: bool,
+    pub epochs: u32,
+    pub strength: &'a str,
+    /// The examples are the model's own replies (practice): a gentler rate
+    /// that warms up and then tapers off.
+    pub own_words: bool,
+    /// Tokens per example: longer conversations are left out by the trainer.
+    pub ctx: u32,
+    /// A Jinja chat template to render the conversations with, instead of
+    /// the model's own.
+    pub template: Option<&'a Path>,
+    /// The share of the job's progress bar the run fills (from, to).
+    pub span: (f64, f64),
+}
+
+/// Quantizations the trainer runs wholly on the graphics card. With the
+/// K-quants most models come in, part of each step falls back to the
+/// processor: measured on a 4B, 50 s a 512-token example instead of 10
+/// (Q4_0) or 6 (Q8_0).
+fn trains_on_card(quant: &str) -> bool {
+    matches!(quant.to_ascii_uppercase().as_str(), "Q4_0" | "Q8_0" | "F16" | "BF16" | "F32")
+}
+
+/// The model file to train on: the installed one, or a copy in a format the
+/// card trains fast, made next to the training data and deleted after.
+///
+/// Q8_0 where it fits: copied from the installed file it keeps the same
+/// weights, so what's learnt carries over. A Q4_0 copy rounds them again
+/// onto another grid: on a 4B its loss on the model's own replies started
+/// at 0.94 instead of 0.67, so part of training went into undoing that, and
+/// the adapter did worse on the real model. Q4_0 is kept for models whose
+/// Q8_0 copy wouldn't fit (the before/after test still decides).
+async fn training_copy(state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
+    let model = crate::model_file(&state.paths, installed);
+    if trains_on_card(&installed.quant) {
+        return Ok(model);
+    }
+    let params = state.model_spec(&installed.model_id).map_or(0.0, |s| s.params_b);
+    let vram = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
+    // Measured: a 4B's Q8_0 copy trained in 10.3 GB of a 12 GB card (1.8 GB
+    // more in shared memory), at 6 s an example against 10 for Q4_0.
+    let q8 = params > 0.0 && (params <= 2.5 || (params <= 4.5 && vram >= 11 * 1024 * 1024 * 1024));
+    let (target, growth) = if q8 { ("Q8_0", 1.8) } else { ("Q4_0", 1.0) };
+    let size = std::fs::metadata(&model).map_or(0, |m| m.len());
+    let need = (size as f64 * growth) as u64 + 512 * 1024 * 1024;
+    if crate::storage::free_on(out_dir).is_some_and(|free| free < need) {
+        return Err("There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.".into());
+    }
+    let quantize = engine::find_exe(trainer.parent().unwrap_or(Path::new(".")), if cfg!(windows) { "llama-quantize.exe" } else { "llama-quantize" })
+        .ok_or("The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.")?;
+    let copy = out_dir.join("train-model.gguf");
+    let threads = state.limits().threads.max(1).to_string();
+    let args: Vec<std::ffi::OsString> = vec!["--allow-requantize".into(), model.into_os_string(), copy.clone().into_os_string(), target.into(), threads.into()];
+    let log = state.paths.logs.join("finetune-copy.log");
+    proc::run(Run { exe: &quantize, args, cwd: out_dir, log: &log, low_priority: true, job: state.job() }, cancel, |_| {}).await?;
+    if !copy.exists() {
+        return Err("Making the model's training copy failed. Its log is in the app's logs folder.".into());
+    }
+    state.log("model", &format!("Made a {target} copy of the model to train on (the card trains it several times faster)"));
+    Ok(copy)
+}
+
+pub(crate) async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+    let (from, to) = setup.span;
+    let exe = ensure_trainer(app, state, cancel, from + (to - from) * 0.05).await?;
     // The chat model gives the graphics card back for the training run.
     state.engine.lock().await.stop().await;
 
     let out_dir = data.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let model = crate::model_file(&state.paths, installed);
-    let mut args: Vec<std::ffi::OsString> = vec!["-m".into(), model.into_os_string(), "-f".into(), data.as_os_str().to_owned()];
-    if conversations {
+    let model = training_copy(state, installed, &exe, &out_dir, cancel).await?;
+    let result = run_trainer(app, state, id, &exe, &model, data, setup, cancel).await;
+    if model.starts_with(&out_dir) {
+        std::fs::remove_file(&model).ok();
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Path, model: &Path, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+    let (from, to) = setup.span;
+    let out_dir = data.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let mut args: Vec<std::ffi::OsString> = vec!["-m".into(), model.as_os_str().to_owned(), "-f".into(), data.as_os_str().to_owned()];
+    if setup.conversations {
         args.push("--assistant-loss-only".into());
     }
+    if let Some(t) = setup.template {
+        args.push("--chat-template".into());
+        args.push(t.as_os_str().to_owned());
+    }
+    let (epochs, ctx) = (setup.epochs, setup.ctx.to_string());
     for a in [
-        "--lora-rank", "16", "--lora-alpha", "32", "--learning-rate", learning_rate(strength), "--num-epochs", &epochs.to_string(),
-        "-c", "512", "-b", "512", "-ub", "512", "-ngl", "999", "-fa", "off", "--checkpoint-save-steps", "50", "--auto-resume",
+        "--lora-rank", "16", "--lora-alpha", "32", "--learning-rate", learning_rate(setup.strength, setup.own_words), "--num-epochs", &epochs.to_string(),
+        "-c", &ctx, "-b", &ctx, "-ub", &ctx, "-ngl", "999", "-fa", "off", "--checkpoint-save-steps", "50", "--auto-resume",
     ] {
         args.push(a.into());
+    }
+    if setup.own_words {
+        for a in ["--lr-scheduler", "cosine", "--warmup-ratio", "0.1"] {
+            args.push(a.into());
+        }
     }
     args.push("--output-adapter".into());
     args.push(out_dir.join("adapter.gguf").into_os_string());
@@ -410,12 +592,18 @@ async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db:
     args.push(out_dir.join("checkpoints").into_os_string());
 
     update(app, |j| j.status = "training".into());
+    let start = from + (to - from) * 0.05;
     let mut epoch = 1u32;
     // Training batches per epoch; the smaller counts are the held-out check.
     let mut train_batches = 0u64;
     let mut loss = None;
+    // Examples longer than the trainer's window, which it leaves out.
+    let mut too_long = 0usize;
     let log = state.paths.logs.join(format!("finetune-{id}.log"));
-    proc::run(Run { exe: &exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line| {
+    proc::run(Run { exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line| {
+        if line.contains("Skipping conversation") && line.contains("too long") {
+            too_long += 1;
+        }
         if let Some(e) = parse_epoch(line) {
             epoch = e + 1;
         }
@@ -429,12 +617,15 @@ async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db:
             update(app, |j| {
                 j.epoch = epoch.min(epochs);
                 j.loss = Some(l);
-                j.fraction = 0.05 + 0.95 * (done / epochs as f64).min(1.0);
+                j.fraction = start + (to - start) * (done / epochs as f64).min(1.0);
                 j.eta = Some(eta);
             });
         }
     })
     .await?;
+    if too_long > 0 {
+        state.log("model", &format!("{too_long} example{} longer than {} tokens, which the trainer leaves out", if too_long == 1 { " was" } else { "s were" }, setup.ctx));
+    }
     if !out_dir.join("adapter.gguf").exists() {
         return Err("The trainer finished without saving the adapter. Its log is in the app's logs folder.".into());
     }
