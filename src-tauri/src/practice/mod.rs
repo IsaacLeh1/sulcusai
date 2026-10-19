@@ -7,15 +7,20 @@
 //! 2. Practice: each task is tried up to four times and the first right
 //!    attempt is kept. A task it never gets right is tried once more being
 //!    told the answer, and kept if it then works it out without saying so.
-//! 3. The trainer learns from the kept attempts (a LoRA adapter, as in
+//! 3. With a teacher (another installed model, usually a bigger one): the
+//!    tasks it never got right are given to the teacher, whose right
+//!    answers (checked the same way) it learns from too.
+//! 4. The trainer learns from the kept attempts (a LoRA adapter, as in
 //!    "Teach a model").
-//! 4. The same test again with what it learnt. It's kept only if it does
+//! 5. The same test again with what it learnt. It's kept only if it does
 //!    better; otherwise nothing changes.
 //!
 //! Each attempt is kept exactly as written after the model's own chat
 //! template laid out the request (tools and thinking included), and the
 //! trainer joins that text back as it was, so what the model learns from
-//! is what it sees and writes in a chat.
+//! is what it sees and writes in a chat. A teacher's answer is written the
+//! same way: after the request as the student's template lays it out, in
+//! the student's own form for tool calls.
 
 mod coding;
 mod hard;
@@ -36,7 +41,7 @@ use crate::catalog::ModelSpec;
 use crate::engine::{self, Endpoint, LaunchSpec};
 use crate::finetune::{self, Adapter, Job, Scores, Setup};
 use crate::{db, AppState, AppStateRef};
-use tasks::{Rng, Skill, Task};
+use tasks::{Reply, Rng, Skill, Task};
 
 /// Practice tasks in all, shared out between the chosen skills (20 to 60
 /// each).
@@ -45,6 +50,9 @@ const PRACTICE_TASKS: usize = 160;
 /// a big one both have room to improve.
 const TEST_LEVELS: [u32; 12] = [1, 2, 3, 3, 4, 4, 5, 5, 5, 6, 6, 6];
 const ATTEMPTS: usize = 4;
+/// The teacher's tries at a task the student missed: its most likely
+/// answer first, then two with a little randomness.
+const TEACHER_TRIES: [f64; 3] = [0.0, 0.7, 0.7];
 /// The share of tasks it gets right first time that it still learns from.
 const EASY_SHARE: f64 = 0.3;
 /// Too few right attempts to learn anything from.
@@ -96,6 +104,23 @@ fn example(bos: &str, prompt: &str, text: &str) -> Option<String> {
     )
 }
 
+/// The model's turn in `whole` (an exchange its template laid out), as it
+/// would write it after `prompt` (the same request, laid out up to its
+/// turn): the turn's opening, its end and any empty thinking left out. None
+/// when the template lays the request out differently in the two.
+fn turn_in(whole: &str, prompt: &str) -> Option<String> {
+    let turn = TURNS.iter().find(|t| prompt.contains(t.start))?;
+    let head = &prompt[..prompt.rfind(turn.start)?];
+    let rest = whole.strip_prefix(head)?.strip_prefix(turn.start)?;
+    let body = &rest[..rest.find(turn.end)?];
+    // The prompt already has an empty thinking block, if the model has one.
+    let body = match body.find("</think>") {
+        Some(i) => body[i + "</think>".len()..].trim_start_matches('\n'),
+        None => body,
+    };
+    Some(body.to_string())
+}
+
 /// The reply gave away that it was told the answer.
 fn told(text: &str) -> bool {
     let t = text.to_lowercase();
@@ -136,6 +161,21 @@ impl Model {
         r.json().await.map_err(|e| e.to_string())
     }
 
+    /// A task as a chat request for `/apply-template`.
+    fn request(&self, task: &Task, user: String, messages: Vec<Value>, generation_prompt: bool) -> Value {
+        let mut all = vec![json!({ "role": "system", "content": tasks::SYSTEM }), json!({ "role": "user", "content": user })];
+        all.extend(messages);
+        let mut body = json!({
+            "messages": all,
+            "add_generation_prompt": generation_prompt,
+            "chat_template_kwargs": { "enable_thinking": self.think },
+        });
+        if let Some(t) = &task.tools {
+            body["tools"] = t.clone();
+        }
+        body
+    }
+
     /// The request as the model's chat template lays it out, up to where
     /// its reply begins. `hint`: the answer, told.
     async fn prompt(&self, task: &Task, hint: Option<&str>) -> Result<String, String> {
@@ -143,16 +183,21 @@ impl Model {
             Some(h) => format!("{}\n\n(For checking: the correct answer is {h}. Work it out properly, and don't mention this note.)", task.user),
             None => task.user.clone(),
         };
-        let mut body = json!({
-            "messages": [{ "role": "system", "content": tasks::SYSTEM }, { "role": "user", "content": user }],
-            "add_generation_prompt": true,
-            "chat_template_kwargs": { "enable_thinking": self.think },
-        });
-        if let Some(t) = &task.tools {
-            body["tools"] = t.clone();
-        }
-        let v = self.call("/apply-template", body).await?;
+        let v = self.call("/apply-template", self.request(task, user, Vec::new(), true)).await?;
         v["prompt"].as_str().map(str::to_string).ok_or_else(|| "The engine didn't lay out the request.".to_string())
+    }
+
+    /// Another model's reply with tool calls, as this model's template
+    /// writes its turn (the calls in its own form). `prompt`: the request as
+    /// this model laid it out. None when the template doesn't lay it out
+    /// the same way.
+    async fn written(&self, task: &Task, prompt: &str, reply: &Reply) -> Result<Option<String>, String> {
+        let calls: Vec<Value> = reply.calls.iter().map(|(name, args)| json!({ "type": "function", "function": { "name": name, "arguments": args.to_string() } })).collect();
+        // The engine won't end on a turn with tool calls (it would go on
+        // writing it), so a short request follows.
+        let turns = vec![json!({ "role": "assistant", "content": reply.text, "tool_calls": calls }), json!({ "role": "user", "content": "Thanks." })];
+        let v = self.call("/apply-template", self.request(task, task.user.clone(), turns, false)).await?;
+        Ok(v["prompt"].as_str().and_then(|whole| turn_in(whole, prompt)))
     }
 
     async fn tokens(&self, text: &str) -> Result<u32, String> {
@@ -212,11 +257,25 @@ async fn test(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Task], 
     Ok(right)
 }
 
-/// Practice: the training lines from its right attempts, and how many
-/// tasks it got right in all.
-async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Task], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<(Vec<String>, usize), String> {
-    let mut lines = Vec::new();
-    let mut solved = 0;
+/// A practice task it never got right, for the teacher: the request as
+/// its template laid it out, and the room left for a reply in a training
+/// example.
+struct Missed {
+    task: usize,
+    prompt: String,
+    room: u32,
+}
+
+struct Practised {
+    /// Training lines from its right attempts.
+    lines: Vec<String>,
+    /// Tasks it got right in all.
+    solved: usize,
+    missed: Vec<Missed>,
+}
+
+async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Task], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<Practised, String> {
+    let mut done = Practised { lines: Vec::new(), solved: 0, missed: Vec::new() };
     for (i, task) in tasks.iter().enumerate() {
         if cancel.load(Ordering::Relaxed) {
             return Err(crate::download::CANCELLED.into());
@@ -227,11 +286,12 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
         let room = TRAIN_CTX.saturating_sub(model.tokens(&prompt).await? + 4);
         if room >= 24 {
             let right = |a: &Attempt| got_right(task, a);
+            let mut solved = false;
             let mut kept = None;
             for attempt in 0..ATTEMPTS {
                 let a = model.reply(&prompt, room, 0.8, rng.next()).await?;
                 if right(&a) {
-                    solved += 1;
+                    solved = true;
                     // Right at once: it knows this already, and learning it
                     // again mostly narrows what it says. A few are kept so
                     // it doesn't forget; the ones it got right only after
@@ -242,24 +302,103 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
                     break;
                 }
             }
-            if kept.is_none() {
+            if !solved {
                 if let Some(answer) = task.hint() {
                     let a = model.reply(&model.prompt(task, Some(&answer)).await?, room, 0.6, rng.next()).await?;
                     if right(&a) && !told(&a.text) {
-                        solved += 1;
+                        solved = true;
                         kept = Some(a.text);
                     }
                 }
             }
+            if solved {
+                done.solved += 1;
+            } else {
+                done.missed.push(Missed { task: i, prompt: prompt.clone(), room });
+            }
             if let Some(line) = kept.and_then(|text| example(&model.bos, &prompt, &text)) {
-                lines.push(line);
+                done.lines.push(line);
             }
         }
-        let kept = lines.len() as u32;
+        let kept = done.lines.len() as u32;
         update(app, |j| j.kept = kept);
         step(app, span, i + 1, tasks.len());
     }
-    Ok((lines, solved))
+    Ok(done)
+}
+
+/// The longest reply the teacher may write: a little over the room in the
+/// student's example (their words can split into tokens a little
+/// differently; the student's own count decides later), or room to think
+/// first for a model that may.
+fn teacher_max(room: u32, may_think: bool) -> u32 {
+    if may_think {
+        TEST_REPLY
+    } else {
+        room + room / 4
+    }
+}
+
+/// The teacher's turn: its first right answer to each task the student
+/// missed (read, its thinking left out), with the `missed` entry it
+/// answers. Tried as the student was, once more being told the answer.
+#[allow(clippy::too_many_arguments)]
+async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelSpec, tasks: &[Task], missed: &[Missed], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<Vec<(usize, Reply)>, String> {
+    let may_think = crate::thinks(spec, crate::advanced::Thinking::Auto);
+    let mut answers = Vec::new();
+    for (i, m) in missed.iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err(crate::download::CANCELLED.into());
+        }
+        let task = &tasks[m.task];
+        // A model that can't use tools leaves the tool tasks out.
+        if task.tools.is_none() || spec.tools {
+            breathe(state, i).await;
+            let max = teacher_max(m.room, may_think);
+            let prompt = teacher.prompt(task, None).await?;
+            let mut right = None;
+            for temperature in TEACHER_TRIES {
+                let a = teacher.reply(&prompt, max, temperature, rng.next()).await?;
+                if got_right(task, &a) {
+                    right = Some(a.text);
+                    break;
+                }
+            }
+            if right.is_none() {
+                if let Some(answer) = task.hint() {
+                    let a = teacher.reply(&teacher.prompt(task, Some(&answer)).await?, max, 0.6, rng.next()).await?;
+                    if got_right(task, &a) && !told(&a.text) {
+                        right = Some(a.text);
+                    }
+                }
+            }
+            if let Some(reply) = right.and_then(|text| tasks::read(&text)) {
+                answers.push((i, reply));
+            }
+        }
+        let kept = answers.len() as u32;
+        update(app, |j| j.kept = kept);
+        step(app, span, i + 1, missed.len());
+    }
+    Ok(answers)
+}
+
+/// The teacher's answers as training lines in the student's own words: the
+/// request as its template laid it out, then the answer as it writes its
+/// turn. An answer is left out if, written that way, it's no longer right
+/// or no longer fits the trainer's window.
+async fn in_students_words(student: &Model, tasks: &[Task], missed: &[Missed], answers: Vec<(usize, Reply)>) -> Result<Vec<String>, String> {
+    let mut lines = Vec::new();
+    for (i, reply) in answers {
+        let (m, task) = (&missed[i], &tasks[missed[i].task]);
+        let text = if reply.calls.is_empty() { Some(reply.text) } else { student.written(task, &m.prompt, &reply).await? };
+        let Some(text) = text else { continue };
+        if !got_right(task, &Attempt { text: text.clone(), cut: false }) || student.tokens(&text).await? > m.room {
+            continue;
+        }
+        lines.extend(example(&student.bos, &m.prompt, &text));
+    }
+    Ok(lines)
 }
 
 /// Loads the model (with a taught adapter on top, or not) for the test or
@@ -342,6 +481,22 @@ fn by_skill(test: &[Task], before: &[bool], after: Option<&[bool]>) -> String {
     parts.join(", ")
 }
 
+/// Where each stage fills the progress bar: the test, practice, the
+/// teacher's turn, training and the test again.
+fn spans(teacher: bool) -> [(f64, f64); 5] {
+    if teacher {
+        [(0.03, 0.12), (0.12, 0.38), (0.38, 0.56), (0.56, 0.9), (0.9, 1.0)]
+    } else {
+        [(0.03, 0.15), (0.15, 0.5), (0.5, 0.5), (0.5, 0.88), (0.88, 1.0)]
+    }
+}
+
+/// Another installed model that answers the tasks the student missed.
+struct Teacher<'a> {
+    installed: &'a db::InstalledModel,
+    spec: &'a ModelSpec,
+}
+
 struct Run<'a> {
     app: &'a AppHandle,
     state: &'a Arc<AppState>,
@@ -350,6 +505,7 @@ struct Run<'a> {
     installed: &'a db::InstalledModel,
     spec: &'a ModelSpec,
     skills: &'a [Skill],
+    teacher: Option<Teacher<'a>>,
     epochs: u32,
     strength: &'a str,
     cancel: &'a AtomicBool,
@@ -358,6 +514,7 @@ struct Run<'a> {
 /// The whole practice run. The adapter, if it did better.
 async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     let (app, state, spec) = (r.app, r.state, r.spec);
+    let spans = spans(r.teacher.is_some());
     let dir = state.paths.data.join("adapters").join(r.id);
     finetune::ensure_trainer(app, state, r.cancel, 0.03).await?;
     // Without thinking: a model's thinking doesn't fit a 512-token example.
@@ -376,7 +533,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     update(app, |j| j.status = "testing".into());
     let mut engine = state.engine.lock().await;
     let model = Model::new(load(state, &mut engine, r.installed, spec, None).await?, think).await;
-    let before = test(app, state, &model, &test_tasks, r.cancel, (0.03, 0.15)).await?;
+    let before = test(app, state, &model, &test_tasks, r.cancel, spans[0]).await?;
     let before_score = before.iter().filter(|x| **x).count() as u32;
     let out_of = test_tasks.len() as u32;
     update(app, |j| j.before = Some(before_score));
@@ -414,20 +571,54 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
 
     // Practice.
     update(app, |j| j.status = "practising".into());
-    let (lines, solved) = practise(app, state, &model, &practice, &mut rng, r.cancel, (0.15, 0.5)).await?;
+    let practised = practise(app, state, &model, &practice, &mut rng, r.cancel, spans[1]).await?;
     engine.stop().await;
     drop(engine);
-    state.log("model", &format!("{} got {solved} of {} practice tasks right; it learns from {} of them", spec.name, practice.len(), lines.len()));
+    state.log("model", &format!("{} got {} of {} practice tasks right; it learns from {} of them", spec.name, practised.solved, practice.len(), practised.lines.len()));
+    let mut lines = practised.lines;
+
+    // The teacher answers what it missed. Only one model fits the card at a
+    // time: the student has stopped, the teacher loads for its turn, and
+    // the student comes back only to lay out the answers as it writes them.
+    if let Some(t) = &r.teacher {
+        update(app, |j| {
+            j.status = "teacher".into();
+            j.kept = 0;
+        });
+        if !t.spec.tools && practised.missed.iter().any(|m| practice[m.task].tools.is_some()) {
+            state.log("model", &format!("{} can't use tools, so it leaves the tool tasks out", t.spec.name));
+        }
+        let mut engine = state.engine.lock().await;
+        // Its answers are what's learnt, so it answers without thinking too.
+        let teacher = Model::new(load(state, &mut engine, t.installed, t.spec, None).await?, false).await;
+        let answers = teach(app, state, &teacher, t.spec, &practice, &practised.missed, &mut rng, r.cancel, spans[2]).await;
+        engine.stop().await;
+        let answers = answers?;
+        let right = answers.len();
+        let student = Model::new(load(state, &mut engine, r.installed, spec, None).await?, think).await;
+        let theirs = in_students_words(&student, &practice, &practised.missed, answers).await;
+        engine.stop().await;
+        drop(engine);
+        let theirs = theirs?;
+        state.log("model", &format!("{} got {right} of the {} practice tasks {} missed right; it learns from {} of them", t.spec.name, practised.missed.len(), spec.name, theirs.len()));
+        lines.extend(theirs);
+        // Mixed in with its own, so neither comes all at the end, where the
+        // learning rate has tapered off.
+        rng.shuffle(&mut lines);
+    }
     if lines.len() < MIN_EXAMPLES {
-        return Err("It got too few practice tasks right to learn from. Try other skills, or a bigger model.".into());
+        return Err(match r.teacher {
+            Some(_) => "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.".into(),
+            None => "It got too few practice tasks right to learn from. Try other skills, or a bigger model.".into(),
+        });
     }
 
-    // Learning from its right attempts.
+    // Learning from the right answers.
     let data = dir.join("training-data");
     let template = dir.join("join.jinja");
     std::fs::write(&data, lines.join("\n")).map_err(|e| e.to_string())?;
     std::fs::write(&template, JOIN_TEMPLATE).map_err(|e| e.to_string())?;
-    let setup = Setup { conversations: true, epochs: r.epochs, strength: r.strength, own_words: true, ctx: TRAIN_CTX, template: Some(&template), span: (0.5, 0.88) };
+    let setup = Setup { conversations: true, epochs: r.epochs, strength: r.strength, own_words: true, ctx: TRAIN_CTX, template: Some(&template), span: spans[3] };
     let trained = finetune::train(app, state, r.id, r.installed, &data, &setup, r.cancel).await;
     std::fs::remove_file(&data).ok();
     let loss = trained?;
@@ -438,7 +629,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     update(app, |j| j.status = "checking".into());
     let mut engine = state.engine.lock().await;
     let model = Model::new(load(state, &mut engine, r.installed, spec, Some(&adapter)).await?, think).await;
-    let after = test(app, state, &model, &test_tasks, r.cancel, (0.88, 1.0)).await;
+    let after = test(app, state, &model, &test_tasks, r.cancel, spans[4]).await;
     engine.stop().await;
     drop(engine);
     let after = after?;
@@ -460,11 +651,13 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         created: db::now_ms(),
         final_loss: loss,
         scores: Some(Scores { before: before_score, after: after_score, out_of }),
+        teacher: r.teacher.as_ref().map(|t| t.spec.name.clone()),
     }))
 }
 
 #[tauri::command]
-pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String, base: String, skills: Vec<Skill>, epochs: Option<u32>, strength: Option<String>) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String, base: String, skills: Vec<Skill>, epochs: Option<u32>, strength: Option<String>, teacher: Option<String>) -> Result<(), String> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Give it a name, like “Practised”.".into());
@@ -488,11 +681,24 @@ pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String
     if chosen.is_empty() {
         return Err("Pick at least one skill to practise.".into());
     }
+    // Any other model on this PC can teach: it answers in its own chat
+    // format, and the student's template writes the answers its way.
+    let teacher = match teacher.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        None => None,
+        Some(t) if t == base => return Err("A model can't be its own teacher. Pick a different one, or no teacher.".into()),
+        Some(t) => {
+            let installed = db::installed_model(&state.db.lock().unwrap(), &t).filter(|m| !crate::cloud::is_cloud(&m.model_id)).ok_or("Pick a model that's installed.")?;
+            let spec = state.model_spec(&t).ok_or("That model isn't available anymore.")?;
+            Some((installed, spec))
+        }
+    };
     let id = format!("{}", uuid::Uuid::new_v4().simple());
     let dir = state.paths.data.join("adapters").join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let epochs = epochs.unwrap_or(2).clamp(1, 5);
-    let cancel = match finetune::begin(Job::new(&id, &name, &spec.name, epochs)) {
+    let mut job = Job::new(&id, &name, &spec.name, epochs);
+    job.teacher = teacher.as_ref().map(|(_, s)| s.name.clone());
+    let cancel = match finetune::begin(job) {
         Ok(c) => c,
         Err(e) => {
             std::fs::remove_dir_all(&dir).ok();
@@ -500,10 +706,12 @@ pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String
         }
     };
     let state = state.inner().clone();
-    state.log("model", &format!("Started practice for {} “{name}”: {}", spec.name, chosen.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ")));
+    let taught_by = teacher.as_ref().map_or(String::new(), |(_, s)| format!(", taught by {}", s.name));
+    state.log("model", &format!("Started practice for {} “{name}”: {}{taught_by}", spec.name, chosen.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ")));
     tauri::async_runtime::spawn(async move {
         let strength = strength.unwrap_or_else(|| "normal".into());
-        let r = Run { app: &app, state: &state, id: &id, name: &name, installed: &installed, spec: &spec, skills: &chosen, epochs, strength: &strength, cancel: &cancel };
+        let teacher = teacher.as_ref().map(|(installed, spec)| Teacher { installed, spec });
+        let r = Run { app: &app, state: &state, id: &id, name: &name, installed: &installed, spec: &spec, skills: &chosen, teacher, epochs, strength: &strength, cancel: &cancel };
         let result = run(&r).await;
         // Whatever happened, the card is free again and no attempts are left behind.
         state.engine.lock().await.stop().await;
@@ -569,6 +777,56 @@ mod tests {
         assert!(v["messages"][1]["content"].as_str().unwrap().ends_with("Hello!<end_of_turn>\n"));
 
         assert!(example("", "### User: hi\n### Assistant:", "x").is_none(), "other chat formats can't be trained");
+    }
+
+    /// A teacher's tool calls, laid out by the student's template, come out
+    /// as the student writes them, and are still right.
+    #[test]
+    fn a_teachers_answer_is_written_the_students_way() {
+        let head = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWeather in Paris and set a 25 minute timer.<|im_end|>\n";
+        let prompt = format!("{head}<|im_start|>assistant\n");
+        // As llama-server's /apply-template laid it out for Qwen3 4B 2507,
+        // which wrote exactly these calls itself (a short request follows:
+        // the engine won't end on a turn with tool calls).
+        let calls = "<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Paris\"}}\n</tool_call>\n<tool_call>\n{\"name\": \"set_timer\", \"arguments\": {\"minutes\": 25}}\n</tool_call>";
+        let whole = format!("{prompt}{calls}<|im_end|>\n<|im_start|>user\nThanks.<|im_end|>\n");
+        let text = turn_in(&whole, &prompt).unwrap();
+        assert_eq!(text, calls);
+        let city = vec![("city".to_string(), tasks::Arg::Text("Paris".into()))];
+        let minutes = vec![("minutes".to_string(), tasks::Arg::Number(25.0))];
+        let task = Task { skill: Skill::Tools, level: 6, user: String::new(), tools: None, check: tasks::Check::Calls(vec![("get_weather".into(), city), ("set_timer".into(), minutes)]) };
+        assert!(tasks::passes(&task, &tasks::read(&text).unwrap()));
+        let v: Value = serde_json::from_str(&example("", &prompt, &text).unwrap()).unwrap();
+        assert_eq!(format!("{}{}", v["messages"][0]["content"].as_str().unwrap(), v["messages"][1]["content"].as_str().unwrap()), format!("{prompt}{calls}<|im_end|>\n"));
+
+        // A model that can think: the prompt ends in an empty thinking
+        // block, which the turn may or may not repeat.
+        let thinking = format!("{prompt}<think>\n\n</think>\n\n");
+        assert_eq!(turn_in(&whole, &thinking).as_deref(), Some(calls));
+        let repeated = whole.replace("assistant\n<tool_call>", "assistant\n<think>\n\n</think>\n\n<tool_call>");
+        assert_eq!(turn_in(&repeated, &thinking).as_deref(), Some(calls));
+
+        let gemma = "<start_of_turn>user\nHi<end_of_turn>\n";
+        let whole = format!("{gemma}<start_of_turn>model\nHello!<end_of_turn>\n<start_of_turn>user\nThanks.<end_of_turn>\n");
+        assert_eq!(turn_in(&whole, &format!("{gemma}<start_of_turn>model\n")).as_deref(), Some("Hello!"));
+
+        // The request laid out differently: left out.
+        assert!(turn_in(&whole.replace("Hi", "Hey"), &format!("{gemma}<start_of_turn>model\n")).is_none());
+    }
+
+    #[test]
+    fn the_teacher_writes_about_what_fits() {
+        assert_eq!(teacher_max(400, false), 500);
+        assert_eq!(teacher_max(400, true), TEST_REPLY);
+    }
+
+    #[test]
+    fn stages_fill_the_bar_in_order() {
+        for teacher in [false, true] {
+            let s = spans(teacher);
+            assert!(s.windows(2).all(|w| w[0].0 <= w[0].1 && w[0].1 == w[1].0), "{s:?}");
+            assert_eq!(s[4].1, 1.0);
+        }
     }
 
     #[test]

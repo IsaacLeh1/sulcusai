@@ -3053,5 +3053,13 @@
  "Making the model's training copy failed. Its log is in the app's logs folder.": "No se pudo crear la copia de entrenamiento del modelo. Su registro está en la carpeta de registros de la app.",
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "Falta el conversor de modelos del entrenador. Elimina la carpeta del entrenador en la carpeta de motores de la app para descargarlo de nuevo.",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "No hay suficiente espacio libre para la copia de entrenamiento del modelo. Libera unos gigabytes en la unidad donde la app guarda sus datos e inténtalo de nuevo.",
- "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "Mejora en los tipos de tareas que practica, no en todo, y no aprende datos nuevos. Suele tardar entre 20 y 90 minutos en la tarjeta gráfica."
+ "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "Mejora en los tipos de tareas que practica, no en todo, y no aprende datos nuevos. Suele tardar entre 20 y 90 minutos en la tarjeta gráfica.",
+ "Teacher": "Modelo maestro",
+ "None: it learns only from its own right answers": "Ninguno: aprende solo de sus propias respuestas correctas",
+ "A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.": "Un modelo más grande de este PC responde las tareas que el modelo sigue fallando. Sus respuestas se comprueban igual, y el modelo también aprende de las correctas. En la tarjeta gráfica solo cabe un modelo a la vez, así que se turnan, lo que añade entre 10 y 30 minutos.",
+ "This teacher can't use tools, so it skips the tool tasks.": "Este modelo maestro no puede usar herramientas, así que omite las tareas de herramientas.",
+ "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} está respondiendo las tareas que el modelo falló: {n} de {total}, {kept} respuestas correctas guardadas",
+ "practised with {teacher} teaching, test {before} → {after} of {total} right": "practicado con {teacher} como maestro, prueba {before} → {after} de {total} correctas",
+ "A model can't be its own teacher. Pick a different one, or no teacher.": "Un modelo no puede ser su propio maestro. Elige otro, o ninguno.",
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "Se acertaron muy pocas tareas de práctica para aprender de ellas. Prueba otras habilidades o un modelo maestro más grande."
 }

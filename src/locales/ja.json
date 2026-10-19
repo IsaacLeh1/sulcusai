@@ -3053,5 +3053,13 @@
  "Making the model's training copy failed. Its log is in the app's logs folder.": "学習用のモデルのコピーを作れませんでした。ログはアプリのログフォルダーにあります。",
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "トレーナーのモデル変換ツールが見つかりません。アプリのエンジンフォルダーにあるトレーナーのフォルダーを削除すると、再ダウンロードされます。",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "学習用のモデルのコピーを置く空き容量が足りません。アプリのデータがあるドライブを数 GB 空けてから、もう一度お試しください。",
- "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "練習した種類の課題が得意になりますが、すべてが良くなるわけではなく、新しい知識も覚えません。グラフィックカードで通常 20～90 分かかります。"
+ "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "練習した種類の課題が得意になりますが、すべてが良くなるわけではなく、新しい知識も覚えません。グラフィックカードで通常 20～90 分かかります。",
+ "Teacher": "教師モデル",
+ "None: it learns only from its own right answers": "なし：自分の正解だけから学習します",
+ "A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.": "このPCにあるより大きなモデルが、モデルが間違え続ける課題に答えます。その答えも同じ方法で確認され、モデルは正解からも学習します。グラフィックカードには一度に1つのモデルしか載らないため交代で動き、10～30 分ほど長くかかります。",
+ "This teacher can't use tools, so it skips the tool tasks.": "この教師モデルはツールを使えないため、ツールの課題は飛ばします。",
+ "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} がモデルの間違えた課題に答えています：{total} 問中 {n} 問、正解 {kept} 件を保存",
+ "practised with {teacher} teaching, test {before} → {after} of {total} right": "{teacher} を教師に練習済み、テスト {total} 問中 {before} → {after} 問正解",
+ "A model can't be its own teacher. Pick a different one, or no teacher.": "モデルは自分自身の教師にはなれません。別のモデルを選ぶか、教師なしにしてください。",
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "練習課題の正解が少なすぎて学習できませんでした。別のスキルか、より大きな教師モデルを試してください。"
 }

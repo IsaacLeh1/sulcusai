@@ -99,25 +99,29 @@ export interface TaughtAdapter {
   final_loss: number | null;
   /** Taught by practice: test tasks right before and after. */
   scores: { before: number; after: number; out_of: number } | null;
+  /** Practice with a teacher: the model that answered the tasks it missed. */
+  teacher?: string | null;
 }
 
 export interface FinetuneJob {
   id: string;
   name: string;
   base_name: string;
-  status: "preparing" | "downloading" | "training" | "saving" | "done" | "failed" | "cancelled" | "testing" | "practising" | "checking" | "not_better";
+  status: "preparing" | "downloading" | "training" | "saving" | "done" | "failed" | "cancelled" | "testing" | "practising" | "teacher" | "checking" | "not_better";
   fraction: number;
   epoch: number;
   epochs: number;
   loss: number | null;
   eta: string | null;
   error: string | null;
-  /** Practice: tasks done of the stage's total, right answers kept, test scores. */
+  /** Practice: tasks done of the stage's total, right answers kept (the teacher's, in its turn), test scores. */
   done: number;
   total: number;
   kept: number;
   before: number | null;
   after: number | null;
+  /** Practice with a teacher: its name. */
+  teacher: string | null;
 }
 
 export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools";
@@ -1697,7 +1701,8 @@ export const api = {
   finetuneView: () => invoke<FinetuneView>("finetune_view"),
   startFinetune: (name: string, base: string, source: { kind: "chats"; chat_ids: string[] } | { kind: "file"; path: string }, epochs: number, strength: string) =>
     invoke<void>("start_finetune", { name, base, source, epochs, strength }),
-  startPractice: (name: string, base: string, skills: PracticeSkill[], epochs: number, strength: string) => invoke<void>("start_practice", { name, base, skills, epochs, strength }),
+  startPractice: (name: string, base: string, skills: PracticeSkill[], epochs: number, strength: string, teacher: string | null) =>
+    invoke<void>("start_practice", { name, base, skills, epochs, strength, teacher }),
   cancelFinetune: () => invoke<void>("cancel_finetune"),
   removeAdapter: (id: string) => invoke<void>("remove_adapter", { id }),
   updateView: () => invoke<UpdateView>("update_view"),

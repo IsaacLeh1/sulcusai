@@ -3053,5 +3053,13 @@
  "Making the model's training copy failed. Its log is in the app's logs folder.": "无法创建模型的训练副本。日志在应用的日志文件夹中。",
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "缺少训练器的模型转换工具。删除应用引擎文件夹中的训练器文件夹即可重新下载。",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "磁盘空间不足，无法创建模型的训练副本。请在应用存放数据的磁盘上腾出几 GB 空间后重试。",
- "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "它会在练习过的任务类型上变好，而不是在所有方面变好，也不会学到新知识。在显卡上通常需要 20–90 分钟。"
+ "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "它会在练习过的任务类型上变好，而不是在所有方面变好，也不会学到新知识。在显卡上通常需要 20–90 分钟。",
+ "Teacher": "教师模型",
+ "None: it learns only from its own right answers": "无：只从自己的正确答案中学习",
+ "A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.": "这台电脑上更大的模型会回答该模型一直答错的任务。这些答案用同样的方式检查，该模型也会从答对的答案中学习。显卡一次只能放下一个模型，所以它们轮流运行，会多花 10–30 分钟。",
+ "This teacher can't use tools, so it skips the tool tasks.": "此教师模型无法使用工具，因此会跳过工具任务。",
+ "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} 正在回答该模型答错的任务：第 {n}/{total} 题，已保留 {kept} 个正确答案",
+ "practised with {teacher} teaching, test {before} → {after} of {total} right": "已在 {teacher} 指导下练习，测试 {total} 道中答对 {before} → {after} 道",
+ "A model can't be its own teacher. Pick a different one, or no teacher.": "模型不能当自己的老师。请选择另一个模型，或不使用教师模型。",
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "答对的练习任务太少，无法从中学习。请尝试其他技能或更大的教师模型。"
 }

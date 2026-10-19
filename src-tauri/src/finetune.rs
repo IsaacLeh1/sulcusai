@@ -110,6 +110,9 @@ pub struct Adapter {
     /// Taught by practice: how it did on the test before and after.
     #[serde(default)]
     pub scores: Option<Scores>,
+    /// The model that answered the practice tasks it missed, if any.
+    #[serde(default)]
+    pub teacher: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +166,7 @@ pub struct Job {
     pub name: String,
     pub base_name: String,
     /// preparing, downloading, training, saving, done, failed, cancelled;
-    /// practice adds testing, practising, checking and not_better.
+    /// practice adds testing, practising, teacher, checking and not_better.
     pub status: String,
     pub fraction: f64,
     pub epoch: u32,
@@ -171,13 +174,15 @@ pub struct Job {
     pub loss: Option<f64>,
     pub eta: Option<String>,
     pub error: Option<String>,
-    /// Practice: tasks done of this stage's total, examples kept so far,
-    /// and the test's scores before and after.
+    /// Practice: tasks done of this stage's total, examples kept so far
+    /// (the teacher's, in its turn), and the test's scores before and after.
     pub done: u32,
     pub total: u32,
     pub kept: u32,
     pub before: Option<u32>,
     pub after: Option<u32>,
+    /// Practice with a teacher: its name.
+    pub teacher: Option<String>,
 }
 
 impl Job {
@@ -198,6 +203,7 @@ impl Job {
             kept: 0,
             before: None,
             after: None,
+            teacher: None,
         }
     }
 }
@@ -439,6 +445,7 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
                     created: db::now_ms(),
                     final_loss: loss,
                     scores: None,
+                    teacher: None,
                 });
                 let _ = save(&state, &list);
                 std::fs::remove_dir_all(dir.join("checkpoints")).ok();

@@ -24,7 +24,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<FinetuneView | null>(null);
   const [job, setJob] = useState<FinetuneJob | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
-  const [form, setForm] = useState<{ open: boolean; name: string; base: string; kind: SourceKind; chatIds: string[]; file: string; epochs: number; strength: string; skills: PracticeSkill[] }>({
+  const [form, setForm] = useState<{ open: boolean; name: string; base: string; kind: SourceKind; chatIds: string[]; file: string; epochs: number; strength: string; skills: PracticeSkill[]; teacher: string }>({
     open: false,
     name: "",
     base: "",
@@ -34,6 +34,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
     epochs: 3,
     strength: "normal",
     skills: ["code", "writing", "research", "tools"],
+    teacher: "",
   });
 
   const load = useCallback(() => {
@@ -62,6 +63,9 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const base = v.bases.find((b) => b.id === form.base);
   const usable = (b: { supported: boolean; practice: boolean }) => (practising ? b.practice : b.supported);
   const skills = form.skills.filter((s) => s !== "tools" || base?.tools);
+  /** Any other model on this PC can teach the one practising. */
+  const teachers = v.bases.filter((b) => b.id !== form.base);
+  const teacher = teachers.find((b) => b.id === form.teacher);
   /** Opens the form, practising or learning from examples. */
   const openForm = (kind: SourceKind) => {
     const fits = (b: { supported: boolean; practice: boolean }) => (kind === "practice" ? b.practice : b.supported);
@@ -78,7 +82,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const start = async () => {
     try {
       if (practising) {
-        await api.startPractice(form.name, form.base, skills, form.epochs, form.strength);
+        await api.startPractice(form.name, form.base, skills, form.epochs, form.strength, teacher?.id ?? null);
         setForm({ ...form, open: false });
         toast(t("Practice has started. You can keep using the app; chats with this PC's models wait until it's done."), "success");
         return;
@@ -109,6 +113,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               {job.status === "training" && `${t("round {n} of {total}", { n: job.epoch, total: job.epochs })}${job.eta ? ` · ${t("about {time} left", { time: job.eta })}` : ""}${job.loss !== null ? ` · ${t("loss {loss}", { loss: job.loss.toFixed(2) })}` : ""}`}
               {job.status === "testing" && t("testing it first: {n} of {total}", { n: job.done, total: job.total })}
               {job.status === "practising" && t("practising: {n} of {total} tasks, {kept} right answers kept", { n: job.done, total: job.total, kept: job.kept })}
+              {job.status === "teacher" && t("{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept", { teacher: job.teacher ?? "", n: job.done, total: job.total, kept: job.kept })}
               {job.status === "checking" && t("testing what it learnt: {n} of {total}", { n: job.done, total: job.total })}
               {job.status === "done" &&
                 (job.before !== null && job.after !== null
@@ -143,9 +148,11 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                 <strong>{a.base_name} + {a.name}</strong>{" "}
                 <span className="muted">
                   ·{" "}
-                  {a.scores
-                    ? t("practised, test {before} → {after} of {total} right", { before: a.scores.before, after: a.scores.after, total: a.scores.out_of })
-                    : t("from {source}, {examples} examples, {rounds} rounds", { source: a.source, examples: a.examples, rounds: a.epochs })}
+                  {a.scores && a.teacher
+                    ? t("practised with {teacher} teaching, test {before} → {after} of {total} right", { teacher: a.teacher, before: a.scores.before, after: a.scores.after, total: a.scores.out_of })
+                    : a.scores
+                      ? t("practised, test {before} → {after} of {total} right", { before: a.scores.before, after: a.scores.after, total: a.scores.out_of })
+                      : t("from {source}, {examples} examples, {rounds} rounds", { source: a.source, examples: a.examples, rounds: a.epochs })}
                 </span>
               </span>
               <button
@@ -203,21 +210,38 @@ export function TeachModel({ toast }: { toast: PushToast }) {
             <span>{t("Practice: it works through tasks whose answers can be checked, learns from its own right answers, and is kept only if it then does better on a test")}</span>
           </label>
           {practising && (
-            <div className="teach-chats">
-              <span className="small">{t("What should it become an expert in?")}</span>
-              {SKILLS.map((s) => (
-                <label key={s.id} className="check" title={s.id === "tools" && !base?.tools ? t("This model can't use tools") : undefined}>
-                  <input
-                    type="checkbox"
-                    disabled={s.id === "tools" && !base?.tools}
-                    checked={form.skills.includes(s.id) && (s.id !== "tools" || !!base?.tools)}
-                    onChange={(e) => setForm({ ...form, skills: e.target.checked ? [...form.skills, s.id] : form.skills.filter((x) => x !== s.id) })}
-                  />
-                  <span>{t(s.label)}</span>
-                </label>
-              ))}
-              <p className="muted small">{t("It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.")}</p>
-            </div>
+            <>
+              <div className="teach-chats">
+                <span className="small">{t("What should it become an expert in?")}</span>
+                {SKILLS.map((s) => (
+                  <label key={s.id} className="check" title={s.id === "tools" && !base?.tools ? t("This model can't use tools") : undefined}>
+                    <input
+                      type="checkbox"
+                      disabled={s.id === "tools" && !base?.tools}
+                      checked={form.skills.includes(s.id) && (s.id !== "tools" || !!base?.tools)}
+                      onChange={(e) => setForm({ ...form, skills: e.target.checked ? [...form.skills, s.id] : form.skills.filter((x) => x !== s.id) })}
+                    />
+                    <span>{t(s.label)}</span>
+                  </label>
+                ))}
+                <p className="muted small">{t("It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.")}</p>
+              </div>
+              <label>
+                {t("Teacher")}
+                <select className="input" value={teacher?.id ?? ""} onChange={(e) => setForm({ ...form, teacher: e.target.value })}>
+                  <option value="">{t("None: it learns only from its own right answers")}</option>
+                  {teachers.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="muted small">
+                {t("A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.")}
+                {teacher && !teacher.tools && skills.includes("tools") ? " " + t("This teacher can't use tools, so it skips the tool tasks.") : ""}
+              </p>
+            </>
           )}
           <label className="check">
             <input type="radio" name="teach-src" checked={form.kind === "chats"} onChange={() => openForm("chats")} />
