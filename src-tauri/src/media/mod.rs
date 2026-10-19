@@ -132,6 +132,10 @@ pub struct MediaModel {
     /// Installed from Hugging Face: its repository there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_hub: Option<String>,
+    /// Installed from Hugging Face: the catalog model it's built on, so its
+    /// prompts are written the way that family reads them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built_on: Option<String>,
 }
 
 /// Every media model: the catalog's, then those installed from Hugging Face.

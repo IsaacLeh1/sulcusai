@@ -3071,5 +3071,8 @@
  "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "这些文件夹中的代码不够用来练习。需要包含几十个函数的 Rust、TypeScript、JavaScript 或 Python 文件。",
  "This model's chat template doesn't lay out tool results, so it can't practise on code.": "此模型的聊天模板无法呈现工具结果，因此不能在代码上练习。",
  "Those folders can't be found.": "找不到这些文件夹。",
- "That's a folder. Use find_files to see what's in it.": "这是一个文件夹。请使用 find_files 查看其中的内容。"
+ "That's a folder. Use find_files to see what's in it.": "这是一个文件夹。请使用 find_files 查看其中的内容。",
+ "Waiting for a reply that uses this model to finish": "正在等待使用此模型的回复完成",
+ "A smarter model fits this PC: {name}": "有更聪明的模型适合这台电脑：{name}",
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "它的评分为 {theirs}，而你目前最好的 {current} 为 {ours}，并且在这里运行流畅。你的聊天和其他模型保持不变。"
 }

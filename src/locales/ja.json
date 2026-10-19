@@ -3071,5 +3071,8 @@
  "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "これらのフォルダーには練習に十分なコードがありません。数十個の関数を含む Rust、TypeScript、JavaScript、Python のファイルが必要です。",
  "This model's chat template doesn't lay out tool results, so it can't practise on code.": "このモデルのチャットテンプレートはツールの結果を扱えないため、コードで練習できません。",
  "Those folders can't be found.": "これらのフォルダーが見つかりません。",
- "That's a folder. Use find_files to see what's in it.": "それはフォルダーです。find_files で中身を確認してください。"
+ "That's a folder. Use find_files to see what's in it.": "それはフォルダーです。find_files で中身を確認してください。",
+ "Waiting for a reply that uses this model to finish": "このモデルを使っている返答が終わるのを待っています",
+ "A smarter model fits this PC: {name}": "より賢いモデルがこの PC で動きます：{name}",
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "評価は {theirs}（今いちばん良い {current} は {ours}）で、この PC で快適に動きます。チャットや他のモデルはそのままです。"
 }

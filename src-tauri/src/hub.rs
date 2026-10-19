@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::catalog::{self, Arch, Budget, License, ModelSpec, Placement, Ratings, Variant, VisionFile};
+use crate::catalog::{self, Arch, Budget, License, ModelSpec, Part, Placement, Ratings, Variant, VisionFile};
 use crate::{db, gguf, local, net, AppState};
 
 pub(crate) const API: &str = "https://huggingface.co/api/models";
@@ -88,6 +88,7 @@ pub struct HubResults {
 }
 
 /// A file in a repository, with its checksum.
+#[derive(Debug, Clone)]
 pub(crate) struct RemoteFile {
     pub path: String,
     pub size: u64,
@@ -149,15 +150,64 @@ fn is_helper(path: &str) -> bool {
     ["eagle", "draft", "mtp", "dflash", "speculator", "imatrix"].iter().any(|w| name.contains(w))
 }
 
-/// The model files a repository offers: single-file GGUFs, not picture
-/// readers or helpers, and not too small to hold the whole model (real
-/// quantizations keep at least ~1.5 bits per weight).
-fn model_files(repo: &Repo) -> impl Iterator<Item = &RemoteFile> {
+/// "big-Q4_K_M-00002-of-00003.gguf" → ("big-Q4_K_M", 2, 3).
+fn split_parts_of(path: &str) -> Option<(&str, u32, u32)> {
+    if !is_split(path) {
+        return None;
+    }
+    let stem = path.strip_suffix(".gguf").unwrap_or(path);
+    let mut it = stem.rsplitn(4, '-');
+    let (total, _, part, base) = (it.next()?, it.next()?, it.next()?, it.next()?);
+    Some((base, part.parse().ok()?, total.parse().ok()?))
+}
+
+/// All the files of the split model whose first part is `first`, in order;
+/// empty when any part is missing.
+fn parts_of<'a>(repo: &'a Repo, first: &str) -> Vec<&'a RemoteFile> {
+    let Some((base, 1, total)) = split_parts_of(first) else { return Vec::new() };
+    let mut parts: Vec<(u32, &RemoteFile)> = repo
+        .files
+        .iter()
+        .filter_map(|f| split_parts_of(&f.path).filter(|(b, _, t)| *b == base && *t == total).map(|(_, n, _)| (n, f)))
+        .collect();
+    parts.sort_by_key(|(n, _)| *n);
+    parts.dedup_by_key(|(n, _)| *n);
+    if parts.len() == total as usize && parts.iter().enumerate().all(|(i, (n, _))| *n == i as u32 + 1) {
+        parts.into_iter().map(|(_, f)| f).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// The model files a repository offers: GGUFs, not picture readers or
+/// helpers, and not too small to hold the whole model (real quantizations
+/// keep at least ~1.5 bits per weight). A model split across files shows
+/// once, as its first part with all the parts' size.
+fn model_files(repo: &Repo) -> Vec<RemoteFile> {
     let params = repo.info["gguf"]["total"].as_f64().unwrap_or(0.0);
     let smallest = (params * 1.5 / 8.0) as u64;
-    repo.files.iter().filter(move |f| {
-        f.path.to_lowercase().ends_with(".gguf") && !is_projector(&f.path) && !is_split(&f.path) && !is_helper(&f.path) && f.size >= smallest
-    })
+    repo.files
+        .iter()
+        .filter(|f| f.path.to_lowercase().ends_with(".gguf") && !is_projector(&f.path) && !is_helper(&f.path))
+        .filter_map(|f| match split_parts_of(&f.path) {
+            None => Some(f.clone()),
+            Some((_, 1, _)) => {
+                let parts = parts_of(repo, &f.path);
+                (!parts.is_empty()).then(|| RemoteFile { size: parts.iter().map(|p| p.size).sum(), ..f.clone() })
+            }
+            Some(_) => None,
+        })
+        .filter(|f| f.size >= smallest)
+        .collect()
+}
+
+/// The file a link names, as the model files list it: a split model's later
+/// part means its first.
+pub(crate) fn listed_file(file: &str) -> String {
+    match split_parts_of(file) {
+        Some((base, n, total)) if n > 1 => format!("{base}-00001-of-{total:05}.gguf"),
+        _ => file.to_string(),
+    }
 }
 
 /// The quantization named in a file name ("…-Q4_K_M.gguf", "…-UD-Q4_K_XL.gguf").
@@ -222,7 +272,7 @@ fn estimate_arch(params_b: f64, architecture: &str, repo_id: &str, ctx_len: u32)
         Some(a) if params_b > 0.0 && a < params_b => 0.1 + 0.9 * a / params_b,
         _ => 1.0,
     };
-    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 131_072), active_fraction }
+    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 131_072), active_fraction, kv_whole: 0, kv_sliding: 0, kv_whole_width: 0, swa_window: 0 }
 }
 
 /// A short name from the repository's: "unsloth/gpt-oss-20b-GGUF" → "gpt-oss-20b".
@@ -270,11 +320,11 @@ fn spec_for(repo_id: &str, info: &Value, variants: Vec<Variant>, vision: Option<
 /// with `all`, every file, the ones it can't run without a placement).
 pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> HubModel {
     let id = m["id"].as_str().unwrap_or_default().to_string();
-    let mut files: Vec<&RemoteFile> = model_files(repo).filter(|f| f.size <= budget.disk).collect();
+    let mut files: Vec<RemoteFile> = model_files(repo).into_iter().filter(|f| f.size <= budget.disk).collect();
     files.sort_by_key(|f| f.size);
     let variants: Vec<Variant> = files
         .iter()
-        .map(|f| Variant { quant: f.path.clone(), quality: String::new(), file: f.path.clone(), url: String::new(), size: f.size, sha256: String::new() })
+        .map(|f| Variant { quant: f.path.clone(), quality: String::new(), file: f.path.clone(), url: String::new(), size: f.size, sha256: String::new(), parts: Vec::new() })
         .collect();
     let spec = spec_for(&id, &repo.info, variants, None, String::new());
     let fit = catalog::fit_model(&spec, budget);
@@ -327,7 +377,7 @@ pub(crate) async fn gguf_copies(client: &reqwest::Client, of: &str) -> Vec<Strin
 /// task) and it has a single-file model SulcusAI can load.
 pub(crate) fn is_chat(repo: &Repo) -> bool {
     let task_ok = matches!(repo.info["pipeline_tag"].as_str(), None | Some("text-generation" | "image-text-to-text"));
-    task_ok && model_files(repo).next().is_some()
+    task_ok && !model_files(repo).is_empty()
 }
 
 /// The repository ("owner/name") and file a pasted Hugging Face link points
@@ -447,14 +497,18 @@ pub async fn prepare(state: &Arc<AppState>, repo_id: &str, file: &str) -> Result
     if r.info["gated"] != false && !r.info["gated"].is_null() {
         return Err("That model needs a Hugging Face account to download, which SulcusAI doesn't use.".into());
     }
-    let f = model_files(&r).find(|f| f.path == file).ok_or("That file isn't in the model's repository anymore.")?;
+    let f = model_files(&r).into_iter().find(|f| f.path == file).ok_or("That file isn't in the model's repository anymore.")?;
     let url = |path: &str| {
         let mut u = reqwest::Url::parse(SITE).map_err(|e| e.to_string())?;
         u.path_segments_mut().map_err(|_| "bad address".to_string())?.pop_if_empty().extend(repo_id.split('/')).push("resolve").push("main").extend(path.split('/'));
         Ok::<String, String>(u.to_string())
     };
     let quant = quant_of(&f.path);
-    let variant = Variant { quality: quality_of(&quant), quant, file: base_name(&f.path).to_string(), url: url(&f.path)?, size: f.size, sha256: f.sha256.clone() };
+    let mut parts = Vec::new();
+    for p in parts_of(&r, &f.path) {
+        parts.push(Part { file: base_name(&p.path).to_string(), url: url(&p.path)?, size: p.size, sha256: p.sha256.clone() });
+    }
+    let variant = Variant { quality: quality_of(&quant), quant, file: base_name(&f.path).to_string(), url: url(&f.path)?, size: f.size, sha256: f.sha256.clone(), parts };
     // The picture reader: the full-precision one if there's a choice, else the smallest.
     let mut projectors: Vec<&RemoteFile> = r.files.iter().filter(|p| is_projector(&p.path) && p.path.to_lowercase().ends_with(".gguf")).collect();
     projectors.sort_by_key(|p| (!p.path.to_lowercase().contains("f16"), p.size));
@@ -512,6 +566,34 @@ mod tests {
         assert_eq!(quality_of("Q8_0"), "Best");
     }
 
+    /// A model split across files is offered once, sized from all its
+    /// parts, and installs every part in order (unsloth's gpt-oss-120b only
+    /// comes split).
+    #[test]
+    fn split_models_are_offered_whole() {
+        const GIB: u64 = 1 << 30;
+        let info = serde_json::json!({ "gguf": { "total": 117.0e9, "architecture": "gpt-oss", "context_length": 131072 } });
+        let f = |path: &str, size: u64| RemoteFile { path: path.into(), size, sha256: format!("sha-{path}") };
+        let repo = Repo {
+            info,
+            files: vec![
+                f("Q4_K_M/big-Q4_K_M-00002-of-00003.gguf", 20 * GIB),
+                f("Q4_K_M/big-Q4_K_M-00001-of-00003.gguf", 25 * GIB),
+                f("Q4_K_M/big-Q4_K_M-00003-of-00003.gguf", 15 * GIB),
+                f("Q8_0/big-Q8_0-00001-of-00002.gguf", 49 * GIB),
+            ],
+        };
+        let files = model_files(&repo);
+        assert_eq!(files.len(), 1, "the Q8_0 set is missing a part");
+        assert_eq!(files[0].path, "Q4_K_M/big-Q4_K_M-00001-of-00003.gguf");
+        assert_eq!(files[0].size, 60 * GIB);
+        let parts: Vec<&str> = parts_of(&repo, &files[0].path).iter().map(|p| p.path.as_str()).collect();
+        assert_eq!(parts, ["Q4_K_M/big-Q4_K_M-00001-of-00003.gguf", "Q4_K_M/big-Q4_K_M-00002-of-00003.gguf", "Q4_K_M/big-Q4_K_M-00003-of-00003.gguf"]);
+        assert!(parts_of(&repo, "Q4_K_M/big-Q4_K_M-00002-of-00003.gguf").is_empty(), "only from the first part");
+        assert_eq!(listed_file("Q4_K_M/big-Q4_K_M-00003-of-00003.gguf"), "Q4_K_M/big-Q4_K_M-00001-of-00003.gguf");
+        assert_eq!(listed_file("m-Q4_K_M.gguf"), "m-Q4_K_M.gguf");
+    }
+
     #[test]
     fn split_files_and_picture_readers_are_told_apart() {
         assert!(is_split("Q4_K_M/big-Q4_K_M-00001-of-00003.gguf"));
@@ -544,7 +626,7 @@ mod tests {
         let budget = Budget { vram: 8 * GIB, ram: 4 * GIB, disk: 500 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 60.0 };
         let shown = describe(&m, &repo, &budget, false);
         let files: Vec<&str> = shown.files.iter().map(|f| f.file.as_str()).collect();
-        assert_eq!(files, ["m-Q4_K_M.gguf", "m-Q8_0.gguf"], "F16 is too big; split parts, picture readers, helpers and too-small files aren't models");
+        assert_eq!(files, ["m-Q4_K_M.gguf", "m-Q8_0.gguf"], "F16 is too big; a split model missing a part, picture readers, helpers and too-small files aren't models");
         assert_eq!(shown.files[0].placement, Some(Placement::Gpu));
         assert!(shown.vision);
         assert_eq!(shown.recommended.as_deref(), Some("m-Q4_K_M.gguf"));

@@ -109,6 +109,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
         </p>
       )}
       {tab === "chat" && <Downloads progress={chatProgress} models={pool} onRefresh={onRefresh} toast={toast} />}
+      {tab === "chat" && <Upgrade models={catalog.models} progress={chatProgress} toast={toast} />}
 
       <section className="card hw">
         <div className="hw-grid">
@@ -659,6 +660,67 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
   );
 }
 
+/** When a much more capable model than any installed one fits this PC (a
+    newer generation, usually), says so once, with Install and Not now. */
+function Upgrade({ models, progress, toast }: { models: ModelCard[]; progress: Record<string, InstallProgress>; toast: PushToast }) {
+  const [dismissed, setDismissed] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem("sulcus.models.upgrade-dismissed");
+    } catch {
+      return null;
+    }
+  });
+  const best = models.find((m) => m.best && !m.installed);
+  const have = models.filter((m) => m.installed && m.ratings.overall > 0);
+  const top = have.reduce<ModelCard | null>((a, m) => (!a || m.ratings.overall > a.ratings.overall ? m : a), null);
+  if (!best || !top || best.ratings.overall < top.ratings.overall + 10 || dismissed === best.id) return null;
+  const p = progress[best.id];
+  const later = () => {
+    setDismissed(best.id);
+    try {
+      localStorage.setItem("sulcus.models.upgrade-dismissed", best.id);
+    } catch {
+      /* not kept */
+    }
+  };
+  return (
+    <section className="card callout upgrade">
+      <p>
+        <strong>{t("A smarter model fits this PC: {name}", { name: best.name })}</strong>
+        <br />
+        <span className="muted small">
+          {t("It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.", {
+            theirs: best.ratings.overall,
+            ours: top.ratings.overall,
+            current: top.name,
+          })}
+        </span>
+      </p>
+      {p ? (
+        <InstallBar modelId={best.id} p={p} />
+      ) : (
+        <div className="row">
+          <button
+            className="btn primary small"
+            onClick={async () => {
+              try {
+                await api.install(best.id, best.fit.recommended ?? best.variants[0].quant, false);
+              } catch (e) {
+                toast(errorText(e), "error");
+              }
+            }}
+          >
+            {t("Install {name}", { name: best.name })}
+          </button>
+          <button className="btn ghost small" onClick={later}>
+            {t("Not now")}
+          </button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
   const label = {
     engine: t("Setting up the engine"),
@@ -668,6 +730,7 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
     benchmark: t("Testing speed on this PC"),
     optimizing: t("Trying setups to find the fastest on this PC"),
     vision: t("Downloading the picture reader"),
+    waiting: t("Waiting for a reply that uses this model to finish"),
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
   const testing = TESTING.has(p.phase);

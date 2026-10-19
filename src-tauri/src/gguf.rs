@@ -130,11 +130,15 @@ fn value(r: &mut Reader, t: u32) -> std::io::Result<Value> {
     let item = u32_of(r)?;
     let count = u64_of(r)?;
     match (item, width(item)) {
-        // Short arrays of whole numbers (per-layer settings) are kept.
-        (0..=5 | 10 | 11, Some(_)) if count <= 4096 => {
+        // Short arrays of whole numbers and yes/no values (per-layer
+        // settings, like which layers slide) are kept, yes as 1.
+        (0..=5 | 7 | 10 | 11, Some(_)) if count <= 4096 => {
             let mut out = Vec::with_capacity(count as usize);
             for _ in 0..count {
-                out.push(scalar(r, item)?.int().unwrap_or(0));
+                out.push(match scalar(r, item)? {
+                    Value::Bool(b) => b as i64,
+                    v => v.int().unwrap_or(0),
+                });
             }
             Ok(Value::Ints(out))
         }

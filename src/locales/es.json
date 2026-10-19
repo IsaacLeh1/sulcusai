@@ -3071,5 +3071,8 @@
  "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "No hay suficiente código en esas carpetas para practicar. Se necesitan archivos de Rust, TypeScript, JavaScript o Python con unas cuantas decenas de funciones.",
  "This model's chat template doesn't lay out tool results, so it can't practise on code.": "La plantilla de chat de este modelo no puede presentar resultados de herramientas, así que no puede practicar con código.",
  "Those folders can't be found.": "No se encuentran esas carpetas.",
- "That's a folder. Use find_files to see what's in it.": "Eso es una carpeta. Usa find_files para ver qué contiene."
+ "That's a folder. Use find_files to see what's in it.": "Eso es una carpeta. Usa find_files para ver qué contiene.",
+ "Waiting for a reply that uses this model to finish": "Esperando a que termine una respuesta que usa este modelo",
+ "A smarter model fits this PC: {name}": "Un modelo más inteligente cabe en este PC: {name}",
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tiene una puntuación de {theirs} frente a {ours} de {current}, el mejor que tienes ahora, y funciona bien aquí. Tus chats y otros modelos se quedan como están."
 }

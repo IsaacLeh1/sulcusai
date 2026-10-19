@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-17",
+  "updated": "2026-10-19",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
@@ -279,7 +279,10 @@
         "n_kv_heads": 4,
         "head_dim": 256,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "kv_whole": 5,
+        "kv_sliding": 29
       },
       "default_ctx": 8192,
       "tools": false,
@@ -492,7 +495,10 @@
         "n_kv_heads": 8,
         "head_dim": 256,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "kv_whole": 8,
+        "kv_sliding": 40
       },
       "default_ctx": 8192,
       "tools": false,
@@ -636,7 +642,10 @@
         "n_kv_heads": 8,
         "head_dim": 64,
         "max_ctx": 131072,
-        "active_fraction": 0.25
+        "active_fraction": 0.25,
+        "swa_window": 128,
+        "kv_whole": 12,
+        "kv_sliding": 12
       },
       "default_ctx": 8192,
       "tools": true,
@@ -977,7 +986,10 @@
         "n_kv_heads": 16,
         "head_dim": 128,
         "max_ctx": 131072,
-        "active_fraction": 1.0
+        "active_fraction": 1.0,
+        "swa_window": 1024,
+        "kv_whole": 10,
+        "kv_sliding": 52
       },
       "default_ctx": 8192,
       "tools": false,
@@ -1165,6 +1177,637 @@
         "research": 5,
         "agents": 8,
         "languages": 4
+      }
+    },
+    {
+      "id": "qwen3.5-2b",
+      "name": "Qwen3.5 2B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF",
+      "description": "Small and quick, and smarter than Qwen3 1.7B: thinks step by step, uses tools and sees pictures. A good pick for older PCs.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "fast",
+        "thinking",
+        "tool-calling",
+        "vision"
+      ],
+      "params_b": 1.9,
+      "arch": {
+        "n_layer": 24,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 6
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3.5-2B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf",
+          "size": 1280835840,
+          "sha256": "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3.5-2B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q5_K_M.gguf",
+          "size": 1435238656,
+          "sha256": "1885b3a9195f8cc09da9a7a7a75afdc1e8d5cbf9fc4a499c3961dddea37098ac"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.5-2B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q6_K.gguf",
+          "size": 1574961408,
+          "sha256": "fc90339420b4298887aafb307a4291c55440b730133bbffe6ba9630503dcb548"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.5-2B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q8_0.gguf",
+          "size": 2012012800,
+          "sha256": "1b04acba824817554f4ce23639bc8495ff70453b8fcb047900c731521021f2c1"
+        }
+      ],
+      "ratings": {
+        "overall": 42,
+        "coding": 4,
+        "writing": 5,
+        "research": 5,
+        "agents": 6,
+        "languages": 6
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 668227264,
+        "sha256": "7035e9cb8d7c6a9681d07eef9a364783e86ea4cd73faab2eabb4f43a101830c7"
+      }
+    },
+    {
+      "id": "qwen3.5-4b",
+      "name": "Qwen3.5 4B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+      "description": "The newest Qwen generation in a small size: thinks step by step, uses tools well and sees pictures. A big step up from Qwen3 4B.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision"
+      ],
+      "params_b": 4.2,
+      "arch": {
+        "n_layer": 32,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 8
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3.5-4B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
+          "size": 2740937888,
+          "sha256": "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3.5-4B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q5_K_M.gguf",
+          "size": 3143656608,
+          "sha256": "8814232b85594dcd46c50e5b8b29324a7efe9e746edbe8a3d1df3d3fce7aad39"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.5-4B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q6_K.gguf",
+          "size": 3525956768,
+          "sha256": "fdedd781c9ce676ab66b018ca247ff78e8a33c98098a822c1e2d5075e7718f66"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.5-4B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf",
+          "size": 4482403488,
+          "sha256": "10cc391b403021dd11c614679d2fd92f611c3681d29e29651b717316965d61e1"
+        }
+      ],
+      "ratings": {
+        "overall": 60,
+        "coding": 6,
+        "writing": 6,
+        "research": 7,
+        "agents": 7,
+        "languages": 7
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 672423616,
+        "sha256": "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864"
+      }
+    },
+    {
+      "id": "qwen3.5-9b",
+      "name": "Qwen3.5 9B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF",
+      "description": "The best all-rounder for 8-12 GB graphics cards: thinks step by step, uses tools and the web well, writes code and sees pictures.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision"
+      ],
+      "params_b": 9.0,
+      "arch": {
+        "n_layer": 32,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 8
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3.5-9B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+          "size": 5680522464,
+          "sha256": "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3.5-9B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q5_K_M.gguf",
+          "size": 6577841376,
+          "sha256": "dc2a39aef291f91a9116ad214058da0d86eb648743a124bd8c333787c4b9c91c"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.5-9B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q6_K.gguf",
+          "size": 7458301152,
+          "sha256": "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.5-9B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q8_0.gguf",
+          "size": 9527502048,
+          "sha256": "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4"
+        }
+      ],
+      "ratings": {
+        "overall": 74,
+        "coding": 8,
+        "writing": 7,
+        "research": 8,
+        "agents": 8,
+        "languages": 8
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 918166080,
+        "sha256": "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f"
+      }
+    },
+    {
+      "id": "qwen3.6-27b",
+      "name": "Qwen3.6 27B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF",
+      "description": "Very capable all-rounder for 24 GB graphics cards or PCs with lots of memory: strong at coding, research and long tasks with tools; sees pictures.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "coding"
+      ],
+      "params_b": 26.9,
+      "arch": {
+        "n_layer": 64,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 16
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3.6-27B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q4_K_M.gguf",
+          "size": 16817244384,
+          "sha256": "5ed60d0af4650a854b1755bd392f9aef4872643dc25a254bc68043fa638392a0"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3.6-27B-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q5_K_M.gguf",
+          "size": 19509790944,
+          "sha256": "cfecab168156269f25d5ffe9e13cf2a401ca2f43a9693fa00bcd1625316ccbde"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.6-27B-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q6_K.gguf",
+          "size": 22523238624,
+          "sha256": "ec1805fe87e6519c461c1ed2d179865464a875ed241032ead65a354f979cfe14"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.6-27B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-Q8_0.gguf",
+          "size": 28595763424,
+          "sha256": "f93f517f38e696d35a1a7df2c0e3155a64f4c4dcd662107a146ae263f7fb14ce"
+        }
+      ],
+      "ratings": {
+        "overall": 88,
+        "coding": 10,
+        "writing": 9,
+        "research": 9,
+        "agents": 10,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 927607360,
+        "sha256": "eacf610d1ee4bd5ed0197a0777dd8f4fceb8eefa27009067c7d496cb68fbde45"
+      }
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "name": "Qwen3.6 35B-A3B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF",
+      "description": "Uses only 3B of its 35B per word (mixture of experts), so it stays quick even partly in system memory: strong at coding and tool use; sees pictures.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "coding"
+      ],
+      "params_b": 34.7,
+      "arch": {
+        "n_layer": 40,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 0.128,
+        "kv_whole": 10
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+          "size": 22134528992,
+          "sha256": "ac0e2c1189e055faa36eff361580e79c5bd6f8e76bffb4ce547f167d53e31a61"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q5_K_M.gguf",
+          "size": 26456194016,
+          "sha256": "c13ce26253ea334df472bd8fbd2d6da66d8a41195c17f6fcbf44c4d20ece0932"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q6_K.gguf",
+          "size": 29308320736,
+          "sha256": "4fe53b148b46f9b88830e2a3055c5b15c3a4d1e3ddc9a1384a108d8b9d59f043"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.6-35B-A3B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-Q8_0.gguf",
+          "size": 36903140320,
+          "sha256": "d1a395809f65a43a13ad119eb4e7acdef1ac6d68120f39902c8ab96e72794a59"
+        }
+      ],
+      "ratings": {
+        "overall": 84,
+        "coding": 9,
+        "writing": 8,
+        "research": 9,
+        "agents": 10,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 899283680,
+        "sha256": "8971ee4f331ff0a4c609374f32984b3d4e6dc086c0aa35f1d637fad1829e887f"
+      }
+    },
+    {
+      "id": "gemma-4-e4b",
+      "name": "Gemma 4 E4B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF",
+      "description": "Google's efficient small model: natural writing in many languages, sees pictures and uses tools.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual",
+        "vision",
+        "tool-calling"
+      ],
+      "params_b": 7.5,
+      "arch": {
+        "n_layer": 42,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 4,
+        "kv_sliding": 20,
+        "kv_whole_width": 1024,
+        "swa_window": 512
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-4-E4B-it-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
+          "size": 4977171584,
+          "sha256": "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-4-E4B-it-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q5_K_M.gguf",
+          "size": 5481798784,
+          "sha256": "a5d6e634db151368d2caa4270fd32ab604d96c2d1291950586989f46d8e17d36"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-4-E4B-it-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q6_K.gguf",
+          "size": 7074929792,
+          "sha256": "fd83f3ef44d22e00ff0f638753dde9a66a83e8ccf79c11024f47d383c489531b"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-4-E4B-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q8_0.gguf",
+          "size": 8192953472,
+          "sha256": "f8854aa4480df62585a279e7ca0a881554fc18a41c59c4f62642d16a2ae47012"
+        }
+      ],
+      "ratings": {
+        "overall": 55,
+        "coding": 5,
+        "writing": 8,
+        "research": 6,
+        "agents": 6,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 990372672,
+        "sha256": "ddf46c21d7078e95338cfc22306b19b276a29a5ad089023449dd54d4b6170a51"
+      }
+    },
+    {
+      "id": "gemma-4-12b",
+      "name": "Gemma 4 12B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF",
+      "description": "Google's mid-size model: excellent writing and translation in many languages; sees pictures and uses tools.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual",
+        "vision",
+        "tool-calling"
+      ],
+      "params_b": 11.9,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 8,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 1.0,
+        "kv_whole": 8,
+        "kv_sliding": 40,
+        "kv_whole_width": 512,
+        "swa_window": 1024
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-4-12b-it-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q4_K_M.gguf",
+          "size": 7121861440,
+          "sha256": "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-4-12b-it-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q5_K_M.gguf",
+          "size": 8413576000,
+          "sha256": "32c554c7d1338a23837ae39b3db482213a4a642f96df3b2619f516a2375d16cd"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-4-12b-it-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q6_K.gguf",
+          "size": 9786022720,
+          "sha256": "6f394336500bb5409bd68c31aa9d75097b5e6104f6cf30c82a09a7b64df41faf"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-4-12b-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/gemma-4-12b-it-Q8_0.gguf",
+          "size": 12669647680,
+          "sha256": "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72"
+        }
+      ],
+      "ratings": {
+        "overall": 70,
+        "coding": 7,
+        "writing": 9,
+        "research": 7,
+        "agents": 7,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-4-12b-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 175115840,
+        "sha256": "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e"
+      }
+    },
+    {
+      "id": "gemma-4-26b-a4b",
+      "name": "Gemma 4 26B-A4B",
+      "publisher": "Google",
+      "source": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF",
+      "description": "Google's mixture-of-experts model (4B of 26B per word): high-quality writing and reasoning at the speed of a small model; sees pictures.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://ai.google.dev/gemma/docs/gemma_4_license",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "writing",
+        "multilingual",
+        "vision",
+        "tool-calling"
+      ],
+      "params_b": 25.2,
+      "arch": {
+        "n_layer": 30,
+        "n_kv_heads": 8,
+        "head_dim": 256,
+        "max_ctx": 131072,
+        "active_fraction": 0.156,
+        "kv_whole": 5,
+        "kv_sliding": 25,
+        "kv_whole_width": 1024,
+        "swa_window": 1024
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+          "size": 16947541728,
+          "sha256": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f"
+        },
+        {
+          "quant": "Q5_K_M",
+          "quality": "Better",
+          "file": "gemma-4-26B-A4B-it-UD-Q5_K_M.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q5_K_M.gguf",
+          "size": 21150365408,
+          "sha256": "769d386a69d43782321c1bad04d41d29a2e84b2c06e6a277cd99fd6265ec0e80"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "gemma-4-26B-A4B-it-UD-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q6_K.gguf",
+          "size": 23172478688,
+          "sha256": "76bf3eee49cca5b076b34a4b575ecd505dabc470512b46f1207b4f9da08385f0"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "gemma-4-26B-A4B-it-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q8_0.gguf",
+          "size": 26859861728,
+          "sha256": "5f7cbd0f4564e84342fc34321a09acb54b1a3da9215124e5bf444baa6dda152c"
+        }
+      ],
+      "ratings": {
+        "overall": 78,
+        "coding": 8,
+        "writing": 9,
+        "research": 8,
+        "agents": 8,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 1193058784,
+        "sha256": "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f"
       }
     }
   ],
@@ -1848,6 +2491,161 @@
             "z-image",
             "z_image",
             "zimage"
+          ]
+        }
+      },
+      {
+        "id": "flux1-schnell",
+        "name": "FLUX.1 schnell",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.1-schnell",
+        "description": "Detailed pictures in 4 quick steps, and the base of many FLUX.1 fine-tunes you can open from a Hugging Face link. Creates and fills in; for edits from instructions, use FLUX.2 klein.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux1-schnell-Q4_K_S.gguf",
+            "url": "https://huggingface.co/city96/FLUX.1-schnell-gguf/resolve/main/flux1-schnell-Q4_K_S.gguf",
+            "size": 6783943712,
+            "sha256": "4fd16477b3a5296d0cf722c4b92a9fd7f30d09ac7495826e4465d8de9c9fd973"
+          },
+          {
+            "role": "clip_l",
+            "file": "clip_l.safetensors",
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+            "size": 246144152,
+            "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+          },
+          {
+            "role": "t5xxl",
+            "file": "t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "size": 2896123072,
+            "sha256": "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4"
+          },
+          {
+            "role": "vae",
+            "file": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "size": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 25,
+        "quality": 7,
+        "defaults": {
+          "steps": 4,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.1 schnell",
+          "bases": [
+            "black-forest-labs/FLUX.1-schnell"
+          ],
+          "role": "diffusion",
+          "min_size": 3000000000,
+          "max_size": 25000000000,
+          "avoid": [
+            "fill",
+            "kontext",
+            "redux",
+            "depth",
+            "canny",
+            "fp8",
+            "dev"
+          ]
+        }
+      },
+      {
+        "id": "flux1-dev",
+        "name": "FLUX.1 dev",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/black-forest-labs/FLUX.1-dev",
+        "description": "Sharper, more detailed pictures than FLUX.1 schnell, in 20 steps, and the base of most FLUX.1 fine-tunes on Hugging Face (paste a link to one in the Studio). Creates and fills in.",
+        "license": {
+          "name": "FLUX.1 [dev] Non-Commercial License",
+          "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md",
+          "commercial": false,
+          "note": "Non-commercial use only. Read the license before using what it makes for work."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "fill",
+          "extend"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux1-dev-Q4_K_S.gguf",
+            "url": "https://huggingface.co/city96/FLUX.1-dev-gguf/resolve/main/flux1-dev-Q4_K_S.gguf",
+            "size": 6805988640,
+            "sha256": "75bb19459b5240c9f373b5af527584af15b675867fa142efadf7478d6abbf62b"
+          },
+          {
+            "role": "clip_l",
+            "file": "clip_l.safetensors",
+            "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+            "size": 246144152,
+            "sha256": "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+          },
+          {
+            "role": "t5xxl",
+            "file": "t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/t5-v1_1-xxl-encoder-gguf/resolve/main/t5-v1_1-xxl-encoder-Q4_K_M.gguf",
+            "size": 2896123072,
+            "sha256": "6be2b0b7e2de7cf2919340c88cb802a103a997ce46c53131cec91958c1db1af4"
+          },
+          {
+            "role": "vae",
+            "file": "ae.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors",
+            "size": 335304388,
+            "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+          }
+        ],
+        "min_vram_gb": 8,
+        "cpu": false,
+        "secs": 80,
+        "quality": 8,
+        "defaults": {
+          "steps": 20,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        },
+        "hub": {
+          "name": "FLUX.1 dev",
+          "bases": [
+            "black-forest-labs/FLUX.1-dev"
+          ],
+          "role": "diffusion",
+          "min_size": 3000000000,
+          "max_size": 25000000000,
+          "avoid": [
+            "fill",
+            "kontext",
+            "redux",
+            "depth",
+            "canny",
+            "fp8",
+            "schnell"
           ]
         }
       },

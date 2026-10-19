@@ -279,6 +279,87 @@ fn gguf_files(dir: &Path, min_size: u64) -> Vec<PathBuf> {
     out
 }
 
+/// How a model keeps its conversation memory, from its header: which layers
+/// keep the whole window, which only a sliding window, and how wide each
+/// is. Read from what the file lists (Gemma 4: which layers slide, how many
+/// share another's memory, K/V heads per layer), else the family's pattern
+/// (Gemma 3, gpt-oss), else Qwen3.5's one-in-N full-attention layers.
+/// Returns the memory fields of an `Arch` (the rest left at zero).
+fn kv_layout(meta: &gguf::Meta, arch: &str, n_layer: usize, heads: i64, head_dim: i64) -> Arch {
+    let get = |k: &str| meta.get(&format!("{arch}.{k}"));
+    let per_layer = |k: &str| -> Vec<i64> {
+        match get(k) {
+            Some(gguf::Value::Ints(v)) if v.len() == n_layer => v.clone(),
+            Some(v) => vec![v.int().unwrap_or(0); n_layer],
+            None => Vec::new(),
+        }
+    };
+    let kv_heads = per_layer("attention.head_count_kv");
+    let kv_at = |i: usize| kv_heads.get(i).copied().filter(|h| *h > 0).unwrap_or(heads);
+    let int = |k: &str| get(k).and_then(gguf::Value::int);
+    let window = int("attention.sliding_window").unwrap_or(0).max(0) as u32;
+    let shared = (int("attention.shared_kv_layers").unwrap_or(0).max(0) as usize).min(n_layer);
+    let own = n_layer - shared;
+    // Which of the layers with their own memory slide (yes = 1).
+    let pattern = per_layer("attention.sliding_window_pattern");
+    let every = crate::catalog::swa_every(arch) as usize;
+    let sliding: Vec<bool> = if window > 0 && pattern.len() == n_layer {
+        pattern[..own].iter().map(|p| *p != 0).collect()
+    } else if window > 0 && every > 0 {
+        // llama.cpp: layer i keeps everything when i % every == every - 1.
+        (0..own).map(|i| i % every != every - 1).collect()
+    } else {
+        Vec::new()
+    };
+    let interval = int("full_attention_interval").unwrap_or(0).max(0) as usize;
+    let mut a = Arch { n_layer: n_layer as u32, n_kv_heads: kv_at(0) as u32, head_dim: head_dim as u32, max_ctx: 0, active_fraction: 1.0, kv_whole: 0, kv_sliding: 0, kv_whole_width: 0, swa_window: 0 };
+    if !sliding.is_empty() {
+        let first_whole = sliding.iter().position(|s| !s);
+        let first_sliding = sliding.iter().position(|s| *s);
+        a.kv_whole = sliding.iter().filter(|s| !**s).count() as u32;
+        a.kv_sliding = own as u32 - a.kv_whole;
+        a.swa_window = window;
+        // The sliding layers' shape is the main one; the whole-window
+        // layers' is kept beside it when it differs.
+        if let Some(i) = first_sliding {
+            a.n_kv_heads = kv_at(i) as u32;
+            a.head_dim = int("attention.key_length_swa").unwrap_or(head_dim) as u32;
+        }
+        if let Some(i) = first_whole {
+            let width = (kv_at(i) * head_dim) as u32;
+            if width != a.n_kv_heads * a.head_dim {
+                a.kv_whole_width = width;
+            }
+        }
+    } else if interval > 0 {
+        // Linear-attention layers keep a small fixed state, not the window.
+        a.kv_whole = (n_layer / interval) as u32;
+    } else if shared > 0 {
+        a.kv_whole = own as u32;
+    }
+    a
+}
+
+/// Deletes a model file and, when it's the first part of a split model, its
+/// other parts too.
+pub fn remove_with_parts(path: &Path) {
+    let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+    let stem = name.trim_end_matches(".gguf");
+    let mut it = stem.rsplitn(4, '-');
+    if let (Some(total), Some("of"), Some(part), Some(base), Some(dir)) = (it.next(), it.next(), it.next(), it.next(), path.parent()) {
+        if part.trim_start_matches('0') == "1" && total.bytes().all(|b| b.is_ascii_digit()) {
+            let (prefix, suffix) = (format!("{base}-"), format!("-of-{total}.gguf"));
+            for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+                let n = e.file_name().to_string_lossy().to_lowercase();
+                if n.starts_with(&prefix) && n.ends_with(&suffix) && later_part(&n) {
+                    std::fs::remove_file(e.path()).ok();
+                }
+            }
+        }
+    }
+    std::fs::remove_file(path).ok();
+}
+
 /// "…-00002-of-00003.gguf": the second or a later part of a split model.
 fn later_part(name: &str) -> bool {
     let stem = name.trim_end_matches(".gguf");
@@ -337,6 +418,12 @@ fn known_ratings(name: &str, params_b: f64) -> Ratings {
     if let Some(m) = models.iter().find(|m| m.id == base || m.id.starts_with(&format!("{base}-"))) {
         return m.ratings.clone();
     }
+    // Other apps spell the same model differently: Ollama's "gemma3:12b"
+    // is the catalog's "gemma-3-12b", "qwen3.5:9b" its "qwen3.5-9b".
+    let bare = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    if let Some(m) = models.iter().find(|m| bare(&m.id) == bare(&base)) {
+        return m.ratings.clone();
+    }
     let fam = family(&base);
     if fam.is_empty() {
         return Ratings::default();
@@ -371,7 +458,6 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         return Err("isn't a kind of model SulcusAI understands".into());
     };
     let heads = heads.max(1);
-    let kv_heads = a("attention.head_count_kv").unwrap_or(heads);
     let head_dim = a("attention.key_length").or_else(|| a("embedding_length").map(|e| e / heads)).unwrap_or(128);
     let max_ctx = a("context_length").unwrap_or(4096).clamp(2048, 131_072) as u32;
     let active_fraction = match (a("expert_count"), a("expert_used_count")) {
@@ -379,6 +465,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         (Some(n), Some(used)) if n > 0 => 0.1 + 0.9 * used as f64 / n as f64,
         _ => 1.0,
     };
+    let memory = kv_layout(&meta, &arch, n_layer.max(1) as usize, heads, head_dim);
     std::fs::metadata(&c.path).map_err(|e| e.to_string())?;
     let size = size_with_parts(&c.path);
     let header = int("general.file_type").map_or("Unknown", gguf::quant_name);
@@ -414,7 +501,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         },
         tags: if vision.is_some() { vec!["vision".into()] } else { Vec::new() },
         params_b,
-        arch: Arch { n_layer: n_layer as u32, n_kv_heads: kv_heads as u32, head_dim: head_dim as u32, max_ctx, active_fraction },
+        arch: Arch { n_layer: n_layer as u32, max_ctx, active_fraction, ..memory },
         default_ctx: 8192.min(max_ctx),
         tools: template.contains("tools"),
         variants: vec![Variant {
@@ -424,6 +511,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
             url: String::new(),
             size,
             sha256: String::new(),
+            parts: Vec::new(),
         }],
         ratings: known_ratings(c.name.as_deref().unwrap_or(&c.path.display().to_string()), params_b),
         vision,
@@ -521,6 +609,40 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
 mod tests {
     use super::*;
 
+    /// Conversation memory as llama.cpp b11450 allocated it at 16K, from
+    /// the real headers: Qwen3.5 0.8B keeps it in 6 of 24 layers (192 MiB),
+    /// Gemma 4 E2B in 3 whole-window and 12 sliding layers, 20 sharing
+    /// (96 + 12 MiB), Gemma 3 4B in 5 whole and 29 sliding (320 + 174 MiB).
+    #[test]
+    fn layers_plan_their_conversation_memory_as_the_engine_does() {
+        use gguf::Value::{Int, Ints};
+        let mib = |a: &Arch| crate::catalog::kv_cache_bytes(a, 16384) / (1024 * 1024);
+        let meta = |pairs: Vec<(&str, gguf::Value)>| pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<gguf::Meta>();
+
+        let qwen = meta(vec![("qwen35.attention.head_count_kv", Int(2)), ("qwen35.full_attention_interval", Int(4))]);
+        let a = kv_layout(&qwen, "qwen35", 24, 8, 256);
+        assert_eq!((a.kv_whole, a.kv_sliding, mib(&a)), (6, 0, 192));
+
+        let pattern: Vec<i64> = (0..35).map(|i| (i % 5 != 4) as i64).collect();
+        let gemma4 = meta(vec![
+            ("gemma4.attention.head_count_kv", Int(1)),
+            ("gemma4.attention.key_length_swa", Int(256)),
+            ("gemma4.attention.sliding_window", Int(512)),
+            ("gemma4.attention.shared_kv_layers", Int(20)),
+            ("gemma4.attention.sliding_window_pattern", Ints(pattern)),
+        ]);
+        let a = kv_layout(&gemma4, "gemma4", 35, 8, 512);
+        assert_eq!((a.kv_whole, a.kv_sliding, a.kv_whole_width, mib(&a)), (3, 12, 512, 96 + 12));
+
+        let gemma3 = meta(vec![("gemma3.attention.head_count_kv", Int(4)), ("gemma3.attention.sliding_window", Int(1024))]);
+        let a = kv_layout(&gemma3, "gemma3", 34, 8, 256);
+        assert_eq!((a.kv_whole, a.kv_sliding, mib(&a)), (5, 29, 320 + 174));
+
+        let plain = meta(vec![("qwen3.attention.head_count_kv", Int(8))]);
+        let a = kv_layout(&plain, "qwen3", 36, 32, 128);
+        assert_eq!((a.kv_whole, a.kv_sliding), (0, 0), "every layer keeps the whole window");
+    }
+
     #[test]
     fn a_split_model_is_as_big_as_all_its_parts() {
         let dir = std::env::temp_dir().join(format!("sulcus-split-{}", std::process::id()));
@@ -530,6 +652,10 @@ mod tests {
         }
         assert_eq!(size_with_parts(&dir.join("big-Q4_K_M-00001-of-00003.gguf")), 35);
         assert_eq!(size_with_parts(&dir.join("other.gguf")), 99);
+        // Replacing it with another version deletes every part, not just the first.
+        remove_with_parts(&dir.join("big-Q4_K_M-00001-of-00003.gguf"));
+        let left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["other.gguf"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -539,6 +665,8 @@ mod tests {
         assert_eq!(known_ratings("qwen3-coder:30b", 30.5).agents, 8);
         assert_eq!(known_ratings("qwen2.5-coder:14b", 14.8).agents, 4, "same family, nearest size");
         assert_eq!(known_ratings("qwen3:8b", 8.2).agents, 7);
+        assert_eq!(known_ratings("gemma3:12b", 12.0).writing, 8, "Ollama leaves out the catalog's dashes");
+        assert_eq!(known_ratings("qwen3.5:9b", 9.0).overall, 74);
         assert_eq!(known_ratings(r"C:\models\qwen3-14b-Q4_K_M.gguf", 14.8).agents, 8);
         assert_eq!(known_ratings("some-new-model:7b", 7.0).agents, 0, "unknown: no ratings");
     }

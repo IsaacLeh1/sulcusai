@@ -279,6 +279,7 @@ fn derive(donor: &MediaModel, repo_id: &str, info: &Value, f: &RemoteFile, url: 
     }
     m.hub = None;
     m.from_hub = Some(repo_id.to_string());
+    m.built_on = Some(donor.id.clone());
     m
 }
 
@@ -514,6 +515,41 @@ mod tests {
             "hub": { "name": "SDXL", "bases": ["stabilityai/stable-diffusion-xl-base-1.0"], "role": "model", "min_size": 2_000_000_000u64, "max_size": 8_000_000_000u64, "tune_steps": true }
         }))
         .unwrap()
+    }
+
+    /// FLUX.1 fine-tunes (his brother pasted some): a dev fine-tune opens
+    /// FLUX.1 dev, keeps its text readers and decoder, and Fill/Kontext
+    /// files and the catalog's own file aren't offered.
+    #[test]
+    fn flux1_fine_tunes_open_their_family() {
+        let catalog = crate::catalog::Catalog::bundled();
+        let donors: Vec<MediaModel> = catalog.media.models.iter().filter(|m| m.hub.is_some()).cloned().collect();
+        let tune = json!({ "id": "someone/flux1-dev-realism-gguf", "tags": ["base_model:finetune:black-forest-labs/FLUX.1-dev"] });
+        let fams = families_of(&tune, &donors);
+        assert_eq!(fams.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["flux1-dev"]);
+        let schnell = json!({ "id": "city96/FLUX.1-schnell-gguf", "tags": ["base_model:quantized:black-forest-labs/FLUX.1-schnell"] });
+        assert_eq!(families_of(&schnell, &donors).iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["flux1-schnell"]);
+
+        let f = |path: &str, size: u64, sha: &str| RemoteFile { path: path.into(), size, sha256: sha.into() };
+        let repo = Repo {
+            info: tune.clone(),
+            files: vec![
+                f("realism-flux1-dev-Q5_K_S.gguf", 8_285_267_232, "c"),
+                f("realism-flux1-dev-fill-Q4_0.gguf", 6_791_167_136, "d"),
+                f("flux1-dev-Q4_K_S.gguf", 6_805_988_640, "75bb19459b5240c9f373b5af527584af15b675867fa142efadf7478d6abbf62b"),
+            ],
+        };
+        let known: HashSet<String> = catalog.media.models.iter().flat_map(|m| m.files.iter().map(|f| f.sha256.clone())).collect();
+        let offers = offered(&repo, &fams, &known);
+        assert_eq!(offers.iter().map(|(f, _)| f.path.as_str()).collect::<Vec<_>>(), ["realism-flux1-dev-Q5_K_S.gguf"]);
+        let m = derive(offers[0].1, "someone/flux1-dev-realism-gguf", &tune, offers[0].0, "u".into());
+        let roles: Vec<&str> = m.files.iter().map(|f| f.role.as_str()).collect();
+        assert_eq!(roles, ["diffusion", "clip_l", "t5xxl", "vae"]);
+        assert!(m.files[0].file.ends_with("realism-flux1-dev-Q5_K_S.gguf") && m.files[2].file == "t5-v1_1-xxl-encoder-Q4_K_M.gguf");
+        assert_eq!(m.defaults.steps, 20, "dev fine-tunes keep dev's steps");
+        assert_eq!(super::super::prompts::family(&m), "flux2", "prompts written the FLUX way, not the general one");
+        let older = MediaModel { built_on: None, ..m };
+        assert_eq!(super::super::prompts::family(&older), "flux2", "one installed before built_on was kept: from its description");
     }
 
     #[test]

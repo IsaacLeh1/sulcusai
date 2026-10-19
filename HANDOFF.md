@@ -1336,6 +1336,29 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
 - Speed: the content check first used Unicode `\b`, which sends the regex crate to its slow engine on non-ASCII text (the locale tables, arrows in comments). Unoptimized, it took 25 s on his repo. ASCII `(?-u:\b)` brought it to 1.9 s.
 - On his repo the content check also leaves out `src/locales/de.json` and `ja.json`: a translated "token"/"password" line looks like one. They aren't code, so nothing is lost. `yourcode.rs` writes its test key and token in pieces (`concat!`) so it doesn't leave itself out.
 
+## Overnight batch (2026-10-19, branch `night`, worktree C:\dev\sulcusai-night)
+
+He went to bed and left free rein to add and refine things, then build and publish one large update. This work was done in a separate worktree, because two practice sessions were editing C:\dev\sulcusai. Builds use a separate target folder, C:\dev\sulcusai-night-target.
+
+- **Newer chat models** (catalog): Qwen3.5 2B/4B/9B, Qwen3.6 27B and 35B-A3B, Gemma 4 E4B/12B/26B-A4B, all with picture readers.
+  - Files and layouts were read from the real headers by `scratchpad/gather_models.py` (HTTP range requests). The ratings are estimates from public benchmarks, placed against the catalog's own.
+  - Checked on b11450 with the 0.8B and E2B sizes, processor only: both load, answer, read a test picture and make tool calls the engine parses.
+  - The suggested assistant (`best_for`) is now Qwen3.5 9B on 8-16 GB cards, Qwen3.6 27B on 24 GB and up, Qwen3.5 4B on small cards, and Qwen3.5 2B on the processor.
+  - The Models page notes, once per model, when a model rated 10 or more points above every installed one fits (`Upgrade` in ModelsView).
+- **Conversation memory per layer kind** (`Arch.kv_whole`, `kv_sliding`, `kv_whole_width`, `swa_window`; `local::kv_layout`):
+  - Gemma 3: 5 of 34 layers keep the whole window, the rest 1,024 + 512 tokens.
+  - Gemma 4: a pattern and shared layers read from the file; whole-window layers are 1 × 512 wide, against 8 × 256.
+  - Qwen3.5/3.6: memory in one layer in four (`full_attention_interval`); the rest keep a small fixed state.
+  - gpt-oss: half the layers slide (128).
+  - Matches llama.cpp's allocation at 16K exactly (Gemma 3 4B 494 MiB, where 2.2 GB was planned before). So more of these models goes on the card.
+- **Split GGUFs from links**: offered once, sized from all their parts, every part downloaded (`Variant.parts`). The engine loads the first part (checked with a 4B split into three). Replacing a version deletes all the old parts.
+- **FLUX.1 schnell and dev** (picture catalog): city96's Q4_K_S, CLIP-L, a Q4 T5-XXL, and Z-Image's FLUX decoder (shared file). Each opens its family of fine-tunes from links. They're rated below Z-Image, so they're never the default unless picked.
+- **Link copies of picture models** remember the catalog model they're built on (`MediaModel.built_on`), so their prompts are written for that family. Older installs fall back to their description.
+- **Installing a new version of the model a chat is replying with** waits for the reply (up to 3 minutes, `waiting` phase) instead of cutting it off.
+- Models from other apps get ratings when only dashes or dots differ ("gemma3:12b" → gemma-3-12b).
+- Checked and already done (the old notes were stale): free-memory check before loading (`memcheck`), log caps while running (`capped_log`), scheduled tasks claiming their reply first.
+- Found, not fixable here: the trainer (QVAC b7349, its latest release, March 2026) finds turns only in ChatML and Gemma 3 formats. Gemma 4 (`<|turn>model`) and Llama 3 can't be taught from conversations or practise; documents still work.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
