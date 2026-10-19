@@ -409,7 +409,7 @@ pub fn parse_plan(v: &Value) -> Option<EditPlan> {
     let text = |c: &Value, k: &str, words: usize| short(c[k].as_str().unwrap_or_default(), words);
     let result = cut_words(v["result"].as_str().unwrap_or_default().trim().trim_end_matches(['.', ' ']), 80);
     let result_low = result.to_lowercase();
-    let (mut gone, mut checks, mut moved, mut people_gone) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut gone, mut leftover, mut checks, mut moved, mut people_gone) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
     // Where things were taken from, so the planner's own "no …" items about them aren't checked twice.
     let mut emptied: Vec<String> = Vec::new();
     for c in v["leaving"].as_array().into_iter().flatten().take(4) {
@@ -419,7 +419,6 @@ pub fn parse_plan(v: &Value) -> Option<EditPlan> {
         }
         let place = if now.is_empty() { String::new() } else { format!(" {now}") };
         let fill = if left.is_empty() { "fill the space so it matches its surroundings".to_string() } else { format!("show {left} there instead") };
-        gone.push(format!("Remove {what}{place}, and {fill}."));
         if !now.is_empty() {
             emptied.push(now.to_lowercase());
         }
@@ -428,16 +427,23 @@ pub fn parse_plan(v: &Value) -> Option<EditPlan> {
         let moves = head.len() > 2 && result_low.contains(&head);
         if moves {
             moved.push(head.clone());
-        } else if PEOPLE.contains(&head.as_str()) {
-            people_gone += 1;
+            // Taken away after the new scene is drawn: while a person still
+            // held it, klein (4B and 9B) wouldn't remove it at all.
+            leftover.push(format!("Remove the {head} {}, and {fill}. Keep the {head} in its new place.", if now.is_empty() { "left in its old place".to_string() } else { format!("that is still {now}") }));
+        } else {
+            gone.push(format!("Remove {what}{place}, and {fill}."));
+            if PEOPLE.contains(&head.as_str()) {
+                people_gone += 1;
+            }
         }
         checks.push(if moves { format!("no {} left{place}", bare(&what)) } else { format!("no {}{place}", bare(&what)) });
     }
     let then = if result.split_whitespace().count() >= 3 { vec![format!("{result}.")] } else { Vec::new() };
     let keep = "Keep everything else as it is.";
-    // One removal per step: given two in one instruction, klein made the
-    // first and ignored the second.
-    let steps: Vec<String> = gone.into_iter().map(|g| vec![g]).chain([then]).filter(|s| !s.is_empty()).map(|s| cut_words(&format!("{} {keep}", s.join(" ")), 140)).collect();
+    // One removal per step (given two in one instruction, klein made the
+    // first and ignored the second): what goes, the new scene, then the
+    // old copy of anything that moved.
+    let steps: Vec<String> = gone.into_iter().map(|g| vec![g]).chain([then]).chain(leftover.into_iter().map(|g| vec![g])).filter(|s| !s.is_empty()).map(|s| cut_words(&format!("{} {keep}", s.join(" ")), 140)).collect();
     if steps.is_empty() {
         return None;
     }
@@ -506,6 +512,40 @@ pub async fn plan_edit(h: &Helper, img: &image::DynamicImage, request: &str) -> 
     ] }));
     let v = h.ask_json(msgs, plan_schema(), 1200, 0.2).await?;
     let v = add_moved_thing(h, img, request, v).await;
+    parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())
+}
+
+/// What a picture shows, in words, for the prompt coach (a language model
+/// that doesn't see pictures): every person and thing, its colors, how many,
+/// any writing, and where each is.
+pub async fn caption(reader: &Helper, img: &image::DynamicImage) -> Result<String, String> {
+    if !reader.sees {
+        return Err(format!("{} can't see pictures.", reader.name));
+    }
+    let msgs = vec![
+        json!({ "role": "system", "content": "You describe pictures plainly and exactly." }),
+        json!({ "role": "user", "content": [
+            { "type": "image_url", "image_url": { "url": crate::vision::data_url(img)? } },
+            { "type": "text", "text": "Describe this picture for someone who can't see it: every person and thing in it, with colors, how many, any writing, and where each one is (left, right, middle, front, back). At most 90 words, plain sentences." },
+        ] }),
+    ];
+    let said = reader.ask(msgs, 260, 0.1).await?;
+    Ok(cut_words(said.trim(), 110))
+}
+
+/// The edit planner for a model that reads a description of the picture
+/// rather than the picture (the prompt coach): the same questions and the
+/// same worked example, whose picture is described in words too.
+pub fn words_messages(caption: &str, request: &str) -> Vec<Value> {
+    let mut msgs = vec![json!({ "role": "system", "content": EDIT_PLANNER.replace("Look at the picture.", "Read the description of the picture.") })];
+    msgs.extend(plan_demo());
+    msgs.push(json!({ "role": "user", "content": format!("The request: {} (The picture: {})", request.trim().trim_end_matches('.'), caption.trim()) }));
+    msgs
+}
+
+/// Plans an edit from a description of the picture (the prompt coach).
+pub async fn plan_from_words(h: &Helper, caption: &str, request: &str, temperature: f32) -> Result<EditPlan, String> {
+    let v = h.ask_json(words_messages(caption, request), plan_schema(), 1200, temperature).await?;
     parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())
 }
 
@@ -608,7 +648,9 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
 pub async fn writer(state: &Arc<AppState>, m: &MediaModel) -> Result<Helper, String> {
     if let Some(llm) = super::installed_file(state, m, "llm") {
         let vision = super::installed_file(state, m, "llm_vision");
-        return Helper::start(state, &format!("{}'s language model", m.name), &llm, vision.as_deref()).await;
+        // Coached on this PC for this picture model: with what it learned.
+        let coach = super::coach::trained(state, m);
+        return Helper::start_tuned(state, &format!("{}'s language model", m.name), &llm, vision.as_deref(), coach.as_ref().map(|c| c.adapter.as_path())).await;
     }
     if let Some(r) = crate::vision::readers(state).into_iter().next() {
         return Helper::start(state, &r.name, &r.model, Some(&r.mmproj)).await;
@@ -994,11 +1036,11 @@ mod tests {
             "checklist": ["No barbell left on the floor in front of the girl", "both arms straight up", "x"]
         });
         let p = parse_plan(&v).unwrap();
-        assert_eq!(p.steps.len(), 3, "each thing that goes on its own, then how the changed part looks");
+        assert_eq!(p.steps.len(), 3, "what goes, the new scene, then the moved thing's old copy");
         assert_eq!(p.steps[0], "Remove the woman in a black sweatshirt standing behind the girl, and show the weight bench and the black floor mats there instead. Keep everything else as it is.");
-        assert_eq!(p.steps[1], "Remove the long silver barbell with three black plates on each end on the floor in front of the girl, and show the black rubber floor mat there instead. Keep everything else as it is.");
-        assert!(p.steps[2].starts_with("The little girl in the red dress kneels and holds the long silver barbell"));
-        assert!(p.steps[2].ends_with("arms straight up. Keep everything else as it is."));
+        assert!(p.steps[1].starts_with("The little girl in the red dress kneels and holds the long silver barbell"));
+        assert!(p.steps[1].ends_with("arms straight up. Keep everything else as it is."));
+        assert_eq!(p.steps[2], "Remove the barbell that is still on the floor in front of the girl, and show the black rubber floor mat there instead. Keep the barbell in its new place. Keep everything else as it is.");
         assert_eq!(
             p.checklist,
             vec!["no woman in a black sweatshirt standing behind the girl", "no long silver barbell with three black plates on each end left on the floor in front of the girl", "both arms straight up"],

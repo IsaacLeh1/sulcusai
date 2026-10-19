@@ -8,6 +8,7 @@
 //! and what it makes goes into the gallery, encrypted.
 
 pub mod clarify;
+pub mod coach;
 mod cutout;
 pub(crate) mod imaging;
 mod cloud;
@@ -171,7 +172,7 @@ pub fn feature_of(kind: Kind) -> Feature {
 
 fn op_kind(op: &str) -> Option<Kind> {
     Some(match op {
-        "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" => Kind::Image,
+        "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" | "coach" => Kind::Image,
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
         "video" => Kind::Video,
@@ -372,7 +373,7 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
     let list = installed(&state.db.lock().unwrap());
     let all = models(state);
     let ok = |m: &&MediaModel| {
-        m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(if op == "tune" { "generate" } else { op })) && (!needs_image_input || kind != Kind::Video || m.can("image"))
+        m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(if matches!(op, "tune" | "coach") { "generate" } else { op })) && (!needs_image_input || kind != Kind::Video || m.can("image"))
     };
     if let Some(id) = wanted.filter(|w| !w.is_empty()) {
         if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
@@ -917,7 +918,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     });
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
-    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune")
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach")
         || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
@@ -1096,6 +1097,11 @@ fn estimate(state: &AppState, m: &MediaModel, req: &Request) -> f64 {
     if req.op == "tune" {
         // About 27 practice pictures at 768 pixels, plus writing and checking them.
         return f.est_secs * 27.0 * 0.6 + 300.0;
+    }
+    if req.op == "coach" {
+        // About 110 practice pictures and edit steps at 768 pixels, the
+        // checking, and a training run.
+        return f.est_secs * 110.0 * 0.6 + 1500.0;
     }
     (f.est_secs * job_scale(m, req)).max(3.0)
 }
@@ -1613,7 +1619,7 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     } else {
         req
     };
-    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune") {
+    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach") {
         make_room(state, req, model).await
     } else {
         None
@@ -1731,18 +1737,39 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let stopped = || cancel.load(Ordering::Relaxed);
 
     progress("Looking at the picture and planning the change", 0.0);
-    let plan = match prompts::reader(state, Some(m)).await {
+    let coached = coach::trained(state, m).is_some();
+    let (plan, rubric) = match prompts::reader(state, Some(m)).await {
         Ok(r) => {
             let p = prompts::plan_edit(&r, &before, &req.prompt).await;
+            // A writer coached for this model plans from a description of
+            // the picture, the way it practised.
+            let caption = if coached { prompts::caption(&r, &before).await.ok() } else { None };
             r.done(state).await;
-            p.map_err(|e| crate::applog::line("media", &format!("Couldn't plan the edit ({e}); using the instruction as written"))).ok()
+            let p = p.map_err(|e| crate::applog::line("media", &format!("Couldn't plan the edit ({e}); using the instruction as written"))).ok();
+            let mine = match caption {
+                Some(c) => match prompts::writer(state, m).await {
+                    Ok(w) => {
+                        let x = prompts::plan_from_words(&w, &c, &req.prompt, 0.3).await.ok();
+                        w.done(state).await;
+                        x
+                    }
+                    Err(_) => None,
+                },
+                None => None,
+            };
+            if mine.is_some() {
+                crate::applog::line("media", "The coached prompt writer planned the edit");
+            }
+            // The reader's plan says what to check, either way.
+            (mine.or_else(|| p.clone()), p)
         }
         Err(e) => {
             crate::applog::line("media", &format!("Nothing could look at the picture ({e}); using the instruction as written"));
-            None
+            (None, None)
         }
     };
     let plan = plan.unwrap_or_else(|| prompts::EditPlan { steps: vec![req.prompt.trim().to_string()], ..Default::default() });
+    let check = rubric.unwrap_or_else(|| plan.clone());
     crate::applog::line("media", &format!("Edit planned as {} step(s) with {} things to check", plan.steps.len(), plan.checklist.len()));
     if stopped() {
         return Err(download::CANCELLED.into());
@@ -1758,10 +1785,10 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     }
     let mut v1 = None;
     let mut steps_again = None;
-    if plan.checklist.len() >= 2 && !stopped() {
+    if check.checklist.len() >= 2 && !stopped() {
         progress("Checking the change against what you asked for", 0.0);
         if let Ok(r) = prompts::reader(state, Some(m)).await {
-            if let Ok(v) = prompts::judge_edit(&r, &before, &first, &plan).await {
+            if let Ok(v) = prompts::judge_edit(&r, &before, &first, &check).await {
                 crate::applog::line("media", &format!("The edit did {:.0}% of what was asked for", v.score * 100.0));
                 if v.score < 0.85 && !v.missing.is_empty() && !stopped() {
                     steps_again = prompts::replan_edit(&r, &before, &first, &req.prompt, &plan, &v.missing).await.ok().map(|p| p.steps);
@@ -1784,7 +1811,7 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
             let mut v2 = None;
             if v1.is_some() {
                 if let Ok(r) = prompts::reader(state, Some(m)).await {
-                    v2 = prompts::judge_edit(&r, &before, &second, &plan).await.ok();
+                    v2 = prompts::judge_edit(&r, &before, &second, &check).await.ok();
                     r.done(state).await;
                 }
             }
@@ -1892,6 +1919,24 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             };
             let report = prompts::tune(state, m, 3, &render, progress, cancel).await?;
             emit(state, "media:tuned", json!(report));
+            Ok(Vec::new())
+        }
+        "coach" => {
+            let m = model.ok_or("No picture model.")?;
+            let n = std::sync::atomic::AtomicUsize::new(0);
+            let base = work.0.clone();
+            let render = |prompt: String, negative: String, seed: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
+                let dir = base.join(format!("p{}", n.fetch_add(1, Ordering::Relaxed)));
+                let ctx = &ctx;
+                Box::pin(async move { ctx.render(m, &prompt, &negative, seed as i64, &dir).await })
+            };
+            let edit = |before: image::DynamicImage, steps: Vec<String>, seed: i64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
+                let dir = base.join(format!("e{}", n.fetch_add(1, Ordering::Relaxed)));
+                let ctx = &ctx;
+                Box::pin(async move { edit_steps(ctx, m, &before, None, &steps, seed, &dir).await })
+            };
+            let report = coach::train(state, m, &render, Some(&edit), progress, cancel).await?;
+            emit(state, "media:coached", json!(report));
             Ok(Vec::new())
         }
         _ => Err("Unknown kind of job.".into()),
@@ -2680,7 +2725,7 @@ pub async fn media_prompt_status(state: AppStateRef<'_>, model_id: String) -> Re
     let own = installed_file(&state, &m, "llm").is_some();
     let own_eyes = own && installed_file(&state, &m, "llm_vision").is_some();
     let reader = if own_eyes { Some(m.name.clone()) } else { crate::vision::readers(&state).into_iter().next().map(|r| r.name) };
-    Ok(json!({ "family": fam, "tuned": tuned, "own_writer": own, "reader": reader }))
+    Ok(json!({ "family": fam, "tuned": tuned, "own_writer": own, "reader": reader, "coach": coach::trained(&state, &m) }))
 }
 
 /// Goes back to the prompt writer's bundled instructions for a model's family.
@@ -2689,6 +2734,7 @@ pub fn media_forget_tuning(state: AppStateRef, model_id: String) -> Result<(), S
     state.cipher()?;
     let m = models(&state).into_iter().find(|m| m.id == model_id).ok_or("That model isn't in the list.")?;
     prompts::forget_tuning(&state.paths, prompts::family(&m));
+    coach::forget(&state, &m);
     db::log_action(&state.db.lock().unwrap(), "model", &format!("Forgot the prompt writer's tuning for {}", m.name));
     Ok(())
 }
