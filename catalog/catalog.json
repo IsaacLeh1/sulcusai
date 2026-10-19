@@ -2543,7 +2543,7 @@
         ],
         "min_vram_gb": 8,
         "cpu": false,
-        "secs": 25,
+        "secs": 16,
         "quality": 7,
         "defaults": {
           "steps": 4,
@@ -2621,7 +2621,7 @@
         ],
         "min_vram_gb": 8,
         "cpu": false,
-        "secs": 80,
+        "secs": 60,
         "quality": 8,
         "defaults": {
           "steps": 20,

@@ -1357,6 +1357,10 @@ He went to bed and left free rein to add and refine things, then build and publi
 - **Installing a new version of the model a chat is replying with** waits for the reply (up to 3 minutes, `waiting` phase) instead of cutting it off.
 - Models from other apps get ratings when only dashes or dots differ ("gemma3:12b" → gemma-3-12b).
 - Checked and already done (the old notes were stale): free-memory check before loading (`memcheck`), log caps while running (`capped_log`), scheduled tasks claiming their reply first.
+- **Live on his PC after the merge** (dev build, 2026-10-19):
+  - FLUX.1 schnell made a 1024 × 1024 lighthouse in 16 s, with the card at 60 °C.
+  - Qwen3.5 9B (Q4_K_M) loaded in 7.4 s with a 32K window, every layer on the card and its picture reader. It wrote 87 tokens/s, using 7.3 GB of the card and 95 MB of shared memory. His Qwen2.5-Coder 14B does about 46 at 16K.
+- **After the merge**: the training copy is Q8_0 only when 2.8 times its size fits the card's free memory (`finetune::q8_fits`; the "your code" session saw a 4B's Q8_0 training peak at 11.4 GB and spill). Llama and Gemma 4 learn from documents only (`finetune::conversations_ok`), and practice leaves out Gemma 4.
 - Found, not fixable here: the trainer (QVAC b7349, its latest release, March 2026) finds turns only in ChatML and Gemma 3 formats. Gemma 4 (`<|turn>model`) and Llama 3 can't be taught from conversations or practise; documents still work.
 
 ## Website (2026-10-12)
