@@ -3061,5 +3061,15 @@
  "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} がモデルの間違えた課題に答えています：{total} 問中 {n} 問、正解 {kept} 件を保存",
  "practised with {teacher} teaching, test {before} → {after} of {total} right": "{teacher} を教師に練習済み、テスト {total} 問中 {before} → {after} 問正解",
  "A model can't be its own teacher. Pick a different one, or no teacher.": "モデルは自分自身の教師にはなれません。別のモデルを選ぶか、教師なしにしてください。",
- "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "練習課題の正解が少なすぎて学習できませんでした。別のスキルか、より大きな教師モデルを試してください。"
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "練習課題の正解が少なすぎて学習できませんでした。別のスキルか、より大きな教師モデルを試してください。",
+ "Your code (which file defines a function, what it takes and what calls it, looked up in folders you pick)": "あなたのコード（関数を定義しているファイル、その引数、その関数を呼び出す関数を、選んだフォルダーで調べる）",
+ "Folders with your code": "コードのあるフォルダー",
+ "Pick a folder with your code": "コードのあるフォルダーを選択",
+ "It looks things up in your Rust, TypeScript, JavaScript and Python files with the file tools chats use, and its answers are checked against the files. It only reads them, and never opens .env files, keys, lockfiles, or dependency and build folders. It learns how to look, not your code itself.": "チャットと同じファイルツールで Rust、TypeScript、JavaScript、Python のファイルを調べ、答えはファイルと照らし合わせて確認されます。ファイルは読むだけで、.env ファイル、鍵、ロックファイル、依存関係やビルドのフォルダーは決して開きません。覚えるのは調べ方で、コードそのものではありません。",
+ "Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.": "コードに関する課題はモデル自身が解きます。ファイルツールを何度も使う必要があり、教師モデルは 1 回で答えるためです。",
+ "Pick at least one folder with your code.": "コードのあるフォルダーを 1 つ以上選んでください。",
+ "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "これらのフォルダーには練習に十分なコードがありません。数十個の関数を含む Rust、TypeScript、JavaScript、Python のファイルが必要です。",
+ "This model's chat template doesn't lay out tool results, so it can't practise on code.": "このモデルのチャットテンプレートはツールの結果を扱えないため、コードで練習できません。",
+ "Those folders can't be found.": "これらのフォルダーが見つかりません。",
+ "That's a folder. Use find_files to see what's in it.": "それはフォルダーです。find_files で中身を確認してください。"
 }

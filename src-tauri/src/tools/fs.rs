@@ -481,7 +481,7 @@ fn search_roots(sb: &Sandbox, path: Option<&str>) -> Result<Vec<std::path::PathB
 
 /// Files under each root, honoring .gitignore and skipping build/dependency
 /// folders. Globs are matched relative to each root, so each gets its own walk.
-fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit: usize) -> Result<Vec<std::path::PathBuf>, String> {
+pub(crate) fn walk_files(roots: &[std::path::PathBuf], glob: Option<&str>, limit: usize) -> Result<Vec<std::path::PathBuf>, String> {
     let mut files = Vec::new();
     for root in roots {
         let mut ov = ignore::overrides::OverrideBuilder::new(root);

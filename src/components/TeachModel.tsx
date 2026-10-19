@@ -17,14 +17,31 @@ const SKILLS: { id: PracticeSkill; label: string }[] = [
   { id: "time", label: tx("Dates and times") },
   { id: "format", label: tx("Following instructions (bullets, word limits, JSON)") },
   { id: "tools", label: tx("Using tools") },
+  { id: "project", label: tx("Your code (which file defines a function, what it takes and what calls it, looked up in folders you pick)") },
 ];
+
+/** Skills worked with tools: a model that can't use tools can't practise them. */
+const needsTools = (s: PracticeSkill) => s === "tools" || s === "project";
 
 /** Advanced → Model work: teach a model from your own examples (LoRA). */
 export function TeachModel({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<FinetuneView | null>(null);
   const [job, setJob] = useState<FinetuneJob | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
-  const [form, setForm] = useState<{ open: boolean; name: string; base: string; kind: SourceKind; chatIds: string[]; file: string; epochs: number; strength: string; skills: PracticeSkill[]; teacher: string }>({
+  const [form, setForm] = useState<{
+    open: boolean;
+    name: string;
+    base: string;
+    kind: SourceKind;
+    chatIds: string[];
+    file: string;
+    epochs: number;
+    strength: string;
+    skills: PracticeSkill[];
+    teacher: string;
+    /** Folders with the person's code, for practice on it. */
+    folders: string[];
+  }>({
     open: false,
     name: "",
     base: "",
@@ -35,6 +52,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
     strength: "normal",
     skills: ["code", "writing", "research", "tools"],
     teacher: "",
+    folders: [],
   });
 
   const load = useCallback(() => {
@@ -62,7 +80,13 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const practising = form.kind === "practice";
   const base = v.bases.find((b) => b.id === form.base);
   const usable = (b: { supported: boolean; practice: boolean }) => (practising ? b.practice : b.supported);
-  const skills = form.skills.filter((s) => s !== "tools" || base?.tools);
+  const skills = form.skills.filter((s) => !needsTools(s) || base?.tools);
+  const onCode = skills.includes("project");
+  const addFolders = async () => {
+    const p = await openFile({ directory: true, multiple: true, title: t("Pick a folder with your code") });
+    const picked = Array.isArray(p) ? p : typeof p === "string" ? [p] : [];
+    if (picked.length) setForm((f) => ({ ...f, folders: [...new Set([...f.folders, ...picked])] }));
+  };
   /** Any other model on this PC can teach the one practising. */
   const teachers = v.bases.filter((b) => b.id !== form.base);
   const teacher = teachers.find((b) => b.id === form.teacher);
@@ -82,7 +106,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
   const start = async () => {
     try {
       if (practising) {
-        await api.startPractice(form.name, form.base, skills, form.epochs, form.strength, teacher?.id ?? null);
+        await api.startPractice(form.name, form.base, skills, form.epochs, form.strength, teacher?.id ?? null, onCode ? form.folders : null);
         setForm({ ...form, open: false });
         toast(t("Practice has started. You can keep using the app; chats with this PC's models wait until it's done."), "success");
         return;
@@ -214,11 +238,11 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               <div className="teach-chats">
                 <span className="small">{t("What should it become an expert in?")}</span>
                 {SKILLS.map((s) => (
-                  <label key={s.id} className="check" title={s.id === "tools" && !base?.tools ? t("This model can't use tools") : undefined}>
+                  <label key={s.id} className="check" title={needsTools(s.id) && !base?.tools ? t("This model can't use tools") : undefined}>
                     <input
                       type="checkbox"
-                      disabled={s.id === "tools" && !base?.tools}
-                      checked={form.skills.includes(s.id) && (s.id !== "tools" || !!base?.tools)}
+                      disabled={needsTools(s.id) && !base?.tools}
+                      checked={form.skills.includes(s.id) && (!needsTools(s.id) || !!base?.tools)}
                       onChange={(e) => setForm({ ...form, skills: e.target.checked ? [...form.skills, s.id] : form.skills.filter((x) => x !== s.id) })}
                     />
                     <span>{t(s.label)}</span>
@@ -226,6 +250,28 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                 ))}
                 <p className="muted small">{t("It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.")}</p>
               </div>
+              {onCode && (
+                <div className="teach-chats">
+                  <span className="small">{t("Folders with your code")}</span>
+                  {form.folders.map((f) => (
+                    <div key={f} className="row">
+                      <span className="small ellipsis">{f}</span>
+                      <button className="btn ghost small" onClick={() => setForm((x) => ({ ...x, folders: x.folders.filter((y) => y !== f) }))}>
+                        {t("Remove")}
+                      </button>
+                    </div>
+                  ))}
+                  <div className="row wrap">
+                    <button className="btn small" onClick={addFolders}>
+                      {t("Add a folder…")}
+                    </button>
+                    {form.folders.length === 0 && <span className="muted small">{t("None chosen")}</span>}
+                  </div>
+                  <p className="muted small">
+                    {t("It looks things up in your Rust, TypeScript, JavaScript and Python files with the file tools chats use, and its answers are checked against the files. It only reads them, and never opens .env files, keys, lockfiles, or dependency and build folders. It learns how to look, not your code itself.")}
+                  </p>
+                </div>
+              )}
               <label>
                 {t("Teacher")}
                 <select className="input" value={teacher?.id ?? ""} onChange={(e) => setForm({ ...form, teacher: e.target.value })}>
@@ -240,6 +286,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               <p className="muted small">
                 {t("A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.")}
                 {teacher && !teacher.tools && skills.includes("tools") ? " " + t("This teacher can't use tools, so it skips the tool tasks.") : ""}
+                {teacher && onCode ? " " + t("Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.") : ""}
               </p>
             </>
           )}
@@ -312,7 +359,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
             <button
               className="btn primary"
               onClick={start}
-              disabled={!form.name.trim() || !base || !usable(base) || (practising ? skills.length === 0 : form.kind === "chats" ? form.chatIds.length === 0 : !form.file)}
+              disabled={!form.name.trim() || !base || !usable(base) || (practising ? skills.length === 0 || (onCode && form.folders.length === 0) : form.kind === "chats" ? form.chatIds.length === 0 : !form.file)}
             >
               {practising ? t("Start practice") : t("Start teaching")}
             </button>

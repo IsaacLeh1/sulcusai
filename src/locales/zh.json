@@ -3061,5 +3061,15 @@
  "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} 正在回答该模型答错的任务：第 {n}/{total} 题，已保留 {kept} 个正确答案",
  "practised with {teacher} teaching, test {before} → {after} of {total} right": "已在 {teacher} 指导下练习，测试 {total} 道中答对 {before} → {after} 道",
  "A model can't be its own teacher. Pick a different one, or no teacher.": "模型不能当自己的老师。请选择另一个模型，或不使用教师模型。",
- "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "答对的练习任务太少，无法从中学习。请尝试其他技能或更大的教师模型。"
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "答对的练习任务太少，无法从中学习。请尝试其他技能或更大的教师模型。",
+ "Your code (which file defines a function, what it takes and what calls it, looked up in folders you pick)": "你的代码（哪个文件定义了某个函数、它接受哪些参数、哪些函数调用它，在你选择的文件夹中查找）",
+ "Folders with your code": "包含你代码的文件夹",
+ "Pick a folder with your code": "选择一个包含你代码的文件夹",
+ "It looks things up in your Rust, TypeScript, JavaScript and Python files with the file tools chats use, and its answers are checked against the files. It only reads them, and never opens .env files, keys, lockfiles, or dependency and build folders. It learns how to look, not your code itself.": "它用聊天所用的文件工具在你的 Rust、TypeScript、JavaScript 和 Python 文件中查找，答案会对照文件检查。它只读取文件，绝不会打开 .env 文件、密钥、锁文件，以及依赖和构建文件夹。它学的是怎么查找，而不是你的代码本身。",
+ "Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.": "关于你代码的任务由它自己完成：这些任务需要用文件工具进行多轮操作，而教师模型只回答一次。",
+ "Pick at least one folder with your code.": "请至少选择一个包含你代码的文件夹。",
+ "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "这些文件夹中的代码不够用来练习。需要包含几十个函数的 Rust、TypeScript、JavaScript 或 Python 文件。",
+ "This model's chat template doesn't lay out tool results, so it can't practise on code.": "此模型的聊天模板无法呈现工具结果，因此不能在代码上练习。",
+ "Those folders can't be found.": "找不到这些文件夹。",
+ "That's a folder. Use find_files to see what's in it.": "这是一个文件夹。请使用 find_files 查看其中的内容。"
 }

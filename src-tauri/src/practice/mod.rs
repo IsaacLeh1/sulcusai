@@ -27,6 +27,7 @@ mod hard;
 mod research;
 pub mod tasks;
 mod writing;
+mod yourcode;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -128,9 +129,21 @@ fn told(text: &str) -> bool {
 }
 
 struct Attempt {
+    /// Its reply (with tools, its last one: the answer).
     text: String,
-    /// It ran out of room before finishing.
+    /// It ran out of room before finishing (with tools: or answered without
+    /// looking).
     cut: bool,
+    /// With tools, everything after the request: its turns with the tool
+    /// results between them, which is what's learnt from.
+    all: Option<String>,
+}
+
+impl Attempt {
+    /// What it learns from, if it's kept.
+    fn learnt(self) -> String {
+        self.all.unwrap_or(self.text)
+    }
 }
 
 /// The model, loaded, answering practice and test tasks.
@@ -209,7 +222,17 @@ impl Model {
         let v = self
             .call("/completion", json!({ "prompt": prompt, "n_predict": max, "temperature": temperature, "top_p": 0.95, "top_k": 20, "seed": seed % (1 << 31), "cache_prompt": true }))
             .await?;
-        Ok(Attempt { text: v["content"].as_str().unwrap_or_default().to_string(), cut: v["stop_type"] == "limit" || v["stopped_limit"] == true })
+        Ok(Attempt { text: v["content"].as_str().unwrap_or_default().to_string(), cut: v["stop_type"] == "limit" || v["stopped_limit"] == true, all: None })
+    }
+
+    /// One try at a task: a reply, or for a task about the person's code,
+    /// replies with their tool calls carried out until it answers. `room`:
+    /// the tokens it may use after the request (tool results included).
+    async fn attempt(&self, task: &Task, prompt: &str, room: u32, temperature: f64, seed: u64) -> Result<Attempt, String> {
+        match &task.check {
+            tasks::Check::Look(look) => yourcode::episode(self, task, look, prompt, room, temperature, seed).await,
+            _ => self.reply(prompt, room, temperature, seed).await,
+        }
     }
 }
 
@@ -250,7 +273,7 @@ async fn test(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Task], 
         breathe(state, i).await;
         let prompt = model.prompt(task, None).await?;
         // Its most likely answer, so before and after differ only by what it learnt.
-        let a = model.reply(&prompt, TEST_REPLY, 0.0, i as u64 + 1).await?;
+        let a = model.attempt(task, &prompt, TEST_REPLY, 0.0, i as u64 + 1).await?;
         right.push(got_right(task, &a));
         step(app, span, i + 1, tasks.len());
     }
@@ -289,7 +312,7 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
             let mut solved = false;
             let mut kept = None;
             for attempt in 0..ATTEMPTS {
-                let a = model.reply(&prompt, room, 0.8, rng.next()).await?;
+                let a = model.attempt(task, &prompt, room, 0.8, rng.next()).await?;
                 if right(&a) {
                     solved = true;
                     // Right at once: it knows this already, and learning it
@@ -297,7 +320,7 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
                     // it doesn't forget; the ones it got right only after
                     // tries are what it learns from.
                     if attempt > 0 || rng.chance(EASY_SHARE) {
-                        kept = Some(a.text);
+                        kept = Some(a.learnt());
                     }
                     break;
                 }
@@ -313,7 +336,9 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
             }
             if solved {
                 done.solved += 1;
-            } else {
+            } else if !matches!(task.check, tasks::Check::Look(_)) {
+                // A teacher answers in one reply, so tasks about the person's
+                // code (looked up with tools over several turns) stay its own.
                 done.missed.push(Missed { task: i, prompt: prompt.clone(), room });
             }
             if let Some(line) = kept.and_then(|text| example(&model.bos, &prompt, &text)) {
@@ -393,7 +418,7 @@ async fn in_students_words(student: &Model, tasks: &[Task], missed: &[Missed], a
         let (m, task) = (&missed[i], &tasks[missed[i].task]);
         let text = if reply.calls.is_empty() { Some(reply.text) } else { student.written(task, &m.prompt, &reply).await? };
         let Some(text) = text else { continue };
-        if !got_right(task, &Attempt { text: text.clone(), cut: false }) || student.tokens(&text).await? > m.room {
+        if !got_right(task, &Attempt { text: text.clone(), cut: false, all: None }) || student.tokens(&text).await? > m.room {
             continue;
         }
         lines.extend(example(&student.bos, &m.prompt, &text));
@@ -424,6 +449,15 @@ async fn load(state: &Arc<AppState>, engine: &mut engine::Engine, installed: &db
         lora,
     };
     engine.ensure_tuned(launch, plan.tuning, state.job()).await
+}
+
+/// A task of this skill at this level: made up, or about the person's code
+/// from the scan of its folders.
+fn make(skill: Skill, level: u32, rng: &mut Rng, code: Option<&Arc<yourcode::Index>>) -> Task {
+    match (skill, code) {
+        (Skill::Project, Some(code)) => yourcode::task(code, level, rng),
+        _ => tasks::make(skill, level, rng),
+    }
 }
 
 /// How many practice tasks a skill gets: an even share, twice that for
@@ -506,6 +540,8 @@ struct Run<'a> {
     spec: &'a ModelSpec,
     skills: &'a [Skill],
     teacher: Option<Teacher<'a>>,
+    /// The person's folders, scanned, for practice on their code.
+    code: Option<Arc<yourcode::Index>>,
     epochs: u32,
     strength: &'a str,
     cancel: &'a AtomicBool,
@@ -526,7 +562,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     // Coding tasks run their reference solution to make their tests.
     let test_tasks = tokio::task::block_in_place(|| {
         let mut rng = Rng::new(TEST_SEED);
-        r.skills.iter().flat_map(|s| TEST_LEVELS.map(|level| (*s, level))).map(|(s, level)| tasks::make(s, level, &mut rng)).collect::<Vec<Task>>()
+        r.skills.iter().flat_map(|s| TEST_LEVELS.map(|level| (*s, level))).map(|(s, level)| make(s, level, &mut rng, r.code.as_ref())).collect::<Vec<Task>>()
     });
 
     // Before.
@@ -538,6 +574,13 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     let out_of = test_tasks.len() as u32;
     update(app, |j| j.before = Some(before_score));
     state.log("model", &format!("Practice test for {} before: {before_score} of {out_of} right ({})", spec.name, by_skill(&test_tasks, &before, None)));
+    // How the tries at the person's code went (found, guessed, out of room).
+    let tally = || {
+        if let Some(c) = &r.code {
+            state.log("model", &c.tally());
+        }
+    };
+    tally();
     if before_score + MARGIN > out_of {
         engine.stop().await;
         return Ok(None);
@@ -555,7 +598,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
             let mut n = 0;
             for _ in 0..each * 5 {
                 let level = pick_level(&mut rng, &w);
-                let t = tasks::make(*s, level, &mut rng);
+                let t = make(*s, level, &mut rng, r.code.as_ref());
                 if !seen.contains(t.user.as_str()) {
                     practice.push(t);
                     n += 1;
@@ -575,6 +618,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     engine.stop().await;
     drop(engine);
     state.log("model", &format!("{} got {} of {} practice tasks right; it learns from {} of them", spec.name, practised.solved, practice.len(), practised.lines.len()));
+    tally();
     let mut lines = practised.lines;
 
     // The teacher answers what it missed. Only one model fits the card at a
@@ -636,6 +680,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     let after_score = after.iter().filter(|x| **x).count() as u32;
     update(app, |j| j.after = Some(after_score));
     state.log("model", &format!("Practice test for {} after: {before_score} → {after_score} of {out_of} right ({})", spec.name, by_skill(&test_tasks, &before, Some(&after))));
+    tally();
     if after_score < before_score + MARGIN {
         return Ok(None);
     }
@@ -657,7 +702,17 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String, base: String, skills: Vec<Skill>, epochs: Option<u32>, strength: Option<String>, teacher: Option<String>) -> Result<(), String> {
+pub async fn start_practice(
+    app: AppHandle,
+    state: AppStateRef<'_>,
+    name: String,
+    base: String,
+    skills: Vec<Skill>,
+    epochs: Option<u32>,
+    strength: Option<String>,
+    teacher: Option<String>,
+    folders: Option<Vec<String>>,
+) -> Result<(), String> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("Give it a name, like “Practised”.".into());
@@ -676,11 +731,31 @@ pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String
     if !finetune::arch_of(&state, &installed).is_some_and(|a| can_practise(&a)) {
         return Err("This model can't practise yet: practice works with Qwen3 and Gemma models.".into());
     }
-    let mut chosen: Vec<Skill> = Skill::ALL.into_iter().filter(|s| skills.contains(s) && (*s != Skill::Tools || spec.tools)).collect();
+    let mut chosen: Vec<Skill> = Skill::ALL.into_iter().filter(|s| skills.contains(s) && (!matches!(s, Skill::Tools | Skill::Project) || spec.tools)).collect();
     chosen.dedup();
     if chosen.is_empty() {
         return Err("Pick at least one skill to practise.".into());
     }
+    // Practice on the person's code: their folders, scanned for the answers.
+    let code = if chosen.contains(&Skill::Project) {
+        let folders: Vec<String> = folders.unwrap_or_default().into_iter().map(|f| f.trim().to_string()).filter(|f| !f.is_empty()).collect();
+        if folders.is_empty() {
+            return Err("Pick at least one folder with your code.".into());
+        }
+        // Read only, so a folder inside Program Files is fine; a whole drive,
+        // the whole user folder and the app's own data aren't.
+        if let Some(why) = folders.iter().find_map(|f| crate::sandbox::refuse_reason(Path::new(f), &state.paths.data, true)) {
+            return Err(why.into());
+        }
+        let scanned = tauri::async_runtime::spawn_blocking(move || yourcode::Index::scan(&folders)).await.map_err(|e| e.to_string())??;
+        if !scanned.usable() {
+            return Err("There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.".into());
+        }
+        state.log("model", &format!("Scanned the folders to practise on: {}", scanned.summary()));
+        Some(Arc::new(scanned))
+    } else {
+        None
+    };
     // Any other model on this PC can teach: it answers in its own chat
     // format, and the student's template writes the answers its way.
     let teacher = match teacher.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
@@ -711,7 +786,7 @@ pub async fn start_practice(app: AppHandle, state: AppStateRef<'_>, name: String
     tauri::async_runtime::spawn(async move {
         let strength = strength.unwrap_or_else(|| "normal".into());
         let teacher = teacher.as_ref().map(|(installed, spec)| Teacher { installed, spec });
-        let r = Run { app: &app, state: &state, id: &id, name: &name, installed: &installed, spec: &spec, skills: &chosen, teacher, epochs, strength: &strength, cancel: &cancel };
+        let r = Run { app: &app, state: &state, id: &id, name: &name, installed: &installed, spec: &spec, skills: &chosen, teacher, code, epochs, strength: &strength, cancel: &cancel };
         let result = run(&r).await;
         // Whatever happened, the card is free again and no attempts are left behind.
         state.engine.lock().await.stop().await;

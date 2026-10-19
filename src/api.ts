@@ -124,7 +124,7 @@ export interface FinetuneJob {
   teacher: string | null;
 }
 
-export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools";
+export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools" | "project";
 
 export interface FinetuneView {
   bases: { id: string; name: string; supported: boolean; practice: boolean; tools: boolean }[];
@@ -1701,8 +1701,9 @@ export const api = {
   finetuneView: () => invoke<FinetuneView>("finetune_view"),
   startFinetune: (name: string, base: string, source: { kind: "chats"; chat_ids: string[] } | { kind: "file"; path: string }, epochs: number, strength: string) =>
     invoke<void>("start_finetune", { name, base, source, epochs, strength }),
-  startPractice: (name: string, base: string, skills: PracticeSkill[], epochs: number, strength: string, teacher: string | null) =>
-    invoke<void>("start_practice", { name, base, skills, epochs, strength, teacher }),
+  /** `folders`: where the person's code is, for the "project" skill. */
+  startPractice: (name: string, base: string, skills: PracticeSkill[], epochs: number, strength: string, teacher: string | null, folders: string[] | null) =>
+    invoke<void>("start_practice", { name, base, skills, epochs, strength, teacher, folders }),
   cancelFinetune: () => invoke<void>("cancel_finetune"),
   removeAdapter: (id: string) => invoke<void>("remove_adapter", { id }),
   updateView: () => invoke<UpdateView>("update_view"),

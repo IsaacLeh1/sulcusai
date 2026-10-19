@@ -1247,7 +1247,94 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
     - The teacher loaded with only 33 of its 49 layers on the card, and the normal cache. Adaptive cooling had stepped down during practice, and its "back to full speed" came 3 s after the teacher's load was planned. Practice also plans layers for the model's chat window (16K here), not its own 4K one, where all 49 would fit. Here that kept the card cool (52 °C) at about 8 s a task.
   - Next to try, one run each (ask him first): 1 round, or "Lightly", to stop the memorising; and keeping more of the student's own right answers for the skills that fell, so they're replayed alongside the teacher's.
   - Live runs while another session edits this folder: `tauri dev` restarts the app on any save under `src-tauri`, which ends a run. Instead, run a copy of `target\debug\sulcusai.exe` with your own vite on port 1430 (`C:\dev\tools\teacher-run\start.cmd`, through Explorer for his real data).
-- Not built, on purpose: training on his own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. A better follow-up is practising code navigation on his real projects, checked against the files.
+- Not built, on purpose: training on his own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. Built instead: practising code navigation on his real projects, checked against the files (next section).
+
+## Practice on your own code (2026-10-18)
+
+The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `project`). The person picks folders; the model practises looking things up in them with the chat file tools, and its answers are checked against a scan of the files. It learns how to look, not the code.
+- **Scan** (`Index::scan`, once, at `start_practice`):
+  - It walks the folders with the chat tools' own walker (`tools::fs::walk_files`, which honours .gitignore).
+  - It never reads dependency, build or cache folders (`node_modules`, `target`, `.git`, `dist`, `build`, `out`, `.next`, `.venv`, `vendor`, …), lockfiles, minified bundles or files over 512 KB.
+  - It leaves out anything that may hold a secret, by name (`.env*`, key and certificate files, `id_rsa*`, `.npmrc`, names with secret, password, credential or api_key in them, `*_token`) or by content (private-key headers, the usual key shapes such as `sk-`, `ghp_`, `AKIA`, `xox?-`, `AIza`, JWTs, and a long quoted value given to something called key, secret, token or password).
+  - Definitions come from a simple parse, run with comments and strings blanked out:
+    - Rust `fn`;
+    - TS/JS `function`, `const x = (…) =>`, `const x = function` and class or object methods;
+    - Python `def`.
+  - For each it records the parameter names (not `self`, `this` or `cls`), how many lines the signature spans, and the body's lines. A call is the name followed by `(`, in code, inside a body. On his repo: 244 files with code, 4,009 functions, 1.9 s in a debug build.
+- **Tasks**, 6 levels, each with exactly one right answer from the scan:
+  1. Which file defines a function few files mention.
+  2. The same for one that 3 or more files mention, so a plain name search finds too much.
+  3. Its parameters, with the signature on one line.
+  4. Its parameters, with the signature over several lines, so reading is needed. His repo has only 7, since its signatures are mostly one line; the level falls back to 3.
+  5. The one function that calls it.
+  6. All 2-3 functions that call it.
+
+  Only names defined once, 5+ letters and not common method names (`parse`, `render`, …) are asked about. A caller task needs every call site inside one non-nested function, with no recursion.
+- **Checks** (`Look::passes`) read the last `Answer:` line (markdown taken off, underscores kept):
+  - a path counts as shown, inside its folder, in full, or by file name when that name is unique;
+  - parameters are names in order, with types, `&`, `mut`, brackets and "and" allowed;
+  - callers are the exact set of function names, so an extra or a missing one fails.
+
+  An answer given without any tool call that worked counts as wrong: guessing isn't what's practised.
+- **A try runs for real** (`episode`):
+  - The model gets search_files, find_files and read_file with the chats' names and parameters. Only search_files keeps a description ("Regex search of file contents.").
+  - Its calls are carried out on the scanned files, read only, in the chats' output format. Results are small (4 matches, 100-character lines, 12 lines a read, 5 files), and the tools refuse anything the scan left out.
+  - It gets up to 6 rounds and 3 calls a round. The results go back laid out by the model's own template: `/apply-template` lays out the conversation with a stand-in for the turn it just wrote, and the text after the stand-in is appended.
+  - The whole text is one training line, so the trainer's `--assistant-loss-only` trains every one of its turns (it finds each `<|im_start|>assistant … <|im_end|>`; the tool results sit in user turns). Only tries that fit 512 tokens are kept; practice gives the try exactly the room left after the request.
+- **Fitting 512 tokens** is the whole difficulty. Qwen3 4B 2507's request, measured with its own template:
+  - 430 tokens with the chat tool descriptions;
+  - 350 with a few words a tool and the required lists;
+  - about 310 now (only search_files keeps a description, no required lists).
+
+  That leaves about 200 tokens for the whole try. A match line with its path is about 35 tokens, and right tries took 170-240 tokens after the request.
+- **The wording matters more than the definitions.** On the 12 test tasks ("your code" alone, full window, no adapter):
+
+  | Definitions | Wording | Right |
+  |---|---|---|
+  | none but search's | short ("Which file defines…? … Look it up.") | 1 |
+  | a few words each | short | 4 |
+  | none but search's / a few words / the chats' | with "in my code" and "don't guess" | 5 / 5 / 5 |
+
+  The long wording costs 7 tokens and stays.
+- **What the 4B does** (`e2e_code_tries`, test room vs practice room with practice's 4 tries at 0.8):
+  - It almost always calls find_files first, often `**/*.rs` (a 125-file listing), alongside a search for the bare name.
+  - Final settings, 90 tasks: a right try that fits practice's room for L1 7 of 15, L2 5, L3 2, L4 0, L5 2, L6 0. Practice keeps every one right after a miss and 30% of those right at once, which kept 7.
+  - L4-L6 are rarely right even with the full window. It gives types or call arguments as parameters, and "read_file" or file names as callers. Those are its real weaknesses, but self-practice can't learn them: it seldom gets them right, and tries that read a file don't fit 512.
+- **Live runs on the dev app** (Qwen3 4B 2507 on C:\dev\sulcusai, 2026-10-19; copied debug build, driven over CDP; card peak 70-78 °C, under the 83 °C stop):
+  1. "Your code" alone, first settings (350-token requests, 6 matches, 12-file listings): test 5 of 12. 213 of 232 practice tries ran out of room; 4 of 60 tasks right inside the window, 3 kept; stopped with "too few to learn from".
+  2. "Your code" and "using tools", short wording: test 12 of 24 (tools 9, code 3). Practice: 35 of 120 right, 15 kept (4 code tries); 116 of 218 code tries ran out of room. The trainer loaded all 15 lines (none too long) and the loss fell 0.61 to 0.32. Then it slowed from 7 s a step to 37 s at step 8, stood still on step 13 for 28 minutes, and was stopped.
+  3. The same: the test exactly the same (12 of 24). 44 of 120 right, 14 kept (7 code). The trainer crashed at step 8 (exit 0xC0000409).
+  4. The same: 37 of 120 right, only 8 kept; stopped under `MIN_EXAMPLES`.
+- **The trainer, by hand** (`llama-finetune-lora` with practice's arguments, on a Q8_0 copy):
+  - 13 of the 4B's multi-turn code tries trained cleanly: 5 s a step, loss 0.18 → 0.04, card peak 81 °C. So tries with several turns are fine for the trainer.
+  - Its card memory jumped from 11.0 to 11.4 GB at step 8, the step where both app runs went wrong. Q8_0 training of a 4B at 512 sits at the edge of the 12 GB card, and the desktop holds 1.2-1.5 GB. When the trainer outgrows the card, Windows swaps its memory and it crawls or crashes. The teacher session's run slowed the same way today (34 s a step).
+  - Before and after, on the 12 test tasks:
+    - short wording, 13 tries kept (every right one): 1 → 4;
+    - final wording, the 7 tries practice's own rule kept: 5 → 5.
+
+    So it learns the lookups it practises, but a 4B gets too few right in 512 tokens to move a test it already half passes.
+- **Where gains would come from:**
+  1. A teacher for code tasks. Run the teacher through the same episode, then lay its turns out in the student's template, as `in_students_words` does for single tool calls. Only that teaches L4-L6.
+  2. Training the part of a right try that fits (the request and its first searches) when the whole try doesn't. This breaks the whole-try rule this was built to, so it's his call.
+  3. Checking free card memory before picking the Q8_0 copy, or using Q4_0 when the desktop holds too much.
+
+  Picked with other skills, "your code" adds its lookup tries to theirs.
+- The test's code tasks come from the same seeded random source as the other skills' tasks, after them. So "your code" alone (5 of 12) and with "using tools" (3 of 12) are different tasks, each the same on every run.
+- A teacher answers in one reply, so tasks about the person's code never go to it (they stay out of `missed`). The form says so when both are picked.
+- The app log gets one line per stage: "Tries at your code: N; … answered after looking, … without looking, … ran out of room, … never answered; … tool calls; requests up to … tokens" (`Index::tally`).
+- Tests (`practice::yourcode::tests`):
+  - a small project in all three languages, beside a `node_modules`, a `target`, a `.env`, a key file, a file with a token in it, a lockfile and a gitignored folder;
+  - the definitions and parameters, and what calls what;
+  - every level's right answer passes and wrong ones fail;
+  - the ways answers get written;
+  - the tools' limits and refusals, secret names, and the layout tail.
+
+  Three ignored tests:
+  - `scan_a_real_folder` scans `SULCUSAI_SCAN` and prints a task of each level.
+  - `e2e_code_tries` runs real tries on it against a llama-server started with `--jinja` (`SULCUSAI_TEST_PORT`/`_KEY`, `SULCUSAI_TRIES` a level, `SULCUSAI_SHOW` for transcripts). With `SULCUSAI_DUMP` it writes the lines practice would keep, for running the trainer by hand.
+  - `e2e_code_test` runs practice's 12-task test against a server with or without `--lora`; `SULCUSAI_TOOLS` swaps in other tool definitions.
+- Speed: the content check first used Unicode `\b`, which sends the regex crate to its slow engine on non-ASCII text (the locale tables, arrows in comments). Unoptimized, it took 25 s on his repo. ASCII `(?-u:\b)` brought it to 1.9 s.
+- On his repo the content check also leaves out `src/locales/de.json` and `ja.json`: a translated "token"/"password" line looks like one. They aren't code, so nothing is lost. `yourcode.rs` writes its test key and token in pieces (`concat!`) so it doesn't leave itself out.
 
 ## Website (2026-10-12)
 

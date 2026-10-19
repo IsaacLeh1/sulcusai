@@ -28,10 +28,12 @@ pub enum Skill {
     Time,
     Format,
     Tools,
+    /// Finding things in the person's own code with the file tools.
+    Project,
 }
 
 impl Skill {
-    pub const ALL: [Skill; 8] = [Skill::Code, Skill::Writing, Skill::Research, Skill::Math, Skill::Careful, Skill::Time, Skill::Format, Skill::Tools];
+    pub const ALL: [Skill; 9] = [Skill::Code, Skill::Writing, Skill::Research, Skill::Math, Skill::Careful, Skill::Time, Skill::Format, Skill::Tools, Skill::Project];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -43,6 +45,7 @@ impl Skill {
             Skill::Time => "dates and times",
             Skill::Format => "following instructions",
             Skill::Tools => "using tools",
+            Skill::Project => "your code",
         }
     }
 }
@@ -123,6 +126,9 @@ pub enum Check {
     /// those and `may` (no answer: the sources don't say). `not`: words that
     /// mustn't be in it.
     Cited { want: Option<Want>, sources: Vec<usize>, may: Vec<usize>, not: Vec<String> },
+    /// An answer about the person's code, found with the file tools and
+    /// checked against the scan of its folders.
+    Look(super::yourcode::Look),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,6 +249,7 @@ pub fn make(skill: Skill, level: u32, rng: &mut Rng) -> Task {
         Skill::Time => time(level, rng),
         Skill::Format => format_task(level, rng),
         Skill::Tools => tools_task(level, rng),
+        Skill::Project => unreachable!("tasks about the person's code are made from its scan (yourcode::task)"),
     };
     t.level = level;
     t
@@ -1475,6 +1482,7 @@ pub fn passes(task: &Task, reply: &Reply) -> bool {
         }
         Check::Exact(want) => reply.calls.is_empty() && plain_text(&reply.text) == plain_text(want),
         Check::Cited { want, sources, may, not } => reply.calls.is_empty() && cited(&reply.text, want.as_ref(), sources, may, not),
+        Check::Look(look) => reply.calls.is_empty() && look.passes(&reply.text),
     }
 }
 
@@ -1568,7 +1576,8 @@ mod tests {
 
     #[test]
     fn the_same_seed_makes_the_same_tasks() {
-        for skill in Skill::ALL {
+        // Tasks about the person's code come from a scan (yourcode's tests).
+        for skill in Skill::ALL.into_iter().filter(|s| *s != Skill::Project) {
             for level in 1..=LEVELS {
                 let (mut a, mut b) = (Rng::new(42), Rng::new(42));
                 for _ in 0..20 {

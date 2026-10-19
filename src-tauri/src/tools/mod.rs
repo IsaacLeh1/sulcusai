@@ -7,7 +7,7 @@ pub mod chats;
 pub mod comms;
 mod compute;
 mod documents;
-mod fs;
+pub(crate) mod fs;
 mod guard;
 mod lookup;
 mod media;

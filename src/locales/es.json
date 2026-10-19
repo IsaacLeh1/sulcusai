@@ -3061,5 +3061,15 @@
  "{teacher} is answering the tasks it got wrong: {n} of {total}, {kept} right answers kept": "{teacher} está respondiendo las tareas que el modelo falló: {n} de {total}, {kept} respuestas correctas guardadas",
  "practised with {teacher} teaching, test {before} → {after} of {total} right": "practicado con {teacher} como maestro, prueba {before} → {after} de {total} correctas",
  "A model can't be its own teacher. Pick a different one, or no teacher.": "Un modelo no puede ser su propio maestro. Elige otro, o ninguno.",
- "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "Se acertaron muy pocas tareas de práctica para aprender de ellas. Prueba otras habilidades o un modelo maestro más grande."
+ "Too few practice tasks were answered right to learn from. Try other skills, or a bigger teacher.": "Se acertaron muy pocas tareas de práctica para aprender de ellas. Prueba otras habilidades o un modelo maestro más grande.",
+ "Your code (which file defines a function, what it takes and what calls it, looked up in folders you pick)": "Tu código (qué archivo define una función, qué parámetros recibe y qué funciones la llaman, buscado en carpetas que eliges)",
+ "Folders with your code": "Carpetas con tu código",
+ "Pick a folder with your code": "Elige una carpeta con tu código",
+ "It looks things up in your Rust, TypeScript, JavaScript and Python files with the file tools chats use, and its answers are checked against the files. It only reads them, and never opens .env files, keys, lockfiles, or dependency and build folders. It learns how to look, not your code itself.": "Busca en tus archivos de Rust, TypeScript, JavaScript y Python con las mismas herramientas de archivos que usan los chats, y sus respuestas se comprueban con los archivos. Solo los lee, y nunca abre archivos .env, claves, archivos de bloqueo ni carpetas de dependencias o de compilación. Aprende a buscar, no tu código en sí.",
+ "Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.": "Las tareas sobre tu código las resuelve el propio modelo: requieren varios turnos con las herramientas de archivos, y un modelo maestro responde en uno solo.",
+ "Pick at least one folder with your code.": "Elige al menos una carpeta con tu código.",
+ "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "No hay suficiente código en esas carpetas para practicar. Se necesitan archivos de Rust, TypeScript, JavaScript o Python con unas cuantas decenas de funciones.",
+ "This model's chat template doesn't lay out tool results, so it can't practise on code.": "La plantilla de chat de este modelo no puede presentar resultados de herramientas, así que no puede practicar con código.",
+ "Those folders can't be found.": "No se encuentran esas carpetas.",
+ "That's a folder. Use find_files to see what's in it.": "Eso es una carpeta. Usa find_files para ver qué contiene."
 }
