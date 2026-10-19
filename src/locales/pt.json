@@ -3341,5 +3341,12 @@
  "{card} is turned off in Device Manager, so models run on the processor. Turn it on there, then scan again.": "{card} está desativada no Gerenciador de Dispositivos, então os modelos rodam no processador. Ative-a lá e procure de novo.",
  "{maker} graphics card ({name})": "Placa de vídeo {maker} ({name})",
  "{size} memory": "{size} de memória",
+ "One thing to know first, so it comes out the way you want:": "Uma pergunta antes, para sair do jeito que você quer:",
+ "A few things to know first, so it comes out the way you want:": "Algumas perguntas antes, para sair do jeito que você quer:",
+ "Make it anyway": "Criar mesmo assim",
+ "Make it": "Criar",
+ "asks when unclear": "pergunta quando algo não está claro",
+ "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Antes de criar ou mudar uma imagem, pergunta sobre tudo o que mudaria o resultado, como de qual pessoa você está falando ou o que uma placa deve dizer. As conversas também perguntam.",
+ "Ask me when something's unclear": "Perguntar quando algo não estiver claro",
  "Questions before the picture": "Perguntas antes da imagem"
 }

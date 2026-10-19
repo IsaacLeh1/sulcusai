@@ -123,6 +123,13 @@ export function ExamplePicker({
   );
 }
 
+const ASK_KEY = "sulcus.studio.ask";
+
+/** "Ask me when something's unclear" is on (it is unless turned off). */
+export function asksFirst(): boolean {
+  return remembered(ASK_KEY, true);
+}
+
 /** The prompt writer and checker for a model, remembered between visits. */
 export function usePromptHelp(modelId: string | undefined): {
   status: PromptStatus | null;
@@ -130,11 +137,14 @@ export function usePromptHelp(modelId: string | undefined): {
   setWrite: (on: boolean) => void;
   check: boolean;
   setCheck: (on: boolean) => void;
+  ask: boolean;
+  setAsk: (on: boolean) => void;
   reload: () => void;
 } {
   const [status, setStatus] = useState<PromptStatus | null>(null);
   const [write, setWriteState] = useState(() => remembered("sulcus.studio.write", true));
   const [check, setCheckState] = useState(() => remembered("sulcus.studio.check", true));
+  const [ask, setAskState] = useState(asksFirst);
   const [n, setN] = useState(0);
   useEffect(() => {
     if (!modelId || modelId.startsWith("cloud:")) return setStatus(null);
@@ -156,8 +166,77 @@ export function usePromptHelp(modelId: string | undefined): {
       setCheckState(on);
       remember("sulcus.studio.check", on);
     },
+    ask,
+    setAsk: (on) => {
+      setAskState(on);
+      remember(ASK_KEY, on);
+      // Chats follow the same choice.
+      api.mediaSetAskQuestions(on).catch(() => {});
+    },
     reload: () => setN((x) => x + 1),
   };
+}
+
+/** Questions before a picture is made or changed: `check` asks the core and
+ * says whether to go ahead now (false while questions are showing). */
+export function useAskFirst(): {
+  asking: boolean;
+  questions: string[] | null;
+  check: (op: "generate" | "edit", prompt: string, source: string | null, modelId: string | null, examples?: number) => Promise<boolean>;
+  clear: () => void;
+} {
+  const [asking, setAsking] = useState(false);
+  const [questions, setQuestions] = useState<string[] | null>(null);
+  const check = async (op: "generate" | "edit", prompt: string, source: string | null, modelId: string | null, examples = 0) => {
+    setAsking(true);
+    // Nothing can ask (or it failed): it's made as it is.
+    const found = await api.mediaQuestions(op, prompt, source, modelId, examples).catch(() => [] as string[]);
+    setAsking(false);
+    if (!found.length) return true;
+    setQuestions(found);
+    return false;
+  };
+  return { asking, questions, check, clear: () => setQuestions(null) };
+}
+
+/** The questions, each with a field for the answer, above the box. "Make it"
+ * folds the answers into the request; "Make it anyway" makes it as written. */
+export function PictureQuestions({ questions, prompt, onMake }: { questions: string[]; prompt: string; onMake: (prompt: string) => void }) {
+  const [answers, setAnswers] = useState<string[]>(() => questions.map(() => ""));
+  const [busy, setBusy] = useState(false);
+  const answered = answers.some((a) => a.trim());
+  const make = async () => {
+    if (!answered || busy) return;
+    setBusy(true);
+    const pairs = questions.map((q, i) => [q, answers[i] ?? ""] as [string, string]);
+    const folded = await api.mediaWithAnswers(prompt, pairs).catch(() => prompt);
+    setBusy(false);
+    onMake(folded);
+  };
+  return (
+    <div className="callout picture-questions">
+      <span className="small">
+        {questions.length === 1 ? t("One thing to know first, so it comes out the way you want:") : t("A few things to know first, so it comes out the way you want:")}
+      </span>
+      {questions.map((q, i) => (
+        <label key={i} className="picture-question small">
+          {q}
+          <input
+            className="input"
+            value={answers[i] ?? ""}
+            autoFocus={i === 0}
+            onChange={(e) => setAnswers((all) => all.map((a, j) => (j === i ? e.target.value : a)))}
+            onKeyDown={(e) => e.key === "Enter" && make()}
+          />
+        </label>
+      ))}
+      <div className="row">
+        <span className="spacer" />
+        <button className="btn small" disabled={busy} onClick={() => onMake(prompt)}>{t("Make it anyway")}</button>
+        <button className="btn primary small" disabled={!answered || busy} onClick={make}>{t("Make it")}</button>
+      </div>
+    </div>
+  );
 }
 
 const PRACTICE_PICTURES = 27;
@@ -169,12 +248,15 @@ export function PromptHelpPanel({
   onStart,
   toast,
   canCheck = true,
+  canAsk = false,
 }: {
   model: MediaModelCard | undefined;
   help: ReturnType<typeof usePromptHelp>;
   onStart: (r: MediaRequest) => Promise<boolean>;
   toast: PushToast;
   canCheck?: boolean;
+  /** Offer "Ask me when something's unclear" (where questions are asked). */
+  canAsk?: boolean;
 }) {
   const [teaching, setTeaching] = useState(false);
   const s = help.status;
@@ -186,12 +268,19 @@ export function PromptHelpPanel({
         {t("Prompt writer")}
         {help.write ? ` · ${t("on")}` : ` · ${t("off")}`}
         {help.check && canCheck ? ` · ${t("checks pictures")}` : ""}
+        {help.ask && canAsk ? ` · ${t("asks when unclear")}` : ""}
         {tuned ? ` · ${t("taught")}` : ""}
       </summary>
       <label className="check">
         <input type="checkbox" checked={help.write} onChange={(e) => help.setWrite(e.target.checked)} />
         {t("Rewrite my description the way {model} follows best", { model: model.name })}
       </label>
+      {canAsk && (
+        <label className="check" title={t("Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.")}>
+          <input type="checkbox" checked={help.ask} onChange={(e) => help.setAsk(e.target.checked)} />
+          {t("Ask me when something's unclear")}
+        </label>
+      )}
       {canCheck && (
         <label className="check" title={s?.reader ? t("Checked by {reader}", { reader: s.reader }) : undefined}>
           <input type="checkbox" checked={help.check} disabled={!s?.reader} onChange={(e) => help.setCheck(e.target.checked)} />

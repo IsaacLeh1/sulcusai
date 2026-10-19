@@ -24,7 +24,7 @@ import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
-import { ExamplePicker, PromptHelpPanel, SetWallpaperButton, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
+import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 
 type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate";
 type Shape = NonNullable<MediaRequest["shape"]>;
@@ -470,22 +470,34 @@ function PictureComposer({
   const [examples, setExamples] = useState<MediaItem[]>([]);
   const [use, setUse] = useState<ExampleUse>("style");
   const help = usePromptHelp(m?.id);
+  const ask = useAskFirst();
   const local = !!m && !m.id.startsWith("cloud:");
-  const go = async () => {
+  const make = async (description: string) => {
     const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check } : {};
-    if (await onStart({ op: "generate", prompt, shape, count, style, model_id: m?.id, ...extra })) {
+    if (await onStart({ op: "generate", prompt: description, shape, count, style, model_id: m?.id, ...extra })) {
       setPrompt("");
       setExamples([]);
+      ask.clear();
     }
+  };
+  const go = async () => {
+    if (ask.asking) return;
+    if (help.ask && !(await ask.check("generate", prompt, null, m?.id ?? null, local ? examples.length : 0))) return;
+    await make(prompt);
   };
   return (
     <div className="form">
+      {ask.questions && <PictureQuestions key={ask.questions.join("\n")} questions={ask.questions} prompt={prompt} onMake={make} />}
       <textarea
         className="input"
         rows={3}
         value={prompt}
         placeholder={t("Describe the picture: the subject, the setting, the light and mood. Pick a look below.")}
-        onChange={(e) => setPrompt(e.target.value)}
+        onChange={(e) => {
+          setPrompt(e.target.value);
+          // Rewording it asks afresh on Create.
+          ask.clear();
+        }}
         onKeyDown={(e) => e.key === "Enter" && (e.ctrlKey || e.metaKey) && prompt.trim() && go()}
         autoFocus
       />
@@ -512,10 +524,10 @@ function PictureComposer({
         <span className="spacer" />
         <ImproveButton prompt={prompt} kind="image" onDone={setPrompt} />
         {m && <span className="small muted">{waitLabel(m.fit.est_secs * count)}</span>}
-        <button className="btn primary" disabled={!prompt.trim()} onClick={go}>{t("Create")}</button>
+        <button className="btn primary" disabled={!prompt.trim() || ask.asking} onClick={go}>{ask.asking ? t("Checking…") : t("Create")}</button>
       </div>
       {local && <ExamplePicker value={examples} onChange={setExamples} use={use} onUse={setUse} gallery={gallery} toast={toast} canRead={!!help.status?.reader} />}
-      <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} />
+      <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} canAsk />
       {lifelike && (style === "auto" || style === "photo" || style === "phone_photo") && (
         <p className="small callout">
           {t("For the most lifelike photos, add {name}: it makes pictures that look like real photographs.", { name: lifelike.name })}{" "}
@@ -839,11 +851,13 @@ function Viewer({
   const [confirm, setConfirm] = useState(false);
   const painter = useRef<MaskHandle>(null);
   const can = (op: string) => imageModels.some((m) => m.can.includes(op));
+  const ask = useAskFirst();
 
   useEffect(() => {
     setTool(null);
     setText("");
-  }, [item.id]);
+    ask.clear();
+  }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && !confirm && onClose();
     window.addEventListener("keydown", k);
@@ -851,6 +865,11 @@ function Viewer({
   }, [onClose, confirm]);
 
   const run = (req: Omit<MediaRequest, "source">) => onStart({ ...req, source: item.id });
+  const change = async () => {
+    if (!text.trim() || ask.asking) return;
+    if (asksFirst() && !(await ask.check("edit", text, item.id, null))) return;
+    run({ op: "edit", prompt: text });
+  };
   const fill = async () => {
     const mask = await painter.current?.mask();
     if (!mask) return toast(t("Paint over the part to change first."), "error");
@@ -912,8 +931,19 @@ function Viewer({
               </div>
               {tool === "edit" && (
                 <div className="form">
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("E.g. make it night, add a red scarf, remove the car")} autoFocus onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "edit", prompt: text })} />
-                  <button className="btn primary small" disabled={!text.trim()} onClick={() => run({ op: "edit", prompt: text })}>{t("Change it")}</button>
+                  {ask.questions && <PictureQuestions key={ask.questions.join("\n")} questions={ask.questions} prompt={text} onMake={(p) => run({ op: "edit", prompt: p })} />}
+                  <input
+                    className="input"
+                    value={text}
+                    onChange={(e) => {
+                      setText(e.target.value);
+                      ask.clear();
+                    }}
+                    placeholder={t("E.g. make it night, add a red scarf, remove the car")}
+                    autoFocus
+                    onKeyDown={(e) => e.key === "Enter" && change()}
+                  />
+                  <button className="btn primary small" disabled={!text.trim() || ask.asking} onClick={change}>{ask.asking ? t("Checking…") : t("Change it")}</button>
                 </div>
               )}
               {tool === "fill" && (
