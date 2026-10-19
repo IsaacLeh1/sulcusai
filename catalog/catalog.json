@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-17",
+  "updated": "2026-10-19",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
