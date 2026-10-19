@@ -1549,6 +1549,25 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## After 0.9.15 (2026-10-19): honest prompts, real calendar events, wider redaction, privacy for cloud chats
+
+- **Where the model runs** (`chat::runs_where`): `system_prompt` no longer says "runs privately… nothing leaves their PC". Each turn appends a line saying where this model really runs: on this PC (only what online tools send leaves it), or at the cloud provider ("never tell the user it stays on their PC"). Used by chats, scheduled tasks and People answers; it's added after any custom base prompt from Advanced.
+- **The assistant's calendar tool** (`tools/comms.rs` `pick_calendar`):
+  - Events go to the calendar the user named (new optional `calendar` argument), else the first calendar of the first connected account (as the Add to calendar form picks). They stay on this PC when none is connected or web access is off.
+  - The card says which calendar. The invitation note is now true: "Your calendar account emails the invitations to them" for an account calendar, and "saved on this PC only, so no invitations are sent" otherwise.
+- **Cloud redaction**:
+  - It now also covers earlier assistant replies and tool-call arguments, which held real values again after being put back for the user. The provider's own `cloud_blocks` were never restored.
+  - New detectors: keys and passwords (`yourcode::SECRET_TEXT`), street addresses (`outgoing::STREET`), and the user's own name, full, first and last as whole words (`Redactor::for_state`, also used for cloud media prompts). Test: `names_keys_addresses_and_earlier_replies_are_redacted_too`.
+- **Privacy mode for cloud chats** (`Turn::cloud_gate`):
+  - Before a turn goes to an online model, `outgoing::review_cloud` lists your message, the earlier messages (count), pictures, and three parts you can leave out: profile, memories, connected accounts. Those three are kept apart as `self.about`, `memory_part` and `accounts_part`.
+  - It asks from `ask_from`, once a chat, and again only when a turn is more personal than what was approved (`Approvals.cloud`, separate from tool calls' `shared`). A no ends the turn with a note.
+  - Popup: `kind: "cloud"` hides "don't ask again".
+  - Not covered: titles, summaries and compaction sent to a cloud model.
+- **What left this PC**:
+  - `outgoing::record` keeps every outside call, whether or not privacy mode is on: tool calls (as finally sent, after edits), picture-name lookups, connector calls and cloud turns, plus declined ones as "Not sent".
+  - They're stored in settings key `sent_log` (encrypted JSON, newest first, 30 days, at most 1,000).
+  - Commands `privacy_sent` and `privacy_sent_clear`; `SentLog` is in Settings → What left this PC.
+
 ## 0.9.15 (2026-10-19): privacy mode, mail, practice that keeps what's better
 
 **Published and installed 2026-10-19**, built from 6df893a (main = phase7). The tag is on 6df893a, as the release script now checks. Notes are in `C:\dev\tools\notes-0915.md`.

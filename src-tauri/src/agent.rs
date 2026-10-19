@@ -62,6 +62,8 @@ pub struct Approvals {
     allowed: Mutex<HashMap<String, HashSet<Risk>>>,
     /// Privacy mode: the level up to which a chat may send without asking again.
     shared: Mutex<HashMap<String, u8>>,
+    /// Privacy mode: the level a chat's online model was allowed to receive.
+    cloud: Mutex<HashMap<String, u8>>,
 }
 
 impl Approvals {
@@ -108,9 +110,20 @@ impl Approvals {
         self.shared.lock().unwrap().get(chat_id).copied().unwrap_or(0)
     }
 
+    fn cloud_ok(&self, chat_id: &str) -> u8 {
+        self.cloud.lock().unwrap().get(chat_id).copied().unwrap_or(0)
+    }
+
+    fn allow_cloud(&self, chat_id: &str, level: u8) {
+        let mut cloud = self.cloud.lock().unwrap();
+        let ok = cloud.entry(chat_id.to_string()).or_default();
+        *ok = (*ok).max(level);
+    }
+
     pub fn forget_chat(&self, chat_id: &str) {
         self.allowed.lock().unwrap().remove(chat_id);
         self.shared.lock().unwrap().remove(chat_id);
+        self.cloud.lock().unwrap().remove(chat_id);
     }
 }
 
@@ -425,9 +438,10 @@ impl Turn {
         if let Some(p) = &project {
             about.push_str(&projects::prompt_section(p));
         }
-        if memory_tools {
-            about.push_str(&memory::prompt_section(&memory::relevant(&memories, &request)));
-        }
+        // Kept apart too, so privacy mode can leave them out for an online model.
+        let memory_part = if memory_tools { memory::prompt_section(&memory::relevant(&memories, &request)) } else { String::new() };
+        about.push_str(&memory_part);
+        let mut accounts_part = String::new();
         if !media_note.is_empty() {
             let text = format!(
                 "\n\nYou can make {} on this PC. When the user asks for one, call the tool with a vivid, specific description \
@@ -473,7 +487,8 @@ impl Turn {
             );
         }
         if self.use_tools {
-            about.push_str(&tools::app_note(&self.state, &self.cipher));
+            accounts_part = tools::app_note(&self.state, &self.cipher);
+            about.push_str(&accounts_part);
             about.push_str(&tool_instructions(&sandbox, self.mode));
             self.add_live_data(&sandbox, &mut about, &mut tools, build_ask || !small);
             if tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("calculate"))) {
@@ -496,6 +511,13 @@ impl Turn {
         }
         if small && !lean {
             self.fit_small(&recent_asks.join("\n"), &mut about, &mut tools, &notes).await;
+        }
+        // An online model: what it receives is listed, and in privacy mode
+        // the person shares it, leaves out the parts about them, or doesn't.
+        if self.ep.cloud.is_some() {
+            if let Some(stopped) = self.cloud_gate(&request, &mut about, &memory_part, &accounts_part).await? {
+                return Ok(stopped);
+            }
         }
         let project_id = project.as_ref().map(|p| p.id.clone());
         let system_of = |about: &str| if about.trim().is_empty() { self.base.clone() } else { format!("{}\n\n{}", self.base, about.trim_start()) };
@@ -1127,8 +1149,11 @@ impl Turn {
         // Privacy mode: what this call sends off the PC, who gets it, and how
         // personal it is (1-5). Shown on the approval card when the call asks
         // anyway; otherwise asked about below, from the level set.
+        // Reviewed whether or not the mode is on: every call that goes out is
+        // listed under "What left this PC".
         let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
-        let review = if privacy.on { crate::outgoing::review(&call.name, &args, &crate::outgoing::context(&self.state, &self.cipher)) } else { None };
+        let cx = if crate::outgoing::is_external(&call.name, &args) { Some(crate::outgoing::context(&self.state, &self.cipher)) } else { None };
+        let review = cx.as_ref().and_then(|cx| crate::outgoing::review(&call.name, &args, cx));
         let mut asked = false;
         let allowed = self.state.approvals.allowed(&self.chat_id, risk);
         let adv = crate::advanced::get(&self.state);
@@ -1158,7 +1183,7 @@ impl Turn {
                     Ok(p) => p,
                     Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
                 };
-                if let Some(r) = &review {
+                if let Some(r) = review.as_ref().filter(|_| privacy.on) {
                     let line = crate::outgoing::summary(r);
                     preview.note = Some(match preview.note.take() {
                         Some(n) => format!("{n}\n{line}"),
@@ -1180,7 +1205,7 @@ impl Turn {
         let mut args = args;
         let mut shared_note = None;
         if let Some(r) = review {
-            if !asked && r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
+            if privacy.on && !asked && r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
                 match self.share(call, &r).await {
                     Ok(edits) if edits.is_empty() => {}
                     Ok(edits) => {
@@ -1190,7 +1215,12 @@ impl Turn {
                     Err(refused) => return refused,
                 }
             }
-            self.log(&format!("Sent to {} (privacy level {} of 5)", r.to, r.level));
+            // As it really goes, after any changes.
+            let sent = cx.as_ref().and_then(|cx| crate::outgoing::review(&call.name, &args, cx)).unwrap_or(r);
+            crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, &sent, true);
+            if privacy.on {
+                self.log(&format!("Sent to {} (privacy level {} of 5)", sent.to, sent.level));
+            }
         }
         // Chats not working together: another chat's handoff note needs the person's word.
         if let Some(refused) = self.handoff_gate(call, &args, sandbox).await {
@@ -1311,15 +1341,17 @@ impl Turn {
                     let mut search = json!({ "query": format!("{name} appearance"), "count": 4 });
                     // Privacy mode covers these lookups too.
                     let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
-                    if privacy.on {
-                        if let Some(r) = crate::outgoing::review("web_search", &search, &crate::outgoing::context(&self.state, &self.cipher)) {
-                            if r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
-                                let look = ToolCall { id: format!("{}_look{i}", call.id), name: "web_search".into(), arguments: search.to_string() };
-                                match self.share(&look, &r).await {
-                                    Ok(edits) => search = crate::outgoing::apply(&search, &r, &edits),
-                                    Err(_) => continue,
-                                }
+                    let cx = crate::outgoing::context(&self.state, &self.cipher);
+                    if let Some(r) = crate::outgoing::review("web_search", &search, &cx) {
+                        if privacy.on && r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
+                            let look = ToolCall { id: format!("{}_look{i}", call.id), name: "web_search".into(), arguments: search.to_string() };
+                            match self.share(&look, &r).await {
+                                Ok(edits) => search = crate::outgoing::apply(&search, &r, &edits),
+                                Err(_) => continue,
                             }
+                        }
+                        if let Some(sent) = crate::outgoing::review("web_search", &search, &cx) {
+                            crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, "web_search", &sent, true);
                         }
                     }
                     self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "looking_up", "detail": name }));
@@ -1440,7 +1472,8 @@ impl Turn {
         };
         // Privacy mode: a connector may pass what it's given on to an online service.
         let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
-        let review = privacy.on.then(|| crate::outgoing::review_connector(&t.connector_name, &args, &crate::outgoing::context(&self.state, &self.cipher).me));
+        let all = crate::outgoing::review_connector(&t.connector_name, &args, &crate::outgoing::context(&self.state, &self.cipher).me);
+        let review = privacy.on.then(|| all.clone());
         match permission {
             Permission::Refuse => return Outcome::error(format!("Couldn't use {title}"), "This connector tool isn't allowed in this mode."),
             Permission::Ask => {
@@ -1469,6 +1502,7 @@ impl Turn {
         }
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
         self.log(&format!("Used {title}"));
+        crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, &all, true);
         match connectors::call(&self.state, &t.connector_id, &t.tool, args).await {
             Ok((false, text)) => Outcome::ok(text.clone(), format!("Used {title}"), "text", Some(text)),
             Ok((true, text)) => Outcome::error(format!("{title} reported a problem"), text),
@@ -1843,6 +1877,65 @@ impl Turn {
         o
     }
 
+    /// An online model: what this turn sends it goes on the "What left this
+    /// PC" list. In privacy mode, from the level set, the person sees it
+    /// first: once a chat, and again only when a turn is more personal than
+    /// what they shared before. They may leave out the parts about them
+    /// (profile, memories, connected accounts), taken out of `about` here.
+    /// Some(result) when they said no: the turn ends with a note saying so.
+    async fn cloud_gate(&self, request: &str, about: &mut String, memories: &str, accounts: &str) -> Result<Option<TurnResult>, String> {
+        let Some(target) = self.ep.cloud.clone() else { return Ok(None) };
+        let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
+        let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
+        let earlier: Vec<String> = history
+            .iter()
+            .filter(|m| m.id != self.turn_id && (m.role == "user" || m.role == "assistant") && !m.content.trim().is_empty())
+            .map(|m| m.content.clone())
+            .collect();
+        let pictures: usize = history.iter().filter_map(|m| m.meta.as_ref()?.get("images")?.as_array().map(Vec::len)).sum();
+        let me = crate::outgoing::context(&self.state, &self.cipher).me;
+        let r = crate::outgoing::review_cloud(&target.provider, request, &self.about, memories, accounts, &earlier, pictures, target.redact, &me);
+        let mut sent = r.clone();
+        if privacy.on && r.level >= privacy.ask_from && r.level > self.state.approvals.cloud_ok(&self.chat_id) {
+            let call = ToolCall { id: format!("{}_cloud", self.turn_id), name: "cloud_chat".into(), arguments: "{}".into() };
+            match self.share(&call, &r).await {
+                Ok(edits) => {
+                    for e in edits.iter().filter(|e| e.value.is_none()) {
+                        let part = match e.key.as_str() {
+                            "profile" => self.about.as_str(),
+                            "memories" => memories,
+                            "accounts" => accounts,
+                            _ => "",
+                        };
+                        if !part.is_empty() {
+                            *about = about.replacen(part, "", 1);
+                        }
+                        sent.items.retain(|i| i.key.as_deref() != Some(e.key.as_str()));
+                    }
+                    sent.level = sent.items.iter().map(|i| i.level).max().unwrap_or(r.level);
+                    self.state.approvals.allow_cloud(&self.chat_id, r.level);
+                }
+                Err(_) => {
+                    let note = Message {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        chat_id: self.chat_id.clone(),
+                        role: "assistant".into(),
+                        content: format!(
+                            "Not sent: you chose not to share this with {}. To keep this chat on your PC, pick a model that runs here in the model menu.",
+                            target.provider
+                        ),
+                        created_at: now(),
+                        ..Default::default()
+                    };
+                    self.save(&note)?;
+                    return Ok(Some(TurnResult { last: Some(note), context: ContextInfo::default(), tps: None, cancelled: false }));
+                }
+            }
+        }
+        crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, "cloud_chat", &sent, true);
+        Ok(None)
+    }
+
     /// Privacy mode: shows the person what a call would send, to whom, and
     /// how personal it is, and asks. Their changes (reworded or left-out
     /// parts) come back. Refused when they say no, or when nobody's there
@@ -1850,6 +1943,7 @@ impl Turn {
     async fn share(&self, call: &ToolCall, r: &crate::outgoing::Review) -> Result<Vec<crate::outgoing::Edit>, Outcome> {
         let title = format!("Send to {}", r.to);
         if self.unattended {
+            crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, r, false);
             self.log(&format!("Privacy mode: didn't send to {} in a scheduled task (level {} of 5, nobody there to approve it)", r.to, r.level));
             return Err(Outcome::error(
                 title,
@@ -1864,6 +1958,7 @@ impl Turn {
         let preview = Preview { title: format!("Send to {}?", r.to), kind: "privacy", detail: serde_json::to_string(r).ok(), note: None };
         match self.ask(call, Risk::Read, preview).await {
             Decision::Deny => {
+                crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, r, false);
                 self.log(&format!("Privacy mode: chose not to send to {}", r.to));
                 Err(Outcome {
                     text: "The user chose not to share this (privacy mode). Don't send it another way: carry on without it, or ask them what they'd be happy to share.".into(),

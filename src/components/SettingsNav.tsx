@@ -25,6 +25,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "connectivity", label: tx("Connectivity") },
     { id: "private", label: tx("Private connection") },
     { id: "privacy-mode", label: tx("Privacy mode") },
+    { id: "sent", label: tx("What left this PC") },
     { id: "devices", label: tx("Your devices") },
     { id: "phone", label: tx("Phone") },
     { id: "backup", label: tx("Backup and restore") },

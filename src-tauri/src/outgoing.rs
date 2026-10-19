@@ -196,6 +196,10 @@ pub struct Item {
 /// What a call sends, to whom, what they could do with it, and how personal.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Review {
+    /// "tool" for a tool call; "cloud" for a turn going to an online model
+    /// (asked once a chat, so the popup offers no "don't ask again").
+    #[serde(default)]
+    pub kind: String,
     pub level: u8,
     pub level_name: String,
     /// Who receives it: "DuckDuckGo (search engine)".
@@ -390,6 +394,7 @@ pub fn review(tool: &str, args: &Value, cx: &Context) -> Option<Review> {
     };
     let top = items.iter().map(|i| i.level).max().unwrap_or(1);
     Some(Review {
+        kind: "tool".into(),
         level: top,
         level_name: level_name(top).into(),
         to,
@@ -425,6 +430,7 @@ pub fn review_connector(connector: &str, args: &Value, me: &Me) -> Review {
     let found = find(&text, me);
     let lv = level(&found, 1);
     Review {
+        kind: "tool".into(),
         level: lv,
         level_name: level_name(lv).into(),
         to: format!("The {connector} connector"),
@@ -433,6 +439,110 @@ pub fn review_connector(connector: &str, args: &Value, me: &Me) -> Review {
         found,
         note: None,
     }
+}
+
+pub const CLOUD_COULD: &str = "AI companies keep what they're sent for a while (often about 30 days) to check for misuse. Depending on your account's settings, some use it to improve their models, and their staff may read conversations that get flagged.";
+pub const REDACTED_NOTE: &str = "Emails, phone numbers, card and ID numbers, keys, street addresses and your name are swapped for placeholders before sending, and put back in the reply.";
+pub const NOT_REDACTED_NOTE: &str = "Cloud redaction is off (Settings, Cloud models), so everything goes as written.";
+
+fn trimmed(s: &str, max: usize) -> String {
+    let s = s.trim();
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max).collect::<String>())
+    }
+}
+
+/// What a turn sends to an online model: the message, the chat so far,
+/// pictures, and the parts of the system text that are about the person
+/// (profile, memories, connected accounts), which they may leave out.
+#[allow(clippy::too_many_arguments)]
+pub fn review_cloud(provider: &str, message: &str, profile: &str, memories: &str, accounts: &str, earlier: &[String], pictures: usize, redacted: bool, me: &Me) -> Review {
+    let mut items = vec![Item { key: None, label: "Your message".into(), value: trimmed(message, 600), level: level(&find(message, me), 3), editable: false, removable: false }];
+    if !earlier.is_empty() {
+        let all = earlier.join("\n");
+        items.push(Item { key: None, label: "Earlier messages in this chat".into(), value: format!("{} messages", earlier.len()), level: level(&find(&all, me), 3), editable: false, removable: false });
+    }
+    if pictures > 0 {
+        items.push(Item { key: None, label: "Pictures in this chat".into(), value: pictures.to_string(), level: 3, editable: false, removable: false });
+    }
+    for (key, label, text) in [("profile", "About you (from your profile)", profile), ("memories", "What it remembers about you", memories), ("accounts", "Your connected accounts", accounts)] {
+        if !text.trim().is_empty() {
+            items.push(Item { key: Some(key.into()), label: label.into(), value: trimmed(text, 400), level: level(&find(text, me), 2), editable: false, removable: true });
+        }
+    }
+    let mut found: Vec<Found> = Vec::new();
+    for f in [message, profile, memories, accounts, &earlier.join("\n")].iter().flat_map(|t| find(t, me)) {
+        if !found.contains(&f) {
+            found.push(f);
+        }
+    }
+    found.sort_by(|a, b| b.level.cmp(&a.level));
+    let top = items.iter().map(|i| i.level).max().unwrap_or(3);
+    Review {
+        kind: "cloud".into(),
+        level: top,
+        level_name: level_name(top).into(),
+        to: format!("{provider} (online AI model)"),
+        items,
+        could: vec![CLOUD_COULD.into()],
+        found,
+        note: Some(if redacted { REDACTED_NOTE } else { NOT_REDACTED_NOTE }.into()),
+    }
+}
+
+// ---------- what left this PC ----------
+
+/// One thing sent off this PC, for the "What left this PC" list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Sent {
+    pub at: i64,
+    pub chat_id: String,
+    /// The tool, or "cloud_chat" for a turn sent to an online model.
+    pub tool: String,
+    pub to: String,
+    pub level: u8,
+    /// Its first part, shortened: the search words, the address.
+    pub what: String,
+    /// False when the person chose not to send it.
+    pub sent: bool,
+}
+
+const SENT_KEY: &str = "sent_log";
+const SENT_KEEP: usize = 1000;
+const SENT_DAYS: i64 = 30;
+
+fn sent_list(conn: &rusqlite::Connection, c: &crate::crypto::Cipher) -> Vec<Sent> {
+    crate::db::get::<String>(conn, SENT_KEY).and_then(|s| c.decrypt(&s).ok()).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
+}
+
+/// Adds a call to the list (encrypted, newest first, 30 days and at most 1,000 kept).
+pub fn record(state: &crate::AppState, c: &crate::crypto::Cipher, chat_id: &str, tool: &str, r: &Review, sent: bool) {
+    let what = r.items.first().map(|i| if i.value.is_empty() { i.label.clone() } else { trimmed(&i.value, 140) }).unwrap_or_default();
+    let now = chrono::Utc::now().timestamp_millis();
+    let conn = state.db.lock().unwrap();
+    let mut list = sent_list(&conn, c);
+    list.insert(0, Sent { at: now, chat_id: chat_id.into(), tool: tool.into(), to: r.to.clone(), level: r.level, what, sent });
+    list.retain(|s| now - s.at < SENT_DAYS * 86_400_000);
+    list.truncate(SENT_KEEP);
+    if let Ok(json) = serde_json::to_string(&list) {
+        let _ = crate::db::set(&conn, SENT_KEY, &c.encrypt(&json));
+    }
+}
+
+#[tauri::command(async)]
+pub fn privacy_sent(state: crate::AppStateRef) -> Result<Vec<Sent>, String> {
+    let c = state.cipher()?;
+    Ok(sent_list(&state.db.lock().unwrap(), &c))
+}
+
+#[tauri::command]
+pub fn privacy_sent_clear(state: crate::AppStateRef) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    crate::db::set(&conn, SENT_KEY, &String::new())?;
+    crate::db::log_action(&conn, "privacy", "Cleared the list of what left this PC");
+    Ok(())
 }
 
 /// The person's changes in the popup: a new value for an item, or None to
@@ -582,6 +692,20 @@ mod tests {
         let s = serde_json::json!({ "query": "my address 12 Elm Street" });
         let r = review("web_search", &s, &cx()).unwrap();
         assert_eq!(apply(&s, &r, &[Edit { key: "query".into(), value: None }]), s);
+    }
+
+    #[test]
+    fn a_cloud_turn_lists_what_it_sends_and_the_parts_about_you_can_be_left_out() {
+        let r = review_cloud("Anthropic", "plan my week", "The user's name is Isaac Lehman.", "", "Email: isaac38.lehman@gmail.com", &["hi".into()], 2, true, &me());
+        assert_eq!((r.kind.as_str(), r.to.as_str()), ("cloud", "Anthropic (online AI model)"));
+        assert_eq!(r.level, 4, "full name and email");
+        let removable: Vec<&str> = r.items.iter().filter(|i| i.removable).filter_map(|i| i.key.as_deref()).collect();
+        assert_eq!(removable, ["profile", "accounts"], "no memories here, so none listed");
+        assert!(r.items.iter().any(|i| i.label == "Pictures in this chat" && i.value == "2"));
+        assert_eq!(r.note.as_deref(), Some(REDACTED_NOTE));
+        let plain = review_cloud("OpenAI", "what's a monad", "", "", "", &[], 0, false, &me());
+        assert_eq!(plain.level, 3);
+        assert_eq!(plain.note.as_deref(), Some(NOT_REDACTED_NOTE));
     }
 
     #[test]

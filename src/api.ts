@@ -915,6 +915,8 @@ export interface ShareItem {
 
 /** Privacy mode: what a call would send, who gets it, what they could do with it, how personal (1-5). */
 export interface ShareReview {
+  /** "tool" for a tool call; "cloud" for a turn going to an online model (asked once a chat). */
+  kind?: string;
   level: number;
   level_name: string;
   to: string;
@@ -922,6 +924,19 @@ export interface ShareReview {
   could: string[];
   found: { level: number; what: string }[];
   note: string | null;
+}
+
+/** One thing sent off this PC ("What left this PC"). */
+export interface SentEntry {
+  at: number;
+  chat_id: string;
+  /** The tool, or "cloud_chat" for a turn sent to an online model. */
+  tool: string;
+  to: string;
+  level: number;
+  what: string;
+  /** False when the person chose not to send it. */
+  sent: boolean;
 }
 
 export interface PrivacyMode {
@@ -2025,6 +2040,8 @@ export const api = {
   setPrivacyMode: (mode: PrivacyMode) => invoke<void>("set_privacy_mode", { mode }),
   /** The privacy popup's changes: a new value, or null to leave a part out. */
   privacyShare: (callId: string, edits: { key: string; value: string | null }[]) => invoke<void>("privacy_share", { callId, edits }),
+  privacySent: () => invoke<SentEntry[]>("privacy_sent"),
+  privacySentClear: () => invoke<void>("privacy_sent_clear"),
   siteKeys: () => invoke<SavedSiteKey[]>("site_keys"),
   siteKeyForget: (host: string) => invoke<void>("site_key_forget", { host }),
   desktopAccess: () => invoke<DesktopAccess>("desktop_access"),

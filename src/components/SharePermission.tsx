@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, type Chat, type PrivacyMode, type ShareReview } from "../api";
+import { api, errorText, type Chat, type PrivacyMode, type SentEntry, type ShareReview } from "../api";
 import { useWaitingApprovals } from "../approvals";
 import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
@@ -60,6 +60,15 @@ export const REVIEW_TEXTS = [
   tx("The people it's sent to get your name and email address with the message and can keep or forward it. Your mail provider keeps a copy."),
   tx("Connectors are programs on this PC. SulcusAI can't see where a connector sends what it's given: it may pass it on to an online service."),
   tx("Your private connection is on, so these services see the proxy's or Tor's address instead of yours."),
+  tx("Your message"),
+  tx("Earlier messages in this chat"),
+  tx("Pictures in this chat"),
+  tx("About you (from your profile)"),
+  tx("What it remembers about you"),
+  tx("Your connected accounts"),
+  tx("AI companies keep what they're sent for a while (often about 30 days) to check for misuse. Depending on your account's settings, some use it to improve their models, and their staff may read conversations that get flagged."),
+  tx("Emails, phone numbers, card and ID numbers, keys, street addresses and your name are swapped for placeholders before sending, and put back in the reply."),
+  tx("Cloud redaction is off (Settings, Cloud models), so everything goes as written."),
 ];
 
 /** A level's number and name, coloured from green (1) to red (5). */
@@ -190,7 +199,8 @@ export function SharePermission({ chats, onOpenChat }: { chats: Chat[]; onOpenCh
         ))}
       </ul>
       {r.note && <p className="muted small">{t(r.note)}</p>}
-      {edits.length === 0 && (
+      {r.kind === "cloud" && <p className="muted small">{t("Asked once for this chat, and again only if a later message is more personal.")}</p>}
+      {edits.length === 0 && r.kind !== "cloud" && (
         <label className="share-forchat small">
           <input type="checkbox" checked={forChat} onChange={(e) => setForChat(e.target.checked)} />
           {t("Don't ask again in this chat for level {level} or lower", { level: r.level })}
@@ -275,6 +285,86 @@ export function PrivacyModeSettings({ toast }: { toast: PushToast }) {
         ))}
       </ol>
       <p className="muted small">{t("Scheduled tasks run when nobody's there to ask, so in privacy mode they only send what's below the level you're asked from.")}</p>
+    </section>
+  );
+}
+
+/** Settings: everything sent off this PC lately (searches, pages, emails,
+ * turns sent to online models), with how personal each was. Kept on this
+ * PC, encrypted, for 30 days. */
+export function SentLog({ toast }: { toast: PushToast }) {
+  const [list, setList] = useState<SentEntry[] | null>(null);
+  const [days, setDays] = useState(7);
+  const [personal, setPersonal] = useState(false);
+  const [all, setAll] = useState(false);
+  const load = () => api.privacySent().then(setList).catch((e) => toast(errorText(e), "error"));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (list === null) return null;
+  const since = Date.now() - days * 86_400_000;
+  const shown = list.filter((s) => s.at >= since && (!personal || s.level >= 3));
+  const visible = all ? shown : shown.slice(0, 25);
+  const clear = async () => {
+    try {
+      await api.privacySentClear();
+      setList([]);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <section className="card">
+      <h2>{t("What left this PC")}</h2>
+      <p className="muted">
+        {t("Everything the assistant sent off your PC lately: searches, pages, emails and messages to online AI models, with how personal each was. This list stays on your PC, encrypted, for 30 days.")}
+      </p>
+      <div className="sent-filters">
+        <select className="input" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label={t("How far back")}>
+          <option value={1}>{t("Today")}</option>
+          <option value={7}>{t("Past week")}</option>
+          <option value={30}>{t("Past 30 days")}</option>
+        </select>
+        <label className="row small">
+          <input type="checkbox" checked={personal} onChange={(e) => setPersonal(e.target.checked)} />
+          {t("Level 3 and up only")}
+        </label>
+        <button className="btn ghost small" onClick={load}>
+          {t("Refresh")}
+        </button>
+        {list.length > 0 && (
+          <button className="btn ghost small danger" onClick={clear}>
+            {t("Clear the list")}
+          </button>
+        )}
+      </div>
+      {shown.length === 0 ? (
+        <p className="muted small">{t("Nothing in this time.")}</p>
+      ) : (
+        <ul className="sent-list">
+          {visible.map((s, i) => (
+            <li key={`${s.at}-${i}`} className={s.sent ? "" : "not-sent"}>
+              <span className={`share-dot share-level-${s.level}`} title={t(LEVELS[s.level - 1] ?? "")}>
+                {s.level}
+              </span>
+              <div className="sent-body">
+                <div className="sent-head">
+                  <strong>{s.to}</strong>
+                  <span className="muted small">{new Date(s.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+                  {!s.sent && <span className="sent-chip">{t("Not sent")}</span>}
+                </div>
+                <div className="sent-what small">{s.what}</div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!all && shown.length > visible.length && (
+        <button className="btn ghost small" onClick={() => setAll(true)}>
+          {t("Show all {n}", { n: shown.length })}
+        </button>
+      )}
     </section>
   );
 }

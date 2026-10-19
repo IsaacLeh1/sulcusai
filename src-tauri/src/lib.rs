@@ -2439,6 +2439,8 @@ pub fn run() {
             outgoing::privacy_mode,
             outgoing::set_privacy_mode,
             outgoing::privacy_share,
+            outgoing::privacy_sent,
+            outgoing::privacy_sent_clear,
             privacy::test_privacy,
             updates::install_update,
             backup::backup_info,
