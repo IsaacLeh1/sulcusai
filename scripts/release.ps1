@@ -76,12 +76,17 @@ $latestPath = Join-Path $bundle "latest.json"
 Write-Host "Built and signed $exeName; wrote latest.json"
 
 if ($Publish) {
+    # The tag goes on this commit, not on whatever main is on GitHub: the
+    # macOS and Linux builds start from the tag (0.9.14's first went out on
+    # 0.9.13's code because main wasn't pushed yet).
+    $commit = (git -C $root rev-parse HEAD).Trim()
+    if (-not (git -C $root branch -r --contains $commit)) { throw "Push $commit to GitHub first: the release tag goes on it." }
     $title = "SulcusAI $version"
     $body = if ($Notes) { $Notes } else { "SulcusAI $version" }
     # From a file, so quotes in the notes reach GitHub intact.
     $bodyFile = Join-Path $env:TEMP "sulcusai-notes-$version.md"
     [System.IO.File]::WriteAllText($bodyFile, $body, (New-Object System.Text.UTF8Encoding $false))
-    gh release create $tag $exe $latestPath --repo IsaacLeh1/sulcusai --target main --title $title --notes-file $bodyFile
+    gh release create $tag $exe $latestPath --repo IsaacLeh1/sulcusai --target $commit --title $title --notes-file $bodyFile
     Remove-Item $bodyFile -ErrorAction SilentlyContinue
     if ($LASTEXITCODE -ne 0) { throw "Publishing the release failed." }
     Write-Host "Published $tag. Installed copies will find it on their next check."

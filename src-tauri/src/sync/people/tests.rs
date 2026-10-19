@@ -22,7 +22,7 @@ fn folders_for_someones_assistant_follow_the_sharing_rules() {
     std::fs::create_dir_all(&data).unwrap();
     let real = dunce::canonicalize(&proj).unwrap().display().to_string();
     // Resolved, and once each.
-    let messy = format!("{}\\..\\proj", proj.display());
+    let messy = proj.join("..").join("proj").display().to_string();
     assert_eq!(ask::allowed_folders(&[proj.display().to_string(), messy], &data).unwrap(), vec![real]);
     // Not the app's own data, a whole drive, a folder that isn't there, or a system folder.
     assert!(ask::allowed_folders(&[data.display().to_string()], &data).is_err());

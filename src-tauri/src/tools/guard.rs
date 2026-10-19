@@ -206,17 +206,23 @@ mod tests {
     fn deleting_outside_the_shared_folders_is_refused() {
         let (sb, d) = shared();
         let inside = d.join("site").join("old");
-        for c in [
-            "Remove-Item -Recurse -Force C:\\Program Files (x86)\\Steam\\steamapps".to_string(),
-            "rm -r -fo C:\\".to_string(),
-            "del /s /q C:".to_string(),
-            "Remove-Item $env:LOCALAPPDATA\\Temp\\* -Recurse".to_string(),
-            "Remove-Item ~\\Documents -Recurse".to_string(),
-            "rd /s /q ..\\..".to_string(),
-            "Get-Process | Out-File C:\\Windows\\log.txt".to_string(),
-            "echo hi > C:\\Users\\Public\\x.txt".to_string(),
-        ] {
-            assert!(refuse(&c, &d, &sb).is_some_and(|w| w.contains("outside the shared folders")), "{c}");
+        // Windows' paths there; on macOS and Linux, "C:\..." is just a name.
+        let outside: &[&str] = if cfg!(windows) {
+            &[
+                "Remove-Item -Recurse -Force C:\\Program Files (x86)\\Steam\\steamapps",
+                "rm -r -fo C:\\",
+                "del /s /q C:",
+                "Remove-Item $env:LOCALAPPDATA\\Temp\\* -Recurse",
+                "Remove-Item ~\\Documents -Recurse",
+                "rd /s /q ..\\..",
+                "Get-Process | Out-File C:\\Windows\\log.txt",
+                "echo hi > C:\\Users\\Public\\x.txt",
+            ]
+        } else {
+            &["rm -rf /usr/local/lib", "rm -r ~/Documents", "rm -rf ../..", "mv dist /etc/nginx/html", "echo hi > /etc/hosts"]
+        };
+        for c in outside {
+            assert!(refuse(c, &d, &sb).is_some_and(|w| w.contains("outside the shared folders")), "{c}");
         }
         // Inside them, and everyday build commands, are fine.
         for c in [
