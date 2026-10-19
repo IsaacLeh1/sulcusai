@@ -3288,5 +3288,15 @@
  "Your answer couldn't be sent: {error}": "无法发送你的回复：{error}",
  "Your answer was sent to {name}.": "你的回复已发送给 {name}。",
  "not sent to the organizer": "未发送给组织者",
- "sent to the organizer": "已发送给组织者"
+ "sent to the organizer": "已发送给组织者",
+ "Autocomplete": "自动补全",
+ "Autocorrect": "自动更正",
+ "Suggested next message": "建议的下一条消息",
+ "Typing": "输入",
+ "Tab": "Tab",
+ "Took too long.": "耗时太长。",
+ "Changed “{from}” to “{to}”.": "已将“{from}”改为“{to}”。",
+ "While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC.": "在聊天中输入时，以浅灰色显示单词或你以前问过的内容的剩余部分。按 Tab 键采用。它在这台电脑上从你自己的聊天中学习。",
+ "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "在你打完一个单词时，用 Windows 自带的拼写检查修正拼错的单词，仅在确定时修正。紧接着按退格键可撤销修正。仅限 Windows。",
+ "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "回复完成后，消息框会显示你接下来可能要问的内容。按 Tab 键使用，或直接输入让它消失。由这台电脑上的模型猜测，绝不使用在线模型。"
 }

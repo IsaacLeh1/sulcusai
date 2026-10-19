@@ -37,6 +37,7 @@ import { insertDictation } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
 import { GlobeIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
+import { rememberSent, SmartInput } from "../components/SmartInput";
 
 interface Props {
   chat: Chat | null;
@@ -185,6 +186,26 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const busy = status !== "idle" || compacting;
   // A reply is being written: what's typed now is added to it or queued.
   const replying = status !== "idle";
+  // The suggested next message: once a reply is done and the box is empty,
+  // the model that answered guesses what's asked next (Tab takes it).
+  const [nextUp, setNextUp] = useState<string | null>(null);
+  const wasReplying = useRef(false);
+  const chatNow = useRef(chat.id);
+  chatNow.current = chat.id;
+  useEffect(() => {
+    if (wasReplying.current && !replying && features.has("next_prompt") && !inputRef.current?.value) {
+      const id = chat.id;
+      api
+        .typingNext(id)
+        .then((s) => {
+          if (s && chatNow.current === id && !inputRef.current?.value) setNextUp(s);
+        })
+        .catch(() => {});
+    }
+    wasReplying.current = replying;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replying]);
+  useEffect(() => setNextUp(null), [chat.id]);
   // Messages since the last summary: what Compact now would cover.
   const lastSummary = messages.map((m) => !!m.meta?.compacted).lastIndexOf(true);
   const canCompact = !busy && messages.slice(lastSummary + 1).some((m) => m.role === "user");
@@ -339,6 +360,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
   const sendText = async (text: string, images: string[] = [], force = false) => {
     if ((!text && images.length === 0) || (busy && !force)) return;
+    rememberSent(text);
+    setNextUp(null);
     toEnd();
     setError(null);
     setStatus("loading");
@@ -697,10 +720,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               ))}
             </div>
           )}
-          <textarea
+          <SmartInput
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onValueChange={setInput}
+            complete={features.has("autocomplete")}
+            correct={features.has("autocorrect")}
+            suggestion={nextUp}
+            onSuggestionGone={() => setNextUp(null)}
             onKeyDown={onKey}
             onPaste={onPaste}
             placeholder={

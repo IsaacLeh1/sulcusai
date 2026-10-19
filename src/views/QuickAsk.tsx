@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type MediaItem } from "../api";
 import { Markdown } from "../components/Markdown";
+import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartInput";
 import { useMediaUrl } from "../media";
 import { t, tx } from "../i18n";
 import { CameraIcon } from "../components/Icons";
@@ -29,14 +30,14 @@ export function QuickAsk() {
   /** "Ask about the screen": the screenshot to send with the question. */
   const [shot, setShot] = useState<MediaItem | null>(null);
   const [shooting, setShooting] = useState(false);
+  const helpers = useTypingHelpers();
   const shotUrl = useMediaUrl(shot, true);
   const input = useRef<HTMLTextAreaElement>(null);
   const chatRef = useRef<string | null>(null);
   chatRef.current = chatId;
 
   const refresh = () => {
-    api.security().then((s) => setLocked(s.locked)).catch(() => {});
-    api.quickClipboard().then(setClip).catch(() => setClip(null));
+    api.security().then((s) => setLocked(s.locked)).catch(() => {});    api.quickClipboard().then(setClip).catch(() => setClip(null));
     setTimeout(() => input.current?.focus(), 30);
   };
 
@@ -58,7 +59,8 @@ export function QuickAsk() {
         if (p.message?.content) setAnswer(p.message.content);
       })),
     ];
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && api.quickHide();
+    // Esc closes the box, unless it just hid a typing suggestion.
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && api.quickHide();
     window.addEventListener("keydown", esc);
     return () => {
       subs.forEach((s) => s.then((u) => u()));
@@ -96,6 +98,7 @@ export function QuickAsk() {
       setChatId(id);
       chatRef.current = id;
       setText("");
+      rememberSent(prompt);
       const images = shot ? [shot.id] : [];
       setShot(null);
       await api.send(id, prompt.trim() || "What's on my screen? Explain what I'm looking at.", images);
@@ -126,13 +129,15 @@ export function QuickAsk() {
     <div className="quick" data-tauri-drag-region>
       <div className="quick-head" data-tauri-drag-region>
         <img src="/logo.svg" alt="" width={20} height={20} />
-        <textarea
+        <SmartInput
           ref={input}
           className="quick-input"
           rows={1}
           value={text}
+          onValueChange={setText}
+          complete={helpers.complete}
+          correct={helpers.correct}
           placeholder={chatId ? t("Ask a follow-up…") : t("Ask anything…")}
-          onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

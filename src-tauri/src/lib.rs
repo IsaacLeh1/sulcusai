@@ -87,6 +87,7 @@ mod tools;
 mod translate;
 mod triage;
 mod tts;
+mod typing;
 mod updates;
 mod vad;
 mod vision;
@@ -2447,6 +2448,10 @@ pub fn run() {
             outgoing::privacy_share,
             outgoing::privacy_sent,
             outgoing::privacy_sent_clear,
+            typing::typing_vocabulary,
+            typing::typing_fix,
+            typing::typing_can_correct,
+            typing::typing_next,
             privacy::test_privacy,
             updates::install_update,
             backup::backup_info,

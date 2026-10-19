@@ -1200,7 +1200,16 @@ export type FeatureId =
   | "scheduled"
   | "connectors"
   | "people"
-  | "chat_team";
+  | "chat_team"
+  | "autocomplete"
+  | "autocorrect"
+  | "next_prompt";
+
+/** Autocomplete's material: the person's own words (with counts) and requests, newest first. */
+export interface Vocabulary {
+  words: [string, number][];
+  prompts: string[];
+}
 
 export interface FeatureView {
   id: FeatureId;
@@ -2178,6 +2187,12 @@ export const api = {
   removeSpeakerModel: () => invoke<void>("remove_speaker_model"),
   renameSpeaker: (id: string, voice: number, name: string) => invoke<void>("rename_speaker", { id, voice, name }),
   features: () => invoke<FeatureView[]>("features_view"),
+  typingVocabulary: () => invoke<Vocabulary>("typing_vocabulary"),
+  /** Windows' spell checker's sure fix for a finished word, or null. */
+  typingFix: (word: string, lang: string, known: boolean) => invoke<string | null>("typing_fix", { word, lang, known }),
+  typingCanCorrect: (lang: string) => invoke<boolean>("typing_can_correct", { lang }),
+  /** The message the person will most likely send next in a chat (the local model's guess), or null. */
+  typingNext: (chatId: string) => invoke<string | null>("typing_next", { chatId }),
   setFeature: (feature: FeatureId, on: boolean) => invoke<FeatureId[]>("set_feature", { feature, on }),
   installFeature: (feature: FeatureId) => invoke<void>("install_feature", { feature }),
   notes: () => invoke<Note[]>("notes"),

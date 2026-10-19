@@ -3288,5 +3288,15 @@
  "Your answer couldn't be sent: {error}": "返事を送信できませんでした：{error}",
  "Your answer was sent to {name}.": "{name} に返事を送信しました。",
  "not sent to the organizer": "主催者には未送信",
- "sent to the organizer": "主催者に送信済み"
+ "sent to the organizer": "主催者に送信済み",
+ "Autocomplete": "オートコンプリート",
+ "Autocorrect": "自動修正",
+ "Suggested next message": "次のメッセージの候補",
+ "Typing": "入力",
+ "Tab": "Tab",
+ "Took too long.": "時間がかかりすぎました。",
+ "Changed “{from}” to “{to}”.": "「{from}」を「{to}」に変更しました。",
+ "While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC.": "チャットで入力中に、単語の続きや以前に尋ねた内容の続きを薄いグレーで表示します。Tab キーで確定します。この PC 上で、あなた自身のチャットから学習します。",
+ "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "単語を打ち終えたときにつづりの誤りを Windows のスペルチェッカーで修正します。確実な場合だけです。直後に Backspace キーを押すと修正を取り消せます。Windows のみ。",
+ "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "返信が終わると、次に尋ねそうな内容がメッセージ欄に表示されます。Tab キーで使うか、そのまま入力すると消えます。この PC 上のモデルが推測し、オンラインのモデルは使いません。"
 }

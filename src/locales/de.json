@@ -3288,5 +3288,15 @@
  "Your answer couldn't be sent: {error}": "Deine Antwort konnte nicht gesendet werden: {error}",
  "Your answer was sent to {name}.": "Deine Antwort wurde an {name} gesendet.",
  "not sent to the organizer": "nicht an den Organisator gesendet",
- "sent to the organizer": "an den Organisator gesendet"
+ "sent to the organizer": "an den Organisator gesendet",
+ "Autocomplete": "Autovervollständigung",
+ "Autocorrect": "Autokorrektur",
+ "Suggested next message": "Vorgeschlagene nächste Nachricht",
+ "Typing": "Tippen",
+ "Tab": "Tab",
+ "Took too long.": "Hat zu lange gedauert.",
+ "Changed “{from}” to “{to}”.": "„{from}“ in „{to}“ geändert.",
+ "While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC.": "Zeigt beim Tippen in einem Chat den Rest des Wortes oder von etwas, das du schon einmal gefragt hast, in hellem Grau. Drücke Tab, um es zu übernehmen. Es lernt aus deinen eigenen Chats, auf diesem PC.",
+ "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "Korrigiert ein falsch geschriebenes Wort, sobald du es beendest, mit der Rechtschreibprüfung von Windows, und nur, wenn sie sich sicher ist. Drücke direkt danach die Rücktaste, um eine Korrektur rückgängig zu machen. Nur unter Windows.",
+ "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "Wenn eine Antwort fertig ist, zeigt das Nachrichtenfeld, was du wahrscheinlich als Nächstes fragst. Drücke Tab, um es zu verwenden, oder tippe einfach weiter, damit es verschwindet. Vom Modell auf diesem PC erraten, nie mit einem Online-Modell."
 }

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
 import { Markdown } from "../components/Markdown";
+import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartInput";
 import { PeopleConnect } from "../components/PeopleConnect";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -190,6 +191,7 @@ function preview(m: PersonMessage): string {
 function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { contact: PersonContact; relaySet: boolean; cloud: boolean; onChanged: () => void; toast: PushToast }) {
   const [messages, setMessages] = useState<PersonMessage[] | null>(null);
   const [text, setText] = useState("");
+  const helpers = useTypingHelpers();
   const [file, setFile] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -447,12 +449,14 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
               </button>
             </div>
           )}
-          <textarea
+          <SmartInput
             rows={2}
             value={text}
+            onValueChange={setText}
+            complete={helpers.complete}
+            correct={helpers.correct}
             placeholder={t("Message {name}", { name: c.name })}
             aria-label={t("Message {name}", { name: c.name })}
-            onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
@@ -570,6 +574,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
   const [v, setV] = useState<SharedView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const helpers = useTypingHelpers();
   // This user's model answering here: what it's doing, and its words so far.
   const [mine, setMine] = useState<{ status: string; content: string } | null>(null);
   // What this user just wrote, until it comes back in their chat.
@@ -612,6 +617,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
     const text = input.trim();
     if (!text || mine) return;
     setInput("");
+    rememberSent(text);
     setPending(text);
     setMine({ status: "loading", content: "" });
     try {
@@ -710,11 +716,13 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
       </div>
       {v && (
         <div className="shared-compose">
-          <textarea
+          <SmartInput
             className="input"
             rows={2}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onValueChange={setInput}
+            complete={helpers.complete}
+            correct={helpers.correct}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();

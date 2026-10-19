@@ -47,6 +47,10 @@ pub enum Feature {
     People,
     /// Chats searching, reading and asking each other.
     ChatTeam,
+    /// Typing help in the chat boxes (typing.rs).
+    Autocomplete,
+    Autocorrect,
+    NextPrompt,
 }
 
 pub const ALL: &[Feature] = &[
@@ -74,6 +78,9 @@ pub const ALL: &[Feature] = &[
     Feature::Connectors,
     Feature::People,
     Feature::ChatTeam,
+    Feature::Autocomplete,
+    Feature::Autocorrect,
+    Feature::NextPrompt,
 ];
 
 impl Feature {
@@ -103,6 +110,9 @@ impl Feature {
             Feature::Connectors => "Connectors and plugins",
             Feature::People => "People",
             Feature::ChatTeam => "Chats working together",
+            Feature::Autocomplete => "Autocomplete",
+            Feature::Autocorrect => "Autocorrect",
+            Feature::NextPrompt => "Suggested next message",
         }
     }
 

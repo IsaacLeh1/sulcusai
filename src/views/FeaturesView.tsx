@@ -69,6 +69,18 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Chats working together"),
     detail: tx("The assistant can look through your other chats, read them, and hand another chat a question or a piece of work: it works on it there, with the same model, and the answer comes back. Incognito chats are never included."),
   },
+  autocomplete: {
+    name: tx("Autocomplete"),
+    detail: tx("While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC."),
+  },
+  autocorrect: {
+    name: tx("Autocorrect"),
+    detail: tx("Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only."),
+  },
+  next_prompt: {
+    name: tx("Suggested next message"),
+    detail: tx("When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model."),
+  },
   people: {
     name: tx("People"),
     detail: tx("Connect with someone else's SulcusAI by a code and chat with them directly: messages and files go straight between your PCs, encrypted, and never to a model. Works on the same network, or across the internet through a virtual network like Radmin VPN or Tailscale."),
@@ -81,6 +93,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
   { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
+  { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },
   { title: tx("With other people"), ids: ["people"] },
 ];
 

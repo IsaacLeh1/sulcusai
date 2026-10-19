@@ -3288,5 +3288,15 @@
  "Your answer couldn't be sent: {error}": "Votre réponse n'a pas pu être envoyée : {error}",
  "Your answer was sent to {name}.": "Votre réponse a été envoyée à {name}.",
  "not sent to the organizer": "non envoyée à l'organisateur",
- "sent to the organizer": "envoyée à l'organisateur"
+ "sent to the organizer": "envoyée à l'organisateur",
+ "Autocomplete": "Saisie semi-automatique",
+ "Autocorrect": "Correction automatique",
+ "Suggested next message": "Message suivant suggéré",
+ "Typing": "Saisie",
+ "Tab": "Tab",
+ "Took too long.": "Ça a pris trop de temps.",
+ "Changed “{from}” to “{to}”.": "« {from} » remplacé par « {to} ».",
+ "While you type in a chat, shows the rest of the word or of something you've asked before in light grey. Press Tab to take it. It learns from your own chats, on this PC.": "Pendant que vous tapez dans une discussion, affiche en gris clair la fin du mot ou d’une demande que vous avez déjà faite. Appuyez sur Tab pour l’utiliser. Il apprend de vos propres discussions, sur ce PC.",
+ "Fixes a misspelled word when you finish it, with Windows' own spell checker, only when it's sure. Press Backspace right after to undo a fix. Windows only.": "Corrige un mot mal orthographié quand vous le terminez, avec le correcteur orthographique de Windows, seulement quand il est sûr. Appuyez sur Retour arrière juste après pour annuler une correction. Windows uniquement.",
+ "When a reply is done, the message box shows what you're likely to ask next. Press Tab to use it, or just type to make it go away. Guessed by the model on this PC; never with an online model.": "Quand une réponse est terminée, la zone de message affiche ce que vous allez probablement demander ensuite. Appuyez sur Tab pour l’utiliser, ou tapez simplement pour le faire disparaître. Deviné par le modèle de ce PC, jamais par un modèle en ligne."
 }
