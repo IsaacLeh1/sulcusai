@@ -1203,7 +1203,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   The first version had only level-1 tasks, and Qwen3 4B 2507 got 59 of 60 right.
 - Training window: 512 tokens, measured on his 12 GB card with the 4B. 512 takes 8.3 GB; 768 spills 4.6 GB into shared memory; 1,024 spilled 6.9 GB and didn't finish a step in 3 minutes; `-ub` below `-c` crashes the trainer (GGML_ASSERT ggml_can_repeat). So tool tasks offer at most 4 tools (Qwen's tool instructions are long), coding replies are asked for without explanation, and practice runs with thinking off.
 - Training copy: the trainer's Vulkan backward pass handles Q4_0, Q8_0 and F16 on the card, but falls back to the processor for K-quants. Per 512-token example on the 4B: Q4_K_M 50 s, Q4_0 10 s, Q8_0 6 s (Q8_0 also spilled 1.8 GB). `finetune::training_copy` makes the copy with the trainer's own `llama-quantize --allow-requantize` before training, checks free disk space first, and deletes the copy after. "Teach a model" gets the same speed-up.
-  - Q8_0 is used where it fits (2.5B or less, or up to 4.5B on cards of 11 GB or more). Copied from the installed Q4_K_M it keeps the same weights.
+  - Q8_0 is used where it fits with 1 GB to spare (see "Training that fits the card"; on his 12 GB card a 4B gets Q4_0). Copied from the installed Q4_K_M it keeps the same weights.
   - A Q4_0 copy rounds the weights again. On the model's own replies its loss started at 0.94, against 0.67 for Q8_0, so the adapter partly learns to undo Q4_0's rounding, and that hurt on the real model. Q4_0 stays as the fallback for bigger models; the before/after test still decides whether to keep the result.
 - Learning rate: the model's own replies need a much gentler rate. At 1e-4 constant, the 4B's loss climbed to 1.8 by the end of round 2, and it then got 0 of 48 test tasks right (nothing kept). Practice now uses 2e-5 (1e-5 light, 5e-5 strong) with a cosine schedule and 10% warm-up (`Setup::own_words`). "Teach a model" keeps 1e-4 for the person's own examples. A short Q8_0 run at 1e-4 on practice data did fall (0.67 to 0.2 in 20 steps), so the climb came from the rate over two rounds.
 - What it learns from: every task solved after a retry or with the hint, but only 30% of those solved first time (`EASY_SHARE`). Learning everything it already knew made it no better (35 to 31 of 48). The test answers at temperature 0, so before and after differ only by the adapter.
@@ -1316,7 +1316,7 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
 - **Where gains would come from:**
   1. A teacher for code tasks. Run the teacher through the same episode, then lay its turns out in the student's template, as `in_students_words` does for single tool calls. Only that teaches L4-L6.
   2. Training the part of a right try that fits (the request and its first searches) when the whole try doesn't. This breaks the whole-try rule this was built to, so it's his call.
-  3. Checking free card memory before picking the Q8_0 copy, or using Q4_0 when the desktop holds too much.
+  3. Checking free card memory before picking the Q8_0 copy, or using Q4_0 when the desktop holds too much (done: "Training that fits the card").
 
   Picked with other skills, "your code" adds its lookup tries to theirs.
 - The test's code tasks come from the same seeded random source as the other skills' tasks, after them. So "your code" alone (5 of 12) and with "using tools" (3 of 12) are different tasks, each the same on every run.
@@ -1360,7 +1360,7 @@ He went to bed and left free rein to add and refine things, then build and publi
 - **Live on his PC after the merge** (dev build, 2026-10-19):
   - FLUX.1 schnell made a 1024 × 1024 lighthouse in 16 s, with the card at 60 °C.
   - Qwen3.5 9B (Q4_K_M) loaded in 7.4 s with a 32K window, every layer on the card and its picture reader. It wrote 87 tokens/s, using 7.3 GB of the card and 95 MB of shared memory. His Qwen2.5-Coder 14B does about 46 at 16K.
-- **After the merge**: the training copy is Q8_0 only when 2.8 times its size fits the card's free memory (`finetune::q8_fits`; the "your code" session saw a 4B's Q8_0 training peak at 11.4 GB and spill). Llama and Gemma 4 learn from documents only (`finetune::conversations_ok`), and practice leaves out Gemma 4.
+- **After the merge**: the training copy is Q8_0 only when 2.8 times its size fits the card's free memory (`finetune::q8_fits`, since replaced by `finetune::plan`: see "Training that fits the card"). Llama and Gemma 4 learn from documents only (`finetune::conversations_ok`), and practice leaves out Gemma 4.
 - Found, not fixable here: the trainer (QVAC b7349, its latest release, March 2026) finds turns only in ChatML and Gemma 3 formats. Gemma 4 (`<|turn>model`) and Llama 3 can't be taught from conversations or practise; documents still work.
 
 ## 0.9.14 (2026-10-19): newer models, practice, Optimize for this PC, FLUX.1
@@ -1371,6 +1371,46 @@ He went to bed and left free rein to add and refine things, then build and publi
 - CI on Mac and Linux had failed since 2026-10-14: five `#[ignore]` live tests (cleanup, devmode, mail, media/hub ×2) called `crate::e2e::scratch_state()`, and `e2e` exists only on Windows (`#[cfg(all(test, windows))]`). They now carry `#[cfg(windows)]` like the other live tests. **Any new test that uses `crate::e2e` needs `#[cfg(windows)]`.**
   - With that fixed, two tests ran on Mac and Linux for the first time and failed because they assumed Windows paths: the people folder test (a `\..\` path) and the command guard test (`C:\...`, `del /s`). The guard test now checks Windows cases on Windows and `/usr/local/lib`, `~/Documents`, `../..` and `/etc/...` elsewhere.
 - Publishing gotcha (fixed): `release.ps1` created the tag with `--target main`, and GitHub's main was still 0.9.13 because phase7 wasn't pushed yet. So v0.9.14 first pointed at d108112, and the Mac/Linux workflow built 0.9.13 and attached `SulcusAI_0.9.13_*` files. The Windows installer and latest.json were right, and latest.json lists only Windows, so no updates went wrong. Fixed by force-pushing the tag to 9abc781, deleting the three wrong files and re-running `release-unix.yml` with `-f tag=v0.9.14`. `release.ps1 -Publish` now tags HEAD (`--target $commit`) and refuses to publish a commit that isn't on GitHub.
+
+## Training that fits the card (2026-10-19, branch `trainfit`)
+
+Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his RTX 5070 12 GB. One app run slowed from 7 s a step to 37 s at step 8, then sat on step 13 for 28 minutes. Another "crashed at step 8" (0xC0000409). The teacher run went at 34 s a step.
+
+- **Measured by hand** (`llama-finetune-lora` with practice's arguments: 512 tokens, rank 16), reading the trainer's own counters (`GPU Process Memory`, dedicated and shared) every ~1.5 s, on Qwen3 4B 2507:
+
+  | Copy | File | Card (dedicated) | Shared | Step | Card total |
+  |---|---|---|---|---|---|
+  | Q4_0 | 2.37 GB | 7,954 MB, flat for all 19 steps | 660 MB, flat | 13 s (two compiles were running) | 9,354 of 12,227 MB |
+  | Q8_0 | 4.28 GB | 9,776 MB, then +1.1 GB asked for at step 8 | 741 → 1,770 MB at step 8 | 5.5 s | 12,087 of 12,227 MB at step 8 |
+
+  The shared 0.66-0.74 GB is there from the first step in both: it's part of how the trainer works, not a spill.
+- **Going over the card's memory can reset the graphics driver.** The Q8_0 run above took the card to 12,087 of 12,227 MB at step 8. Two seconds later the NVIDIA driver reset (System log: nvlddmkm event 153, four times, 07:59:16-20). The trainer crashed with 0xC0000409 at 07:59:22 (Application log 1000, ucrtbase), with nothing in its own log. The NVIDIA overlay was then left as a black always-on-top layer over his main monitor until it was restarted. So the app runs that "crashed at step 8" were very likely this same driver reset. **Never run a training (or a test of one) that can take the card within 1 GB of full.**
+- **The plan** (`finetune::plan`, used by `training_copy` for practice and teaching):
+  - The memory a run needs is the copy's weights plus, per weight, what a step needs besides them (`per_weight`: 1.5 bytes for Q4_0, 1.8 for Q8_0 and F16; it covers the step-8 jump). The weights are counted from the file's size and format (`bits`), all parts of a split model included (`model_size`).
+  - It takes the most faithful format that leaves **1 GB free** beyond that (`HEADROOM`):
+    - a file the card trains as it is (Q4_0, Q8_0, F16) stays as it is, and is only ever copied smaller;
+    - otherwise a Q8_0 copy, else a Q4_0 copy.
+  - On his card, with the desktop holding about 1.4 GB, a 4B trains on Q4_0 (estimated 7.9 GB, against 7.8 measured, plus the 1 GB). Q8_0 is estimated at 10.9 GB, so it takes a card with about 12 GB free, such as a 16 GB one.
+  - `card_free` reads the card until the count stops falling, since Windows' count lags a moment behind a server that has just quit.
+- **When nothing fits** at training time:
+  - It waits up to 3 minutes, reading the card again every 5 s. The job shows "The graphics card is short of free memory for training. Closing other apps…" (`Job.low_memory`).
+  - It then stops with "There isn't enough free memory on the graphics card to teach this model safely…" (`NO_ROOM`). The app log has the numbers.
+  - Before practice or teaching starts, `fits_card` refuses a model that couldn't fit even on an empty card as Q4_0 (`TOO_BIG`), so a run isn't wasted. For example, an 8B on a 12 GB card is refused.
+- **The trainer is watched** (`Pace`, through the new `media::proc::run_watched`, which can stop a program with a reason):
+  - The run is stopped with "The trainer stopped making progress, most likely because the graphics card ran out of memory…" (`TRAINER_STALLED`) when:
+    - no step finishes in the first 15 minutes (loading included);
+    - or a later step takes more than 15 times the usual one (the middle of steps 2-6) and at least 4 minutes.
+  - Three steps in a row more than 4 times the usual one log "Training slowed from about 7 s a step to 37 s…" and show the short-of-memory line.
+  - A trainer that quits after some steps worked gives "The trainer quit partway through, most likely because the graphics card ran out of memory…" (`TRAINER_QUIT`). The raw error goes to the app log.
+  - A gap of more than 30 s between looks means the PC slept with the trainer paused, so the wait starts again.
+- **Limits of the estimate:** `per_weight` comes from one model. For bigger models, the memory beyond the weights grows more slowly than the weights (activations go with layers × width), so it asks too much for 8B and up: safe, but an 8B on a 16 GB card may be refused when it would just fit. A small model with a big vocabulary (Gemma 3's 262K) may need more per weight than it says.
+- Five new texts, in all six languages: the window's short-of-memory line, and the core's `NO_ROOM`, `TOO_BIG`, `TRAINER_STALLED` and `TRAINER_QUIT`.
+- Tests (`finetune::tests`):
+  - `training_need_covers_the_measured_peaks`;
+  - `the_training_format_fits_the_free_card_memory`, which covers his card with 1.4 GB or 5.4 GB taken, 16 GB cards, 1.7B and 8B models, Q4_0/Q8_0/F16 files and no card;
+  - `a_model_too_big_for_the_card_is_refused_at_the_start`;
+  - `a_stalled_trainer_is_stopped`, `a_slowed_trainer_is_flagged` (the 7 → 37 s run) and `sleep_is_not_a_stall`.
+- Live check of a whole 4B practice run: not done yet. The card was put on hold after the driver reset.
 
 ## Website (2026-10-12)
 

@@ -1081,6 +1081,7 @@ pub async fn start_practice(
     if !finetune::arch_of(&state, &installed).is_some_and(|a| can_practise(&a)) {
         return Err("This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.".into());
     }
+    finetune::fits_card(&state, &installed)?;
     let mut chosen: Vec<Skill> = Skill::ALL.into_iter().filter(|s| skills.contains(s) && (!matches!(s, Skill::Tools | Skill::Project) || spec.tools)).collect();
     chosen.dedup();
     if chosen.is_empty() {

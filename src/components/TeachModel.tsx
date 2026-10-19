@@ -193,6 +193,11 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               <span style={{ width: `${Math.round(job.fraction * 100)}%` }} />
             </div>
           )}
+          {running && job.low_memory && (
+            <p className="small warn-text">
+              {t("The graphics card is short of free memory for training. Closing other apps that use it, such as games, browsers and video players, helps.")}
+            </p>
+          )}
         </div>
       )}
 

@@ -225,6 +225,9 @@ pub struct Job {
     pub skills: Vec<SkillScore>,
     /// Practice: the second test, of new tasks, of the one it would keep.
     pub second: Option<Second>,
+    /// Training doesn't fit the card's free memory, or has slowed down as
+    /// if it didn't: closing other apps that use the card helps.
+    pub low_memory: bool,
 }
 
 impl Job {
@@ -251,6 +254,7 @@ impl Job {
             parts: 0,
             skills: Vec::new(),
             second: None,
+            low_memory: false,
         }
     }
 }
@@ -448,6 +452,7 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
         return Err("A model is already being taught. Wait for it or stop it first.".into());
     }
     let installed = db::installed_model(&state.db.lock().unwrap(), &base).ok_or("Pick a model that's installed.")?;
+    fits_card(&state, &installed)?;
     let base_name = state.model_spec(&base).map_or(base.clone(), |s| s.name);
     let documents = matches!(&source, Source::File { path } if !path.to_lowercase().ends_with(".jsonl"));
     if !documents && !arch_of(&state, &installed).is_some_and(|a| conversations_ok(&a)) {
@@ -569,23 +574,133 @@ fn trains_on_card(quant: &str) -> bool {
     matches!(quant.to_ascii_uppercase().as_str(), "Q4_0" | "Q8_0" | "F16" | "BF16" | "F32")
 }
 
-/// What the graphics card has free now (the chat model is already
-/// stopped): its size less what Windows, the desktop and other apps hold.
-fn card_free(state: &AppState) -> u64 {
-    let total = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
-    let card = crate::hardware::dedicated().and_then(|c| c.luid);
-    let used = crate::perf::card_memory_used(card).unwrap_or(3 * 1024 * 1024 * 1024 / 2);
-    total.saturating_sub(used)
+/// Bits a weight takes in a model file of this quantization, embeddings
+/// and all (Qwen3 4B 2507: Q4_K_M 4.97, Q4_0 4.71, Q8_0 8.51), to tell how
+/// many weights a file holds and how big a copy in another format comes out.
+/// Rounded so the weights are overcounted, never under.
+fn bits(quant: &str) -> f64 {
+    match quant.to_ascii_uppercase().as_str() {
+        "F32" => 32.0,
+        "F16" | "BF16" => 16.0,
+        "Q8_0" => 8.5,
+        "Q6_K" => 6.5,
+        "Q4_0" => 4.7,
+        q if q.starts_with("Q5") => 5.5,
+        q if q.starts_with("Q3") || q.starts_with("IQ3") => 3.8,
+        q if q.starts_with("Q2") || q.starts_with("IQ2") || q.starts_with("IQ1") => 2.8,
+        // Q4_K_M, as the catalog's models come, and the like.
+        _ => 4.9,
+    }
 }
 
-/// Whether training a Q8_0 copy of a model whose installed file is `size`
-/// bytes fits `free` card memory. Measured at 512 tokens: a 4B's Q8_0 copy
-/// (4.1 GB) peaked at 11.4 GB, about 2.8 times the copy; with the desktop
-/// holding 1.2-1.5 GB of a 12 GB card it spilled into shared memory and
-/// slowed from 7 s a step to 37 s, or crashed. Its Q4_0 copy took 8.3 GB.
-fn q8_fits(size: u64, free: u64) -> bool {
-    let copy = size as f64 * 1.8;
-    copy * 2.8 + 512.0 * 1024.0 * 1024.0 <= free as f64
+/// Card memory a training step takes per weight besides the weights
+/// themselves, at the 512-token window teaching and practice use: the LoRA
+/// and its optimizer, the activations kept for the backward pass, the
+/// vocabulary's logits. Measured with the trainer's own counters on Qwen3
+/// 4B 2507 (2026-10-19): its Q4_0 copy (2.37 GB) held 7.95 GB of the card
+/// throughout; its Q8_0 copy (4.28 GB) held 9.8 GB, and at step 8 asked
+/// for 1.1 GB more (the step where app runs crashed or crawled). Both also
+/// keep about 0.7 GB in the computer's memory, which isn't the card's.
+fn per_weight(target: &str) -> f64 {
+    if target.eq_ignore_ascii_case("Q4_0") {
+        1.5
+    } else {
+        1.8
+    }
+}
+
+/// Card memory left free beyond training's measured peak, since the free
+/// memory is read once, at the start, and the desktop grows with another
+/// window or a video. Going over the card's memory isn't just slow: on his
+/// RTX 5070 the 4B's Q8_0 step 8 took the card to 12,087 of 12,227 MB, the
+/// NVIDIA driver reset (nvlddmkm event 153), the trainer crashed
+/// (0xC0000409, as in two practice runs that "crashed at step 8") and the
+/// NVIDIA overlay was left as a black layer over his main monitor.
+const HEADROOM: u64 = 1 << 30;
+/// Card memory the desktop takes at the least, for the check at the start.
+const DESKTOP: u64 = 512 << 20;
+/// How long training waits for other apps to give card memory back.
+const ROOM_WAIT: std::time::Duration = std::time::Duration::from_secs(180);
+
+pub const NO_ROOM: &str = "There isn't enough free memory on the graphics card to teach this model safely. Close other apps that use it, such as games, browsers and video players, and try again.";
+pub const TOO_BIG: &str = "This model is too big to teach on this graphics card. Pick a smaller model.";
+
+/// Card memory training takes, for a model whose installed file is `size`
+/// bytes of `quant`, trained as `target`.
+fn training_need(size: u64, quant: &str, target: &str) -> u64 {
+    let weights = size as f64 * 8.0 / bits(quant);
+    (weights * (bits(target) / 8.0 + per_weight(target))) as u64
+}
+
+/// What a model is trained as: the installed file (`copy` None) or a copy in
+/// another format, the card memory that takes, and whether that fits.
+#[derive(Debug, PartialEq)]
+struct Plan {
+    copy: Option<&'static str>,
+    need: u64,
+    fits: bool,
+}
+
+/// The most faithful format whose training fits `free` card memory with
+/// room to spare. A file the card trains as it is stays as it is when it
+/// fits, and is only ever copied smaller; other formats are copied to Q8_0
+/// or Q4_0. When nothing fits, the smallest, flagged. Without a graphics
+/// card (`free` None) there's nothing to run out of: the smallest.
+fn plan(size: u64, quant: &str, free: Option<u64>) -> Plan {
+    let copies = ["Q8_0", "Q4_0"].into_iter();
+    let options: Vec<Option<&'static str>> = if trains_on_card(quant) {
+        std::iter::once(None).chain(copies.filter(|t| bits(t) < bits(quant)).map(Some)).collect()
+    } else {
+        copies.map(Some).collect()
+    };
+    let need = |o: Option<&str>| training_need(size, quant, o.unwrap_or(quant));
+    let fitting = free.and_then(|free| options.iter().copied().find(|o| need(*o) + HEADROOM <= free));
+    let copy = fitting.unwrap_or(options[options.len() - 1]);
+    Plan { copy, need: need(copy), fits: fitting.is_some() || free.is_none() }
+}
+
+/// Before teaching or practice starts (so practice isn't wasted): whether
+/// the model can train on this PC's graphics card at all, in its smallest
+/// format, with the headroom and the least the desktop takes.
+pub(crate) fn fits_card(state: &AppState, installed: &db::InstalledModel) -> Result<(), String> {
+    let total = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
+    if too_big(model_size(state, installed), &installed.quant, total) {
+        return Err(TOO_BIG.into());
+    }
+    Ok(())
+}
+
+fn too_big(size: u64, quant: &str, card: u64) -> bool {
+    card > 0 && plan(size, quant, Some(0)).need + HEADROOM + DESKTOP > card
+}
+
+/// The model's size on disk: all its parts when it's split across files
+/// (`model_file` is the first).
+fn model_size(state: &AppState, installed: &db::InstalledModel) -> u64 {
+    let first = std::fs::metadata(crate::model_file(&state.paths, installed)).map_or(0, |m| m.len());
+    installed.size.max(first)
+}
+
+/// What the graphics card has free now (the chat model has just been
+/// stopped): its size less what Windows, the desktop and other apps hold.
+/// None without a graphics card. Windows' count lags a moment behind a
+/// program that has just quit, so it's read until it stops falling.
+async fn card_free(state: &AppState) -> Option<u64> {
+    let total = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
+    if total == 0 {
+        return None;
+    }
+    let card = crate::hardware::dedicated().and_then(|c| c.luid);
+    let mut used = crate::perf::card_memory_used(card);
+    for _ in 0..6 {
+        let Some(before) = used else { break };
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        used = crate::perf::card_memory_used(card);
+        if used.is_none_or(|now| before.saturating_sub(now) < 64 << 20) {
+            break;
+        }
+    }
+    Some(total.saturating_sub(used.unwrap_or(3 << 29)))
 }
 
 /// The model file to train on: the installed one, or a copy in a format the
@@ -597,16 +712,46 @@ fn q8_fits(size: u64, free: u64) -> bool {
 /// at 0.94 instead of 0.67, so part of training went into undoing that, and
 /// the adapter did worse on the real model. Q4_0 is kept for when the Q8_0
 /// copy's training wouldn't fit the card's free memory (the before/after
-/// test still decides).
-async fn training_copy(state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
+/// test still decides). Training that outgrows the card first slows down
+/// (Windows moves part of it to the computer's memory: 7 s a step became
+/// 37 s), then can reset the graphics driver (`HEADROOM`). So when nothing
+/// fits with room to spare, it waits a few minutes for other apps to give
+/// memory back, and then doesn't start.
+async fn training_copy(app: &AppHandle, state: &Arc<AppState>, installed: &db::InstalledModel, trainer: &Path, out_dir: &Path, cancel: &AtomicBool) -> Result<std::path::PathBuf, String> {
     let model = crate::model_file(&state.paths, installed);
-    if trains_on_card(&installed.quant) {
-        return Ok(model);
+    let size = model_size(state, installed);
+    let mut free = card_free(state).await;
+    let mut chosen = plan(size, &installed.quant, free);
+    let waiting = std::time::Instant::now();
+    if !chosen.fits {
+        let format = chosen.copy.unwrap_or(&installed.quant);
+        let (need, free) = (crate::size_label(chosen.need), crate::size_label(free.unwrap_or(0)));
+        state.log("model", &format!("Training as {format} needs about {need} of the graphics card's memory and 1 GB to spare, but only {free} is free; waiting up to 3 minutes for other apps to give some back"));
+        update(app, |j| j.low_memory = true);
     }
-    let size = std::fs::metadata(&model).map_or(0, |m| m.len());
-    let q8 = q8_fits(size, card_free(state));
-    let (target, growth) = if q8 { ("Q8_0", 1.8) } else { ("Q4_0", 1.0) };
-    let need = (size as f64 * growth) as u64 + 512 * 1024 * 1024;
+    while !chosen.fits {
+        if waiting.elapsed() > ROOM_WAIT {
+            state.log("model", "The graphics card's memory didn't free up, so training didn't start");
+            return Err(NO_ROOM.into());
+        }
+        for _ in 0..5 {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(crate::download::CANCELLED.into());
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+        free = card_free(state).await;
+        chosen = plan(size, &installed.quant, free);
+        if chosen.fits {
+            update(app, |j| j.low_memory = false);
+        }
+    }
+    if let Some(free) = free {
+        let format = chosen.copy.unwrap_or(&installed.quant);
+        state.log("model", &format!("Training as {format}: it needs about {} of the graphics card's memory, and {} is free", crate::size_label(chosen.need), crate::size_label(free)));
+    }
+    let Some(target) = chosen.copy else { return Ok(model) };
+    let need = (size as f64 * bits(target) / bits(&installed.quant)) as u64 + 512 * 1024 * 1024;
     if crate::storage::free_on(out_dir).is_some_and(|free| free < need) {
         return Err("There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.".into());
     }
@@ -663,9 +808,87 @@ pub(crate) async fn prepare(app: &AppHandle, state: &Arc<AppState>, installed: &
     let exe = ensure_trainer(app, state, cancel, span).await?;
     // The chat model gives the graphics card back, so its free memory can be measured.
     state.engine.lock().await.stop().await;
-    let model = training_copy(state, installed, &exe, out_dir, cancel).await?;
+    // One plan and one copy, for every adapter trained from it.
+    let model = training_copy(app, state, installed, &exe, out_dir, cancel).await?;
     let copy = model.starts_with(out_dir);
     Ok(Ready { exe, model, copy })
+}
+
+pub const TRAINER_STALLED: &str = "The trainer stopped making progress, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.";
+pub const TRAINER_QUIT: &str = "The trainer quit partway through, most likely because the graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.";
+
+/// How long the first step may take, loading the model included.
+const FIRST_STEP: f64 = 15.0 * 60.0;
+/// A run has stalled when a step takes this many times the usual one, and
+/// at least `STALL_FLOOR` seconds.
+const STALL_TIMES: f64 = 15.0;
+const STALL_FLOOR: f64 = 4.0 * 60.0;
+/// Three steps in a row this many times the usual one: short of memory.
+const SLOW_TIMES: f64 = 4.0;
+
+/// The trainer's pace, to stop a run that has stalled. When training
+/// outgrows the card, Windows moves part of its memory to the computer's,
+/// and steps go from seconds to minutes and then stop: one run went from
+/// 7 s a step to 37 s at step 8, then sat on step 13 for 28 minutes. Times
+/// are seconds since the trainer started.
+#[derive(Default)]
+struct Pace {
+    /// How long each training step took (the first includes loading).
+    took: Vec<f64>,
+    /// When the last step ended, a held-out check's step too.
+    last: f64,
+    /// When the pace was last looked at.
+    seen: f64,
+    /// Slow steps in a row.
+    slow: u32,
+}
+
+impl Pace {
+    /// The usual step: the middle one of steps 2-6, or the first while
+    /// that's all there is.
+    fn usual(&self) -> Option<f64> {
+        let mut early: Vec<f64> = self.took.iter().skip(1).take(5).copied().collect();
+        if early.is_empty() {
+            return self.took.first().copied();
+        }
+        early.sort_by(f64::total_cmp);
+        Some(early[early.len() / 2])
+    }
+
+    /// Called first whenever the pace is looked at. A long gap means this
+    /// PC slept, with the trainer paused too, so the wait starts again.
+    fn awake(&mut self, now: f64) {
+        if now - self.seen > 30.0 {
+            self.last += now - self.seen;
+        }
+        self.seen = now;
+    }
+
+    /// A step ended (`training`, or the held-out check's). When steps have
+    /// just turned slow: (the usual step, this one).
+    fn step(&mut self, now: f64, training: bool) -> Option<(f64, f64)> {
+        let took = now - self.last;
+        self.last = now;
+        if !training {
+            return None;
+        }
+        self.took.push(took);
+        let usual = self.usual().filter(|_| self.took.len() > 6)?;
+        self.slow = if took > usual * SLOW_TIMES { self.slow + 1 } else { 0 };
+        (self.slow == 3).then_some((usual, took))
+    }
+
+    /// How long it has waited for the next step.
+    fn waited(&self, now: f64) -> f64 {
+        now - self.last
+    }
+
+    /// No step for far longer than the usual one, or the first step not
+    /// done in `FIRST_STEP`.
+    fn stalled(&self, now: f64) -> bool {
+        let limit = self.usual().map_or(FIRST_STEP, |u| (u * STALL_TIMES).max(STALL_FLOOR));
+        self.waited(now) > limit
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -706,7 +929,12 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
     // Examples longer than the trainer's window, which it leaves out.
     let mut too_long = 0usize;
     let log = state.paths.logs.join(format!("finetune-{id}.log"));
-    proc::run(Run { exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line| {
+    let began = std::time::Instant::now();
+    let mut pace = Pace::default();
+    let watched = proc::run_watched(Run { exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line| {
+        let now = began.elapsed().as_secs_f64();
+        pace.awake(now);
+        let line = line.unwrap_or_default();
         if line.contains("Skipping conversation") && line.contains("too long") {
             too_long += 1;
         }
@@ -715,20 +943,41 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
         }
         if let Some((batch, batches, l, eta)) = parse_progress(line) {
             train_batches = train_batches.max(batches);
-            if batches < train_batches {
-                return;
+            let training = batches == train_batches;
+            if let Some(slowed) = pace.step(now, training) {
+                state.log("model", &format!("Training slowed from about {:.0} s a step to {:.0} s: the graphics card looks short of memory", slowed.0, slowed.1));
+                update(app, |j| j.low_memory = true);
             }
-            loss = Some(l);
-            let done = (epoch - 1) as f64 + batch as f64 / batches.max(1) as f64;
-            update(app, |j| {
-                j.epoch = epoch.min(epochs);
-                j.loss = Some(l);
-                j.fraction = start + (to - start) * (done / epochs as f64).min(1.0);
-                j.eta = Some(eta);
-            });
+            if training {
+                loss = Some(l);
+                let done = (epoch - 1) as f64 + batch as f64 / batches.max(1) as f64;
+                update(app, |j| {
+                    j.epoch = epoch.min(epochs);
+                    j.loss = Some(l);
+                    j.fraction = start + (to - start) * (done / epochs as f64).min(1.0);
+                    j.eta = Some(eta);
+                });
+            }
         }
+        pace.stalled(now).then(|| TRAINER_STALLED.to_string())
     })
-    .await?;
+    .await;
+    if let Err(e) = watched {
+        let steps = pace.took.len();
+        let card = crate::hardware::dedicated().and_then(|c| c.luid);
+        let used = crate::perf::card_memory_used(card).map_or(String::new(), |u| format!("; the graphics card had {} in use", crate::size_label(u)));
+        if e == TRAINER_STALLED {
+            state.log("model", &format!("The trainer made no progress for {:.0} minutes after {steps} steps (they took about {:.0} s each){used}, so it was stopped", pace.waited(began.elapsed().as_secs_f64()) / 60.0, pace.usual().unwrap_or(0.0)));
+            return Err(e);
+        }
+        // Quitting partway, after steps that worked: the card's memory ran
+        // out (a 4B's Q8_0 run crashed at step 8 with 0xC0000409).
+        if steps > 0 && e != crate::download::CANCELLED {
+            state.log("model", &format!("The trainer quit after {steps} steps{used}: {e}"));
+            return Err(TRAINER_QUIT.into());
+        }
+        return Err(e);
+    }
     if too_long > 0 {
         state.log("model", &format!("{too_long} example{} longer than {} tokens, which the trainer leaves out", if too_long == 1 { " was" } else { "s were" }, setup.ctx));
     }
@@ -787,15 +1036,139 @@ mod tests {
         assert_eq!(parse_epoch("Starting epoch 1 (step 37, lr=1.0000e-04)"), Some(1));
     }
 
-    /// The faithful Q8_0 copy only where its training fits the card's free
-    /// memory: not a 4B on a 12 GB card with the desktop on it.
+    const GB: u64 = 1 << 30;
+    const MB: u64 = 1 << 20;
+    /// Qwen3 4B 2507's files.
+    const Q4KM_4B: u64 = 2_497_281_120;
+    const Q4_0_4B: u64 = 2_369_547_360;
+    const Q8_0_4B: u64 = 4_280_405_600;
+
+    /// The estimate covers what the trainer took on his card, without
+    /// asking for much more.
     #[test]
-    fn the_q8_copy_only_when_it_fits() {
-        const GB: u64 = 1024 * 1024 * 1024;
-        let q4km_4b = 2_497_281_120;
-        assert!(!q8_fits(q4km_4b, 10 * GB + GB / 2), "12 GB card, desktop holding 1.5 GB");
-        assert!(q8_fits(q4km_4b, 15 * GB), "16 GB card");
-        assert!(q8_fits(1_100_000_000, 10 * GB), "a 1.7B on a 12 GB card");
+    fn training_need_covers_the_measured_peaks() {
+        let q8 = training_need(Q4KM_4B, "Q4_K_M", "Q8_0");
+        assert!(((9850 + 1029) * MB..11 * GB + GB / 2).contains(&q8), "Q8_0: 9.8 GB, then 1.1 GB more at step 8; got {q8}");
+        let q4 = training_need(Q4KM_4B, "Q4_K_M", "Q4_0");
+        assert!((7954 * MB..8 * GB + GB / 2).contains(&q4), "Q4_0: 7.95 GB throughout; got {q4}");
+        // The same model installed as Q4_0 or Q8_0 needs the same.
+        assert!(training_need(Q4_0_4B, "Q4_0", "Q4_0").abs_diff(q4) < 200 * MB);
+        assert!(training_need(Q8_0_4B, "Q8_0", "Q8_0").abs_diff(q8) < 300 * MB);
+    }
+
+    /// The faithful Q8_0 copy only where its training fits the card's free
+    /// memory, with room to spare; Q4_0 otherwise, flagged when even that
+    /// doesn't fit.
+    #[test]
+    fn the_training_format_fits_the_free_card_memory() {
+        let card_12 = 12227 * MB;
+        let plan_on = |size, quant, free| {
+            let p = plan(size, quant, free);
+            (p.copy, p.fits)
+        };
+        // His 12 GB card with the desktop holding 1.4 GB: Q8_0 crashed at step 8.
+        assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", Some(card_12 - 1400 * MB)), (Some("Q4_0"), true));
+        // With a game or a browser holding 4 GB more, even Q4_0 is short.
+        assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", Some(card_12 - 5400 * MB)), (Some("Q4_0"), false));
+        assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", Some(15 * GB)), (Some("Q8_0"), true), "16 GB card");
+        assert_eq!(plan_on(1_100_000_000, "Q4_K_M", Some(10 * GB)), (Some("Q8_0"), true), "a 1.7B on a 12 GB card");
+        assert_eq!(plan_on(4_683_074_240, "Q4_K_M", Some(card_12 - 1400 * MB)), (Some("Q4_0"), false), "an 8B on a 12 GB card");
+        // Files the card trains as they are stay so when they fit, and are only copied smaller.
+        assert_eq!(plan_on(Q4_0_4B, "Q4_0", Some(10 * GB)), (None, true));
+        assert_eq!(plan_on(Q4_0_4B, "Q4_0", Some(6 * GB)), (None, false));
+        assert_eq!(plan_on(Q8_0_4B, "Q8_0", Some(15 * GB)), (None, true));
+        assert_eq!(plan_on(Q8_0_4B, "Q8_0", Some(card_12 - 1400 * MB)), (Some("Q4_0"), true));
+        assert_eq!(plan_on(3_400_000_000, "F16", Some(10 * GB)), (None, true), "a 1.7B in F16");
+        assert_eq!(plan_on(3_400_000_000, "F16", Some(6 * GB)), (Some("Q8_0"), true));
+        // No graphics card: nothing to run out of.
+        assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", None), (Some("Q4_0"), true));
+        // At least 1 GB stays free beyond the peak: the Q8_0 4B's step 8
+        // left 140 MB and reset the graphics driver.
+        let p = plan(Q4KM_4B, "Q4_K_M", Some(card_12 - 1400 * MB));
+        assert!(p.need + GB <= card_12 - 1400 * MB);
+    }
+
+    /// Checked before practice starts: a model that can't train on the card
+    /// even as Q4_0 with nothing else on it is refused.
+    #[test]
+    fn a_model_too_big_for_the_card_is_refused_at_the_start() {
+        assert!(!too_big(Q4KM_4B, "Q4_K_M", 12227 * MB), "a 4B on his 12 GB card");
+        assert!(too_big(Q4KM_4B, "Q4_K_M", 8 * GB), "a 4B on an 8 GB card");
+        assert!(too_big(4_683_074_240, "Q4_K_M", 12227 * MB), "an 8B on a 12 GB card");
+        assert!(!too_big(4_683_074_240, "Q4_K_M", 24 * GB), "an 8B on a 24 GB card");
+        assert!(!too_big(4_683_074_240, "Q4_K_M", 0), "no graphics card");
+    }
+
+    /// The watcher looks every quarter second; here, every second.
+    fn wait(p: &mut Pace, from: f64, to: f64) -> bool {
+        let mut t = from;
+        while t < to {
+            t = (t + 1.0).min(to);
+            p.awake(t);
+            if p.stalled(t) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Steps of 7 s carry on; one that takes 4 minutes stops the run. The
+    /// first step (loading the model) gets 15 minutes.
+    #[test]
+    fn a_stalled_trainer_is_stopped() {
+        let mut p = Pace::default();
+        assert!(!wait(&mut p, 0.0, FIRST_STEP - 1.0));
+        assert!(wait(&mut p, FIRST_STEP - 1.0, FIRST_STEP + 1.0), "no first step in 15 minutes");
+
+        let mut p = Pace::default();
+        let mut t = 0.0;
+        for i in 0..30 {
+            let next = if i == 0 { 25.0 } else { t + 7.0 };
+            assert!(!wait(&mut p, t, next));
+            t = next;
+            assert_eq!(p.step(t, true), None);
+        }
+        assert_eq!(p.usual(), Some(7.0));
+        assert!(!wait(&mut p, t, t + STALL_FLOOR - 1.0), "a slow step isn't a stall");
+        assert!(wait(&mut p, t + STALL_FLOOR - 1.0, t + STALL_FLOOR + 1.0));
+    }
+
+    /// The run that went from 7 s a step to 37 s at step 8 is flagged once,
+    /// at the third slow step; the held-out check's steps don't count.
+    #[test]
+    fn a_slowed_trainer_is_flagged() {
+        let mut p = Pace::default();
+        let mut t = 0.0;
+        let mut flagged = Vec::new();
+        for step in 1..=14 {
+            let next = t + if step == 1 { 25.0 } else if step < 8 { 7.0 } else { 37.0 };
+            wait(&mut p, t, next);
+            t = next;
+            if let Some(f) = p.step(t, true) {
+                flagged.push((step, f));
+            }
+        }
+        assert_eq!(flagged, vec![(10, (7.0, 37.0))]);
+        // Held-out steps keep it alive without changing the usual step.
+        p.step(t + 2.0, false);
+        assert_eq!(p.took.len(), 14);
+        assert!(!p.stalled(t + 2.0 + STALL_FLOOR - 1.0));
+    }
+
+    /// A PC that sleeps pauses the trainer too: the wait starts again.
+    #[test]
+    fn sleep_is_not_a_stall() {
+        let mut p = Pace::default();
+        let mut t = 0.0;
+        for _ in 0..8 {
+            wait(&mut p, t, t + 7.0);
+            t += 7.0;
+            p.step(t, true);
+        }
+        wait(&mut p, t, t + 2.0);
+        p.awake(t + 2.0 + 3600.0);
+        assert!(!p.stalled(t + 2.0 + 3600.0));
+        assert!(!wait(&mut p, t + 3602.0, t + 3602.0 + STALL_FLOOR - 10.0));
     }
 
     #[test]

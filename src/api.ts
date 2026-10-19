@@ -130,6 +130,8 @@ export interface FinetuneJob {
   skills: SkillScore[];
   /** Practice: the second test, of new tasks, of the one it would keep. */
   second: SecondTest | null;
+  /** Training doesn't fit the card's free memory, or has slowed down as if it didn't. */
+  low_memory: boolean;
 }
 
 /** Practice's second test, of new tasks, that confirms what's kept: right before and after. */
