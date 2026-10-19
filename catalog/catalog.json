@@ -281,7 +281,8 @@
         "max_ctx": 131072,
         "active_fraction": 1.0,
         "swa_window": 1024,
-        "swa_every": 6
+        "kv_whole": 5,
+        "kv_sliding": 29
       },
       "default_ctx": 8192,
       "tools": false,
@@ -496,7 +497,8 @@
         "max_ctx": 131072,
         "active_fraction": 1.0,
         "swa_window": 1024,
-        "swa_every": 6
+        "kv_whole": 8,
+        "kv_sliding": 40
       },
       "default_ctx": 8192,
       "tools": false,
@@ -642,7 +644,8 @@
         "max_ctx": 131072,
         "active_fraction": 0.25,
         "swa_window": 128,
-        "swa_every": 2
+        "kv_whole": 12,
+        "kv_sliding": 12
       },
       "default_ctx": 8192,
       "tools": true,
@@ -985,7 +988,8 @@
         "max_ctx": 131072,
         "active_fraction": 1.0,
         "swa_window": 1024,
-        "swa_every": 6
+        "kv_whole": 10,
+        "kv_sliding": 52
       },
       "default_ctx": 8192,
       "tools": false,

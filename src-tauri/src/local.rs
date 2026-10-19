@@ -279,6 +279,67 @@ fn gguf_files(dir: &Path, min_size: u64) -> Vec<PathBuf> {
     out
 }
 
+/// How a model keeps its conversation memory, from its header: which layers
+/// keep the whole window, which only a sliding window, and how wide each
+/// is. Read from what the file lists (Gemma 4: which layers slide, how many
+/// share another's memory, K/V heads per layer), else the family's pattern
+/// (Gemma 3, gpt-oss), else Qwen3.5's one-in-N full-attention layers.
+/// Returns the memory fields of an `Arch` (the rest left at zero).
+fn kv_layout(meta: &gguf::Meta, arch: &str, n_layer: usize, heads: i64, head_dim: i64) -> Arch {
+    let get = |k: &str| meta.get(&format!("{arch}.{k}"));
+    let per_layer = |k: &str| -> Vec<i64> {
+        match get(k) {
+            Some(gguf::Value::Ints(v)) if v.len() == n_layer => v.clone(),
+            Some(v) => vec![v.int().unwrap_or(0); n_layer],
+            None => Vec::new(),
+        }
+    };
+    let kv_heads = per_layer("attention.head_count_kv");
+    let kv_at = |i: usize| kv_heads.get(i).copied().filter(|h| *h > 0).unwrap_or(heads);
+    let int = |k: &str| get(k).and_then(gguf::Value::int);
+    let window = int("attention.sliding_window").unwrap_or(0).max(0) as u32;
+    let shared = (int("attention.shared_kv_layers").unwrap_or(0).max(0) as usize).min(n_layer);
+    let own = n_layer - shared;
+    // Which of the layers with their own memory slide (yes = 1).
+    let pattern = per_layer("attention.sliding_window_pattern");
+    let every = crate::catalog::swa_every(arch) as usize;
+    let sliding: Vec<bool> = if window > 0 && pattern.len() == n_layer {
+        pattern[..own].iter().map(|p| *p != 0).collect()
+    } else if window > 0 && every > 0 {
+        // llama.cpp: layer i keeps everything when i % every == every - 1.
+        (0..own).map(|i| i % every != every - 1).collect()
+    } else {
+        Vec::new()
+    };
+    let interval = int("full_attention_interval").unwrap_or(0).max(0) as usize;
+    let mut a = Arch { n_layer: n_layer as u32, n_kv_heads: kv_at(0) as u32, head_dim: head_dim as u32, max_ctx: 0, active_fraction: 1.0, kv_whole: 0, kv_sliding: 0, kv_whole_width: 0, swa_window: 0 };
+    if !sliding.is_empty() {
+        let first_whole = sliding.iter().position(|s| !s);
+        let first_sliding = sliding.iter().position(|s| *s);
+        a.kv_whole = sliding.iter().filter(|s| !**s).count() as u32;
+        a.kv_sliding = own as u32 - a.kv_whole;
+        a.swa_window = window;
+        // The sliding layers' shape is the main one; the whole-window
+        // layers' is kept beside it when it differs.
+        if let Some(i) = first_sliding {
+            a.n_kv_heads = kv_at(i) as u32;
+            a.head_dim = int("attention.key_length_swa").unwrap_or(head_dim) as u32;
+        }
+        if let Some(i) = first_whole {
+            let width = (kv_at(i) * head_dim) as u32;
+            if width != a.n_kv_heads * a.head_dim {
+                a.kv_whole_width = width;
+            }
+        }
+    } else if interval > 0 {
+        // Linear-attention layers keep a small fixed state, not the window.
+        a.kv_whole = (n_layer / interval) as u32;
+    } else if shared > 0 {
+        a.kv_whole = own as u32;
+    }
+    a
+}
+
 /// Deletes a model file and, when it's the first part of a split model, its
 /// other parts too.
 pub fn remove_with_parts(path: &Path) {
@@ -391,7 +452,6 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         return Err("isn't a kind of model SulcusAI understands".into());
     };
     let heads = heads.max(1);
-    let kv_heads = a("attention.head_count_kv").unwrap_or(heads);
     let head_dim = a("attention.key_length").or_else(|| a("embedding_length").map(|e| e / heads)).unwrap_or(128);
     let max_ctx = a("context_length").unwrap_or(4096).clamp(2048, 131_072) as u32;
     let active_fraction = match (a("expert_count"), a("expert_used_count")) {
@@ -399,10 +459,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         (Some(n), Some(used)) if n > 0 => 0.1 + 0.9 * used as f64 / n as f64,
         _ => 1.0,
     };
-    // Layers that keep only a sliding window of the conversation.
-    let swa_every = crate::catalog::swa_every(&arch);
-    let swa_window = if swa_every > 0 { a("attention.sliding_window").unwrap_or(0).max(0) as u32 } else { 0 };
-    let swa_every = if swa_window > 0 { swa_every } else { 0 };
+    let memory = kv_layout(&meta, &arch, n_layer.max(1) as usize, heads, head_dim);
     std::fs::metadata(&c.path).map_err(|e| e.to_string())?;
     let size = size_with_parts(&c.path);
     let header = int("general.file_type").map_or("Unknown", gguf::quant_name);
@@ -438,7 +495,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
         },
         tags: if vision.is_some() { vec!["vision".into()] } else { Vec::new() },
         params_b,
-        arch: Arch { n_layer: n_layer as u32, n_kv_heads: kv_heads as u32, head_dim: head_dim as u32, max_ctx, active_fraction, swa_window, swa_every },
+        arch: Arch { n_layer: n_layer as u32, max_ctx, active_fraction, ..memory },
         default_ctx: 8192.min(max_ctx),
         tools: template.contains("tools"),
         variants: vec![Variant {
@@ -545,6 +602,40 @@ pub fn adopt(state: &AppState, entries: &[Entry], again: bool) -> (Vec<String>, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Conversation memory as llama.cpp b11450 allocated it at 16K, from
+    /// the real headers: Qwen3.5 0.8B keeps it in 6 of 24 layers (192 MiB),
+    /// Gemma 4 E2B in 3 whole-window and 12 sliding layers, 20 sharing
+    /// (96 + 12 MiB), Gemma 3 4B in 5 whole and 29 sliding (320 + 174 MiB).
+    #[test]
+    fn layers_plan_their_conversation_memory_as_the_engine_does() {
+        use gguf::Value::{Int, Ints};
+        let mib = |a: &Arch| crate::catalog::kv_cache_bytes(a, 16384) / (1024 * 1024);
+        let meta = |pairs: Vec<(&str, gguf::Value)>| pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<gguf::Meta>();
+
+        let qwen = meta(vec![("qwen35.attention.head_count_kv", Int(2)), ("qwen35.full_attention_interval", Int(4))]);
+        let a = kv_layout(&qwen, "qwen35", 24, 8, 256);
+        assert_eq!((a.kv_whole, a.kv_sliding, mib(&a)), (6, 0, 192));
+
+        let pattern: Vec<i64> = (0..35).map(|i| (i % 5 != 4) as i64).collect();
+        let gemma4 = meta(vec![
+            ("gemma4.attention.head_count_kv", Int(1)),
+            ("gemma4.attention.key_length_swa", Int(256)),
+            ("gemma4.attention.sliding_window", Int(512)),
+            ("gemma4.attention.shared_kv_layers", Int(20)),
+            ("gemma4.attention.sliding_window_pattern", Ints(pattern)),
+        ]);
+        let a = kv_layout(&gemma4, "gemma4", 35, 8, 512);
+        assert_eq!((a.kv_whole, a.kv_sliding, a.kv_whole_width, mib(&a)), (3, 12, 512, 96 + 12));
+
+        let gemma3 = meta(vec![("gemma3.attention.head_count_kv", Int(4)), ("gemma3.attention.sliding_window", Int(1024))]);
+        let a = kv_layout(&gemma3, "gemma3", 34, 8, 256);
+        assert_eq!((a.kv_whole, a.kv_sliding, mib(&a)), (5, 29, 320 + 174));
+
+        let plain = meta(vec![("qwen3.attention.head_count_kv", Int(8))]);
+        let a = kv_layout(&plain, "qwen3", 36, 32, 128);
+        assert_eq!((a.kv_whole, a.kv_sliding), (0, 0), "every layer keeps the whole window");
+    }
 
     #[test]
     fn a_split_model_is_as_big_as_all_its_parts() {
