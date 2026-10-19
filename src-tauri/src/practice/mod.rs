@@ -779,17 +779,23 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         (n, set)
     };
     let mut tried = Vec::new();
+    let mut failed = None;
     for (i, (skills, mine)) in firsts.into_iter().enumerate() {
         let (own, set) = with_anchors(&skills, mine);
-        tried.push(learning.learn(skills, own, &set, i, span_of(i)).await?);
+        let label = labels(&skills);
+        add_try(state, &mut tried, &mut failed, &label, learning.learn(skills, own, &set, i, span_of(i)).await)?;
     }
     // Then together: the skills that went up on their own.
     let up: Vec<Skill> = tried.iter().filter(|t| went_up(&t.tally, &t.skills)).flat_map(|t| t.skills.clone()).collect();
     if tried.len() >= 2 && up.len() >= 2 {
         let (own, set) = with_anchors(&up, lines.iter().filter(|(k, _)| up.contains(k)).map(|(_, l)| l.clone()).collect());
-        tried.push(learning.learn(up, own, &set, parts - 1, span_of(parts - 1)).await?);
+        let label = labels(&up);
+        add_try(state, &mut tried, &mut failed, &label, learning.learn(up, own, &set, parts - 1, span_of(parts - 1)).await)?;
     }
     drop(ready);
+    if let (true, Some(e)) = (tried.is_empty(), failed) {
+        return Err(e);
+    }
     update(app, |j| {
         j.part.clear();
         j.part_no = 0;
@@ -848,11 +854,13 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     if !confirmed {
         return Ok(None);
     }
-    // Kept as the run's adapter; the other tries go.
+    // Kept as the run's adapter; the other tries' folders go.
     let adapter = dir.join("adapter.gguf");
     std::fs::rename(kept.dir.join("adapter.gguf"), &adapter).map_err(|e| e.to_string())?;
-    for t in &tried {
-        std::fs::remove_dir_all(&t.dir).ok();
+    for e in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        if e.path().is_dir() {
+            std::fs::remove_dir_all(e.path()).ok();
+        }
     }
     state.log("model", &format!("Kept the adapter that learnt {}: {before_score} → {} of {out_of} right", labels(&kept.skills), kept.score()));
     Ok(Some(Adapter {
@@ -869,6 +877,22 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         scores: Some(Scores { before: before_score, after: kept.score(), out_of, skills: kept.scores(), second: Some(second) }),
         teacher: r.teacher.as_ref().map(|t| t.spec.name.clone()),
     }))
+}
+
+/// A try's result: kept for picking, or, when its training or test failed
+/// (the trainer stalled, or ran short of card memory), left out so that the
+/// other tries go on. Stopping the run ends it. `failed`: the last failure,
+/// for when every try fails.
+fn add_try(state: &AppState, tried: &mut Vec<Tried>, failed: &mut Option<String>, label: &str, result: Result<Tried, String>) -> Result<(), String> {
+    match result {
+        Ok(t) => tried.push(t),
+        Err(e) if e == crate::download::CANCELLED => return Err(e),
+        Err(e) => {
+            state.log("model", &format!("Learning {label} didn't finish, so practice goes on without it: {e}"));
+            *failed = Some(e);
+        }
+    }
+    Ok(())
 }
 
 /// Takes a test with the model loaded, and `lora` on top, then stops it.
