@@ -732,9 +732,9 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         j.part_no = 0;
     });
 
-    // The one to keep: learnt together if that's better, else the skill on
-    // its own that gained most.
-    let kept = tried.iter().filter(|t| better(&t.tally, &t.skills)).max_by_key(|t| (t.skills.len(), t.score()));
+    // The one to keep: of those that are better, the one with the highest
+    // score, and of equals the one that learnt more skills.
+    let kept = tried.iter().filter(|t| better(&t.tally, &t.skills)).max_by_key(|t| (t.score(), t.skills.len()));
     // What the person sees: the one kept, or else the best try.
     let shown = kept.or_else(|| tried.iter().max_by_key(|t| t.score()));
     if let Some(t) = shown {
