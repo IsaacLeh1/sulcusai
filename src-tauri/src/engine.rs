@@ -236,7 +236,9 @@ fn dedicated_indexes() -> Option<String> {
     if devices.len() != cards.len() || std::env::var_os("GGML_VK_VISIBLE_DEVICES").is_some() {
         return None;
     }
-    let picked: Vec<String> = pick_devices(&devices, &cards, crate::hardware::dedicated().as_ref()).iter().filter_map(|(id, _)| id.strip_prefix("Vulkan").map(str::to_string)).collect();
+    // A card the person picked; else the dedicated ones beside integrated graphics, as before.
+    let chosen = crate::hardware::main_choice().and(crate::hardware::dedicated());
+    let picked: Vec<String> = pick_devices(&devices, &cards, chosen.as_ref()).iter().filter_map(|(id, _)| id.strip_prefix("Vulkan").map(str::to_string)).collect();
     (!picked.is_empty()).then(|| picked.join(","))
 }
 
