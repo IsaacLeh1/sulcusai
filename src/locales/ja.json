@@ -3340,5 +3340,13 @@
  "{size} memory": "メモリ {size}",
  "The planner gave back no changes.": "プランナーから変更が返されませんでした。",
  "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "温度を見守り、PC が熱くなると負荷を下げます。プロセッサーが熱いときはスレッド数を減らし、グラフィックカードが熱いときは短い休憩を入れます。モデルはグラフィックカードに載ったままです。冷えたら元に戻ります。",
- "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "プロセッサーの約半分、小さめのコンテキストウィンドウ、低い優先度で、グラフィックカードはすべて使います。使われないまま 5 分たつとモデルを解放します。ノート PC に最適です。"
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "プロセッサーの約半分、小さめのコンテキストウィンドウ、低い優先度で、グラフィックカードはすべて使います。使われないまま 5 分たつとモデルを解放します。ノート PC に最適です。",
+ "One thing to know first, so it comes out the way you want:": "思いどおりに仕上げるため、先に一つ確認させてください:",
+ "A few things to know first, so it comes out the way you want:": "思いどおりに仕上げるため、先にいくつか確認させてください:",
+ "Make it anyway": "このまま作成",
+ "Make it": "作成",
+ "asks when unclear": "不明な点は確認",
+ "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "画像を作成・変更する前に、どの人物のことか、看板に何と書くかなど、結果が変わる点を確認します。チャットでも確認します。",
+ "Ask me when something's unclear": "不明な点があれば確認する",
+ "Questions before the picture": "画像の前の確認"
 }

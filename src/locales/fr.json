@@ -3340,5 +3340,13 @@
  "{size} memory": "{size} de mémoire",
  "The planner gave back no changes.": "Le planificateur n’a renvoyé aucune modification.",
  "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "Surveille les températures et ralentit quand le PC chauffe : moins de threads du processeur quand le processeur est chaud, de courtes pauses quand c’est la carte graphique. Le modèle reste sur la carte graphique. Repart à pleine vitesse une fois refroidi.",
- "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Environ la moitié du processeur, une fenêtre de contexte plus petite, une priorité basse, et toujours toute la carte graphique. Les modèles se déchargent après 5 minutes d’inactivité. Idéal sur un portable."
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Environ la moitié du processeur, une fenêtre de contexte plus petite, une priorité basse, et toujours toute la carte graphique. Les modèles se déchargent après 5 minutes d’inactivité. Idéal sur un portable.",
+ "One thing to know first, so it comes out the way you want:": "Une question d'abord, pour que le résultat soit comme vous le voulez :",
+ "A few things to know first, so it comes out the way you want:": "Quelques questions d'abord, pour que le résultat soit comme vous le voulez :",
+ "Make it anyway": "La créer quand même",
+ "Make it": "La créer",
+ "asks when unclear": "demande si c'est flou",
+ "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Avant de créer ou de modifier une image, il pose des questions sur tout ce qui changerait le résultat, comme la personne dont vous parlez ou le texte d'un panneau. Les conversations posent aussi ces questions.",
+ "Ask me when something's unclear": "Me demander quand quelque chose n'est pas clair",
+ "Questions before the picture": "Questions avant l'image"
 }

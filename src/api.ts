@@ -2318,6 +2318,13 @@ export const api = {
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
   mediaPromptStatus: (modelId: string) => invoke<PromptStatus>("media_prompt_status", { modelId }),
   mediaForgetTuning: (modelId: string) => invoke<void>("media_forget_tuning", { modelId }),
+  /** Questions worth asking before a new picture or a change (usually none). */
+  mediaQuestions: (op: "generate" | "edit", prompt: string, source: string | null, modelId: string | null, examples = 0) =>
+    invoke<string[]>("media_questions", { op, prompt, source, modelId, examples }),
+  /** The request with the answers to its questions folded in. */
+  mediaWithAnswers: (prompt: string, answers: [string, string][]) => invoke<string>("media_with_answers", { prompt, answers }),
+  /** Whether chats ask before a picture too (the Studio's checkbox). */
+  mediaSetAskQuestions: (on: boolean) => invoke<void>("media_set_ask_questions", { on }),
   wallpaperScreens: () => invoke<Screen[]>("wallpaper_screens"),
   wallpaperSet: (id: string, x: number | null, y: number | null) => invoke<WallpaperSet>("wallpaper_set", { id, x, y }),
   mediaJobs: () => invoke<MediaJob[]>("media_jobs"),

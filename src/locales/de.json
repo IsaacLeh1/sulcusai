@@ -3340,5 +3340,13 @@
  "{size} memory": "{size} Speicher",
  "The planner gave back no changes.": "Der Planer hat keine Änderungen zurückgegeben.",
  "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "Beobachtet die Temperaturen und fährt herunter, wenn der PC warm wird: weniger Prozessor-Threads, wenn der Prozessor heiß ist, kurze Pausen, wenn die Grafikkarte heiß ist. Das Modell bleibt auf der Grafikkarte. Fährt wieder hoch, sobald es abgekühlt ist.",
- "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Etwa der halbe Prozessor, ein kleineres Kontextfenster, niedrige Priorität und weiterhin die ganze Grafikkarte. Modelle werden nach 5 Minuten ohne Nutzung entladen. Am besten auf einem Laptop."
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Etwa der halbe Prozessor, ein kleineres Kontextfenster, niedrige Priorität und weiterhin die ganze Grafikkarte. Modelle werden nach 5 Minuten ohne Nutzung entladen. Am besten auf einem Laptop.",
+ "One thing to know first, so it comes out the way you want:": "Eine Frage vorab, damit es so wird, wie du es möchtest:",
+ "A few things to know first, so it comes out the way you want:": "Ein paar Fragen vorab, damit es so wird, wie du es möchtest:",
+ "Make it anyway": "Trotzdem erstellen",
+ "Make it": "Erstellen",
+ "asks when unclear": "fragt bei Unklarem nach",
+ "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Bevor ein Bild erstellt oder geändert wird, fragt es nach allem, was das Ergebnis verändern würde, etwa welche Person du meinst oder was auf einem Schild stehen soll. Chats fragen ebenfalls.",
+ "Ask me when something's unclear": "Nachfragen, wenn etwas unklar ist",
+ "Questions before the picture": "Fragen vor dem Bild"
 }

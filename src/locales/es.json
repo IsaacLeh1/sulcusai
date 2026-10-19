@@ -3340,5 +3340,13 @@
  "{size} memory": "{size} de memoria",
  "The planner gave back no changes.": "El planificador no devolvió ningún cambio.",
  "Watches the temperatures and steps down as the PC heats up: fewer processor threads when the processor is hot, short rests when the graphics card is. The model stays on the graphics card. Steps back up once it cools.": "Vigila las temperaturas y baja el ritmo cuando el PC se calienta: menos hilos del procesador cuando el procesador está caliente, pausas breves cuando lo está la tarjeta gráfica. El modelo se queda en la tarjeta gráfica. Vuelve a subir cuando se enfría.",
- "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Más o menos la mitad del procesador, una ventana de contexto más pequeña, prioridad baja y aun así toda la tarjeta gráfica. Los modelos se descargan tras 5 minutos sin uso. Ideal para un portátil."
+ "About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.": "Más o menos la mitad del procesador, una ventana de contexto más pequeña, prioridad baja y aun así toda la tarjeta gráfica. Los modelos se descargan tras 5 minutos sin uso. Ideal para un portátil.",
+ "One thing to know first, so it comes out the way you want:": "Una pregunta antes, para que salga como quieres:",
+ "A few things to know first, so it comes out the way you want:": "Unas preguntas antes, para que salga como quieres:",
+ "Make it anyway": "Crearla de todos modos",
+ "Make it": "Crearla",
+ "asks when unclear": "pregunta si algo no está claro",
+ "Before a picture is made or changed, it asks about anything that would change the result, like which person you mean or what a sign should say. Chats ask too.": "Antes de crear o cambiar una imagen, pregunta por cualquier cosa que cambiaría el resultado, como a qué persona te refieres o qué debe decir un cartel. Los chats también preguntan.",
+ "Ask me when something's unclear": "Preguntarme cuando algo no esté claro",
+ "Questions before the picture": "Preguntas antes de la imagen"
 }

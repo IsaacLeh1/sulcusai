@@ -1614,6 +1614,8 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .prompt-help[open] { display: flex; flex-direction: column; gap: 6px; }
 .prompt-help label.check { font-weight: 400 !important; }
 .input.tiny { width: 84px; }
+/* Studio: questions before a picture is made or changed. */
+.picture-questions { display: flex; flex-direction: column; gap: 8px; }
 
 /* Models: "Optimize for this PC" on an installed model. */
 .optimize { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px; }
