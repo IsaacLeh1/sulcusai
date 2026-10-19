@@ -55,7 +55,7 @@ const KEY_FILES: &[&str] = &["pem", "key", "p12", "pfx", "crt", "cer", "der", "j
 const SECRET_WORDS: &[&str] = &["secret", "password", "passwd", "credential", "apikey", "api_key", "api-key", "private_key", "private-key", "privatekey"];
 /// Text that looks like a key or token: private keys, the usual service
 /// key shapes, and a long quoted value given to something named like one.
-static SECRET_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+pub(crate) static SECRET_TEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
         r"|(?-u:\b)(?:sk|pk|rk)_(?:live|test)_[0-9A-Za-z]{16,}",

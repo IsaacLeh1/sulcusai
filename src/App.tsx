@@ -41,6 +41,8 @@ import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
+import { IncognitoIcon } from "./components/IncognitoIcon";
+import { SharePermission } from "./components/SharePermission";
 
 // Pages load the first time they are opened, so the app starts faster.
 const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
@@ -458,7 +460,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       }}
       title={c.title}
     >
-      {c.incognito && <span aria-label={t("Incognito")}>🕶</span>}
+      {c.incognito && <IncognitoIcon title={t("Incognito")} />}
       <span className="ellipsis">{c.title}</span>
       {locks.chats.includes(c.id) && <span className="chat-kept" title={t("Locked: the automatic cleanup never removes it")}>🔒</span>}
       {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
@@ -527,7 +529,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             title={t("Incognito chat: not saved, no memory")}
             aria-label={t("New incognito chat")}
           >
-            🕶
+            <IncognitoIcon size="1.3em" />
           </button>
         </div>
         <nav className="nav" aria-label={t("Main")}>
@@ -1014,6 +1016,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       <WebPermission chats={chats} onOpenChat={openChat} />
       <FolderPermission chats={chats} onOpenChat={openChat} />
       <KeyPermission chats={chats} onOpenChat={openChat} />
+      <SharePermission chats={chats} onOpenChat={openChat} />
       <MemoryWarningPopup />
       <ElsewhereApprovals chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} />
       <CrashReportPrompt toast={toast} />

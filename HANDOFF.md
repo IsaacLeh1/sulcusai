@@ -1521,6 +1521,34 @@ Why: on Qwen3 4B 2507, one adapter learnt from every skill's right answers nets 
   - Not tried yet: whether coding gains on a Q8_0 copy with the per-skill rule (it needs about 12 GB free: a 16 GB card); and 1 round, or "Lightly", against the memorising.
   - A try whose training or test fails (the trainer stalls, or an outside guard stops it) is now logged and left out, and the other tries go on (`add_try`). Only stopping the run, or every try failing, ends it.
 
+## Privacy mode, incognito icon, website look (2026-10-19, after 0.9.14)
+
+He asked for: "each external call a model must make, they tell the user what data the external source receives and what could be done with that info. They scale it on a privacy scale. User can then approve external information share or specify what specifically they allow", with the scale 1 no personal information, 2 a first or last name (not both), 3 interests and searches, 4 identifying (full name, email), 5 sensitive (keys, secrets, address, contact information).
+
+- **`outgoing.rs`**:
+  - `find()` rates text with the cloud redactor's patterns (`cloud::PATTERNS`, `luhn`, now `pub(crate)`), `yourcode::SECRET_TEXT` (now `pub(crate)`), a "password: …" pattern, key-like tokens, street addresses, and the profile's first/last name and town plus the mail accounts' addresses (`Me`).
+  - `review(tool, args, Context)` lists what a call sends (`Item`: key into the args, label, value, level, editable/removable), who receives it, fixed "what they could do" sentences, and the level: the highest of its items. Searches and pages start at 3 and public lookups at 1. Weather or places "here" send exact coordinates, which is level 5.
+  - `apply()` changes only the keys that were offered.
+  - Setting `privacy_mode` {on, ask_from}, off by default. Commands `privacy_mode`, `set_privacy_mode`, `privacy_share`.
+- **Where it hooks in** (`agent.rs`): `execute` builds the review when the mode is on.
+  - Calls that ask anyway (`email_send`, `ask_person`, `work_with_person`, browser submits, web `open_path`) get one line on their own card (`outgoing::summary`).
+  - Otherwise, from `ask_from` up, `Turn::share` asks with `Preview { kind: "privacy", detail: Review JSON }`. The popup's edits arrive through `privacy_share` before the answer. The model is told what changed (`outgoing::changed`).
+  - "Don't ask again in this chat up to level N" is `Approvals.shared`.
+  - Also covered: picture-name web lookups (`picture_names`) and connector tools (`review_connector`: "can't see where it goes"). Helpers (`run_helper`) may not send anything at all in privacy mode.
+  - Scheduled (unattended) runs send only what's below `ask_from` and refuse the rest with a message.
+  - Not covered: chats on a cloud model. The provider gets the whole conversation on every message, and that's the person's own pick of model; cloud redaction still applies. Cloud picture fallbacks and `run_command` aren't covered either.
+- **Window**:
+  - `SharePermission.tsx` is the popup: who receives it, a 1-5 meter, why, each part (editable textarea, Send tick for list items), what they could do with it, Share / Share my version / Don't share, and "don't ask again here".
+  - `PrivacyModeSettings` sits in Settings → Privacy mode (after Private connection).
+  - The core's English texts are listed with `tx()` (`REVIEW_TEXTS`, `LEVELS`, `SCALE_TEXTS`) so they're translated.
+  - Privacy approvals are kept out of the inline `ApprovalCard` and `ElsewhereApprovals`.
+- **Tests**:
+  - `outgoing::tests`: 6 tests, covering the scale, findings, reviews, edits and names.
+  - Checked in the UI mock (`mock.html?privacy`): the popup, an edit sent as `{query}` with allow, and the settings section.
+  - Not yet run against a real model in the app.
+- **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
+- **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

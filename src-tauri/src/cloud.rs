@@ -288,7 +288,7 @@ pub fn estimate_tokens(text: &str) -> u32 {
 
 // ---------- personal details ----------
 
-static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
+pub(crate) static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     vec![
         ("email", Regex::new(r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b").unwrap()),
         ("card number", Regex::new(r"\b(?:\d[ -]?){12,18}\d\b").unwrap()),
@@ -297,7 +297,7 @@ static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new(|| {
     ]
 });
 
-fn luhn(digits: &str) -> bool {
+pub(crate) fn luhn(digits: &str) -> bool {
     let d: Vec<u32> = digits.chars().filter_map(|c| c.to_digit(10)).collect();
     if !(13..=19).contains(&d.len()) {
         return false;

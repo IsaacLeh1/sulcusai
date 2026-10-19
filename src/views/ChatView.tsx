@@ -35,6 +35,7 @@ import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation } from "../format";
 import { LookForModels } from "./ModelsView";
+import { IncognitoIcon } from "../components/IncognitoIcon";
 
 interface Props {
   chat: Chat | null;
@@ -564,7 +565,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
       {(chat.incognito || projectName || chat.parent_id) && (
         <div className={`chat-banner ${chat.incognito ? "incognito" : ""}`}>
-          {chat.incognito ? t("🕶 Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.") : projectName ? t("📚 In project {name}", { name: projectName }) : null}
+          {chat.incognito ? (
+            <>
+              <IncognitoIcon /> {t("Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.")}
+            </>
+          ) : projectName ? t("📚 In project {name}", { name: projectName }) : null}
           {chat.parent_id && (
             <button className="link" onClick={() => onOpenChat(chat.parent_id!)}>
               {t("↩ Continues an earlier chat")}
@@ -625,7 +630,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           />
         ))}
         {/* Asking for the web, a folder or an API key is a popup (WebPermission, FolderPermission, KeyPermission), wherever the person is. */}
-        {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder" && p.tool !== "request_api_key").map((p) => (
+        {pending.filter((p) => p.tool !== "request_web" && p.tool !== "request_folder" && p.tool !== "request_api_key" && p.preview.kind !== "privacy").map((p) => (
           <ApprovalCard key={p.call_id} p={p} onAnswered={() => setPending((all) => all.filter((a) => a.call_id !== p.call_id))} />
         ))}
         {jobs.map((j) => (

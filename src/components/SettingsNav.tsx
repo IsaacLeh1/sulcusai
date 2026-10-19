@@ -24,6 +24,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "sign-in", label: tx("Microsoft and Google sign-in"), show: features.has("email") || features.has("calendar") },
     { id: "connectivity", label: tx("Connectivity") },
     { id: "private", label: tx("Private connection") },
+    { id: "privacy-mode", label: tx("Privacy mode") },
     { id: "devices", label: tx("Your devices") },
     { id: "phone", label: tx("Phone") },
     { id: "backup", label: tx("Backup and restore") },

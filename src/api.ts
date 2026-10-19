@@ -896,9 +896,38 @@ export interface QueueItem {
 
 export interface Preview {
   title: string;
-  kind: "diff" | "command" | "text" | "folder" | "key";
+  /** "privacy": detail is a ShareReview (JSON) of what a call would send. */
+  kind: "diff" | "command" | "text" | "folder" | "key" | "privacy";
   detail: string | null;
   note: string | null;
+}
+
+/** Privacy mode: one part of what a call would send off this PC. */
+export interface ShareItem {
+  /** Where it is in the call ("query", "searches.1"); null when it goes along on its own. */
+  key: string | null;
+  label: string;
+  value: string;
+  level: number;
+  editable: boolean;
+  removable: boolean;
+}
+
+/** Privacy mode: what a call would send, who gets it, what they could do with it, how personal (1-5). */
+export interface ShareReview {
+  level: number;
+  level_name: string;
+  to: string;
+  items: ShareItem[];
+  could: string[];
+  found: { level: number; what: string }[];
+  note: string | null;
+}
+
+export interface PrivacyMode {
+  on: boolean;
+  /** Asks before sending anything at this level or above (1-5). */
+  ask_from: number;
 }
 
 /** A site the assistant is building needs an API key for a data source. */
@@ -1930,6 +1959,10 @@ export const api = {
   setChatHidden: (key: string, hidden: boolean) => invoke<string[]>("set_chat_hidden", { key, hidden }),
   siteKeyAsk: (callId: string) => invoke<SiteKeyAsk>("site_key_ask", { callId }),
   siteKeyGive: (callId: string, key: string) => invoke<void>("site_key_give", { callId, key }),
+  privacyMode: () => invoke<PrivacyMode>("privacy_mode"),
+  setPrivacyMode: (mode: PrivacyMode) => invoke<void>("set_privacy_mode", { mode }),
+  /** The privacy popup's changes: a new value, or null to leave a part out. */
+  privacyShare: (callId: string, edits: { key: string; value: string | null }[]) => invoke<void>("privacy_share", { callId, edits }),
   siteKeys: () => invoke<SavedSiteKey[]>("site_keys"),
   siteKeyForget: (host: string) => invoke<void>("site_key_forget", { host }),
   desktopAccess: () => invoke<DesktopAccess>("desktop_access"),

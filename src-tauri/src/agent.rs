@@ -60,6 +60,8 @@ pub struct Approvals {
     waiting: Mutex<HashMap<String, (PendingApproval, oneshot::Sender<Decision>)>>,
     /// Risks the user approved for a whole chat.
     allowed: Mutex<HashMap<String, HashSet<Risk>>>,
+    /// Privacy mode: the level up to which a chat may send without asking again.
+    shared: Mutex<HashMap<String, u8>>,
 }
 
 impl Approvals {
@@ -78,7 +80,15 @@ impl Approvals {
         match self.waiting.lock().unwrap().remove(call_id) {
             Some((p, tx)) => {
                 if d == Decision::AllowForChat {
-                    self.allowed.lock().unwrap().entry(p.chat_id).or_default().insert(p.risk);
+                    if p.preview.kind == "privacy" {
+                        // "Don't ask again here up to this level."
+                        let level = p.preview.detail.as_deref().and_then(|d| serde_json::from_str::<crate::outgoing::Review>(d).ok()).map_or(0, |r| r.level);
+                        let mut shared = self.shared.lock().unwrap();
+                        let up_to = shared.entry(p.chat_id).or_default();
+                        *up_to = (*up_to).max(level);
+                    } else {
+                        self.allowed.lock().unwrap().entry(p.chat_id).or_default().insert(p.risk);
+                    }
                 }
                 tx.send(d).is_ok()
             }
@@ -94,8 +104,13 @@ impl Approvals {
         self.allowed.lock().unwrap().get(chat_id).is_some_and(|s| s.contains(&risk))
     }
 
+    fn shared_up_to(&self, chat_id: &str) -> u8 {
+        self.shared.lock().unwrap().get(chat_id).copied().unwrap_or(0)
+    }
+
     pub fn forget_chat(&self, chat_id: &str) {
         self.allowed.lock().unwrap().remove(chat_id);
+        self.shared.lock().unwrap().remove(chat_id);
     }
 }
 
@@ -1109,6 +1124,12 @@ impl Turn {
                 Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
             }
         }
+        // Privacy mode: what this call sends off the PC, who gets it, and how
+        // personal it is (1-5). Shown on the approval card when the call asks
+        // anyway; otherwise asked about below, from the level set.
+        let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
+        let review = if privacy.on { crate::outgoing::review(&call.name, &args, &crate::outgoing::context(&self.state, &self.cipher)) } else { None };
+        let mut asked = false;
         let allowed = self.state.approvals.allowed(&self.chat_id, risk);
         let adv = crate::advanced::get(&self.state);
         if adv.forbids(risk) {
@@ -1127,7 +1148,7 @@ impl Turn {
             }
             Permission::Ask => {
                 // A preview that fails (say, edit text not found) goes straight back to the model.
-                let preview = match if let Some(p) = browser_preview.take() {
+                let mut preview = match if let Some(p) = browser_preview.take() {
                     Ok(p)
                 } else if call.name == "update_note" {
                     tools::notes_preview(&call.name, &args, &self.state.db, &self.cipher)
@@ -1137,6 +1158,14 @@ impl Turn {
                     Ok(p) => p,
                     Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
                 };
+                if let Some(r) = &review {
+                    let line = crate::outgoing::summary(r);
+                    preview.note = Some(match preview.note.take() {
+                        Some(n) => format!("{n}\n{line}"),
+                        None => line,
+                    });
+                    asked = true;
+                }
                 let title = preview.title.clone();
                 match self.ask(call, risk, preview).await {
                     Decision::Deny => {
@@ -1147,6 +1176,21 @@ impl Turn {
                 }
             }
             Permission::Run => {}
+        }
+        let mut args = args;
+        let mut shared_note = None;
+        if let Some(r) = review {
+            if !asked && r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
+                match self.share(call, &r).await {
+                    Ok(edits) if edits.is_empty() => {}
+                    Ok(edits) => {
+                        args = crate::outgoing::apply(&args, &r, &edits);
+                        shared_note = Some(crate::outgoing::changed(&edits));
+                    }
+                    Err(refused) => return refused,
+                }
+            }
+            self.log(&format!("Sent to {} (privacy level {} of 5)", r.to, r.level));
         }
         // Chats not working together: another chat's handoff note needs the person's word.
         if let Some(refused) = self.handoff_gate(call, &args, sandbox).await {
@@ -1179,6 +1223,9 @@ impl Turn {
         };
         if let Some(note) = picture_note {
             outcome.text = format!("{}\n\n(Before it was made: {note}.)", outcome.text);
+        }
+        if let Some(note) = shared_note {
+            outcome.text = format!("{}\n\n({note})", outcome.text);
         }
         if web_granted {
             outcome.meta["web_granted"] = json!(true);
@@ -1261,8 +1308,22 @@ impl Turn {
                         break;
                     }
                     let name = names[i].name.trim().to_string();
+                    let mut search = json!({ "query": format!("{name} appearance"), "count": 4 });
+                    // Privacy mode covers these lookups too.
+                    let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
+                    if privacy.on {
+                        if let Some(r) = crate::outgoing::review("web_search", &search, &crate::outgoing::context(&self.state, &self.cipher)) {
+                            if r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id) {
+                                let look = ToolCall { id: format!("{}_look{i}", call.id), name: "web_search".into(), arguments: search.to_string() };
+                                match self.share(&look, &r).await {
+                                    Ok(edits) => search = crate::outgoing::apply(&search, &r, &edits),
+                                    Err(_) => continue,
+                                }
+                            }
+                        }
+                    }
                     self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "looking_up", "detail": name }));
-                    let found = tools::run("web_search", &json!({ "query": format!("{name} appearance"), "count": 4 }), ctx).await;
+                    let found = tools::run("web_search", &search, ctx).await;
                     if found.meta["status"] != "ok" {
                         continue;
                     }
@@ -1338,7 +1399,11 @@ impl Turn {
             for c in &calls {
                 let args: Value = serde_json::from_str(if c.arguments.trim().is_empty() { "{}" } else { &c.arguments }).unwrap_or_default();
                 let read_only = tools::find(&c.name).is_some_and(|d| d.risk == Risk::Read) && c.name != "delegate";
-                let out = if read_only {
+                // Privacy mode: helpers work on this PC only (nobody sees their calls to approve them).
+                let sends = crate::outgoing::is_external(&c.name, &args) && crate::outgoing::mode(&self.state.db.lock().unwrap()).on;
+                let out = if sends {
+                    Outcome::error(tools::failed_title(&c.name, &args), "Privacy mode is on, so helpers can't send anything off this PC. Say what you'd look up; the main chat can do it with the person's OK.")
+                } else if read_only {
                     tools::run(&c.name, &args, ctx).await
                 } else {
                     Outcome::error(tools::failed_title(&c.name, &args), "Helpers can only look, not change anything.")
@@ -1373,21 +1438,34 @@ impl Turn {
             (Mode::Auto, _) if self.state.approvals.allowed(&self.chat_id, Risk::Connector) => Permission::Run,
             (Mode::Auto, ToolMode::Ask) => Permission::Ask,
         };
+        // Privacy mode: a connector may pass what it's given on to an online service.
+        let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
+        let review = privacy.on.then(|| crate::outgoing::review_connector(&t.connector_name, &args, &crate::outgoing::context(&self.state, &self.cipher).me));
         match permission {
             Permission::Refuse => return Outcome::error(format!("Couldn't use {title}"), "This connector tool isn't allowed in this mode."),
             Permission::Ask => {
+                let note = "Connectors are programs on this PC; what this does is up to the connector.".to_string();
                 let preview = Preview {
                     title: format!("Use {} from the {} connector", t.tool, t.connector_name),
                     kind: "text",
                     detail: Some(serde_json::to_string_pretty(&args).unwrap_or_default()),
-                    note: Some("Connectors are programs on this PC; what this does is up to the connector.".into()),
+                    note: Some(match &review {
+                        Some(r) => format!("{note}\n{}", crate::outgoing::summary(r)),
+                        None => note,
+                    }),
                 };
                 if self.ask(call, Risk::Connector, preview).await == Decision::Deny {
                     self.log(&format!("Declined: {title}"));
                     return Outcome::denied(format!("Use {title}"));
                 }
             }
-            Permission::Run => {}
+            Permission::Run => {
+                if let Some(r) = review.filter(|r| r.level >= privacy.ask_from && r.level > self.state.approvals.shared_up_to(&self.chat_id)) {
+                    if let Err(refused) = self.share(call, &r).await {
+                        return refused;
+                    }
+                }
+            }
         }
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
         self.log(&format!("Used {title}"));
@@ -1763,6 +1841,37 @@ impl Turn {
         );
         o.meta["folder_granted"] = json!(true);
         o
+    }
+
+    /// Privacy mode: shows the person what a call would send, to whom, and
+    /// how personal it is, and asks. Their changes (reworded or left-out
+    /// parts) come back. Refused when they say no, or when nobody's there
+    /// to ask (a scheduled task).
+    async fn share(&self, call: &ToolCall, r: &crate::outgoing::Review) -> Result<Vec<crate::outgoing::Edit>, Outcome> {
+        let title = format!("Send to {}", r.to);
+        if self.unattended {
+            self.log(&format!("Privacy mode: didn't send to {} in a scheduled task (level {} of 5, nobody there to approve it)", r.to, r.level));
+            return Err(Outcome::error(
+                title,
+                format!(
+                    "Privacy mode is on, and this would send level {} information ({}) to {}. Nobody is here to approve it, so it wasn't sent. Carry on without it.",
+                    r.level,
+                    r.level_name.to_lowercase(),
+                    r.to
+                ),
+            ));
+        }
+        let preview = Preview { title: format!("Send to {}?", r.to), kind: "privacy", detail: serde_json::to_string(r).ok(), note: None };
+        match self.ask(call, Risk::Read, preview).await {
+            Decision::Deny => {
+                self.log(&format!("Privacy mode: chose not to send to {}", r.to));
+                Err(Outcome {
+                    text: "The user chose not to share this (privacy mode). Don't send it another way: carry on without it, or ask them what they'd be happy to share.".into(),
+                    meta: json!({ "title": title, "status": "denied", "kind": "text" }),
+                })
+            }
+            Decision::Allow | Decision::AllowForChat => Ok(crate::outgoing::take_edits(&call.id)),
+        }
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {

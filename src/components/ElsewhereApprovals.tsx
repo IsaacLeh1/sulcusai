@@ -10,7 +10,7 @@ import { Modal } from "./Modal";
  * wherever they are, so it never waits unseen. The web, folder and API key
  * requests have their own popups. */
 export function ElsewhereApprovals({ chats, openChatId, onOpenChat }: { chats: Chat[]; openChatId: string | null; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool !== "request_web" && p.tool !== "request_folder" && p.tool !== "request_api_key");
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool !== "request_web" && p.tool !== "request_folder" && p.tool !== "request_api_key" && p.preview.kind !== "privacy");
   // The open chat shows its own requests in the conversation.
   const p = asks.find((a) => a.chat_id !== openChatId);
   if (!p) return null;

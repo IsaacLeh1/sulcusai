@@ -27,7 +27,7 @@ mod hard;
 mod research;
 pub mod tasks;
 mod writing;
-mod yourcode;
+pub(crate) mod yourcode;
 
 use std::collections::HashSet;
 use std::path::Path;

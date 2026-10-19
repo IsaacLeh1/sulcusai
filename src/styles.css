@@ -465,7 +465,36 @@ select, .input {
 /* ---------- memory, projects, incognito ---------- */
 .new-chat-row { display: flex; gap: 6px; }
 .new-chat-row .btn.block { flex: 1; }
-.incognito-btn { padding: 7px 10px; }
+.incognito-btn { padding: 5px 10px; display: inline-flex; align-items: center; justify-content: center; }
+.incognito-icon { vertical-align: -0.2em; flex: none; }
+
+/* ---------- privacy mode ---------- */
+.share-level-1 { --lv: #2f9e44; }
+.share-level-2 { --lv: #74b816; }
+.share-level-3 { --lv: #e8a400; }
+.share-level-4 { --lv: #e8590c; }
+.share-level-5 { --lv: #d6336c; }
+.share-level { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); }
+.share-level-n, .share-dot {
+  display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px;
+  background: var(--lv); color: #fff; font-size: 12px; font-weight: 700;
+}
+.share-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0 2px; }
+.share-meter { display: inline-flex; gap: 3px; }
+.share-meter span { width: 22px; height: 8px; border-radius: 4px; background: var(--border); }
+.share-meter span.on { background: var(--lv); }
+.share-sub { font-size: 14px; margin: 14px 0 6px; }
+.share-items { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.share-items li { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; }
+.share-items li.left-out { opacity: 0.55; }
+.share-item-head { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.share-item-head .share-dot { min-width: 18px; height: 18px; font-size: 11px; }
+.share-send { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.share-value { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow: auto; font-size: 14px; }
+.share-items textarea { width: 100%; resize: vertical; }
+.share-forchat { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.share-scale { padding-left: 0; list-style: none; display: grid; gap: 6px; margin: 12px 0; }
+.modal:has(.share-items) { width: min(580px, 100%); max-height: 92vh; overflow: auto; }
 .side-section { display: flex; flex-direction: column; gap: 1px; }
 .side-head { display: flex; justify-content: space-between; align-items: center; padding: 4px 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 600; }
 .chat-project { font-size: 11px; margin-left: auto; opacity: 0.7; }

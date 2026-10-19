@@ -24,6 +24,7 @@ import { HandoffSettings } from "../components/HandoffSettings";
 import { LogSettings } from "../components/LogSettings";
 import { DevModeSetting } from "../components/DevMode";
 import { PrivacySettings } from "../components/PrivacySettings";
+import { PrivacyModeSettings } from "../components/SharePermission";
 import { UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
@@ -406,6 +407,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-private" className="settings-anchor" />
       <PrivacySettings toast={toast} />
+
+      <span id="settings-privacy-mode" className="settings-anchor" />
+      <PrivacyModeSettings toast={toast} />
 
       <span id="settings-devices" className="settings-anchor" />
       <SyncSettings toast={toast} />

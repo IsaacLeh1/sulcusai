@@ -62,6 +62,7 @@ mod notes;
 mod notify;
 mod offline;
 mod optimize;
+mod outgoing;
 mod oauth;
 mod paths;
 mod perf;
@@ -2431,6 +2432,9 @@ pub fn run() {
             updates::set_update_install,
             privacy::privacy_view,
             privacy::set_privacy,
+            outgoing::privacy_mode,
+            outgoing::set_privacy_mode,
+            outgoing::privacy_share,
             privacy::test_privacy,
             updates::install_update,
             backup::backup_info,
