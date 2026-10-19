@@ -138,7 +138,7 @@ function AvailableSpeech({ m, live, p, otherBusy, toast }: { m: SpeechCard; live
 }
 
 function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
-  const label = { engine: t("Setting up the speech engine"), verify: t("Checking the file"), download: t("Downloading"), loading: t("Loading it to test it"), benchmark: t("Testing it"), vision: t("Downloading") }[p.phase];
+  const label = { engine: t("Setting up the speech engine"), verify: t("Checking the file"), download: t("Downloading"), loading: t("Loading it to test it"), benchmark: t("Testing it"), vision: t("Downloading"), optimizing: t("Testing it") }[p.phase];
   const testing = TESTING.has(p.phase);
   const since = useTestStart(testing);
   const pct = p.total > 0 ? percent(p.received, p.total) : null;

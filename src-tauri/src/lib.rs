@@ -61,6 +61,7 @@ mod net;
 mod notes;
 mod notify;
 mod offline;
+mod optimize;
 mod oauth;
 mod paths;
 mod perf;
@@ -685,6 +686,14 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 // The model is installed; only the speed test failed.
                 Err(e) => eprintln!("benchmark failed for {}: {e}", spec.id),
             }
+            // The estimate left part of it off the graphics card: the setups
+            // are tried on this PC now, while the person expects a wait.
+            if plan.gpu_layers > 0 && plan.gpu_layers <= spec.arch.n_layer {
+                emit("optimizing", 0, 0);
+                if let Err(e) = optimize_now(&app, &state, &spec.id).await {
+                    state.log("model", &format!("Couldn't optimize {} for this PC: {e}", spec.name));
+                }
+            }
             Ok(())
         }
         .await;
@@ -762,16 +771,26 @@ fn chosen_window(state: &AppState) -> Option<u32> {
 }
 
 /// How to start a model (`launch_plan`).
-struct Plan {
-    ctx: u32,
-    gpu_layers: u32,
-    threads: usize,
-    batch: u32,
-    tuning: engine::Tuning,
+pub(crate) struct Plan {
+    pub(crate) ctx: u32,
+    pub(crate) gpu_layers: u32,
+    pub(crate) threads: usize,
+    pub(crate) batch: u32,
+    pub(crate) tuning: engine::Tuning,
+    /// The card memory it was planned with (after the mode's limits and a
+    /// picture reader beside the model).
+    pub(crate) budget: catalog::Budget,
 }
 
 /// `encoder`: the size of the picture reader loaded with the model (0: none).
 fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) -> Plan {
+    plan_with(state, spec, quant, encoder, true)
+}
+
+/// `measured`: settings measured on this PC ("Optimize for this PC") are
+/// used where they apply; without, the automatic plan (what the optimizer
+/// starts from).
+pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64, measured: bool) -> Plan {
     let mut limits = state.limits();
     let mut budget = state.budget();
     // The picture reader takes room of its own beside the model.
@@ -794,6 +813,11 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) ->
         if let Some((c, l)) = catalog::with_q8_cache(spec, quant, &budget.with_limits(&limits), ctx, layers, chosen.is_none()) {
             (ctx, layers, kv_q8) = (c.min(limits.max_ctx), l, true);
         }
+        // Measured on this PC for this window and this much of the card.
+        let room = budget.with_limits(&limits).vram;
+        if let Some(t) = optimize::get(&state.db.lock().unwrap(), &spec.id).filter(|t| measured && t.applies(quant, ctx, room)) {
+            (layers, kv_q8) = (t.gpu_layers, t.kv_q8);
+        }
     }
     if let Some(c) = e.ctx {
         ctx = c.clamp(512, spec.arch.max_ctx.max(512));
@@ -814,7 +838,7 @@ fn launch_plan(state: &AppState, spec: &ModelSpec, quant: &str, encoder: u64) ->
         }
         None => limits.threads,
     };
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8 } }
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8 }, budget: budget.with_limits(&limits) }
 }
 
 /// The versions of a model this PC can run, the best suited first.
@@ -989,6 +1013,48 @@ fn speed_test_allowed(state: &AppState) -> Result<(), String> {
 #[tauri::command(async)]
 fn speed_test_status() -> SpeedStatus {
     SPEED_STATUS.lock().unwrap().clone()
+}
+
+/// "Optimize for this PC" for one chat model. Progress arrives as
+/// `models:optimize` events ({model_id, step, of, label}); the last one has
+/// `finished` with the report or an error.
+async fn optimize_now(app: &AppHandle, state: &Arc<AppState>, model_id: &str) -> Result<optimize::Report, String> {
+    speed_test_allowed(state)?;
+    if SPEED_TESTING.swap(true, Ordering::SeqCst) {
+        return Err("A speed test is already running.".into());
+    }
+    let progress = |step: usize, of: usize, label: &str| {
+        app.emit("models:optimize", json!({ "model_id": model_id, "step": step, "of": of, "label": label })).ok();
+    };
+    let r = optimize::run(state, model_id, &progress).await;
+    SPEED_TESTING.store(false, Ordering::SeqCst);
+    let payload = match &r {
+        Ok(report) => json!({ "model_id": model_id, "finished": true, "report": report }),
+        Err(e) => json!({ "model_id": model_id, "finished": true, "error": e }),
+    };
+    app.emit("models:optimize", payload).ok();
+    r
+}
+
+#[tauri::command]
+async fn optimize_model(app: AppHandle, state: AppStateRef<'_>, model_id: String) -> Result<optimize::Report, String> {
+    let state = state.inner().clone();
+    state.cipher()?;
+    optimize_now(&app, &state, &model_id).await
+}
+
+/// Settings measured on this PC, per model.
+#[tauri::command(async)]
+fn model_tunings(state: AppStateRef) -> Result<HashMap<String, optimize::Tuned>, String> {
+    state.cipher()?;
+    Ok(optimize::all(&state.db.lock().unwrap()))
+}
+
+/// Back to the automatic settings for a model.
+#[tauri::command(async)]
+fn forget_optimization(state: AppStateRef, model_id: String) -> Result<(), String> {
+    state.cipher()?;
+    optimize::forget(&state.db.lock().unwrap(), &model_id)
 }
 
 /// Runs the speed test for an installed chat model.
@@ -2263,6 +2329,9 @@ pub fn run() {
             import_model_file,
             import_model_folder,
             measure_model_speed,
+            optimize_model,
+            model_tunings,
+            forget_optimization,
             measure_all_speeds,
             speed_test_status,
             advanced::advanced_view,

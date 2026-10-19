@@ -1151,6 +1151,24 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - Tried and not worth it: `-ub` 1024 or 2048 (under 1% faster reading). Not tried: `--cache-reuse`, and direct convolutions for picture decoding (only about 2 s a picture to gain).
 - The 14B chose to save a short story as Desktop/lighthouse_story.docx. The test declined it and nothing was written.
 
+## Optimize for this PC (2026-10-18, for 0.9.14)
+
+- `optimize.rs` with the `optimize_model`, `model_tunings` and `forget_optimization` commands, and a button and result on each installed model card (Models page). It also runs automatically after an install when the estimate leaves layers off the card.
+- What it tries, at the window the model is used with:
+  - the automatic settings;
+  - every layer on the card with the normal cache, then with the compressed one;
+  - the compressed cache at the estimate's layers.
+  Each one is loaded through the real engine and timed with `engine::measure`.
+- What it rejects:
+  - a setup that didn't load;
+  - one whose engine put more than 256 MB in shared system memory (`perf::process_card_memory`, PDH "GPU Process Memory");
+  - one that left less than 600 MB of the card free (`perf::card_memory_used`, PDH "GPU Adapter Memory"). Both readings work for any card vendor.
+- Choosing: the fastest wins, unless another within 3% leaves more room. The result is saved per model with its window and card budget (`Tuned`, setting `model_tuning`). `plan_with` uses it only when those match.
+- Window offer: when the whole model didn't fit at the window, it also times a 12K or 8K window with everything on the card, and offers it on the card. It never applies it itself.
+- Between setups it waits for the card to cool to 65 °C (90 s at most), and stops at 85 °C.
+- Lesson: Windows quietly moves what doesn't fit to shared memory. His 14B with 49 layers and the normal cache at 16K "fit", with 2.1 GB in shared memory, and llama.cpp logged "failed to fit params". A short test still looked fast (51 tokens/s), so the first version wrongly chose it. The spill check fixed that.
+- Live on his 14B at 16K: the automatic setup (47 layers, compressed) stays at 46.5 tokens/s. The other setups were rejected (spill; 591 MB free). It offered a 12K window with everything on the card at 58.9 tokens/s. A run takes 99 s and the card stayed under 40 °C.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

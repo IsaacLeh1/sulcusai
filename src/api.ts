@@ -1609,6 +1609,33 @@ export interface MediaRequest {
   wallpaper?: WallpaperSpec | null;
 }
 
+/** A chat model's settings measured on this PC ("Optimize for this PC"). */
+export interface ModelTuning {
+  quant: string;
+  ctx: number;
+  room: number;
+  gpu_layers: number;
+  kv_q8: boolean;
+  tps: number;
+  prompt_tps: number | null;
+  before_tps: number;
+  all_layers: number;
+  at: number;
+  smaller_window?: { ctx: number; tps: number } | null;
+}
+
+export interface OptimizeReport {
+  model_id: string;
+  ctx: number;
+  before_tps: number;
+  tps: number;
+  gpu_layers: number;
+  all_layers: number;
+  kv_q8: boolean;
+  /** A smaller window at which the whole model fits the card. */
+  smaller_window: { ctx: number; tps: number } | null;
+}
+
 export interface WallpaperSpec {
   width: number;
   height: number;
@@ -1755,6 +1782,10 @@ export const api = {
   /** Starts installing one file; returns the model id its progress is reported under. */
   hubInstall: (repo: string, file: string, force = false) => invoke<string>("hub_install", { repo, file, force }),
   hubLink: (link: string) => invoke<HubLinkResult>("hub_link", { link }),
+  /** Tries a few setups on this PC's graphics card and keeps the fastest. */
+  optimizeModel: (modelId: string) => invoke<OptimizeReport>("optimize_model", { modelId }),
+  modelTunings: () => invoke<Record<string, ModelTuning>>("model_tunings"),
+  forgetOptimization: (modelId: string) => invoke<void>("forget_optimization", { modelId }),
   measureModelSpeed: (modelId: string) => invoke<Speed>("measure_model_speed", { modelId }),
   // Tests every installed chat model; progress comes as models:speed.
   speedTestStatus: () => invoke<SpeedStatus>("speed_test_status"),
@@ -2137,7 +2168,7 @@ export interface GpuNow {
 export interface InstallProgress {
   model_id: string;
   /** "loading" and "benchmark": the model is tried out on this PC (its speed is measured). */
-  phase: "engine" | "verify" | "download" | "loading" | "benchmark" | "vision";
+  phase: "engine" | "verify" | "download" | "loading" | "benchmark" | "vision" | "optimizing";
   received: number;
   total: number;
 }
@@ -2208,6 +2239,7 @@ export interface ChatEvents {
   "models:moving": { done?: number; total?: number; finished?: boolean; error?: string };
   /** The speed test's status, plus the model just tested (tps or error), and finished at the end. */
   "models:speed": SpeedStatus & { tested?: string; tps?: number; prompt_tps?: number | null; error?: string; finished?: boolean };
+  "models:optimize": { model_id: string; step?: number; of?: number; label?: string; finished?: boolean; report?: OptimizeReport; error?: string };
   "sync:changed": null;
   "people:changed": null;
   "people:message": { contact_id: string };

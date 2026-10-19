@@ -8,7 +8,7 @@ import { clock } from "../format";
 import { t } from "../i18n";
 
 /** The steps of trying a model out, as install progress reports them. */
-export const TESTING = new Set(["loading", "benchmark"]);
+export const TESTING = new Set(["loading", "benchmark", "optimizing"]);
 
 /** When the current test started: resets when `testing` turns on again. */
 export function useTestStart(testing: boolean): number {

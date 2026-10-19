@@ -638,6 +638,110 @@ fn windows_gpu_usage(_card: Option<i64>, _ours: &std::collections::HashSet<u32>)
     None
 }
 
+/// The graphics card's own memory in use right now, by every app (Windows'
+/// "GPU Adapter Memory" counters: any vendor, and it doesn't wake the card).
+#[cfg(windows)]
+pub fn card_memory_used(card: Option<i64>) -> Option<u64> {
+    use windows::Win32::System::Performance::*;
+    // SAFETY: as in `windows_gpu_usage`: PDH handles opened and closed here,
+    // items read only within the buffer PDH filled.
+    unsafe {
+        let (mut query, mut counter) = (0isize, 0isize);
+        if PdhOpenQueryW(windows::core::PCWSTR::null(), 0, &mut query) != 0 {
+            return None;
+        }
+        let close = |q: isize| {
+            PdhCloseQuery(q);
+        };
+        if PdhAddEnglishCounterW(query, windows::core::w!("\\GPU Adapter Memory(*)\\Dedicated Usage"), 0, &mut counter) != 0 || PdhCollectQueryData(query) != 0 {
+            close(query);
+            return None;
+        }
+        let (mut size, mut count) = (0u32, 0u32);
+        if PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &mut size, &mut count, None) != PDH_MORE_DATA || size == 0 {
+            close(query);
+            return None;
+        }
+        let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+        let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+        if PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &mut size, &mut count, Some(items)) != 0 {
+            close(query);
+            return None;
+        }
+        // Instances look like "luid_0x00000000_0x0001A2B8_phys_0".
+        let wanted = card.map(|l| format!("0x{:08x}_0x{:08x}", (l >> 32) as u32, l as u32));
+        let mut used: Option<u64> = None;
+        for i in 0..count as usize {
+            let item = &*items.add(i);
+            if item.FmtValue.CStatus != 0 {
+                continue;
+            }
+            let name = item.szName.to_string().unwrap_or_default().to_lowercase();
+            let this = name.split("luid_").nth(1).and_then(|r| r.split("_phys").next()).unwrap_or("");
+            if wanted.as_deref().is_some_and(|w| w != this) {
+                continue;
+            }
+            let v = item.FmtValue.Anonymous.largeValue.max(0) as u64;
+            // Without a card named, the busiest one.
+            used = Some(if wanted.is_some() { used.unwrap_or(0) + v } else { used.map_or(v, |u| u.max(v)) });
+        }
+        close(query);
+        used
+    }
+}
+
+#[cfg(not(windows))]
+pub fn card_memory_used(_card: Option<i64>) -> Option<u64> {
+    None
+}
+
+/// One process's graphics memory: on the card itself, and in system memory
+/// the card uses ("shared"). Windows moves what doesn't fit on the card to
+/// shared memory without telling the app: a model that looks loaded is then
+/// slow in long chats (2.1 GB of a 14B spilled at 16K with the normal cache).
+#[cfg(windows)]
+pub fn process_card_memory(pid: u32) -> Option<(u64, u64)> {
+    let sum = |path: &str| -> Option<u64> {
+        use windows::Win32::System::Performance::*;
+        // SAFETY: as in `card_memory_used`.
+        unsafe {
+            let (mut query, mut counter) = (0isize, 0isize);
+            if PdhOpenQueryW(windows::core::PCWSTR::null(), 0, &mut query) != 0 {
+                return None;
+            }
+            let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut out = None;
+            if PdhAddEnglishCounterW(query, windows::core::PCWSTR(wide.as_ptr()), 0, &mut counter) == 0 && PdhCollectQueryData(query) == 0 {
+                let (mut size, mut count) = (0u32, 0u32);
+                if PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &mut size, &mut count, None) == PDH_MORE_DATA && size > 0 {
+                    let mut buf = vec![0u64; (size as usize).div_ceil(8)];
+                    let items = buf.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+                    if PdhGetFormattedCounterArrayW(counter, PDH_FMT_LARGE, &mut size, &mut count, Some(items)) == 0 {
+                        let mut total = 0u64;
+                        for i in 0..count as usize {
+                            let item = &*items.add(i);
+                            if item.FmtValue.CStatus == 0 {
+                                total += item.FmtValue.Anonymous.largeValue.max(0) as u64;
+                            }
+                        }
+                        out = Some(total);
+                    }
+                }
+            }
+            PdhCloseQuery(query);
+            out
+        }
+    };
+    let dedicated = sum(&format!("\\GPU Process Memory(pid_{pid}_*)\\Dedicated Usage"))?;
+    let shared = sum(&format!("\\GPU Process Memory(pid_{pid}_*)\\Shared Usage")).unwrap_or(0);
+    Some((dedicated, shared))
+}
+
+#[cfg(not(windows))]
+pub fn process_card_memory(_pid: u32) -> Option<(u64, u64)> {
+    None
+}
+
 fn gpu_cache() -> &'static Mutex<Option<(Instant, GpuNow)>> {
     static C: std::sync::OnceLock<Mutex<Option<(Instant, GpuNow)>>> = std::sync::OnceLock::new();
     C.get_or_init(Default::default)

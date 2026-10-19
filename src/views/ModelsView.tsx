@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type Settings, type VariantFit } from "../api";
+import { api, errorText, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
 import { bytes, percent, placementLabel, speedLabel } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -26,6 +26,7 @@ interface Props {
 
 export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSettings, toast }: Props) {
   const [checking, setChecking] = useState(false);
+  const tunings = useTunings();
   const [tab, setTab] = useState<"chat" | "speech" | "create">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
@@ -176,7 +177,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <h2>{t("Installed")}</h2>
           <div className={`model-grid ${layout}`}>
             {installed.map((m) => (
-              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} kept={keptModels.includes(m.id)} onKept={setKeptModels} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
+              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} kept={keptModels.includes(m.id)} tuning={tunings[m.id] ?? null} onKept={setKeptModels} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
             ))}
           </div>
         </>
@@ -665,6 +666,7 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
     download: t("Downloading"),
     loading: t("Loading the model to test it"),
     benchmark: t("Testing speed on this PC"),
+    optimizing: t("Trying setups to find the fastest on this PC"),
     vision: t("Downloading the picture reader"),
   }[p.phase];
   const pct = p.total > 0 ? percent(p.received, p.total) : null;
@@ -738,11 +740,116 @@ function RenameModel({ m, onClose, onRefresh }: { m: ModelCard; onClose: () => v
   );
 }
 
+/** Settings measured on this PC per model, kept current as runs finish. */
+function useTunings(): Record<string, ModelTuning> {
+  const [tunings, setTunings] = useState<Record<string, ModelTuning>>({});
+  useEffect(() => {
+    const load = () => api.modelTunings().then(setTunings).catch(() => {});
+    load();
+    const sub = on("models:optimize", (e) => e.finished && load());
+    // "Use the automatic settings" on a card.
+    window.addEventListener("sulcus:tunings", load);
+    return () => {
+      sub.then((un) => un());
+      window.removeEventListener("sulcus:tunings", load);
+    };
+  }, []);
+  return tunings;
+}
+
+/** "Optimize for this PC": the button, its progress, and what it found. */
+function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: ModelTuning | null; onRefresh: () => Promise<void>; toast: PushToast }) {
+  const [step, setStep] = useState<{ step: number; of: number; label: string } | null>(null);
+  const [report, setReport] = useState<OptimizeReport | null>(null);
+  const since = useTestStart(step !== null);
+  useEffect(() => {
+    const sub = on("models:optimize", (e) => {
+      if (e.model_id !== m.id) return;
+      if (e.finished) {
+        setStep(null);
+        if (e.report) setReport(e.report);
+        if (e.error) toast(errorText(e.error), "error");
+        // The speed shown on the card is the one just measured.
+        onRefresh().catch(() => {});
+      } else if (e.of) {
+        setStep({ step: e.step ?? 0, of: e.of, label: e.label ?? "" });
+      }
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [m.id, toast, onRefresh]);
+  const run = () => {
+    setReport(null);
+    setStep({ step: 0, of: 1, label: "" });
+    api.optimizeModel(m.id).catch(() => setStep(null));
+  };
+  if (step) {
+    return (
+      <div className="optimize small">
+        <span>
+          {t("Optimizing: trying setup {n} of {of}", { n: step.step + 1, of: step.of })}
+          {step.label && <span className="muted"> · {step.label}</span>}
+        </span>
+        <TestingNote since={since} short />
+      </div>
+    );
+  }
+  const offer = report?.smaller_window ?? tuning?.smaller_window ?? null;
+  const measuredTps = report?.tps ?? tuning?.tps ?? 0;
+  return (
+    <div className="optimize small">
+      {tuning ? (
+        <span>
+          ⚡ {t("Optimized for this PC: {tps} tokens/sec", { tps: tuning.tps })}
+          {tuning.before_tps > 0 && Math.abs(tuning.tps - tuning.before_tps) >= 0.5 && <span className="muted"> {t("(automatic settings: {tps})", { tps: tuning.before_tps })}</span>}
+          <span className="muted">
+            {" · "}
+            {tuning.gpu_layers >= tuning.all_layers ? t("all of it on the graphics card") : t("{n} of {all} layers on the graphics card", { n: tuning.gpu_layers, all: tuning.all_layers })}
+            {tuning.kv_q8 ? ` · ${t("compressed cache")}` : ""}
+          </span>
+        </span>
+      ) : null}
+      <span className="row wrap">
+        <button
+          className="btn small"
+          onClick={run}
+          title={t("Tries a few ways of running it on this PC's graphics card and keeps the fastest. Takes a minute or two, and the graphics card works hard meanwhile.")}
+        >
+          {tuning ? t("Optimize again") : t("⚡ Optimize for this PC")}
+        </button>
+        {tuning && Math.abs(tuning.tps - tuning.before_tps) >= 0.5 && (
+          <button className="link" onClick={() => api.forgetOptimization(m.id).then(() => window.dispatchEvent(new Event("sulcus:tunings"))).catch((e) => toast(errorText(e), "error"))}>
+            {t("Use the automatic settings")}
+          </button>
+        )}
+      </span>
+      {offer && (
+        <p className="callout">
+          {t("With a {k}K window, the whole model fits the graphics card: {tps} tokens/sec instead of {now}. A smaller window means it remembers less of a long chat.", { k: Math.round(offer.ctx / 1024), tps: offer.tps, now: measuredTps })}{" "}
+          <button
+            className="link"
+            onClick={() =>
+              api
+                .setContextWindow(offer.ctx)
+                .then(() => toast(t("Chats now use a {k}K window.", { k: Math.round(offer.ctx / 1024) }), "success"))
+                .catch((e) => toast(errorText(e), "error"))
+            }
+          >
+            {t("Use a {k}K window", { k: Math.round(offer.ctx / 1024) })}
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function InstalledCard({
   m,
   rank,
   isDefault,
   kept,
+  tuning,
   onKept,
   onRefresh,
   onSettings,
@@ -752,6 +859,7 @@ function InstalledCard({
   rank: RankInfo;
   isDefault: boolean;
   kept: boolean;
+  tuning: ModelTuning | null;
   onKept: (models: string[]) => void;
   onRefresh: () => Promise<void>;
   onSettings: (s: Settings) => void;
@@ -796,6 +904,7 @@ function InstalledCard({
           : t("Speed not measured yet")}
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>
+      {fit?.placement !== "cpu" && <Optimize m={m} tuning={tuning} onRefresh={onRefresh} toast={toast} />}
       <div className="install-row">
         {!isDefault && (
           <button

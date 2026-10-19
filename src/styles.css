@@ -1436,3 +1436,7 @@ button.ctx:hover { background: var(--hover); }
 .prompt-help[open] { display: flex; flex-direction: column; gap: 6px; }
 .prompt-help label.check { font-weight: 400 !important; }
 .input.tiny { width: 84px; }
+
+/* Models: "Optimize for this PC" on an installed model. */
+.optimize { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px; }
+.optimize .callout { margin: 0; }

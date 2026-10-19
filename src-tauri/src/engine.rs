@@ -722,7 +722,7 @@ pub fn log_tail(path: &Path, lines: usize) -> String {
 /// Measures generation speed (tokens/second) on this PC.
 /// A model's speed on this PC: writing (tokens a second it produces) and
 /// reading (tokens a second it takes in, for long prompts and documents).
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct Speed {
     pub tps: f64,
     pub prompt_tps: Option<f64>,
