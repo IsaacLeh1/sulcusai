@@ -1231,6 +1231,7 @@ mod tests {
         assert_eq!(firsts.len(), 1);
         assert_eq!(firsts[0].0, [Skill::Code, Skill::Writing, Skill::Tools]);
         assert_eq!(firsts[0].1.len(), 12);
+    }
 
     /// Skills short of their share of the lines replay spare first-try
     /// answers up to it, never more than they have, and never take any away.
@@ -1247,6 +1248,38 @@ mod tests {
         let even = of(&[(Skill::Code, 10), (Skill::Writing, 5), (Skill::Research, 5), (Skill::Tools, 5)]);
         assert!(top_up(&four, &even, &spare).iter().all(|(_, n)| *n == 0));
         assert!(top_up(&four, &lines, &[]).iter().all(|(_, n)| *n == 0));
+    }
+
+    /// Practice's test, run by hand against a llama-server started with
+    /// `--jinja` (and `--lora` for an adapter): `SULCUSAI_TEST_PORT`/`_KEY`,
+    /// `SULCUSAI_SKILLS` (as the form sends them, comma-separated; default
+    /// coding, writing, research and tools) and `SULCUSAI_SEED` (default the
+    /// app's test). A different seed gives new tasks, to check an adapter on
+    /// tasks it wasn't chosen on (except coding, whose tasks come from a fixed
+    /// set of problems). `SULCUSAI_OUT` saves each task's result, and
+    /// `SULCUSAI_BEFORE` (a saved result) counts what changed.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn e2e_practice_test() {
+        let port = std::env::var("SULCUSAI_TEST_PORT").expect("SULCUSAI_TEST_PORT").parse().unwrap();
+        let key = std::env::var("SULCUSAI_TEST_KEY").unwrap_or_default();
+        let skills: Vec<Skill> = serde_json::from_value(json!(std::env::var("SULCUSAI_SKILLS").unwrap_or("code,writing,research,tools".into()).split(',').collect::<Vec<_>>())).unwrap();
+        let seed = std::env::var("SULCUSAI_SEED").map_or(TEST_SEED, |s| s.parse().unwrap());
+        let model = Model::new(crate::engine::Endpoint { port, key, ctx: ENGINE_CTX, extra: Value::Null, cloud: None }, false).await;
+        let mut rng = Rng::new(seed);
+        let test: Vec<Task> = skills.iter().flat_map(|s| TEST_LEVELS.map(|level| (*s, level))).map(|(s, level)| tasks::make(s, level, &mut rng)).collect();
+        let mut right = Vec::new();
+        for (i, t) in test.iter().enumerate() {
+            let prompt = model.prompt(t, None).await.unwrap();
+            let a = model.attempt(t, &prompt, TEST_REPLY, 0.0, i as u64 + 1).await.unwrap();
+            right.push(got_right(t, &a));
+        }
+        let before: Vec<bool> = std::env::var("SULCUSAI_BEFORE").map_or(right.clone(), |p| serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap());
+        if let Ok(out) = std::env::var("SULCUSAI_OUT") {
+            std::fs::write(out, json!(right).to_string()).unwrap();
+        }
+        let t = tallies(&test, &before, &right);
+        println!("\nseed {seed}: {} of {} right ({})", right.iter().filter(|r| **r).count(), right.len(), by_skill(&t, std::env::var("SULCUSAI_BEFORE").is_ok()));
     }
 
     #[test]
