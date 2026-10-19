@@ -3076,5 +3076,18 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Es hat {theirs} Punkte gegenüber {ours} für {current}, dein bisher bestes, und läuft hier gut. Deine Chats und anderen Modelle bleiben, wie sie sind.",
  "(documents only)": "(nur Dokumente)",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Dieses Modell kann nur aus Dokumenten (.txt oder .md) lernen: Der Trainer findet seine Antworten in seinem Chat-Format nicht (Llama und Gemma 4).",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Dieses Modell kann noch nicht üben: Üben funktioniert mit Qwen3-, Qwen3.5-, Qwen3.6- und Gemma-3-Modellen."
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Dieses Modell kann noch nicht üben: Üben funktioniert mit Qwen3-, Qwen3.5-, Qwen3.6- und Gemma-3-Modellen.",
+ "coding": "Programmieren",
+ "writing": "Schreiben",
+ "research": "Recherche",
+ "word problems": "Textaufgaben",
+ "counting": "Zählen",
+ "dates and times": "Daten und Uhrzeiten",
+ "following instructions": "Anweisungen befolgen",
+ "using tools": "Werkzeuge nutzen",
+ "your code": "dein Code",
+ "learning {skills} ({n} of {total})": "lernt {skills} ({n} von {total})",
+ "Skill by skill: {scores}.": "Je Fähigkeit: {scores}.",
+ "learnt {scores}": "gelernt: {scores}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "Jede Fähigkeit wird zuerst einzeln gelernt und an allen getestet; die, die besser wurden, werden dann zusammen gelernt. Behalten wird nur, was bei dem Gelernten und im ganzen Test besser abschneidet, ohne dass eine Fähigkeit mehr als 2 Testaufgaben schlechter wird."
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type Chat, type FinetuneJob, type FinetuneView, type PracticeSkill } from "../api";
+import { api, errorText, on, type Chat, type FinetuneJob, type FinetuneView, type PracticeSkill, type SkillScore } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -22,6 +22,24 @@ const SKILLS: { id: PracticeSkill; label: string }[] = [
 
 /** Skills worked with tools: a model that can't use tools can't practise them. */
 const needsTools = (s: PracticeSkill) => s === "tools" || s === "project";
+
+/** Short names, for the test's numbers skill by skill. */
+const SKILL_NAMES: Record<PracticeSkill, string> = {
+  code: tx("coding"),
+  writing: tx("writing"),
+  research: tx("research"),
+  math: tx("word problems"),
+  careful: tx("counting"),
+  time: tx("dates and times"),
+  format: tx("following instructions"),
+  tools: tx("using tools"),
+  project: tx("your code"),
+};
+
+const skillNames = (skills: PracticeSkill[]) => skills.map((s) => t(SKILL_NAMES[s])).join(", ");
+
+/** "coding 8 → 11, writing 8 → 10" */
+const skillScores = (skills: SkillScore[]) => skills.map((s) => `${t(SKILL_NAMES[s.skill])} ${s.before} → ${s.after}`).join(", ");
 
 /** Advanced → Model work: teach a model from your own examples (LoRA). */
 export function TeachModel({ toast }: { toast: PushToast }) {
@@ -136,6 +154,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               <strong>{job.base_name} + {job.name}</strong> ·{" "}
               {job.status === "preparing" && t("getting ready…")}
               {job.status === "downloading" && t("downloading the trainer ({size}, first time only)…", { size: bytes(v.trainer_size) })}
+              {job.part.length > 0 && (job.status === "training" || job.status === "checking") && `${t("learning {skills} ({n} of {total})", { skills: skillNames(job.part), n: job.part_no, total: job.parts })} · `}
               {job.status === "training" && `${t("round {n} of {total}", { n: job.epoch, total: job.epochs })}${job.eta ? ` · ${t("about {time} left", { time: job.eta })}` : ""}${job.loss !== null ? ` · ${t("loss {loss}", { loss: job.loss.toFixed(2) })}` : ""}`}
               {job.status === "testing" && t("testing it first: {n} of {total}", { n: job.done, total: job.total })}
               {job.status === "practising" && t("practising: {n} of {total} tasks, {kept} right answers kept", { n: job.done, total: job.total, kept: job.kept })}
@@ -149,6 +168,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                 (job.after === null
                   ? t("it already gets {before} of {total} test tasks right, so practice has nothing to add. Nothing was changed.", { before: job.before ?? 0, total: job.total })
                   : t("it didn't get better ({before} → {after} of {total} test tasks right), so nothing was kept.", { before: job.before ?? 0, after: job.after, total: job.total }))}
+              {(job.status === "done" || job.status === "not_better") && job.skills.length > 0 && ` ${t("Skill by skill: {scores}.", { scores: skillScores(job.skills) })}`}
               {job.status === "cancelled" && t("stopped.")}
               {job.status === "failed" && <span className="warn-text">{t("didn't finish: {error}", { error: errorText(job.error ?? "") })}</span>}
             </span>
@@ -179,6 +199,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                     : a.scores
                       ? t("practised, test {before} → {after} of {total} right", { before: a.scores.before, after: a.scores.after, total: a.scores.out_of })
                       : t("from {source}, {examples} examples, {rounds} rounds", { source: a.source, examples: a.examples, rounds: a.epochs })}
+                  {a.scores?.skills?.some((s) => s.learnt) && ` · ${t("learnt {scores}", { scores: skillScores(a.scores.skills.filter((s) => s.learnt)) })}`}
                 </span>
               </span>
               <button
@@ -251,6 +272,11 @@ export function TeachModel({ toast }: { toast: PushToast }) {
                   </label>
                 ))}
                 <p className="muted small">{t("It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.")}</p>
+                {skills.length > 1 && (
+                  <p className="muted small">
+                    {t("Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.")}
+                  </p>
+                )}
               </div>
               {onCode && (
                 <div className="teach-chats">

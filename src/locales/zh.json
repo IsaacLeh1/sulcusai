@@ -3076,5 +3076,18 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "它的评分为 {theirs}，而你目前最好的 {current} 为 {ours}，并且在这里运行流畅。你的聊天和其他模型保持不变。",
  "(documents only)": "（仅限文档）",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "此模型只能从文档（.txt 或 .md）学习：训练器无法在它的聊天格式中找到它的回复（Llama 和 Gemma 4）。",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "此模型暂不能练习：练习适用于 Qwen3、Qwen3.5、Qwen3.6 和 Gemma 3 模型。"
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "此模型暂不能练习：练习适用于 Qwen3、Qwen3.5、Qwen3.6 和 Gemma 3 模型。",
+ "coding": "编程",
+ "writing": "写作",
+ "research": "研究",
+ "word problems": "应用题",
+ "counting": "计数",
+ "dates and times": "日期和时间",
+ "following instructions": "遵循指令",
+ "using tools": "使用工具",
+ "your code": "你的代码",
+ "learning {skills} ({n} of {total})": "正在学习{skills}（第 {n} 个，共 {total} 个）",
+ "Skill by skill: {scores}.": "按技能：{scores}。",
+ "learnt {scores}": "已学：{scores}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "每项技能先单独学习，并在所有技能上测试；变好的技能随后一起学习。只有在所学技能和整个测试上都更好，且没有任何技能多错超过 2 道测试题时，结果才会保留。"
 }

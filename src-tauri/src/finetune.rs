@@ -127,6 +127,20 @@ pub struct Scores {
     pub before: u32,
     pub after: u32,
     pub out_of: u32,
+    /// Skill by skill (practice kept before this have none).
+    #[serde(default)]
+    pub skills: Vec<SkillScore>,
+}
+
+/// How one skill's test tasks went, before and after.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkillScore {
+    pub skill: crate::practice::tasks::Skill,
+    pub before: u32,
+    pub after: u32,
+    pub out_of: u32,
+    /// The adapter learnt from this skill's practice.
+    pub learnt: bool,
 }
 
 pub fn adapters(state: &AppState) -> Vec<Adapter> {
@@ -190,6 +204,14 @@ pub struct Job {
     pub after: Option<u32>,
     /// Practice with a teacher: its name.
     pub teacher: Option<String>,
+    /// Practice learns each skill on its own first: the skills being
+    /// learnt or tested now, and which try this is of how many.
+    pub part: Vec<crate::practice::tasks::Skill>,
+    pub part_no: u32,
+    pub parts: u32,
+    /// Practice, at the end: the test skill by skill, for what was kept (or
+    /// the best try, when nothing was).
+    pub skills: Vec<SkillScore>,
 }
 
 impl Job {
@@ -211,6 +233,10 @@ impl Job {
             before: None,
             after: None,
             teacher: None,
+            part: Vec::new(),
+            part_no: 0,
+            parts: 0,
+            skills: Vec::new(),
         }
     }
 }
@@ -586,17 +612,46 @@ async fn training_copy(state: &Arc<AppState>, installed: &db::InstalledModel, tr
 
 pub(crate) async fn train(app: &AppHandle, state: &Arc<AppState>, id: &str, installed: &db::InstalledModel, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     let (from, to) = setup.span;
-    let exe = ensure_trainer(app, state, cancel, from + (to - from) * 0.05).await?;
-    // The chat model gives the graphics card back for the training run.
-    state.engine.lock().await.stop().await;
+    let out_dir = data.parent().unwrap_or(Path::new("."));
+    let ready = prepare(app, state, installed, out_dir, from + (to - from) * 0.05, cancel).await?;
+    ready.train(app, state, id, data, setup, cancel).await
+}
 
-    let out_dir = data.parent().unwrap_or(Path::new(".")).to_path_buf();
-    let model = training_copy(state, installed, &exe, &out_dir, cancel).await?;
-    let result = run_trainer(app, state, id, &exe, &model, data, setup, cancel).await;
-    if model.starts_with(&out_dir) {
-        std::fs::remove_file(&model).ok();
+/// The trainer and the model file it trains, ready for one training run or
+/// several (practice trains one adapter per skill). A training copy is
+/// deleted when this is dropped.
+pub(crate) struct Ready {
+    exe: std::path::PathBuf,
+    model: std::path::PathBuf,
+    copy: bool,
+}
+
+impl Drop for Ready {
+    fn drop(&mut self) {
+        if self.copy {
+            std::fs::remove_file(&self.model).ok();
+        }
     }
-    result
+}
+
+impl Ready {
+    /// Trains an adapter on `data`, saved next to it as adapter.gguf.
+    pub(crate) async fn train(&self, app: &AppHandle, state: &Arc<AppState>, id: &str, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
+        // The chat model gives the graphics card back for the training run.
+        state.engine.lock().await.stop().await;
+        run_trainer(app, state, id, &self.exe, &self.model, data, setup, cancel).await
+    }
+}
+
+/// Downloads the trainer the first time (filling the progress bar up to
+/// `span`) and makes the model's training copy in `out_dir`.
+pub(crate) async fn prepare(app: &AppHandle, state: &Arc<AppState>, installed: &db::InstalledModel, out_dir: &Path, span: f64, cancel: &AtomicBool) -> Result<Ready, String> {
+    let exe = ensure_trainer(app, state, cancel, span).await?;
+    // The chat model gives the graphics card back, so its free memory can be measured.
+    state.engine.lock().await.stop().await;
+    let model = training_copy(state, installed, &exe, out_dir, cancel).await?;
+    let copy = model.starts_with(out_dir);
+    Ok(Ready { exe, model, copy })
 }
 
 #[allow(clippy::too_many_arguments)]

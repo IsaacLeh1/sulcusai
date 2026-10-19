@@ -3076,5 +3076,18 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tiene una puntuación de {theirs} frente a {ours} de {current}, el mejor que tienes ahora, y funciona bien aquí. Tus chats y otros modelos se quedan como están.",
  "(documents only)": "(solo documentos)",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Este modelo solo puede aprender de documentos (.txt o .md): el entrenador no encuentra sus respuestas en su formato de chat (Llama y Gemma 4).",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Este modelo aún no puede practicar: la práctica funciona con modelos Qwen3, Qwen3.5, Qwen3.6 y Gemma 3."
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Este modelo aún no puede practicar: la práctica funciona con modelos Qwen3, Qwen3.5, Qwen3.6 y Gemma 3.",
+ "coding": "programación",
+ "writing": "redacción",
+ "research": "investigación",
+ "word problems": "problemas de texto",
+ "counting": "contar",
+ "dates and times": "fechas y horas",
+ "following instructions": "seguir instrucciones",
+ "using tools": "usar herramientas",
+ "your code": "tu código",
+ "learning {skills} ({n} of {total})": "aprendiendo {skills} ({n} de {total})",
+ "Skill by skill: {scores}.": "Por habilidad: {scores}.",
+ "learnt {scores}": "aprendió {scores}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "Cada habilidad se aprende primero por separado y se prueba en todas; las que mejoraron se aprenden después juntas. Lo que se conserva debe mejorar en lo que aprendió y en toda la prueba, sin que ninguna habilidad empeore en más de 2 tareas de prueba."
 }

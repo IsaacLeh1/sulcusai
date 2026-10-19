@@ -3076,5 +3076,18 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Il obtient {theirs} contre {ours} pour {current}, le meilleur que vous avez actuellement, et tourne sans peine ici. Vos discussions et autres modèles restent tels quels.",
  "(documents only)": "(documents uniquement)",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "Ce modèle ne peut apprendre qu'à partir de documents (.txt ou .md) : l'entraîneur ne trouve pas ses réponses dans son format de discussion (Llama et Gemma 4).",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Ce modèle ne peut pas encore s'entraîner : l'entraînement fonctionne avec les modèles Qwen3, Qwen3.5, Qwen3.6 et Gemma 3."
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "Ce modèle ne peut pas encore s'entraîner : l'entraînement fonctionne avec les modèles Qwen3, Qwen3.5, Qwen3.6 et Gemma 3.",
+ "coding": "programmation",
+ "writing": "rédaction",
+ "research": "recherche",
+ "word problems": "problèmes",
+ "counting": "comptage",
+ "dates and times": "dates et heures",
+ "following instructions": "suivre des consignes",
+ "using tools": "utiliser des outils",
+ "your code": "votre code",
+ "learning {skills} ({n} of {total})": "apprentissage : {skills} ({n} sur {total})",
+ "Skill by skill: {scores}.": "Par compétence : {scores}.",
+ "learnt {scores}": "appris : {scores}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "Chaque compétence est d'abord apprise seule et testée sur toutes ; celles qui se sont améliorées sont ensuite apprises ensemble. Ce qui est conservé doit faire mieux sur ce qu'il a appris et sur l'ensemble du test, sans qu'aucune compétence ne perde plus de 2 tâches de test."
 }

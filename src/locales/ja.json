@@ -3076,5 +3076,18 @@
  "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "評価は {theirs}（今いちばん良い {current} は {ours}）で、この PC で快適に動きます。チャットや他のモデルはそのままです。",
  "(documents only)": "（文書のみ）",
  "This model can only be taught from documents (.txt or .md): the trainer can't find its replies in its chat format (Llama and Gemma 4).": "このモデルは文書（.txt または .md）からしか学習できません。トレーナーがこのモデルのチャット形式から返答を見つけられないためです（Llama と Gemma 4）。",
- "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "このモデルはまだ練習できません。練習は Qwen3、Qwen3.5、Qwen3.6、Gemma 3 のモデルで使えます。"
+ "This model can't practise yet: practice works with Qwen3, Qwen3.5, Qwen3.6 and Gemma 3 models.": "このモデルはまだ練習できません。練習は Qwen3、Qwen3.5、Qwen3.6、Gemma 3 のモデルで使えます。",
+ "coding": "コーディング",
+ "writing": "文章作成",
+ "research": "リサーチ",
+ "word problems": "文章題",
+ "counting": "数え上げ",
+ "dates and times": "日付と時刻",
+ "following instructions": "指示に従う",
+ "using tools": "ツールの使用",
+ "your code": "あなたのコード",
+ "learning {skills} ({n} of {total})": "{skills}を学習中（{total} 件中 {n} 件目）",
+ "Skill by skill: {scores}.": "スキル別：{scores}。",
+ "learnt {scores}": "学習：{scores}",
+ "Each skill is learnt on its own first and tested on all of them; the ones that got better are then learnt together. What's kept must do better on what it learnt and on the whole test, without any skill getting more than 2 test tasks worse.": "各スキルはまず単独で学習し、すべてのスキルでテストします。改善したスキルはその後まとめて学習します。保存されるのは、学んだスキルとテスト全体の両方で成績が上がり、どのスキルもテスト課題 2 問を超えて悪化しなかった場合だけです。"
 }
