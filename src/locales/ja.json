@@ -3065,7 +3065,6 @@
  "Folders with your code": "コードのあるフォルダー",
  "Pick a folder with your code": "コードのあるフォルダーを選択",
  "It looks things up in your Rust, TypeScript, JavaScript and Python files with the file tools chats use, and its answers are checked against the files. It only reads them, and never opens .env files, keys, lockfiles, or dependency and build folders. It learns how to look, not your code itself.": "チャットと同じファイルツールで Rust、TypeScript、JavaScript、Python のファイルを調べ、答えはファイルと照らし合わせて確認されます。ファイルは読むだけで、.env ファイル、鍵、ロックファイル、依存関係やビルドのフォルダーは決して開きません。覚えるのは調べ方で、コードそのものではありません。",
- "Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.": "コードに関する課題はモデル自身が解きます。ファイルツールを何度も使う必要があり、教師モデルは 1 回で答えるためです。",
  "Pick at least one folder with your code.": "コードのあるフォルダーを 1 つ以上選んでください。",
  "There isn't enough code in those folders to practise on. It needs Rust, TypeScript, JavaScript or Python files with a few dozen functions.": "これらのフォルダーには練習に十分なコードがありません。数十個の関数を含む Rust、TypeScript、JavaScript、Python のファイルが必要です。",
  "This model's chat template doesn't lay out tool results, so it can't practise on code.": "このモデルのチャットテンプレートはツールの結果を扱えないため、コードで練習できません。",

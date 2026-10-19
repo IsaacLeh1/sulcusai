@@ -287,8 +287,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               </label>
               <p className="muted small">
                 {t("A bigger model on this PC answers the tasks it keeps getting wrong. Its answers are checked the same way, and it learns from the right ones too. Only one model fits on the graphics card at a time, so they take turns, which adds 10–30 minutes.")}
-                {teacher && !teacher.tools && skills.includes("tools") ? " " + t("This teacher can't use tools, so it skips the tool tasks.") : ""}
-                {teacher && onCode ? " " + t("Tasks about your code stay its own: they take several turns with the file tools, and a teacher answers in one.") : ""}
+                {teacher && !teacher.tools && skills.some(needsTools) ? " " + t("This teacher can't use tools, so it skips the tool tasks.") : ""}
               </p>
             </>
           )}
