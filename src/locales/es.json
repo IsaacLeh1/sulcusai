@@ -3054,5 +3054,7 @@
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "Falta el conversor de modelos del entrenador. Elimina la carpeta del entrenador en la carpeta de motores de la app para descargarlo de nuevo.",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "No hay suficiente espacio libre para la copia de entrenamiento del modelo. Libera unos gigabytes en la unidad donde la app guarda sus datos e inténtalo de nuevo.",
  "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "Mejora en los tipos de tareas que practica, no en todo, y no aprende datos nuevos. Suele tardar entre 20 y 90 minutos en la tarjeta gráfica.",
- "Waiting for a reply that uses this model to finish": "Esperando a que termine una respuesta que usa este modelo"
+ "Waiting for a reply that uses this model to finish": "Esperando a que termine una respuesta que usa este modelo",
+ "A smarter model fits this PC: {name}": "Un modelo más inteligente cabe en este PC: {name}",
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "Tiene una puntuación de {theirs} frente a {ours} de {current}, el mejor que tienes ahora, y funciona bien aquí. Tus chats y otros modelos se quedan como están."
 }

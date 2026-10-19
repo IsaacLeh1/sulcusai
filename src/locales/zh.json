@@ -3054,5 +3054,7 @@
  "The trainer's model converter is missing. Remove the trainer folder in the app's engines folder to download it again.": "缺少训练器的模型转换工具。删除应用引擎文件夹中的训练器文件夹即可重新下载。",
  "There isn't enough free disk space for the model's training copy. Free a few gigabytes on the drive the app keeps its data on, and try again.": "磁盘空间不足，无法创建模型的训练副本。请在应用存放数据的磁盘上腾出几 GB 空间后重试。",
  "It gets better at the kinds of tasks it practises, not at everything, and it doesn't learn new facts. It usually takes 20–90 minutes on the graphics card.": "它会在练习过的任务类型上变好，而不是在所有方面变好，也不会学到新知识。在显卡上通常需要 20–90 分钟。",
- "Waiting for a reply that uses this model to finish": "正在等待使用此模型的回复完成"
+ "Waiting for a reply that uses this model to finish": "正在等待使用此模型的回复完成",
+ "A smarter model fits this PC: {name}": "有更聪明的模型适合这台电脑：{name}",
+ "It's rated {theirs} against {ours} for {current}, the best you have now, and runs comfortably here. Your chats and other models stay as they are.": "它的评分为 {theirs}，而你目前最好的 {current} 为 {ours}，并且在这里运行流畅。你的聊天和其他模型保持不变。"
 }
