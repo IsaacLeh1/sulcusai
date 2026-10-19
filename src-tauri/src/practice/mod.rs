@@ -701,7 +701,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     let practised = practise(app, state, &model, &practice, &mut rng, r.cancel, spans[1]).await?;
     engine.stop().await;
     drop(engine);
-    state.log("model", &format!("{} got {} of {} practice tasks right; it learns from {} of them", spec.name, practised.solved, practice.len(), practised.lines.len()));
+    state.log("model", &format!("{} got {} of {} practice tasks right; it learns from {} of them ({})", spec.name, practised.solved, practice.len(), practised.lines.len(), per_skill(r.skills, &practised.lines)));
     tally();
     let mut lines = practised.lines;
 
@@ -728,7 +728,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         engine.stop().await;
         drop(engine);
         let theirs = theirs?;
-        state.log("model", &format!("{} got {right} of the {} practice tasks {} missed right; it learns from {} of them", t.spec.name, practised.missed.len(), spec.name, theirs.len()));
+        state.log("model", &format!("{} got {right} of the {} practice tasks {} missed right; it learns from {} of them ({})", t.spec.name, practised.missed.len(), spec.name, theirs.len(), per_skill(r.skills, &theirs)));
         tally();
         lines.extend(theirs);
     }
@@ -950,6 +950,11 @@ fn anchors(skills: &[Skill], learnt: &[Skill], own: usize, spare: &[(Skill, Stri
             spare.iter().filter(move |(k, _)| k == s).take(n).map(|(_, l)| l.clone())
         })
         .collect()
+}
+
+/// "coding 9, writing 4, research 0, using tools 6": lines per skill.
+fn per_skill(skills: &[Skill], lines: &[(Skill, String)]) -> String {
+    skills.iter().map(|s| format!("{} {}", s.label(), lines.iter().filter(|(k, _)| k == s).count())).collect::<Vec<_>>().join(", ")
 }
 
 /// "coding, writing"
