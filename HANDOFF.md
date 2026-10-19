@@ -1381,7 +1381,7 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   | Copy | File | Card (dedicated) | Shared | Step | Card total |
   |---|---|---|---|---|---|
   | Q4_0 | 2.37 GB | 7,954 MB, flat for all 19 steps | 660 MB, flat | 13 s (two compiles were running) | 9,354 of 12,227 MB |
-  | Q8_0 | 4.28 GB | 9,776 MB, then +1.1 GB asked for at step 8 | 741 → 1,770 MB at step 8 | 5.5 s | 12,087 of 12,227 MB at step 8 |
+  | Q8_0 | 4.28 GB | 9,776 MB, then 9,850 at step 8 | 741 → 1,770 MB at step 8 | 5.5 s | 11,174, then 12,087 of 12,227 MB at step 8 |
 
   The shared 0.66-0.74 GB is there from the first step in both: it's part of how the trainer works, not a spill.
 - **Going over the card's memory can reset the graphics driver.** The Q8_0 run above took the card to 12,087 of 12,227 MB at step 8. Two seconds later the NVIDIA driver reset (System log: nvlddmkm event 153, four times, 07:59:16-20). The trainer crashed with 0xC0000409 at 07:59:22 (Application log 1000, ucrtbase), with nothing in its own log. The NVIDIA overlay was then left as a black always-on-top layer over his main monitor until it was restarted. So the app runs that "crashed at step 8" were very likely this same driver reset. **Never run a training (or a test of one) that can take the card within 1 GB of full.**
@@ -1403,6 +1403,20 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - Three steps in a row more than 4 times the usual one log "Training slowed from about 7 s a step to 37 s…" and show the short-of-memory line.
   - A trainer that quits after some steps worked gives "The trainer quit partway through, most likely because the graphics card ran out of memory…" (`TRAINER_QUIT`). The raw error goes to the app log.
   - A gap of more than 30 s between looks means the PC slept with the trainer paused, so the wait starts again.
+  - **The card is watched too** (`CardWatch`, every 2 s). It reads the whole card's use and the trainer's own, on the card and in shared memory (`perf::process_card_memory` with the pid that `run_watched` now passes).
+    - Each rise of 256 MB or more is logged with whose it was: "During training the graphics card's use rose from … to …; the trainer's own went from … to …".
+    - When the card comes within 0.5 GB of the size Windows reports for it (11,921 MB on his card; nvidia-smi says 12,227), the run stops with `NO_ROOM` before the driver can reset.
+- **The late jump** (code-teacher's in-app run, Q4_0 copy, 18 lines, 2 rounds): the card total held 9,476-9,528 MB through round 1. In round 2, at steps 3-7 (the trainer's own log ends at step 6), it went to 9,916 MB and then 11,461 MB, with step times unchanged. Their watcher stopped it. Data: `C:\dev\tools\yourcode-run\jump-data\`. What the trainer's source (QVAC b7349) says:
+  - Every example is padded to the window (`common_opt_sft_dataset_init`: `sample_tokens.resize(ne_datapoint, pad_token)`). Each round walks the examples in the same order, with no shuffle (`llama_context::opt_epoch`). So every training step builds the same graph with the same shapes. A longer line can't grow anything, and round 2's step 7 had already run in round 1 without a jump.
+  - ggml-opt rebuilds the graph each step (`opt_epoch_iter`, `ggml_opt_alloc`). The scheduler's memory planner reallocates only when a graph needs more than it already holds. The only change between rounds is the held-out check (one forward-only step) at the end of round 1.
+  - Checkpoints are saved only every 50 steps (the app's `--checkpoint-save-steps`), so not there.
+  - The loss's labels and masks are each 152K words × 512 tokens of f32 (297 MB each), but they're the same every step.
+
+  So nothing in the trainer's code explains a jump mid-round 2. **Not settled; medium-low confidence either way.** Every reading of a jump so far was of the card's total, except the Q8_0 by-hand run above. There, the trainer's own use rose 1.1 GB (74 MB on the card, the rest in shared memory) while the rest of the card's rose 0.8 GB at the same moment. And 9.7-10.1 GB stayed in use for a few seconds after the trainer died, during the driver reset. The desktop alone has held from 1.2 to 2.7 GB of this card. So the jumps may be the trainer, another program, or both.
+  - Next time it happens, the card-watch log line says whose it was. If it's the trainer, the next things to try are:
+    1. run each round as its own trainer process (`--num-epochs 1`, then `--resume-from` the round's checkpoint), in case the switch to the held-out check and back is the cause;
+    2. or raise `per_weight` for Q4_0 to about 2.0, which would make a 4B need about 9.7 GB + 1 GB and so refuse it on his card.
+  - A by-hand 2-round Q4_0 run on the 4B, sampling the trainer's own memory and killed at the card's total − 1 GB, would settle it in about 8 minutes. Ask first.
 - **Limits of the estimate:** `per_weight` comes from one model. For bigger models, the memory beyond the weights grows more slowly than the weights (activations go with layers × width), so it asks too much for 8B and up: safe, but an 8B on a 16 GB card may be refused when it would just fit. A small model with a big vocabulary (Gemma 3's 262K) may need more per weight than it says.
 - Five new texts, in all six languages: the window's short-of-memory line, and the core's `NO_ROOM`, `TOO_BIG`, `TRAINER_STALLED` and `TRAINER_QUIT`.
 - Tests (`finetune::tests`):
@@ -1415,7 +1429,7 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - the feed-forward activations (3 × 9,728 wide per token);
   - the 152K-word logits and their gradients.
 
-  The LoRA and its optimizer are small (45.6 MB adapter). Q8_0 alone then asks for 1.1 GB more at step 8, probably a buffer for using its weights the other way round in the backward pass; Q4_0 never did.
+  The LoRA and its optimizer are small (45.6 MB adapter).
 - **No safe lever in the trainer's options** (QVAC b7349, read from its help text): no gradient checkpointing, no 16-bit activations, no training of only the last layers. `--lora-modules` only adds trainable weights. `-ub` below `-c` crashes it. A shorter window cuts the activations but drops the 512-token examples practice is built around. So on a 12 GB card a 4B trains on Q4_0.
   - Tried 2026-10-19 (he said "Run your experiments"; same 20 lines as the table above, killed if the card came within 1 GB of full; no driver events):
     - `-fa on` doesn't train. The trainer stops before its first step with "ggml_compute_backward: unsupported ggml op for backward pass: FLASH_ATTN_EXT". So the attention matrices can't be saved this way.

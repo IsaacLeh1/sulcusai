@@ -44,7 +44,7 @@ fn is_error_line(l: &str) -> bool {
 }
 
 pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str)) -> Result<(), String> {
-    run_watched(r, cancel, |line| {
+    run_watched(r, cancel, |line, _| {
         if let Some(l) = line {
             on_line(l);
         }
@@ -54,9 +54,10 @@ pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str))
 }
 
 /// `run`, with a watcher that sees each line and is also called every
-/// quarter second while the program is quiet (`None`). When it gives a
-/// reason, the program is stopped and the run fails with that reason.
-pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>) -> Option<String>) -> Result<(), String> {
+/// quarter second while the program is quiet (`None`), with the program's
+/// process id. When it gives a reason, the program is stopped and the run
+/// fails with that reason.
+pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>, u32) -> Option<String>) -> Result<(), String> {
     let mut cmd = Command::new(r.exe);
     cmd.args(&r.args).current_dir(r.cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(windows)]
@@ -68,6 +69,7 @@ pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(
     crate::engine::tie_to_app(&mut cmd);
     crate::engine::prefer_dedicated(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("Couldn't start {}: {e}", r.exe.file_name().unwrap_or_default().to_string_lossy()))?;
+    let pid = child.id().unwrap_or(0);
     #[cfg(windows)]
     if let (Some(job), Some(pid)) = (r.job, child.id()) {
         job.assign(pid).ok();
@@ -126,11 +128,11 @@ pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(
                     if last.len() > 6 {
                         last.remove(0);
                     }
-                    watch(Some(&l))
+                    watch(Some(&l), pid)
                 }
                 None => break,
             },
-            _ = tokio::time::sleep(Duration::from_millis(250)) => watch(None),
+            _ = tokio::time::sleep(Duration::from_millis(250)) => watch(None, pid),
         };
         if let Some(why) = why {
             child.start_kill().ok();
