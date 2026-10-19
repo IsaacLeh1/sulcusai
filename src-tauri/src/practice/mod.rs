@@ -977,6 +977,20 @@ mod tests {
         assert!(!got_right(&task, &a), "the student's own reply is read as written");
         assert!(teacher_right(&task, &Attempt { text: written.replace("25,", "30,"), cut: false, all: None }).is_none(), "a wrong call is still wrong");
         assert!(teacher_right(&task, &Attempt { text: written.into(), cut: true, all: None }).is_none());
+        // Its real replies to regular tool tasks (2026-10-19): the call in <tools> tags.
+        let real = "<tools>\n{\n  \"name\": \"set_timer\",\n  \"arguments\": {\n    \"minutes\": 25,\n    \"label\": \"pasta\"\n  }\n}\n</tools>";
+        let r = teacher_right(&task, &Attempt { text: real.into(), cut: false, all: None }).expect("its real reply");
+        assert_eq!((r.calls[0].0.as_str(), r.text.as_str()), ("set_timer", ""));
+        let get_weather = json!({ "type": "function", "function": { "name": "get_weather", "parameters": { "type": "object", "properties": { "city": { "type": "string" } } } } });
+        let weather = Task {
+            skill: Skill::Tools,
+            level: 1,
+            user: "Is it cold in Oslo at the moment?".into(),
+            tools: Some(json!([get_weather])),
+            check: tasks::Check::Call { name: "get_weather".into(), args: vec![("city".into(), tasks::Arg::Has(vec!["Oslo".into()]))] },
+        };
+        let oslo = "<tools>\n{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Oslo\"}}\n</tools>";
+        assert!(teacher_right(&weather, &Attempt { text: oslo.into(), cut: false, all: None }).is_some());
     }
 
     /// A teacher's tool calls, laid out by the student's template, come out
