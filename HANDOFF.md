@@ -1410,7 +1410,18 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - `the_training_format_fits_the_free_card_memory`, which covers his card with 1.4 GB or 5.4 GB taken, 16 GB cards, 1.7B and 8B models, Q4_0/Q8_0/F16 files and no card;
   - `a_model_too_big_for_the_card_is_refused_at_the_start`;
   - `a_stalled_trainer_is_stopped`, `a_slowed_trainer_is_flagged` (the 7 → 37 s run) and `sleep_is_not_a_stall`.
-- Live check of a whole 4B practice run: not done yet. The card was put on hold after the driver reset.
+- **What the 5.6 GB beyond the weights is, and why Q8_0 can't fit a 4B on 12 GB.** Take the copy away and both runs hold exactly the same: Q4_0 7,954 − 2,260 MB and Q8_0 9,776 − 4,082 MB are both 5,694 MB. So it doesn't depend on the format. It's what a 512-token step keeps for the backward pass, all in 32-bit floats:
+  - the attention matrices (32 heads × 512 × 512 per layer, 32 MB each, ×36 layers), materialised because training runs with flash attention off (`-fa off` since the first version, with no reason recorded);
+  - the feed-forward activations (3 × 9,728 wide per token);
+  - the 152K-word logits and their gradients.
+
+  The LoRA and its optimizer are small (45.6 MB adapter). Q8_0 alone then asks for 1.1 GB more at step 8, probably a buffer for using its weights the other way round in the backward pass; Q4_0 never did.
+- **No safe lever in the trainer's options** (QVAC b7349, read from its help text): no gradient checkpointing, no 16-bit activations, no training of only the last layers. `--lora-modules` only adds trainable weights. `-ub` below `-c` crashes it. A shorter window cuts the activations but drops the 512-token examples practice is built around. So on a 12 GB card a 4B trains on Q4_0.
+  - Tried 2026-10-19 (he said "Run your experiments"; same 20 lines as the table above, killed if the card came within 1 GB of full; no driver events):
+    - `-fa on` doesn't train. The trainer stops before its first step with "ggml_compute_backward: unsupported ggml op for backward pass: FLASH_ATTN_EXT". So the attention matrices can't be saved this way.
+    - A Q5_1 copy (3.05 GB) trains, but on the processor: 80 s a step, with the card idle at 37-40 °C (Q4_0 13 s, Q8_0 5.5 s). Its memory is as the estimate says: 8,603 MB on the card (2,909 MB of weights plus the same 5,694 MB) and 660 MB shared. It's faithful: the step-2 loss was 5.348, against 5.335 for Q8_0 and 5.401 for Q4_0. But it's 6 times slower than Q4_0, so not used.
+  - So on a 12 GB card a 4B trains on Q4_0. Q8_0's quality there would need a trainer with gradient checkpointing, or flash attention with a backward pass.
+- Live check of a whole 4B practice run: the coordinating session had code-teacher's and perskill's practice runs (after merging this branch) stand in for a separate one.
 
 ## Website (2026-10-12)
 

@@ -248,6 +248,38 @@ fn got_right(task: &Task, a: &Attempt) -> bool {
     !a.cut && tokio::task::block_in_place(|| tasks::read(&a.text).is_some_and(|r| tasks::passes(task, &r)))
 }
 
+/// A reply without tool calls, with the first call written into its text
+/// (for a tool that was offered) taken out and made a call, the way chats
+/// run it (`chat::salvage`). qwen2.5-coder, for one, writes its calls as a
+/// ```json block with "name" and "arguments" instead of the tool-call form.
+/// Only for a teacher: its calls are written out again in the student's
+/// form, while the student's own replies are learnt as written.
+fn rescued(reply: Reply, tools: &Value) -> Reply {
+    if !reply.calls.is_empty() {
+        return reply;
+    }
+    let offered: Vec<String> = tools.as_array().into_iter().flatten().filter_map(|d| d["function"]["name"].as_str().map(str::to_string)).collect();
+    let (calls, before) = crate::chat::salvage(&reply.text, &offered);
+    match calls.into_iter().next() {
+        Some(c) => Reply { text: before, calls: vec![(c.name, serde_json::from_str(&c.arguments).unwrap_or_else(|_| json!({})))] },
+        None => reply,
+    }
+}
+
+/// A teacher's reply that gets the task right, read (its thinking left out,
+/// a call written as text made a call).
+fn teacher_right(task: &Task, a: &Attempt) -> Option<Reply> {
+    if a.cut {
+        return None;
+    }
+    let reply = tasks::read(&a.text)?;
+    let reply = match &task.tools {
+        Some(tools) => rescued(reply, tools),
+        None => reply,
+    };
+    tokio::task::block_in_place(|| tasks::passes(task, &reply)).then_some(reply)
+}
+
 /// Moves the progress bar through `span` of the whole job.
 fn step(app: &AppHandle, span: (f64, f64), done: usize, total: usize) {
     update(app, |j| {
@@ -408,20 +440,20 @@ async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelS
             let mut right = None;
             for temperature in TEACHER_TRIES {
                 let a = teacher.reply(&prompt, max, temperature, rng.next()).await?;
-                if got_right(task, &a) {
-                    right = Some(a.text);
+                right = teacher_right(task, &a);
+                if right.is_some() {
                     break;
                 }
             }
             if right.is_none() {
                 if let Some(answer) = task.hint() {
                     let a = teacher.reply(&teacher.prompt(task, Some(&answer)).await?, max, 0.6, rng.next()).await?;
-                    if got_right(task, &a) && !told(&a.text) {
-                        right = Some(a.text);
+                    if !told(&a.text) {
+                        right = teacher_right(task, &a);
                     }
                 }
             }
-            if let Some(reply) = right.and_then(|text| tasks::read(&text)) {
+            if let Some(reply) = right {
                 answers.push((i, Answer::Said(reply)));
             }
         }
@@ -1203,6 +1235,29 @@ mod tests {
         assert!(v["messages"][1]["content"].as_str().unwrap().ends_with("Hello!<end_of_turn>\n"));
 
         assert!(example("", "### User: hi\n### Assistant:", "x").is_none(), "other chat formats can't be trained");
+    }
+
+    /// qwen2.5-coder 14B writes a call as a ```json block: from a teacher,
+    /// that's the call it meant (and it's checked as one); the student's own
+    /// replies are still read as written.
+    #[test]
+    fn a_teachers_call_written_as_text_is_read() {
+        let set_timer = json!({ "type": "function", "function": { "name": "set_timer", "parameters": { "type": "object", "properties": { "minutes": { "type": "integer" }, "label": { "type": "string" } } } } });
+        let task = Task {
+            skill: Skill::Tools,
+            level: 1,
+            user: "Set a timer for 25 minutes for the pasta.".into(),
+            tools: Some(json!([set_timer])),
+            check: tasks::Check::Call { name: "set_timer".into(), args: vec![("minutes".into(), tasks::Arg::Number(25.0))] },
+        };
+        let written = "To set a timer for 25 minutes for the pasta, I will use the `set_timer` function.\n\n```json\n{\n  \"name\": \"set_timer\",\n  \"arguments\": {\n    \"minutes\": 25,\n    \"label\": \"pasta\"\n  }\n}\n```";
+        let a = Attempt { text: written.into(), cut: false, all: None };
+        let r = teacher_right(&task, &a).expect("the call it meant");
+        assert_eq!(r.calls, vec![("set_timer".to_string(), json!({ "minutes": 25, "label": "pasta" }))]);
+        assert_eq!(r.text, "To set a timer for 25 minutes for the pasta, I will use the `set_timer` function.");
+        assert!(!got_right(&task, &a), "the student's own reply is read as written");
+        assert!(teacher_right(&task, &Attempt { text: written.replace("25,", "30,"), cut: false, all: None }).is_none(), "a wrong call is still wrong");
+        assert!(teacher_right(&task, &Attempt { text: written.into(), cut: true, all: None }).is_none());
     }
 
     /// A teacher's tool calls, laid out by the student's template, come out
