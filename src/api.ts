@@ -1246,11 +1246,69 @@ export interface MailItem {
   body: string;
   attachments: string[];
   partial: boolean;
+  /** When the user marked it read with the button (it's under Marked read). */
+  marked_at: number | null;
+  /** List-Unsubscribe targets (mailto: and https:). */
+  unsubscribe: string[];
+  one_click: boolean;
+  list_id: string;
+  list_name: string;
+}
+
+export type MailCategory = "needs reply" | "to-do" | "work" | "personal" | "bills" | "travel" | "updates" | "newsletters" | "promotions" | "social";
+
+/** How to leave a mailing list. */
+export interface Unsub {
+  key: string;
+  method: "one_click" | "email" | "link" | "none";
+  /** For "email": where the unsubscribe email goes, and its subject. */
+  email_to: string;
+  email_subject: string;
+  unsubscribed: { at: number; method: string } | null;
+}
+
+/** A list or bulk sender in the inbox. */
+export interface Subscription extends Unsub {
+  account_id: string;
+  name: string;
+  address: string;
+  list_id: string;
+  count: number;
+  latest: number;
+  /** Its mail still in the inbox. */
+  inbox_ids: string[];
+}
+
+export interface UnsubscribeResult {
+  key: string;
+  method: "one_click" | "email" | "link";
+  at: number;
+  /** For "link": the page to open in the browser. */
+  url: string;
+  /** For "link" after the one-click request failed. */
+  problem: string;
+  to: string;
+  subject: string;
+}
+
+/** An event read out of an email, for the calendar form. */
+export interface EventDraft {
+  title: string;
+  /** YYYY-MM-DD */
+  date: string;
+  /** HH:MM, or "" when not known. */
+  start: string;
+  end: string;
+  all_day: boolean;
+  location: string;
+  notes: string;
+  source: "ai" | "text" | "none";
 }
 
 /** One message in the AI's sorting report. */
 export interface TriageItem {
   id: string;
+  account_id: string;
   from: string;
   from_name: string;
   subject: string;
@@ -1261,6 +1319,10 @@ export interface TriageItem {
   marked_read: boolean;
   reason: string;
   next: "reply" | "calendar" | "pay" | "review" | "read later" | "none";
+  category: MailCategory;
+  /** Needs a reply from a person, with none sent after a day. */
+  missed: boolean;
+  unsubscribe: Unsub | null;
 }
 
 export interface TriageReport {
@@ -2108,7 +2170,11 @@ export const api = {
   mailTriageReport: () => invoke<TriageReport>("mail_triage_report"),
   mailTriageUndo: (ids: string[]) => invoke<void>("mail_triage_undo", { ids }),
   setMailAutoSort: (on: boolean) => invoke<void>("set_mail_auto_sort", { on }),
-  mailAction: (ids: string[], action: "seen" | "unseen" | "archive" | "trash") => invoke<void>("mail_action", { ids, action }),
+  /** "mark_read" is the mark-read button: read, and listed under Marked read. */
+  mailAction: (ids: string[], action: "seen" | "unseen" | "archive" | "trash" | "mark_read") => invoke<void>("mail_action", { ids, action }),
+  mailSubscriptions: () => invoke<Subscription[]>("mail_subscriptions"),
+  mailUnsubscribe: (key: string) => invoke<UnsubscribeResult>("mail_unsubscribe", { key }),
+  mailEventDraft: (id: string) => invoke<EventDraft>("mail_event_draft", { id }),
   setUiLanguage: (code: string) => invoke<void>("set_ui_language", { code }),
   sendMail: (accountId: string, draft: MailDraft) => invoke<void>("send_mail", { accountId, draft }),
   calendarPresets: () => invoke<{ name: string; url: string; note: string }[]>("calendar_presets"),
