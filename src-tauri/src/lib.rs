@@ -835,6 +835,14 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     // advanced mode or a GPU share set: those are kept as they are.
     let mut kv_q8 = false;
     if e.ctx.is_none() && e.gpu_layers.is_none() && limits.gpu_share >= 1.0 {
+        // A card too small for this window: the compressed cache or a
+        // smaller window still gets some of the model on it, rather than
+        // all on the processor.
+        if layers == 0 {
+            if let Some((c, l, q8)) = catalog::on_small_card(spec, quant, &budget.with_limits(&limits), ctx, chosen.is_none()) {
+                (ctx, layers, kv_q8) = (c, l, q8);
+            }
+        }
         if let Some((c, l)) = catalog::with_q8_cache(spec, quant, &budget.with_limits(&limits), ctx, layers, chosen.is_none()) {
             (ctx, layers, kv_q8) = (c.min(limits.max_ctx), l, true);
         }

@@ -422,6 +422,40 @@ pub fn with_q8_cache(model: &ModelSpec, quant: &str, b: &Budget, ctx: u32, layer
     }
 }
 
+/// The smallest window `on_small_card` goes down to: the app's own
+/// instructions and a few messages still fit.
+pub const SMALL_CTX: u32 = 4096;
+
+/// A card too small for the model at this window (2 to 4 GB cards: the
+/// cache and work buffers alone fill it), so nothing would go on it. Rather
+/// than the processor alone (slow, and hot on a laptop), the largest window
+/// down to `SMALL_CTX` that puts some layers on the card: the compressed
+/// cache first at the same window, then smaller windows with the normal
+/// cache or else the compressed one. `shrink`: the window may get smaller
+/// (not when the person chose it). Returns the window, the layers and
+/// whether the cache is compressed; None when the card can't take any.
+pub fn on_small_card(model: &ModelSpec, quant: &str, b: &Budget, ctx: u32, shrink: bool) -> Option<(u32, u32, bool)> {
+    let v = model.variant(quant)?;
+    if b.vram == 0 {
+        return None;
+    }
+    let some = |c: u32, q8: bool| {
+        let f = fit_with(model, v, c, b, q8);
+        (f.placement.is_some() && f.gpu_layers > 0).then_some((c, f.gpu_layers, q8))
+    };
+    if let Some(found) = some(ctx, false).or_else(|| some(ctx, true)) {
+        return Some(found);
+    }
+    let mut c = ctx;
+    while shrink && c / 2 >= SMALL_CTX {
+        c /= 2;
+        if let Some(found) = some(c, false).or_else(|| some(c, true)) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 pub fn fit_variant(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget) -> VariantFit {
     fit_with(model, v, ctx, b, false)
 }
@@ -432,15 +466,20 @@ fn fit_with(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget, q8: bool) -> V
     let per_token = v.size as f64 * model.arch.active_fraction;
     let all_layers = model.arch.n_layer + 1; // +1 offloads the output layer too
 
-    let (placement, est_tps, gpu_layers) = if b.vram > 0 && needed <= b.vram {
-        (Some(Placement::Gpu), tps(per_token, b.gpu_bw_gbs), all_layers)
-    } else if b.vram > 0 && needed <= b.vram + b.ram {
-        // KV cache and buffers stay on the GPU; weights fill what is left.
+    // KV cache and buffers stay on the GPU; weights fill what is left. No
+    // whole layer left for the card (a small card, a long window): that's
+    // the processor alone, which needs all of it in system memory.
+    let split_layers = || {
         let gpu_weights = b.vram.saturating_sub(kv + RUNTIME_OVERHEAD) as f64;
         let frac = (gpu_weights / v.size as f64).clamp(0.0, 1.0);
+        ((model.arch.n_layer as f64 * frac).floor() as u32, frac)
+    };
+    let (placement, est_tps, gpu_layers) = if b.vram > 0 && needed <= b.vram {
+        (Some(Placement::Gpu), tps(per_token, b.gpu_bw_gbs), all_layers)
+    } else if b.vram > 0 && needed <= b.vram + b.ram && split_layers().0 > 0 {
+        let (layers, frac) = split_layers();
         let secs = per_token * frac / (BANDWIDTH_EFFICIENCY * b.gpu_bw_gbs * 1e9)
             + per_token * (1.0 - frac) / (BANDWIDTH_EFFICIENCY * b.cpu_bw_gbs * 1e9);
-        let layers = (model.arch.n_layer as f64 * frac).floor() as u32;
         (Some(Placement::Split), if secs > 0.0 { 1.0 / secs } else { 0.0 }, layers)
     } else if needed <= b.ram {
         (Some(Placement::Cpu), tps(per_token, b.cpu_bw_gbs), 0)
@@ -471,11 +510,16 @@ pub fn fit_model(model: &ModelSpec, b: &Budget) -> ModelFit {
 
 /// Context size and GPU layers to launch with. The catalog filter uses the
 /// default context; at launch, a larger window is used if the model still
-/// fits the same way (agent work needs room for tool output).
+/// fits the same way (agent work needs room for tool output). Not for a
+/// model on the processor alone: a bigger window there only makes the
+/// slower, hotter processor read longer prompts (as with the GPU limit off).
 pub fn launch_settings(model: &ModelSpec, quant: &str, b: &Budget) -> (u32, u32) {
     let base = fit_model(model, b);
     let Some(variant) = model.variant(quant) else { return (base.ctx, 0) };
     let base_fit = fit_variant(model, variant, base.ctx, b);
+    if base_fit.gpu_layers == 0 {
+        return (base.ctx, 0);
+    }
     for ctx in [32_768u32, 16_384] {
         if ctx > model.arch.max_ctx || ctx <= base.ctx {
             continue;
@@ -899,6 +943,54 @@ mod tests {
         // Never beyond what the model supports.
         let coder = c.model("qwen2.5-coder-7b").unwrap();
         assert!(launch_settings(coder, "Q4_K_M", &budget(20, 64)).0 <= coder.arch.max_ctx);
+    }
+
+    /// A 2 GB card (an MX450 beside Intel graphics): the cache and work
+    /// buffers fill it, so no layer fits. That used to read "Split" with 0
+    /// layers, and the window then grew to 32K on the processor.
+    #[test]
+    fn a_card_with_room_for_no_layer_is_the_processor() {
+        let c = catalog();
+        let m = c.model("qwen3-8b").unwrap();
+        let v = m.variant("Q4_K_M").unwrap();
+        let card = |mib: u64| Budget { vram: mib * MIB, gpu_bw_gbs: 150.0, ..budget(0, 16) };
+        let two_gb = card(1536);
+        let f = fit_variant(m, v, 8192, &two_gb);
+        assert_eq!((f.placement, f.gpu_layers), (Some(Placement::Cpu), 0));
+        assert_eq!(fit_model(m, &two_gb).variant("Q4_K_M").unwrap().placement, Some(Placement::Cpu));
+        // On the processor the window stays at the default, card or not.
+        assert_eq!(launch_settings(m, "Q4_K_M", &two_gb), (8192, 0));
+        assert_eq!(launch_settings(m, "Q4_K_M", &budget(0, 16)), (8192, 0));
+        // Not enough system memory either: it doesn't run at all.
+        assert_eq!(fit_variant(m, v, 8192, &Budget { ram: 4 * GIB, ..two_gb }).placement, None);
+        // A card with room for some layers is still a split.
+        let four_gb = card(3584);
+        let f = fit_variant(m, v, 8192, &four_gb);
+        assert!(f.placement == Some(Placement::Split) && f.gpu_layers > 0, "{f:?}");
+    }
+
+    /// Before giving up on a small card: the compressed cache at the same
+    /// window, then a smaller window, still put some of the model on it.
+    #[test]
+    fn a_small_card_gets_the_compressed_cache_or_a_smaller_window() {
+        let c = catalog();
+        let m = c.model("qwen3-8b").unwrap();
+        let v = m.variant("Q4_K_M").unwrap();
+        let card = |bytes: u64| Budget { vram: bytes, gpu_bw_gbs: 150.0, ..budget(0, 16) };
+        // Room for the compressed 8K cache and a few layers.
+        let some = card(kv_cache_bytes_q8(&m.arch, 8192) + RUNTIME_OVERHEAD + v.size / 10);
+        assert_eq!(fit_variant(m, v, 8192, &some).gpu_layers, 0);
+        let (ctx, layers, q8) = on_small_card(m, "Q4_K_M", &some, 8192, true).expect("some layers");
+        assert!(ctx == 8192 && layers > 0 && q8, "{ctx} {layers} {q8}");
+        // Room only at a 4K window: the window shrinks, unless the person chose it.
+        let tiny = card(kv_cache_bytes_q8(&m.arch, 4096) + RUNTIME_OVERHEAD + v.size / 20);
+        assert!(kv_cache_bytes_q8(&m.arch, 8192) + RUNTIME_OVERHEAD > tiny.vram);
+        let (ctx, layers, _) = on_small_card(m, "Q4_K_M", &tiny, 8192, true).expect("a smaller window");
+        assert!(ctx == SMALL_CTX && layers > 0, "{ctx} {layers}");
+        assert_eq!(on_small_card(m, "Q4_K_M", &tiny, 8192, false), None, "a window he chose stays");
+        // Never below the smallest window, and nothing without a card.
+        assert_eq!(on_small_card(m, "Q4_K_M", &card(RUNTIME_OVERHEAD), 8192, true), None);
+        assert_eq!(on_small_card(m, "Q4_K_M", &budget(0, 16), 8192, true), None);
     }
 
     #[test]
