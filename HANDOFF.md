@@ -1449,6 +1449,55 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - So on a 12 GB card a 4B trains on Q4_0. Q8_0's quality there would need a trainer with gradient checkpointing, or flash attention with a backward pass.
 - Live check of a whole 4B practice run: the coordinating session had code-teacher's and perskill's practice runs (after merging this branch) stand in for a separate one.
 
+## Practice skill by skill (2026-10-19, branch `perskill`)
+
+Why: on Qwen3 4B 2507, one adapter learnt from every skill's right answers nets out to no gain. Last night's teacher run went 35 → 34 of 48: coding +3 and writing +2, but research −4 and tools −2. One skill's gain was cancelled by another's loss, and the whole was thrown away.
+
+- **How practice learns now** (`practice::run`, after practice, the teacher and `top_up`):
+  1. **Each skill on its own.** The lines (each tagged with its task's skill, teacher-stick's `Practised.lines`) are split by skill. Each skill with at least 5 (`MIN_SKILL`) gets its own adapter (`first_tries`), in `adapters/<run id>/<skill>/`. If none has 5, everything is learnt in one, as before.
+  2. **Anchors.** Each try also learns some of the model's own first-try right answers in the skills it doesn't learn (`anchors`, from `Practised.spare`): half as many as its own lines, shared out by `weight` (coding counts twice), never more than are spare. They're the model's own words, so their loss is already low; they hold the other skills in place. (teacher-stick's idea, from the review of the first version.)
+  3. **Each try takes the whole test**, so every skill's before and after is known (`tallies`: right before and after, and how many it newly got right and wrong). The app log gets one line per try: "Practice test for X after learning coding (29 examples, 15 anchors): 35 → 37 of 48 right (coding 8 → 11 of 12 (+3 −0), research 10 → 9 of 12 (+0 −1), …); better".
+  4. **Then together.** The skills whose own adapter went up (`went_up`: that skill +1 or more, the whole test +1 or more, and no skill 3 or more worse) are learnt together in one more try, with anchors from the rest.
+  5. **What may be kept** (`better`):
+     - the skills it learnt get at least 2 (`MARGIN`) more test tasks right together, and none of them gets worse;
+     - the whole test gets at least 2 more right;
+     - no other skill gets more than 2 worse.
+
+     So one skill's gain can't pay for another's loss. Of the tries that are better, the highest score wins; more skills learnt breaks ties.
+  6. **A second test.** The best of up to five tries on one 12-task-a-skill test can win by luck, so the winner (only the winner) takes a second test of new tasks (`second_test`, `SECOND_SEED`), base and adapter. Its tasks are at the same levels, none is in the first test, none appears in any training line or spare answer (matched by the request's JSON text), and none repeats. Coding comes from a fixed set of 50 problems, so a level with no unused problem left is skipped. It's kept only if `better` holds there too.
+  7. The winner's `adapter.gguf` moves to `adapters/<run id>/`, and the other tries' folders go.
+- **One training copy for all tries:** `finetune::prepare` (trainfit's `training_copy`, one plan) makes the copy once, and `Ready::train` runs the trainer from it for each try. The copy is deleted when `Ready` is dropped. `finetune::train` (teaching) is `prepare` plus one `Ready::train`.
+- **What the person sees:**
+  - While learning: "learning coding (1 of 5) · round 1 of 2 · …" (`Job.part`, `part_no`, `parts`).
+  - At the end, skill by skill: "Skill by skill: coding 8 → 11, writing 8 → 9, …" (`Job.skills`), and the second test's numbers (`Job.second`). If the winner fails the second test: "it did better on the test (…), but not on a second test of new tasks (…), so nothing was kept."
+  - A kept adapter lists the skills it learnt with their numbers, and its second test (`Scores.skills` of `SkillScore`, `Scores.second`; older adapters have neither).
+  - The form explains the rule when more than one skill is picked.
+  - 16 new texts in all six languages.
+- Tests (`practice::tests`): `the_test_is_counted_skill_by_skill`, `one_skills_gain_cant_pay_for_anothers_loss` (on last night's numbers), `each_skill_is_learnt_on_its_own_first`, `a_try_holds_the_other_skills_with_anchors`, `the_second_test_is_new_tasks`. `e2e_practice_test` (ignored) runs the practice test by hand against a llama-server, with any seed (`SULCUSAI_SEED`) and skills, and counts what changed against a saved result (`SULCUSAI_OUT`, `SULCUSAI_BEFORE`).
+- **Live run** (Qwen3 4B 2507, teacher qwen2.5-coder:14b; coding, writing, research, tools; 2 rounds, normal; the same settings as last night's 35 → 34 run). Besides the per-skill rule, anchors and the second test, this run differs from last night's in two ways: the teacher's tool calls are now read (code-teacher's rescue; before, every teacher answer to a tool task was lost), and training is on a Q4_0 copy (trainfit's plan; last night's was a Q8_0 that spilled).
+  - **Result (09:50-10:45, run d3c04ee3): kept.** The adapter that learnt writing is "Qwen3 4B Instruct + Practised" in his model menu.
+    - Before: 35 of 48 (coding 8, writing 8, research 10, tools 9), the same as every run.
+    - Practice: 113 of 156 right, 38 kept to learn from. Teacher: 22 of the 39 it missed right (last night 13 of 30), all 22 learnt. Replays (`top_up`): tools 3. So 63 lines: coding 27, writing 12, research 12, tools 12.
+    - The tries, each on the whole 48-task test:
+
+      | Learnt | Lines + anchors | Coding | Writing | Research | Tools | Whole test | Card peak |
+      |---|---|---|---|---|---|---|---|
+      | coding | 27 + 15 | 8 → 8 | 8 → 8 | 10 → 11 | 9 → 7 | 35 → 34 | 9,916 MiB |
+      | **writing** | 12 + 7 | 8 → 8 | **8 → 12** | 10 → 9 | 9 → 10 | **35 → 39, better** | 9,960 MiB |
+      | research | 12 + 7 | 8 → 8 | 8 → 8 | 10 → 11 | 9 → 8 | 35 → 35 | 10,000 MiB |
+      | tools | 12 + 7 | 8 → 8 | 8 → 8 | 10 → 9 | 9 → 9 | 35 → 34 | 10,017 MiB |
+
+      Only writing went up, so there was no together try.
+    - Second test (new tasks, 41 of them: coding only 5, since most unused problems were taken), base → writing adapter: 32 → 35. Coding 5 → 5, writing 9 → 12, research 10 → 10, tools 8 → 8. Better there too, so it was kept.
+    - The writing gain held on tasks it was never picked on: +4 and then +3. The other skills moved by at most one task either way on both tests, which is about the noise of a 12-task skill.
+    - Coding didn't move with its own adapter (8 → 8), although last night's one-adapter teacher run took coding 8 → 11 on a Q8_0 copy. This run trained on Q4_0 (trainfit's plan for a 12 GB card), whose rounding the adapter partly learns to undo. That may be why. Its loss fell from 0.25 to 0.05 (98% of tokens right), so it also memorised.
+    - Training: Q4_0 copy, about 12 s a step, 9.5 GB card total at the start, about +0.4 GB at round 2, then flat. No try came near the late jump code-teacher saw (11.46 GB); the run's peak was 10,017 MiB. The guard (kill the trainer above 11,700 MiB) never fired. The card peaked at 77 °C during practice.
+    - Whole run: 54 minutes (test and practice 4, teacher 8, the four tries 40, second test 1.5).
+  - First attempt (08:58): lost at 09:11, when the app window was closed by mistake seconds after the first adapter's training began. Before that it went the same way: 35 of 48 before, practice 109 of 156 with 43 kept, teacher 21 of 41.
+  - Fixed after the run: the job's progress total was left at the second test's size, so the "done" line would have said "35 → 39 of 41". It's now reset to the first test's 48. The form's new lines were not looked at on screen (only their data, read from the app over DevTools).
+  - Not tried yet: whether coding gains on a Q8_0 copy with the per-skill rule (it needs about 12 GB free: a 16 GB card); and 1 round, or "Lightly", against the memorising.
+  - A try whose training or test fails (the trainer stalls, or an outside guard stops it) is now logged and left out, and the other tries go on (`add_try`). Only stopping the run, or every try failing, ends it.
+
 ## Website (2026-10-12)
 
 `docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.

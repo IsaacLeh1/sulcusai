@@ -97,8 +97,8 @@ export interface TaughtAdapter {
   epochs: number;
   created: number;
   final_loss: number | null;
-  /** Taught by practice: test tasks right before and after. */
-  scores: { before: number; after: number; out_of: number } | null;
+  /** Taught by practice: test tasks right before and after, in all and skill by skill. */
+  scores: { before: number; after: number; out_of: number; skills?: SkillScore[]; second?: SecondTest | null } | null;
   /** Practice with a teacher: the model that answered the tasks it missed. */
   teacher?: string | null;
 }
@@ -122,8 +122,32 @@ export interface FinetuneJob {
   after: number | null;
   /** Practice with a teacher: its name. */
   teacher: string | null;
+  /** Practice learns each skill on its own first: the skills being learnt or tested now, and which try of how many. */
+  part: PracticeSkill[];
+  part_no: number;
+  parts: number;
+  /** Practice, at the end: the test skill by skill, for what was kept (or the best try). */
+  skills: SkillScore[];
+  /** Practice: the second test, of new tasks, of the one it would keep. */
+  second: SecondTest | null;
   /** Training doesn't fit the card's free memory, or has slowed down as if it didn't. */
   low_memory: boolean;
+}
+
+/** Practice's second test, of new tasks, that confirms what's kept: right before and after. */
+export interface SecondTest {
+  before: number;
+  after: number;
+  out_of: number;
+}
+
+/** One skill's test tasks right before and after practice; `learnt`: the adapter learnt from this skill. */
+export interface SkillScore {
+  skill: PracticeSkill;
+  before: number;
+  after: number;
+  out_of: number;
+  learnt: boolean;
 }
 
 export type PracticeSkill = "code" | "writing" | "research" | "math" | "careful" | "time" | "format" | "tools" | "project";
