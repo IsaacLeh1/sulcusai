@@ -1549,6 +1549,10 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.17 (2026-10-19): the agent does the task, graphics card picker, models stay on the card, picture edits, typing help
+
+**Published and installed 2026-10-19**, built from cc2bdbe (main = phase7, tag checked). Notes are in `C:\dev\tools\notes-0917.md`. It carries the sections below down to "Typing help". The prompt coach's core is in, without its Studio button. Both gpt-oss-20b models (stock and huihui-ai's) are in the desktop's models folder, not yet installed in the app: install from Models (stock) and from the Hugging Face link (bartowski's Q4_K_M); both reuse the file.
+
 ## The agent does the task (2026-10-19, for 0.9.17)
 
 His report, running huihui-ai's abliterated gpt-oss-20b at 16K on the RTX 5070: the agent asked permission over and over, didn't find files, and explained a web page's steps instead of doing them. The causes:
