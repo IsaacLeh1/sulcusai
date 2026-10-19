@@ -10,6 +10,12 @@
 //! (read only, in small pieces), the results go back to it, and its final
 //! answer is checked against the scan.
 //!
+//! A teacher (a bigger model on this PC) tries the tasks the student
+//! missed the same way. Its right tries are then written the student's way:
+//! each of its turns laid out by the student's own template, with the same
+//! tool results after it, so the student learns a whole lookup it couldn't
+//! do itself.
+//!
 //! The code itself isn't trained on: a small model would remember it
 //! fuzzily, that memory goes stale as the code changes, and it gets worse
 //! at chatting. Reading the files is exact and current, so what's practised
@@ -28,8 +34,8 @@ use std::sync::{Arc, LazyLock};
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::tasks::{self, Check, Rng, Skill, Task};
-use super::{Attempt, Model};
+use super::tasks::{self, Check, Reply, Rng, Skill, Task};
+use super::{Attempt, Model, Turn, TURNS};
 use crate::sandbox::Sandbox;
 use crate::tools::fs::walk_files;
 
@@ -1182,7 +1188,27 @@ async fn layout(model: &Model, messages: &[Value], tools: &Value) -> Result<Stri
 /// written, and taking what follows it), so the trainer finds every one of
 /// its turns.
 pub(super) async fn episode(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32, temperature: f64, seed: u64) -> Result<Attempt, String> {
+    Ok(tried(model, task, look, prompt, room, temperature, seed).await?.0)
+}
+
+/// A turn of a try with tool calls: what the model said (its thinking left
+/// out) and the results its calls got.
+pub(super) struct Round {
+    reply: Reply,
+    results: Vec<String>,
+}
+
+/// A teacher's right try, to be written the student's way.
+pub(super) struct Looked {
+    rounds: Vec<Round>,
+    /// Its last turn: the answer.
+    answer: String,
+}
+
+/// The try, and its turns with tool calls.
+async fn tried(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32, temperature: f64, seed: u64) -> Result<(Attempt, Vec<Round>), String> {
     let tools = task.tools.clone().unwrap_or_else(definitions);
+    let mut rounds = Vec::new();
     let mut messages = vec![json!({ "role": "system", "content": tasks::SYSTEM }), json!({ "role": "user", "content": task.user })];
     let t = &look.code.tally;
     let count = |n: &AtomicU32| n.fetch_add(1, Ordering::Relaxed);
@@ -1199,18 +1225,18 @@ pub(super) async fn episode(model: &Model, task: &Task, look: &Look, prompt: &st
     for round in 0..ROUNDS {
         let left = limit.saturating_sub(model.tokens(&text).await?);
         if left < 16 {
-            return Ok(gave_up(String::new(), &t.no_room));
+            return Ok((gave_up(String::new(), &t.no_room), rounds));
         }
         let a = model.reply(&text, left.min(TURN), temperature, seed.wrapping_add(round as u64 * 7919)).await?;
         if a.cut {
-            return Ok(gave_up(a.text, &t.no_room));
+            return Ok((gave_up(a.text, &t.no_room), rounds));
         }
-        let Some(reply) = tasks::read(&a.text) else { return Ok(gave_up(a.text, &t.lost)) };
+        let Some(reply) = tasks::read(&a.text) else { return Ok((gave_up(a.text, &t.lost), rounds)) };
         if reply.calls.is_empty() {
             // An answer given without looking is a guess, which isn't what's practised.
             count(if looked { &t.answered } else { &t.guessed });
             let all = format!("{}{}", &text[prompt.len()..], a.text);
-            return Ok(Attempt { text: a.text, cut: !looked, all: Some(all) });
+            return Ok((Attempt { text: a.text, cut: !looked, all: Some(all) }, rounds));
         }
         t.calls.fetch_add(reply.calls.len() as u32, Ordering::Relaxed);
         let results: Vec<String> = tokio::task::block_in_place(|| {
@@ -1233,8 +1259,73 @@ pub(super) async fn episode(model: &Model, task: &Task, look: &Look, prompt: &st
         text.push_str(tail);
         // Later layouts show this turn as it was written.
         messages[at]["content"] = json!(a.text);
+        rounds.push(Round { reply, results });
     }
-    Ok(gave_up(String::new(), &t.lost))
+    Ok((gave_up(String::new(), &t.lost), rounds))
+}
+
+/// The teacher's tries at a task about the person's code, as the student's
+/// were (each a whole try with its tool calls carried out), at each of
+/// `temperatures` until one is right. `room`: the tokens it may use after
+/// its request.
+pub(super) async fn teach(teacher: &Model, task: &Task, look: &Look, room: u32, temperatures: &[f64], rng: &mut Rng) -> Result<Option<Looked>, String> {
+    let prompt = teacher.prompt(task, None).await?;
+    for temperature in temperatures {
+        let (a, rounds) = tried(teacher, task, look, &prompt, room, *temperature, rng.next()).await?;
+        let answer = if a.cut { None } else { tasks::read(&a.text).filter(|r| tasks::passes(task, r)) };
+        if let Some(answer) = answer {
+            return Ok(Some(Looked { rounds, answer: answer.text }));
+        }
+    }
+    Ok(None)
+}
+
+/// Where a layout's latest turn of the model's begins, the generation
+/// prompt at its end left aside: just past that turn's start, and past an
+/// empty thinking block the template may write in it (the request already
+/// ends with one when the model has thinking).
+fn last_turn<'a>(laid: &'a str, turn: &Turn) -> Option<&'a str> {
+    let starts: Vec<usize> = laid.match_indices(turn.start).map(|(i, _)| i).collect();
+    let at = starts.len().checked_sub(2).map(|k| starts[k] + turn.start.len())?;
+    let piece = &laid[at..];
+    Some(match piece.strip_prefix("<think>").and_then(|p| p.find("</think>").map(|i| &p[i + "</think>".len()..])) {
+        Some(rest) => rest.trim_start_matches('\n'),
+        None => piece,
+    })
+}
+
+/// A teacher's right try in the student's own words: each of its turns as
+/// the student's template writes it (its tool calls in the student's form),
+/// the same tool results laid out after each the student's way, then its
+/// answer. `prompt`: the request as the student's template laid it out;
+/// `room`: the tokens a training example has left after it. The text after
+/// the request, or none when written that way it's no longer right or
+/// doesn't fit.
+pub(super) async fn in_students_words(student: &Model, task: &Task, prompt: &str, room: u32, taught: &Looked) -> Result<Option<String>, String> {
+    let Some(turn) = TURNS.iter().find(|t| prompt.contains(t.start)) else { return Ok(None) };
+    let looked = taught.rounds.iter().any(|r| r.results.iter().any(|x| !x.starts_with("Error:")));
+    let right = tasks::read(&taught.answer).is_some_and(|r| tasks::passes(task, &r));
+    if !looked || !right {
+        return Ok(None);
+    }
+    let tools = task.tools.clone().unwrap_or_else(definitions);
+    let mut messages = vec![json!({ "role": "system", "content": tasks::SYSTEM }), json!({ "role": "user", "content": task.user })];
+    let mut text = String::new();
+    for (k, round) in taught.rounds.iter().enumerate() {
+        let calls: Vec<Value> = round.reply.calls.iter().enumerate().map(|(i, (name, args))| json!({ "id": format!("call_{k}_{i}"), "type": "function", "function": { "name": name, "arguments": args.to_string() } })).collect();
+        messages.push(json!({ "role": "assistant", "content": round.reply.text, "tool_calls": calls }));
+        for (i, r) in round.results.iter().enumerate() {
+            messages.push(json!({ "role": "tool", "tool_call_id": format!("call_{k}_{i}"), "content": r }));
+        }
+        let laid = layout(student, &messages, &tools).await?;
+        let Some(piece) = last_turn(&laid, turn) else { return Ok(None) };
+        text.push_str(piece);
+    }
+    text.push_str(&taught.answer);
+    if student.tokens(&format!("{prompt}{text}")).await? > student.tokens(prompt).await? + room {
+        return Ok(None);
+    }
+    Ok(Some(text))
 }
 
 #[cfg(test)]
@@ -1624,6 +1715,67 @@ class Exporter:
             right.push(ok);
         }
         println!("\n{} of {} right; {}", right.iter().filter(|r| **r).count(), right.len(), code.tally());
+    }
+
+    /// A teacher's turn is taken from the student's layout of the
+    /// conversation: from its latest turn (not the generation prompt at the
+    /// end) to the end, any empty thinking block left out.
+    #[test]
+    fn a_turn_is_taken_from_the_students_layout() {
+        let chatml = &super::super::TURNS[0];
+        // As Qwen3 4B 2507's template lays out a try after its first round.
+        let head = "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\nWhich file defines `x`?<|im_end|>\n<|im_start|>assistant\n";
+        let call = "<tool_call>\n{\"name\": \"search_files\", \"arguments\": {\"pattern\": \"fn x\"}}\n</tool_call>";
+        let after = "<|im_end|>\n<|im_start|>user\n<tool_response>\nproj/src/a.rs:3: fn x() {\n</tool_response><|im_end|>\n<|im_start|>assistant\n";
+        let laid = format!("{head}{call}{after}");
+        assert_eq!(last_turn(&laid, chatml).unwrap(), format!("{call}{after}"));
+        // A template that writes an empty thinking block into the turn.
+        let thinking = format!("{head}<think>\n\n</think>\n\n{call}{after}");
+        assert_eq!(last_turn(&thinking, chatml).unwrap(), format!("{call}{after}"));
+        // After a second round, only the latest turn: the pieces join up.
+        let second = "<tool_call>\n{\"name\": \"read_file\", \"arguments\": {\"path\": \"proj/src/a.rs\"}}\n</tool_call>";
+        let after2 = "<|im_end|>\n<|im_start|>user\n<tool_response>\n    3\tfn x() {\n</tool_response><|im_end|>\n<|im_start|>assistant\n";
+        let laid2 = format!("{laid}{second}{after2}");
+        let joined = format!("{head}{}{}", last_turn(&laid, chatml).unwrap(), last_turn(&laid2, chatml).unwrap());
+        assert_eq!(joined, laid2);
+        assert!(last_turn(head, chatml).is_none(), "no turn of the model's yet");
+        let gemma = &super::super::TURNS[1];
+        let g = "<start_of_turn>user\nq<end_of_turn>\n<start_of_turn>model\nlooking<end_of_turn>\n<start_of_turn>user\nresult<end_of_turn>\n<start_of_turn>model\n";
+        assert_eq!(last_turn(g, gemma).unwrap(), "looking<end_of_turn>\n<start_of_turn>user\nresult<end_of_turn>\n<start_of_turn>model\n");
+    }
+
+    /// A model's own right try, re-laid by its own template the way a
+    /// teacher's is, comes out as it wrote it. Against a running
+    /// llama-server, as `e2e_code_tries`.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn e2e_a_relaid_try_matches_the_original() {
+        let folder = std::env::var("SULCUSAI_SCAN").expect("SULCUSAI_SCAN");
+        let port = std::env::var("SULCUSAI_TEST_PORT").expect("SULCUSAI_TEST_PORT").parse().unwrap();
+        let key = std::env::var("SULCUSAI_TEST_KEY").unwrap_or_default();
+        let code = Arc::new(Index::scan(&[folder]).unwrap());
+        let model = Model::new(crate::engine::Endpoint { port, key, ctx: super::super::ENGINE_CTX, extra: Value::Null, cloud: None }, false).await;
+        let mut rng = Rng::new(super::super::TEST_SEED);
+        let (mut same, mut tried_n) = (0, 0);
+        for level in [1, 2, 3, 1, 2, 3, 4, 5] {
+            let t = task(&code, level, &mut rng);
+            let Check::Look(look) = &t.check else { panic!() };
+            let prompt = model.prompt(&t, None).await.unwrap();
+            let (a, rounds) = tried(&model, &t, look, &prompt, super::super::TEST_REPLY, 0.0, 1).await.unwrap();
+            let Some(answer) = (!a.cut).then(|| tasks::read(&a.text)).flatten().filter(|r| tasks::passes(&t, r)) else { continue };
+            tried_n += 1;
+            let looked = Looked { rounds, answer: answer.text };
+            let relaid = in_students_words(&model, &t, &prompt, super::super::TEST_REPLY, &looked).await.unwrap().expect("still right and fits");
+            let original = a.all.unwrap();
+            if relaid == original {
+                same += 1;
+            } else {
+                let at = relaid.chars().zip(original.chars()).take_while(|(x, y)| x == y).count();
+                println!("level {level}: differs at char {at}\n  re-laid: {:?}\n  its own: {:?}", relaid.chars().skip(at.saturating_sub(40)).take(120).collect::<String>(), original.chars().skip(at.saturating_sub(40)).take(120).collect::<String>());
+            }
+        }
+        println!("{same} of {tried_n} right tries re-laid exactly as written");
+        assert!(tried_n > 0);
     }
 
     /// The tool definitions keep the chat tools' names and parameters.

@@ -345,9 +345,7 @@ async fn practise(app: &AppHandle, state: &AppState, model: &Model, tasks: &[Tas
             }
             if solved {
                 done.solved += 1;
-            } else if !matches!(task.check, tasks::Check::Look(_)) {
-                // A teacher answers in one reply, so tasks about the person's
-                // code (looked up with tools over several turns) stay its own.
+            } else {
                 done.missed.push(Missed { task: i, prompt: prompt.clone(), room });
             }
             if let Some(line) = kept.and_then(|text| example(&model.bos, &prompt, &text)) {
@@ -376,11 +374,18 @@ fn teacher_max(room: u32, may_think: bool) -> u32 {
     }
 }
 
+/// A teacher's right answer: one reply, or for a task about the person's
+/// code a whole try with its tool calls carried out.
+enum Answer {
+    Said(Reply),
+    Looked(yourcode::Looked),
+}
+
 /// The teacher's turn: its first right answer to each task the student
 /// missed (read, its thinking left out), with the `missed` entry it
 /// answers. Tried as the student was, once more being told the answer.
 #[allow(clippy::too_many_arguments)]
-async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelSpec, tasks: &[Task], missed: &[Missed], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<Vec<(usize, Reply)>, String> {
+async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelSpec, tasks: &[Task], missed: &[Missed], rng: &mut Rng, cancel: &AtomicBool, span: (f64, f64)) -> Result<Vec<(usize, Answer)>, String> {
     let may_think = crate::thinks(spec, crate::advanced::Thinking::Auto);
     let mut answers = Vec::new();
     for (i, m) in missed.iter().enumerate() {
@@ -389,7 +394,12 @@ async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelS
         }
         let task = &tasks[m.task];
         // A model that can't use tools leaves the tool tasks out.
-        if task.tools.is_none() || spec.tools {
+        if let (tasks::Check::Look(look), true) = (&task.check, spec.tools) {
+            breathe(state, i).await;
+            if let Some(looked) = yourcode::teach(teacher, task, look, teacher_max(m.room, may_think), &TEACHER_TRIES, rng).await? {
+                answers.push((i, Answer::Looked(looked)));
+            }
+        } else if task.tools.is_none() || spec.tools {
             breathe(state, i).await;
             let max = teacher_max(m.room, may_think);
             let prompt = teacher.prompt(task, None).await?;
@@ -410,7 +420,7 @@ async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelS
                 }
             }
             if let Some(reply) = right.and_then(|text| tasks::read(&text)) {
-                answers.push((i, reply));
+                answers.push((i, Answer::Said(reply)));
             }
         }
         let kept = answers.len() as u32;
@@ -424,10 +434,18 @@ async fn teach(app: &AppHandle, state: &AppState, teacher: &Model, spec: &ModelS
 /// request as its template laid it out, then the answer as it writes its
 /// turn. An answer is left out if, written that way, it's no longer right
 /// or no longer fits the trainer's window.
-async fn in_students_words(student: &Model, tasks: &[Task], missed: &[Missed], answers: Vec<(usize, Reply)>) -> Result<Vec<(Skill, String)>, String> {
+async fn in_students_words(student: &Model, tasks: &[Task], missed: &[Missed], answers: Vec<(usize, Answer)>) -> Result<Vec<(Skill, String)>, String> {
     let mut lines = Vec::new();
-    for (i, reply) in answers {
+    for (i, answer) in answers {
         let (m, task) = (&missed[i], &tasks[missed[i].task]);
+        let reply = match answer {
+            Answer::Said(reply) => reply,
+            // Checked and measured as it's written out.
+            Answer::Looked(looked) => {
+                lines.extend(yourcode::in_students_words(student, task, &m.prompt, m.room, &looked).await?.and_then(|text| example(&student.bos, &m.prompt, &text)).map(|line| (task.skill, line)));
+                continue;
+            }
+        };
         let text = if reply.calls.is_empty() { Some(reply.text) } else { student.written(task, &m.prompt, &reply).await? };
         let Some(text) = text else { continue };
         if !got_right(task, &Attempt { text: text.clone(), cut: false, all: None }) || student.tokens(&text).await? > m.room {
@@ -677,6 +695,7 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
         drop(engine);
         let theirs = theirs?;
         state.log("model", &format!("{} got {right} of the {} practice tasks {} missed right; it learns from {} of them", t.spec.name, practised.missed.len(), spec.name, theirs.len()));
+        tally();
         lines.extend(theirs);
     }
     if lines.len() < MIN_EXAMPLES {
