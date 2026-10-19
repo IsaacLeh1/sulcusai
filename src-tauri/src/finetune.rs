@@ -598,9 +598,12 @@ fn bits(quant: &str) -> f64 {
 /// and its optimizer, the activations kept for the backward pass, the
 /// vocabulary's logits. Measured with the trainer's own counters on Qwen3
 /// 4B 2507 (2026-10-19): its Q4_0 copy (2.37 GB) held 7.95 GB of the card
-/// throughout; its Q8_0 copy (4.28 GB) held 9.8 GB, and at step 8 asked
-/// for 1.1 GB more (the step where app runs crashed or crawled). Both also
-/// keep about 0.7 GB in the computer's memory, which isn't the card's.
+/// for a whole round; its Q8_0 copy (4.28 GB) held 9.8 GB. At step 8 of the
+/// Q8_0 run the card filled: the trainer's own use rose 1.1 GB, mostly in
+/// shared memory, while the rest of the card's rose 0.8 GB at the same
+/// moment, so another program may have been loading too. 1.8 covers the
+/// 1.1 GB. Both also keep about 0.7 GB in the computer's memory, which
+/// isn't the card's.
 fn per_weight(target: &str) -> f64 {
     if target.eq_ignore_ascii_case("Q4_0") {
         1.5
@@ -891,6 +894,66 @@ impl Pace {
     }
 }
 
+/// How close to full the card may get while training before the run is
+/// stopped, since going over reset the graphics driver.
+const STOP_MARGIN: u64 = 512 << 20;
+/// A rise in card memory worth logging, with whose it was.
+const RISE: u64 = 256 << 20;
+
+/// The card's memory during training: the whole card's use, and the
+/// trainer's own on the card and in shared memory.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Reading {
+    card: u64,
+    own: u64,
+    shared: u64,
+}
+
+/// What a reading shows.
+#[derive(Debug, PartialEq)]
+enum Seen {
+    Fine,
+    /// A rise since the last steady reading: (then, now).
+    Rose(Reading, Reading),
+    /// Within `STOP_MARGIN` of full.
+    Full(Reading),
+}
+
+/// Watches the card while the trainer runs. The card's total has jumped
+/// late in runs whose every step is the same size (the trainer pads each
+/// example to its window and keeps their order), and the desktop alone has
+/// held from 1.2 to 2.7 GB, so each rise is logged with whose it was. The
+/// run is stopped before the card fills.
+struct CardWatch {
+    /// The card's memory.
+    size: u64,
+    /// The last steady reading.
+    last: Option<Reading>,
+}
+
+impl CardWatch {
+    /// A reading; `steady` once the first step is done (loading ramps up).
+    fn see(&mut self, r: Reading, steady: bool) -> Seen {
+        if self.size > 0 && r.card + STOP_MARGIN >= self.size {
+            return Seen::Full(r);
+        }
+        if !steady {
+            return Seen::Fine;
+        }
+        match self.last {
+            Some(l) if r.card >= l.card + RISE || r.own + r.shared >= l.own + l.shared + RISE => {
+                self.last = Some(r);
+                Seen::Rose(l, r)
+            }
+            Some(_) => Seen::Fine,
+            None => {
+                self.last = Some(r);
+                Seen::Fine
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Path, model: &Path, data: &Path, setup: &Setup<'_>, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     let (from, to) = setup.span;
@@ -931,9 +994,32 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
     let log = state.paths.logs.join(format!("finetune-{id}.log"));
     let began = std::time::Instant::now();
     let mut pace = Pace::default();
-    let watched = proc::run_watched(Run { exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line| {
+    let luid = crate::hardware::dedicated().and_then(|c| c.luid);
+    let mut card = CardWatch { size: state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes), last: None };
+    let mut looked = 0.0;
+    let watched = proc::run_watched(Run { exe, args, cwd: &out_dir, log: &log, low_priority: false, job: state.job() }, cancel, |line, pid| {
         let now = began.elapsed().as_secs_f64();
         pace.awake(now);
+        if now - looked >= 2.0 {
+            looked = now;
+            if let Some(used) = crate::perf::card_memory_used(luid) {
+                let (own, shared) = crate::perf::process_card_memory(pid).unwrap_or((0, 0));
+                let gb = crate::size_label;
+                match card.see(Reading { card: used, own, shared }, !pace.took.is_empty()) {
+                    Seen::Fine => {}
+                    Seen::Rose(a, b) => {
+                        state.log("model", &format!("During training the graphics card's use rose from {} to {}; the trainer's own went from {} to {} on the card and {} to {} in shared memory", gb(a.card), gb(b.card), gb(a.own), gb(b.own), gb(a.shared), gb(b.shared)));
+                        if b.card + HEADROOM >= card.size {
+                            update(app, |j| j.low_memory = true);
+                        }
+                    }
+                    Seen::Full(r) => {
+                        state.log("model", &format!("The graphics card was nearly full ({} of {} in use, {} of it the trainer's), so training was stopped before the graphics driver could crash", gb(r.card), gb(card.size), gb(r.own)));
+                        return Some(NO_ROOM.to_string());
+                    }
+                }
+            }
+        }
         let line = line.unwrap_or_default();
         if line.contains("Skipping conversation") && line.contains("too long") {
             too_long += 1;
@@ -964,15 +1050,15 @@ async fn run_trainer(app: &AppHandle, state: &Arc<AppState>, id: &str, exe: &Pat
     .await;
     if let Err(e) = watched {
         let steps = pace.took.len();
-        let card = crate::hardware::dedicated().and_then(|c| c.luid);
-        let used = crate::perf::card_memory_used(card).map_or(String::new(), |u| format!("; the graphics card had {} in use", crate::size_label(u)));
+        let used = crate::perf::card_memory_used(luid).map_or(String::new(), |u| format!("; the graphics card had {} in use", crate::size_label(u)));
         if e == TRAINER_STALLED {
             state.log("model", &format!("The trainer made no progress for {:.0} minutes after {steps} steps (they took about {:.0} s each){used}, so it was stopped", pace.waited(began.elapsed().as_secs_f64()) / 60.0, pace.usual().unwrap_or(0.0)));
             return Err(e);
         }
         // Quitting partway, after steps that worked: the card's memory ran
-        // out (a 4B's Q8_0 run crashed at step 8 with 0xC0000409).
-        if steps > 0 && e != crate::download::CANCELLED {
+        // out (a 4B's Q8_0 run crashed at step 8 with 0xC0000409, when the
+        // graphics driver reset).
+        if steps > 0 && e != crate::download::CANCELLED && e != NO_ROOM {
             state.log("model", &format!("The trainer quit after {steps} steps{used}: {e}"));
             return Err(TRAINER_QUIT.into());
         }
@@ -1153,6 +1239,24 @@ mod tests {
         p.step(t + 2.0, false);
         assert_eq!(p.took.len(), 14);
         assert!(!p.stalled(t + 2.0 + STALL_FLOOR - 1.0));
+    }
+
+    /// code-teacher's Q4_0 run: steady at 9,525 MB of the card through round
+    /// 1, then 9,916 and 11,461 MB in round 2. Each rise is logged with
+    /// whose it was, and the run stops before the card fills.
+    #[test]
+    fn the_card_is_watched_while_training() {
+        let mut w = CardWatch { size: 11_921 * MB, last: None };
+        let r = |card, own| Reading { card: card * MB, own: own * MB, shared: 660 * MB };
+        assert_eq!(w.see(r(5_000, 3_500), false), Seen::Fine, "loading ramps up unlogged");
+        assert_eq!(w.see(r(9_525, 7_964), true), Seen::Fine);
+        assert_eq!(w.see(r(9_600, 7_964), true), Seen::Fine, "small changes aren't logged");
+        assert_eq!(w.see(r(9_916, 7_964), true), Seen::Rose(r(9_525, 7_964), r(9_916, 7_964)), "another app grew");
+        assert_eq!(w.see(r(10_300, 8_400), true), Seen::Rose(r(9_916, 7_964), r(10_300, 8_400)), "the trainer grew");
+        assert_eq!(w.see(r(11_461, 9_500), true), Seen::Full(r(11_461, 9_500)), "within 0.5 GB of a full card");
+        assert_eq!(w.see(r(11_500, 0), false), Seen::Full(r(11_500, 0)), "even while loading");
+        let mut none = CardWatch { size: 0, last: None };
+        assert_eq!(none.see(r(11_500, 0), true), Seen::Fine, "no card size known");
     }
 
     /// A PC that sleeps pauses the trainer too: the wait starts again.
