@@ -3340,5 +3340,6 @@
  "{card} is too small for this model. A smaller model, or a smaller context window, fits it.": "{card} est trop petite pour ce modèle. Un modèle plus petit, ou une fenêtre de contexte plus petite, y tient.",
  "{card} is turned off in Device Manager, so models run on the processor. Turn it on there, then scan again.": "{card} est désactivée dans le Gestionnaire de périphériques, donc les modèles fonctionnent sur le processeur. Activez-la, puis relancez la recherche.",
  "{maker} graphics card ({name})": "Carte graphique {maker} ({name})",
- "{size} memory": "{size} de mémoire"
+ "{size} memory": "{size} de mémoire",
+ "Questions before the picture": "Questions avant l'image"
 }

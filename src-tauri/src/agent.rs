@@ -954,7 +954,8 @@ impl Turn {
                 if matches!(call.name.as_str(), "write_file" | "edit_file") && outcome.meta["status"] != "error" {
                     previewed = false;
                 }
-                if matches!(call.name.as_str(), "create_image" | "edit_image" | "create_video" | "create_music") && outcome.meta["status"] == "ok" {
+                // Questions asked before a picture: nothing was made yet.
+                if matches!(call.name.as_str(), "create_image" | "edit_image" | "create_video" | "create_music") && outcome.meta["status"] == "ok" && outcome.meta["questions"].is_null() {
                     made_media = true;
                 }
                 // Asked to preview before writing anything (the live test's 14B

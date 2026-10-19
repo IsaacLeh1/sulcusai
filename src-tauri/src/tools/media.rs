@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::{Ctx, Outcome};
-use crate::media::{self, MediaItem, Request};
+use crate::media::{self, clarify, MediaItem, Request};
 
 pub fn create_image_params() -> Value {
     json!({ "type": "object", "required": ["prompt"], "properties": {
@@ -16,15 +16,20 @@ pub fn create_image_params() -> Value {
         "shape": { "type": "string", "enum": ["square", "portrait", "landscape", "wide", "tall"], "description": "Default square." },
         "count": { "type": "integer", "description": "How many versions (1-4, default 1)." },
         "examples": { "type": "array", "items": { "type": "string" }, "description": "Ids of pictures the new one should follow (the user's attached pictures are used on their own; give ids only for other pictures in this chat). At most 4." },
-        "example_use": { "type": "string", "enum": ["style", "subject", "layout"], "description": "What to take from the example pictures: their style, their subject (the same person, pet or thing in a new scene), or their layout and colors." } } })
+        "example_use": { "type": "string", "enum": ["style", "subject", "layout"], "description": "What to take from the example pictures: their style, their subject (the same person, pet or thing in a new scene), or their layout and colors." },
+        "clarified": { "type": "boolean", "description": CLARIFIED } } })
 }
 
 pub fn edit_image_params() -> Value {
     json!({ "type": "object", "required": ["instruction"], "properties": {
         "instruction": { "type": "string", "description": "What to change, e.g. \"make it night\", \"add a red scarf\". For restyle, the style." },
         "action": { "type": "string", "enum": ["edit", "restyle", "upscale", "remove_background"], "description": "Default edit." },
-        "image": { "type": "string", "description": "Leave it out to change the newest picture in this chat (the usual case: each change builds on the last). Give a picture's id only when the user points to an older one." } } })
+        "image": { "type": "string", "description": "Leave it out to change the newest picture in this chat (the usual case: each change builds on the last). Give a picture's id only when the user points to an older one." },
+        "clarified": { "type": "boolean", "description": CLARIFIED } } })
 }
+
+/// The tools' "clarified" argument.
+const CLARIFIED: &str = "Set true after the user answered questions this tool asked before (or said to go ahead as it is): it's made without asking again. Leave it out otherwise.";
 
 pub fn create_video_params() -> Value {
     json!({ "type": "object", "required": ["prompt"], "properties": {
@@ -112,6 +117,49 @@ fn examples_for(args: &Value, ctx: &Ctx<'_>) -> (Vec<String>, Option<String>) {
     (ids, Some(given_use.unwrap_or_else(|| guessed.into())))
 }
 
+/// Before a new picture or a change: when the request leaves something open
+/// that would change the result, the questions for the assistant to ask (and
+/// nothing is made). Not when the call says it's clarified, when asking is
+/// off, or when this chat just asked.
+async fn ask_first(name: &str, args: &Value, req: &Request, ctx: &Ctx<'_>) -> Option<Outcome> {
+    // Restyling, upscaling and cut-outs leave nothing to ask about.
+    if !matches!(req.op.as_str(), "generate" | "edit") {
+        return None;
+    }
+    let chat = ctx.memory.chat_id;
+    let state = ctx.state;
+    let history = crate::db::messages(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher, chat);
+    let last = clarify::last_asked(chat);
+    let skip = args.get("clarified").and_then(Value::as_bool) == Some(true)
+        || !clarify::enabled(&state.db.lock().unwrap())
+        // Asked in this turn or the one before: no model run needed to know.
+        || clarify::asked_already(&history, last.as_ref(), &[]);
+    if skip {
+        clarify::forget_asked(chat);
+        return None;
+    }
+    let model = media::choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok();
+    let source = req.source.as_deref().and_then(|id| media::store::read(&state.paths, ctx.memory.cipher, id).ok()).and_then(|b| media::imaging::decode(&b).ok());
+    let prompt = clarify::noting_examples(&req.prompt, req.examples.len());
+    let questions = clarify::questions(state, &req.op, &prompt, source.as_ref(), model.as_ref()).await;
+    if questions.is_empty() || clarify::asked_already(&history, last.as_ref(), &questions) {
+        clarify::forget_asked(chat);
+        return None;
+    }
+    let after_user = history.iter().rev().find(|m| m.role == "user").map(|m| m.id.clone()).unwrap_or_default();
+    clarify::remember_asked(chat, clarify::Asked { after_user, questions: questions.clone() });
+    let (field, again) = if name == "edit_image" { ("instruction", "edit_image") } else { ("prompt", "create_image") };
+    let list = questions.iter().map(|q| format!("- {q}")).collect::<Vec<_>>().join("\n");
+    let text = format!(
+        "Not made yet: the request leaves something open that would change the picture. Ask the user these questions, word for word, \
+         in one short message, and nothing else:\n{list}\nWhen they answer, call {again} again with their answers worked into the {field}, \
+         and \"clarified\": true. If they say to go ahead as it is, call it again with \"clarified\": true."
+    );
+    let mut o = Outcome::ok(text, "Questions before the picture", "text", Some(questions.join("\n")));
+    o.meta["questions"] = json!(questions);
+    Some(o)
+}
+
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let state: Arc<crate::AppState> = ctx.state.clone();
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);
@@ -177,6 +225,11 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         },
         other => return Outcome::error(format!("Couldn't use {other}"), "Unknown media tool."),
     };
+    if matches!(name, "create_image" | "edit_image") {
+        if let Some(o) = ask_first(name, args, &req, ctx).await {
+            return o;
+        }
+    }
     let what = match req.op.as_str() {
         "video" => "a video",
         "music" => "a song",
