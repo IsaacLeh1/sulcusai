@@ -1148,12 +1148,9 @@ pub fn addresses(s: &str) -> Vec<String> {
     s.split([',', ';']).map(str::trim).filter(|a| !a.is_empty()).map(str::to_string).collect()
 }
 
-pub fn build(cfg: &AccountConfig, d: &Draft, replying: Option<&MailData>) -> Result<lettre::Message, String> {
-    build_with(cfg, d, replying, None)
-}
-
-/// `build`, with a calendar reply (METHOD:REPLY) next to the text when
-/// `calendar` is given, as mail apps send invitation answers.
+/// A message to send (a reply threads under `replying`), with a calendar
+/// reply (METHOD:REPLY) next to the text when `calendar` is given, as mail
+/// apps send invitation answers.
 pub fn build_with(cfg: &AccountConfig, d: &Draft, replying: Option<&MailData>, calendar: Option<&str>) -> Result<lettre::Message, String> {
     use lettre::message::{header::ContentType, Mailbox, MultiPart, SinglePart};
     if d.to.is_empty() {
@@ -1538,10 +1535,12 @@ pub fn invite_reply_draft(inv: &crate::calendar::Invite, partstat: &str, name: &
         _ => ("Declined", "declined"),
     };
     let who = if name.trim().is_empty() { "The invitee".to_string() } else { name.trim().to_string() };
+    // The title comes from someone else's invitation: one line, so it can't add header lines.
+    let title: String = inv.title.chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect();
     Draft {
         to: vec![inv.organizer.clone()],
         cc: Vec::new(),
-        subject: format!("{word}: {}", inv.title),
+        subject: format!("{word}: {title}"),
         body: format!("{who} has {says} this invitation."),
         reply_to: Some(reply_to.to_string()),
     }
@@ -1813,11 +1812,11 @@ mod tests {
         let cfg = AccountConfig { name: "Me".into(), email: "me@example.org".into(), ..Default::default() };
         let (orig, _) = parse(RAW, false);
         let d = Draft { to: vec!["ana@example.com".into()], subject: "Re: Budget review on Friday".into(), body: "Friday works.".into(), ..Default::default() };
-        let msg = String::from_utf8(build(&cfg, &d, Some(&orig)).unwrap().formatted()).unwrap();
+        let msg = String::from_utf8(build_with(&cfg, &d, Some(&orig), None).unwrap().formatted()).unwrap();
         assert!(msg.contains("In-Reply-To: <abc123@example.com>") && msg.contains("Friday works."), "{msg}");
         let bad = Draft { to: vec!["not an address".into()], ..d.clone() };
-        assert!(build(&cfg, &bad, None).is_err());
-        assert!(build(&cfg, &Draft { to: vec![], ..d }, None).is_err());
+        assert!(build_with(&cfg, &bad, None, None).is_err());
+        assert!(build_with(&cfg, &Draft { to: vec![], ..d }, None, None).is_err());
         assert_eq!(addresses("a@x.com, Bo <b@y.com>; "), vec!["a@x.com", "Bo <b@y.com>"]);
     }
 
@@ -1869,13 +1868,16 @@ mod tests {
         assert_eq!(invited_as(&inv, "other@example.org"), "other@example.org");
         let d = invite_reply_draft(&inv, "TENTATIVE", "Isaac", "local-id");
         assert_eq!((d.to.clone(), d.subject.as_str(), d.body.as_str()), (vec!["ana@example.com".to_string()], "Tentative: Lunch", "Isaac has tentatively accepted this invitation."));
+        // A title can't add header lines.
+        let sneaky = crate::calendar::Invite { title: "Lunch\r\nBcc: x@evil.example".into(), ..inv.clone() };
+        assert_eq!(invite_reply_draft(&sneaky, "ACCEPTED", "", "id").subject, "Accepted: Lunch Bcc: x@evil.example");
         let cfg = AccountConfig { name: "Isaac".into(), email: "me@example.org".into(), ..Default::default() };
         let ics = crate::calendar::reply_ics(&inv, "me@example.org", "Isaac", "TENTATIVE", 1_000);
         let msg = String::from_utf8(build_with(&cfg, &d, Some(&m), Some(&ics)).unwrap().formatted()).unwrap();
         assert!(msg.contains("multipart/alternative") && msg.contains("text/calendar") && msg.contains("method=REPLY"), "{msg}");
         assert!(msg.contains("In-Reply-To: <inv-mail@example.com>"), "{msg}");
         // Plain mail stays plain.
-        let plain = String::from_utf8(build(&cfg, &d, None).unwrap().formatted()).unwrap();
+        let plain = String::from_utf8(build_with(&cfg, &d, None, None).unwrap().formatted()).unwrap();
         assert!(!plain.contains("text/calendar"));
     }
 
@@ -1961,7 +1963,7 @@ mod live {
         assert!(again.is_empty(), "nothing new on the second sync");
 
         let d = Draft { to: vec!["ana@example.com".into()], subject: "Re: hello".into(), body: "Sounds good.\nThanks!".into(), ..Default::default() };
-        let msg = build(&cfg, &d, Some(&inbox[0].data)).unwrap();
+        let msg = build_with(&cfg, &d, Some(&inbox[0].data), None).unwrap();
         smtp_send(&cfg, &msg).await.unwrap();
         println!("sent over SMTP");
         let sent = sent.expect("demo data has a Sent folder");
