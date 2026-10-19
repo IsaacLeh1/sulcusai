@@ -96,22 +96,42 @@ pub fn grow(mask: &GrayImage, r: u32) -> GrayImage {
     })
 }
 
-/// Shrinks the white of a mask by `r` pixels: white stays only where all of
-/// its neighbours within `r` are white.
-pub fn shrink(mask: &GrayImage, r: u32) -> GrayImage {
+/// The mask without its small white patches: groups of touching white
+/// pixels (sides and corners) smaller than `least` are made black.
+pub fn without_specks(mask: &GrayImage, least: usize) -> GrayImage {
     let (w, h) = mask.dimensions();
-    let r = r as i64;
-    GrayImage::from_fn(w, h, |x, y| {
-        for dy in -r..=r {
-            for dx in -r..=r {
-                let (nx, ny) = (x as i64 + dx, y as i64 + dy);
-                if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 || mask.get_pixel(nx as u32, ny as u32)[0] <= 127 {
-                    return Luma([0]);
+    let mut out = mask.clone();
+    let mut seen = vec![false; (w * h) as usize];
+    for start in 0..(w * h) {
+        if seen[start as usize] || mask.as_raw()[start as usize] <= 127 {
+            continue;
+        }
+        // One group, found from `start`.
+        let mut group = vec![start];
+        seen[start as usize] = true;
+        let mut i = 0;
+        while i < group.len() {
+            let (x, y) = ((group[i] % w) as i64, (group[i] / w) as i64);
+            for (dx, dy) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
+                let (nx, ny) = (x + dx, y + dy);
+                if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                    continue;
+                }
+                let n = (ny as u32) * w + nx as u32;
+                if !seen[n as usize] && mask.as_raw()[n as usize] > 127 {
+                    seen[n as usize] = true;
+                    group.push(n);
                 }
             }
+            i += 1;
         }
-        Luma([255])
-    })
+        if group.len() < least {
+            for p in group {
+                out.put_pixel(p % w, p / w, Luma([0]));
+            }
+        }
+    }
+    out
 }
 
 /// A bigger canvas with the picture inside and a mask over the new area.
@@ -317,9 +337,13 @@ pub fn changed_area(before: &DynamicImage, after: &DynamicImage) -> (RgbaImage, 
         Luma([if changed * 3 >= n.max(1) { 255 } else { 0 }])
     });
     // Scattered small changes (the model redrawing a floor's texture) are
-    // dropped: pasted in, they showed as patches. What's left gets a margin.
-    let blocks = grow(&shrink(&blocks, 1), 3);
-    let share = blocks.pixels().filter(|p| p[0] > 127).count() as f32 / (bw * bh).max(1) as f32;
+    // dropped: pasted in, they showed as patches. By size, not by shape:
+    // shrinking the mask first also dropped a thin barbell the edit had
+    // removed, and the original's showed through. What's left gets a margin.
+    let changed = without_specks(&blocks, 6);
+    // The share that changed, before the margin.
+    let share = changed.pixels().filter(|p| p[0] > 127).count() as f32 / (bw * bh).max(1) as f32;
+    let blocks = grow(&changed, 3);
     let mask = imageops::resize(&blocks, w, h, FilterType::Triangle);
     (after, mask, share)
 }
@@ -494,6 +518,19 @@ mod tests {
         assert!(mask.get_pixel(125, 60)[0] > 200, "the box changed");
         assert_eq!(mask.get_pixel(20, 130)[0], 0, "the far corner didn't");
         assert_eq!(aligned.get_pixel(125, 60).0, [230, 20, 20, 255], "the edit is lined up again");
+    }
+
+    #[test]
+    fn small_specks_go_and_long_thin_changes_stay() {
+        let mut m = GrayImage::new(30, 10);
+        for x in 2..25 {
+            m.put_pixel(x, 5, Luma([255])); // a thin bar, one block tall
+        }
+        m.put_pixel(28, 1, Luma([255])); // a speck
+        m.put_pixel(28, 2, Luma([255]));
+        let out = without_specks(&m, 6);
+        assert_eq!(out.get_pixel(10, 5)[0], 255, "the bar stays");
+        assert_eq!(out.get_pixel(28, 1)[0], 0, "the speck goes");
     }
 
     #[test]

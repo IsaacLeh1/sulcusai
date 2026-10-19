@@ -408,8 +408,12 @@ fn short(s: &str, words: usize) -> String {
 pub fn parse_plan(v: &Value) -> Option<EditPlan> {
     let text = |c: &Value, k: &str, words: usize| short(c[k].as_str().unwrap_or_default(), words);
     let result = cut_words(v["result"].as_str().unwrap_or_default().trim().trim_end_matches(['.', ' ']), 80);
-    let result_low = result.to_lowercase();
-    let (mut gone, mut leftover, mut checks, mut moved, mut people_gone) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
+    // What the result puts somewhere: "the space where the adult was" names
+    // the adult without placing them anywhere.
+    let result_low = regex::Regex::new(r"where (?:the |a |an )?[\w-]+(?: [\w-]+)? (?:was|were|stood|sat|lay|used to be|had been)")
+        .map(|r| r.replace_all(&result.to_lowercase(), "").into_owned())
+        .unwrap_or_else(|_| result.to_lowercase());
+    let (mut gone, mut leftover, mut checks, mut moved, mut people_gone, mut looks) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0, Vec::new());
     // Where things were taken from, so the planner's own "no …" items about them aren't checked twice.
     let mut emptied: Vec<String> = Vec::new();
     for c in v["leaving"].as_array().into_iter().flatten().take(4) {
@@ -427,6 +431,7 @@ pub fn parse_plan(v: &Value) -> Option<EditPlan> {
         let moves = head.len() > 2 && result_low.contains(&head);
         if moves {
             moved.push(head.clone());
+            looks.push(format!("The {head} looks exactly as it did: {}.", bare(&what)));
             // Taken away after the new scene is drawn: while a person still
             // held it, klein (4B and 9B) wouldn't remove it at all.
             leftover.push(format!("Remove the {head} {}, and {fill}. Keep the {head} in its new place.", if now.is_empty() { "left in its old place".to_string() } else { format!("that is still {now}") }));
@@ -438,7 +443,14 @@ pub fn parse_plan(v: &Value) -> Option<EditPlan> {
         }
         checks.push(if moves { format!("no {} left{place}", bare(&what)) } else { format!("no {}{place}", bare(&what)) });
     }
-    let then = if result.split_whitespace().count() >= 3 { vec![format!("{result}.")] } else { Vec::new() };
+    // A moved thing redrawn as it looked (klein drew a bare bar overhead,
+    // without its plates), unless the safety net already said so.
+    let then = if result.split_whitespace().count() >= 3 {
+        let again = if result_low.contains("looks exactly as") { String::new() } else { looks.iter().map(|l| format!(" {l}")).collect() };
+        vec![format!("{result}.{again}")]
+    } else {
+        Vec::new()
+    };
     let keep = "Keep everything else as it is.";
     // One removal per step (given two in one instruction, klein made the
     // first and ignored the second): what goes, the new scene, then the
@@ -1039,7 +1051,7 @@ mod tests {
         assert_eq!(p.steps.len(), 3, "what goes, the new scene, then the moved thing's old copy");
         assert_eq!(p.steps[0], "Remove the woman in a black sweatshirt standing behind the girl, and show the weight bench and the black floor mats there instead. Keep everything else as it is.");
         assert!(p.steps[1].starts_with("The little girl in the red dress kneels and holds the long silver barbell"));
-        assert!(p.steps[1].ends_with("arms straight up. Keep everything else as it is."));
+        assert!(p.steps[1].ends_with("arms straight up. The barbell looks exactly as it did: long silver barbell with three black plates on each end. Keep everything else as it is."), "{}", p.steps[1]);
         assert_eq!(p.steps[2], "Remove the barbell that is still on the floor in front of the girl, and show the black rubber floor mat there instead. Keep the barbell in its new place. Keep everything else as it is.");
         assert_eq!(
             p.checklist,
@@ -1082,6 +1094,16 @@ mod tests {
         let p = parse_plan(&v).unwrap();
         assert_eq!(p.moved, vec!["barbell"]);
         assert_eq!(p.people_gone, 1);
+        // "Where the adult was standing" doesn't move the adult.
+        let v = json!({
+            "leaving": [{ "what": "the adult in a black shirt", "where_now": "behind the girl", "left_behind": "the bench" }],
+            "result": "The girl kneels with her arms up. The floor extends into the space where the adult was standing.",
+            "checklist": []
+        });
+        let p = parse_plan(&v).unwrap();
+        assert!(p.moved.is_empty());
+        assert_eq!(p.people_gone, 1);
+        assert!(p.steps[0].starts_with("Remove the adult in a black shirt behind the girl"), "{:?}", p.steps);
     }
 
     #[test]
