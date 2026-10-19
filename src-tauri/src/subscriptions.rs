@@ -144,17 +144,55 @@ pub struct Subscription {
     pub latest: i64,
     /// Its mail still in the inbox (to archive after leaving).
     pub inbox_ids: Vec<String>,
+    /// When the user last opened one of its emails here.
+    pub opened_at: Option<i64>,
+    /// A list the user never opens: how many of its latest emails in a row
+    /// went unopened (0 when it isn't one; see `never_opened`).
+    pub unopened: usize,
     #[serde(flatten)]
     pub how: Unsub,
 }
 
-/// Inbox (and archived) mail grouped by list or sender, the ones still
-/// subscribed first, then the most mail.
-pub fn group(items: &[MailItem], done: &HashMap<String, Unsubscribed>) -> Vec<Subscription> {
+/// Opened within this long: still read.
+const READ_WITHIN_MS: i64 = 60 * 86_400_000;
+/// Unopened emails in a row that make a list one the user never opens.
+const UNOPENED_AT_LEAST: usize = 3;
+/// When SulcusAI started noting which emails are opened (setting).
+const OPENS_SINCE_KEY: &str = "mail_opens_since";
+
+/// When opens started being noted: mail from before can't count as unread
+/// (the user may have read it before, or elsewhere). Set the first time.
+pub fn opens_since(conn: &rusqlite::Connection) -> i64 {
+    db::get::<i64>(conn, OPENS_SINCE_KEY).unwrap_or_else(|| {
+        let now = db::now_ms();
+        db::set(conn, OPENS_SINCE_KEY, &now).ok();
+        now
+    })
+}
+
+/// A list the user never opens, from its emails' (date, opened_at): none
+/// opened in the last 60 days, and at least 3 received unopened since the
+/// newest one opened (counting mail since opens were noted, `since`).
+/// Returns how many in a row went unopened, else 0.
+pub fn never_opened(mail: &[(i64, Option<i64>)], now: i64, since: i64) -> usize {
+    if mail.iter().any(|(_, o)| o.is_some_and(|o| o >= now - READ_WITHIN_MS)) {
+        return 0;
+    }
+    // Emails after the newest one opened.
+    let after = mail.iter().filter(|(_, o)| o.is_some()).map(|(d, _)| *d).max().unwrap_or(i64::MIN);
+    let n = mail.iter().filter(|(d, o)| o.is_none() && *d > after && *d >= since).count();
+    if n >= UNOPENED_AT_LEAST { n } else { 0 }
+}
+
+/// Inbox (and archived) mail grouped by list or sender: the ones still
+/// subscribed first, those never opened first among them, then the most
+/// mail. `since`: when opens started being noted.
+pub fn group(items: &[MailItem], done: &HashMap<String, Unsubscribed>, now: i64, since: i64) -> Vec<Subscription> {
     let mut sorted: Vec<&MailItem> = items.iter().filter(|m| m.folder.eq_ignore_ascii_case("INBOX") || m.folder == mail::ARCHIVE).collect();
     sorted.sort_by(|a, b| b.date.cmp(&a.date));
     let mut order: Vec<String> = Vec::new();
     let mut groups: HashMap<String, Subscription> = HashMap::new();
+    let mut opens: HashMap<String, Vec<(i64, Option<i64>)>> = HashMap::new();
     for m in sorted {
         let Some(key) = key_of(m) else { continue };
         let d = &m.data;
@@ -162,9 +200,11 @@ pub fn group(items: &[MailItem], done: &HashMap<String, Unsubscribed>) -> Vec<Su
             order.push(key.clone());
             let name = [&d.from_name, &d.list_name, &d.from].into_iter().map(|s| s.trim()).find(|s| !s.is_empty()).unwrap_or("").to_string();
             let how = Unsub { key: key.clone(), method: "none".into(), email_to: String::new(), email_subject: String::new(), unsubscribed: done.get(&key).cloned() };
-            Subscription { account_id: m.account_id.clone(), name, address: d.from.clone(), list_id: d.list_id.clone(), count: 0, latest: m.date, inbox_ids: Vec::new(), how }
+            Subscription { account_id: m.account_id.clone(), name, address: d.from.clone(), list_id: d.list_id.clone(), count: 0, latest: m.date, inbox_ids: Vec::new(), opened_at: None, unopened: 0, how }
         });
         g.count += 1;
+        g.opened_at = g.opened_at.max(m.opened_at);
+        opens.entry(key.clone()).or_default().push((m.date, m.opened_at));
         if m.folder.eq_ignore_ascii_case("INBOX") {
             g.inbox_ids.push(m.id.clone());
         }
@@ -176,7 +216,14 @@ pub fn group(items: &[MailItem], done: &HashMap<String, Unsubscribed>) -> Vec<Su
         }
     }
     let mut out: Vec<Subscription> = order.into_iter().filter_map(|k| groups.remove(&k)).collect();
-    out.sort_by(|a, b| a.how.unsubscribed.is_some().cmp(&b.how.unsubscribed.is_some()).then(b.count.cmp(&a.count)).then(b.latest.cmp(&a.latest)));
+    for s in &mut out {
+        if s.how.unsubscribed.is_none() {
+            s.unopened = never_opened(opens.get(&s.how.key).map(Vec::as_slice).unwrap_or(&[]), now, since);
+        }
+    }
+    out.sort_by(|a, b| {
+        a.how.unsubscribed.is_some().cmp(&b.how.unsubscribed.is_some()).then((b.unopened > 0).cmp(&(a.unopened > 0))).then(b.count.cmp(&a.count)).then(b.latest.cmp(&a.latest))
+    });
     out
 }
 
@@ -226,7 +273,7 @@ pub fn mail_subscriptions(state: AppStateRef) -> Result<Vec<Subscription>, Strin
     let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
     let items = mail::list(&conn, &c, "", usize::MAX);
-    Ok(group(&items, &done(&conn)))
+    Ok(group(&items, &done(&conn), db::now_ms(), opens_since(&conn)))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -297,7 +344,7 @@ mod tests {
     use super::*;
 
     fn item(id: &str, account: &str, folder: &str, date: i64, d: MailData) -> MailItem {
-        MailItem { id: id.into(), account_id: account.into(), folder: folder.into(), date, seen: false, marked_at: None, data: d }
+        MailItem { id: id.into(), account_id: account.into(), folder: folder.into(), date, seen: false, marked_at: None, opened_at: None, data: d }
     }
 
     #[test]
@@ -356,8 +403,11 @@ mod tests {
             item("o1", "other", "INBOX", 120, news("Monday")),
         ];
         let mut done = HashMap::new();
+        // Opens noted only after all of this mail: none of it counts as unread.
+        let group = |items: &[MailItem], done: &HashMap<String, Unsubscribed>| group(items, done, 10_000, 1_000);
         let subs = group(&items, &done);
         assert_eq!(subs.len(), 3, "{subs:#?}");
+        assert!(subs.iter().all(|s| s.unopened == 0));
         let paper = &subs[0];
         assert_eq!((paper.name.as_str(), paper.count, paper.latest, paper.account_id.as_str()), ("The Paper", 3, 300, "acc"));
         assert_eq!(paper.inbox_ids, vec!["n2", "n1"], "archived mail counts but isn't archived again");
@@ -370,5 +420,40 @@ mod tests {
         let subs = group(&items, &done);
         assert_eq!(subs.last().unwrap().how.key, "acc|morning.paper.example");
         assert_eq!(subs.last().unwrap().how.unsubscribed.as_ref().unwrap().at, 999);
+    }
+
+    #[test]
+    fn lists_never_opened_are_60_days_unopened_with_at_least_3() {
+        const DAY: i64 = 86_400_000;
+        let now = 400 * DAY;
+        let since = 100 * DAY;
+        let days_ago = |n: i64| now - n * DAY;
+        // Three since opens were noted, none opened: never opened.
+        assert_eq!(never_opened(&[(days_ago(3), None), (days_ago(2), None), (days_ago(1), None)], now, since), 3);
+        // Only two: not enough to say.
+        assert_eq!(never_opened(&[(days_ago(2), None), (days_ago(1), None)], now, since), 0);
+        // One opened in the last 60 days: still read.
+        assert_eq!(never_opened(&[(days_ago(70), Some(days_ago(59))), (days_ago(3), None), (days_ago(2), None), (days_ago(1), None)], now, since), 0);
+        // Last opened 61 days ago: the ones after it count, not the one opened.
+        let old_open = [(days_ago(90), Some(days_ago(61))), (days_ago(30), None), (days_ago(20), None), (days_ago(10), None), (days_ago(5), None)];
+        assert_eq!(never_opened(&old_open, now, since), 4);
+        // Mail from before opens were noted doesn't count (it may have been read).
+        let before = [(since - DAY, None), (since - 2 * DAY, None), (days_ago(1), None), (days_ago(2), None)];
+        assert_eq!(never_opened(&before, now, since), 0);
+
+        // In the list: shown first among those still subscribed, with the count.
+        let news = |n: i64| MailData { from: "news@paper.example".into(), list_id: "paper.example".into(), unsubscribe: vec!["https://paper.example/u".into()], subject: format!("Issue {n}"), ..Default::default() };
+        let shop = MailData { from: "deals@shop.example".into(), unsubscribe: vec!["https://shop.example/u".into()], ..Default::default() };
+        let mut items: Vec<MailItem> = (1..=3).map(|n| item(&format!("n{n}"), "acc", "INBOX", days_ago(n), news(n))).collect();
+        for n in 1..=5 {
+            let mut m = item(&format!("s{n}"), "acc", "INBOX", days_ago(n), shop.clone());
+            if n == 2 {
+                m.opened_at = Some(days_ago(1));
+            }
+            items.push(m);
+        }
+        let subs = group(&items, &HashMap::new(), now, since);
+        assert_eq!((subs[0].name.as_str(), subs[0].unopened), ("news@paper.example", 3), "{subs:#?}");
+        assert_eq!((subs[1].count, subs[1].unopened, subs[1].opened_at), (5, 0, Some(days_ago(1))), "opened lately, though it sends more");
     }
 }
