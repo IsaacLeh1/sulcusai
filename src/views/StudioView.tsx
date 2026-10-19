@@ -165,7 +165,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("🎨 Pictures"), video: t("🎬 Video"), wallpaper: t("🖥 Wallpapers"), music: t("🎵 Music and sound"), narrate: t("🗣 Narration") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration") }[tb]}
           </button>
         ))}
       </div>
@@ -320,7 +320,7 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
       const edits = /:(gpt-image|dall-e-2)/.test(c.id);
       return {
         id: c.id,
-        name: `☁ ${c.name} (${c.provider})`,
+        name: `${c.name} (${c.provider})`,
         publisher: c.provider,
         source: "",
         description: "",
@@ -337,8 +337,8 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
 }
 
 function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void }) {
-  // Models on this PC are marked as such; cloud ones carry ☁ in their names.
-  const label = (m: MediaModelCard) => (m.name.startsWith("☁") ? m.name : t("{name} (this PC)", { name: m.name }));
+  // Models on this PC are marked as such; cloud ones carry their provider in their names.
+  const label = (m: MediaModelCard) => (m.id.startsWith("cloud:") ? m.name : t("{name} (this PC)", { name: m.name }));
   if (models.length === 1) return <span className="small muted" title={t("Model")}>{label(models[0])}</span>;
   if (models.length < 2) return null;
   return (
@@ -397,7 +397,7 @@ function DefaultLink({ id, defaultId, onSetDefault }: { id: string | undefined; 
 const LOOKS: { id: string; label: string }[] = [
   { id: "auto", label: tx("Auto (realistic unless you say)") },
   { id: "photo", label: tx("Realistic photo") },
-  { id: "phone_photo", label: tx("📱 Phone photo (most lifelike)") },
+  { id: "phone_photo", label: tx("Phone photo (most lifelike)") },
   { id: "cinematic", label: tx("Cinematic") },
   { id: "cartoon", label: tx("Cartoon") },
   { id: "anime", label: tx("Anime") },
@@ -409,7 +409,7 @@ const LOOKS: { id: string; label: string }[] = [
   { id: "pixel_art", label: tx("Pixel art") },
 ];
 
-/** "✨ Improve": the chat model turns a short idea into a fuller description. */
+/** "Improve": the chat model turns a short idea into a fuller description. */
 function ImproveButton({ prompt, kind, onDone }: { prompt: string; kind: string; onDone: (p: string) => void }) {
   const [busy, setBusy] = useState(false);
   const [why, setWhy] = useState<string | null>(null);
@@ -431,7 +431,7 @@ function ImproveButton({ prompt, kind, onDone }: { prompt: string; kind: string;
           }
         }}
       >
-        {busy ? t("Improving…") : t("✨ Improve")}
+        {busy ? t("Improving…") : t("Improve")}
       </button>
       {why && <span className="small warn-text">{why}</span>}
     </>
@@ -526,7 +526,7 @@ function PictureComposer({
         {canEdit ? (
           <>
             {t("Have a photo to change? ")}
-            <button className="link" onClick={onEditPhoto}>{t("✏ Edit a photo…")}</button>{" "}
+            <button className="link" onClick={onEditPhoto}>{t("Edit a photo…")}</button>{" "}
             {t("Open it, then describe the change, like “add a top hat” or “put us at a party”.")}
           </>
         ) : (
@@ -607,7 +607,7 @@ function VideoComposer({
             <button className="link" onClick={() => onPickSource(null)}>✕</button>
           </span>
         ) : (
-          <button className="btn small" onClick={() => setPicking(true)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("🖼 Start from a picture…")}</button>
+          <button className="btn small" onClick={() => setPicking(true)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("Start from a picture…")}</button>
         )}
         {!source && (
           <div className="filters tight">
@@ -780,7 +780,7 @@ function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStar
           <select value={engine} onChange={(e) => setEngine(e.target.value)} title={t("Voices from")}>
             <option value="">{t("This PC's voices")}</option>
             {cloud.map((c) => (
-              <option key={c.id} value={c.id}>☁ {c.name} ({c.provider})</option>
+              <option key={c.id} value={c.id}>{c.name} ({c.provider})</option>
             ))}
           </select>
         )}
@@ -905,10 +905,10 @@ function Viewer({
           {item.kind === "image" && features.has("images") && (
             <div className="viewer-tools">
               <div className="filters tight">
-                {can("edit") && <button className={`chip ${tool === "edit" ? "active" : ""}`} onClick={() => setTool(tool === "edit" ? null : "edit")}>{t("✏️ Change it")}</button>}
-                {can("fill") && <button className={`chip ${tool === "fill" ? "active" : ""}`} onClick={() => setTool(tool === "fill" ? null : "fill")}>{t("🖌 Paint to fill in")}</button>}
-                {can("extend") && <button className={`chip ${tool === "extend" ? "active" : ""}`} onClick={() => setTool(tool === "extend" ? null : "extend")}>{t("↔ Extend")}</button>}
-                {can("restyle") && <button className={`chip ${tool === "restyle" ? "active" : ""}`} onClick={() => setTool(tool === "restyle" ? null : "restyle")}>{t("🎨 Restyle")}</button>}
+                {can("edit") && <button className={`chip ${tool === "edit" ? "active" : ""}`} onClick={() => setTool(tool === "edit" ? null : "edit")}>{t("Change it")}</button>}
+                {can("fill") && <button className={`chip ${tool === "fill" ? "active" : ""}`} onClick={() => setTool(tool === "fill" ? null : "fill")}>{t("Paint to fill in")}</button>}
+                {can("extend") && <button className={`chip ${tool === "extend" ? "active" : ""}`} onClick={() => setTool(tool === "extend" ? null : "extend")}>{t("Extend")}</button>}
+                {can("restyle") && <button className={`chip ${tool === "restyle" ? "active" : ""}`} onClick={() => setTool(tool === "restyle" ? null : "restyle")}>{t("Restyle")}</button>}
               </div>
               {tool === "edit" && (
                 <div className="form">
@@ -956,10 +956,10 @@ function Viewer({
                   onClick={() => run({ op: "upscale", prompt: "" })}
                   title={Math.max(item.width, item.height) > 2048 ? t("It's already large. Upscaling is for pictures up to 2048 pixels across.") : t("Four times larger and sharper")}
                 >
-                  {t("⤢ Upscale 4×")}
+                  {t("Upscale 4×")}
                 </button>
-                <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>{t("✂ Remove background")}</button>
-                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("🎬 Turn into a video")}</button>}
+                <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>{t("Remove background")}</button>
+                {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("Turn into a video")}</button>}
                 <SetWallpaperButton item={item} toast={toast} />
                 {item.op === "generate" && item.prompt && (
                   <button className="btn small" onClick={() => onStart({ op: "generate", prompt: item.prompt, model_id: item.model_id, shape: item.width > item.height ? "landscape" : item.width < item.height ? "portrait" : "square" })}>

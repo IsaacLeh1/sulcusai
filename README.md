@@ -10,7 +10,7 @@ everything local unless you choose otherwise.
 ## What works today
 
 The app starts bare-bones: chat and models. Everything else below is added
-from **✨ Features**, which installs what a feature needs (for example the
+from **Features**, which installs what a feature needs (for example the
 speech model for dictation) and turns it on. Turning a feature off hides it
 and stops it, and keeps your data.
 
@@ -29,7 +29,7 @@ and stops it, and keeps your data.
 - **Your profile.** Your name, details about you and how you like answers are
   included in every chat.
 - **Connectivity levels:** Offline (the default), Local AI + Web, and Cloud. A
-  one-click 🌐 toggle (or Ctrl+Shift+W) turns on web for a single chat.
+  one-click Web toggle (or Ctrl+Shift+W) turns on web for a single chat.
 - **Encrypted chats.** Chat titles, messages and your profile are encrypted on
   disk. The key is sealed to your Windows account.
 - **App lock.** An optional PIN or passphrase, with a one-time recovery code,
@@ -63,7 +63,7 @@ and stops it, and keeps your data.
 - **Speech models** (Models › Speech), filtered to what this PC's processor
   can keep up with: a quick one for dictation and voice chats, the most
   accurate one for meetings.
-- **Dictation.** The 🎤 button (or Ctrl+Shift+Space) types what you say.
+- **Dictation.** The microphone button (or Ctrl+Shift+Space) types what you say.
 - **Voice chats.** Talk, and hear the answer as it's written; talk over it to
   interrupt. Replies can also be read aloud.
 - **Natural voices** (optional, 31 languages), with Windows' built-in voices

@@ -1860,7 +1860,7 @@ impl Turn {
         }
         let shown = match crate::workspace::share_folder(&self.state, &chosen, true, true) {
             Ok(s) => s,
-            Err(e) => return Outcome::error("Couldn't share the folder", format!("{e} Tell the user, and ask them to share one with the 📁 button.")),
+            Err(e) => return Outcome::error("Couldn't share the folder", format!("{e} Tell the user, and ask them to share one with the folder button under the message box.")),
         };
         self.emit("folders:changed", json!({}));
         let name = Path::new(&shown).file_name().map_or_else(|| shown.clone(), |n| n.to_string_lossy().to_string());

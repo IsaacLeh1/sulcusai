@@ -152,7 +152,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
     let cipher = state.work_cipher()?;
     let (profile, title) = {
         let conn = state.db.lock().unwrap();
-        let title = format!("⏰ {} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
+        let title = format!("{} · {}", s.name, Local::now().format("%b %-d, %H:%M"));
         (db::profile(&conn, &cipher), title)
     };
     // The chat and its reply are claimed before the model is loaded, so

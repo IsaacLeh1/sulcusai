@@ -132,7 +132,7 @@ function SiteKeys({ toast }: { toast: PushToast }) {
       {keys.map((k) => (
         <div key={k.host} className="row">
           <span>
-            🔑 <strong>{k.platform}</strong> <span className="muted small">{k.host}</span>
+            <strong>{k.platform}</strong> <span className="muted small">{k.host}</span>
           </span>
           <span className="spacer" />
           <button className="btn ghost small danger" onClick={() => forget(k.host)}>{t("Remove")}</button>
@@ -164,7 +164,7 @@ function BrowserChoice({ toast }: { toast: PushToast }) {
     <div className="form web-search">
       <h3>{t("Main browser")}</h3>
       <label>
-        {t("Links and the 🌐 button open in")}
+        {t("Links and the globe button open in")}
         <select value={value} onChange={(e) => pick(e.target.value)}>
           <option value="builtin">{t("SulcusAI's browser (the assistant can use it)")}</option>
           <option value="system">{t("Windows' default browser")}</option>
@@ -390,7 +390,6 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <div className="levels" role="radiogroup" aria-label={t("Connectivity level")}>
           {LEVELS.map((l) => (
             <button key={l.id} role="radio" aria-checked={connectivity === l.id} className={`level ${connectivity === l.id ? "active" : ""}`} onClick={() => pick(l.id)}>
-              <span className="conn-icon" aria-hidden>{l.icon}</span>
               <span>
                 <strong>{t(l.label)}</strong>
                 {l.id === "offline" && <span className="badge subtle">{t("Default")}</span>}
@@ -399,7 +398,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
             </button>
           ))}
         </div>
-        <p className="muted small">{t("Tip: while Offline, the 🌐 button in a chat (or Ctrl+Shift+W) turns web on for just that chat.")}</p>
+        <p className="muted small">{t("Tip: while Offline, the Web button in a chat (or Ctrl+Shift+W) turns web on for just that chat.")}</p>
         <WebSearchSettings toast={toast} />
         <SiteKeys toast={toast} />
         <BrowserChoice toast={toast} />

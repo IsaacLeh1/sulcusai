@@ -32,7 +32,7 @@ function Thumb({ item, onOpen, toast }: { item: MediaItem; onOpen: (i: MediaItem
           {src ? <img src={src} alt={item.prompt || t("Picture")} /> : <span>…</span>}
         </button>
       ) : (
-        <div className="files-thumb other" aria-hidden>{item.kind === "video" ? "🎬" : "🎵"}</div>
+        <div className="files-thumb other">{item.kind === "video" ? t("Video") : t("Sound")}</div>
       )}
       <div className="files-meta">
         <span className="small ellipsis" title={item.prompt}>{item.prompt || (item.hidden ? t("Attached picture") : t("Picture"))}</span>
@@ -65,14 +65,14 @@ export function ChatFilesPanel({ chatId, messages, onOpenPicture, onClose, toast
       </div>
       <h4>{t("Pictures, video and music")}</h4>
       {media === null && <p className="muted small">{t("Loading…")}</p>}
-      {media?.length === 0 && <p className="muted small">{t("None yet. Ask for a picture, or attach one with 📎.")}</p>}
+      {media?.length === 0 && <p className="muted small">{t("None yet. Ask for a picture, or attach one with the paperclip button.")}</p>}
       <div className="files-grid">
         {media?.map((m) => (
           <Thumb key={m.id} item={m} onOpen={onOpenPicture} toast={toast} />
         ))}
       </div>
       <h4>{t("Files it made")}</h4>
-      {files.length === 0 && <p className="muted small">{t("None yet. Share a folder with 📁 and ask it to make something.")}</p>}
+      {files.length === 0 && <p className="muted small">{t("None yet. Share a folder with the folder button and ask it to make something.")}</p>}
       <ul className="files-list">
         {files.map((f) => (
           <li key={f}>

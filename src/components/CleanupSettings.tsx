@@ -22,7 +22,7 @@ const CACHE_TEXT: Record<string, { name: string; what: string }> = {
   logs: { name: tx("Logs"), what: tx("SulcusAI's logs (Settings → Logs). They start again from now.") },
 };
 
-const KIND_ICON: Record<CleanItem["kind"], string> = { chat: "💬", model: "🧠", media: "🎨" };
+const KIND_WORD: Record<CleanItem["kind"], string> = { chat: tx("Chat"), model: tx("Model"), media: tx("Studio model") };
 
 function DaysPick({ label, value, onChange }: { label: string; value: number | null; onChange: (d: number | null) => void }) {
   return (
@@ -88,7 +88,7 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
           <DaysPick label={t("Remove models not used for")} value={s.model_days} onChange={(d) => set(s.chat_days, d)} />
         </div>
         <p className="small muted">
-          {t("Lock a chat by right-clicking it in the sidebar, and a model with 🔒 on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.")}
+          {t("Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.")}
         </p>
         {on && (
           <p className="small">
@@ -110,11 +110,11 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
                   {v.would_remove.map((i) => (
                     <li key={`${i.kind}:${i.id}`}>
                       <span className="ellipsis">
-                        <span aria-hidden>{KIND_ICON[i.kind]}</span> {i.name}
+                        <span className="muted">{t(KIND_WORD[i.kind])} · </span>{i.name}
                         <span className="muted"> · {t("last used {when}", { when: new Date(i.last_used).toLocaleDateString() })}{i.size > 0 && ` · ${bytes(i.size)}`}</span>
                       </span>
                       <button className="btn ghost small" onClick={() => keep(i)} title={t("Lock it: the cleanup never removes it")}>
-                        🔒 {t("Keep")}
+                        {t("Keep")}
                       </button>
                     </li>
                   ))}

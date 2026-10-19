@@ -95,7 +95,6 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
           <h3>{t("Go through")}</h3>
           <div className="levels" role="radiogroup" aria-label={t("Go through")}>
             <button role="radio" aria-checked={s.via === "tor"} className={`level ${s.via === "tor" ? "active" : ""}`} onClick={() => s.via !== "tor" && save({ ...s, via: "tor" })}>
-              <span className="conn-icon" aria-hidden>🧅</span>
               <span>
                 <strong>{t("Tor (built in)")}</strong>
                 <span className="small muted block">{t("Free, nothing to set up, run by volunteers worldwide. Slower, and some sites show extra checks to Tor users. Some school and work networks block it.")}</span>
@@ -106,7 +105,6 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
                 if (proxy.trim()) save({ ...s, via: "proxy", proxy: proxy.trim() });
                 else toast(t("Type your proxy's address below first."));
               }}>
-              <span className="conn-icon" aria-hidden>🛡️</span>
               <span>
                 <strong>{t("Your own proxy or VPN")}</strong>
                 <span className="small muted block">{t("A SOCKS5 or HTTP proxy you already use. Many VPN apps offer one in their settings.")}</span>
@@ -135,7 +133,7 @@ export function PrivacySettings({ toast }: { toast: PushToast }) {
               <span>
                 {t(r.label)}
                 <span className="muted small block">{t(r.detail)}</span>
-                {r.warning && <span className="warn-text small block">⚠ {t(r.warning)}</span>}
+                {r.warning && <span className="warn-text small block">{t(r.warning)}</span>}
               </span>
             </label>
           ))}
@@ -192,7 +190,7 @@ export function PrivacyPill({ onOpen }: { onOpen: () => void }) {
         : [t("Private"), t("SulcusAI's chosen traffic goes {via}.", { via })];
   return (
     <button className={`status-item link-btn privacy-pill ${v.state === "stuck" ? "warn-text" : ""}`} onClick={onOpen} title={title}>
-      <span aria-hidden>{v.state === "stuck" ? "⚠" : "🧅"}</span> {label}
+      {label}
     </button>
   );
 }

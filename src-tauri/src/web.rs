@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Web search and page reading, for chats where web access is on (the Local
-//! AI + Web level, or the 🌐 toggle on one chat). The AI still runs here;
+//! AI + Web level, or the Web toggle on one chat). The AI still runs here;
 //! only the search query and page requests go out.
 //!
 //! Pages are untrusted: their text goes to the model marked as information,

@@ -155,7 +155,7 @@ export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { prog
                   {r.file === found.model.recommended && r.file !== found.file && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
                   <span className="muted small ellipsis" title={r.file}>{baseName(r.file)}</span>
                   <span className={`small block ${r.runs ? "muted" : "warn-text"}`}>
-                    {bytes(r.size)} · {r.runs ? r.what : `⚠ ${r.what}`}
+                    {bytes(r.size)} · {r.what}
                   </span>
                 </div>
                 {p ? (

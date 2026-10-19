@@ -12,6 +12,7 @@ import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { Downloads } from "../components/Downloads";
+import { LockIcon } from "../components/Icons";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
 
@@ -416,7 +417,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
             </span>
           ) : (
             <span className="warn-text small" title={cantRun({ quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk }, budget)}>
-              {t(f.quality)} · {bytes(f.size)} · ⚠ {t("too much for this PC")}
+              {t(f.quality)} · {bytes(f.size)} · {t("too much for this PC")}
             </span>
           )}
         </div>
@@ -489,7 +490,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
                     </div>
                     <span className="muted small">
                       {m.params_b !== null && `${t("{n}B parameters", { n: m.params_b })} · `}
-                      ⬇ {compact.format(m.downloads)} · ♥ {compact.format(m.likes)}
+                      {t("{n} downloads", { n: compact.format(m.downloads) })} · {t("{n} likes", { n: compact.format(m.likes) })}
                       {m.vision && ` · ${t("sees pictures")}`}
                     </span>
                   </div>
@@ -654,7 +655,7 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
           {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} tokens/sec, estimated)", { n: Math.round(fit.est_tps) })}
         </p>
       ) : (
-        <p className="warn-text small fit-line" role="note">⚠ {t("This PC probably can't run this version.")} {cantRun(fit, budget)}</p>
+        <p className="warn-text small fit-line" role="note">{t("This PC probably can't run this version.")} {cantRun(fit, budget)}</p>
       ))}
     </article>
   );
@@ -864,7 +865,7 @@ function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: Model
     <div className="optimize small">
       {tuning ? (
         <span>
-          ⚡ {t("Optimized for this PC: {tps} tokens/sec", { tps: tuning.tps })}
+          {t("Optimized for this PC: {tps} tokens/sec", { tps: tuning.tps })}
           {tuning.before_tps > 0 && Math.abs(tuning.tps - tuning.before_tps) >= 0.5 && <span className="muted"> {t("(automatic settings: {tps})", { tps: tuning.before_tps })}</span>}
           <span className="muted">
             {" · "}
@@ -879,7 +880,7 @@ function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: Model
           onClick={run}
           title={t("Tries a few ways of running it on this PC's graphics card and keeps the fastest. Takes a minute or two, and the graphics card works hard meanwhile.")}
         >
-          {tuning ? t("Optimize again") : t("⚡ Optimize for this PC")}
+          {tuning ? t("Optimize again") : t("Optimize for this PC")}
         </button>
         {tuning && Math.abs(tuning.tps - tuning.before_tps) >= 0.5 && (
           <button className="link" onClick={() => api.forgetOptimization(m.id).then(() => window.dispatchEvent(new Event("sulcus:tunings"))).catch((e) => toast(errorText(e), "error"))}>
@@ -954,7 +955,7 @@ function InstalledCard({
             title={kept ? t("Locked: the automatic cleanup never removes it. Click to unlock.") : t("Lock it so the automatic cleanup never removes it")}
             onClick={() => api.setKept("model", m.id, !kept).then((l) => onKept(l.models)).catch((e) => toast(errorText(e), "error"))}
           >
-            {kept ? "🔒" : "🔓"}
+            <LockIcon open={!kept} />
           </button>
         </span>
       </div>

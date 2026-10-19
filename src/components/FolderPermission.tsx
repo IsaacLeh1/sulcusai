@@ -47,7 +47,7 @@ export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenC
       {p.preview.detail && <p className="web-ask-reason">{p.preview.detail}</p>}
       <div className="folder-ask-path">
         <span className="ellipsis" title={folder}>
-          📁 {folder}
+          {folder}
         </span>
         <button className="btn small" onClick={pickAnother}>
           {t("Pick another…")}
@@ -55,7 +55,7 @@ export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenC
       </div>
       {error && <p className="error-text">{error}</p>}
       <p className="muted small">
-        {t("If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (📁 under the message box). Changes can be undone from the chat.")}
+        {t("If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.")}
       </p>
       <div className="modal-actions">
         {chat && (

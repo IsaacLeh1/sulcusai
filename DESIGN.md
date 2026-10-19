@@ -41,7 +41,7 @@ Cloud is a deliberate step:
 
 - A one-time confirmation explains what gets sent and to whom.
 - Each cloud provider is enabled separately.
-- Every cloud-powered feature carries a ☁ badge.
+- Every cloud-powered feature carries a Cloud badge.
 - Local stays the default model for each task unless the user picks otherwise.
 - Personal info is redacted before anything goes to the cloud.
 - Spend is tracked against a budget the user sets.

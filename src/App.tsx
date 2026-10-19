@@ -42,6 +42,7 @@ import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 import { IncognitoIcon } from "./components/IncognitoIcon";
+import { BookIcon, GlobeIcon, LockIcon, PeopleIcon } from "./components/Icons";
 import { SharePermission } from "./components/SharePermission";
 
 // Pages load the first time they are opened, so the app starts faster.
@@ -266,7 +267,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
-      // The assistant asked for the web and got a yes: the 🌐 button shows it.
+      // The assistant asked for the web and got a yes: the Web button shows it.
       on("chat:web", () => refreshChats()),
       // The assistant showing the user a page (open_page).
       on("app:navigate", (p) => setView(p.page as View)),
@@ -284,7 +285,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           "success",
         );
       }),
-      on("task:reminder", (p) => toast(`⏰ ${p.title}`, "success")),
+      on("task:reminder", (p) => toast(t("Reminder: {title}", { title: p.title }), "success")),
       on("schedule:ran", (p) => {
         refreshChats();
         if (p.error) toast(t("Scheduled task “{name}” didn't run: {error}", { name: p.name, error: errorText(p.error) }), "error");
@@ -388,7 +389,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     }
   }, [current, refreshChats, toast]);
 
-  // Ctrl+Shift+W toggles web for the open chat, as its 🌐 button does: only
+  // Ctrl+Shift+W toggles web for the open chat, as its Web button does: only
   // on the chat page, and only Offline (other levels have web on for every chat).
   const webKey = view === "chat" && !!current && settings?.connectivity === "offline";
   useEffect(() => {
@@ -462,9 +463,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     >
       {c.incognito && <IncognitoIcon title={t("Incognito")} />}
       <span className="ellipsis">{c.title}</span>
-      {locks.chats.includes(c.id) && <span className="chat-kept" title={t("Locked: the automatic cleanup never removes it")}>🔒</span>}
-      {c.project_id && <span className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name}>📚</span>}
-      {c.web && <span className="globe-mini" title={t("Web on for this chat")}>🌐</span>}
+      {locks.chats.includes(c.id) && <LockIcon className="chat-kept" title={t("Locked: the automatic cleanup never removes it")} />}
+      {c.project_id && <BookIcon className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name} />}
+      {c.web && <GlobeIcon className="globe-mini" title={t("Web on for this chat")} />}
       {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
     </button>
   );
@@ -485,7 +486,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       title={s.online ? t("{name} shares this chat with you", { name: s.contact_name }) : t("{name} shares this chat with you (not connected right now)", { name: s.contact_name })}
     >
       <span className="ellipsis">{s.chat.title}</span>
-      <span className="shared-from">👥 {s.contact_name}</span>
+      <span className="shared-from"><PeopleIcon /> {s.contact_name}</span>
       {s.chat.busy && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
     </button>
   );
@@ -501,7 +502,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           <span>{APP_NAME}</span>
           {security.lock_enabled && (
             <button className="icon-btn lock-btn" title={t("Lock now")} aria-label={t("Lock now")} onClick={() => api.lockNow()}>
-              🔒
+              <LockIcon />
             </button>
           )}
         </div>
@@ -613,7 +614,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 setProjectMenu({ p, x: e.clientX, y: e.clientY });
               }}
             >
-              <span aria-hidden>📚</span>
+              <BookIcon />
               <span className="ellipsis">{p.name}</span>
             </button>
           ))}
@@ -657,7 +658,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 <span className="menu-label">{t("Move to folder")}</span>
                 {folders.filter((f) => f.id !== current?.id).map((f) => (
                   <button key={f.id} role="menuitem" onClick={() => move(f.id)}>
-                    📁 {f.name}
+                    {f.name}
                   </button>
                 ))}
                 <button role="menuitem" onClick={() => (setFolderFor(id), done())}>
@@ -676,7 +677,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     hideChat(id, !hidden.includes(id));
                   }}
                 >
-                  {hidden.includes(id) ? `👁 ${t("Show in the list again")}` : `🙈 ${t("Hide from the list")}`}
+                  {hidden.includes(id) ? t("Show in the list again") : t("Hide from the list")}
                 </button>
                 <button
                   role="menuitem"
@@ -685,7 +686,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     api.setKept("chat", id, !kept).then(setLocks).catch((e) => toast(errorText(e), "error"));
                   }}
                 >
-                  {kept ? `🔓 ${t("Unlock (the cleanup may remove it)")}` : `🔒 ${t("Lock (the cleanup never removes it)")}`}
+                  {kept ? t("Unlock (the cleanup may remove it)") : t("Lock (the cleanup never removes it)")}
                 </button>
                 <button
                   role="menuitem"
@@ -695,7 +696,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     done();
                   }}
                 >
-                  {t("🗑 Delete chat")}
+                  {t("Delete chat")}
                 </button>
               </>
             );
@@ -712,7 +713,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               setProjectMenu(null);
             }}
           >
-            📚 {t("Open")}
+            {t("Open")}
           </button>
           <button
             role="menuitem"
@@ -724,11 +725,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             ＋ {t("New chat in this project")}
           </button>
           <button role="menuitem" onClick={() => (setRenamingProject(projectMenu.p), setProjectMenu(null))}>
-            ✏️ {t("Rename…")}
+            {t("Rename…")}
           </button>
           <hr />
           <button role="menuitem" className="danger" onClick={() => (setDeletingProject(projectMenu.p), setProjectMenu(null))}>
-            🗑 {t("Delete project…")}
+            {t("Delete project…")}
           </button>
         </FloatingMenu>
       )}
@@ -800,7 +801,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     setView("shared");
                   }}
                 >
-                  💬 {t("Open")}
+                  {t("Open")}
                 </button>
                 <button
                   role="menuitem"
@@ -809,7 +810,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     hideChat(key, !hidden.includes(key));
                   }}
                 >
-                  {hidden.includes(key) ? `👁 ${t("Show in the list again")}` : `🙈 ${t("Hide from the list")}`}
+                  {hidden.includes(key) ? t("Show in the list again") : t("Hide from the list")}
                 </button>
               </>
             );
@@ -1009,7 +1010,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         <PrivacyPill onOpen={() => setView("settings")} />
         <span className="spacer" />
         <span className="status-item muted">
-          {t("🔐 Encrypted ·")}{" "}
+          {t("Encrypted ·")}{" "}
           {settings.connectivity === "cloud" ? t("AI runs on this PC unless you pick a cloud model") : t("AI runs only on this PC")}
         </span>
       </footer>
@@ -1082,7 +1083,7 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
       <FeedbackButton toast={toast} />
       {web && (
         <button className="icon-btn web-btn" title={t("Open {name}", { name })} aria-label={t("Open {name}", { name })} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
-          🌐
+          <GlobeIcon />
         </button>
       )}
     </div>

@@ -181,7 +181,6 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
     <div className="connector">
       <div className="setting-row">
         <button className="tool-head" onClick={onToggleOpen} aria-expanded={open}>
-          <span aria-hidden>🔌</span>
           <span>
             <strong>{c.name}</strong>
             <span className="small muted block">

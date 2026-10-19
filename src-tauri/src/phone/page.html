@@ -43,7 +43,7 @@ input.text { flex: 1; font: inherit; color: inherit; background: var(--panel); b
 </style>
 </head>
 <body>
-<header><button class="link" id="back" hidden aria-label="Back">‹</button><h1 id="title">SulcusAI</h1><button class="link" id="new" hidden>New chat</button><button class="link" id="lock" hidden aria-label="Lock">🔒</button></header>
+<header><button class="link" id="back" hidden aria-label="Back">‹</button><h1 id="title">SulcusAI</h1><button class="link" id="new" hidden>New chat</button><button class="link" id="lock" hidden>Lock</button></header>
 <main id="main"><p class="center muted">Connecting…</p></main>
 <nav class="tabs" id="tabs" hidden>
   <button data-tab="chats" class="on">Chats</button><button data-tab="tasks">Tasks</button><button data-tab="notes">Notes</button>
@@ -215,7 +215,7 @@ async function showNotes() {
   stopPolling();
   header("Notes", false);
   const notes = await call("notes");
-  main.innerHTML = `<ul class="list">${notes.map((n, i) => `<li class="tap" data-i="${i}"><strong>${n.pinned ? "📌 " : ""}${esc(n.title || "Untitled")}</strong><div class="muted">${esc(n.body.slice(0, 120))}</div></li>`).join("") || '<li class="muted">No notes yet.</li>'}</ul>`;
+  main.innerHTML = `<ul class="list">${notes.map((n, i) => `<li class="tap" data-i="${i}"><strong>${esc(n.title || "Untitled")}</strong>${n.pinned ? ' <span class="muted">· Pinned</span>' : ""}<div class="muted">${esc(n.body.slice(0, 120))}</div></li>`).join("") || '<li class="muted">No notes yet.</li>'}</ul>`;
   main.querySelectorAll("li[data-i]").forEach((li) => (li.onclick = () => {
     const n = notes[+li.dataset.i];
     header(n.title || "Untitled", true);

@@ -5,14 +5,14 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 
-const CATEGORIES: { id: string; label: string; icon: string }[] = [
-  { id: "all", label: tx("Everything"), icon: "" },
-  { id: "network", label: tx("Left this PC"), icon: "🌐" },
-  { id: "model", label: tx("Models"), icon: "🧠" },
-  { id: "privacy", label: tx("Privacy"), icon: "🛡" },
-  { id: "security", label: tx("Security"), icon: "🔐" },
-  { id: "chat", label: tx("Chats"), icon: "💬" },
-  { id: "people", label: tx("People"), icon: "👥" },
+const CATEGORIES: { id: string; label: string }[] = [
+  { id: "all", label: tx("Everything") },
+  { id: "network", label: tx("Left this PC") },
+  { id: "model", label: tx("Models") },
+  { id: "privacy", label: tx("Privacy") },
+  { id: "security", label: tx("Security") },
+  { id: "chat", label: tx("Chats") },
+  { id: "people", label: tx("People") },
 ];
 
 const PERIODS: { id: string; label: string; days: number | null }[] = [
@@ -31,10 +31,6 @@ function periodStart(days: number | null): number | undefined {
     return d.getTime();
   }
   return Date.now() - days * 86_400_000;
-}
-
-function icon(category: string) {
-  return CATEGORIES.find((c) => c.id === category)?.icon || "•";
 }
 
 function when(ms: number) {
@@ -84,7 +80,6 @@ export function ActivityView({ toast }: { toast: PushToast }) {
         <div className="filters">
           {CATEGORIES.map((c) => (
             <button key={c.id} className={`chip ${filter === c.id ? "active" : ""}`} onClick={() => setFilter(c.id)}>
-              {c.icon && <span aria-hidden>{c.icon} </span>}
               {t(c.label)}
             </button>
           ))}
@@ -98,7 +93,6 @@ export function ActivityView({ toast }: { toast: PushToast }) {
           <ol className="activity-list">
             {shown.map((a) => (
               <li key={a.id}>
-                <span className="activity-icon" aria-hidden>{icon(a.category)}</span>
                 <span className="activity-summary">{a.summary}</span>
                 <time className="muted small" dateTime={new Date(a.at).toISOString()}>{when(a.at)}</time>
               </li>

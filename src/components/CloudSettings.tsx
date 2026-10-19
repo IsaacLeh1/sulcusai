@@ -91,7 +91,7 @@ function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
             <label className="check">
               <input type="checkbox" checked={on(m.id)} disabled={!p.has_key} onChange={(e) => toggle(m, e.target.checked)} />
               <span>
-                ☁ {m.name} <span className="muted">· {t(MEDIA_KIND[m.kind])}</span>
+                {m.name} <span className="muted">· {t(MEDIA_KIND[m.kind])}</span>
               </span>
             </label>
             {on(m.id) && (
@@ -163,7 +163,7 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
             {p.models.map((m) => (
               <tr key={m.id}>
                 <td>
-                  ☁ {m.name}
+                  {m.name}
                   {m.vision && <span className="muted"> · {t("sees pictures")}</span>}
                 </td>
                 <td><input className="input" type="number" min={0} step={0.01} defaultValue={m.price_in ?? ""} onBlur={(e) => setPrice(m.id, "price_in", e.target.value)} aria-label={t("{name} input price", { name: m.name })} /></td>
@@ -219,7 +219,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
 
   return (
     <section className="card cloud-settings">
-      <h2>{t("☁ Cloud models")}</h2>
+      <h2>{t("Cloud models")}</h2>
       <p className="muted small">
         {t("Use models from providers you have an account with, with your own API key. They only work at the Cloud level, and what you send to them goes to that provider. Models on this PC stay the default.")}
         {!cloudOn && " " + t("You're not at the Cloud level now, so these models are switched off.")}

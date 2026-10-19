@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dictation (the 🎤 button), voice mode's panel, and read-aloud.
+// Dictation (the microphone button), voice mode's panel, and read-aloud.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, on } from "../api";
 import { t, tx } from "../i18n";
+import { MicIcon, SpeakerIcon, StopIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
 
 type DictationState = "idle" | "loading" | "listening" | "hearing" | "finishing";
@@ -105,7 +106,7 @@ export function MicButton({ onText, toast, disabled }: { onText: (text: string) 
       title={t(DICTATION_LABEL[d.state])}
       style={d.active ? { boxShadow: `0 0 0 ${2 + ring * 6}px color-mix(in srgb, var(--danger) ${20 + ring * 30}%, transparent)` } : undefined}
     >
-      🎤
+      <MicIcon />
     </button>
   );
 }
@@ -205,7 +206,7 @@ export function SpeakButton({ text, toast }: { text: string; toast: PushToast })
   };
   return (
     <button className="icon-btn speak-btn" onClick={click} title={state === "idle" ? t("Read aloud") : t("Stop reading")} aria-label={state === "idle" ? t("Read aloud") : t("Stop reading")}>
-      {state === "idle" ? "🔊" : state === "preparing" ? "…" : "⏹"}
+      {state === "idle" ? <SpeakerIcon /> : state === "preparing" ? "…" : <StopIcon />}
     </button>
   );
 }

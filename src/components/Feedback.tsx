@@ -12,7 +12,7 @@ export function FeedbackButton({ toast }: { toast: PushToast }) {
   return (
     <>
       <button className="btn ghost small feedback-btn" onClick={() => setOpen(true)} title={t("Report a bug or send an idea to SulcusAI's developer")}>
-        🐞 {t("Bug / Feedback")}
+        {t("Bug / Feedback")}
       </button>
       {open && <FeedbackDialog onClose={() => setOpen(false)} toast={toast} />}
     </>
@@ -47,10 +47,10 @@ function FeedbackDialog({ onClose, toast }: { onClose: () => void; toast: PushTo
     <Modal title={t("Report a bug or send feedback")} onClose={onClose}>
       <div className="mode-switch feedback-kind" role="radiogroup" aria-label={t("What it is")}>
         <button role="radio" aria-checked={kind === "bug"} className={`mode ${kind === "bug" ? "active" : ""}`} onClick={() => setKind("bug")}>
-          🐞 {t("A bug")}
+          {t("A bug")}
         </button>
         <button role="radio" aria-checked={kind === "idea"} className={`mode ${kind === "idea" ? "active" : ""}`} onClick={() => setKind("idea")}>
-          💡 {t("An idea or feedback")}
+          {t("An idea or feedback")}
         </button>
       </div>
       <textarea
@@ -69,7 +69,7 @@ function FeedbackDialog({ onClose, toast }: { onClose: () => void; toast: PushTo
         <span>{t("Also send the version number ({version}), so the developer knows which one you have", { version: number })}</span>
       </label>
       <div className="feedback-privacy">
-        <strong>🔒 {t("Only what you write here is sent")}</strong>
+        <strong>{t("Only what you write here is sent")}</strong>
         <span className="small">
           {t("It goes straight to SulcusAI's developer, and nothing else goes with it: not your name, your chats, your files, your models or anything about your PC. Your internet address isn't saved. Leave out passwords and private details.")}
         </span>
