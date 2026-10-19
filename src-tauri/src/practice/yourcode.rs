@@ -35,7 +35,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 
 use super::tasks::{self, Check, Reply, Rng, Skill, Task};
-use super::{Attempt, Model, Turn, TURNS};
+use super::{rescued, Attempt, Model, Turn, TURNS};
 use crate::sandbox::Sandbox;
 use crate::tools::fs::walk_files;
 
@@ -1188,7 +1188,7 @@ async fn layout(model: &Model, messages: &[Value], tools: &Value) -> Result<Stri
 /// written, and taking what follows it), so the trainer finds every one of
 /// its turns.
 pub(super) async fn episode(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32, temperature: f64, seed: u64) -> Result<Attempt, String> {
-    Ok(tried(model, task, look, prompt, room, temperature, seed).await?.0)
+    Ok(tried(model, task, look, prompt, room, temperature, seed, false).await?.0)
 }
 
 /// A turn of a try with tool calls: what the model said (its thinking left
@@ -1205,8 +1205,12 @@ pub(super) struct Looked {
     answer: String,
 }
 
-/// The try, and its turns with tool calls.
-async fn tried(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32, temperature: f64, seed: u64) -> Result<(Attempt, Vec<Round>), String> {
+/// The try, and its turns with tool calls. `rescue`: a call written into the
+/// text is run the way chats run it (`rescued`). Only for a teacher, whose
+/// turns are written out again the student's way: the student's own turns
+/// are learnt as written, so they must be in its form.
+#[allow(clippy::too_many_arguments)]
+async fn tried(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32, temperature: f64, seed: u64, rescue: bool) -> Result<(Attempt, Vec<Round>), String> {
     let tools = task.tools.clone().unwrap_or_else(definitions);
     let mut rounds = Vec::new();
     let mut messages = vec![json!({ "role": "system", "content": tasks::SYSTEM }), json!({ "role": "user", "content": task.user })];
@@ -1231,7 +1235,10 @@ async fn tried(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32,
         if a.cut {
             return Ok((gave_up(a.text, &t.no_room), rounds));
         }
-        let Some(reply) = tasks::read(&a.text) else { return Ok((gave_up(a.text, &t.lost), rounds)) };
+        let Some(mut reply) = tasks::read(&a.text) else { return Ok((gave_up(a.text, &t.lost), rounds)) };
+        if rescue {
+            reply = rescued(reply, &tools);
+        }
         if reply.calls.is_empty() {
             // An answer given without looking is a guess, which isn't what's practised.
             count(if looked { &t.answered } else { &t.guessed });
@@ -1271,7 +1278,7 @@ async fn tried(model: &Model, task: &Task, look: &Look, prompt: &str, room: u32,
 pub(super) async fn teach(teacher: &Model, task: &Task, look: &Look, room: u32, temperatures: &[f64], rng: &mut Rng) -> Result<Option<Looked>, String> {
     let prompt = teacher.prompt(task, None).await?;
     for temperature in temperatures {
-        let (a, rounds) = tried(teacher, task, look, &prompt, room, *temperature, rng.next()).await?;
+        let (a, rounds) = tried(teacher, task, look, &prompt, room, *temperature, rng.next(), true).await?;
         let answer = if a.cut { None } else { tasks::read(&a.text).filter(|r| tasks::passes(task, r)) };
         if let Some(answer) = answer {
             return Ok(Some(Looked { rounds, answer: answer.text }));
@@ -1641,7 +1648,9 @@ class Exporter:
                 let room = super::super::TRAIN_CTX.saturating_sub(asked + 4);
                 let s = &mut score[level as usize - 1];
                 s.0 += 1;
-                let a = episode(&model, &t, look, &prompt, super::super::TEST_REPLY, 0.0, 1).await.unwrap();
+                // SULCUSAI_RESCUE: run calls written as text, as for a teacher.
+                let rescue = std::env::var("SULCUSAI_RESCUE").is_ok();
+                let a = tried(&model, &t, look, &prompt, super::super::TEST_REPLY, 0.0, 1, rescue).await.unwrap().0;
                 let right = |a: &Attempt| !a.cut && tasks::read(&a.text).is_some_and(|r| tasks::passes(&t, &r));
                 let all = a.all.clone().unwrap_or_default();
                 let used = if all.is_empty() { 0 } else { model.tokens(&format!("{prompt}{all}")).await.unwrap() };
@@ -1651,7 +1660,7 @@ class Exporter:
                     println!("{}", if all.is_empty() { &a.text } else { &all });
                 }
                 for k in 0..super::super::ATTEMPTS {
-                    let p = episode(&model, &t, look, &prompt, room, 0.8, rng.next()).await.unwrap();
+                    let p = tried(&model, &t, look, &prompt, room, 0.8, rng.next(), rescue).await.unwrap().0;
                     if right(&p) {
                         s.2 += 1;
                         let used = model.tokens(&format!("{prompt}{}", p.all.clone().unwrap_or_default())).await.unwrap();
@@ -1744,6 +1753,20 @@ class Exporter:
         assert_eq!(last_turn(g, gemma).unwrap(), "looking<end_of_turn>\n<start_of_turn>user\nresult<end_of_turn>\n<start_of_turn>model\n");
     }
 
+    /// qwen2.5-coder 14B writes its calls as a ```json block, then copies the
+    /// answer line's placeholder: for a teacher, that's the call it meant.
+    #[test]
+    fn a_call_written_as_text_is_run_for_a_teacher() {
+        let written = "To find the file that defines the Rust function `background_endpoint`, I will use the `search_files` function.\n\n```json\n{\n  \"name\": \"search_files\",\n  \"arguments\": {\n    \"pattern\": \"fn background_endpoint\",\n    \"glob\": \"sulcusai/**/*\"\n  }\n}\n```\n\nAnswer: <path>";
+        let r = rescued(tasks::read(written).unwrap(), &definitions());
+        assert_eq!(r.calls, vec![("search_files".to_string(), json!({ "pattern": "fn background_endpoint", "glob": "sulcusai/**/*" }))]);
+        assert_eq!(r.text, "To find the file that defines the Rust function `background_endpoint`, I will use the `search_files` function.");
+        let plain = rescued(tasks::read("It's in proj/src/a.rs.\n\nAnswer: proj/src/a.rs").unwrap(), &definitions());
+        assert!(plain.calls.is_empty() && plain.text.ends_with("Answer: proj/src/a.rs"));
+        let other = rescued(tasks::read("```json\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"x\"}}\n```").unwrap(), &definitions());
+        assert!(other.calls.is_empty(), "only tools that were offered");
+    }
+
     /// A model's own right try, re-laid by its own template the way a
     /// teacher's is, comes out as it wrote it. Against a running
     /// llama-server, as `e2e_code_tries`.
@@ -1761,7 +1784,7 @@ class Exporter:
             let t = task(&code, level, &mut rng);
             let Check::Look(look) = &t.check else { panic!() };
             let prompt = model.prompt(&t, None).await.unwrap();
-            let (a, rounds) = tried(&model, &t, look, &prompt, super::super::TEST_REPLY, 0.0, 1).await.unwrap();
+            let (a, rounds) = tried(&model, &t, look, &prompt, super::super::TEST_REPLY, 0.0, 1, false).await.unwrap();
             let Some(answer) = (!a.cut).then(|| tasks::read(&a.text)).flatten().filter(|r| tasks::passes(&t, r)) else { continue };
             tried_n += 1;
             let looked = Looked { rounds, answer: answer.text };
