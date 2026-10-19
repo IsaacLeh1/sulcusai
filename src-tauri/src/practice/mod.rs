@@ -850,6 +850,9 @@ async fn run(r: &Run<'_>) -> Result<Option<Adapter>, String> {
     update(app, |j| {
         j.part.clear();
         j.second = Some(second.clone());
+        // What it says at the end counts the first test's tasks.
+        j.done = out_of;
+        j.total = out_of;
     });
     if !confirmed {
         return Ok(None);
