@@ -366,7 +366,7 @@ async fn keep_running(mut child: tokio::process::Child, command: String, dir: st
     o
 }
 
-fn workdir(args: &Value, sb: &Sandbox) -> Result<std::path::PathBuf, String> {
+pub(crate) fn workdir(args: &Value, sb: &Sandbox) -> Result<std::path::PathBuf, String> {
     // A shared folder, or one in the home folder (to run a program found
     // there); with nothing shared, the home folder. What a command may
     // change is the guard's call (`guard::refuse`, `guard::destructive`).

@@ -3353,5 +3353,9 @@
  "Exit code 0.": "退出代码 0。",
  "Listed folders": "已列出文件夹",
  "The trainer finished without saving the prompt writer's adapter.": "训练器结束了，但没有保存提示词撰写器的适配器。",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "这个图片模型没有自带语言模型，所以没有可训练的撰写器。"
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "这个图片模型没有自带语言模型，所以没有可训练的撰写器。",
+ "Asking because this sends something off your PC.": "之所以询问，是因为这会把内容发送到你的电脑之外。",
+ "Deny to leave it out; the model is told it was left out.": "拒绝即可略去；模型会被告知已略去。",
+ "Secret": "机密",
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "对方会收到该命令发送的所有内容（文件、文本或你项目的代码），并可以保存、读取或转给他人。"
 }

@@ -338,6 +338,10 @@ impl Turn {
         // allowed it); changes stay in the shared folders.
         let file_feature = features.contains(&Feature::Files);
         let mut sandbox = if file_feature { Sandbox::new(&folders).with_home() } else { Sandbox::new(&folders) };
+        // An online model gets what it reads: keys and saved logins stay closed to it.
+        if self.ep.cloud.is_some() {
+            sandbox = sandbox.for_online();
+        }
         let files = self.use_tools && file_feature && (!sandbox.is_empty() || sandbox.home().is_some());
         let memory_tools = self.use_tools && memory_on;
         let mut defs = tools::definitions(self.mode, files, memory_tools).as_array().cloned().unwrap_or_default();
@@ -1068,7 +1072,7 @@ impl Turn {
                         db::chat(&conn, &self.cipher, &self.chat_id).map(|c| projects::chat_folders(&conn, &c)).unwrap_or_default()
                     };
                     let before = tool_instructions(&sandbox, self.mode);
-                    sandbox = Sandbox::new(&folders).with_home();
+                    sandbox = if self.ep.cloud.is_some() { Sandbox::new(&folders).with_home().for_online() } else { Sandbox::new(&folders).with_home() };
                     about = about.replacen(&before, &tool_instructions(&sandbox, self.mode), 1);
                     system = system_of(&about);
                     if let Some(Value::Array(defs)) = tools.as_mut() {
@@ -1221,6 +1225,16 @@ impl Turn {
                 Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
             }
         }
+        // A command that sends something off the PC (an upload, a post, a
+        // push, a copy to another machine, a request to the local network):
+        // asked in every mode, Bypass included, never "for the whole chat".
+        // His rule: models here may read anything; nothing leaves without
+        // his word, and a secret leaving gets a warning.
+        let egress = tools::egress_call(&call.name, &args, sandbox);
+        if let Some(e) = &egress {
+            risk = Risk::Submit;
+            browser_preview = Some(tools::egress_preview(e, args.get("command").and_then(Value::as_str).unwrap_or_default()));
+        }
         // Privacy mode: what this call sends off the PC, who gets it, and how
         // personal it is (1-5). Shown on the approval card when the call asks
         // anyway; otherwise asked about below, from the level set.
@@ -1249,6 +1263,13 @@ impl Turn {
         if permission == Permission::Run && adv.must_ask(risk) {
             permission = Permission::Ask;
         }
+        // A secret in what goes out (a key in a search or a web address, a
+        // password in an email or a message, a key file a command sends)
+        // always asks, whatever the mode and with privacy mode on or off.
+        let secret_out = review.as_ref().is_some_and(|r| r.level >= 5) || egress.as_ref().is_some_and(|e| e.secret.is_some());
+        if secret_out && permission == Permission::Run {
+            permission = Permission::Ask;
+        }
         match permission {
             Permission::Refuse => {
                 return Outcome::error(tools::failed_title(&call.name, &args), "Plan mode can't change anything. Put this step in your plan instead.");
@@ -1271,6 +1292,14 @@ impl Turn {
                         Some(n) => format!("{n}\n{line}"),
                         None => line,
                     });
+                    asked = true;
+                }
+                // A secret named on the card, plainly (the command card says so already).
+                if let Some(r) = review.as_ref().filter(|r| r.level >= 5 && egress.is_none()) {
+                    let what = r.found.iter().find(|f| f.level >= 5).map(|f| f.what.clone()).unwrap_or_else(|| "a secret".into());
+                    preview.title = format!("Warning: this would send {what} to {}", r.to);
+                    preview.kind = "text";
+                    preview.detail = Some(r.items.iter().map(|i| format!("{}: {}", i.label, i.value)).collect::<Vec<_>>().join("\n"));
                     asked = true;
                 }
                 let title = preview.title.clone();
@@ -1344,6 +1373,23 @@ impl Turn {
         }
         if let Some(title) = outcome.meta.get("title").and_then(Value::as_str) {
             self.log(title);
+        }
+        // A chat on an online model: what a tool read goes to it next. A key
+        // or password in it (a file, a command's output) asks first; denied,
+        // the model gets a note instead of the text.
+        if let Some(cloud) = self.ep.cloud.as_ref().filter(|_| matches!(call.name.as_str(), "read_file" | "run_command" | "search_files" | "read_document" | "list_dir")) {
+            if crate::practice::yourcode::SECRET_TEXT.is_match(&outcome.text) {
+                let preview = Preview {
+                    title: format!("Warning: this would send a key or password to {}", cloud.provider),
+                    kind: "text",
+                    detail: Some(format!("What {} found holds what looks like a key or password. It would go to {}, the online model this chat uses.", call.name, cloud.provider)),
+                    note: Some("Deny to leave it out; the model is told it was left out.".into()),
+                };
+                if self.ask(call, Risk::Submit, preview).await == Decision::Deny {
+                    self.log("Left a key or password out of what went to the online model");
+                    outcome.text = "[Left out: it holds a key or password, and the user chose not to send it to the online model.]".into();
+                }
+            }
         }
         outcome
     }

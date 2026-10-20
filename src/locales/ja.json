@@ -3353,5 +3353,9 @@
  "Exit code 0.": "終了コード 0。",
  "Listed folders": "フォルダーを一覧表示しました",
  "The trainer finished without saving the prompt writer's adapter.": "トレーナーはプロンプトライターのアダプターを保存せずに終了しました。",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。"
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。",
+ "Asking because this sends something off your PC.": "PCの外に何かを送るため、確認しています。",
+ "Deny to leave it out; the model is told it was left out.": "拒否すると除外されます。除外されたことはモデルに伝えられます。",
+ "Secret": "秘密情報",
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "送信先は、コマンドが送るもの（ファイル、テキスト、プロジェクトのコード）をすべて受け取り、保存、閲覧、他者への提供ができます。"
 }

@@ -3353,5 +3353,9 @@
  "Exit code 0.": "Código de salida 0.",
  "Listed folders": "Carpetas listadas",
  "The trainer finished without saving the prompt writer's adapter.": "El entrenador terminó sin guardar el adaptador del redactor de prompts.",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "Este modelo de imágenes no trae su propio modelo de lenguaje, así que no hay redactor que entrenar."
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "Este modelo de imágenes no trae su propio modelo de lenguaje, así que no hay redactor que entrenar.",
+ "Asking because this sends something off your PC.": "Se pregunta porque esto envía algo fuera de tu PC.",
+ "Deny to leave it out; the model is told it was left out.": "Deniega para dejarlo fuera; al modelo se le dice que se dejó fuera.",
+ "Secret": "Secreto",
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "Reciben todo lo que envía el comando (archivos, texto o el código de tu proyecto) y pueden guardarlo, leerlo o pasarlo a otros."
 }

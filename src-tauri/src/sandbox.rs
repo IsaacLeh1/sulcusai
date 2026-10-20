@@ -11,11 +11,15 @@ pub struct Sandbox {
     /// home folder, which the person lets it look through (changes still
     /// happen only in shared folders).
     readable: Vec<PathBuf>,
+    /// The chat runs on an online model: whatever is read goes to it, so
+    /// keys and saved logins in the home folder stay closed. A model on this
+    /// PC may read them (his rule: reading isn't the risk, sending is).
+    online: bool,
 }
 
-/// Places in the home folder never read, even there: keys, saved
-/// passwords and logins, and SulcusAI's own data.
-const SECRET_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".tauri", ".password-store"];
+/// Keys, saved passwords and logins, and SulcusAI's own data: never sent
+/// off the PC without a warning, and not read for an online model.
+const SECRET_DIRS: &[&str] = &[".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".tauri", ".password-store", ".claude", ".wrangler"];
 const SECRET_PATHS: &[&str] = &[
     "appdata/local/google/chrome/user data",
     "appdata/local/microsoft/edge/user data",
@@ -26,10 +30,13 @@ const SECRET_PATHS: &[&str] = &[
     "appdata/roaming/microsoft/protect",
     "appdata/local/app.sulcusai.desktop",
     "appdata/roaming/app.sulcusai.desktop",
+    "appdata/roaming/github cli",
+    "globalstorage/state.vscdb",
+    "psreadline/consolehost_history.txt",
 ];
-const SECRET_FILES: &[&str] = &[".env", ".pem", ".key", ".pfx", ".p12", ".kdbx"];
+const SECRET_FILES: &[&str] = &[".env", ".pem", ".key", ".pfx", ".p12", ".kdbx", ".git-credentials", ".netrc", ".npmrc", "credentials.toml", "keys.json"];
 
-/// A key, saved login or password store: never read from the home folder.
+/// A key, saved login or password store.
 pub fn secret(path: &Path) -> bool {
     // Without regard to capitals everywhere: "AppData/.../Chrome/User Data" on a Mac too.
     let k = key(path).to_lowercase();
@@ -137,7 +144,7 @@ pub fn refuse_reason(path: &Path, app_data: &Path, allow_system: bool) -> Option
 
 impl Sandbox {
     pub fn new(folders: &[String]) -> Sandbox {
-        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect(), readable: Vec::new() }
+        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect(), readable: Vec::new(), online: false }
     }
 
     /// The same, with the user's home folder open for searching and reading.
@@ -182,15 +189,27 @@ impl Sandbox {
         self.resolve_in(input, &self.roots)
     }
 
+    /// For a chat on an online model: keys and saved logins in the home
+    /// folder stay closed, since what's read is sent to it.
+    pub fn for_online(mut self) -> Sandbox {
+        self.online = true;
+        self
+    }
+
+    /// Whether keys and saved logins in the home folder are closed (an online model).
+    pub fn secrets_closed(&self) -> bool {
+        self.online
+    }
+
     /// A path to search or read: inside a shared folder, or in the home
-    /// folder when that's open for reading (but never a key or saved
-    /// login there). Relative paths start at the first shared folder, else
-    /// the home folder.
+    /// folder when that's open for reading (for an online model, not a key
+    /// or saved login there). Relative paths start at the first shared
+    /// folder, else the home folder.
     pub fn resolve_read(&self, input: &str) -> Result<PathBuf, String> {
         let all: Vec<PathBuf> = self.roots.iter().chain(&self.readable).cloned().collect();
         let p = self.resolve_in(input, &all)?;
-        if !self.roots.iter().any(|r| is_inside(&p, r)) && secret(&p) {
-            return Err(format!("{input} holds keys or saved logins, which SulcusAI doesn't read."));
+        if self.online && !self.roots.iter().any(|r| is_inside(&p, r)) && secret(&p) {
+            return Err(format!("{input} holds keys or saved logins, which aren't read for an online model (they'd be sent to it)."));
         }
         Ok(p)
     }
@@ -289,7 +308,7 @@ mod tests {
     /// The home folder can be searched and read, not changed, and its keys
     /// and saved logins stay closed.
     #[test]
-    fn the_home_folder_is_read_only_and_keeps_its_secrets() {
+    fn the_home_folder_is_read_only_and_closes_secrets_to_online_models() {
         let d = std::env::temp_dir().join(format!("sulcusai-home-{}", uuid::Uuid::new_v4().simple()));
         for f in ["proj", "home/Desktop", "home/.ssh", "home/AppData/Local/Google/Chrome/User Data"] {
             std::fs::create_dir_all(d.join(f)).unwrap();
@@ -301,9 +320,13 @@ mod tests {
         let bat = d.join("home/Desktop/hello.bat").display().to_string();
         assert!(sb.resolve_read(&bat).is_ok(), "read anywhere in the home folder");
         assert!(sb.resolve(&bat).unwrap_err().contains("can be read but not changed"), "changes only in shared folders");
+        // A model on this PC may read keys and logins (reading isn't the
+        // risk; sending is, and that asks). An online model may not.
+        let online = sb.clone().for_online();
         for secret in ["home/.ssh/id_ed25519", "home/Desktop/.env", "home/AppData/Local/Google/Chrome/User Data"] {
             let p = d.join(secret).display().to_string();
-            assert!(sb.resolve_read(&p).unwrap_err().contains("keys or saved logins"), "{secret}");
+            assert!(sb.resolve_read(&p).is_ok(), "local: {secret}");
+            assert!(online.resolve_read(&p).unwrap_err().contains("keys or saved logins"), "online: {secret}");
         }
         // Outside both: closed.
         assert!(sb.resolve_read(&std::env::temp_dir().display().to_string()).is_err());

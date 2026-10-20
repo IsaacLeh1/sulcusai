@@ -548,8 +548,8 @@ fn find_files(sb: &Sandbox, pattern: &str, path: Option<&str>) -> Result<Outcome
             from_home = !found.is_empty();
         }
     }
-    // Secrets in the home folder aren't listed (they can't be read either).
-    found.retain(|p| sb.holds(p) || !crate::sandbox::secret(p));
+    // For an online model, secrets in the home folder aren't listed (they can't be read either).
+    found.retain(|p| !sb.secrets_closed() || sb.holds(p) || !crate::sandbox::secret(p));
     let shown: Vec<String> = found.iter().map(|p| if sb.holds(p) { sb.display(p) } else { p.display().to_string() }).collect();
     let text = if shown.is_empty() {
         let stem = pattern.trim_matches('*').split('.').next().unwrap_or(pattern);
@@ -582,7 +582,7 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
     let single_file = roots.len() == 1 && roots[0].is_file();
     let files: Vec<std::path::PathBuf> = if single_file { roots.clone() } else { walk_files(&roots, glob, 20_000)? };
     'files: for file in files {
-        if !sb.holds(&file) && crate::sandbox::secret(&file) {
+        if sb.secrets_closed() && !sb.holds(&file) && crate::sandbox::secret(&file) {
             continue;
         }
         let Ok(text) = read_text(&file) else { continue };

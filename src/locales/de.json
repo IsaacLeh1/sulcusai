@@ -3353,5 +3353,9 @@
  "Exit code 0.": "Exitcode 0.",
  "Listed folders": "Ordner aufgelistet",
  "The trainer finished without saving the prompt writer's adapter.": "Der Trainer ist fertig geworden, ohne den Adapter des Prompt-Schreibers zu speichern.",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "Dieses Bildmodell bringt kein eigenes Sprachmodell mit, also gibt es keinen Schreiber zum Trainieren."
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "Dieses Bildmodell bringt kein eigenes Sprachmodell mit, also gibt es keinen Schreiber zum Trainieren.",
+ "Asking because this sends something off your PC.": "Diese Frage kommt, weil dabei etwas deinen PC verlässt.",
+ "Deny to leave it out; the model is told it was left out.": "Lehne ab, um es wegzulassen; dem Modell wird gesagt, dass es weggelassen wurde.",
+ "Secret": "Geheimnis",
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "Sie bekommen alles, was der Befehl sendet (Dateien, Text oder den Code deines Projekts), und können es behalten, lesen oder weitergeben."
 }

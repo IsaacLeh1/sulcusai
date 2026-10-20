@@ -67,6 +67,9 @@ pub(crate) static SECRET_TEXT: LazyLock<Regex> = LazyLock::new(|| {
         r"|(?-u:\b)ya29\.[0-9A-Za-z_-]{20,}",
         r"|(?-u:\b)eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
         r#"|(?i:(?-u:\b)(?:api[_-]?key|secret|token|passw(?:or)?d|client[_-]?secret|access[_-]?key)(?-u:\b)["']?\s*[:=]\s*["'][^"'\s]{12,}["'])"#,
+        // The same without quotes, as in a .env file (CLIENT_SECRET=abc…):
+        // a long run of key characters, not code (no dots or brackets).
+        r"|(?i:(?-u:\b)[A-Z0-9_]*(?:api[_-]?key|secret|token|passw(?:or)?d|access[_-]?key|private[_-]?key)(?-u:\b)\s*[:=]\s*[A-Za-z0-9_+/=-]{16,}(?-u:\b))",
     ))
     .unwrap()
 });
@@ -1591,6 +1594,23 @@ class Exporter:
         }
         assert!(skipped(Path::new("web/node_modules/x/index.js")) && skipped(Path::new("pnpm-lock.yaml")) && skipped(Path::new("app/dist/main.js")));
         assert!(!skipped(Path::new("src/builder.rs")));
+    }
+
+    /// Keys in text, quoted in code or bare in a .env file; ordinary code isn't.
+    #[test]
+    fn keys_in_text_are_seen_quoted_or_bare() {
+        for text in [
+            "const apiKey = \"abcdef0123456789xyz\";",
+            "CLIENT_SECRET=Zx9q2LmN8pR4tV6wY1bC",
+            "OPENAI_API_KEY=abcdEFGH1234ijklMNOP5678",
+            "DB_PASSWORD: s3cretPassw0rdValue1",
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+        ] {
+            assert!(SECRET_TEXT.is_match(text), "{text}");
+        }
+        for text in ["let token = next_token(&mut lexer);", "password = form.password.value", "API_KEY=", "secret: true"] {
+            assert!(!SECRET_TEXT.is_match(text), "{text}");
+        }
     }
 
     /// What follows the model's turn is taken from its template's layout.
