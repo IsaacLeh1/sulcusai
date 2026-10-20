@@ -2737,7 +2737,6 @@
  "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "このチャットはオフラインのため、サイトはインターネットにアクセスできません。許可するには、このチャットでウェブをオンにしてください。",
  "Didn't make it again": "もう一度は作りませんでした",
  "It's ready: it's shown above, with a button to save it.": "できました。上に表示されていて、保存ボタンもあります。",
- "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI はまだその音楽モデルを実行できません。Hugging Face の音楽モデルは ACE-Step 1.5 をベースにしたものなら使えます。",
  "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI はまだその動画モデルを実行できません。Hugging Face の動画モデルは Wan 2.2 5B または Wan 2.1 1.3B をベースにしたものなら使えます。",
  "{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.": "{original} は SulcusAI がチャットモデルを動かす形式の GGUF ではないため、これは Hugging Face で最も人気のある GGUF 版です。",
  "Ask for a key": "キーを求める",
@@ -3363,5 +3362,10 @@
  "1 more model needs a bigger graphics card than this PC has, so it's not shown.": "このPCより大きなグラフィックカードが必要なモデルがあと1つあるため、表示していません。",
  "{n} more models need a bigger graphics card than this PC has, so they're not shown.": "このPCより大きなグラフィックカードが必要なモデルがあと {n} 個あるため、表示していません。",
  "1 more model needs more free disk space than this PC has. Free some space to see it.": "このPCの空きディスク容量では足りないモデルがあと1つあります。表示するには空き容量を増やしてください。",
- "{n} more models need more free disk space than this PC has. Free some space to see them.": "このPCの空きディスク容量では足りないモデルがあと {n} 個あります。表示するには空き容量を増やしてください。"
+ "{n} more models need more free disk space than this PC has. Free some space to see them.": "このPCの空きディスク容量では足りないモデルがあと {n} 個あります。表示するには空き容量を増やしてください。",
+ "That file isn't a music model SulcusAI can run. Its music engine (acestep.cpp) needs ACE-Step 1.5 files converted for it, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "そのファイルは SulcusAI で実行できる音楽モデルではありません。音楽エンジン（acestep.cpp）には、Serveurperso/ACE-Step-1.5-GGUF にあるような、このエンジン用に変換された ACE-Step 1.5 のファイルが必要です。",
+ "That's an ACE-Step 1 model. SulcusAI's music engine runs ACE-Step 1.5: look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "それは ACE-Step 1 のモデルです。SulcusAI の音楽エンジンは ACE-Step 1.5 を実行します。Serveurperso/ACE-Step-1.5-GGUF にあるような、acestep.cpp 用に変換された ACE-Step 1.5 のファイルを探してください。",
+ "That's an add-on (a LoRA) for ACE-Step 1.5, which SulcusAI can't load yet. It runs whole ACE-Step 1.5 music models converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "それは ACE-Step 1.5 用のアドオン（LoRA）で、SulcusAI はまだ読み込めません。SulcusAI が実行できるのは、Serveurperso/ACE-Step-1.5-GGUF にあるような、acestep.cpp 用に変換された ACE-Step 1.5 の音楽モデル本体です。",
+ "That ACE-Step model isn't in a form SulcusAI's music engine runs. It needs ACE-Step 1.5 turbo files converted for acestep.cpp: GGUF files named like acestep-v15-turbo-Q8_0.gguf, as in Serveurperso/ACE-Step-1.5-GGUF. Base and SFT versions aren't offered: they take several times longer.": "その ACE-Step モデルは、SulcusAI の音楽エンジンで実行できる形式ではありません。acestep.cpp 用に変換された ACE-Step 1.5 の turbo ファイル（Serveurperso/ACE-Step-1.5-GGUF にある acestep-v15-turbo-Q8_0.gguf のような名前の GGUF ファイル）が必要です。base 版と SFT 版は何倍も時間がかかるため、表示していません。",
+ "SulcusAI can't run that music model: its music engine runs ACE-Step 1.5 only. Look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "SulcusAI はその音楽モデルを実行できません。音楽エンジンが実行できるのは ACE-Step 1.5 だけです。Serveurperso/ACE-Step-1.5-GGUF にあるような、acestep.cpp 用に変換された ACE-Step 1.5 のファイルを探してください。"
 }

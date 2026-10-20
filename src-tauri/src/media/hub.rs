@@ -293,6 +293,71 @@ fn open(info: &Value) -> bool {
     info["gated"].is_null() || info["gated"] == false
 }
 
+/// The music engine (acestep.cpp) tells its files apart by their GGUF
+/// architecture, and runs only files converted for it.
+fn music_arch(role: &str) -> Option<&'static str> {
+    match role {
+        "dit" => Some("acestep-dit"),
+        "lm" => Some("acestep-lm"),
+        "embedding" => Some("acestep-text-enc"),
+        "vae" => Some("acestep-vae"),
+        _ => None,
+    }
+}
+
+pub const NOT_MUSIC: &str = "That file isn't a music model SulcusAI can run. Its music engine (acestep.cpp) needs ACE-Step 1.5 files converted for it, like the ones in Serveurperso/ACE-Step-1.5-GGUF.";
+
+/// Why a music model's file won't run, from its GGUF header's architecture
+/// (None: it will, or the role isn't one the engine checks).
+pub fn music_file_problem(role: &str, arch: Option<&str>) -> Option<&'static str> {
+    let want = music_arch(role)?;
+    (arch != Some(want)).then_some(NOT_MUSIC)
+}
+
+pub const ACE_STEP_ONE: &str = "That's an ACE-Step 1 model. SulcusAI's music engine runs ACE-Step 1.5: look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.";
+pub const ACE_STEP_ADD_ON: &str = "That's an add-on (a LoRA) for ACE-Step 1.5, which SulcusAI can't load yet. It runs whole ACE-Step 1.5 music models converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.";
+pub const ACE_STEP_FORM: &str = "That ACE-Step model isn't in a form SulcusAI's music engine runs. It needs ACE-Step 1.5 turbo files converted for acestep.cpp: GGUF files named like acestep-v15-turbo-Q8_0.gguf, as in Serveurperso/ACE-Step-1.5-GGUF. Base and SFT versions aren't offered: they take several times longer.";
+pub const OTHER_MUSIC: &str = "SulcusAI can't run that music model: its music engine runs ACE-Step 1.5 only. Look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.";
+
+/// Why a pasted repository that is a music model can't be used (None: it
+/// isn't one). Called when none of its files can be offered.
+pub fn music_why_not(info: &Value) -> Option<&'static str> {
+    let low = |v: &Value| v.as_str().map(str::to_lowercase).unwrap_or_default();
+    let id = low(&info["id"]);
+    let pipeline = low(&info["pipeline_tag"]);
+    let tags: Vec<String> = info["tags"].as_array().into_iter().flatten().map(low).collect();
+    let ace = ["ace-step", "acestep", "ace_step"].iter().any(|w| id.contains(w) || tags.iter().any(|t| t.contains(w)));
+    let music = ace || matches!(pipeline.as_str(), "text-to-audio" | "text-to-music") || tags.iter().any(|t| matches!(t.as_str(), "music" | "music-generation" | "text-to-music"));
+    if !music {
+        return None;
+    }
+    let v15 = ["1.5", "v15", "1_5"].iter().any(|w| id.contains(w) || tags.iter().any(|t| t.contains("ace-step") && t.contains(w)));
+    let add_on = tags.iter().any(|t| t == "lora" || t.starts_with("base_model:adapter:")) || ["lora", "lokr", "dora"].iter().any(|w| id.contains(w));
+    Some(match () {
+        _ if ace && !v15 => ACE_STEP_ONE,
+        _ if ace && add_on => ACE_STEP_ADD_ON,
+        _ if ace => ACE_STEP_FORM,
+        _ => OTHER_MUSIC,
+    })
+}
+
+/// A GGUF file's architecture on Hugging Face, read from the start of the
+/// file (its first 4 MB at most); None when it can't be read.
+async fn remote_architecture(client: &reqwest::Client, url: &str) -> Option<String> {
+    const HEAD: usize = 4 << 20;
+    let resp = client.get(url).header(reqwest::header::RANGE, format!("bytes=0-{}", HEAD - 1)).send().await.ok()?.error_for_status().ok()?;
+    // A server that ignores the range sends the whole file: stop at the start.
+    let mut bytes = Vec::new();
+    let mut body = resp.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        bytes.extend_from_slice(&chunk.ok()?);
+        if bytes.len() >= HEAD {
+            break;
+        }
+    }
+    crate::gguf::read_start(&bytes).ok()?.get("general.architecture")?.str().map(str::to_string)
+}
+
 /// Searches Hugging Face for models of one kind ("image", "video", "music")
 /// built on a family SulcusAI runs. `all` keeps files this PC can't run.
 pub async fn search(state: &Arc<AppState>, kind: &str, query: &str, sort: &str, all: bool) -> Result<HubMediaResults, String> {
@@ -491,7 +556,18 @@ pub async fn prepare(state: &Arc<AppState>, repo_id: &str, file: &str) -> Result
         return Err("SulcusAI can't tell which kind of model that is, so it can't run it.".into());
     }
     let (f, donor) = offered(&r, &mine, &known_files(state)).into_iter().find(|(f, _)| f.path == file).ok_or("That file isn't in the model's repository anymore.")?;
-    let spec = derive(donor, repo_id, &r.info, f, file_url(repo_id, &f.path)?);
+    let url = file_url(repo_id, &f.path)?;
+    // A music file is checked before gigabytes come down (a conversion for
+    // another engine looks the same by its name); installing checks again.
+    if donor.kind == Kind::Music {
+        let h = donor.hub.clone().unwrap_or_default();
+        if let Some(arch) = remote_architecture(&client, &url).await {
+            if let Some(why) = music_file_problem(&h.role, Some(&arch)) {
+                return Err(why.into());
+            }
+        }
+    }
+    let spec = derive(donor, repo_id, &r.info, f, url);
     remember(&state.db.lock().unwrap(), &spec)?;
     Ok(spec)
 }
@@ -550,6 +626,58 @@ mod tests {
         assert_eq!(super::super::prompts::family(&m), "flux2", "prompts written the FLUX way, not the general one");
         let older = MediaModel { built_on: None, ..m };
         assert_eq!(super::super::prompts::family(&older), "flux2", "one installed before built_on was kept: from its description");
+    }
+
+    /// Music: acestep.cpp's own turbo GGUF files stand in for the catalog
+    /// model's music model (standard or XL), sharing its language model,
+    /// text reader and decoder; base and SFT versions, its language models
+    /// and another engine's all-in-one file aren't offered.
+    #[test]
+    fn music_models_are_acestep_turbo_files() {
+        let catalog = crate::catalog::Catalog::bundled();
+        let donors: Vec<MediaModel> = catalog.media.models.iter().filter(|m| m.kind == Kind::Music && m.hub.is_some()).cloned().collect();
+        let info = json!({ "id": "someone/ACE-Step-1.5-GGUF", "tags": ["gguf", "base_model:quantized:ACE-Step/Ace-Step1.5"] });
+        let fams = families_of(&info, &donors);
+        assert_eq!(fams.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["ace-step-1.5", "ace-step-1.5-xl"]);
+        let f = |path: &str, size: u64| RemoteFile { path: path.into(), size, sha256: path.into() };
+        let repo = Repo {
+            info: info.clone(),
+            files: vec![
+                f("acestep-v15-turbo-Q6_K.gguf", 1_970_472_064),
+                f("acestep-v15-xl-turbo-Q5_K_M.gguf", 3_527_566_464),
+                f("acestep-v15-base-Q8_0.gguf", 2_549_527_936),
+                f("acestep-5Hz-lm-4B-Q8_0.gguf", 4_457_323_648),
+                f("Qwen3-Embedding-0.6B-BF16.gguf", 1_196_890_592),
+                f("vae-BF16.gguf", 337_420_928),
+                f("ACE-Step1.5-GGUF/turbo/ace-step-1.5-turbo-q8_0.gguf", 6_185_468_096),
+            ],
+        };
+        let offers = offered(&repo, &fams, &HashSet::new());
+        let got: Vec<(&str, &str)> = offers.iter().map(|(f, d)| (f.path.as_str(), d.id.as_str())).collect();
+        assert_eq!(got, [("acestep-v15-turbo-Q6_K.gguf", "ace-step-1.5"), ("acestep-v15-xl-turbo-Q5_K_M.gguf", "ace-step-1.5-xl")]);
+        let m = derive(offers[0].1, "someone/ACE-Step-1.5-GGUF", &info, offers[0].0, "u".into());
+        assert!(m.file("dit").unwrap().file.starts_with("hfm-") && m.file("dit").unwrap().file.ends_with("acestep-v15-turbo-Q6_K.gguf"));
+        assert_eq!(m.file("lm").unwrap().file, "acestep-5Hz-lm-1.7B-Q8_0.gguf", "shared with ACE-Step 1.5");
+        assert_eq!((m.file("embedding").unwrap().file.as_str(), m.file("vae").unwrap().file.as_str()), ("Qwen3-Embedding-0.6B-Q8_0.gguf", "vae-BF16.gguf"));
+        assert_eq!(m.kind, Kind::Music);
+        assert!(m.can("music") && m.can("sound"));
+        // The engine's own check, by the file's GGUF architecture.
+        assert_eq!(music_file_problem("dit", Some("acestep-dit")), None);
+        assert_eq!(music_file_problem("dit", Some("acestep-lm")), Some(NOT_MUSIC));
+        assert_eq!(music_file_problem("dit", Some("ace-step")), Some(NOT_MUSIC), "another engine's conversion");
+        assert_eq!(music_file_problem("dit", None), Some(NOT_MUSIC), "not a GGUF file at all");
+        assert_eq!(music_file_problem("diffusion", None), None, "not a music file");
+    }
+
+    /// Pasted music repositories SulcusAI can't run say what it needs.
+    #[test]
+    fn music_links_that_cant_run_say_why() {
+        let why = |id: &str, tags: &[&str], pipeline: Option<&str>| music_why_not(&json!({ "id": id, "tags": tags, "pipeline_tag": pipeline }));
+        assert_eq!(why("Comfy-Org/ace_step_1.5_ComfyUI_files", &["base_model:finetune:ACE-Step/Ace-Step1.5"], None), Some(ACE_STEP_FORM));
+        assert_eq!(why("tarn59/super_eurobeats_ACE_STEP-1.5-lora", &["lora", "base_model:adapter:ACE-Step/Ace-Step1.5"], None), Some(ACE_STEP_ADD_ON));
+        assert_eq!(why("ACE-Step/ACE-Step-v1-3.5B", &["text-to-music"], Some("text-to-audio")), Some(ACE_STEP_ONE));
+        assert_eq!(why("facebook/musicgen-small", &["musicgen"], Some("text-to-audio")), Some(OTHER_MUSIC));
+        assert_eq!(why("unsloth/Qwen3-8B-GGUF", &["gguf"], Some("text-generation")), None, "not a music model");
     }
 
     #[test]

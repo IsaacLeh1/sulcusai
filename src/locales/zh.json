@@ -2737,7 +2737,6 @@
  "This chat is offline, so the site can't reach the internet. Turn on web for this chat to let it.": "此聊天处于离线状态，因此网站无法访问互联网。为此聊天开启网络即可允许。",
  "Didn't make it again": "没有再次生成",
  "It's ready: it's shown above, with a button to save it.": "已完成：显示在上方，并附有保存按钮。",
- "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.": "SulcusAI 暂时无法运行该音乐模型。基于 ACE-Step 1.5 的 Hugging Face 音乐模型可以使用。",
  "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.": "SulcusAI 暂时无法运行该视频模型。基于 Wan 2.2 5B 或 Wan 2.1 1.3B 的 Hugging Face 视频模型可以使用。",
  "{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.": "{original} 不是 GGUF 格式（SulcusAI 运行聊天模型所用的格式），这是它在 Hugging Face 上最受欢迎的 GGUF 版本。",
  "Ask for a key": "请求密钥",
@@ -3363,5 +3362,10 @@
  "1 more model needs a bigger graphics card than this PC has, so it's not shown.": "还有 1 个模型需要比这台电脑更强的显卡，因此未显示。",
  "{n} more models need a bigger graphics card than this PC has, so they're not shown.": "还有 {n} 个模型需要比这台电脑更强的显卡，因此未显示。",
  "1 more model needs more free disk space than this PC has. Free some space to see it.": "还有 1 个模型需要的可用磁盘空间超出这台电脑的剩余空间。腾出一些空间即可看到它。",
- "{n} more models need more free disk space than this PC has. Free some space to see them.": "还有 {n} 个模型需要的可用磁盘空间超出这台电脑的剩余空间。腾出一些空间即可看到它们。"
+ "{n} more models need more free disk space than this PC has. Free some space to see them.": "还有 {n} 个模型需要的可用磁盘空间超出这台电脑的剩余空间。腾出一些空间即可看到它们。",
+ "That file isn't a music model SulcusAI can run. Its music engine (acestep.cpp) needs ACE-Step 1.5 files converted for it, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "该文件不是 SulcusAI 能运行的音乐模型。它的音乐引擎（acestep.cpp）需要为其转换的 ACE-Step 1.5 文件，例如 Serveurperso/ACE-Step-1.5-GGUF 中的文件。",
+ "That's an ACE-Step 1 model. SulcusAI's music engine runs ACE-Step 1.5: look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "这是 ACE-Step 1 模型。SulcusAI 的音乐引擎运行的是 ACE-Step 1.5：请找为 acestep.cpp 转换的 ACE-Step 1.5 文件，例如 Serveurperso/ACE-Step-1.5-GGUF 中的文件。",
+ "That's an add-on (a LoRA) for ACE-Step 1.5, which SulcusAI can't load yet. It runs whole ACE-Step 1.5 music models converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "这是 ACE-Step 1.5 的附加组件（LoRA），SulcusAI 暂时无法加载。它运行为 acestep.cpp 转换的完整 ACE-Step 1.5 音乐模型，例如 Serveurperso/ACE-Step-1.5-GGUF 中的模型。",
+ "That ACE-Step model isn't in a form SulcusAI's music engine runs. It needs ACE-Step 1.5 turbo files converted for acestep.cpp: GGUF files named like acestep-v15-turbo-Q8_0.gguf, as in Serveurperso/ACE-Step-1.5-GGUF. Base and SFT versions aren't offered: they take several times longer.": "该 ACE-Step 模型的格式不是 SulcusAI 音乐引擎能运行的。它需要为 acestep.cpp 转换的 ACE-Step 1.5 turbo 文件：名称类似 acestep-v15-turbo-Q8_0.gguf 的 GGUF 文件，例如 Serveurperso/ACE-Step-1.5-GGUF 中的文件。不提供 base 和 SFT 版本：它们要多花好几倍的时间。",
+ "SulcusAI can't run that music model: its music engine runs ACE-Step 1.5 only. Look for ACE-Step 1.5 files converted for acestep.cpp, like the ones in Serveurperso/ACE-Step-1.5-GGUF.": "SulcusAI 无法运行该音乐模型：它的音乐引擎只运行 ACE-Step 1.5。请找为 acestep.cpp 转换的 ACE-Step 1.5 文件，例如 Serveurperso/ACE-Step-1.5-GGUF 中的文件。"
 }

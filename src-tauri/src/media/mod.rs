@@ -474,6 +474,19 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
         download::fetch_verified(&client, &f.url, &dest, f.size, &f.sha256, cancel, |r, _| emit("download", base + r, total)).await?;
         done += f.size;
     }
+    // A music model from Hugging Face: its own file must be one the music
+    // engine runs (it skips others, and the song would fail later).
+    if spec.kind == Kind::Music && spec.from_hub.is_some() {
+        for f in spec.files.iter().filter(|f| f.file.starts_with("hfm-")) {
+            let dest = file_path(&state.paths, spec, f);
+            let arch = crate::gguf::read(&dest).ok().and_then(|m| m.get("general.architecture").and_then(|v| v.str().map(str::to_string)));
+            if let Some(why) = hub::music_file_problem(&f.role, arch.as_deref()) {
+                crate::applog::line("media", &format!("{} isn't a music engine file ({arch:?}); deleted it", f.file));
+                std::fs::remove_file(&dest).ok();
+                return Err(why.into());
+            }
+        }
+    }
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     if !list.iter().any(|i| i.model_id == spec.id) {
