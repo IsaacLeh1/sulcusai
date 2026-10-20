@@ -677,3 +677,21 @@ mod tests {
         assert!(!dir.exists());
     }
 }
+
+/// Unit tests make `%TEMP%\sulcusai-*` folders and files and most leave them;
+/// each test run clears what earlier runs left (anything over six hours old,
+/// so a long run going on beside it keeps its own).
+#[cfg(test)]
+mod test_leftovers {
+    #[test]
+    fn earlier_test_runs_leave_nothing_behind() {
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+        let old = |e: &std::fs::DirEntry| e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() > 6 * 3600);
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("sulcusai-") && old(&e) {
+                let p = e.path();
+                let _ = if p.is_dir() { std::fs::remove_dir_all(&p) } else { std::fs::remove_file(&p) };
+            }
+        }
+    }
+}

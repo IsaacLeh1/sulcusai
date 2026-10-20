@@ -855,6 +855,11 @@ pub struct Action {
 }
 
 /// Records something the app did. Summaries never include chat content.
+/// Activity older than `days` is removed (at startup), so it doesn't grow forever.
+pub fn prune_actions(conn: &Connection, days: i64) {
+    let _ = conn.execute("DELETE FROM action_log WHERE at < ?1", [now_ms() - days * 86_400_000]);
+}
+
 pub fn log_action(conn: &Connection, category: &str, summary: &str) {
     crate::applog::line(category, summary);
     let _ = conn.execute(

@@ -919,6 +919,34 @@ struct User {
 
 pub static USERS: std::sync::Mutex<Users> = std::sync::Mutex::new(Users(Vec::new()));
 
+/// Background work on the loaded model (the mail report, meeting notes, a
+/// translation, a helper's questions): while one is held, a chat doesn't
+/// stop or relaunch that model under it, and it isn't removed.
+static HOLDS: std::sync::Mutex<Vec<(u64, String)>> = std::sync::Mutex::new(Vec::new());
+static NEXT_HOLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[must_use = "the model is held only while this lives"]
+pub struct Hold(u64);
+
+impl Hold {
+    pub fn new(key: &str) -> Hold {
+        let id = NEXT_HOLD.fetch_add(1, Ordering::Relaxed);
+        HOLDS.lock().unwrap().push((id, key.to_string()));
+        Hold(id)
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        HOLDS.lock().unwrap().retain(|(i, _)| *i != self.0);
+    }
+}
+
+/// Background jobs holding the model with this key.
+pub fn held(key: &str) -> usize {
+    HOLDS.lock().unwrap().iter().filter(|(_, k)| k == key).count()
+}
+
 impl Users {
     fn has(&self, flag: &Arc<AtomicBool>) -> bool {
         self.0.iter().any(|u| Arc::ptr_eq(&u.flag, flag))

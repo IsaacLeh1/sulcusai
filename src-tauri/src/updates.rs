@@ -122,7 +122,7 @@ pub fn start(app: AppHandle) {
                     if idle(&state) {
                         state.log("settings", "Installing an update automatically");
                         app.emit("update:installing", json!({})).ok();
-                        if let Err(e) = install(&app, &state).await {
+                        if let Err(e) = install(&app, &state, true).await {
                             state.log("settings", &format!("The automatic update didn't install: {e}"));
                         }
                         break;
@@ -182,10 +182,13 @@ pub fn set_update_install(state: AppStateRef, install: bool) -> Result<(), Strin
 /// Downloads the update, checks its signature, installs it and restarts.
 #[tauri::command]
 pub async fn install_update(app: AppHandle, state: AppStateRef<'_>) -> Result<(), String> {
-    install(&app, &state).await
+    install(&app, &state, false).await
 }
 
-async fn install(app: &AppHandle, state: &AppState) -> Result<(), String> {
+/// Downloads and installs the waiting update, then restarts. `auto`: it
+/// began on its own, so it waits after the download until nothing is running
+/// (a reply may have started meanwhile).
+async fn install(app: &AppHandle, state: &AppState, auto: bool) -> Result<(), String> {
     let update = match PENDING.lock().unwrap().take() {
         Some(u) => u,
         None => return Err("There's no update waiting. Check for updates first.".into()),
@@ -193,8 +196,8 @@ async fn install(app: &AppHandle, state: &AppState) -> Result<(), String> {
     state.log("network", &format!("Downloading SulcusAI {} from GitHub", update.version));
     let mut received = 0u64;
     let progress = app.clone();
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             |chunk, total| {
                 received += chunk as u64;
                 progress.emit("update:progress", json!({ "received": received, "total": total })).ok();
@@ -202,7 +205,18 @@ async fn install(app: &AppHandle, state: &AppState) -> Result<(), String> {
             || {},
         )
         .await
-        .map_err(|e| format!("The update didn't install: {e}"))?;
+        .map_err(|e| format!("The update didn't download: {e}"))?;
+    if auto {
+        let mut waited = 0;
+        while !idle(state) {
+            if waited >= 3600 {
+                return Err("Something kept running for an hour after the download, so it wasn't installed.".into());
+            }
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            waited += 20;
+        }
+    }
+    update.install(bytes).map_err(|e| format!("The update didn't install: {e}"))?;
     state.log("settings", &format!("Installed SulcusAI {}", update.version));
     crate::crash::closing();
     app.restart();

@@ -23,11 +23,14 @@ for it: the user's goals, important facts and decisions, files created or change
 Use short bullet points under those headings. Only include what was actually discussed.";
 
 /// Asks the model for a handoff summary of the chat so far.
-pub async fn summarize(ep: &Endpoint, base: &str, history: &[Message]) -> Result<String, String> {
+pub async fn summarize(ep: &Endpoint, base: &str, history: &[Message], cancel: &AtomicBool) -> Result<String, String> {
     let mut history = history.to_vec();
     history.push(Message { id: uuid::Uuid::new_v4().to_string(), role: "user".into(), content: ASK.into(), ..Default::default() });
     let (kept, _) = chat::fit_history(ep, base, "", None, &history).await?;
-    let done = chat::stream(ep, chat::api_messages(base, &kept), None, &AtomicBool::new(false), |_| {}).await?;
+    let done = chat::stream(ep, chat::api_messages(base, &kept), None, cancel, |_| {}).await?;
+    if done.cancelled {
+        return Err("Stopped.".into());
+    }
     let summary = done.content.trim().to_string();
     if summary.is_empty() {
         return Err("The model didn't write a summary.".into());

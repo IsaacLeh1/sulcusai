@@ -101,10 +101,18 @@ pub fn logs_view(state: AppStateRef) -> LogsView {
 pub fn read_log(state: AppStateRef, name: String, lines: Option<usize>) -> Result<String, String> {
     let file = Path::new(&name).file_name().filter(|f| f.to_string_lossy() == name && name.ends_with(".log")).ok_or("That isn't one of SulcusAI's logs.")?;
     let path = state.paths.logs.join(file);
-    let bytes = std::fs::read(&path).map_err(|_| "That log is empty or gone.".to_string())?;
-    // The end of a big log is what matters: at most the last 400 KB.
-    let tail = &bytes[bytes.len().saturating_sub(400 * 1024)..];
-    let text = String::from_utf8_lossy(tail);
+    // The end of a big log is what matters: at most the last 400 KB, read
+    // from there (an engine log can be 64 MB).
+    let tail = {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = std::fs::File::open(&path).map_err(|_| "That log is empty or gone.".to_string())?;
+        let len = f.metadata().map_or(0, |m| m.len());
+        f.seek(SeekFrom::Start(len.saturating_sub(400 * 1024))).map_err(|e| e.to_string())?;
+        let mut b = Vec::new();
+        f.read_to_end(&mut b).map_err(|e| e.to_string())?;
+        b
+    };
+    let text = String::from_utf8_lossy(&tail);
     let all: Vec<&str> = text.lines().collect();
     let keep = lines.unwrap_or(400).clamp(10, 5000);
     Ok(all[all.len().saturating_sub(keep)..].join("\n"))

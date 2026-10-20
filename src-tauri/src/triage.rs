@@ -792,7 +792,7 @@ pub async fn mail_triage(app: tauri::AppHandle, state: AppStateRef<'_>) -> Resul
     }
     let _done = Done;
     let state: Arc<AppState> = state.inner().clone();
-    let (ep, spec) = crate::background_endpoint(&state).await?;
+    let (ep, spec, _hold) = crate::background_endpoint(&state).await?;
     let report = run(&state, &c, &ep, &spec.name, false, |done, total| {
         app.emit("mail:triage", json!({ "done": done, "total": total })).ok();
     })
@@ -813,7 +813,7 @@ pub async fn mail_event_draft(state: AppStateRef<'_>, id: String) -> Result<Even
     let state: Arc<AppState> = state.inner().clone();
     let d = &m.data;
     let ai = async {
-        let (ep, _) = crate::background_endpoint(&state).await.ok()?;
+        let (ep, _, _hold) = crate::background_endpoint(&state).await.ok()?;
         let who = if d.from_name.is_empty() { d.from.clone() } else { format!("{} <{}>", d.from_name, d.from) };
         let text: String = d.body.chars().take(EVENT_EXCERPT).collect();
         let user = format!(
@@ -886,7 +886,7 @@ pub async fn after_sync(state: &Arc<AppState>, app: &tauri::AppHandle) {
     let result = async {
         let c = state.work_cipher()?;
         let before = db::now_ms();
-        let (ep, spec) = crate::background_endpoint(state).await?;
+        let (ep, spec, _hold) = crate::background_endpoint(state).await?;
         let report = run(state, &c, &ep, &spec.name, true, |_, _| {}).await?;
         Ok::<_, String>((report, before))
     }
@@ -958,7 +958,7 @@ pub async fn mail_draft_reply(state: AppStateRef<'_>, id: String) -> Result<Stri
         reply_prompt(&sign_off(&profile.name, &account_name), &profile.about, &m, &thread, &me)
     };
     let state: Arc<AppState> = state.inner().clone();
-    let (ep, _) = crate::background_endpoint(&state).await?;
+    let (ep, _, _hold) = crate::background_endpoint(&state).await?;
     let body = clean_reply(&chat::complete(&ep, messages, json!({}), 700).await?);
     if body.trim().is_empty() {
         return Err("Your AI didn't write a reply. Try again, or write it yourself.".into());

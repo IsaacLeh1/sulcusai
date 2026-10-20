@@ -294,11 +294,16 @@ pub fn delete_schedule(state: AppStateRef, id: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn run_schedule_now(app: AppHandle, state: AppStateRef<'_>, id: String) -> Result<String, String> {
     let c = state.cipher()?;
-    let mut s = list(&state.db.lock().unwrap(), &c).into_iter().find(|s| s.id == id).ok_or("That task no longer exists.")?;
+    let s = list(&state.db.lock().unwrap(), &c).into_iter().find(|s| s.id == id).ok_or("That task no longer exists.")?;
     let chat_id = run(&app, state.inner(), &s).await?;
-    s.last_run = Some(now_ms());
-    s.last_chat = Some(chat_id.clone());
-    save(&state.db.lock().unwrap(), &c, &s)?;
+    // Read again: the timer may have run and moved it on meanwhile, and its
+    // next time must stay (an old one would make it run again at once).
+    let conn = state.db.lock().unwrap();
+    if let Some(mut fresh) = list(&conn, &c).into_iter().find(|s| s.id == id) {
+        fresh.last_run = Some(now_ms());
+        fresh.last_chat = Some(chat_id.clone());
+        save(&conn, &c, &fresh)?;
+    }
     Ok(chat_id)
 }
 

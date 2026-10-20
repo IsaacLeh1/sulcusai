@@ -2412,7 +2412,7 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
 
 /// Lyrics from the chat model, so a song with vocals has real words to sing.
 async fn write_lyrics(state: &Arc<AppState>, prompt: &str, seconds: f32, language: Option<&str>) -> Option<String> {
-    let (ep, _) = crate::background_endpoint(state).await.ok()?;
+    let (ep, _, _hold) = crate::background_endpoint(state).await.ok()?;
     let lines = ((seconds / 30.0) * 8.0).round().clamp(6.0, 40.0) as u32;
     let lang = language.filter(|l| !l.is_empty() && *l != "auto").map(|l| format!(" Write them in the language with code \"{l}\"."));
     let messages = vec![

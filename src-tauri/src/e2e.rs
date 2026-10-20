@@ -617,7 +617,7 @@ async fn e2e_helper_and_handoff() {
     assert!(helper.content.contains("checkout"), "the helper found the file");
 
     let old = crate::db::chat(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
-    let summary = crate::handoff::summarize(&ep, &chat::system_prompt(&Profile::default(), "today").0, &msgs).await.unwrap();
+    let summary = crate::handoff::summarize(&ep, &chat::system_prompt(&Profile::default(), "today").0, &msgs, &std::sync::atomic::AtomicBool::new(false)).await.unwrap();
     println!("summary:\n{summary}");
     let new = crate::handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &old, &summary).unwrap();
     let first = &crate::db::messages(&state.db.lock().unwrap(), &cipher, &new.id)[0];
@@ -1118,7 +1118,7 @@ async fn a_compacted_chat_carries_on_from_its_summary() {
     }
     let history = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
     assert_eq!(crate::compact::pending(&history), 4);
-    let summary = crate::compact::summarize(&ep, "You are a helpful assistant.", history).await.unwrap();
+    let summary = crate::compact::summarize(&ep, "You are a helpful assistant.", history, &std::sync::atomic::AtomicBool::new(false)).await.unwrap();
     crate::compact::save(&state.db.lock().unwrap(), &cipher, &chat.id, &summary, 4, false).unwrap();
     assert_eq!(crate::compact::pending(&crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id)), 0, "nothing new to compact");
 

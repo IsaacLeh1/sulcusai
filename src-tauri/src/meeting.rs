@@ -497,7 +497,7 @@ async fn transcriber(
             if let Some(lang) = translate_to.clone() {
                 let (state, cipher, emit) = (state.clone(), cipher.clone(), emit.clone());
                 tauri::async_runtime::spawn(async move {
-                    if let Ok((ep, _)) = crate::background_endpoint(&state).await {
+                    if let Ok((ep, _, _hold)) = crate::background_endpoint(&state).await {
                         if let Ok(tr) = crate::translate::translate_text(&ep, &text, &lang).await {
                             let _ = state.db.lock().unwrap().execute(
                                 "UPDATE meeting_segments SET translation = ?2 WHERE id = ?1",
@@ -853,7 +853,7 @@ pub async fn finish(state: &Arc<AppState>, cipher: &Cipher, id: &str, emit: &Emi
         (segments(&conn, cipher, id), load(&conn, cipher, id).map(|m| m.data.speaker_names).unwrap_or_default())
     };
     let result = async {
-        let (ep, _) = crate::background_endpoint(state).await?;
+        let (ep, _, _hold) = crate::background_endpoint(state).await?;
         write_notes(&ep, &segs, &names).await
     }
     .await;

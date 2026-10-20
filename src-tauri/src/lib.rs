@@ -234,16 +234,25 @@ impl AppState {
     /// file so the old plaintext is gone.
     fn migrate_plaintext(&self, cipher: &Cipher) {
         let mut conn = self.db.lock().unwrap();
+        // Done once: reading every message at each start cost time for nothing.
+        if db::get::<bool>(&conn, LEGACY_DONE).unwrap_or(false) {
+            return;
+        }
         match db::encrypt_legacy(&mut conn, cipher) {
-            Ok(0) => {}
             Ok(n) => {
-                let _ = db::compact(&conn);
-                db::log_action(&conn, "privacy", &format!("Encrypted {n} previously saved items on this PC"));
+                if n > 0 {
+                    let _ = db::compact(&conn);
+                    db::log_action(&conn, "privacy", &format!("Encrypted {n} previously saved items on this PC"));
+                }
+                let _ = db::set(&conn, LEGACY_DONE, &true);
             }
             Err(e) => eprintln!("encrypting saved data failed: {e}"),
         }
     }
 }
+
+/// Set once everything saved before encryption existed has been encrypted.
+const LEGACY_DONE: &str = "legacy_encrypted";
 
 /// Removes a cancel flag when the work it guards ends, however it ends.
 struct FlagGuard<'a> {
@@ -1285,6 +1294,11 @@ pub(crate) async fn remove_model_now(state: &Arc<AppState>, model_id: &str, dele
     {
         let mut engine = state.engine.lock().await;
         if engine.status().model_id.as_deref() == Some(model_id) {
+            // A reply or a background job using it would be cut off.
+            let held = engine.current().is_some_and(|(_, ep)| engine::held(&ep.key) > 0);
+            if held || !state.generations.lock().unwrap().is_empty() {
+                return Err("This model is answering right now. Wait for it to finish (or stop the reply), then remove it.".into());
+            }
             engine.stop().await;
         }
     }
@@ -1449,7 +1463,7 @@ fn set_context_window(state: AppStateRef, size: Option<u32>) -> Result<(), Strin
 async fn compact_chat(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -> Result<(), String> {
     let state = state.inner().clone();
     let cipher = state.cipher()?;
-    let Some((_cancel, _guard)) = claim(&state.generations, &chat_id) else {
+    let Some((cancel, _guard)) = claim(&state.generations, &chat_id) else {
         return Err("Wait for the reply to finish, then compact.".into());
     };
     let (chat, profile) = {
@@ -1470,7 +1484,7 @@ async fn compact_chat(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -
     let (base, about) = chat::system_prompt(&profile, &today);
     let base = advanced::get(&state).base_prompt(base);
     let result = async {
-        let summary = compact::summarize(&ep, &base, history).await?;
+        let summary = compact::summarize(&ep, &base, history, &cancel).await?;
         compact::save(&state.db.lock().unwrap(), &cipher, &chat_id, &summary, covered, false)?;
         if let Ok(info) = compact::fresh_context(&ep, &base, &about, &summary).await {
             state.contexts.lock().unwrap().insert(chat_id.clone(), info.clone());
@@ -1805,7 +1819,7 @@ async fn run_turn_with(
             app.emit("chat:status", json!({ "chat_id": chat_id, "status": "compacting" })).ok();
             let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
             let covered = compact::pending(&history);
-            if let Ok(summary) = compact::summarize(&ep, &base, history).await {
+            if let Ok(summary) = compact::summarize(&ep, &base, history, &cancel).await {
                 compact::save(&state.db.lock().unwrap(), &cipher, &chat_id, &summary, covered, true)?;
                 state.contexts.lock().unwrap().remove(&chat_id);
                 state.log("chat", "Compacted a long chat (it was nearly full)");
@@ -1817,7 +1831,7 @@ async fn run_turn_with(
         if !chat.incognito && handoff::needed(last_context.as_ref(), Some(at)) {
             app.emit("chat:status", json!({ "chat_id": chat_id, "status": "handoff" })).ok();
             let history = db::messages(&state.db.lock().unwrap(), &cipher, &chat_id);
-            let summary = handoff::summarize(&ep, &base, &history).await?;
+            let summary = handoff::summarize(&ep, &base, &history, &cancel).await?;
             let new = handoff::continue_in_new_chat(&state.db.lock().unwrap(), &cipher, &chat, &summary)?;
             state.log("chat", "A long chat continued in a new chat with a summary");
             app.emit("chat:handoff", json!({ "from": chat_id, "to": new.id })).ok();
@@ -2011,7 +2025,8 @@ pub(crate) async fn llm_endpoint(
         // Other replies still using the model loaded now: it isn't stopped
         // under them (they'd be cut off mid-reply).
         let loaded = engine.current();
-        let busy = loaded.as_ref().map_or(0, |(_, ep)| engine::USERS.lock().unwrap().others(&replies(state), &before, &ep.key, task));
+        let held = loaded.as_ref().map_or(0, |(_, ep)| engine::held(&ep.key));
+        let busy = held + loaded.as_ref().map_or(0, |(_, ep)| engine::USERS.lock().unwrap().others(&replies(state), &before, &ep.key, task));
         let was = loaded.as_ref().map(|(_, ep)| ep.key.clone());
         if let Some(ep) = engine.endpoint_for(&installed.model_id, lora.as_deref()) {
             // Same model: new limits (mode, heat) apply between replies.
@@ -2025,6 +2040,9 @@ pub(crate) async fn llm_endpoint(
             }
             if asked.elapsed() >= WAIT_FOR_REPLIES {
                 let other = loaded.map(|(id, _)| state.model_spec(&id).map_or(id, |s| s.name)).unwrap_or_default();
+                if held == busy {
+                    return Err(format!("A background job (the mail report, meeting notes or a translation) is still using {other}. Try again when it's done."));
+                }
                 return Err(format!("Another chat is still answering with {other}, and stopping it would cut that reply off. Try again when it's done, or stop it first."));
             }
             if let Some(f) = on_loading.take() {
@@ -2045,7 +2063,7 @@ pub(crate) async fn llm_endpoint(
         // Another model was loaded, or a reply started, meanwhile (the
         // question can wait minutes): look again before stopping it.
         let now = engine.current().map(|(_, ep)| ep.key);
-        if now != was || now.is_some_and(|key| engine::USERS.lock().unwrap().others(&replies(state), &before, &key, task) > 0) {
+        if now != was || now.is_some_and(|key| engine::held(&key) + engine::USERS.lock().unwrap().others(&replies(state), &before, &key, task) > 0) {
             continue;
         }
         if let Some(f) = on_loading.take() {
@@ -2152,20 +2170,24 @@ fn watch_work(state: &Arc<AppState>, ep: &engine::Endpoint) {
 
 /// For background work (meeting notes, translation): the model already
 /// loaded if there is one, so a chat's model isn't swapped out mid-reply.
-pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine::Endpoint, ModelSpec), String> {
+/// The model stays theirs (not stopped or relaunched by a chat) while the
+/// returned hold lives.
+pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine::Endpoint, ModelSpec, engine::Hold), String> {
     // Use the model as it is loaded: relaunching it with new limits here
     // could cut off a chat that is mid-reply.
     let loaded = {
         let mut engine = state.engine.lock().await;
-        engine.current().and_then(|(id, ep)| Some((ep, state.model_spec(&id)?)))
+        // Held before the engine is let go, so a chat can't swap it in between.
+        engine.current().and_then(|(id, ep)| Some((state.model_spec(&id)?, engine::Hold::new(&ep.key), ep)))
     };
-    if let Some((ep, spec)) = loaded {
+    if let Some((spec, hold, ep)) = loaded {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
         watch_work(state, &ep);
-        return Ok((ep, spec));
+        return Ok((ep, spec, hold));
     }
     let (ep, spec, _) = llm_endpoint(state, None, false, || {}).await?;
-    Ok((ep, spec))
+    let hold = engine::Hold::new(&ep.key);
+    Ok((ep, spec, hold))
 }
 
 // ---------- engine ----------
@@ -2259,6 +2281,8 @@ pub fn run() {
             };
             let paths = Paths::new(data)?;
             // A restore unpacked last time is swapped in before anything opens.
+            // The app's log first, so everything startup does is in it.
+            applog::init(&paths.logs);
             backup::apply_pending(&paths.data)?;
             let conn = db::open(&paths.db)?;
             let vault = open_vault(&paths)?;
@@ -2294,6 +2318,7 @@ pub fn run() {
             // Fully offline is known before anything starts going online.
             offline::load(&state.db.lock().unwrap());
             checkpoint::prune(&state.db.lock().unwrap());
+            db::prune_actions(&state.db.lock().unwrap(), 90);
             // What a crash may have left: picture/video work, teaching data.
             media::clean_work(&state.paths);
             finetune::clean_leftovers(&state.paths);
@@ -2301,8 +2326,7 @@ pub fn run() {
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
-            // The app's own logs, and what this PC is (for reading them later).
-            applog::init(&state.paths.logs);
+            // What this PC is (for reading the logs later).
             {
                 let hw = state.hardware.read().unwrap();
                 applog::line(

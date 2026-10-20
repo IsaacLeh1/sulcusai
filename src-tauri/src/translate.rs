@@ -159,7 +159,7 @@ pub struct Translation {
 pub async fn translate(state: AppStateRef<'_>, text: String, to: String, detect: bool) -> Result<Translation, String> {
     state.cipher()?;
     crate::features::require(&state, crate::features::Feature::Translate)?;
-    let (ep, _) = crate::background_endpoint(state.inner()).await?;
+    let (ep, _, _hold) = crate::background_endpoint(state.inner()).await?;
     let detected = if detect { detect_language(&ep, &text).await.ok() } else { None };
     let out = translate_text(&ep, &text, &to).await?;
     state.log("translate", &format!("Translated text into {} on this PC", language_name(&to)));
@@ -190,7 +190,7 @@ pub async fn translate_file(state: AppStateRef<'_>, path: String, to: String) ->
         return Err("That file is over 2 MB, which is too long to translate in one go.".into());
     }
     let text = std::fs::read_to_string(&input).map_err(|_| "That file isn't readable text (UTF-8).".to_string())?;
-    let (ep, _) = crate::background_endpoint(state.inner()).await?;
+    let (ep, _, _hold) = crate::background_endpoint(state.inner()).await?;
     let out = match ext.as_str() {
         "srt" | "vtt" => translate_subtitles(&ep, &text, &to).await?,
         _ => translate_text(&ep, &text, &to).await?,

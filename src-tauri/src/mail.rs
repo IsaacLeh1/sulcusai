@@ -1009,6 +1009,14 @@ async fn pull_state(state: &AppState, s: &mut Session, id: &str) -> Result<(), S
     if local.is_empty() {
         return Ok(());
     }
+    let pending = |conn: &rusqlite::Connection| -> std::collections::HashSet<u32> {
+        conn.prepare("SELECT uid FROM mail_pending WHERE account_id = ?1 AND folder = 'INBOX'")
+            .and_then(|mut st| st.query_map([id], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()))
+            .unwrap_or_default()
+    };
+    // Changes waiting to go up before the fetch too: one sent (and its row
+    // removed) while the server's old flags were coming back isn't undone.
+    let waiting_before = pending(&state.db.lock().unwrap());
     s.examine("INBOX").await.map_err(|e| e.to_string())?;
     let mut flags: HashMap<u32, bool> = HashMap::new();
     for chunk in local.chunks(200) {
@@ -1021,12 +1029,9 @@ async fn pull_state(state: &AppState, s: &mut Session, id: &str) -> Result<(), S
         }
     }
     let conn = state.db.lock().unwrap();
-    let waiting: std::collections::HashSet<u32> = conn
-        .prepare("SELECT uid FROM mail_pending WHERE account_id = ?1 AND folder = 'INBOX'")
-        .and_then(|mut st| st.query_map([id], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()))
-        .unwrap_or_default();
+    let waiting = pending(&conn);
     for (mid, uid, seen) in local {
-        if waiting.contains(&uid) {
+        if waiting.contains(&uid) || waiting_before.contains(&uid) {
             continue;
         }
         match flags.get(&uid) {

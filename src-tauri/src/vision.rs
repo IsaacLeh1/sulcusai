@@ -137,6 +137,8 @@ pub struct Helper {
     pub sees: bool,
     eng: Option<engine::Engine>,
     paused: Option<engine::Paused>,
+    /// The chat model, held while the helper uses it.
+    _hold: Option<engine::Hold>,
     _turn: tokio::sync::MutexGuard<'static, ()>,
 }
 
@@ -182,7 +184,7 @@ impl Helper {
             )
             .await;
         match started {
-            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _turn: turn }),
+            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, _turn: turn }),
             Err(e) => {
                 if let Some(p) = paused {
                     crate::media::give_back(state, p).await;
@@ -196,14 +198,15 @@ impl Helper {
     /// nothing to stop afterwards.
     pub async fn chat_model(state: &Arc<AppState>, pictures: bool) -> Result<Helper, String> {
         let turn = turn().lock().await;
-        let (ep, spec) = if pictures {
+        let (ep, spec, hold) = if pictures {
             let (ep, spec, _) = crate::llm_endpoint(state, None, true, || {}).await?;
-            (ep, spec)
+            let hold = engine::Hold::new(&ep.key);
+            (ep, spec, hold)
         } else {
             crate::background_endpoint(state).await?
         };
         let sees = pictures && spec.vision.is_some();
-        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _turn: turn })
+        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _hold: Some(hold), _turn: turn })
     }
 
     /// One answer (thinking is off: `chat::complete` asks for that).

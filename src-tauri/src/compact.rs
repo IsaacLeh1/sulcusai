@@ -51,7 +51,7 @@ fn system(base: &str, about: &str) -> String {
 }
 
 /// Asks the model to summarize the chat so far (from the last summary on).
-pub async fn summarize(ep: &Endpoint, base: &str, history: Vec<Message>) -> Result<String, String> {
+pub async fn summarize(ep: &Endpoint, base: &str, history: Vec<Message>, cancel: &AtomicBool) -> Result<String, String> {
     let (mut recent, earlier) = after_last(history);
     if !recent.iter().any(|m| m.role == "user") {
         return Err("There's nothing new to compact yet.".into());
@@ -59,7 +59,10 @@ pub async fn summarize(ep: &Endpoint, base: &str, history: Vec<Message>) -> Resu
     let about = earlier.as_deref().map(prompt_section).unwrap_or_default();
     recent.push(Message { id: uuid::Uuid::new_v4().to_string(), role: "user".into(), content: ASK.into(), ..Default::default() });
     let (kept, _) = chat::fit_history(ep, base, &about, None, &recent).await?;
-    let done = chat::stream(ep, chat::api_messages(&system(base, &about), &kept), None, &AtomicBool::new(false), |_| {}).await?;
+    let done = chat::stream(ep, chat::api_messages(&system(base, &about), &kept), None, cancel, |_| {}).await?;
+    if done.cancelled {
+        return Err("Stopped.".into());
+    }
     let summary = done.content.trim().to_string();
     if summary.is_empty() {
         return Err("The model didn't write a summary.".into());
