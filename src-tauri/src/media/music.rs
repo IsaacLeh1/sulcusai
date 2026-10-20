@@ -163,7 +163,9 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     Ok(Song {
         mp3,
         seconds: info["duration"].as_f64().unwrap_or(r.seconds as f64),
-        lyrics: info["lyrics"].as_str().unwrap_or("").to_string(),
+        // What was sung: the plan's lyrics (the music model's own, when it
+        // wrote them), else the ones it was given.
+        lyrics: info["lyrics"].as_str().unwrap_or(r.lyrics).to_string(),
     })
 }
 

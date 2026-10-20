@@ -3353,5 +3353,7 @@
  "Exit code 0.": "終了コード 0。",
  "Listed folders": "フォルダーを一覧表示しました",
  "The trainer finished without saving the prompt writer's adapter.": "トレーナーはプロンプトライターのアダプターを保存せずに終了しました。",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。"
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。",
+ "Couldn't write lyrics: no AI chat model is available. Add your own lyrics, or install a chat model.": "歌詞を書けませんでした：使えるAIチャットモデルがありません。自分の歌詞を入れるか、チャットモデルをインストールしてください。",
+ "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "歌詞を書けませんでした：チャットモデルが歌える歌詞を書きませんでした。自分の歌詞を入れるか、もう一度お試しください。"
 }

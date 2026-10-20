@@ -42,6 +42,7 @@ pub fn create_music_params() -> Value {
     json!({ "type": "object", "required": ["description"], "properties": {
         "description": { "type": "string", "description": "Genre, mood, instruments, tempo and voice, e.g. \"upbeat acoustic folk, warm male vocals\". For a sound effect, the sound." },
         "lyrics": { "type": "string", "description": "Lyrics to sing, with [Verse] and [Chorus] lines. Leave out to have them written." },
+        "language": { "type": "string", "description": "The language the vocals are sung in, as a two-letter code (en, es, fr, de, it, pt, ja, ko, zh). Leave out for the language of the lyrics or description." },
         "instrumental": { "type": "boolean", "description": "No vocals." },
         "sound_effect": { "type": "boolean", "description": "A sound effect rather than music." },
         "seconds": { "type": "number", "description": "Length in seconds (music 10-240, default 30; sound 10-30)." } } })
@@ -221,6 +222,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
             prompt: s("description").unwrap_or_default(),
             lyrics: s("lyrics"),
+            language: s("language").and_then(|l| media::lyrics::language_code(&l)),
             instrumental: args.get("instrumental").and_then(Value::as_bool),
             seconds: args.get("seconds").and_then(Value::as_f64).map(|v| v as f32),
             chat_id,

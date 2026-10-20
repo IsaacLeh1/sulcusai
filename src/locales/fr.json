@@ -3353,5 +3353,7 @@
  "Exit code 0.": "Code de sortie 0.",
  "Listed folders": "Dossiers listés",
  "The trainer finished without saving the prompt writer's adapter.": "L’entraîneur a terminé sans enregistrer l’adaptateur du rédacteur de prompts.",
- "This picture model doesn't bring its own language model, so there's no writer to coach.": "Ce modèle d’images n’a pas son propre modèle de langage, il n’y a donc pas de rédacteur à entraîner."
+ "This picture model doesn't bring its own language model, so there's no writer to coach.": "Ce modèle d’images n’a pas son propre modèle de langage, il n’y a donc pas de rédacteur à entraîner.",
+ "Couldn't write lyrics: no AI chat model is available. Add your own lyrics, or install a chat model.": "Impossible d'écrire les paroles : aucun modèle de chat IA n'est disponible. Ajoutez vos propres paroles ou installez un modèle de chat.",
+ "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "Impossible d'écrire les paroles : le modèle de chat n'a rien écrit qui puisse être chanté. Ajoutez vos propres paroles ou réessayez."
 }
