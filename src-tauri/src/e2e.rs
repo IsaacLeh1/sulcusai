@@ -500,6 +500,60 @@ async fn e2e_agent_asks_before_sending() {
     assert!(asked.iter().all(|a| a.ends_with("once: true")), "no allowing for the whole chat: {asked:?}");
 }
 
+/// A song attached to a chat is worked on: "make this longer" calls
+/// create_music on that song, and the result is that much longer. A small
+/// model (SULCUSAI_TEST_GGUF, Qwen3 4B) so the music engine fits beside it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_chat_works_on_an_attached_song() {
+    use crate::media::{self, store, Request};
+    let (_eng, ep, name) = test_model().await;
+    let state = media_state();
+    let cipher = state.cipher().unwrap();
+    media::install_for_test(&state, "ace-step-1.5").await.unwrap();
+    // A song of theirs, attached to the chat.
+    let song = media::run(&state, store::new_id(), Request { op: "music".into(), prompt: "calm acoustic guitar instrumental".into(), seconds: Some(20.0), instrumental: Some(true), ..Default::default() }).await.unwrap().remove(0);
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let mut item = song.clone();
+    item.chat_id = Some(chat.id.clone());
+    item.hidden = true;
+    store::update(&state.db.lock().unwrap(), &cipher, &item).unwrap();
+    let turn_id = uuid::Uuid::new_v4().to_string();
+    crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message {
+        id: turn_id.clone(),
+        chat_id: chat.id.clone(),
+        role: "user".into(),
+        content: "Make this song 20 seconds longer.".into(),
+        created_at: crate::db::now_ms(),
+        meta: Some(serde_json::json!({ "images": [song.id] })),
+        ..Default::default()
+    })
+    .unwrap();
+    let turn = crate::agent::Turn {
+        emit: std::sync::Arc::new(|_: &str, _| {}),
+        state: state.clone(),
+        chat_id: chat.id.clone(),
+        turn_id,
+        cipher: cipher.clone(),
+        ep: ep.clone(),
+        mode: crate::tools::Mode::Auto,
+        use_tools: true,
+        vision: false,
+        unattended: false,
+        base: chat::system_prompt(&Profile::default(), "today").0,
+        about: String::new(),
+        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+    };
+    let started = std::time::Instant::now();
+    turn.run().await.unwrap();
+    let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: make the attached song longer ({:.0}s)", started.elapsed().as_secs_f64()));
+    let made: Vec<media::MediaItem> = store::in_chat(&state.db.lock().unwrap(), &cipher, &chat.id).into_iter().filter(|i| i.kind == "audio" && i.id != song.id).collect();
+    println!("made: {:?}", made.iter().map(|i| (i.parent.clone(), i.seconds, i.prompt.clone())).collect::<Vec<_>>());
+    assert!(tools.iter().any(|t| t == "create_music"), "worked on it with create_music: {tools:?}");
+    let longer = made.iter().find(|i| i.parent.as_deref() == Some(song.id.as_str())).expect("a song made from the attached one");
+    assert!((longer.seconds - (song.seconds + 20.0)).abs() < 3.0, "{} s from {} s", longer.seconds, song.seconds);
+}
+
 /// The owner's task: a page fetched and applied to a folder, without
 /// asking. The page is GitHub's Node .gitignore; applied, it becomes the
 /// folder's .gitignore. See `test_model` for the model.

@@ -53,12 +53,12 @@ pub fn create_music_params() -> Value {
         "language": { "type": "string", "description": "The language the vocals are sung in, as a two-letter code (en, es, fr, de, it, pt, ja, ko, zh). Leave out for the language of the lyrics or description." },
         "instrumental": { "type": "boolean", "description": "No vocals." },
         "sound_effect": { "type": "boolean", "description": "A sound effect rather than music." },
-        "seconds": { "type": "number", "description": "Length in seconds (music 10-600, default 30; sound 10-30)." },
+        "seconds": { "type": "number", "description": "Length in seconds (music 10-600, default 30; sound 10-30). With change extend: the seconds to add." },
         "song": { "type": "string", "description": "To work on a song already in the gallery or this chat: its id (from an earlier create_music result)." },
         "change": { "type": "string", "enum": ["cover", "repaint", "extend", "add", "extract", "complete"], "description": "With song: cover = the same song in the style described; repaint = make part of it again (from/to); extend = add more after its end (seconds to add); add = add a part (part); extract = keep only one part (part); complete = build a full song around a lone part." },
         "part": { "type": "string", "enum": ["vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard", "percussion", "strings", "synth", "fx", "brass", "woodwinds"], "description": "With change add or extract." },
         "from": { "type": "number", "description": "With change repaint: where the part starts, in seconds." },
-        "to": { "type": "number", "description": "With change repaint: where it ends, in seconds." } } })
+        "to": { "type": "number", "description": "With change repaint: where it ends, in seconds. With change extend: the new length in all (or give seconds to add)." } } })
 }
 
 fn summary(items: &[MediaItem]) -> String {
@@ -94,6 +94,19 @@ fn edit_source(given: Option<String>, ctx: &Ctx<'_>) -> Option<String> {
 }
 
 /// Pictures the newest message of the person's came with.
+/// How much longer the person asked for, from their words: "20 seconds
+/// longer", "add a minute", "1.5 minutes more".
+fn asked_amount(asked: &str) -> Option<f32> {
+    static AMOUNT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(\d+(?:\.\d+)?|a|an|one)\s*(seconds?|secs?|s|minutes?|mins?)\b").unwrap());
+    let c = AMOUNT.captures(asked)?;
+    let n: f32 = match c[1].to_lowercase().as_str() {
+        "a" | "an" | "one" => 1.0,
+        x => x.parse().ok()?,
+    };
+    let minutes = c[2].to_lowercase().starts_with('m');
+    Some(if minutes { n * 60.0 } else { n }).filter(|s| *s >= 1.0)
+}
+
 fn newest_attached(ctx: &Ctx<'_>) -> (Vec<String>, String) {
     let conn = ctx.memory.db.lock().unwrap();
     let newest = crate::db::messages(&conn, ctx.memory.cipher, ctx.memory.chat_id).into_iter().rev().find(|m| m.role == "user");
@@ -276,7 +289,19 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                     (Some(a), Some(b)) => Some([a, b]),
                     _ => None,
                 },
-                extend_by: if change.as_deref() == Some("extend") { num("seconds") } else { None },
+                // Seconds to add; or "to", the new length in all (a model
+                // asked for 20 more on a 20-second song gave to: 40).
+                // A small model gave from: 0, to: 0: what makes no sense is
+                // taken from the person's own words ("20 seconds longer").
+                extend_by: if change.as_deref() == Some("extend") {
+                    let len = song.as_deref().and_then(|id| media::store::get(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher, id)).map_or(0.0, |i| i.seconds as f32);
+                    num("seconds")
+                        .filter(|s| *s >= 1.0)
+                        .or_else(|| num("to").filter(|t| *t > len + 1.0).map(|t| t - len))
+                        .or_else(|| asked_amount(&newest_attached(ctx).1))
+                } else {
+                    None
+                },
                 track: s("part"),
                 task: change,
                 audio: song,
@@ -364,5 +389,18 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             o
         }
         Err(e) => Outcome::error(format!("Couldn't make {what}"), e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn how_much_longer_is_read_from_the_words() {
+        assert_eq!(asked_amount("make this song 20 seconds longer."), Some(20.0));
+        assert_eq!(asked_amount("add a minute to it"), Some(60.0));
+        assert_eq!(asked_amount("1.5 minutes more please"), Some(90.0));
+        assert_eq!(asked_amount("make it longer"), None);
     }
 }
