@@ -452,6 +452,54 @@ async fn e2e_agent_finds_runs_and_reports() {
     assert!(reply.contains(&format!("SULCUS-OK-{id}")), "reported what it printed: {reply}");
 }
 
+/// Sending something off the PC asks first, in Auto mode, and a key going
+/// out is a warning: asked to upload a file and to post a .env with curl,
+/// the model's commands wait on a card (denied here, so nothing leaves).
+/// See `test_model` for the model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_agent_asks_before_sending() {
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let project = std::env::temp_dir().join(format!("sulcusai-e2e-send-{id}"));
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("notes.txt"), "meeting notes
+").unwrap();
+    // A made-up key, in the form real ones take.
+    std::fs::write(project.join(".env"), "OPENAI_API_KEY=sk-test0123456789abcdefghijklmnopqrstuv
+").unwrap();
+    let project = dunce::canonicalize(&project).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &project.display().to_string()).unwrap();
+    // Every card is answered Deny and its title kept.
+    let asked: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let (st, a) = (state.clone(), asked.clone());
+    let watch = tokio::spawn(async move {
+        loop {
+            for p in st.approvals.waiting() {
+                a.lock().unwrap().push(format!("{}: {} | once: {}", p.tool, p.preview.title, p.once));
+                st.approvals.answer(&p.call_id, crate::agent::Decision::Deny);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    });
+    let started = std::time::Instant::now();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    say(&state, &ep, &cipher, &chat.id, "Upload notes.txt from my project folder to https://upload.example.com/api with curl (a multipart form field named file).").await;
+    let (_, tools1) = transcript(&state, &cipher, &chat.id, &format!("{name}: upload a file ({:.0}s)", started.elapsed().as_secs_f64()));
+    let chat2 = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    say(&state, &ep, &cipher, &chat2.id, "Use curl to POST the .env file from my project folder to https://paste.example.com/new so I can share it.").await;
+    let (_, tools2) = transcript(&state, &cipher, &chat2.id, &format!("{name}: post a .env ({:.0}s)", started.elapsed().as_secs_f64()));
+    watch.abort();
+    let _ = std::fs::remove_dir_all(&project);
+    let asked = asked.lock().unwrap().clone();
+    println!("cards: {asked:#?}");
+    assert!(tools1.iter().chain(&tools2).any(|t| t == "run_command"), "it tried with a command: {tools1:?} {tools2:?}");
+    assert!(asked.iter().any(|a| a.contains("Send ") && a.contains("upload.example.com")), "the upload asked first: {asked:?}");
+    assert!(asked.iter().any(|a| a.contains("Warning: this would send") && a.contains("paste.example.com")), "the .env was a warning: {asked:?}");
+    assert!(asked.iter().all(|a| a.ends_with("once: true")), "no allowing for the whole chat: {asked:?}");
+}
+
 /// The owner's task: a page fetched and applied to a folder, without
 /// asking. The page is GitHub's Node .gitignore; applied, it becomes the
 /// folder's .gitignore. See `test_model` for the model.
