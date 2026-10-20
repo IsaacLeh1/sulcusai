@@ -3535,5 +3535,10 @@
  "Remove song": "移除歌曲",
  "Make it {time}": "改为 {time}",
  "Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.": "这种风格的人声通常偏轻或模糊。想听清歌词，流行、摇滚、民谣或乡村效果最好。",
- "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} 行歌词需要约 {time} 才能唱清楚；只有 {length} 时歌词会含糊不清。"
+ "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} 行歌词需要约 {time} 才能唱清楚；只有 {length} 时歌词会含糊不清。",
+ "1 version": "1 个版本",
+ "2 versions": "2 个版本",
+ "3 versions": "3 个版本",
+ "Make several versions at once and keep the one you like": "一次生成多个版本，保留你喜欢的那个",
+ "Versions": "版本"
 }

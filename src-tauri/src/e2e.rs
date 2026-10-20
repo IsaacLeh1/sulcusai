@@ -2639,6 +2639,18 @@ async fn e2e_music_songs() {
         let req = Request { op: "music".into(), prompt: "driving through a neon city at night".into(), seconds: Some(40.0), music: Some(music), language: Some("en".into()), ..Default::default() };
         made.push(("shaped".into(), req.clone(), make("shaped", req).await, Some("en")));
     }
+    // Two versions at once: two songs, each as long as asked.
+    if want("versions") {
+        let req = Request { op: "music".into(), prompt: "cheerful ukulele pop about a sunny weekend, bright female vocals".into(), seconds: Some(30.0), count: Some(2), ..Default::default() };
+        let t = std::time::Instant::now();
+        let r = media::run(&state, store::new_id(), req.clone()).await;
+        println!("versions: {:.0}s -> {:?}", t.elapsed().as_secs_f64(), r.as_ref().map(|v| v.iter().map(|i| i.seconds).collect::<Vec<_>>()));
+        let v = r.unwrap();
+        assert_eq!(v.len(), 2, "two versions");
+        for (k, i) in v.into_iter().enumerate() {
+            made.push((format!("version{}", k + 1), req.clone(), Ok(i), Some("en")));
+        }
+    }
     // A long song: as long as asked.
     if want("long") {
         let req = Request { op: "music".into(), prompt: "slow soulful blues ballad about a long road home, raspy male vocals, electric guitar and organ".into(), seconds: Some(150.0), ..Default::default() };

@@ -918,6 +918,9 @@ function MusicComposer({
   const [meter, setMeter] = useState("");
   const [key, setKey] = useState("");
   const [seconds, setSeconds] = useState(60);
+  // Vocals come out clearly about three times in four: two versions on the
+  // graphics card (seconds each) make one clear one likely. Changed by hand, it stays.
+  const [versionsSet, setVersions] = useState<number | null>(null);
   const [more, setMore] = useState(false);
   const [reference, setReference] = useState<MediaItem | null>(null);
   const [song, setSong] = useState<MediaItem | null>(null);
@@ -942,6 +945,7 @@ function MusicComposer({
   const fit = models.filter((m) => (m.can ?? ["music", "sound"]).includes(needOp));
   const [model, setModel] = useModelPick("music", fit.length ? fit : models, defaultId);
   const m = fit.find((x) => x.id === model) ?? fit[0];
+  const versions = versionsSet ?? (mode === "song" && vocals !== "none" && m?.fit.on_gpu ? 2 : 1);
   const secs = mode === "sound" ? Math.min(Math.max(seconds, 10), 30) : seconds;
   const sings = mode === "song" ? vocals !== "none" : mode === "edit" && ((task === "add" && part.includes("vocals")) || task === "cover" || task === "repaint");
   const styled = mode === "song" || (mode === "edit" && (task === "cover" || task === "complete"));
@@ -993,11 +997,12 @@ function MusicComposer({
       lyrics: sings && (mode === "edit" || vocals === "mine") && lyrics.trim() ? lyrics : null,
       language: sings && language !== "auto" ? language : null,
       model_id: m?.id,
+      count: mode === "song" ? versions : undefined,
       music: mode === "sound" ? null : spec(),
     });
     if (ok && mode !== "edit") setPrompt("");
   };
-  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs)) / 30 : 0;
+  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs) * (mode === "song" ? versions : 1)) / 30 : 0;
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1203,6 +1208,13 @@ function MusicComposer({
             />
             {mmss(secs)}
           </label>
+        )}
+        {mode === "song" && (
+          <select value={versions} onChange={(e) => setVersions(+e.target.value)} aria-label={t("Versions")} title={t("Make several versions at once and keep the one you like")}>
+            <option value={1}>{t("1 version")}</option>
+            <option value={2}>{t("2 versions")}</option>
+            <option value={3}>{t("3 versions")}</option>
+          </select>
         )}
         <ModelPick models={fit.length ? fit : models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />

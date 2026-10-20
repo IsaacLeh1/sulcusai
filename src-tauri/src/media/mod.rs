@@ -1234,7 +1234,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
 fn job_scale(m: &MediaModel, req: &Request) -> f64 {
     match m.kind {
         Kind::Video => (req.seconds.unwrap_or(m.defaults.seconds).max(1.0) / m.defaults.seconds.max(1.0)) as f64,
-        Kind::Music => (req.seconds.unwrap_or(m.defaults.seconds).max(10.0) / m.defaults.seconds.max(10.0)) as f64,
+        Kind::Music => (req.seconds.unwrap_or(m.defaults.seconds).max(10.0) / m.defaults.seconds.max(10.0)) as f64 * req.count.unwrap_or(1).clamp(1, 3) as f64,
         Kind::Image => req.count.unwrap_or(1).clamp(1, 4) as f64,
         _ => 1.0,
     }
@@ -2813,6 +2813,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     let lyrics_text = if task.is_some() && words == lyrics::Words::MusicModelWrites { String::new() } else { words.for_engine().to_string() };
     let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
+    let versions = if task.is_none() && !sound { req.count.unwrap_or(1).clamp(1, 3) } else { 1 };
     let made = music::make(
         &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
         work,
@@ -2833,16 +2834,18 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             strength: spec.strength,
             source: source.as_ref().map(|s| s.1.as_path()),
             reference: reference.as_ref().map(|r| r.1.as_path()),
+            versions,
         },
         ctx.cancel,
         ctx.progress,
     )
     .await?;
+    let planned = made[0].lyrics.clone();
     // Vocals were asked for, and the music model planned nothing to sing:
     // say so rather than hand back an instrumental as if it were the song.
     if task.is_none() {
-        if let Err(e) = lyrics::check_sung(&words, &made.lyrics, problem.as_ref()) {
-            crate::applog::line("media", &format!("The song came out without words to sing (planned lyrics: {:?})", made.lyrics.chars().take(80).collect::<String>()));
+        if let Err(e) = lyrics::check_sung(&words, &planned, problem.as_ref()) {
+            crate::applog::line("media", &format!("The song came out without words to sing (planned lyrics: {:?})", planned.chars().take(80).collect::<String>()));
             return Err(e);
         }
     }
@@ -2857,20 +2860,24 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         _ if req.prompt.trim().is_empty() => caption.clone(),
         _ => req.prompt.trim().to_string(),
     };
-    let item = MediaItem {
-        kind: "audio".into(),
-        op: req.op.clone(),
-        prompt,
-        model_id: Some(m.id.clone()),
-        mime: "audio/mpeg".into(),
-        seconds: made.seconds,
-        parent: source.as_ref().map(|s| s.0.id.clone()),
-        chat_id: req.chat_id.clone(),
-        seed: Some(seed),
-        lyrics: (!sound && lyrics::has_singing(&made.lyrics)).then_some(made.lyrics),
-        ..Default::default()
-    };
-    Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &made.mp3, None)?])
+    let mut items = Vec::new();
+    for song in made {
+        let item = MediaItem {
+            kind: "audio".into(),
+            op: req.op.clone(),
+            prompt: prompt.clone(),
+            model_id: Some(m.id.clone()),
+            mime: "audio/mpeg".into(),
+            seconds: song.seconds,
+            parent: source.as_ref().map(|s| s.0.id.clone()),
+            chat_id: req.chat_id.clone(),
+            seed: Some(seed),
+            lyrics: (!sound && lyrics::has_singing(&song.lyrics)).then_some(song.lyrics),
+            ..Default::default()
+        };
+        items.push(store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &song.mp3, None)?);
+    }
+    Ok(items)
 }
 
 async fn narrate(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {

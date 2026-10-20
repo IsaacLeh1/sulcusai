@@ -51,6 +51,8 @@ pub struct SongRequest<'a> {
     pub source: Option<&'a Path>,
     /// A song whose sound (voices and instruments) to follow.
     pub reference: Option<&'a Path>,
+    /// How many versions to make at once (1 to 3), to keep the best.
+    pub versions: u32,
 }
 
 /// Tempo, key and time signature for a new song, from what the person set
@@ -207,10 +209,18 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     if let Some(s) = r.strength {
         v["audio_cover_strength"] = json!(s.clamp(0.0, 1.0));
     }
+    if r.versions > 1 {
+        v["synth_batch_size"] = json!(r.versions.min(3));
+    }
+    // Words to sing: the lyrics followed more closely (they were heard better
+    // across seeds at 3 than at the turbo model's own 1).
+    if !r.lyrics.is_empty() && r.lyrics != "[Instrumental]" && r.source.is_none() {
+        v["guidance_scale"] = json!(3.0);
+    }
     v
 }
 
-pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Song, String> {
+pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<Song>, String> {
     let exe = |name: &str| -> Result<PathBuf, String> {
         crate::engine::find_exe(e.dir, name).ok_or_else(|| "The music engine isn't fully installed. Reinstall the music model from the Studio's Models list.".to_string())
     };
@@ -225,7 +235,7 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     std::fs::write(&request, request_json(r).to_string()).map_err(|e| e.to_string())?;
     let mut t = Tracker::new(r.seconds);
     progress(t.label(), t.fraction());
-    let mut made_secs = None::<f64>;
+    let mut made_secs: Vec<f64> = Vec::new();
     let mut args: Vec<std::ffi::OsString> = vec!["--models".into(), e.models.into(), "--request".into(), request.clone().into()];
     if let Some(s) = r.source {
         args.extend(["--src-audio".into(), s.into()]);
@@ -245,7 +255,7 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
         cancel,
         |l: &str| {
             if let Some(s) = decoded_secs(l) {
-                made_secs = Some(s);
+                made_secs.push(s);
             }
             if t.line(l) {
                 progress(t.label(), t.fraction());
@@ -253,13 +263,17 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
         },
     )
     .await?;
-    // Named after the request file (song.json writes song0.mp3); else the first MP3 it wrote.
-    let mut out = work.join("song0.mp3");
-    if !out.exists() {
-        out = std::fs::read_dir(work).ok().and_then(|d| d.flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "mp3"))).ok_or("The music model didn't produce a song.")?;
+    // Named after the request file: song.json writes song0.mp3, song1.mp3…
+    let mut songs = Vec::new();
+    for i in 0..r.versions.clamp(1, 3) {
+        let Ok(mp3) = std::fs::read(work.join(format!("song{i}.mp3"))) else { continue };
+        let seconds = made_secs.get(i as usize).copied().unwrap_or(r.seconds as f64);
+        songs.push(Song { mp3, seconds, lyrics: r.lyrics.to_string() });
     }
-    let mp3 = std::fs::read(&out).map_err(|_| "The music model didn't produce a song.".to_string())?;
-    Ok(Song { mp3, seconds: made_secs.unwrap_or(r.seconds as f64), lyrics: r.lyrics.to_string() })
+    if songs.is_empty() {
+        return Err("The music model didn't produce a song.".into());
+    }
+    Ok(songs)
 }
 
 /// The length the synth says it wrote: "[VAE] Decoded: … (23.44s @ 48kHz)".

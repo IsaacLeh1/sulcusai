@@ -3535,5 +3535,10 @@
  "Remove song": "曲を削除",
  "Make it {time}": "{time} にする",
  "Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.": "このスタイルのボーカルは小さくぼやけがちです。歌詞を聞き取りやすくするなら、ポップ、ロック、フォーク、カントリーがおすすめです。",
- "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} 行をはっきり歌うには約 {time} 必要です。{length} では言葉が不明瞭になります。"
+ "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} 行をはっきり歌うには約 {time} 必要です。{length} では言葉が不明瞭になります。",
+ "1 version": "1 バージョン",
+ "2 versions": "2 バージョン",
+ "3 versions": "3 バージョン",
+ "Make several versions at once and keep the one you like": "複数のバージョンを一度に作り、気に入ったものを残します",
+ "Versions": "バージョン"
 }

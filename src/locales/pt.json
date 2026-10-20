@@ -3535,5 +3535,10 @@
  "Remove song": "Remover música",
  "Make it {time}": "Deixar com {time}",
  "Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.": "Os vocais neste estilo costumam sair suaves ou abafados. Para entender a letra, Pop, Rock, Folk ou Country funcionam melhor.",
- "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} linhas precisam de cerca de {time} para serem cantadas com clareza; com {length} as palavras saem emboladas."
+ "{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.": "{n} linhas precisam de cerca de {time} para serem cantadas com clareza; com {length} as palavras saem emboladas.",
+ "1 version": "1 versão",
+ "2 versions": "2 versões",
+ "3 versions": "3 versões",
+ "Make several versions at once and keep the one you like": "Fazer várias versões de uma vez e ficar com a que você gostar",
+ "Versions": "Versões"
 }
