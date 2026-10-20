@@ -348,6 +348,30 @@ pub fn changed_area(before: &DynamicImage, after: &DynamicImage) -> (RgbaImage, 
     (after, mask, share)
 }
 
+/// How much brighter or darker (per color) the edit made the parts it
+/// didn't change: the middle difference there.
+fn tone_shift(before: &DynamicImage, aligned: &RgbaImage, mask: &GrayImage) -> [i32; 3] {
+    let b = before.to_rgba8();
+    let mut d: [Vec<i32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    for (x, y, p) in aligned.enumerate_pixels().step_by(5) {
+        if x >= b.width() || y >= b.height() || x >= mask.width() || y >= mask.height() || mask.get_pixel(x, y)[0] >= 32 {
+            continue;
+        }
+        let q = b.get_pixel(x, y);
+        for (c, list) in d.iter_mut().enumerate() {
+            list.push(p[c] as i32 - q[c] as i32);
+        }
+    }
+    let mut out = [0; 3];
+    for (c, list) in d.iter_mut().enumerate() {
+        if !list.is_empty() {
+            let mid = list.len() / 2;
+            out[c] = *list.select_nth_unstable(mid).1;
+        }
+    }
+    out
+}
+
 /// An edit put back into the full-size original: only what the edit changed
 /// comes from it, so the rest of the picture keeps its own pixels and size
 /// ("keep everything else exactly as it is"). None when the edit changed
@@ -358,6 +382,10 @@ pub fn keep_unchanged(original: &DynamicImage, before: &DynamicImage, after: &Dy
     if share > 0.6 {
         return None;
     }
+    // The edit model shifts the whole picture's tone a little; that shift is
+    // taken out of what's blended in, or the floor around a change showed as
+    // lighter and darker patches (the barbell photo).
+    let shift = tone_shift(before, &aligned, &mask);
     // Blended over a wide, soft edge (about 4 of the edit's pixels), so no seam shows.
     let (w, h) = original.dimensions();
     let result = DynamicImage::ImageRgba8(aligned).resize_exact(w, h, FilterType::Lanczos3).to_rgba8();
@@ -366,7 +394,7 @@ pub fn keep_unchanged(original: &DynamicImage, before: &DynamicImage, after: &Dy
     Some(DynamicImage::ImageRgba8(RgbaImage::from_fn(w, h, |x, y| {
         let a = soft.get_pixel(x, y)[0] as f32 / 255.0;
         let (o, n) = (base.get_pixel(x, y), result.get_pixel(x, y));
-        let mix = |i: usize| (o[i] as f32 * (1.0 - a) + n[i] as f32 * a).round() as u8;
+        let mix = |i: usize| (o[i] as f32 * (1.0 - a) + (n[i] as i32 - shift[i]).clamp(0, 255) as f32 * a).round() as u8;
         Rgba([mix(0), mix(1), mix(2), o[3]])
     })))
 }
@@ -545,6 +573,18 @@ mod tests {
         let out = keep_unchanged(&full, &before, &zoomed).expect("put back into the original").to_rgba8();
         assert_eq!(out.dimensions(), (400, 300));
         assert_eq!(out.get_pixel(4, 4), full.to_rgba8().get_pixel(4, 4), "the zoomed-away edge is the original's");
+    }
+
+    /// The edit made everything a little brighter: that's measured where
+    /// nothing changed, and taken out of what's blended in.
+    #[test]
+    fn the_edits_overall_tone_shift_is_measured() {
+        let (_, before, _) = an_edit();
+        let mut brighter = before.to_rgba8();
+        brighter.pixels_mut().for_each(|p| *p = Rgba([p[0].saturating_add(20), p[1].saturating_add(20), p[2].saturating_add(20), 255]));
+        let none = GrayImage::new(brighter.width(), brighter.height());
+        let s = tone_shift(&before, &brighter, &none);
+        assert!(s.iter().all(|c| (15..=20).contains(c)), "{s:?}");
     }
 
     #[test]
