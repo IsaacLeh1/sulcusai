@@ -37,7 +37,6 @@
  "1 larger one is hidden because it needs more memory than this PC has.": "有 1 个更大的模型已隐藏，因为它需要的内存超过这台电脑的容量。",
  "1 model fits": "有 1 个模型适合",
  "1 model is hidden because this PC can't run it.": "有 1 个模型已隐藏，因为这台电脑无法运行它。",
- "1 more model needs more than this PC has, so it's not shown.": "还有 1 个模型需要的资源超出这台电脑的配置，因此未显示。",
  "1 new message.": "1 封新邮件。",
  "1 picture": "1 张图片",
  "1 speech model is hidden because this PC's processor couldn't keep up with live speech.": "有 1 个语音模型已隐藏，因为这台电脑的处理器跟不上实时语音。",
@@ -1608,7 +1607,6 @@
  "{n} min ago": "{n} 分钟前",
  "{n} models are hidden because this PC can't run them.": "有 {n} 个模型已隐藏，因为这台电脑无法运行它们。",
  "{n} models fit": "有 {n} 个模型适合",
- "{n} more models need more than this PC has, so they're not shown.": "还有 {n} 个模型需要的资源超出这台电脑的配置，因此未显示。",
  "{n} new messages.": "{n} 封新邮件。",
  "{n} of {total}": "{n} / {total}",
  "{n} of {total} GB": "{n} / {total} GB",
@@ -3355,5 +3353,15 @@
  "The trainer finished without saving the prompt writer's adapter.": "训练器结束了，但没有保存提示词撰写器的适配器。",
  "This picture model doesn't bring its own language model, so there's no writer to coach.": "这个图片模型没有自带语言模型，所以没有可训练的撰写器。",
  "Couldn't write lyrics: no AI chat model is available. Add your own lyrics, or install a chat model.": "无法写歌词：没有可用的 AI 聊天模型。请添加你自己的歌词，或安装一个聊天模型。",
- "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "无法写歌词：聊天模型没有写出可以演唱的歌词。请添加你自己的歌词，或再试一次。"
+ "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "无法写歌词：聊天模型没有写出可以演唱的歌词。请添加你自己的歌词，或再试一次。",
+ "More models…": "更多模型…",
+ "Show models of every kind": "显示所有类型的模型",
+ "Paste a Hugging Face link to a model, e.g. {link}": "粘贴模型的 Hugging Face 链接，例如 {link}",
+ "Paste a Hugging Face link to a picture, video or music model": "粘贴图片、视频或音乐模型的 Hugging Face 链接",
+ "1 more model needs more memory than this PC has, so it's not shown.": "还有 1 个模型需要的内存超出这台电脑的配置，因此未显示。",
+ "{n} more models need more memory than this PC has, so they're not shown.": "还有 {n} 个模型需要的内存超出这台电脑的配置，因此未显示。",
+ "1 more model needs a bigger graphics card than this PC has, so it's not shown.": "还有 1 个模型需要比这台电脑更强的显卡，因此未显示。",
+ "{n} more models need a bigger graphics card than this PC has, so they're not shown.": "还有 {n} 个模型需要比这台电脑更强的显卡，因此未显示。",
+ "1 more model needs more free disk space than this PC has. Free some space to see it.": "还有 1 个模型需要的可用磁盘空间超出这台电脑的剩余空间。腾出一些空间即可看到它。",
+ "{n} more models need more free disk space than this PC has. Free some space to see them.": "还有 {n} 个模型需要的可用磁盘空间超出这台电脑的剩余空间。腾出一些空间即可看到它们。"
 }

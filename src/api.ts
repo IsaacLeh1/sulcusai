@@ -1752,6 +1752,8 @@ export interface MediaView {
   models: MediaModelCard[];
   cloud: CloudMediaChoice[];
   hidden: number;
+  /** Models left out by kind and why: more memory, a bigger graphics card, or more free disk space. */
+  hidden_by_kind?: { kind: MediaKind; why: "memory" | "card" | "disk"; count: number }[];
   video_note: string | null;
   installing: string[];
   jobs: MediaJob[];

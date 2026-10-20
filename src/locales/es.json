@@ -37,7 +37,6 @@
  "1 larger one is hidden because it needs more memory than this PC has.": "1 modelo más grande está oculto porque necesita más memoria de la que tiene esta PC.",
  "1 model fits": "Cabe 1 modelo",
  "1 model is hidden because this PC can't run it.": "1 modelo está oculto porque esta PC no puede ejecutarlo.",
- "1 more model needs more than this PC has, so it's not shown.": "1 modelo más necesita más de lo que tiene esta PC, así que no se muestra.",
  "1 new message.": "1 mensaje nuevo.",
  "1 picture": "1 imagen",
  "1 speech model is hidden because this PC's processor couldn't keep up with live speech.": "1 modelo de voz está oculto porque el procesador de esta PC no podía seguir el ritmo de la voz en vivo.",
@@ -1608,7 +1607,6 @@
  "{n} min ago": "hace {n} min",
  "{n} models are hidden because this PC can't run them.": "{n} modelos están ocultos porque esta PC no puede ejecutarlos.",
  "{n} models fit": "Caben {n} modelos",
- "{n} more models need more than this PC has, so they're not shown.": "{n} modelos más necesitan más de lo que tiene esta PC, así que no se muestran.",
  "{n} new messages.": "{n} mensajes nuevos.",
  "{n} of {total}": "{n} de {total}",
  "{n} of {total} GB": "{n} de {total} GB",
@@ -3355,5 +3353,15 @@
  "The trainer finished without saving the prompt writer's adapter.": "El entrenador terminó sin guardar el adaptador del redactor de prompts.",
  "This picture model doesn't bring its own language model, so there's no writer to coach.": "Este modelo de imágenes no trae su propio modelo de lenguaje, así que no hay redactor que entrenar.",
  "Couldn't write lyrics: no AI chat model is available. Add your own lyrics, or install a chat model.": "No se pudo escribir la letra: no hay ningún modelo de chat de IA disponible. Añade tu propia letra o instala un modelo de chat.",
- "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "No se pudo escribir la letra: el modelo de chat no escribió nada que se pudiera cantar. Añade tu propia letra o inténtalo de nuevo."
+ "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "No se pudo escribir la letra: el modelo de chat no escribió nada que se pudiera cantar. Añade tu propia letra o inténtalo de nuevo.",
+ "More models…": "Más modelos…",
+ "Show models of every kind": "Mostrar modelos de todos los tipos",
+ "Paste a Hugging Face link to a model, e.g. {link}": "Pega un enlace de Hugging Face a un modelo, p. ej., {link}",
+ "Paste a Hugging Face link to a picture, video or music model": "Pega un enlace de Hugging Face a un modelo de imágenes, video o música",
+ "1 more model needs more memory than this PC has, so it's not shown.": "1 modelo más necesita más memoria de la que tiene esta PC, así que no se muestra.",
+ "{n} more models need more memory than this PC has, so they're not shown.": "{n} modelos más necesitan más memoria de la que tiene esta PC, así que no se muestran.",
+ "1 more model needs a bigger graphics card than this PC has, so it's not shown.": "1 modelo más necesita una tarjeta gráfica más potente que la de esta PC, así que no se muestra.",
+ "{n} more models need a bigger graphics card than this PC has, so they're not shown.": "{n} modelos más necesitan una tarjeta gráfica más potente que la de esta PC, así que no se muestran.",
+ "1 more model needs more free disk space than this PC has. Free some space to see it.": "1 modelo más necesita más espacio libre en disco del que tiene esta PC. Libera espacio para verlo.",
+ "{n} more models need more free disk space than this PC has. Free some space to see them.": "{n} modelos más necesitan más espacio libre en disco del que tiene esta PC. Libera espacio para verlos."
 }

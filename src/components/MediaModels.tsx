@@ -40,11 +40,24 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
   if (!view) return <p className="muted">{t("Loading…")}</p>;
   const busy = Object.keys(progress).length > 0;
   const kinds = KINDS.filter((k) => !only || only.includes(k.kind));
+  const installed = new Set(view.models.filter((m) => m.installed).map((m) => m.id));
+  const first: HubKind = only?.includes("video") ? "video" : only?.includes("music") ? "music" : "image";
+  const hubKinds = (["image", "video", "music"] as HubKind[]).filter((k) => !only || only.includes(k));
   return (
     <div className="media-models">
+      <section className="media-link">
+        <HubLinkBox
+          progress={progress}
+          isInstalled={(id) => installed.has(id)}
+          toast={toast}
+          onInstalled={load}
+          placeholder={hubKinds.length === 1 ? t("Paste a Hugging Face link to a model, e.g. {link}", { link: LINK_EXAMPLE[hubKinds[0]] }) : t("Paste a Hugging Face link to a picture, video or music model")}
+        />
+      </section>
       {kinds.map(({ kind, title, per }) => {
         const list = view.models.filter((m) => m.kind === kind).sort((a, b) => b.quality - a.quality);
-        if (list.length === 0 && kind !== "video") return null;
+        const left = (view.hidden_by_kind ?? []).filter((h) => h.kind === kind);
+        if (list.length === 0 && left.length === 0 && kind !== "video") return null;
         return (
           <section key={kind}>
             <h3>{t(title)}</h3>
@@ -52,25 +65,39 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
             {list.map((m) => (
               <MediaModelRow key={m.id} m={m} per={per} progress={progress[m.id]} busy={busy} toast={toast} onChanged={load} isDefault={defaultOf(view, m.kind) === m.id} kept={kept.includes(m.id)} onKept={setKept} />
             ))}
+            {left.map((h) => (
+              <p key={h.why} className="small muted">{hiddenText(h.why, h.count)}</p>
+            ))}
           </section>
         );
       })}
-      {view.hidden > 0 && (
-        <p className="small muted">
-          {view.hidden === 1
-            ? t("1 more model needs more than this PC has, so it's not shown.")
-            : t("{n} more models need more than this PC has, so they're not shown.", { n: view.hidden })}
-        </p>
-      )}
-      <MediaHubBrowser
-        first={only?.includes("video") ? "video" : only?.includes("music") ? "music" : "image"}
-        installed={new Set(view.models.filter((m) => m.installed).map((m) => m.id))}
-        progress={progress}
-        toast={toast}
-        onChanged={load}
-      />
+      <MediaHubBrowser first={first} installed={installed} progress={progress} toast={toast} onChanged={load} />
     </div>
   );
+}
+
+/** A Hugging Face link of each kind, as an example. */
+const LINK_EXAMPLE: Record<HubKind, string> = {
+  image: "https://huggingface.co/RunDiffusion/Juggernaut-XL-v9",
+  video: "https://huggingface.co/QuantStack/Wan2.2-TI2V-5B-GGUF",
+  music: "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF",
+};
+
+/** Why some models of a kind aren't listed. */
+function hiddenText(why: "memory" | "card" | "disk", n: number): string {
+  if (why === "disk") {
+    return n === 1
+      ? t("1 more model needs more free disk space than this PC has. Free some space to see it.")
+      : t("{n} more models need more free disk space than this PC has. Free some space to see them.", { n });
+  }
+  if (why === "card") {
+    return n === 1
+      ? t("1 more model needs a bigger graphics card than this PC has, so it's not shown.")
+      : t("{n} more models need a bigger graphics card than this PC has, so they're not shown.", { n });
+  }
+  return n === 1
+    ? t("1 more model needs more memory than this PC has, so it's not shown.")
+    : t("{n} more models need more memory than this PC has, so they're not shown.", { n });
 }
 
 /** The default model for a kind that has one (pictures, video, music). */
@@ -192,7 +219,6 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
           </p>
         </div>
       </div>
-      <HubLinkBox progress={progress} isInstalled={(id) => installed.has(id)} toast={toast} onInstalled={onChanged} />
       <div className="mode-switch small" role="tablist">
         {HUB_KINDS.map((k) => (
           <button

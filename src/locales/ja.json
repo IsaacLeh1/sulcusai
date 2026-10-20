@@ -37,7 +37,6 @@
  "1 larger one is hidden because it needs more memory than this PC has.": "このPCのメモリでは足りない大きなモデルが1つ非表示になっています。",
  "1 model fits": "1 モデルが利用可能",
  "1 model is hidden because this PC can't run it.": "このPCでは実行できないモデルが1つ非表示になっています。",
- "1 more model needs more than this PC has, so it's not shown.": "このPCの性能を超えるモデルがあと1つあるため、表示していません。",
  "1 new message.": "新着メッセージが1件あります。",
  "1 picture": "1枚",
  "1 speech model is hidden because this PC's processor couldn't keep up with live speech.": "このPCのプロセッサーではリアルタイムの音声に追いつけないため、音声モデルが1つ非表示になっています。",
@@ -1608,7 +1607,6 @@
  "{n} min ago": "{n} 分前",
  "{n} models are hidden because this PC can't run them.": "このPCでは実行できないモデルが {n} 個非表示になっています。",
  "{n} models fit": "{n}個のモデル",
- "{n} more models need more than this PC has, so they're not shown.": "このPCの性能を超えるモデルがあと {n} 個あるため、表示していません。",
  "{n} new messages.": "新着メッセージが {n} 件あります。",
  "{n} of {total}": "{n} / {total}",
  "{n} of {total} GB": "{n} / {total} GB",
@@ -3355,5 +3353,15 @@
  "The trainer finished without saving the prompt writer's adapter.": "トレーナーはプロンプトライターのアダプターを保存せずに終了しました。",
  "This picture model doesn't bring its own language model, so there's no writer to coach.": "この画像モデルには専用の言語モデルがないため、鍛えるライターがありません。",
  "Couldn't write lyrics: no AI chat model is available. Add your own lyrics, or install a chat model.": "歌詞を書けませんでした：使えるAIチャットモデルがありません。自分の歌詞を入れるか、チャットモデルをインストールしてください。",
- "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "歌詞を書けませんでした：チャットモデルが歌える歌詞を書きませんでした。自分の歌詞を入れるか、もう一度お試しください。"
+ "Couldn't write lyrics: the chat model didn't write any it could sing. Add your own lyrics, or try again.": "歌詞を書けませんでした：チャットモデルが歌える歌詞を書きませんでした。自分の歌詞を入れるか、もう一度お試しください。",
+ "More models…": "その他のモデル…",
+ "Show models of every kind": "すべての種類のモデルを表示",
+ "Paste a Hugging Face link to a model, e.g. {link}": "モデルの Hugging Face リンクを貼り付け（例：{link}）",
+ "Paste a Hugging Face link to a picture, video or music model": "画像・動画・音楽モデルの Hugging Face リンクを貼り付け",
+ "1 more model needs more memory than this PC has, so it's not shown.": "このPCのメモリでは足りないモデルがあと1つあるため、表示していません。",
+ "{n} more models need more memory than this PC has, so they're not shown.": "このPCのメモリでは足りないモデルがあと {n} 個あるため、表示していません。",
+ "1 more model needs a bigger graphics card than this PC has, so it's not shown.": "このPCより大きなグラフィックカードが必要なモデルがあと1つあるため、表示していません。",
+ "{n} more models need a bigger graphics card than this PC has, so they're not shown.": "このPCより大きなグラフィックカードが必要なモデルがあと {n} 個あるため、表示していません。",
+ "1 more model needs more free disk space than this PC has. Free some space to see it.": "このPCの空きディスク容量では足りないモデルがあと1つあります。表示するには空き容量を増やしてください。",
+ "{n} more models need more free disk space than this PC has. Free some space to see them.": "このPCの空きディスク容量では足りないモデルがあと {n} 個あります。表示するには空き容量を増やしてください。"
 }

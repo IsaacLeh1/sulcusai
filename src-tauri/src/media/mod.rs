@@ -2526,6 +2526,8 @@ pub struct MediaView {
     cloud: Vec<crate::cloud::MediaChoice>,
     /// Models that can't run on this PC, left out of the list.
     hidden: usize,
+    /// The same, by kind and why, so each kind's list can say so.
+    hidden_by_kind: Vec<Hidden>,
     /// Why video isn't available here, when no video model fits.
     video_note: Option<String>,
     installing: Vec<String>,
@@ -2533,6 +2535,33 @@ pub struct MediaView {
     gallery: usize,
     /// The default model per kind.
     pub defaults: MediaDefaults,
+}
+
+/// Models of a kind left out of the list, and why: "memory" (more than this
+/// PC has), "card" (a bigger graphics card) or "disk" (more free space).
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Hidden {
+    kind: Kind,
+    why: &'static str,
+    count: usize,
+}
+
+/// Why a model that doesn't fit is left out, in one word.
+fn hidden_why(m: &MediaModel, f: &MediaFit) -> &'static str {
+    if f.runnable {
+        "disk"
+    } else if matches!(m.kind, Kind::Music | Kind::Background) || f.reason.as_deref().is_some_and(|r| r.starts_with("needs about")) {
+        "memory"
+    } else {
+        "card"
+    }
+}
+
+fn count_hidden(list: &mut Vec<Hidden>, kind: Kind, why: &'static str) {
+    match list.iter_mut().find(|h| h.kind == kind && h.why == why) {
+        Some(h) => h.count += 1,
+        None => list.push(Hidden { kind, why, count: 1 }),
+    }
 }
 
 #[tauri::command(async)]
@@ -2545,6 +2574,7 @@ fn view(state: &AppState) -> MediaView {
     let b = Budget::from_hardware(&hw);
     let list = installed(&state.db.lock().unwrap());
     let mut hidden = 0;
+    let mut hidden_by_kind = Vec::new();
     let mut video_note = None;
     let mut models = Vec::new();
     let installing: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
@@ -2557,6 +2587,7 @@ fn view(state: &AppState) -> MediaView {
         let f = fit(m, &hw, &b, missing_bytes(&state.paths, m), inst.and_then(|i| i.secs));
         if inst.is_none() && !(f.runnable && f.disk_ok) {
             hidden += 1;
+            count_hidden(&mut hidden_by_kind, m.kind, hidden_why(m, &f));
             if m.kind == Kind::Video && video_note.is_none() {
                 video_note = f.reason.clone().map(|r| format!("Video isn't available on this PC: the smallest video model {r}."));
             }
@@ -2577,7 +2608,7 @@ fn view(state: &AppState) -> MediaView {
         (crate::cloud::media_choices(&conn), gallery)
     };
     let defaults = defaults(&state.db.lock().unwrap());
-    MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery, defaults }
+    MediaView { models, cloud, hidden, hidden_by_kind, video_note, installing, jobs: list_jobs(), gallery, defaults }
 }
 
 #[tauri::command(async)]
@@ -3197,6 +3228,36 @@ mod tests {
         let plain: Vec<std::ffi::OsString> = ["-p", "x", "-o", "o.png"].iter().map(|s| s.into()).collect();
         let added: Vec<String> = with_flag(&plain, "--max-vram", Some("-1")).iter().map(|s| s.to_string_lossy().into_owned()).collect();
         assert_eq!(added, ["-p", "x", "--max-vram", "-1", "-o", "o.png"], "before the output path");
+    }
+
+    /// A PC with 8 GB and no graphics card runs the small music model; the
+    /// other two are left out for memory, and the Studio says so per kind.
+    #[test]
+    fn music_models_left_out_are_counted_with_why() {
+        let mut h = Hardware { cpu_cores: Some(8), cpu_threads: 16, avx2: true, ram_total: 8 * GIB, disk_free: 500 * GIB, ..Default::default() };
+        let b = Budget::from_hardware(&h);
+        let mut hidden = Vec::new();
+        for id in ["ace-step-1.5", "ace-step-1.5-xl", "ace-step-1.5-small"] {
+            let m = model(id);
+            let f = fit(&m, &h, &b, m.size(), None);
+            if !(f.runnable && f.disk_ok) {
+                count_hidden(&mut hidden, m.kind, hidden_why(&m, &f));
+            }
+        }
+        assert_eq!(hidden, vec![Hidden { kind: Kind::Music, why: "memory", count: 2 }]);
+        // Room for all of them but not on the disk: "disk".
+        h.ram_total = 32 * GIB;
+        h.disk_free = 6 * GIB;
+        let b = Budget::from_hardware(&h);
+        let xl = model("ace-step-1.5-xl");
+        let f = fit(&xl, &h, &b, xl.size(), None);
+        assert!(f.runnable && !f.disk_ok);
+        assert_eq!(hidden_why(&xl, &f), "disk");
+        let wan = model("wan2.2-ti2v-5b");
+        for vram in [0, 4] {
+            let (h, b) = hw(vram, 8);
+            assert_eq!(hidden_why(&wan, &fit(&wan, &h, &b, 0, None)), "card", "{vram} GB");
+        }
     }
 
     #[test]

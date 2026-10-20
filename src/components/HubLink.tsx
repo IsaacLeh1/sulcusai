@@ -22,7 +22,20 @@ interface Row {
 /** "Paste a Hugging Face link": works for chat models and for picture,
  * video and music models; shows the versions SulcusAI can use, the one the
  * link named first, and installs the one picked like any other model. */
-export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { progress: Record<string, InstallProgress>; isInstalled: (id: string) => boolean; toast: PushToast; onInstalled: () => void }) {
+export function HubLinkBox({
+  progress,
+  isInstalled,
+  toast,
+  onInstalled,
+  placeholder,
+}: {
+  progress: Record<string, InstallProgress>;
+  isInstalled: (id: string) => boolean;
+  toast: PushToast;
+  onInstalled: () => void;
+  /** What the box asks for (a chat model's link, unless given). */
+  placeholder?: string;
+}) {
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [found, setFound] = useState<HubLinkResult | null>(null);
@@ -109,7 +122,7 @@ export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { prog
           className="input"
           value={link}
           onChange={(e) => setLink(e.target.value)}
-          placeholder={t("Paste a Hugging Face link, e.g. https://huggingface.co/unsloth/Qwen3-8B-GGUF")}
+          placeholder={placeholder ?? t("Paste a Hugging Face link, e.g. https://huggingface.co/unsloth/Qwen3-8B-GGUF")}
           aria-label={t("Hugging Face link")}
         />
         <button className="btn" type="submit" disabled={busy || !link.trim()}>
