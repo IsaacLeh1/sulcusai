@@ -314,10 +314,16 @@ pub fn install_speaker_model(app: AppHandle, state: AppStateRef) -> Result<(), S
         let emit = |phase: &str, received: u64, total: u64| {
             app.emit("install:progress", json!({ "model_id": id, "phase": phase, "received": received, "total": total })).ok();
         };
+        // A cancel deletes only what this install downloaded.
+        let files = [model_path(&state.paths, &state.catalog.diarization)];
+        let had = download::existing(&files);
         let result = install(&state, &cancel, &emit).await;
         let payload = match &result {
             Ok(()) => json!({ "model_id": id, "name": name, "ok": true }),
-            Err(err) if err == download::CANCELLED => json!({ "model_id": id, "name": name, "ok": false, "cancelled": true }),
+            Err(err) if err == download::CANCELLED => {
+                download::discard_new(&files, &had, &state.paths.models);
+                json!({ "model_id": id, "name": name, "ok": false, "cancelled": true })
+            }
             Err(err) => {
                 state.log("model", &format!("Installing {name} failed: {err}"));
                 json!({ "model_id": id, "name": name, "ok": false, "error": err })

@@ -352,6 +352,8 @@ pub fn install_feature(app: AppHandle, state: AppStateRef, feature: Feature) -> 
         };
         state.log("model", &format!("Started installing {} for {}", spec.name, feature.name()));
         let cancel: &AtomicBool = &cancel;
+        let files = [speech::model_file(&state.paths, &spec)];
+        let had = download::existing(&files);
         let result = speech::install(&state, &spec, cancel, &emit).await;
         let payload = match &result {
             Ok(_) => {
@@ -359,7 +361,10 @@ pub fn install_feature(app: AppHandle, state: AppStateRef, feature: Feature) -> 
                 state.log("feature", &format!("Installed {} and turned on {}", spec.name, feature.name()));
                 json!({ "model_id": spec.id, "name": feature.name(), "ok": true, "feature": feature })
             }
-            Err(e) if e == download::CANCELLED => json!({ "model_id": spec.id, "name": feature.name(), "ok": false, "cancelled": true }),
+            Err(e) if e == download::CANCELLED => {
+                download::discard_new(&files, &had, &state.paths.models);
+                json!({ "model_id": spec.id, "name": feature.name(), "ok": false, "cancelled": true })
+            }
             Err(e) => {
                 state.log("model", &format!("Installing {} failed: {e}", spec.name));
                 json!({ "model_id": spec.id, "name": feature.name(), "ok": false, "error": e })

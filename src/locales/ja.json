@@ -3540,5 +3540,8 @@
  "2 versions": "2 バージョン",
  "3 versions": "3 バージョン",
  "Make several versions at once and keep the one you like": "複数のバージョンを一度に作り、気に入ったものを残します",
- "Versions": "バージョン"
+ "Versions": "バージョン",
+ "Cancel download": "ダウンロードを中止",
+ "Keeps what's downloaded so you can carry on later": "ダウンロード済みの分を残し、あとで続きから再開できます",
+ "Stops it and deletes what was downloaded so far": "中止して、ここまでにダウンロードした分を削除します"
 }

@@ -5,6 +5,7 @@ import { api, errorText, type HubLinkResult, type InstallProgress } from "../api
 import { bytes, percent, placementLabel, words } from "../format";
 import { t } from "../i18n";
 import { waitLabel } from "../media";
+import { CancelInstall } from "./CancelInstall";
 import type { PushToast } from "./Toasts";
 
 const baseName = (path: string) => path.split("/").pop() ?? path;
@@ -172,7 +173,10 @@ export function HubLinkBox({
                   </span>
                 </div>
                 {p ? (
-                  <span className="small muted">{pct !== null ? t("Downloading · {n}%", { n: Math.round(pct) }) : t("Setting up…")}</span>
+                  <span className="row hub-installing">
+                    <span className="small muted">{pct !== null ? t("Downloading · {n}%", { n: Math.round(pct) }) : t("Setting up…")}</span>
+                    <CancelInstall p={p} name={`${found.model.name} ${r.quant}`} />
+                  </span>
                 ) : isInstalled(r.modelId) ? (
                   <span className="badge subtle">{t("Installed")}</span>
                 ) : (

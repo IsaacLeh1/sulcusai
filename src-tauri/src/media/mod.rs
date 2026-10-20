@@ -3052,6 +3052,8 @@ pub(crate) fn start_install(app: AppHandle, state: Arc<AppState>, spec: MediaMod
             app.emit("install:progress", json!({ "model_id": spec.id, "phase": phase, "received": received, "total": total })).ok();
         };
         state.log("model", &format!("Started installing {}", spec.name));
+        // A cancel deletes only what this install downloaded.
+        let had: Vec<PathBuf> = spec.files.iter().map(|f| file_path(&state.paths, &spec, f)).filter(|p| p.exists()).collect();
         let result = install(&state, &spec, &cancel, &emit).await;
         let payload = match &result {
             Ok(()) => {
@@ -3062,6 +3064,7 @@ pub(crate) fn start_install(app: AppHandle, state: Arc<AppState>, spec: MediaMod
                 json!({ "model_id": spec.id, "name": spec.name, "ok": true })
             }
             Err(e) if e == download::CANCELLED => {
+                discard_download(&state, &spec, &had);
                 state.log("model", &format!("Cancelled installing {}", spec.name));
                 json!({ "model_id": spec.id, "name": spec.name, "ok": false, "cancelled": true })
             }
@@ -3082,6 +3085,47 @@ pub async fn remove_media_model(state: AppStateRef<'_>, model_id: String) -> Res
     remove_now(&state, &model_id)
 }
 
+/// Deletes a model's files and half-downloaded parts, except files a model
+/// in `installed` still uses and those in `also_keep`. Returns the bytes freed.
+fn delete_files(paths: &Paths, all: &[MediaModel], spec: &MediaModel, installed: &[InstalledMedia], also_keep: &[PathBuf]) -> u64 {
+    let mut keep: Vec<PathBuf> = all
+        .iter()
+        .filter(|m| m.id != spec.id && installed.iter().any(|i| i.model_id == m.id))
+        .flat_map(|m| m.files.iter().map(|f| file_path(paths, m, f)).collect::<Vec<_>>())
+        .collect();
+    keep.extend_from_slice(also_keep);
+    let mut freed = 0;
+    for f in &spec.files {
+        let p = file_path(paths, spec, f);
+        if !keep.contains(&p) {
+            freed += p.metadata().map_or(0, |m| m.len());
+            std::fs::remove_file(&p).ok();
+        }
+        let part = download::part_path(&p);
+        freed += part.metadata().map_or(0, |m| m.len());
+        std::fs::remove_file(&part).ok();
+    }
+    freed
+}
+
+/// After a cancelled install: deletes what it downloaded (files that were
+/// here before it started, `had`, and files another installed model shares
+/// stay), and forgets a Hugging Face model that was never installed. A model
+/// that was already installed keeps everything.
+fn discard_download(state: &AppState, spec: &MediaModel, had: &[PathBuf]) {
+    let all = models(state);
+    let conn = state.db.lock().unwrap();
+    let list = installed(&conn);
+    if list.iter().any(|i| i.model_id == spec.id) {
+        return;
+    }
+    let freed = delete_files(&state.paths, &all, spec, &list, had);
+    if spec.from_hub.is_some() {
+        hub::forget(&conn, &spec.id).ok();
+    }
+    crate::applog::line("download", &format!("{}: cancelled, deleted {} it had downloaded", spec.name, crate::size_label(freed)));
+}
+
 /// Removes a picture, video or music model from this PC: its files (and any
 /// half-downloaded ones), unless another installed model shares them, and
 /// what SulcusAI kept about it. Returns the bytes freed.
@@ -3091,25 +3135,7 @@ pub(crate) fn remove_now(state: &AppState, model_id: &str) -> Result<u64, String
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     list.retain(|i| i.model_id != model_id);
-    // Keep files another installed model still uses.
-    let keep: Vec<PathBuf> = all
-        .iter()
-        .filter(|m| list.iter().any(|i| i.model_id == m.id))
-        .flat_map(|m| m.files.iter().map(|f| file_path(&state.paths, m, f)).collect::<Vec<_>>())
-        .collect();
-    let mut freed = 0;
-    for f in &spec.files {
-        let p = file_path(&state.paths, &spec, f);
-        if !keep.contains(&p) {
-            freed += p.metadata().map_or(0, |m| m.len());
-            std::fs::remove_file(&p).ok();
-        }
-        let mut part = p.clone().into_os_string();
-        part.push(".part");
-        let part = PathBuf::from(part);
-        freed += part.metadata().map_or(0, |m| m.len());
-        std::fs::remove_file(&part).ok();
-    }
+    let freed = delete_files(&state.paths, &all, &spec, &list, &[]);
     if spec.kind == Kind::Background {
         cutout::unload();
     }

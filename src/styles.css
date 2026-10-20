@@ -358,7 +358,10 @@ select, .input {
 .install-row select { flex: 1; }
 .fit-line { margin: 0; }
 .install-progress { display: flex; flex-direction: column; gap: 6px; }
-.progress-label { display: flex; justify-content: space-between; font-size: 12.5px; }
+.progress-label { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
+.progress-label .row { gap: 6px; flex-wrap: nowrap; }
+.cancel-install { flex-shrink: 0; }
+.hub-installing { gap: 8px; align-items: center; flex-wrap: nowrap; }
 .progress { height: 8px; background: var(--border); border-radius: 99px; overflow: hidden; }
 .progress span { display: block; height: 100%; background: var(--accent); transition: width 0.25s; }
 .progress.indeterminate span { width: 35%; animation: slide 1.2s infinite ease-in-out; }

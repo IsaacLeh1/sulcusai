@@ -689,6 +689,8 @@ pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String
             app.emit("install:progress", json!({ "model_id": model_id, "phase": phase, "received": received, "total": total })).ok();
         };
         state.log("model", &format!("Started installing {}", spec.name));
+        let files = [model_file(&state.paths, &spec)];
+        let had = download::existing(&files);
         let result = install(&state, &spec, &cancel, &emit).await;
         let payload = match &result {
             Ok(speed) => {
@@ -696,6 +698,7 @@ pub fn install_speech_model(app: AppHandle, state: AppStateRef, model_id: String
                 json!({ "model_id": model_id, "name": spec.name, "ok": true, "speed": speed })
             }
             Err(e) if e == download::CANCELLED => {
+                download::discard_new(&files, &had, &state.paths.models);
                 state.log("model", &format!("Cancelled installing {}", spec.name));
                 json!({ "model_id": model_id, "name": spec.name, "ok": false, "cancelled": true })
             }
@@ -821,6 +824,11 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
 #[cfg(test)]
 pub async fn install_for_test(state: &Arc<AppState>, spec: &SpeechModel, cancel: &AtomicBool) -> Result<Option<f64>, String> {
     install(state, spec, cancel, &|_, _, _| {}).await
+}
+
+/// Where a speech model's file goes.
+pub(crate) fn model_file(paths: &Paths, spec: &SpeechModel) -> PathBuf {
+    paths.models.join(&spec.id).join(&spec.file)
 }
 
 #[tauri::command]

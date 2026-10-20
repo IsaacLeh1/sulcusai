@@ -6,6 +6,7 @@ import { bytes, percent } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
+import { CancelInstall } from "../components/CancelInstall";
 import { t, tx } from "../i18n";
 
 function speedText(speed: number): string {
@@ -146,7 +147,7 @@ function SpeechProgress({ id, p }: { id: string; p: InstallProgress }) {
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
-        {!testing && <button className="link" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
+        <CancelInstall p={{ ...p, model_id: id }} />
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />

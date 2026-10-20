@@ -60,6 +60,31 @@ pub(crate) fn part_path(dest: &Path) -> PathBuf {
     dest.with_file_name(name)
 }
 
+/// Which of `files` are on this PC already (before an install starts, so a
+/// cancel deletes only what it downloaded).
+pub(crate) fn existing(files: &[PathBuf]) -> Vec<PathBuf> {
+    files.iter().filter(|f| f.exists()).cloned().collect()
+}
+
+/// After a cancelled install: deletes `files` that weren't here before
+/// (`had`) and every half-downloaded part, then folders left empty, up to
+/// `root`.
+pub(crate) fn discard_new(files: &[PathBuf], had: &[PathBuf], root: &Path) {
+    for f in files {
+        if !had.contains(f) {
+            std::fs::remove_file(f).ok();
+        }
+        std::fs::remove_file(part_path(f)).ok();
+        let mut dir = f.parent();
+        while let Some(d) = dir.filter(|d| d.starts_with(root) && *d != root) {
+            if std::fs::remove_dir(d).is_err() {
+                break;
+            }
+            dir = d.parent();
+        }
+    }
+}
+
 /// Re-hashes what an earlier, interrupted download already saved.
 async fn hash_existing(path: &Path, hasher: &mut Sha256, cancel: &AtomicBool) -> std::io::Result<u64> {
     let mut f = tokio::fs::File::open(path).await?;
@@ -243,5 +268,32 @@ mod tests {
         let stuck = waiting(std::future::pending::<()>(), &cancel).await;
         assert_eq!(stuck, Err(CANCELLED.to_string()));
         assert!(started.elapsed() < Duration::from_secs(3));
+    }
+
+    /// A cancel deletes what that install downloaded, finished or half done,
+    /// and the folders it leaves empty, but never a file that was here before.
+    #[test]
+    fn a_cancel_deletes_only_what_it_downloaded() {
+        let root = std::env::temp_dir().join(format!("sulcusai-discard-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("model").join("onnx");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (before, done, half) = (dir.join("before.bin"), dir.join("done.bin"), dir.join("half.bin"));
+        std::fs::write(&before, b"x").unwrap();
+        let files = vec![before.clone(), done.clone(), half.clone()];
+        let had = existing(&files);
+        assert_eq!(had, vec![before.clone()]);
+        std::fs::write(&done, b"x").unwrap();
+        std::fs::write(part_path(&half), b"x").unwrap();
+        discard_new(&files, &had, &root);
+        assert!(before.exists(), "a file from before stays");
+        assert!(!done.exists() && !part_path(&half).exists());
+
+        // Nothing from before: the empty folders go too, but not the root.
+        std::fs::remove_file(&before).unwrap();
+        std::fs::write(&done, b"x").unwrap();
+        discard_new(&files, &[], &root);
+        assert!(!root.join("model").exists());
+        assert!(root.exists());
+        std::fs::remove_dir_all(&root).ok();
     }
 }

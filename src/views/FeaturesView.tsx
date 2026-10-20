@@ -5,6 +5,7 @@ import { api, errorText, on, type BridgeStatus, type FeatureId, type FeatureView
 import { bytes, percent } from "../format";
 import type { PushToast } from "../components/Toasts";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
+import { CancelInstall } from "../components/CancelInstall";
 import { t, tx } from "../i18n";
 
 interface Info {
@@ -218,7 +219,7 @@ function Progress({ p }: { p: InstallProgress }) {
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}{pct !== null ? ` · ${t("{received} of {total}", { received: bytes(p.received), total: bytes(p.total) })}` : "…"}</span>
-        {!testing && <button className="link" onClick={() => api.cancelInstall(p.model_id)}>{t("Cancel")}</button>}
+        <CancelInstall p={p} />
       </div>
       <div className={`progress ${pct === null ? "indeterminate" : ""}`}>
         <span style={{ width: pct === null ? undefined : `${pct}%` }} />

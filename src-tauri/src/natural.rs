@@ -500,10 +500,17 @@ pub fn install_voice_pack(app: AppHandle, state: AppStateRef, pack_id: String) -
         let emit = |phase: &str, received: u64, total: u64| {
             app.emit("install:progress", json!({ "model_id": pack_id, "phase": phase, "received": received, "total": total })).ok();
         };
+        // A cancel deletes only what this install downloaded.
+        let dir = state.paths.models.join(&pack.id);
+        let files: Vec<PathBuf> = pack.files.iter().map(|f| dir.join(&f.path)).collect();
+        let had = download::existing(&files);
         let result = install(&state, &cancel, &emit).await;
         let payload = match &result {
             Ok(()) => json!({ "model_id": pack_id, "name": pack.name, "ok": true }),
-            Err(e) if e == download::CANCELLED => json!({ "model_id": pack_id, "name": pack.name, "ok": false, "cancelled": true }),
+            Err(e) if e == download::CANCELLED => {
+                download::discard_new(&files, &had, &state.paths.models);
+                json!({ "model_id": pack_id, "name": pack.name, "ok": false, "cancelled": true })
+            }
             Err(e) => {
                 state.log("model", &format!("Installing {} failed: {e}", pack.name));
                 json!({ "model_id": pack_id, "name": pack.name, "ok": false, "error": e })

@@ -7,6 +7,7 @@ import { NewPinForm, RecoveryCode } from "../components/Security";
 import type { PushToast } from "../components/Toasts";
 import { starterModel } from "../starter";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
+import { CancelInstall } from "../components/CancelInstall";
 import { t, tx } from "../i18n";
 
 const STEPS = [tx("Welcome"), tx("Your PC"), tx("First model"), tx("About you"), tx("Protect"), tx("Done")] as const;
@@ -281,6 +282,7 @@ function FirstInstall({ p }: { p: InstallProgress }) {
     <div className="install-progress">
       <div className="progress-label">
         <span>{label}</span>
+        <CancelInstall p={p} />
       </div>
       <div className={`progress ${p.total ? "" : "indeterminate"}`}>
         <span style={{ width: p.total ? `${percent(p.received, p.total)}%` : undefined }} />

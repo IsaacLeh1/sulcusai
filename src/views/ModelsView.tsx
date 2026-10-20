@@ -11,6 +11,7 @@ import { HubLinkBox } from "../components/HubLink";
 import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
+import { CancelInstall } from "../components/CancelInstall";
 import { Downloads } from "../components/Downloads";
 import { LockIcon } from "../components/Icons";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
@@ -744,13 +745,11 @@ function InstallBar({ modelId, p }: { modelId: string; p: InstallProgress }) {
         {!testing && (
           <span className="row">
             {(p.phase === "download" || p.phase === "vision" || p.phase === "engine") && (
-              <button className="link" onClick={() => api.pauseInstall(modelId)}>
+              <button type="button" className="btn small" onClick={() => api.pauseInstall(modelId)} title={t("Keeps what's downloaded so you can carry on later")}>
                 {t("Pause")}
               </button>
             )}
-            <button className="link" onClick={() => api.cancelInstall(modelId)}>
-              {t("Cancel")}
-            </button>
+            <CancelInstall p={p} />
           </span>
         )}
       </div>

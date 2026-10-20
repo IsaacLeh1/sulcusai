@@ -3540,5 +3540,8 @@
  "2 versions": "2 个版本",
  "3 versions": "3 个版本",
  "Make several versions at once and keep the one you like": "一次生成多个版本，保留你喜欢的那个",
- "Versions": "版本"
+ "Versions": "版本",
+ "Cancel download": "取消下载",
+ "Keeps what's downloaded so you can carry on later": "保留已下载的部分，稍后可以接着下载",
+ "Stops it and deletes what was downloaded so far": "停止并删除目前已下载的内容"
 }

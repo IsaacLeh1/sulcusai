@@ -3540,5 +3540,8 @@
  "2 versions": "2 Versionen",
  "3 versions": "3 Versionen",
  "Make several versions at once and keep the one you like": "Mehrere Versionen auf einmal machen und die behalten, die dir gefällt",
- "Versions": "Versionen"
+ "Versions": "Versionen",
+ "Cancel download": "Download abbrechen",
+ "Keeps what's downloaded so you can carry on later": "Behält das bereits Heruntergeladene, damit du später weitermachen kannst",
+ "Stops it and deletes what was downloaded so far": "Hält es an und löscht, was bisher heruntergeladen wurde"
 }

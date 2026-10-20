@@ -7,6 +7,7 @@ import { api, errorText, on, type InstallProgress, type ModelCard, type PausedDo
 import { bytes, percent } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { CancelInstall } from "./CancelInstall";
 import { TESTING, TestingNote, useTestStart } from "./Testing";
 
 const PHASE: Record<string, string> = {
@@ -67,7 +68,7 @@ function Active({ id, p, name }: { id: string; p: InstallProgress; name: string 
       </div>
       <div className="dl-actions">
         {pausable && <button className="btn small" onClick={() => api.pauseInstall(id)}>{t("Pause")}</button>}
-        {!testing && <button className="btn ghost small" onClick={() => api.cancelInstall(id)}>{t("Cancel")}</button>}
+        <CancelInstall p={{ ...p, model_id: id }} name={name} />
       </div>
     </div>
   );
