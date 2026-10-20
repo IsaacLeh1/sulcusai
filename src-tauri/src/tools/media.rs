@@ -39,13 +39,26 @@ pub fn create_video_params() -> Value {
 }
 
 pub fn create_music_params() -> Value {
-    json!({ "type": "object", "required": ["description"], "properties": {
-        "description": { "type": "string", "description": "Genre, mood, instruments, tempo and voice, e.g. \"upbeat acoustic folk, warm male vocals\". For a sound effect, the sound." },
+    json!({ "type": "object", "properties": {
+        "description": { "type": "string", "description": "What the song is about and how it sounds, e.g. \"upbeat acoustic folk about a road trip, warm male vocals\". For a sound effect, the sound." },
+        "genre": { "type": "string", "description": "The style, e.g. pop, rock, hip hop, jazz, lo-fi, country, EDM, classical." },
+        "mood": { "type": "string", "description": "e.g. happy, sad, energetic, calm, dark, romantic, epic." },
+        "instruments": { "type": "array", "items": { "type": "string" }, "description": "Instruments to hear, e.g. [\"piano\", \"acoustic guitar\", \"strings\"]." },
+        "voice": { "type": "string", "enum": ["female", "male", "duet", "choir", "rap"], "description": "Who sings." },
+        "beat": { "type": "string", "description": "The beat's feel, e.g. four on the floor, trap, boom bap, swing, half-time." },
+        "bpm": { "type": "integer", "description": "Tempo in beats a minute (60 slow, 100 medium, 128 dance, 160+ fast)." },
+        "key": { "type": "string", "description": "e.g. C major, A minor." },
+        "time_signature": { "type": "string", "enum": ["4/4", "3/4", "6/8", "2/4"] },
         "lyrics": { "type": "string", "description": "Lyrics to sing, with [Verse] and [Chorus] lines. Leave out to have them written." },
         "language": { "type": "string", "description": "The language the vocals are sung in, as a two-letter code (en, es, fr, de, it, pt, ja, ko, zh). Leave out for the language of the lyrics or description." },
         "instrumental": { "type": "boolean", "description": "No vocals." },
         "sound_effect": { "type": "boolean", "description": "A sound effect rather than music." },
-        "seconds": { "type": "number", "description": "Length in seconds (music 10-240, default 30; sound 10-30)." } } })
+        "seconds": { "type": "number", "description": "Length in seconds (music 10-600, default 30; sound 10-30)." },
+        "song": { "type": "string", "description": "To work on a song already in the gallery or this chat: its id (from an earlier create_music result)." },
+        "change": { "type": "string", "enum": ["cover", "repaint", "extend", "add", "extract", "complete"], "description": "With song: cover = the same song in the style described; repaint = make part of it again (from/to); extend = add more after its end (seconds to add); add = add a part (part); extract = keep only one part (part); complete = build a full song around a lone part." },
+        "part": { "type": "string", "enum": ["vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard", "percussion", "strings", "synth", "fx", "brass", "woodwinds"], "description": "With change add or extract." },
+        "from": { "type": "number", "description": "With change repaint: where the part starts, in seconds." },
+        "to": { "type": "number", "description": "With change repaint: where it ends, in seconds." } } })
 }
 
 fn summary(items: &[MediaItem]) -> String {
@@ -237,16 +250,50 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 ..Default::default()
             }
         }
-        "create_music" => Request {
-            op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
-            prompt: s("description").unwrap_or_default(),
-            lyrics: s("lyrics"),
-            language: s("language").and_then(|l| media::lyrics::language_code(&l)),
-            instrumental: args.get("instrumental").and_then(Value::as_bool),
-            seconds: args.get("seconds").and_then(Value::as_f64).map(|v| v as f32),
-            chat_id,
-            ..Default::default()
-        },
+        "create_music" => {
+            let num = |k: &str| args.get(k).and_then(Value::as_f64).map(|v| v as f32);
+            // A song to work on: the one named, when it's a real song, else the newest in the chat.
+            let change = s("change").filter(|c| matches!(c.as_str(), "cover" | "repaint" | "extend" | "add" | "extract" | "complete"));
+            let song = change.as_ref().and_then(|_| {
+                let conn = ctx.memory.db.lock().unwrap();
+                s("song")
+                    .filter(|id| media::store::get(&conn, ctx.memory.cipher, id).is_some_and(|i| i.kind == "audio"))
+                    .or_else(|| media::store::latest_in_chat(&conn, ctx.memory.cipher, ctx.memory.chat_id, "audio").map(|i| i.id))
+            });
+            if change.is_some() && song.is_none() {
+                return Outcome::error("Couldn't work on a song", "There's no song in this chat to work on. Make one with create_music first, or ask the user to add theirs in the Studio.");
+            }
+            let music = media::MusicSpec {
+                genre: s("genre"),
+                mood: s("mood"),
+                instruments: args.get("instruments").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+                voice: s("voice"),
+                beat: s("beat"),
+                bpm: args.get("bpm").and_then(Value::as_u64).map(|b| b as u32),
+                key: s("key"),
+                time_signature: s("time_signature"),
+                region: match (num("from"), num("to")) {
+                    (Some(a), Some(b)) => Some([a, b]),
+                    _ => None,
+                },
+                extend_by: if change.as_deref() == Some("extend") { num("seconds") } else { None },
+                track: s("part"),
+                task: change,
+                audio: song,
+                ..Default::default()
+            };
+            Request {
+                op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
+                prompt: s("description").unwrap_or_default(),
+                lyrics: s("lyrics"),
+                language: s("language").and_then(|l| media::lyrics::language_code(&l)),
+                instrumental: args.get("instrumental").and_then(Value::as_bool),
+                seconds: num("seconds"),
+                music: Some(music),
+                chat_id,
+                ..Default::default()
+            }
+        }
         other => return Outcome::error(format!("Couldn't use {other}"), "Unknown media tool."),
     };
     if matches!(name, "create_image" | "edit_image") {

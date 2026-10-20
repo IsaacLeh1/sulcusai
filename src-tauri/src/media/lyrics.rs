@@ -215,7 +215,9 @@ pub fn language_code(given: &str) -> Option<String> {
 
 /// About how many lines a song of this length has.
 fn lines_for(seconds: f32) -> u32 {
-    ((seconds / 30.0) * 8.0).round().clamp(6.0, 40.0) as u32
+    // A long song (up to ten minutes) has instrumental parts too, so the
+    // lines stop growing at 90.
+    ((seconds / 30.0) * 8.0).round().clamp(6.0, 90.0) as u32
 }
 
 fn messages(prompt: &str, seconds: f32, language: Option<&str>) -> Vec<serde_json::Value> {
@@ -249,7 +251,9 @@ pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: 
     match crate::background_endpoint(state).await {
         Ok((ep, spec, _hold)) => {
             for temperature in [0.8, 0.6] {
-                match crate::chat::complete(&ep, msgs.clone(), json!({ "temperature": temperature }), 700).await {
+                // Room for every line (about 14 tokens each), and some over.
+                let room = lines_for(seconds) * 14 + 250;
+                match crate::chat::complete(&ep, msgs.clone(), json!({ "temperature": temperature }), room).await {
                     Ok(raw) => match usable(&raw) {
                         Some(l) => return Ok(l),
                         None => why = Some(NotWritten::Unusable(format!("{} answered without lyrics", spec.name))),
@@ -268,7 +272,7 @@ pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: 
     for (name, path) in helpers {
         match crate::vision::Helper::start(state, &name, &path, None).await {
             Ok(h) => {
-                let said = h.ask(msgs.clone(), 700, 0.8).await;
+                let said = h.ask(msgs.clone(), lines_for(seconds) * 14 + 250, 0.8).await;
                 h.done(state).await;
                 match said.as_deref().ok().and_then(usable) {
                     Some(l) => {

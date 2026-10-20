@@ -14,7 +14,8 @@ pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
 pub(crate) mod lyrics;
-mod music;
+mod audio_in;
+pub(crate) mod music;
 pub(crate) mod proc;
 pub mod prompts;
 pub mod screen;
@@ -177,9 +178,18 @@ fn op_kind(op: &str) -> Option<Kind> {
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
         "video" => Kind::Video,
-        "music" | "sound" => Kind::Music,
+        "music" | "sound" | "parts" => Kind::Music,
         _ => return None,
     })
+}
+
+/// What a job asks of its model: a song's parts (adding, taking out or
+/// completing one) need ACE-Step Base; everything else is the job's own kind.
+fn model_op(req: &Request) -> &str {
+    match req.music.as_ref().and_then(|m| m.task.as_deref()) {
+        Some("add" | "extract" | "complete") if req.op == "music" => "parts",
+        _ => &req.op,
+    }
 }
 
 fn op_feature(op: &str) -> Option<Feature> {
@@ -377,7 +387,11 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
     let list = installed(&state.db.lock().unwrap());
     let all = models(state);
     let ok = |m: &&MediaModel| {
-        m.kind == kind && list.iter().any(|i| i.model_id == m.id) && (kind != Kind::Image || m.can(if matches!(op, "tune" | "coach") { "generate" } else { op })) && (!needs_image_input || kind != Kind::Video || m.can("image"))
+        m.kind == kind
+            && list.iter().any(|i| i.model_id == m.id)
+            && (kind != Kind::Image || m.can(if matches!(op, "tune" | "coach") { "generate" } else { op }))
+            && (kind != Kind::Music || m.can(op))
+            && (!needs_image_input || kind != Kind::Video || m.can("image"))
     };
     if let Some(id) = wanted.filter(|w| !w.is_empty()) {
         if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
@@ -415,6 +429,8 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
         (Kind::Image, _) => "Install a picture model first: open the Studio and pick one under Models.".into(),
         (Kind::Video, _) if needs_image_input => "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.".into(),
         (Kind::Video, _) => "Install a video model first: open the Studio and pick one under Models.".into(),
+        (Kind::Music, "parts") => "Adding a part to a song, taking one out or building around one needs ACE-Step 1.5 Base. Install it from the Studio's Models list.".into(),
+        (Kind::Music, "sound") => "Sound effects need ACE-Step 1.5 or its small version. Install one from the Studio's Models list.".into(),
         (Kind::Music, _) => "Install a music model first: open the Studio and pick one under Models.".into(),
         (Kind::Upscale, _) => "Upscaling needs Real-ESRGAN. Install it from the Studio's Models list (64 MB).".into(),
         (Kind::Background, _) => "Removing backgrounds needs BiRefNet. Install it from the Studio's Models list (224 MB).".into(),
@@ -565,6 +581,89 @@ pub fn recommended(state: &AppState, kind: Kind) -> Option<MediaModel> {
 
 // ---------- jobs ----------
 
+/// A song as the person shaped it in the Studio or asked in a chat: its
+/// style, instruments, voice and beat (folded into the music model's
+/// description), its tempo, key and time signature (the music model's own
+/// settings), and work on a song they have.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct MusicSpec {
+    /// "Pop", "Jazz", "Lo-fi hip hop"…
+    pub genre: Option<String>,
+    /// "Happy", "Dark", "Dreamy"…
+    pub mood: Option<String>,
+    pub instruments: Vec<String>,
+    /// The singing: "female", "male", "duet", "choir", "rap" (None: as described).
+    pub voice: Option<String>,
+    /// The beat's feel: "four on the floor", "trap hi-hats", "swing"…
+    pub beat: Option<String>,
+    /// Beats a minute (None: the music model picks).
+    pub bpm: Option<u32>,
+    /// "C major", "F# minor".
+    pub key: Option<String>,
+    /// "4/4", "3/4", "6/8".
+    pub time_signature: Option<String>,
+    /// Work on a song they have (`audio`): "cover" (the same song in another
+    /// style), "repaint" (a part made again), "extend" (more after its end),
+    /// "add" (a new part on top), "extract" (one part alone), "complete"
+    /// (a full arrangement around a lone part). None or "new": a new song.
+    pub task: Option<String>,
+    /// The gallery's song to work on.
+    pub audio: Option<String>,
+    /// A song whose sound (voices and instruments) the new one follows.
+    pub reference: Option<String>,
+    /// The part to make again, in seconds from the start (repaint); for
+    /// extending, how many seconds to add is `extend_by`.
+    pub region: Option<[f32; 2]>,
+    pub extend_by: Option<f32>,
+    /// The part to add, take out or complete with ("vocals", "drums"…).
+    pub track: Option<String>,
+    /// A cover: how close to the original it stays (0 to 1).
+    pub strength: Option<f32>,
+}
+
+impl MusicSpec {
+    /// Says enough about the song to make one without other words.
+    pub fn describes(&self) -> bool {
+        self.genre.as_deref().is_some_and(|g| !g.trim().is_empty()) || !self.instruments.is_empty()
+    }
+
+    /// The music model's description: the person's words, then the style,
+    /// mood, instruments, voice and beat as ACE-Step's captions put them.
+    pub fn caption(&self, words: &str, instrumental: bool) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        let words = words.trim().trim_end_matches('.');
+        if !words.is_empty() {
+            parts.push(words.to_string());
+        }
+        let some = |o: &Option<String>| o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+        if let Some(g) = some(&self.genre) {
+            parts.push(g.to_lowercase());
+        }
+        if let Some(m) = some(&self.mood) {
+            parts.push(format!("{} mood", m.to_lowercase()));
+        }
+        let inst: Vec<String> = self.instruments.iter().map(|i| i.trim().to_lowercase()).filter(|i| !i.is_empty()).collect();
+        if !inst.is_empty() {
+            parts.push(inst.join(", "));
+        }
+        if instrumental {
+            parts.push("instrumental, no vocals".into());
+        } else if let Some(v) = some(&self.voice) {
+            let v = v.to_lowercase();
+            parts.push(match v.as_str() {
+                "female" | "male" | "choir" | "rap" => format!("{v} vocals"),
+                "duet" => "male and female duet vocals".into(),
+                other => format!("{other} vocals"),
+            });
+        }
+        if let Some(b) = some(&self.beat) {
+            parts.push(format!("{} beat", b.to_lowercase()));
+        }
+        parts.join(", ")
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Request {
@@ -591,6 +690,8 @@ pub struct Request {
     pub seconds: Option<f32>,
     pub lyrics: Option<String>,
     pub instrumental: Option<bool>,
+    /// Music: how the song is shaped, and work on a song the person has.
+    pub music: Option<MusicSpec>,
     pub voice: Option<String>,
     pub language: Option<String>,
     pub chat_id: Option<String>,
@@ -819,7 +920,7 @@ fn cloud_pick(state: &AppState, req: &Request) -> Option<String> {
     if let Some(id) = req.model_id.as_deref().filter(|m| crate::cloud::is_cloud(m)) {
         return Some(id.to_string());
     }
-    if req.op == "narrate" || choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).is_ok() {
+    if req.op == "narrate" || choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some()).is_ok() {
         return None;
     }
     crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| cloud_can(c, &req.op)).map(|c| c.id)
@@ -853,13 +954,34 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             _ => {}
         }
     } else if req.op != "narrate" {
-        choose(state, &req.op, req.model_id.as_deref(), req.source.is_some())?;
+        choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
     let needs_source = matches!(req.op.as_str(), "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background");
     if needs_source && req.source.is_none() {
         return Err("Pick a picture to work on first.".into());
     }
-    let needs_prompt = matches!(req.op.as_str(), "generate" | "edit" | "restyle" | "video" | "music" | "sound" | "narrate");
+    // Work on a song the person has: the song, and for some the part.
+    let task = req.music.as_ref().and_then(|m| m.task.as_deref()).filter(|t| *t != "new");
+    if req.op == "music" && task.is_some() {
+        let m = req.music.as_ref().map(|m| m.clone()).unwrap_or_default();
+        if m.audio.is_none() {
+            return Err("Pick the song to work on first.".into());
+        }
+        if matches!(task, Some("add" | "extract")) && m.track.as_deref().is_none_or(|t| t.trim().is_empty()) {
+            return Err("Pick the part (vocals, drums, guitar…).".into());
+        }
+        if let Some(t) = m.track.as_deref().map(|t| t.trim().to_lowercase().replace(' ', "_")).filter(|t| !t.is_empty()) {
+            if !music::PARTS.contains(&t.as_str()) {
+                return Err(format!("The music model knows these parts: {}.", music::PARTS.join(", ").replace('_', " ")));
+            }
+        }
+        if !matches!(task, Some("cover" | "repaint" | "extend" | "add" | "extract" | "complete")) {
+            return Err("Unknown kind of change to a song.".into());
+        }
+    }
+    let described = req.music.as_ref().is_some_and(MusicSpec::describes);
+    let needs_prompt = matches!(req.op.as_str(), "generate" | "edit" | "restyle" | "video" | "music" | "sound" | "narrate")
+        && !(req.op == "music" && (described || matches!(task, Some("repaint" | "extend" | "add" | "extract" | "complete"))));
     if needs_prompt && req.prompt.trim().is_empty() && !(req.op == "video" && req.source.is_some()) {
         return Err(if req.op == "narrate" { "Type the text to read aloud." } else { "Describe what you'd like first." }.into());
     }
@@ -880,7 +1002,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, &req.op, req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     let est = match (&model, &on_cloud) {
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
@@ -1651,11 +1773,12 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     // Lyrics come from the chat model: written before the card is cleared for
     // the music engine, not after (that loaded the chat model again beside it).
     let mut with_lyrics;
-    let req = if req.op == "music" && lyrics::words(false, req.instrumental == Some(true), req.lyrics.as_deref()) == lyrics::Words::MusicModelWrites {
+    let req = if wants_written_lyrics(req) {
         progress("Writing lyrics", 0.02);
-        let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 240.0);
+        let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 600.0);
         with_lyrics = req.clone();
-        match lyrics::write(state, req.prompt.trim(), seconds, req.language.as_deref()).await {
+        // Told the style, mood and voice too, not only the person's words.
+        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref()).await {
             Ok(l) => with_lyrics.lyrics = Some(l),
             Err(why) => {
                 // Nothing written here: the music model writes its own.
@@ -2529,53 +2652,160 @@ fn vocal_language(asked: Option<&str>, words: &lyrics::Words) -> Option<String> 
     }
 }
 
+/// Whether a song job wants lyrics written before it starts: a new song
+/// with vocals and none given, or vocals added to a song the person has.
+fn wants_written_lyrics(req: &Request) -> bool {
+    let spec = req.music.as_ref();
+    let task = spec.and_then(|m| m.task.as_deref()).filter(|t| *t != "new");
+    let sings = match task {
+        None => true,
+        Some("add") => spec.and_then(|m| m.track.as_deref()).is_some_and(|t| t.contains("vocals")),
+        _ => false,
+    };
+    req.op == "music" && sings && lyrics::words(false, req.instrumental == Some(true), req.lyrics.as_deref()) == lyrics::Words::MusicModelWrites
+}
+
+/// What the lyrics writer and the music model are told the song is.
+fn song_caption(req: &Request) -> String {
+    let instrumental = req.instrumental == Some(true);
+    match &req.music {
+        Some(m) => m.caption(&req.prompt, instrumental),
+        None => req.prompt.trim().to_string(),
+    }
+}
+
 async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
     let req = ctx.req;
     let sound = req.op == "sound";
-    let seconds = if sound { req.seconds.unwrap_or(10.0).clamp(10.0, 30.0) } else { req.seconds.unwrap_or(m.defaults.seconds.max(30.0)).clamp(10.0, 240.0) };
+    let spec = req.music.clone().unwrap_or_default();
+    let task = spec.task.as_deref().filter(|t| *t != "new" && !sound);
+    let c = ctx.state.work_cipher()?;
+    // A song from the gallery as a file the engine reads, with its length.
+    let audio_file = |id: &str, name: &str| -> Result<(MediaItem, std::path::PathBuf, f64), String> {
+        let item = store::get(&ctx.state.db.lock().unwrap(), &c, id).ok_or("That song is no longer in the gallery.")?;
+        if item.kind != "audio" {
+            return Err("That isn't a song or a sound.".into());
+        }
+        let bytes = store::read(&ctx.state.paths, &c, id)?;
+        let dir = work.join(name);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let (path, secs) = audio_in::for_engine(&bytes, &item.mime, &dir)?;
+        Ok((item.clone(), path, if secs > 0.0 { secs } else { item.seconds }))
+    };
+    let source = match (task, spec.audio.as_deref()) {
+        (Some(_), Some(id)) => Some(audio_file(id, "source")?),
+        (Some(_), None) => return Err("Pick the song to work on first.".into()),
+        _ => None,
+    };
+    let reference = match spec.reference.as_deref() {
+        Some(id) if !sound => Some(audio_file(id, "reference")?),
+        _ => None,
+    };
+    // A new song: as long as asked, up to ten minutes (sound effects 30 s).
+    let seconds = if sound { req.seconds.unwrap_or(10.0).clamp(10.0, 30.0) } else { req.seconds.unwrap_or(m.defaults.seconds.max(30.0)).clamp(10.0, 600.0) };
+    let source_len = source.as_ref().map_or(0.0, |s| s.2 as f32);
+    let track = spec.track.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(|t| t.to_lowercase().replace(' ', "_"));
+    let (engine_task, region) = match task {
+        Some("cover") => ("cover", None),
+        // The whole song when no part is given.
+        Some("repaint") => ("repaint", Some(spec.region.map_or((0.0, -1.0), |r| (r[0].max(0.0), if r[1] > r[0] { r[1] } else { -1.0 })))),
+        // More after its end: a part past the source's end is made new.
+        Some("extend") => ("repaint", Some((source_len, source_len + spec.extend_by.unwrap_or(30.0).clamp(5.0, 300.0)))),
+        Some("add") => ("lego", None),
+        Some("extract") => ("extract", None),
+        Some("complete") => ("complete", None),
+        _ => ("text2music", None),
+    };
+    let caption_words = song_caption(req);
     let mut problem = req.lyrics_problem.clone();
-    let mut words = lyrics::words(sound, req.instrumental == Some(true), req.lyrics.as_deref());
-    if words == lyrics::Words::MusicModelWrites && problem.is_none() {
+    let sings = matches!(task, None) || (task == Some("add") && track.as_deref().is_some_and(|t| t.contains("vocals")));
+    let mut words = if matches!(task, Some("extract" | "complete")) {
+        lyrics::Words::Instrumental
+    } else if sings {
+        lyrics::words(sound, req.instrumental == Some(true), req.lyrics.as_deref())
+    } else {
+        // A cover or a part made again sings the words given, if any.
+        match req.lyrics.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+            Some(l) => lyrics::Words::Sung(l.to_string()),
+            None if req.instrumental == Some(true) => lyrics::Words::Instrumental,
+            None => lyrics::Words::MusicModelWrites,
+        }
+    };
+    if sings && words == lyrics::Words::MusicModelWrites && problem.is_none() {
         // Not written before the job (it always is for the Studio's and chats' songs).
         (ctx.progress)("Writing lyrics", 0.02);
-        match lyrics::write(ctx.state, req.prompt.trim(), seconds, req.language.as_deref()).await {
+        let length = if task.is_some() { source_len.max(10.0) } else { seconds };
+        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref()).await {
             Ok(l) => words = lyrics::Words::Sung(l),
             Err(why) => problem = Some(why),
         }
     }
     let caption = if sound {
         format!("{}. A sound effect recording, not music: no melody, no singing.", req.prompt.trim().trim_end_matches('.'))
+    } else if caption_words.is_empty() {
+        // Taking a part out, or building around one, needs no description.
+        source.as_ref().map(|s| s.0.prompt.clone()).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "music".into())
     } else {
-        req.prompt.trim().to_string()
+        caption_words.clone()
     };
     let (lm, dit) = (m.file("lm").ok_or("The music model is missing a file.")?, m.file("dit").ok_or("The music model is missing a file.")?);
     let seed = req.seed.unwrap_or_else(random_seed);
     let language = vocal_language(req.language.as_deref(), &words);
-    let lyrics = words.for_engine().to_string();
+    let lyrics_text = if task.is_some() && words == lyrics::Words::MusicModelWrites { String::new() } else { words.for_engine().to_string() };
     let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
     let made = music::make(
         &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
         work,
-        &music::SongRequest { caption: &caption, lyrics: &lyrics, seconds, seed, language: language.as_deref(), lm_file: &lm.file, dit_file: &dit.file },
+        &music::SongRequest {
+            caption: &caption,
+            lyrics: &lyrics_text,
+            seconds: if task.is_some() { source_len.max(10.0) } else { seconds },
+            seed,
+            language: language.as_deref(),
+            lm_file: &lm.file,
+            dit_file: &dit.file,
+            bpm: spec.bpm,
+            key: spec.key.as_deref(),
+            time_signature: spec.time_signature.as_deref(),
+            task: engine_task,
+            track: track.as_deref(),
+            region,
+            strength: spec.strength,
+            source: source.as_ref().map(|s| s.1.as_path()),
+            reference: reference.as_ref().map(|r| r.1.as_path()),
+        },
         ctx.cancel,
         ctx.progress,
     )
     .await?;
     // Vocals were asked for, and the music model planned nothing to sing:
     // say so rather than hand back an instrumental as if it were the song.
-    if let Err(e) = lyrics::check_sung(&words, &made.lyrics, problem.as_ref()) {
-        crate::applog::line("media", &format!("The song came out without words to sing (planned lyrics: {:?})", made.lyrics.chars().take(80).collect::<String>()));
-        return Err(e);
+    if task.is_none() {
+        if let Err(e) = lyrics::check_sung(&words, &made.lyrics, problem.as_ref()) {
+            crate::applog::line("media", &format!("The song came out without words to sing (planned lyrics: {:?})", made.lyrics.chars().take(80).collect::<String>()));
+            return Err(e);
+        }
     }
-    let c = ctx.state.work_cipher()?;
+    // What it is, in the gallery: the person's words, else what was done to which song.
+    let named = |s: &(MediaItem, std::path::PathBuf, f64)| if s.0.prompt.trim().is_empty() { "the song".to_string() } else { format!("“{}”", s.0.prompt.trim()) };
+    let prompt = match (task, source.as_ref()) {
+        (Some("extract"), Some(s)) => format!("The {} of {}", track.as_deref().unwrap_or("part").replace('_', " "), named(s)),
+        (Some("add"), Some(s)) => format!("{} with {} added", named(s), track.as_deref().unwrap_or("a part").replace('_', " ")),
+        (Some("complete"), Some(s)) => format!("{} made into a full song", named(s)),
+        (Some("extend"), Some(s)) if req.prompt.trim().is_empty() => format!("{}, made longer", named(s)),
+        (Some("repaint"), Some(s)) if req.prompt.trim().is_empty() => format!("{} with a part made again", named(s)),
+        _ if req.prompt.trim().is_empty() => caption.clone(),
+        _ => req.prompt.trim().to_string(),
+    };
     let item = MediaItem {
         kind: "audio".into(),
         op: req.op.clone(),
-        prompt: req.prompt.trim().to_string(),
+        prompt,
         model_id: Some(m.id.clone()),
         mime: "audio/mpeg".into(),
         seconds: made.seconds,
+        parent: source.as_ref().map(|s| s.0.id.clone()),
         chat_id: req.chat_id.clone(),
         seed: Some(seed),
         lyrics: (!sound && lyrics::has_singing(&made.lyrics)).then_some(made.lyrics),
@@ -3082,6 +3312,11 @@ fn mime_for(name: &str) -> Option<(&'static str, &'static str)> {
         "mp3" => ("audio", "audio/mpeg"),
         "wav" => ("audio", "audio/wav"),
         "ogg" => ("audio", "audio/ogg"),
+        // Songs to work on: Windows reads these for the music engine.
+        "m4a" => ("audio", "audio/mp4"),
+        "aac" => ("audio", "audio/aac"),
+        "flac" => ("audio", "audio/flac"),
+        "wma" => ("audio", "audio/x-ms-wma"),
         _ => return None,
     })
 }
@@ -3092,7 +3327,7 @@ const MAX_IMPORT: u64 = 200 * 1024 * 1024;
 #[tauri::command(async)]
 pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -> Result<MediaItem, String> {
     let c = state.cipher()?;
-    let (kind, mime) = mime_for(&path).ok_or("Pick a picture (PNG, JPEG, WebP), a clip (WebM, MP4) or a sound (MP3, WAV, OGG).")?;
+    let (kind, mime) = mime_for(&path).ok_or("Pick a picture (PNG, JPEG, WebP), a clip (WebM, MP4) or a sound or song (MP3, WAV, M4A, AAC, FLAC, OGG, WMA).")?;
     // Attached to a chat: a hidden attachment, deleted with the chat.
     if chat_id.is_some() && kind != "image" {
         return Err("Only pictures can be attached to a chat.".into());
@@ -3104,7 +3339,33 @@ pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let name = std::path::Path::new(&path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let hidden = chat_id.is_some();
-    add(&state, &c, bytes, kind, mime, if hidden { "attach" } else { "import" }, &name, None, chat_id, hidden)
+    let mut item = add(&state, &c, bytes, kind, mime, if hidden { "attach" } else { "import" }, &name, None, chat_id, hidden)?;
+    // A song's length, for picking a part of it to work on.
+    if kind == "audio" {
+        if let Some(secs) = audio_in::length(std::path::Path::new(&path)).filter(|s| *s > 0.0) {
+            item.seconds = secs;
+            store::update(&state.db.lock().unwrap(), &c, &item)?;
+        }
+    }
+    Ok(item)
+}
+
+/// Lyrics for a song, written before it's made so the person can read and
+/// change them (the Studio's "Write lyrics for me").
+#[tauri::command]
+pub async fn music_write_lyrics(state: AppStateRef<'_>, prompt: String, music: Option<MusicSpec>, seconds: Option<f32>, language: Option<String>) -> Result<String, String> {
+    state.cipher()?;
+    let req = Request { op: "music".into(), prompt, music, ..Default::default() };
+    let words = song_caption(&req);
+    if words.trim().is_empty() {
+        return Err("Describe the song first (or pick its style), so the lyrics fit it.".into());
+    }
+    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"))
+        .await
+        .map_err(|why| match why {
+            lyrics::NotWritten::NoModel(_) => "There's no chat model on this PC to write lyrics. Install one from Models, or type your own.".to_string(),
+            lyrics::NotWritten::Unusable(e) => format!("The lyrics didn't come out right ({e}). Try again, or type your own."),
+        })
 }
 
 pub(crate) fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, mime: &str, op: &str, prompt: &str, parent: Option<String>, chat_id: Option<String>, hidden: bool) -> Result<MediaItem, String> {
@@ -3188,6 +3449,26 @@ pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The Studio's choices become the music model's description; a part
+    /// job asks for the model that does parts; lyrics are written only for
+    /// songs that sing.
+    #[test]
+    fn a_shaped_song_is_described_and_routed() {
+        let spec = MusicSpec { genre: Some("Lo-fi hip hop".into()), mood: Some("Calm".into()), instruments: vec!["Piano".into(), "Vinyl crackle".into()], voice: Some("female".into()), beat: Some("Boom bap".into()), ..Default::default() };
+        assert_eq!(spec.caption("rainy evening study session.", false), "rainy evening study session, lo-fi hip hop, calm mood, piano, vinyl crackle, female vocals, boom bap beat");
+        assert_eq!(spec.caption("", true), "lo-fi hip hop, calm mood, piano, vinyl crackle, instrumental, no vocals, boom bap beat");
+        assert!(spec.describes() && !MusicSpec::default().describes());
+        let part = |task: &str, track: &str| Request { op: "music".into(), music: Some(MusicSpec { task: Some(task.into()), track: Some(track.into()), audio: Some("a".into()), ..Default::default() }), ..Default::default() };
+        assert_eq!(model_op(&part("add", "drums")), "parts");
+        assert_eq!(model_op(&part("cover", "")), "music");
+        assert_eq!(model_op(&Request { op: "sound".into(), ..Default::default() }), "sound");
+        // Lyrics are written for a new song with vocals, and for vocals added; not for a cover or drums.
+        assert!(wants_written_lyrics(&Request { op: "music".into(), ..Default::default() }));
+        assert!(wants_written_lyrics(&part("add", "vocals")));
+        assert!(!wants_written_lyrics(&part("add", "drums")) && !wants_written_lyrics(&part("cover", "")));
+        assert!(!wants_written_lyrics(&Request { op: "music".into(), instrumental: Some(true), ..Default::default() }));
+    }
 
     #[test]
     fn pictures_look_real_unless_another_look_is_asked_for() {

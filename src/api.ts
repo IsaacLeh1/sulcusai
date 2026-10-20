@@ -1858,6 +1858,26 @@ export interface PortsView {
   supported: boolean;
 }
 
+/** A song as shaped in the Studio or a chat (media/mod.rs `MusicSpec`). */
+export interface MusicSpec {
+  genre?: string | null;
+  mood?: string | null;
+  instruments?: string[];
+  voice?: string | null;
+  beat?: string | null;
+  bpm?: number | null;
+  key?: string | null;
+  time_signature?: string | null;
+  /** Work on a song the person has (`audio`). */
+  task?: "cover" | "repaint" | "extend" | "add" | "extract" | "complete" | null;
+  audio?: string | null;
+  reference?: string | null;
+  region?: [number, number] | null;
+  extend_by?: number | null;
+  track?: string | null;
+  strength?: number | null;
+}
+
 export interface MediaRequest {
   op: MediaOp;
   model_id?: string | null;
@@ -1873,6 +1893,8 @@ export interface MediaRequest {
   seconds?: number;
   lyrics?: string | null;
   instrumental?: boolean;
+  /** Music: style, instruments, tempo, key, and work on a song. */
+  music?: MusicSpec | null;
   voice?: string | null;
   language?: string | null;
   chat_id?: string | null;
@@ -2351,6 +2373,8 @@ export const api = {
   mediaFavorite: (id: string, on: boolean) => invoke<MediaItem>("media_favorite", { id, on }),
   mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),
   mediaImport: (path: string, chatId: string | null = null) => invoke<MediaItem>("media_import", { path, chatId }),
+  musicWriteLyrics: (prompt: string, music: MusicSpec | null, seconds: number | null, language: string | null) =>
+    invoke<string>("music_write_lyrics", { prompt, music, seconds, language }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null }) =>
     invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),

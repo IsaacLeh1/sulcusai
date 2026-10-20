@@ -327,7 +327,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "create_video", risk: Risk::Memory, params: media::create_video_params,
         description: "Make a short video clip (a few seconds) on this PC from a description, or bring a picture to life. Takes a few minutes." },
     ToolDef { name: "create_music", risk: Risk::Memory, params: media::create_music_params,
-        description: "Make a song (with lyrics and vocals, or instrumental) or a sound effect on this PC from a description." },
+        description: "Make a song on this PC (with lyrics and vocals, or instrumental, up to 10 minutes) or a sound effect: its style, mood, instruments, voice, tempo, key and beat can be set. Also works on a song already made: a cover in another style, a part made again, more after its end, a part added or taken out." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
         description: "Read the instructions for one of your skills, by name." },
     ToolDef { name: "ask_person", risk: Risk::Submit, params: crate::sync::people::ask::ask_params,

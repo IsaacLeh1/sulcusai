@@ -455,6 +455,19 @@ MEDIA_MODELS = [
         "defaults": {"seconds": 30},
     },
     {
+        "id": "ace-step-1.5-base", "name": "ACE-Step 1.5 Base (song parts)", "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The full ACE-Step model, slower than the standard one: it adds a part to a song you have (vocals, drums, guitar…), pulls one part out of a song, or builds a full arrangement around a single part. It makes new songs too.",
+        "license": MIT, "kind": "music", "can": ["music", "parts"],
+        "files": [
+            mf("dit", ACE, "acestep-v15-base-Q8_0.gguf", 2549527936, "10329f321010cedc3571c24b6371d002ce49238f48be47def4a1c76bf27ee150"),
+            mf("lm", ACE, "acestep-5Hz-lm-1.7B-Q8_0.gguf", 1975837568, "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"),
+            ACE_EMBED, ACE_VAE,
+        ],
+        "min_vram_gb": 0, "cpu": True, "secs": 300, "quality": 8,
+        "defaults": {"seconds": 30},
+    },
+    {
         "id": "ace-step-1.5-small", "name": "ACE-Step 1.5 (small)", "publisher": "ACE Studio and StepFun",
         "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
         "description": "A lighter ACE-Step for PCs with less memory: quicker, with simpler songs and lyrics.",

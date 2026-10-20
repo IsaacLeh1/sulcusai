@@ -1627,3 +1627,16 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 /* Models: "Optimize for this PC" on an installed model. */
 .optimize { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 8px; }
 .optimize .callout { margin: 0; }
+
+/* ---------- music composer ---------- */
+.music-composer { gap: 12px; }
+.music-field { display: flex; flex-direction: column; gap: 6px; }
+.music-label { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.filters.wrap { flex-wrap: wrap; }
+.chip-input { width: 150px; padding: 4px 10px; border-radius: 99px; font-size: 12.5px; }
+.music-player { height: 32px; max-width: 100%; flex: 1; min-width: 220px; }
+.music-song-list { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; max-height: 200px; overflow-y: auto; }
+.input.num { width: 72px; display: inline-block; padding: 3px 6px; }
+.lyrics-box { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; }
+.music-length { display: inline-flex; align-items: center; gap: 8px; }
+.music-more { align-self: flex-start; }

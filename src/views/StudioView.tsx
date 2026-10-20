@@ -14,6 +14,7 @@ import {
   type CloudMediaChoice,
   type MediaModelCard,
   type MediaRequest,
+  type MusicSpec,
   type Voice,
 } from "../api";
 import { clock } from "../format";
@@ -217,9 +218,11 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             key={view?.defaults?.music ?? "no-default"}
             models={installedOf("music")}
             defaultId={view?.defaults?.music ?? null}
-            onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView).catch(() => {})}
+            onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView)}
             onModels={() => setModels(["music"])}
             onStart={start}
+            gallery={items}
+            toast={toast}
           />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
@@ -719,90 +722,452 @@ function VideoComposer({
   );
 }
 
+/** Styles, moods, instruments and beats to pick from (any can be typed too). */
+const GENRES = [
+  tx("Pop"), tx("Rock"), tx("Hip hop"), tx("R&B"), tx("Country"), tx("Folk"), tx("Jazz"), tx("Blues"), tx("Classical"), tx("Electronic"),
+  tx("House"), tx("Techno"), tx("Lo-fi"), tx("Metal"), tx("Punk"), tx("Indie"), tx("Reggae"), tx("Latin"), tx("K-pop"), tx("Soul"),
+  tx("Funk"), tx("Gospel"), tx("Ambient"), tx("Soundtrack"), tx("Synthwave"), tx("Drum and bass"),
+];
+const MOODS = [tx("Happy"), tx("Sad"), tx("Energetic"), tx("Calm"), tx("Dark"), tx("Romantic"), tx("Epic"), tx("Dreamy"), tx("Angry"), tx("Hopeful"), tx("Nostalgic"), tx("Playful")];
+const INSTRUMENTS = [
+  tx("Piano"), tx("Acoustic guitar"), tx("Electric guitar"), tx("Bass"), tx("Drums"), tx("Strings"), tx("Violin"), tx("Cello"), tx("Synth"), tx("Brass"),
+  tx("Saxophone"), tx("Trumpet"), tx("Flute"), tx("Organ"), tx("Harmonica"), tx("Ukulele"), tx("Banjo"), tx("808 bass"), tx("Choir"), tx("Percussion"),
+];
+const BEATS = [tx("Steady"), tx("Four on the floor"), tx("Swing"), tx("Shuffle"), tx("Half-time"), tx("Trap"), tx("Boom bap"), tx("Breakbeat"), tx("Reggaeton"), tx("Waltz")];
+/** Pace presets, in beats a minute. */
+const PACES: [string, number][] = [[tx("Slow"), 70], [tx("Relaxed"), 90], [tx("Medium"), 105], [tx("Upbeat"), 120], [tx("Fast"), 140], [tx("Very fast"), 170]];
+const NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+/** The parts the music engine knows: [what it's called there, what people call it]. */
+const PARTS: [string, string][] = [
+  ["vocals", tx("Vocals")], ["backing_vocals", tx("Backing vocals")], ["drums", tx("Drums")], ["bass", tx("Bass")], ["guitar", tx("Guitar")], ["keyboard", tx("Keys")],
+  ["percussion", tx("Percussion")], ["strings", tx("Strings")], ["synth", tx("Synth")], ["brass", tx("Brass")], ["woodwinds", tx("Woodwinds")], ["fx", tx("Effects")],
+];
+type SongTask = "cover" | "repaint" | "extend" | "add" | "extract" | "complete";
+const TASKS: [SongTask, string, string][] = [
+  ["cover", tx("Restyle it"), tx("The same song in another style: describe how it should sound.")],
+  ["repaint", tx("Make part of it again"), tx("Pick the part; the rest stays as it is.")],
+  ["extend", tx("Make it longer"), tx("More music after its end, in the same style.")],
+  ["add", tx("Add a part"), tx("Vocals, drums, guitar… added on top of the song.")],
+  ["extract", tx("Keep only one part"), tx("Takes one part out of the mix, such as the vocals or the drums.")],
+  ["complete", tx("Build a full song around it"), tx("For a lone part (a vocal, a guitar riff): the rest of the band added.")],
+];
+
+/** Seconds as "1:05". */
+function mmss(s: number): string {
+  const m = Math.floor(s / 60);
+  const r = Math.round(s % 60);
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
+/** A row of chips to pick one (or none) from, plus a box for anything else. */
+function PickOne({ label, options, value, onChange, other }: { label: string; options: string[]; value: string; onChange: (v: string) => void; other?: string }) {
+  const custom = value !== "" && !options.some((o) => t(o) === value || o === value);
+  return (
+    <div className="music-field">
+      <span className="music-label">{label}</span>
+      <div className="filters tight wrap">
+        {options.map((o) => (
+          <button key={o} className={`chip ${value === o || value === t(o) ? "active" : ""}`} onClick={() => onChange(value === o || value === t(o) ? "" : o)}>
+            {t(o)}
+          </button>
+        ))}
+        {other && <input className="input chip-input" value={custom ? value : ""} placeholder={other} aria-label={other} onChange={(e) => onChange(e.target.value)} />}
+      </div>
+    </div>
+  );
+}
+
+/** Chips to pick several from, plus a box to add others. */
+function PickMany({ label, options, value, onChange, other }: { label: string; options: string[]; value: string[]; onChange: (v: string[]) => void; other: string }) {
+  const [typed, setTyped] = useState("");
+  const toggle = (o: string) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
+  const extra = value.filter((v) => !options.includes(v));
+  return (
+    <div className="music-field">
+      <span className="music-label">{label}</span>
+      <div className="filters tight wrap">
+        {options.map((o) => (
+          <button key={o} className={`chip ${value.includes(o) ? "active" : ""}`} onClick={() => toggle(o)}>
+            {t(o)}
+          </button>
+        ))}
+        {extra.map((o) => (
+          <button key={o} className="chip active" onClick={() => toggle(o)} title={t("Remove")}>
+            {o} ×
+          </button>
+        ))}
+        <input
+          className="input chip-input"
+          value={typed}
+          placeholder={other}
+          aria-label={other}
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && typed.trim()) {
+              onChange([...value, typed.trim()]);
+              setTyped("");
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** The song being worked on: picked from a file or the gallery, and heard. */
+function SongSource({ song, gallery, onPick, toast }: { song: MediaItem | null; gallery: MediaItem[]; onPick: (i: MediaItem | null) => void; toast: PushToast }) {
+  const src = useMediaUrl(song);
+  const [picking, setPicking] = useState(false);
+  const fromFile = async () => {
+    const picked = await openFile({ multiple: false, filters: [{ name: t("Songs and sounds"), extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"] }] });
+    if (typeof picked !== "string") return;
+    try {
+      onPick(await api.mediaImport(picked));
+      setPicking(false);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const songs = gallery.filter((i) => i.kind === "audio");
+  return (
+    <div className="music-field">
+      <span className="music-label">{t("The song")}</span>
+      {song ? (
+        <div className="row wrap">
+          <strong className="small">{song.prompt || t("A song")}</strong>
+          {song.seconds > 0 && <span className="small muted">{mmss(song.seconds)}</span>}
+          <button className="link small" onClick={() => onPick(null)}>{t("Change")}</button>
+          {src && <audio controls src={src} className="music-player" />}
+        </div>
+      ) : (
+        <div className="row wrap">
+          <button className="btn small" onClick={fromFile}>{t("From a file…")}</button>
+          <button className="btn small" onClick={() => setPicking((p) => !p)} disabled={!songs.length}>{t("From the gallery")}</button>
+          {!songs.length && <span className="small muted">{t("No songs in the gallery yet.")}</span>}
+        </div>
+      )}
+      {picking && !song && (
+        <div className="music-song-list">
+          {songs.map((s) => (
+            <button key={s.id} className="btn ghost small" onClick={() => { onPick(s); setPicking(false); }}>
+              {s.prompt || t("A song")} {s.seconds > 0 ? `· ${mmss(s.seconds)}` : ""}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MusicComposer({
   models,
   defaultId,
   onSetDefault,
   onModels,
   onStart,
+  gallery,
+  toast,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
   onSetDefault: (id: string) => void;
   onModels: () => void;
   onStart: (r: MediaRequest) => Promise<boolean>;
+  gallery: MediaItem[];
+  toast: PushToast;
 }) {
-  const [sound, setSound] = useState(false);
+  const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
   const [prompt, setPrompt] = useState("");
+  const [genre, setGenre] = useState("");
+  const [mood, setMood] = useState("");
+  const [instruments, setInstruments] = useState<string[]>([]);
   const [vocals, setVocals] = useState<"write" | "none" | "mine">("write");
+  const [voice, setVoice] = useState("");
   const [lyrics, setLyrics] = useState("");
-  const [seconds, setSeconds] = useState(30);
+  const [writing, setWriting] = useState(false);
   const [language, setLanguage] = useState("auto");
-  const [model, setModel] = useModelPick("music", models, defaultId);
-  const m = models.find((x) => x.id === model) ?? models[0];
-  const secs = sound ? Math.min(Math.max(seconds, 10), 30) : seconds;
+  const [bpm, setBpm] = useState<number | null>(null);
+  const [beat, setBeat] = useState("");
+  const [meter, setMeter] = useState("");
+  const [key, setKey] = useState("");
+  const [seconds, setSeconds] = useState(60);
+  const [more, setMore] = useState(false);
+  const [reference, setReference] = useState<MediaItem | null>(null);
+  const [song, setSong] = useState<MediaItem | null>(null);
+  const [task, setTask] = useState<SongTask>("cover");
+  const [part, setPart] = useState("vocals");
+  const [from, setFrom] = useState(0);
+  const [to, setTo] = useState(30);
+  const [extendBy, setExtendBy] = useState(30);
+  const [strength, setStrength] = useState(0.5);
+  const parts = task === "add" || task === "extract" || task === "complete";
+  const needOp = mode === "sound" ? "sound" : mode === "edit" && parts ? "parts" : "music";
+  const fit = models.filter((m) => (m.can ?? ["music", "sound"]).includes(needOp));
+  const [model, setModel] = useModelPick("music", fit.length ? fit : models, defaultId);
+  const m = fit.find((x) => x.id === model) ?? fit[0];
+  const secs = mode === "sound" ? Math.min(Math.max(seconds, 10), 30) : seconds;
+  const sings = mode === "song" ? vocals !== "none" : mode === "edit" && ((task === "add" && part.includes("vocals")) || task === "cover" || task === "repaint");
+  const styled = mode === "song" || (mode === "edit" && (task === "cover" || task === "complete"));
+  const spec = (): MusicSpec => ({
+    genre: genre || null,
+    mood: mood || null,
+    instruments,
+    voice: voice || null,
+    beat: beat && beat !== "Steady" ? beat : null,
+    bpm,
+    key: key || null,
+    time_signature: meter || null,
+    reference: reference?.id ?? null,
+    ...(mode === "edit" && song
+      ? {
+          task,
+          audio: song.id,
+          track: parts ? (task === "complete" ? null : part) : null,
+          region: task === "repaint" ? [from, Math.max(to, from + 1)] : null,
+          extend_by: task === "extend" ? extendBy : null,
+          strength: task === "cover" ? strength : null,
+        }
+      : {}),
+  });
+  const writeLyrics = async () => {
+    setWriting(true);
+    try {
+      setLyrics(await api.musicWriteLyrics(prompt, spec(), secs, language === "auto" ? null : language));
+      setVocals("mine");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setWriting(false);
+    }
+  };
+  const tag = (s: string) => setLyrics((l) => `${l}${l && !l.endsWith("\n") ? "\n\n" : ""}[${s}]\n`);
+  const ready =
+    mode === "sound"
+      ? !!prompt.trim()
+      : mode === "song"
+        ? (!!prompt.trim() || !!genre || instruments.length > 0) && !(vocals === "mine" && !lyrics.trim())
+        : !!song && (task !== "cover" || !!prompt.trim() || !!genre || instruments.length > 0);
   const go = async () => {
     const ok = await onStart({
-      op: sound ? "sound" : "music",
+      op: mode === "sound" ? "sound" : "music",
       prompt,
-      seconds: secs,
-      instrumental: !sound && vocals === "none",
-      lyrics: !sound && vocals === "mine" ? lyrics : null,
-      language: language === "auto" ? null : language,
+      seconds: mode === "edit" ? (task === "extend" ? extendBy : undefined) : secs,
+      instrumental: mode === "song" ? vocals === "none" : undefined,
+      lyrics: sings && (mode === "edit" || vocals === "mine") && lyrics.trim() ? lyrics : null,
+      language: sings && language !== "auto" ? language : null,
       model_id: m?.id,
+      music: mode === "sound" ? null : spec(),
     });
-    if (ok) setPrompt("");
+    if (ok && mode !== "edit") setPrompt("");
   };
+  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs)) / 30 : 0;
   return (
-    <div className="form">
+    <div className="form music-composer">
       <div className="mode-switch">
-        <button className={`mode ${!sound ? "active" : ""}`} onClick={() => setSound(false)}>{t("Song")}</button>
-        <button className={`mode ${sound ? "active" : ""}`} onClick={() => setSound(true)}>{t("Sound effect")}</button>
+        <button className={`mode ${mode === "song" ? "active" : ""}`} onClick={() => setMode("song")}>{t("New song")}</button>
+        <button className={`mode ${mode === "edit" ? "active" : ""}`} onClick={() => setMode("edit")}>{t("From a song you have")}</button>
+        <button className={`mode ${mode === "sound" ? "active" : ""}`} onClick={() => setMode("sound")}>{t("Sound effect")}</button>
       </div>
+
+      {mode === "edit" && (
+        <>
+          <SongSource song={song} gallery={gallery} onPick={(s) => { setSong(s); if (s?.seconds) { setFrom(0); setTo(Math.min(30, Math.round(s.seconds))); } }} toast={toast} />
+          <div className="music-field">
+            <span className="music-label">{t("What to do with it")}</span>
+            <div className="filters tight wrap">
+              {TASKS.map(([id, label]) => (
+                <button key={id} className={`chip ${task === id ? "active" : ""}`} onClick={() => setTask(id)}>{t(label)}</button>
+              ))}
+            </div>
+            <p className="small muted">{t(TASKS.find(([id]) => id === task)![2])}</p>
+          </div>
+          {task === "repaint" && (
+            <div className="row wrap">
+              <label className="small">
+                {t("From")} <input type="number" className="input num" min={0} max={song?.seconds || 600} value={from} onChange={(e) => setFrom(Math.max(0, +e.target.value))} /> s
+              </label>
+              <label className="small">
+                {t("to")} <input type="number" className="input num" min={from + 1} max={song?.seconds || 600} value={to} onChange={(e) => setTo(+e.target.value)} /> s
+              </label>
+              {song && song.seconds > 0 && <span className="small muted">{t("of {length}", { length: mmss(song.seconds) })}</span>}
+            </div>
+          )}
+          {task === "extend" && (
+            <label className="small music-length">
+              {t("Add")}
+              <input type="range" min={5} max={300} step={5} value={extendBy} onChange={(e) => setExtendBy(+e.target.value)} />
+              {mmss(extendBy)}
+            </label>
+          )}
+          {(task === "add" || task === "extract") && (
+            <PickOne label={task === "add" ? t("The part to add") : t("The part to keep")} options={PARTS.map(([, n]) => n)} value={PARTS.find(([id]) => id === part)?.[1] ?? ""} onChange={(v) => setPart(PARTS.find(([, n]) => n === v || t(n) === v)?.[0] ?? "vocals")} />
+          )}
+          {task === "cover" && (
+            <label className="small music-length">
+              {t("How close to the original")}
+              <input type="range" min={0} max={1} step={0.05} value={strength} onChange={(e) => setStrength(+e.target.value)} />
+              {strength < 0.35 ? t("loosely") : strength < 0.7 ? t("in between") : t("very close")}
+            </label>
+          )}
+          {parts && !m && (
+            <p className="callout small">
+              {t("Adding, keeping or building around a part needs ACE-Step 1.5 Base (slower, and a 2.5 GB download beside ACE-Step 1.5).")}{" "}
+              <button className="link" onClick={onModels}>{t("Get it")}</button>
+            </p>
+          )}
+        </>
+      )}
+
       <textarea
         className="input"
-        rows={3}
+        rows={mode === "edit" ? 2 : 3}
         value={prompt}
-        placeholder={sound ? t("Describe the sound, e.g. \"rain on a tin roof with distant thunder\"") : t("Describe the song: genre, mood, instruments, tempo, voice. E.g. \"upbeat acoustic folk about a road trip, warm male vocals\"")}
+        aria-label={t("Description")}
+        placeholder={
+          mode === "sound"
+            ? t("Describe the sound, e.g. \"rain on a tin roof with distant thunder\"")
+            : mode === "edit"
+              ? t("Describe the result (optional for some changes), e.g. \"as a slow piano ballad\"")
+              : t("What the song is about and how it sounds, e.g. \"a road trip through the mountains with old friends\"")
+        }
         onChange={(e) => setPrompt(e.target.value)}
         autoFocus
       />
-      {!sound && (
-        <div className="row wrap">
-          <div className="filters tight">
-            {(["write", "none", "mine"] as const).map((v) => (
-              <button key={v} className={`chip ${vocals === v ? "active" : ""}`} onClick={() => setVocals(v)}>
-                {{ write: t("Vocals, lyrics written for me"), none: t("Instrumental"), mine: t("My own lyrics") }[v]}
-              </button>
-            ))}
-          </div>
-          {vocals !== "none" && (
-            <select value={language} onChange={(e) => setLanguage(e.target.value)} title={t("Language of the vocals")}>
-              {LANGUAGES.map(([c, n]) => (
-                <option key={c} value={c}>{t(n)}</option>
+
+      {styled && (
+        <>
+          <PickOne label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Other style")} />
+          <PickOne label={t("Mood")} options={MOODS} value={mood} onChange={setMood} />
+          <PickMany label={t("Instruments")} options={INSTRUMENTS} value={instruments} onChange={setInstruments} other={t("Add another (Enter)")} />
+        </>
+      )}
+
+      {mode === "song" && (
+        <div className="music-field">
+          <span className="music-label">{t("Vocals")}</span>
+          <div className="row wrap">
+            <div className="filters tight">
+              {(["write", "mine", "none"] as const).map((v) => (
+                <button key={v} className={`chip ${vocals === v ? "active" : ""}`} onClick={() => setVocals(v)}>
+                  {{ write: t("Lyrics written for me"), mine: t("My own lyrics"), none: t("Instrumental") }[v]}
+                </button>
               ))}
-            </select>
-          )}
+            </div>
+            {vocals !== "none" && (
+              <>
+                <select value={voice} onChange={(e) => setVoice(e.target.value)} aria-label={t("Who sings")}>
+                  <option value="">{t("Any voice")}</option>
+                  <option value="female">{t("Female voice")}</option>
+                  <option value="male">{t("Male voice")}</option>
+                  <option value="duet">{t("Duet")}</option>
+                  <option value="choir">{t("Choir")}</option>
+                  <option value="rap">{t("Rap")}</option>
+                </select>
+                <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label={t("Language of the vocals")}>
+                  {LANGUAGES.map(([c, n]) => (
+                    <option key={c} value={c}>{t(n)}</option>
+                  ))}
+                </select>
+              </>
+            )}
+          </div>
         </div>
       )}
-      {!sound && vocals === "mine" && (
-        <textarea className="input" rows={6} value={lyrics} placeholder={"[Verse]\nYour lines here\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
+
+      {sings && (mode === "edit" || vocals !== "none") && (
+        <div className="music-field">
+          <div className="row wrap">
+            <span className="music-label">{mode === "edit" ? t("Lyrics (optional)") : t("Lyrics")}</span>
+            <span className="spacer" />
+            {["Intro", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Outro"].map((s) => (
+              <button key={s} className="btn ghost small" onClick={() => { tag(s); if (mode === "song") setVocals("mine"); }}>+ {t(s)}</button>
+            ))}
+            <button className="btn small" onClick={writeLyrics} disabled={writing}>{writing ? t("Writing…") : t("Write lyrics for me")}</button>
+          </div>
+          {(vocals === "mine" || mode === "edit") && (
+            <textarea className="input lyrics-box" rows={8} value={lyrics} aria-label={t("Lyrics")} placeholder={"[Verse]\n…\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
+          )}
+          {vocals === "write" && mode === "song" && <p className="small muted">{t("They're written when the song is made. To read and change them first, press Write lyrics for me.")}</p>}
+        </div>
       )}
+
+      {mode === "song" && (
+        <div className="music-field">
+          <span className="music-label">{t("Tempo")}</span>
+          <div className="row wrap">
+            <div className="filters tight">
+              <button className={`chip ${bpm === null ? "active" : ""}`} onClick={() => setBpm(null)}>{t("Auto")}</button>
+              {PACES.map(([label, b]) => (
+                <button key={label} className={`chip ${bpm === b ? "active" : ""}`} onClick={() => setBpm(b)}>{t(label)}</button>
+              ))}
+            </div>
+            {bpm !== null && (
+              <label className="small music-length">
+                <input type="range" min={50} max={200} value={bpm} onChange={(e) => setBpm(+e.target.value)} aria-label={t("Beats a minute")} />
+                {t("{n} beats a minute", { n: bpm })}
+              </label>
+            )}
+          </div>
+        </div>
+      )}
+
+      {mode === "song" && <PickOne label={t("Beat")} options={BEATS} value={beat} onChange={setBeat} other={t("Other beat")} />}
+
+      {mode !== "sound" && (
+        <button className="link small music-more" onClick={() => setMore((x) => !x)} aria-expanded={more}>
+          {more ? t("Fewer settings") : t("More settings: key, time signature, a song to sound like")}
+        </button>
+      )}
+      {more && mode !== "sound" && (
+        <div className="row wrap">
+          <select value={key} onChange={(e) => setKey(e.target.value)} aria-label={t("Key")}>
+            <option value="">{t("Any key")}</option>
+            {NOTES.flatMap((n) => [`${n} major`, `${n} minor`]).map((k) => (
+              <option key={k} value={k}>{k}</option>
+            ))}
+          </select>
+          <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
+            <option value="">{t("Any time signature")}</option>
+            {["4/4", "3/4", "6/8", "2/4"].map((x) => (
+              <option key={x} value={x}>{x}</option>
+            ))}
+          </select>
+          <span className="small">{t("Sound like:")}</span>
+          <select value={reference?.id ?? ""} onChange={(e) => setReference(gallery.find((g) => g.id === e.target.value) ?? null)} aria-label={t("A song to sound like")}>
+            <option value="">{t("No song")}</option>
+            {gallery.filter((g) => g.kind === "audio").map((g) => (
+              <option key={g.id} value={g.id}>{g.prompt || t("A song")}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="row wrap">
-        <select value={secs} onChange={(e) => setSeconds(+e.target.value)} title={t("Length")}>
-          {(sound ? [10, 15, 20, 30] : [15, 30, 60, 90, 120, 180]).map((s) => (
-            <option key={s} value={s}>{s < 60 ? t("{s} seconds", { s }) : s % 60 ? t("{m} min {s} s", { m: s / 60, s: s % 60 }) : t("{m} min", { m: s / 60 })}</option>
-          ))}
-        </select>
-        <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
+        {mode !== "edit" && (
+          <label className="small music-length">
+            {t("Length")}
+            <input
+              type="range"
+              min={mode === "sound" ? 10 : 10}
+              max={mode === "sound" ? 30 : 600}
+              step={mode === "sound" ? 5 : 10}
+              value={secs}
+              onChange={(e) => setSeconds(+e.target.value)}
+              aria-label={t("Length")}
+            />
+            {mmss(secs)}
+          </label>
+        )}
+        <ModelPick models={fit.length ? fit : models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
-        {m && <span className="small muted">{waitLabel((m.fit.est_secs * secs) / 30)}</span>}
-        <button className="btn primary" disabled={!prompt.trim() || (vocals === "mine" && !sound && !lyrics.trim())} onClick={go}>
-          {sound ? t("Make the sound") : t("Make the song")}
+        {m && <span className="small muted">{waitLabel(est)}</span>}
+        <button className="btn primary" disabled={!ready || !m} onClick={go}>
+          {mode === "sound" ? t("Make the sound") : mode === "edit" ? t("Make it") : t("Make the song")}
         </button>
       </div>
-      {sound && <p className="small muted">{t("Sound effects come from the music model, so they're rough sketches rather than library-quality recordings.")}</p>}
+      {mode === "sound" && <p className="small muted">{t("Sound effects come from the music model, so they're rough sketches rather than library-quality recordings.")}</p>}
+      {mode === "song" && secs > 240 && <p className="small muted">{t("Long songs take a while: about {time} here.", { time: waitLabel(est) })}</p>}
     </div>
   );
 }
