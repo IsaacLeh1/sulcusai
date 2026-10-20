@@ -30,9 +30,9 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
-      - name: Rust license policy
+      - name: Rust advisories and license policy
         working-directory: src-tauri
-        run: cargo deny check licenses
+        run: cargo deny check advisories licenses
 
   # macOS and Linux: the core builds and its tests pass there too.
   unix:

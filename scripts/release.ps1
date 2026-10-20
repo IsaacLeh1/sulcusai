@@ -33,6 +33,15 @@ $exeName = "SulcusAI_${version}_x64-setup.exe"
 $exe = Join-Path $bundle $exeName
 $sig = "$exe.sig"
 
+# What's published must be this commit, built from it, under one number.
+$dirty = git -C $root status --porcelain --untracked-files=no
+if ($dirty) { throw "There are uncommitted changes. Commit them first, so the build matches the tag:`n$($dirty -join "`n")" }
+$cargoVersion = (Select-String -Path (Join-Path $root "src-tauri\Cargo.toml") -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+$packageVersion = (Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json).version
+if ($cargoVersion -ne $version -or $packageVersion -ne $version) {
+    throw "The version numbers differ: tauri.conf.json $version, Cargo.toml $cargoVersion, package.json $packageVersion."
+}
+
 if (-not $SkipBuild) {
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $keyFile -Raw
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
@@ -56,6 +65,11 @@ if (-not $SkipBuild) {
     }
 }
 if (-not (Test-Path $sig)) { throw "No signature next to $exeName; was it built with the signing key?" }
+# Publishing an earlier build: only one made after the last commit.
+if ($SkipBuild -and $Publish) {
+    $committed = [DateTimeOffset]::FromUnixTimeSeconds([long](git -C $root log -1 --format=%ct)).LocalDateTime
+    if ((Get-Item $exe).LastWriteTime -lt $committed) { throw "$exeName was built before the last commit. Build again (without -SkipBuild) so it matches." }
+}
 
 if ($NotesFile) { $Notes = [System.IO.File]::ReadAllText((Resolve-Path $NotesFile), [System.Text.Encoding]::UTF8).Trim() }
 

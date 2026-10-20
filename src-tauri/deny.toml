@@ -1,4 +1,4 @@
-# Dependency license policy (see CONTRIBUTING.md). Run: cargo deny check licenses
+# Dependency policy (see CONTRIBUTING.md). Run: cargo deny check advisories licenses
 # Copyleft licenses are not allowed: they would stop the owner from relicensing.
 
 [graph]
@@ -34,3 +34,24 @@ allow = ["AGPL-3.0-only"]
 
 [bans]
 multiple-versions = "allow"
+
+# Known advisories, each looked at (CI fails on any new one). None has a fix
+# upstream, or the affected code isn't reached:
+[advisories]
+ignore = [
+  # rsa (Marvin timing attack): under Arti's Tor crates, not used for the person's keys; no fixed release.
+  { id = "RUSTSEC-2023-0071", reason = "Tor (Arti) only; no fixed release" },
+  # paste and proc-macro-error: unmaintained build-time macro crates (Tor; Linux GTK).
+  { id = "RUSTSEC-2024-0436", reason = "build-time macros under Arti" },
+  { id = "RUSTSEC-2024-0370", reason = "build-time macros under gtk (Linux only)" },
+  # ttf-parser: unmaintained, under pdf-extract's lopdf (reading PDF text).
+  { id = "RUSTSEC-2026-0192", reason = "under pdf-extract; no maintained replacement yet" },
+  # zip: ZipArchive::extract() isn't called anywhere (entries are walked one by one with enclosed_name).
+  { id = "RUSTSEC-2026-0367", reason = "extract() not used" },
+  { id = "RUSTSEC-2026-0368", reason = "extract() not used" },
+  { id = "RUSTSEC-2026-0369", reason = "extract() not used" },
+  # zvariant, zbus_names, zvariant_derive: unmaintained D-Bus crates under tauri on Linux.
+  { id = "RUSTSEC-2026-0370", reason = "Linux D-Bus under tauri" },
+  { id = "RUSTSEC-2026-0371", reason = "Linux D-Bus under tauri" },
+  { id = "RUSTSEC-2026-0372", reason = "Linux D-Bus under tauri" },
+]
