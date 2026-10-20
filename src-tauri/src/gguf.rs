@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,15 +59,15 @@ fn bad(msg: &str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::InvalidData, msg.to_string())
 }
 
-type Reader = BufReader<File>;
+type Reader<R> = BufReader<R>;
 
 /// Skips ahead without dropping the read buffer (vocabularies are hundreds
 /// of thousands of short strings).
-fn skip(r: &mut Reader, n: u64) -> std::io::Result<()> {
+fn skip<R: Read + Seek>(r: &mut Reader<R>, n: u64) -> std::io::Result<()> {
     r.seek_relative(n as i64)
 }
 
-fn string(r: &mut Reader) -> std::io::Result<Option<String>> {
+fn string<R: Read + Seek>(r: &mut Reader<R>) -> std::io::Result<Option<String>> {
     let len = u64_of(r)?;
     if len > MAX_STRING {
         skip(r, len)?;
@@ -89,7 +89,7 @@ fn width(t: u32) -> Option<i64> {
     }
 }
 
-fn scalar(r: &mut Reader, t: u32) -> std::io::Result<Value> {
+fn scalar<R: Read + Seek>(r: &mut Reader<R>, t: u32) -> std::io::Result<Value> {
     let mut b = [0u8; 8];
     Ok(match t {
         0 => {
@@ -123,7 +123,7 @@ fn scalar(r: &mut Reader, t: u32) -> std::io::Result<Value> {
     })
 }
 
-fn value(r: &mut Reader, t: u32) -> std::io::Result<Value> {
+fn value<R: Read + Seek>(r: &mut Reader<R>, t: u32) -> std::io::Result<Value> {
     if t != 9 {
         return scalar(r, t);
     }
@@ -158,7 +158,16 @@ fn value(r: &mut Reader, t: u32) -> std::io::Result<Value> {
 }
 
 pub fn read(path: &Path) -> std::io::Result<Meta> {
-    let mut r = BufReader::with_capacity(1 << 16, File::open(path)?);
+    read_from(BufReader::with_capacity(1 << 16, File::open(path)?), false)
+}
+
+/// The keys in the first bytes of a GGUF file (the start of a download), as
+/// far as they go; fails when not even one is there.
+pub fn read_start(bytes: &[u8]) -> std::io::Result<Meta> {
+    read_from(BufReader::new(std::io::Cursor::new(bytes)), true)
+}
+
+fn read_from<R: Read + Seek>(mut r: Reader<R>, partial: bool) -> std::io::Result<Meta> {
     let mut magic = [0u8; 4];
     r.read_exact(&mut magic)?;
     if &magic != b"GGUF" {
@@ -175,9 +184,21 @@ pub fn read(path: &Path) -> std::io::Result<Meta> {
     }
     let mut meta = Meta::new();
     for _ in 0..keys {
-        let key = string(&mut r)?.ok_or_else(|| bad("key too long"))?;
-        let t = u32_of(&mut r)?;
-        meta.insert(key, value(&mut r, t)?);
+        let next = (|| -> std::io::Result<(String, Value)> {
+            let key = string(&mut r)?.ok_or_else(|| bad("key too long"))?;
+            let t = u32_of(&mut r)?;
+            Ok((key, value(&mut r, t)?))
+        })();
+        match next {
+            Ok((k, v)) => {
+                meta.insert(k, v);
+            }
+            Err(_) if partial && !meta.is_empty() => return Ok(meta),
+            Err(e) => return Err(e),
+        }
+    }
+    if partial {
+        return Ok(meta);
     }
     // The weights' own type, for files whose header names another (some
     // conversions say F16 while most weights are MXFP4).
@@ -195,7 +216,7 @@ const MAX_TENSORS: u64 = 100_000;
 
 /// The tensor type covering the most weights, from the tensor list that
 /// follows the keys (name, dimensions, type, offset for each).
-fn main_tensor_type(r: &mut Reader, n: u64) -> std::io::Result<Option<u32>> {
+fn main_tensor_type<R: Read + Seek>(r: &mut Reader<R>, n: u64) -> std::io::Result<Option<u32>> {
     let mut by_type: HashMap<u32, u128> = HashMap::new();
     for _ in 0..n {
         string(r)?;
@@ -350,6 +371,11 @@ mod tests {
         assert_eq!(m["per_layer"].int(), Some(8));
         assert_eq!(quant_name(m["general.file_type"].int().unwrap()), "Q4_K_M");
         assert!(!m.contains_key(MAIN_TYPE_KEY), "no tensors listed");
+        // The start of a download: the keys as far as they go.
+        assert_eq!(read_start(&f).unwrap()["general.architecture"].str(), Some("qwen2"));
+        let cut = read_start(&f[..75]).unwrap();
+        assert_eq!((cut["general.architecture"].str(), cut.len()), (Some("qwen2"), 1));
+        assert!(read_start(&f[..40]).is_err(), "not even the first key");
     }
 
     /// A header that says F16 over weights that are mostly MXFP4 (a

@@ -31,6 +31,7 @@ type Shape = NonNullable<MediaRequest["shape"]>;
 
 const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
+const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
 const STYLES = [tx("Watercolor"), tx("Oil painting"), tx("Pencil sketch"), tx("Anime"), tx("3D render"), tx("Pixel art"), tx("Vintage photo"), tx("Comic book")];
 const LANGUAGES: [string, string][] = [
@@ -202,6 +203,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             models={installedOf("video")}
             defaultId={view?.defaults?.video ?? null}
             onSetDefault={(id) => api.mediaSetDefault("video", id).then(reloadView)}
+            onModels={() => setModels(["video"])}
             source={source}
             onPickSource={setSource}
             gallery={items}
@@ -211,7 +213,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         ) : tab === "wallpaper" ? (
           <WallpaperComposer imageModels={installedOf("image")} videoModels={features.has("video") ? installedOf("video") : []} gallery={items} onStart={start} toast={toast} />
         ) : tab === "music" ? (
-          <MusicComposer key={view?.defaults?.music ?? "no-default"} models={installedOf("music")} defaultId={view?.defaults?.music ?? null} onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView).catch(() => {})} onStart={start} />
+          <MusicComposer
+            key={view?.defaults?.music ?? "no-default"}
+            models={installedOf("music")}
+            defaultId={view?.defaults?.music ?? null}
+            onSetDefault={(id) => api.mediaSetDefault("music", id).then(reloadView).catch(() => {})}
+            onModels={() => setModels(["music"])}
+            onStart={start}
+          />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
         )}
@@ -293,9 +302,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           }}
         >
           <div className="studio-models">
-            <MediaModels progress={progress} toast={toast} />
+            <MediaModels progress={progress} toast={toast} only={models} />
           </div>
           <div className="modal-actions">
+            {models.length < ALL_KINDS.length && (
+              <button className="link small" onClick={() => setModels(ALL_KINDS)}>
+                {t("Show models of every kind")}
+              </button>
+            )}
             <button
               className="btn"
               onClick={() => {
@@ -337,21 +351,33 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
     });
 }
 
-function ModelPick({ models, value, onChange }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void }) {
+/** The model a composer uses: always shown as a menu, even with one model,
+ * whose last entry opens this kind's models to install another (his
+ * brother saw only the first music model's name and no way to add one). */
+function ModelPick({ models, value, onChange, onMore }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void; onMore?: () => void }) {
   // Models on this PC are marked as such; cloud ones carry their provider in their names.
   const label = (m: MediaModelCard) => (m.id.startsWith("cloud:") ? m.name : t("{name} (this PC)", { name: m.name }));
-  if (models.length === 1) return <span className="small muted" title={t("Model")}>{label(models[0])}</span>;
-  if (models.length < 2) return null;
+  if (models.length === 0) return null;
+  if (models.length === 1 && !onMore) return <span className="small muted" title={t("Model")}>{label(models[0])}</span>;
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} title={t("Model")}>
+    <select
+      value={value}
+      onChange={(e) => (e.target.value === MORE ? onMore?.() : onChange(e.target.value))}
+      title={t("Model")}
+      aria-label={t("Model")}
+    >
       {models.map((m) => (
         <option key={m.id} value={m.id}>
           {label(m)}
         </option>
       ))}
+      {onMore && <option value={MORE}>{t("More models…")}</option>}
     </select>
   );
 }
+
+/** ModelPick's entry that opens the models list. */
+const MORE = "__more_models__";
 
 function best(models: MediaModelCard[], can?: string): string {
   return [...models].filter((m) => !can || m.can.includes(can)).sort((a, b) => b.quality - a.quality)[0]?.id ?? "";
@@ -520,7 +546,7 @@ function PictureComposer({
             <option key={n} value={n}>{n === 1 ? t("1 picture") : t("{n} versions", { n })}</option>
           ))}
         </select>
-        <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
+        <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         <ImproveButton prompt={prompt} kind="image" onDone={setPrompt} />
@@ -554,6 +580,7 @@ function VideoComposer({
   models,
   defaultId,
   onSetDefault,
+  onModels,
   source,
   onPickSource,
   gallery,
@@ -563,6 +590,7 @@ function VideoComposer({
   models: MediaModelCard[];
   defaultId: string | null;
   onSetDefault: (id: string) => void;
+  onModels: () => void;
   source: MediaItem | null;
   onPickSource: (i: MediaItem | null) => void;
   gallery: MediaItem[];
@@ -652,7 +680,7 @@ function VideoComposer({
             {t("seconds")}
           </label>
         )}
-        <ModelPick models={usable} value={m?.id ?? ""} onChange={setModel} />
+        <ModelPick models={usable} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * length) / Math.max(1, m.defaults.seconds || 3))}</span>}
@@ -691,7 +719,19 @@ function VideoComposer({
   );
 }
 
-function MusicComposer({ models, defaultId, onSetDefault, onStart }: { models: MediaModelCard[]; defaultId: string | null; onSetDefault: (id: string) => void; onStart: (r: MediaRequest) => Promise<boolean> }) {
+function MusicComposer({
+  models,
+  defaultId,
+  onSetDefault,
+  onModels,
+  onStart,
+}: {
+  models: MediaModelCard[];
+  defaultId: string | null;
+  onSetDefault: (id: string) => void;
+  onModels: () => void;
+  onStart: (r: MediaRequest) => Promise<boolean>;
+}) {
   const [sound, setSound] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [vocals, setVocals] = useState<"write" | "none" | "mine">("write");
@@ -754,7 +794,7 @@ function MusicComposer({ models, defaultId, onSetDefault, onStart }: { models: M
             <option key={s} value={s}>{s < 60 ? t("{s} seconds", { s }) : s % 60 ? t("{m} min {s} s", { m: s / 60, s: s % 60 }) : t("{m} min", { m: s / 60 })}</option>
           ))}
         </select>
-        <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} />
+        <ModelPick models={models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel((m.fit.est_secs * secs) / 30)}</span>}

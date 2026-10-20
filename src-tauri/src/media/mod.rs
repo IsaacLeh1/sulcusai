@@ -13,6 +13,7 @@ mod cutout;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
+pub(crate) mod lyrics;
 mod music;
 pub(crate) mod proc;
 pub mod prompts;
@@ -476,6 +477,19 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
         download::fetch_verified(&client, &f.url, &dest, f.size, &f.sha256, cancel, |r, _| emit("download", base + r, total)).await?;
         done += f.size;
     }
+    // A music model from Hugging Face: its own file must be one the music
+    // engine runs (it skips others, and the song would fail later).
+    if spec.kind == Kind::Music && spec.from_hub.is_some() {
+        for f in spec.files.iter().filter(|f| f.file.starts_with("hfm-")) {
+            let dest = file_path(&state.paths, spec, f);
+            let arch = crate::gguf::read(&dest).ok().and_then(|m| m.get("general.architecture").and_then(|v| v.str().map(str::to_string)));
+            if let Some(why) = hub::music_file_problem(&f.role, arch.as_deref()) {
+                crate::applog::line("media", &format!("{} isn't a music engine file ({arch:?}); deleted it", f.file));
+                std::fs::remove_file(&dest).ok();
+                return Err(why.into());
+            }
+        }
+    }
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     if !list.iter().any(|i| i.model_id == spec.id) {
@@ -603,6 +617,10 @@ pub struct Request {
     /// (kept with what's made).
     #[serde(skip)]
     pub asked: Option<String>,
+    /// Songs: why lyrics couldn't be written before the job (the music
+    /// model then writes its own).
+    #[serde(skip)]
+    pub lyrics_problem: Option<lyrics::NotWritten>,
 }
 
 /// Looks a new picture can have: id and the words added to its description.
@@ -1633,19 +1651,26 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     // Lyrics come from the chat model: written before the card is cleared for
     // the music engine, not after (that loaded the chat model again beside it).
     let mut with_lyrics;
-    let req = if req.op == "music" && req.instrumental != Some(true) && req.lyrics.as_ref().is_none_or(|l| l.trim().is_empty()) {
+    let req = if req.op == "music" && lyrics::words(false, req.instrumental == Some(true), req.lyrics.as_deref()) == lyrics::Words::MusicModelWrites {
         progress("Writing lyrics", 0.02);
         let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 240.0);
         with_lyrics = req.clone();
-        with_lyrics.lyrics = write_lyrics(state, req.prompt.trim(), seconds, req.language.as_deref()).await;
-        if with_lyrics.lyrics.is_none() {
-            // Nothing written: the song is sung without set words, as before.
-            with_lyrics.lyrics = Some(String::new());
+        match lyrics::write(state, req.prompt.trim(), seconds, req.language.as_deref()).await {
+            Ok(l) => with_lyrics.lyrics = Some(l),
+            Err(why) => {
+                // Nothing written here: the music model writes its own.
+                crate::applog::line("media", &format!("Couldn't write lyrics before the song ({why:?}); the music model writes them"));
+                with_lyrics.lyrics = None;
+                with_lyrics.lyrics_problem = Some(why);
+            }
         }
         &with_lyrics
     } else {
         req
     };
+    if cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
     // Not for upscaling: its model is 64 MB, and stopping a 14 GB chat model
     // for it cost the next message a reload.
     let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach") {
@@ -2492,36 +2517,32 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &cipher, item, &bytes, Some(&thumb))?])
 }
 
-/// Lyrics from the chat model, so a song with vocals has real words to sing.
-async fn write_lyrics(state: &Arc<AppState>, prompt: &str, seconds: f32, language: Option<&str>) -> Option<String> {
-    let (ep, _, _hold) = crate::background_endpoint(state).await.ok()?;
-    let lines = ((seconds / 30.0) * 8.0).round().clamp(6.0, 40.0) as u32;
-    let lang = language.filter(|l| !l.is_empty() && *l != "auto").map(|l| format!(" Write them in the language with code \"{l}\"."));
-    let messages = vec![
-        json!({ "role": "system", "content": format!(
-            "You write song lyrics. Reply with the lyrics only: about {lines} short lines, with section tags on their own lines such as [Verse], [Chorus] and [Bridge]. No title, no notes, no quotes.{}",
-            lang.unwrap_or_default()
-        ) }),
-        json!({ "role": "user", "content": prompt }),
-    ];
-    let raw = crate::chat::complete(&ep, messages, json!({ "temperature": 0.8 }), 600).await.ok()?;
-    let text = raw.trim().trim_matches('`').trim().to_string();
-    (text.lines().filter(|l| !l.trim().is_empty()).count() >= 3).then_some(text)
+/// The vocal language for the music model: the one asked for; with no
+/// lyrics and none asked for, English (left to itself, the music model can
+/// sing made-up words); else none, and it tells from the lyrics.
+fn vocal_language(asked: Option<&str>, words: &lyrics::Words) -> Option<String> {
+    match asked.filter(|l| !l.is_empty() && *l != "auto") {
+        _ if *words == lyrics::Words::Instrumental => None,
+        Some(l) => Some(l.to_string()),
+        None if *words == lyrics::Words::MusicModelWrites => Some("en".into()),
+        None => None,
+    }
 }
 
 async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
     let req = ctx.req;
     let sound = req.op == "sound";
     let seconds = if sound { req.seconds.unwrap_or(10.0).clamp(10.0, 30.0) } else { req.seconds.unwrap_or(m.defaults.seconds.max(30.0)).clamp(10.0, 240.0) };
-    let lyrics = if sound || req.instrumental == Some(true) {
-        "[Instrumental]".to_string()
-    } else if let Some(l) = req.lyrics.as_ref() {
-        // Given, or written before the job (empty: the writer had nothing).
-        l.trim().to_string()
-    } else {
+    let mut problem = req.lyrics_problem.clone();
+    let mut words = lyrics::words(sound, req.instrumental == Some(true), req.lyrics.as_deref());
+    if words == lyrics::Words::MusicModelWrites && problem.is_none() {
+        // Not written before the job (it always is for the Studio's and chats' songs).
         (ctx.progress)("Writing lyrics", 0.02);
-        write_lyrics(ctx.state, req.prompt.trim(), seconds, req.language.as_deref()).await.unwrap_or_default()
-    };
+        match lyrics::write(ctx.state, req.prompt.trim(), seconds, req.language.as_deref()).await {
+            Ok(l) => words = lyrics::Words::Sung(l),
+            Err(why) => problem = Some(why),
+        }
+    }
     let caption = if sound {
         format!("{}. A sound effect recording, not music: no melody, no singing.", req.prompt.trim().trim_end_matches('.'))
     } else {
@@ -2529,9 +2550,8 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     };
     let (lm, dit) = (m.file("lm").ok_or("The music model is missing a file.")?, m.file("dit").ok_or("The music model is missing a file.")?);
     let seed = req.seed.unwrap_or_else(random_seed);
-    // Left to itself with no lyrics or language, the music model can sing in
-    // made-up words; English is the safer guess.
-    let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto").or_else(|| (!sound && lyrics.is_empty()).then(|| "en".to_string()));
+    let language = vocal_language(req.language.as_deref(), &words);
+    let lyrics = words.for_engine().to_string();
     let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
     let made = music::make(
@@ -2542,6 +2562,12 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         ctx.progress,
     )
     .await?;
+    // Vocals were asked for, and the music model planned nothing to sing:
+    // say so rather than hand back an instrumental as if it were the song.
+    if let Err(e) = lyrics::check_sung(&words, &made.lyrics, problem.as_ref()) {
+        crate::applog::line("media", &format!("The song came out without words to sing (planned lyrics: {:?})", made.lyrics.chars().take(80).collect::<String>()));
+        return Err(e);
+    }
     let c = ctx.state.work_cipher()?;
     let item = MediaItem {
         kind: "audio".into(),
@@ -2552,7 +2578,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         seconds: made.seconds,
         chat_id: req.chat_id.clone(),
         seed: Some(seed),
-        lyrics: (!sound && !made.lyrics.is_empty() && made.lyrics != "[Instrumental]").then_some(made.lyrics),
+        lyrics: (!sound && lyrics::has_singing(&made.lyrics)).then_some(made.lyrics),
         ..Default::default()
     };
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &made.mp3, None)?])
@@ -2601,6 +2627,8 @@ pub struct MediaView {
     cloud: Vec<crate::cloud::MediaChoice>,
     /// Models that can't run on this PC, left out of the list.
     hidden: usize,
+    /// The same, by kind and why, so each kind's list can say so.
+    hidden_by_kind: Vec<Hidden>,
     /// Why video isn't available here, when no video model fits.
     video_note: Option<String>,
     installing: Vec<String>,
@@ -2608,6 +2636,33 @@ pub struct MediaView {
     gallery: usize,
     /// The default model per kind.
     pub defaults: MediaDefaults,
+}
+
+/// Models of a kind left out of the list, and why: "memory" (more than this
+/// PC has), "card" (a bigger graphics card) or "disk" (more free space).
+#[derive(Debug, Serialize, PartialEq)]
+pub struct Hidden {
+    kind: Kind,
+    why: &'static str,
+    count: usize,
+}
+
+/// Why a model that doesn't fit is left out, in one word.
+fn hidden_why(m: &MediaModel, f: &MediaFit) -> &'static str {
+    if f.runnable {
+        "disk"
+    } else if matches!(m.kind, Kind::Music | Kind::Background) || f.reason.as_deref().is_some_and(|r| r.starts_with("needs about")) {
+        "memory"
+    } else {
+        "card"
+    }
+}
+
+fn count_hidden(list: &mut Vec<Hidden>, kind: Kind, why: &'static str) {
+    match list.iter_mut().find(|h| h.kind == kind && h.why == why) {
+        Some(h) => h.count += 1,
+        None => list.push(Hidden { kind, why, count: 1 }),
+    }
 }
 
 #[tauri::command(async)]
@@ -2620,6 +2675,7 @@ fn view(state: &AppState) -> MediaView {
     let b = Budget::from_hardware(&hw);
     let list = installed(&state.db.lock().unwrap());
     let mut hidden = 0;
+    let mut hidden_by_kind = Vec::new();
     let mut video_note = None;
     let mut models = Vec::new();
     let installing: Vec<String> = state.installs.lock().unwrap().keys().cloned().collect();
@@ -2632,6 +2688,7 @@ fn view(state: &AppState) -> MediaView {
         let f = fit(m, &hw, &b, missing_bytes(&state.paths, m), inst.and_then(|i| i.secs));
         if inst.is_none() && !(f.runnable && f.disk_ok) {
             hidden += 1;
+            count_hidden(&mut hidden_by_kind, m.kind, hidden_why(m, &f));
             if m.kind == Kind::Video && video_note.is_none() {
                 video_note = f.reason.clone().map(|r| format!("Video isn't available on this PC: the smallest video model {r}."));
             }
@@ -2652,7 +2709,7 @@ fn view(state: &AppState) -> MediaView {
         (crate::cloud::media_choices(&conn), gallery)
     };
     let defaults = defaults(&state.db.lock().unwrap());
-    MediaView { models, cloud, hidden, video_note, installing, jobs: list_jobs(), gallery, defaults }
+    MediaView { models, cloud, hidden, hidden_by_kind, video_note, installing, jobs: list_jobs(), gallery, defaults }
 }
 
 #[tauri::command(async)]
@@ -3274,6 +3331,36 @@ mod tests {
         assert_eq!(added, ["-p", "x", "--max-vram", "-1", "-o", "o.png"], "before the output path");
     }
 
+    /// A PC with 8 GB and no graphics card runs the small music model; the
+    /// other two are left out for memory, and the Studio says so per kind.
+    #[test]
+    fn music_models_left_out_are_counted_with_why() {
+        let mut h = Hardware { cpu_cores: Some(8), cpu_threads: 16, avx2: true, ram_total: 8 * GIB, disk_free: 500 * GIB, ..Default::default() };
+        let b = Budget::from_hardware(&h);
+        let mut hidden = Vec::new();
+        for id in ["ace-step-1.5", "ace-step-1.5-xl", "ace-step-1.5-small"] {
+            let m = model(id);
+            let f = fit(&m, &h, &b, m.size(), None);
+            if !(f.runnable && f.disk_ok) {
+                count_hidden(&mut hidden, m.kind, hidden_why(&m, &f));
+            }
+        }
+        assert_eq!(hidden, vec![Hidden { kind: Kind::Music, why: "memory", count: 2 }]);
+        // Room for all of them but not on the disk: "disk".
+        h.ram_total = 32 * GIB;
+        h.disk_free = 6 * GIB;
+        let b = Budget::from_hardware(&h);
+        let xl = model("ace-step-1.5-xl");
+        let f = fit(&xl, &h, &b, xl.size(), None);
+        assert!(f.runnable && !f.disk_ok);
+        assert_eq!(hidden_why(&xl, &f), "disk");
+        let wan = model("wan2.2-ti2v-5b");
+        for vram in [0, 4] {
+            let (h, b) = hw(vram, 8);
+            assert_eq!(hidden_why(&wan, &fit(&wan, &h, &b, 0, None)), "card", "{vram} GB");
+        }
+    }
+
     #[test]
     fn ops_map_to_features() {
         assert_eq!(op_feature("restyle"), Some(Feature::Images));
@@ -3281,5 +3368,16 @@ mod tests {
         assert_eq!(op_feature("video"), Some(Feature::Video));
         assert_eq!(op_feature("narrate"), Some(Feature::Music));
         assert_eq!(op_feature("nonsense"), None);
+    }
+
+    #[test]
+    fn the_vocal_language_follows_the_choice() {
+        use lyrics::Words;
+        let sung = Words::Sung("[Verse]\nhola".into());
+        assert_eq!(vocal_language(Some("es"), &sung).as_deref(), Some("es"));
+        assert_eq!(vocal_language(Some("auto"), &sung), None, "any language: told from the lyrics");
+        assert_eq!(vocal_language(None, &Words::MusicModelWrites).as_deref(), Some("en"), "no words and no choice: English, not made-up words");
+        assert_eq!(vocal_language(Some("ja"), &Words::MusicModelWrites).as_deref(), Some("ja"));
+        assert_eq!(vocal_language(Some("fr"), &Words::Instrumental), None, "nothing sung");
     }
 }

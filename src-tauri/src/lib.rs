@@ -590,7 +590,9 @@ fn hub_why_not(info: &serde_json::Value) -> String {
     let files: Vec<String> = info["siblings"].as_array().into_iter().flatten().map(|s| text(&s["rfilename"])).collect();
     let one_file = files.iter().any(|f| !f.contains('/') && (f.ends_with(".safetensors") || f.ends_with(".ckpt") || f.ends_with(".gguf")));
     let split = files.iter().any(|f| f.starts_with("unet/") || f.starts_with("transformer/")) && !one_file;
-    if (id.contains("flux.1") || bases.contains("flux.1")) && !id.contains("flux.2") {
+    if let Some(why) = media::hub::music_why_not(info) {
+        why.to_string()
+    } else if (id.contains("flux.1") || bases.contains("flux.1")) && !id.contains("flux.2") {
         format!(
             "That FLUX.1 model isn't in a form SulcusAI runs: it needs the model as one .gguf or .safetensors file (city96's GGUF versions work), and FLUX.1 Fill, Kontext, Redux, Depth and Canny aren't supported. {works}"
         )
@@ -603,8 +605,6 @@ fn hub_why_not(info: &serde_json::Value) -> String {
         format!("SulcusAI can't run that picture model yet: it isn't built on one of the kinds it runs. {works}")
     } else if pipeline.contains("video") {
         "SulcusAI can't run that video model yet. Video models from Hugging Face work when they're built on Wan 2.2 5B or Wan 2.1 1.3B.".into()
-    } else if pipeline.contains("audio") || pipeline.contains("music") {
-        "SulcusAI can't run that music model yet. Music models from Hugging Face work when they're built on ACE-Step 1.5.".into()
     } else if matches!(pipeline.as_str(), "text-generation" | "image-text-to-text") {
         "That chat model has no GGUF file, the format SulcusAI runs chat models in. Look for the same model with \"GGUF\" in its name (for example from unsloth or bartowski) and paste that link.".into()
     } else {
