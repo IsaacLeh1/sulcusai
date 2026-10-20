@@ -442,6 +442,38 @@ impl Vault {
     }
 }
 
+/// A setting sealed to this Windows account (DPAPI), for the few kept
+/// outside the encrypted data (they're needed before it's unlocked): a copy
+/// of the database alone doesn't give them away. Elsewhere it's kept as is.
+pub fn local_seal(plain: &str) -> String {
+    #[cfg(windows)]
+    {
+        if plain.is_empty() || plain.starts_with(LOCAL_PREFIX) {
+            return plain.to_string();
+        }
+        match dpapi::Dpapi.protect(plain.as_bytes()) {
+            Ok(b) => format!("{LOCAL_PREFIX}{}", B64.encode(b)),
+            Err(_) => plain.to_string(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        plain.to_string()
+    }
+}
+
+/// Opens what `local_seal` sealed; a value saved plain before reads as it is.
+pub fn local_open(stored: &str) -> String {
+    #[cfg(windows)]
+    if let Some(b64) = stored.strip_prefix(LOCAL_PREFIX) {
+        return B64.decode(b64).ok().and_then(|b| dpapi::Dpapi.unprotect(&b).ok()).and_then(|b| String::from_utf8(b).ok()).unwrap_or_default();
+    }
+    stored.to_string()
+}
+
+#[cfg(windows)]
+const LOCAL_PREFIX: &str = "dp1:";
+
 /// What protects the data key on this system.
 pub fn platform_protector(data: &Path) -> Box<dyn Protector> {
     #[cfg(windows)]
@@ -735,5 +767,17 @@ mod tests {
         let sealed = p.protect(b"data key").unwrap();
         assert_ne!(sealed, b"data key");
         assert_eq!(p.unprotect(&sealed).unwrap(), b"data key");
+    }
+
+    /// Settings kept outside the encrypted data are sealed to the account;
+    /// ones saved plain before still read.
+    #[cfg(windows)]
+    #[test]
+    fn local_settings_are_sealed_and_old_ones_still_read() {
+        let sealed = local_seal("https://relay.example/abc123");
+        assert!(sealed.starts_with("dp1:") && !sealed.contains("relay.example"));
+        assert_eq!(local_open(&sealed), "https://relay.example/abc123");
+        assert_eq!(local_open("sk-sulcus-plain"), "sk-sulcus-plain");
+        assert_eq!(local_seal(&sealed), sealed, "not sealed twice");
     }
 }

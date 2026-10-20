@@ -3045,7 +3045,6 @@
  "How personal (1 to 5)": "私密程度（1 到 5）",
  "Identifying information": "可识别身份的信息",
  "Identifying or sensitive information (level 4 and up)": "可识别身份或敏感的信息（4 级及以上）",
- "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.": "无痕：此对话不会保存，也不会使用或创建记忆。离开后即被删除。",
  "Just your first or your last name.": "只有你的名或姓。",
  "Keys, passwords and secrets, addresses, phone numbers, card and ID numbers, your exact location.": "密钥、密码和机密、地址、电话号码、银行卡号和证件号、你的精确位置。",
  "Left out": "不发送",
@@ -3357,5 +3356,10 @@
  "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "自行修改文件和运行命令。在删除之前、在任何内容离开这台电脑之前，以及在会丢弃工作的命令之前，会先询问。",
  "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "不经询问就修改文件和运行命令，包括删除。把内容发送到这台电脑之外仍会询问。文件更改仍可撤销。",
  "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "连接 Gmail、Outlook 或其他任何邮箱账户，你和助手就能阅读、搜索、总结邮件并起草回复。副本加密保存在这台电脑上；发送前总会先问你。",
- "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "共享文件夹后，助手可以读取和修改文件并运行命令。它会在删除之前或把任何内容发送到这台电脑之外之前先询问。"
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "共享文件夹后，助手可以读取和修改文件并运行命令。它会在删除之前或把任何内容发送到这台电脑之外之前先询问。",
+ "Description": "描述",
+ "Invites": "邀请",
+ "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "无痕：此聊天不会保存，也不会使用或创建记忆。离开时它会被删除，连同在这里生成或粘贴的图片和歌曲（想保留的请先保存）。",
+ "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI 处于完全离线状态，因此不会向云端发送任何内容。",
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "运营该日历的公司会保存这个日程，与该日历共享的任何人都能看到它。"
 }

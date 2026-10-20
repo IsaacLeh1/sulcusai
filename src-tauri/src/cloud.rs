@@ -297,6 +297,8 @@ pub(crate) static PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLock::new
         ("card number", Regex::new(r"\b(?:\d[ -]?){12,18}\d\b").unwrap()),
         ("SSN", Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").unwrap()),
         ("phone", Regex::new(r"(?:\+\d{1,3}[ .-]?)?\(?\b\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}\b").unwrap()),
+        // Other countries' numbers, written with their + code: +44 20 7946 0958.
+        ("phone", Regex::new(r"\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,4}){2,4}\b").unwrap()),
     ]
 });
 
@@ -340,6 +342,9 @@ impl Redactor {
         let mut names = vec![name];
         names.extend(me.first);
         names.extend(me.last);
+        // The Windows account name shows in paths (C:\Users\<name>\...) in
+        // listings, command output and errors, whatever the profile says.
+        names.extend(std::env::var("USERNAME").or_else(|_| std::env::var("USER")).ok().filter(|u| u.chars().count() >= 3));
         Redactor::with_names(&names)
     }
 
@@ -1114,6 +1119,14 @@ pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_from_other_countries_are_phone_numbers() {
+        let mut r = Redactor::default();
+        let out = r.redact("Ring +44 20 7946 0958 or +49 30 1234 5678 after 6.");
+        assert!(!out.contains("7946") && !out.contains("1234 5678"), "{out}");
+        assert!(r.redact("version 2.5.8 of 12 files").contains("2.5.8"));
+    }
 
     #[test]
     fn redacts_and_restores_personal_details() {

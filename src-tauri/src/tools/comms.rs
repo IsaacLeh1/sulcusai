@@ -173,6 +173,20 @@ fn draft(args: &Value) -> Result<Draft, String> {
     Ok(d)
 }
 
+/// An event going to an account's calendar (not one kept on this PC): what
+/// leaves the PC with it, for privacy mode and "What left this PC".
+pub fn calendar_review(state: &AppState, c: &Cipher, args: &Value, me: &crate::outgoing::Me) -> Option<crate::outgoing::Review> {
+    let n = new_event(args).ok()?;
+    let (cal, label) = pick_calendar(state, c, args.get("calendar").and_then(Value::as_str).unwrap_or(""));
+    cal?;
+    let guests = n.attendees.join(", ");
+    Some(crate::outgoing::review_event(
+        &label,
+        &[("title", "Title", &n.title), ("location", "Place", &n.location), ("notes", "Notes", &n.notes), ("attendees", "Invites", &guests)],
+        me,
+    ))
+}
+
 fn new_event(args: &Value) -> Result<NewEvent, String> {
     let title = arg_str(args, "title")?.trim().to_string();
     let start_text = arg_str(args, "start")?;

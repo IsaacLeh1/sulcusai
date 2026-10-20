@@ -90,21 +90,29 @@ pub struct Peer {
 
 fn config(conn: &rusqlite::Connection) -> Config {
     let mut c: Config = db::get(conn, KEY).unwrap_or_default();
+    c.relay_url = c.relay_url.map(|u| crate::crypto::local_open(&u)).filter(|u| !u.is_empty());
     if c.name.trim().is_empty() {
         c.name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "This PC".into());
     }
     if c.epoch.is_empty() {
         c.epoch = uuid::Uuid::new_v4().simple().to_string();
-        let _ = db::set(conn, KEY, &c);
+        let _ = save(conn, &c);
     }
     c
+}
+
+/// Saves the settings with the relay address sealed (it carries the relay's secret).
+fn save(conn: &rusqlite::Connection, c: &Config) -> Result<(), String> {
+    let mut sealed = c.clone();
+    sealed.relay_url = sealed.relay_url.map(|u| crate::crypto::local_seal(&u));
+    db::set(conn, KEY, &sealed)
 }
 
 fn update<R>(state: &AppState, f: impl FnOnce(&mut Config) -> R) -> Result<R, String> {
     let conn = state.db.lock().unwrap();
     let mut c = config(&conn);
     let r = f(&mut c);
-    db::set(&conn, KEY, &c)?;
+    save(&conn, &c)?;
     Ok(r)
 }
 
@@ -117,7 +125,7 @@ pub fn after_restore(conn: &rusqlite::Connection) {
         p.recv_since = 0;
         p.relay.sent = 0;
     }
-    let _ = db::set(conn, KEY, &c);
+    let _ = save(conn, &c);
 }
 
 /// This PC's id: kept in its own file, so a database restored onto another
@@ -924,6 +932,8 @@ pub fn cancel_pairing(state: AppStateRef) -> SyncView {
 /// address), or the only one nearby showing a code.
 #[tauri::command]
 pub async fn pair_device(state: AppStateRef<'_>, code: String, target: Option<String>) -> Result<SyncView, String> {
+    // Pairing opens a connection on the local network.
+    crate::offline::check(crate::offline::Keep::LocalNetwork)?;
     let code = clean_code(&code).ok_or("A code is 8 letters and numbers, like K7Q2-9XMB.")?;
     let target = target.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let addr = match target {

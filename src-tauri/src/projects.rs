@@ -170,14 +170,14 @@ pub fn remove_project_folder(state: AppStateRef, id: String, path: String) -> Re
 #[tauri::command(async)]
 pub fn create_chat_in(state: AppStateRef, project_id: Option<String>, incognito: bool) -> Result<Chat, String> {
     let c = state.cipher()?;
+    // Only one incognito chat at a time; leaving one deletes it, with what it left.
+    crate::clear_incognito(&state, None)?;
     let conn = state.db.lock().unwrap();
     if let Some(pid) = &project_id {
         if !exists(&conn, pid) {
             return Err("That project no longer exists.".into());
         }
     }
-    // Only one incognito chat at a time; leaving one deletes it.
-    db::delete_incognito_chats(&conn, None)?;
     // A new chat that was never written in is replaced, not kept.
     db::delete_empty_chats(&conn)?;
     let model = db::settings(&conn).default_model;
@@ -187,8 +187,7 @@ pub fn create_chat_in(state: AppStateRef, project_id: Option<String>, incognito:
 #[tauri::command(async)]
 pub fn leave_incognito(state: AppStateRef, keep: Option<String>) -> Result<(), String> {
     state.cipher()?;
-    db::delete_incognito_chats(&state.db.lock().unwrap(), keep.as_deref())?;
-    Ok(())
+    crate::clear_incognito(&state, keep.as_deref())
 }
 
 #[tauri::command(async)]

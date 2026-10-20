@@ -43,11 +43,17 @@ fn new_key() -> String {
 /// The settings, with a key made on first use.
 fn settings(conn: &Connection) -> ApiSettings {
     let mut s: ApiSettings = db::get(conn, KEY).unwrap_or_default();
+    s.key = crate::crypto::local_open(&s.key);
     if s.key.is_empty() {
         s.key = new_key();
-        let _ = db::set(conn, KEY, &s);
+        let _ = save(conn, &s);
     }
     s
+}
+
+/// Saves the settings with the key sealed to this Windows account.
+fn save(conn: &Connection, s: &ApiSettings) -> Result<(), String> {
+    db::set(conn, KEY, &ApiSettings { key: crate::crypto::local_seal(&s.key), ..s.clone() })
 }
 
 struct Running {
@@ -232,7 +238,7 @@ pub async fn set_api_server(state: AppStateRef<'_>, enabled: bool, port: u16) ->
         let was = s.enabled;
         s.enabled = enabled;
         s.port = port;
-        db::set(&conn, KEY, &s)?;
+        save(&conn, &s)?;
         drop(conn);
         if was != enabled {
             let note = if enabled { format!("Turned on the local API server (127.0.0.1:{port})") } else { "Turned off the local API server".into() };
@@ -252,7 +258,7 @@ pub fn new_api_key(state: AppStateRef) -> Result<ApiServerView, String> {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
         s.key = new_key();
-        db::set(&conn, KEY, &s)?;
+        save(&conn, &s)?;
     }
     state.log("settings", "Made a new key for the local API server");
     apply(state.inner().clone());

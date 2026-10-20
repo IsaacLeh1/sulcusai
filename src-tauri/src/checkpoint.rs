@@ -153,6 +153,16 @@ pub fn prune(conn: &Connection) {
     }
 }
 
+/// Removes a chat's backups (an incognito chat's, when it's left).
+pub fn forget_chat(conn: &Connection, chat_id: &str) {
+    for (id, backup) in db::chat_checkpoints(conn, chat_id) {
+        if let Some(b) = backup {
+            let _ = std::fs::remove_file(b);
+        }
+        let _ = db::delete_checkpoint(conn, id);
+    }
+}
+
 /// Moves a file or folder to the Recycle Bin, so deletes can be recovered.
 #[cfg(windows)]
 pub fn recycle(path: &Path) -> Result<(), String> {

@@ -206,6 +206,17 @@ pub fn delete_attachments(conn: &Connection, paths: &Paths, chat_id: &str) {
     }
 }
 
+/// Everything made in a chat or attached to it (an incognito chat, when it's left).
+pub fn delete_chat_items(conn: &Connection, paths: &Paths, chat_id: &str) {
+    let ids: Vec<String> = conn
+        .prepare("SELECT id FROM media WHERE chat_id = ?1")
+        .and_then(|mut s| s.query_map([chat_id], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()))
+        .unwrap_or_default();
+    for id in ids {
+        let _ = delete(conn, paths, &id);
+    }
+}
+
 /// Everything made in a chat or attached to it, newest first.
 pub fn in_chat(conn: &Connection, cipher: &Cipher, chat_id: &str) -> Vec<MediaItem> {
     let Ok(mut stmt) = conn.prepare("SELECT data FROM media WHERE chat_id = ?1 ORDER BY created_at DESC LIMIT 200") else { return Vec::new() };

@@ -500,6 +500,23 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
 }
 
 /// Incognito chats don't outlive the session.
+/// The incognito chats there are, but `except`.
+pub fn incognito_chat_ids(conn: &Connection, except: Option<&str>) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT id FROM chats WHERE incognito = 1 AND id != ?1") else { return Vec::new() };
+    stmt.query_map([except.unwrap_or("")], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
+/// Whether a chat is incognito (a chat that's gone counts as not).
+pub fn chat_incognito(conn: &Connection, id: &str) -> bool {
+    conn.query_row("SELECT incognito FROM chats WHERE id = ?1", [id], |r| r.get::<_, i64>(0)).is_ok_and(|v| v == 1)
+}
+
+/// A chat's file backups: (row, the backup file if one was kept).
+pub fn chat_checkpoints(conn: &Connection, chat_id: &str) -> Vec<(i64, Option<String>)> {
+    let Ok(mut stmt) = conn.prepare("SELECT id, backup FROM checkpoints WHERE chat_id = ?1") else { return Vec::new() };
+    stmt.query_map([chat_id], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
 pub fn delete_incognito_chats(conn: &Connection, except: Option<&str>) -> Result<usize, String> {
     conn.execute("DELETE FROM chats WHERE incognito = 1 AND id != ?1", [except.unwrap_or("")]).map_err(err)
 }

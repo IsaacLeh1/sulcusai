@@ -1560,6 +1560,30 @@ pub(crate) fn delete_chat_now(state: &AppState, chat_id: &str) -> Result<(), Str
     Ok(())
 }
 
+/// Deletes the incognito chats (but `keep`) and everything they left
+/// behind: pasted and made pictures with their descriptions, file backups,
+/// what they sent under "What left this PC", folder links, locks, previews.
+pub(crate) fn clear_incognito(state: &AppState, keep: Option<&str>) -> Result<(), String> {
+    let ids = db::incognito_chat_ids(&state.db.lock().unwrap(), keep);
+    for id in &ids {
+        state.contexts.lock().unwrap().remove(id);
+        state.approvals.forget_chat(id);
+        preview::stop_chat(id);
+    }
+    let conn = state.db.lock().unwrap();
+    for id in &ids {
+        media::store::delete_chat_items(&conn, &state.paths, id);
+        folders::forget_chat(&conn, id);
+        cleanup::forget_chat(&conn, id);
+        checkpoint::forget_chat(&conn, id);
+    }
+    if let Ok(c) = state.cipher() {
+        outgoing::forget_chats(&conn, &c, &ids);
+    }
+    db::delete_incognito_chats(&conn, keep)?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn rename_chat(state: AppStateRef, chat_id: String, title: String) -> Result<(), String> {
     let c = state.cipher()?;
@@ -2273,7 +2297,7 @@ pub fn run() {
             // What a crash may have left: picture/video work, teaching data.
             media::clean_work(&state.paths);
             finetune::clean_leftovers(&state.paths);
-            let _ = db::delete_incognito_chats(&state.db.lock().unwrap(), None);
+            let _ = clear_incognito(&state, None);
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
             let _ = state.app.set(app.handle().clone());
@@ -2747,5 +2771,41 @@ mod hub_link_tests {
         assert!(split.contains("split into folders"), "{split}");
         let chat = super::hub_why_not(&json!({ "id": "Qwen/Qwen3-8B", "pipeline_tag": "text-generation" }));
         assert!(chat.contains("no GGUF file") && chat.contains("unsloth"), "{chat}");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod incognito_tests {
+    /// Leaving an incognito chat takes everything it left with it: pictures
+    /// pasted or made there, file backups, and what it sent; other chats keep theirs.
+    #[test]
+    fn leaving_an_incognito_chat_leaves_nothing_behind() {
+        let state = crate::e2e::temp_state(Some(std::env::temp_dir().join(format!("sulcusai-inc-models-{}", uuid::Uuid::new_v4().simple()))));
+        let c = state.cipher().unwrap();
+        let (secret, kept) = {
+            let conn = state.db.lock().unwrap();
+            let secret = crate::db::create_chat_in(&conn, &c, None, None, true).unwrap().id;
+            let kept = crate::db::create_chat_in(&conn, &c, None, None, false).unwrap().id;
+            for (chat, hidden) in [(&secret, true), (&secret, false), (&kept, true)] {
+                let item = crate::media::store::MediaItem { id: crate::media::store::new_id(), kind: "image".into(), op: "paste".into(), mime: "image/png".into(), chat_id: Some(chat.clone()), hidden, ..Default::default() };
+                crate::media::store::save(&conn, &state.paths, &c, item, b"png", None).unwrap();
+            }
+            let backup = state.paths.data.join("x.bak");
+            std::fs::write(&backup, b"old").unwrap();
+            crate::db::add_checkpoint(&conn, &c, &secret, "t", "write", "C:/x.txt", None, Some(&backup.display().to_string())).unwrap();
+            (secret, kept)
+        };
+        let r = crate::outgoing::review_event("your Outlook calendar", &[("title", "Title", "dentist")], &crate::outgoing::Me::new("", vec![], ""));
+        crate::outgoing::record(&state, &c, &secret, "calendar_create_event", &r, true);
+        crate::outgoing::record(&state, &c, &kept, "calendar_create_event", &r, true);
+        super::clear_incognito(&state, None).unwrap();
+        let conn = state.db.lock().unwrap();
+        assert!(crate::media::store::in_chat(&conn, &c, &secret).is_empty());
+        assert_eq!(crate::media::store::in_chat(&conn, &c, &kept).len(), 1);
+        assert!(crate::db::chat_checkpoints(&conn, &secret).is_empty() && !state.paths.data.join("x.bak").exists());
+        drop(conn);
+        let sent = crate::outgoing::sent_list(&state.db.lock().unwrap(), &c);
+        assert!(sent.iter().all(|s| s.chat_id != secret) && sent.iter().any(|s| s.chat_id == kept));
+        let _ = std::fs::remove_dir_all(&state.paths.data);
     }
 }

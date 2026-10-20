@@ -43,7 +43,8 @@ pub fn allowed(level: Connectivity, purpose: Purpose, chat_web: bool) -> bool {
     let kept = match purpose {
         Purpose::ModelDownload => !crate::offline::blocks(crate::offline::Keep::Downloads),
         Purpose::Search | Purpose::Web => !crate::offline::blocks(crate::offline::Keep::Web),
-        Purpose::Cloud => true,
+        // Fully offline never keeps the cloud, whatever the level says.
+        Purpose::Cloud => !crate::offline::on(),
     };
     kept && match purpose {
         Purpose::ModelDownload => true,
@@ -98,6 +99,7 @@ pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) ->
     match purpose {
         Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
         Purpose::Search | Purpose::Web => crate::offline::check(crate::offline::Keep::Web)?,
+        Purpose::Cloud if crate::offline::on() => return Err("SulcusAI is fully offline, so nothing goes to the cloud.".into()),
         Purpose::Cloud => {}
     }
     if !allowed(level, purpose, chat_web) {

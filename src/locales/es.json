@@ -3045,7 +3045,6 @@
  "How personal (1 to 5)": "Qué tan personal (1 a 5)",
  "Identifying information": "Información identificativa",
  "Identifying or sensitive information (level 4 and up)": "Información identificativa o sensible (nivel 4 o más)",
- "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.": "Incógnito: este chat no se guarda y no usa ni crea recuerdos. Se borra cuando lo dejas.",
  "Just your first or your last name.": "Solo tu nombre o tu apellido.",
  "Keys, passwords and secrets, addresses, phone numbers, card and ID numbers, your exact location.": "Claves, contraseñas y secretos, direcciones, números de teléfono, números de tarjeta y de identidad, tu ubicación exacta.",
  "Left out": "No se envía",
@@ -3357,5 +3356,10 @@
  "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "Cambia archivos y ejecuta comandos por su cuenta. Pregunta antes de borrar, antes de que algo salga de este PC y antes de comandos que descartan trabajo.",
  "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "Cambia archivos y ejecuta comandos sin preguntar, borrados incluidos. Enviar algo fuera de este PC sigue preguntando. Deshacer sigue funcionando para los cambios de archivos.",
  "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "Conecta Gmail, Outlook o cualquier otra cuenta de correo para que tú y el asistente puedan leerla, buscar en ella, resumirla y redactar respuestas. Se guarda una copia cifrada en este PC; enviar siempre te pregunta primero.",
- "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "Comparte carpetas para que el asistente pueda leer y cambiar archivos y ejecutar comandos. Pregunta antes de borrar o de enviar algo fuera de este PC."
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "Comparte carpetas para que el asistente pueda leer y cambiar archivos y ejecutar comandos. Pregunta antes de borrar o de enviar algo fuera de este PC.",
+ "Description": "Descripción",
+ "Invites": "Invitaciones",
+ "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "Incógnito: este chat no se guarda y no usa ni crea recuerdos. Se borra cuando lo dejas, junto con las imágenes y canciones creadas o pegadas aquí (guarda las que quieras conservar).",
+ "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI está completamente sin conexión, así que nada va a la nube.",
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "La empresa que gestiona el calendario guarda el evento, y cualquiera con quien se comparta el calendario puede verlo."
 }

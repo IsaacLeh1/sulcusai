@@ -591,7 +591,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <div className={`chat-banner ${chat.incognito ? "incognito" : ""}`}>
           {chat.incognito ? (
             <>
-              <IncognitoIcon /> {t("Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.")}
+              <IncognitoIcon /> {t("Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).")}
             </>
           ) : projectName ? t("In project {name}", { name: projectName }) : null}
           {chat.parent_id && (

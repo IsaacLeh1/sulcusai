@@ -18,6 +18,11 @@ export const LEVELS = [
 /** Texts the core sends in a review, listed so they're translated. */
 export const REVIEW_TEXTS = [
   tx("Search words"),
+  tx("Description"),
+  tx("Picture"),
+  tx("Title"),
+  tx("Notes"),
+  tx("Invites"),
   tx("Question"),
   tx("Web address"),
   tx("Typed into the page"),

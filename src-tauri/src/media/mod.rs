@@ -804,6 +804,12 @@ fn cloud_pick(state: &AppState, req: &Request) -> Option<String> {
     crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| cloud_can(c, &req.op)).map(|c| c.id)
 }
 
+/// The online model a job would go to, with its provider: (provider, model name).
+pub(crate) fn cloud_target(state: &AppState, req: &Request) -> Option<(String, String)> {
+    let id = cloud_pick(state, req)?;
+    crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| c.id == id).map(|c| (c.provider, c.name))
+}
+
 /// Any model, here or in the cloud, can make this kind of thing.
 pub fn can_make(state: &AppState, kind: Kind) -> bool {
     use crate::cloud::MediaKind;

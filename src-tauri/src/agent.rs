@@ -1251,7 +1251,17 @@ impl Turn {
         // listed under "What left this PC".
         let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
         let cx = if crate::outgoing::is_external(&call.name, &args) { Some(crate::outgoing::context(&self.state, &self.cipher)) } else { None };
-        let review = cx.as_ref().and_then(|cx| crate::outgoing::review(&call.name, &args, cx));
+        let mut review = cx.as_ref().and_then(|cx| crate::outgoing::review(&call.name, &args, cx));
+        // A picture or video an online model would make (nothing here can).
+        if review.is_none() && matches!(call.name.as_str(), "create_image" | "edit_image" | "create_video") {
+            let me = crate::outgoing::context(&self.state, &self.cipher).me;
+            review = tools::media::cloud_review(&self.state, &call.name, &args, &me);
+        }
+        // An event written to an account's calendar goes to its company.
+        if review.is_none() && call.name == "calendar_create_event" {
+            let me = crate::outgoing::context(&self.state, &self.cipher).me;
+            review = tools::comms::calendar_review(&self.state, &self.cipher, &args, &me);
+        }
         let mut asked = false;
         // "Allow for this chat" never covers a delete or another call that
         // asks even in Auto: each one asks.
@@ -1339,6 +1349,7 @@ impl Turn {
             }
             // As it really goes, after any changes.
             let sent = cx.as_ref().and_then(|cx| crate::outgoing::review(&call.name, &args, cx)).unwrap_or(r);
+            // (A chat's online picture job is listed here, not again by the job.)
             crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, &sent, true);
             if privacy.on {
                 self.log(&format!("Sent to {} (privacy level {} of 5)", sent.to, sent.level));
@@ -2190,7 +2201,11 @@ impl Turn {
 
     /// Agent actions go in the activity log, encrypted (they name files).
     fn log(&self, summary: &str) {
-        db::log_action_enc(&self.state.db.lock().unwrap(), &self.cipher, "agent", summary);
+        let conn = self.state.db.lock().unwrap();
+        // An incognito chat leaves no lines in Activity.
+        if !db::chat_incognito(&conn, &self.chat_id) {
+            db::log_action_enc(&conn, &self.cipher, "agent", summary);
+        }
     }
 }
 

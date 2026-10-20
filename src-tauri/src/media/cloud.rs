@@ -113,6 +113,14 @@ fn charge(ctx: &RunCtx<'_>, t: &MediaTarget, units: f64, what: &str, redacted: u
 /// Runs a job on a cloud model. `id` is its "cloud:provider:model" id.
 pub async fn run(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget) -> Result<Vec<MediaItem>, String> {
     let client = cloud::media_client(ctx.state)?;
+    // Listed under "What left this PC" (a chat's job is listed by the chat).
+    if ctx.req.chat_id.is_none() {
+        if let Ok(c) = ctx.state.cipher() {
+            let me = crate::outgoing::context(ctx.state, &c).me;
+            let r = crate::outgoing::review_media(&t.provider, &t.model.name, &ctx.req.prompt, ctx.req.source.is_some(), &me);
+            crate::outgoing::record(ctx.state, &c, "", "cloud_media", &r, true);
+        }
+    }
     match (t.model.kind, ctx.req.op.as_str()) {
         (MediaKind::Image, "generate") => generate(ctx, id, t, &client).await,
         (MediaKind::Image, "edit" | "restyle" | "fill") => edit(ctx, id, t, &client).await,

@@ -163,6 +163,25 @@ async fn ask_first(name: &str, args: &Value, req: &Request, ctx: &Ctx<'_>) -> Op
     Some(o)
 }
 
+/// What a chat's picture or video job would send to an online model (when
+/// one would make it), so privacy mode can ask and it's listed under "What
+/// left this PC".
+pub fn cloud_review(state: &crate::AppState, name: &str, args: &Value, me: &crate::outgoing::Me) -> Option<crate::outgoing::Review> {
+    let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).unwrap_or_default().to_string();
+    let (op, prompt, picture) = match name {
+        "create_image" => ("generate".to_string(), s("prompt"), false),
+        "edit_image" => {
+            let action = s("action");
+            (if matches!(action.as_str(), "restyle" | "upscale" | "remove_background") { action } else { "edit".into() }, s("instruction"), true)
+        }
+        "create_video" => ("video".to_string(), s("prompt"), !s("image").is_empty()),
+        _ => return None,
+    };
+    let req = Request { op, prompt, source: picture.then(|| "picture".to_string()), ..Default::default() };
+    let (provider, model) = media::cloud_target(state, &req)?;
+    Some(crate::outgoing::review_media(&provider, &model, &req.prompt, picture, me))
+}
+
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     let state: Arc<crate::AppState> = ctx.state.clone();
     let s = |k: &str| args.get(k).and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()).map(str::to_string);

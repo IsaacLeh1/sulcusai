@@ -10,7 +10,7 @@ mod documents;
 pub(crate) mod fs;
 pub(crate) mod guard;
 mod lookup;
-mod media;
+pub(crate) mod media;
 mod meetings;
 mod memory;
 mod notes;

@@ -3045,7 +3045,6 @@
  "How personal (1 to 5)": "個人情報の度合い（1〜5）",
  "Identifying information": "本人を特定できる情報",
  "Identifying or sensitive information (level 4 and up)": "本人を特定できる情報や機密情報（レベル 4 以上）",
- "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it.": "シークレット：このチャットは保存されず、記憶を使うことも作ることもありません。チャットを離れると削除されます。",
  "Just your first or your last name.": "名前か名字のどちらかだけ。",
  "Keys, passwords and secrets, addresses, phone numbers, card and ID numbers, your exact location.": "キー、パスワード、秘密情報、住所、電話番号、カード番号や身分証の番号、正確な位置。",
  "Left out": "送らない",
@@ -3357,5 +3356,10 @@
  "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "ファイルの変更とコマンドの実行を自分で行います。削除の前、何かがこのPCの外に出る前、作業を捨てるコマンドの前には確認します。",
  "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "確認せずにファイルを変更し、コマンドを実行します（削除も含む）。このPCの外に何かを送るときは引き続き確認します。ファイルの変更は元に戻せます。",
  "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "Gmail、Outlook、その他のメールアカウントを接続すると、あなたとアシスタントがメールを読み、検索し、要約し、返信の下書きを作れます。コピーはこのPCに暗号化して保存され、送信の前には必ず確認します。",
- "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "フォルダーを共有すると、アシスタントがファイルを読んで変更し、コマンドを実行できます。削除の前と、このPCの外に何かを送る前には確認します。"
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "フォルダーを共有すると、アシスタントがファイルを読んで変更し、コマンドを実行できます。削除の前と、このPCの外に何かを送る前には確認します。",
+ "Description": "説明",
+ "Invites": "招待",
+ "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "シークレット：このチャットは保存されず、メモリを使ったり作ったりしません。チャットを離れると、ここで作成または貼り付けた画像や曲とともに削除されます（残したいものは保存してください）。",
+ "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI は完全オフラインのため、クラウドには何も送られません。",
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "カレンダーを運営する会社がこの予定を保存し、カレンダーを共有している人は誰でも見ることができます。"
 }

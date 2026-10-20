@@ -457,6 +457,47 @@ pub fn review_connector(connector: &str, args: &Value, me: &Me) -> Review {
     }
 }
 
+/// An event written to an account's calendar (Google, Outlook, CalDAV):
+/// what the account's company receives.
+pub fn review_event(to: &str, fields: &[(&str, &str, &str)], me: &Me) -> Review {
+    let items: Vec<Item> = fields.iter().filter(|(_, _, v)| !v.is_empty()).map(|(k, label, v)| text_item(k, label, v, me, 3, false, false)).collect();
+    let found: Vec<Found> = items.iter().flat_map(|i| find(&i.value, me)).collect();
+    let lv = items.iter().map(|i| i.level).max().unwrap_or(1);
+    Review {
+        kind: "tool".into(),
+        level: lv,
+        level_name: level_name(lv).into(),
+        to: to.to_string(),
+        items,
+        could: vec![CALENDAR_COULD.into()],
+        found,
+        note: None,
+    }
+}
+
+pub const CALENDAR_COULD: &str = "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.";
+
+/// A picture or video job on an online model: the description and any
+/// picture it works from.
+pub fn review_media(provider: &str, model: &str, prompt: &str, picture: bool, me: &Me) -> Review {
+    let mut items = vec![text_item("prompt", "Description", prompt, me, 3, false, false)];
+    if picture {
+        items.push(Item { key: None, label: "Picture".into(), value: "1".into(), level: 4, editable: false, removable: false });
+    }
+    let found: Vec<Found> = items.iter().flat_map(|i| find(&i.value, me)).collect();
+    let lv = items.iter().map(|i| i.level).max().unwrap_or(1);
+    Review {
+        kind: "tool".into(),
+        level: lv,
+        level_name: level_name(lv).into(),
+        to: format!("{provider} ({model}, online)"),
+        items,
+        could: vec![CLOUD_COULD.into()],
+        found,
+        note: None,
+    }
+}
+
 pub const CLOUD_COULD: &str = "AI companies keep what they're sent for a while (often about 30 days) to check for misuse. Depending on your account's settings, some use it to improve their models, and their staff may read conversations that get flagged.";
 pub const REDACTED_NOTE: &str = "Emails, phone numbers, card and ID numbers, keys, street addresses and your name are swapped for placeholders before sending, and put back in the reply.";
 pub const NOT_REDACTED_NOTE: &str = "Cloud redaction is off (Settings, Cloud models), so everything goes as written.";
@@ -529,7 +570,7 @@ const SENT_KEY: &str = "sent_log";
 const SENT_KEEP: usize = 1000;
 const SENT_DAYS: i64 = 30;
 
-fn sent_list(conn: &rusqlite::Connection, c: &crate::crypto::Cipher) -> Vec<Sent> {
+pub(crate) fn sent_list(conn: &rusqlite::Connection, c: &crate::crypto::Cipher) -> Vec<Sent> {
     crate::db::get::<String>(conn, SENT_KEY).and_then(|s| c.decrypt(&s).ok()).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
 }
 
@@ -544,6 +585,21 @@ pub fn record(state: &crate::AppState, c: &crate::crypto::Cipher, chat_id: &str,
     list.truncate(SENT_KEEP);
     if let Ok(json) = serde_json::to_string(&list) {
         let _ = crate::db::set(&conn, SENT_KEY, &c.encrypt(&json));
+    }
+}
+
+/// Leaves out what left the PC from these chats (incognito ones, when they're left).
+pub fn forget_chats(conn: &rusqlite::Connection, c: &crate::crypto::Cipher, chats: &[String]) {
+    if chats.is_empty() {
+        return;
+    }
+    let mut list = sent_list(conn, c);
+    let before = list.len();
+    list.retain(|s| !chats.contains(&s.chat_id));
+    if list.len() != before {
+        if let Ok(json) = serde_json::to_string(&list) {
+            let _ = crate::db::set(conn, SENT_KEY, &c.encrypt(&json));
+        }
     }
 }
 
@@ -741,6 +797,17 @@ mod tests {
         let plain = review_cloud("OpenAI", "what's a monad", "", "", "", &[], 0, false, &me());
         assert_eq!(plain.level, 3);
         assert_eq!(plain.note.as_deref(), Some(NOT_REDACTED_NOTE));
+    }
+
+    #[test]
+    fn calendar_events_and_online_pictures_say_what_goes_where() {
+        let e = review_event("your Outlook calendar", &[("title", "Title", "Therapy with Dr X"), ("location", "Place", "12 Elm Street"), ("notes", "Notes", "")], &me());
+        assert_eq!(e.to, "your Outlook calendar");
+        assert_eq!(e.items.len(), 2, "empty fields left out");
+        assert_eq!(e.level, 5, "a street address");
+        let p = review_media("OpenAI", "gpt-image-1", "remove the car", true, &me());
+        assert!(p.to.contains("OpenAI") && p.items.iter().any(|i| i.label == "Picture"));
+        assert_eq!(p.level, 4);
     }
 
     #[test]
