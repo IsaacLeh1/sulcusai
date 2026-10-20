@@ -66,8 +66,8 @@ type Status = "idle" | "loading" | "thinking" | "writing" | "working";
 
 const MODES: { id: RunMode; label: string; help: string }[] = [
   { id: "plan", label: tx("Plan"), help: tx("Looks around and proposes a plan. Changes nothing until you approve.") },
-  { id: "auto", label: tx("Auto"), help: tx("Reads freely; asks before changing files or running commands.") },
-  { id: "bypass", label: tx("Bypass"), help: tx("Changes files and runs commands without asking. Undo still works for file changes.") },
+  { id: "auto", label: tx("Auto"), help: tx("Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.") },
+  { id: "bypass", label: tx("Bypass"), help: tx("Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.") },
 ];
 
 export function ChatView(props: Props) {

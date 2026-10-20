@@ -775,7 +775,17 @@ pub(crate) fn harmony_calls(text: &str, offered: &[String]) -> (Vec<ToolCall>, S
     rest.push_str(&text[at..]);
     let rest = HARMONY_TOKEN.replace_all(&rest, " ");
     let rest = rest.replace("assistantcommentary", " ").replace("assistantanalysis", " ").replace("assistantfinal", " ");
-    (calls, rest.split_whitespace().collect::<Vec<_>>().join(" ").trim().to_string())
+    // Line breaks kept (lists, code blocks); only the gaps the tokens left are tidied.
+    let mut tidy = String::new();
+    let mut blank = 0;
+    for line in rest.lines().map(str::trim_end) {
+        blank = if line.trim().is_empty() { blank + 1 } else { 0 };
+        if blank < 2 {
+            tidy.push_str(line);
+            tidy.push('\n');
+        }
+    }
+    (calls, tidy.trim().to_string())
 }
 
 /// Small models sometimes write a tool call into their thinking or their

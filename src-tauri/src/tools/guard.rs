@@ -55,9 +55,137 @@ static NEVER: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
 /// Words that delete, move or change permissions: every path such a command
 /// names must be inside the shared folders.
 static DESTROYS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(^|[\s;|&(])(remove-item|ri|rm|rmdir|rd|del|erase|clear-content|clear-item|move-item|mv|move|robocopy|rimraf|icacls|attrib)(\.exe)?([\s;|&)]|$)")
+    Regex::new(r"(?i)(^|[\s;|&(])(remove-item|ri|rm|rmdir|rd|del|erase|clear-content|clear-item|move-item|mv|move|rename-item|rni|ren|rename|robocopy|rimraf|icacls|attrib)(\.exe)?([\s;|&)]|$)")
         .expect("a valid pattern")
 });
+
+/// The same words inside a command handed to another shell in quotes:
+/// `powershell -c "Remove-Item …"`, `cmd /c "rd /s …"`.
+static QUOTED_DESTROYS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\s-c|\s-command|\s/c|\s/k|\biex|\binvoke-expression|-argumentlist)\s*\(?\s*['"]\s*(remove-item|ri|rm|rmdir|rd|del|erase|clear-content|move-item|mv|move|rename-item|ren|robocopy|rimraf|icacls|attrib)(\.exe)?\b"#)
+        .expect("a valid pattern")
+});
+
+/// Text a command only says or records: a commit message, what's echoed.
+/// "move the button" there isn't a move.
+static MESSAGES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)(\s-m|\s--message|\s-message|\becho|\bwrite-(?:host|output|error|warning|verbose)|\bprint)(\s*=?\s*)("[^"]*"|'[^']*')"#).expect("a valid pattern")
+});
+
+/// The command with what it only says left out (see `MESSAGES`).
+fn without_messages(command: &str) -> std::borrow::Cow<'_, str> {
+    MESSAGES.replace_all(command, "$1$2\"\"")
+}
+
+/// Copying: what it copies to must be inside the shared folders (copying
+/// from anywhere into them is fine).
+static COPIES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^|[\s;|&(])(?:copy-item|cpi|cp|copy|xcopy)(?:\.exe)?\s+([^;|&\n]+)").expect("a valid pattern")
+});
+
+/// Commands whose effect can't be read from the words: run from a string,
+/// encoded, built in a variable, or deleting through .NET, Python or Node,
+/// or hidden with cmd's `^` escape (`r^d`).
+static HIDDEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)\b(invoke-expression|iex)\b",
+        r"|\b(powershell|pwsh)(\.exe)?\b[^\n]*\s-(e|ec|en|enc|encodedcommand)\s+[A-Za-z0-9+/=]{16,}",
+        r"|(^|[\s;|(])&\s*\$",
+        r"|\[(system\.)?io\.(file|directory|fileinfo|directoryinfo)\]::(delete|move|replace)\b",
+        r"|\bshutil\.(rmtree|move)\b|\bos\.(remove|unlink|rmdir|removedirs|rename|replace)\s*\(|\.(unlink|rmdir|rmtree)\s*\(",
+        r"|\bfs(\.promises)?\.(rm|rmdir|unlink|rename)(sync)?\s*\(|\b(rmsync|unlinksync|rmdirsync|renamesync)\s*\(",
+        r"|\bcmd(\.exe)?\s+/[ck]\b[^\n]*\^",
+    ))
+    .expect("a valid pattern")
+});
+
+/// Making something start with Windows or run on its own later.
+static STARTS_UP: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bschtasks(\.exe)?\s+/create\b|\b(register-scheduledtask|new-scheduledtask|new-service)\b|\bsc(\.exe)?\s+create\b|currentversion\\run(once)?\b|programs\\startup\b|shell:startup")
+        .expect("a valid pattern")
+});
+
+/// Loosening Windows' protection, or asking for administrator rights.
+static LOOSENS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bset-executionpolicy\b|\bnetsh\b[^\n]*\badvfirewall\b[^\n]*\b(add|set)\b|\b(new|set)-netfirewallrule\b|-verb\s+['"]?runas\b|\b(sudo|gsudo)\b"#)
+        .expect("a valid pattern")
+});
+
+/// Links to other folders: a later write through one lands outside.
+static LINKS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\bmklink\b|-itemtype\s+['"]?(junction|symboliclink|hardlink)\b|\bln\s+-s"#).expect("a valid pattern")
+});
+
+/// Where each copy in a command copies to: `-Destination x`, else the last
+/// plain word after the copy (one word alone copies into the current folder).
+fn copy_targets(command: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for c in COPIES.captures_iter(command) {
+        let words: Vec<String> = split_words(&c[1]);
+        let mut plain = Vec::new();
+        let mut i = 0;
+        while i < words.len() {
+            let w = &words[i];
+            let lower = w.to_lowercase();
+            if let Some((_, d)) = lower.split_once(':').filter(|(n, _)| n.len() >= 3 && "-destination".starts_with(n)) {
+                out.push(w[w.len() - d.len()..].to_string());
+                plain.clear();
+                break;
+            }
+            // PowerShell takes any start of a parameter's name: -Dest.
+            if lower.len() >= 3 && "-destination".starts_with(lower.as_str()) {
+                if let Some(d) = words.get(i + 1) {
+                    out.push(d.clone());
+                }
+                plain.clear();
+                break;
+            }
+            let flag = w.starts_with('-') || (cfg!(windows) && w.starts_with('/'));
+            if flag {
+                // PowerShell's -Path takes the next word as what's copied.
+                if lower == "-path" || lower == "-literalpath" {
+                    if let Some(p) = words.get(i + 1) {
+                        plain.push(p.clone());
+                    }
+                    i += 1;
+                }
+            } else {
+                plain.push(w.clone());
+            }
+            i += 1;
+        }
+        if plain.len() >= 2 {
+            out.push(plain.pop().unwrap_or_default());
+        } else if plain.len() == 1 {
+            out.push(".".into());
+        }
+    }
+    out
+}
+
+/// Words of a command, with quoted parts kept whole.
+fn split_words(s: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for ch in s.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => cur.push(c),
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, c) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    words.push(std::mem::take(&mut cur));
+                }
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        words.push(cur);
+    }
+    words
+}
 
 /// Words that write a file: only what they write to must be inside the
 /// shared folders (what they read may be anywhere: listing the home folder
@@ -94,8 +222,10 @@ pub fn refuse(command: &str, dir: &Path, sandbox: &Sandbox) -> Option<String> {
             ));
         }
     }
-    let destroys = DESTROYS.is_match(command);
-    let writes = WRITES.is_match(command) || ANY_REDIRECT.is_match(command);
+    let said = without_messages(command);
+    let destroys = DESTROYS.is_match(&said) || QUOTED_DESTROYS.is_match(&said);
+    let copies = copy_targets(command);
+    let writes = WRITES.is_match(command) || ANY_REDIRECT.is_match(command) || !copies.is_empty();
     // Running in a folder that isn't shared (a program found in the home
     // folder): a command that deletes or writes there would change it.
     if (destroys || writes) && !sandbox.holds(dir) {
@@ -109,7 +239,7 @@ pub fn refuse(command: &str, dir: &Path, sandbox: &Sandbox) -> Option<String> {
     let named: Vec<String> = if destroys {
         PATHS.captures_iter(command).filter_map(|c| c.get(1)).map(|m| m.as_str().to_string()).collect()
     } else {
-        WRITES.captures_iter(command).chain(ANY_REDIRECT.captures_iter(command)).filter_map(|c| c.get(1)).map(|m| m.as_str().to_string()).collect()
+        WRITES.captures_iter(command).chain(ANY_REDIRECT.captures_iter(command)).filter_map(|c| c.get(1)).map(|m| m.as_str().to_string()).chain(copies).collect()
     };
     let outside: Vec<String> = named
         .into_iter()
@@ -258,7 +388,28 @@ pub fn egress(command: &str, dir: Option<&Path>) -> Option<Egress> {
 /// push, stopping programs, uninstalling). Everything else the guard lets
 /// through runs without asking.
 pub fn destructive(command: &str) -> bool {
-    DESTROYS.is_match(command) || THROWS_AWAY.is_match(command)
+    asks_why(command).is_some()
+}
+
+/// Why a command waits for the person's word even in Auto mode, said as
+/// the end of "Asking because …".
+pub fn asks_why(command: &str) -> Option<&'static str> {
+    let command = &*without_messages(command);
+    if DESTROYS.is_match(command) || QUOTED_DESTROYS.is_match(command) {
+        Some("it deletes, moves or renames things")
+    } else if THROWS_AWAY.is_match(command) {
+        Some("it throws work away (a hard reset, a force push, or stopping programs)")
+    } else if HIDDEN.is_match(command) {
+        Some("what it does can't be read from it (it runs a hidden, encoded or built-up command, or deletes through a program)")
+    } else if STARTS_UP.is_match(command) {
+        Some("it makes something start with Windows or run on its own later")
+    } else if LOOSENS.is_match(command) {
+        Some("it loosens Windows' protection or asks for administrator rights")
+    } else if LINKS.is_match(command) {
+        Some("it links to another folder, so later changes through it would land outside the shared folders")
+    } else {
+        None
+    }
 }
 
 /// A path from a command, as the folder it names: variables filled in and
@@ -477,6 +628,82 @@ mod tests {
         for c in ["npm install", "npm run build", "python script.py", "Start-Process notepad.exe", "git status", "Get-ChildItem -Recurse", "node build.js > out.txt", ".\\hello.bat"] {
             assert!(!destructive(c), "{c}");
         }
+    }
+
+    /// Deletes written other ways, startup entries, loosened protection and
+    /// links all ask; everyday commands still don't.
+    #[test]
+    fn disguised_and_lasting_changes_ask_too() {
+        for c in [
+            "Invoke-Expression \"Remove-Item -Recurse -Force $env:USERPROFILE\\Documents\"",
+            "iex 'rm -r -fo C:\\Users\\me\\Documents'",
+            "[IO.Directory]::Delete(\"$env:USERPROFILE\\Documents\", $true)",
+            "[System.IO.File]::Delete('C:\\x.txt')",
+            "powershell -EncodedCommand UgBlAG0AbwB2AGUALQBJAHQAZQBtACAAeAA=",
+            "cmd /c r^d /s /q C:\\Users\\me\\Documents",
+            "$v='Remove-Item'; & $v -Recurse -Force C:\\Users\\me\\Documents",
+            "python -c \"import shutil; shutil.rmtree(r'C:\\Users\\me\\Documents')\"",
+            "node -e \"require('fs').rmSync('C:/Users/me/Documents',{recursive:true,force:true})\"",
+            "Rename-Item C:\\Users\\me\\Documents\\tax.pdf old.pdf",
+            "powershell -c \"rm -r C:\\Users\\me\\Documents\"",
+            "schtasks /create /sc onlogon /tn x /tr C:\\x.bat",
+            "reg add HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v x /d C:\\x.bat",
+            "Copy-Item run.bat \"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\\"",
+            "Set-ExecutionPolicy Unrestricted -Scope CurrentUser",
+            "netsh advfirewall firewall add rule name=x dir=in action=allow",
+            "Start-Process cmd -Verb RunAs",
+            "cmd /c mklink /J site\\link C:\\Users\\me\\Documents",
+            "New-Item -ItemType Junction -Path link -Target C:\\Users",
+        ] {
+            assert!(asks_why(c).is_some(), "{c}");
+        }
+        for c in [
+            "cargo test --lib",
+            "& \"C:\\Program Files\\nodejs\\node.exe\" server.js",
+            "& .\\build.ps1",
+            "git commit -m \"move the button and rename the page\"",
+            "Copy-Item a.txt b.txt",
+            "cmd /c hello.bat",
+            "python -m pytest",
+        ] {
+            assert_eq!(asks_why(c), None, "{c}");
+        }
+    }
+
+    /// A copy may read from anywhere, but only write into the shared folders.
+    #[test]
+    fn copies_may_only_land_in_the_shared_folders() {
+        let (sb, d) = shared();
+        if cfg!(windows) {
+            for c in ["Copy-Item site\\x.txt C:\\Users\\Public\\tax.pdf -Force", "copy /y a.txt C:\\Windows\\a.txt", "Copy-Item -Path a.txt -Destination C:\\Users\\Public\\a.txt", "xcopy /e /i site C:\\Users\\Public\\site"] {
+                assert!(refuse(c, &d, &sb).is_some_and(|w| w.contains("outside the shared folders")), "{c}");
+            }
+            for c in ["Copy-Item C:\\Windows\\win.ini site\\win.ini", "copy C:\\Windows\\win.ini .", "Copy-Item a.txt b.txt -Force"] {
+                assert_eq!(refuse(c, &d, &sb), None, "{c}");
+            }
+        }
+        assert_eq!(copy_targets("Copy-Item -Path a.txt -Dest out\\b.txt -Force"), vec!["out\\b.txt"]);
+        assert_eq!(copy_targets("cp -r src 'my folder'"), vec!["my folder"]);
+        assert_eq!(copy_targets("copy readme.md"), vec!["."]);
+    }
+
+    /// A new file through a junction inside a shared folder is placed where
+    /// it would really land.
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_cant_carry_a_write_outside() {
+        let (sb, d) = shared();
+        let outside = std::env::temp_dir().join(format!("sulcusai-guard-target-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&outside).unwrap();
+        let link = d.join("site").join("link");
+        let made = std::process::Command::new("cmd").args(["/c", "mklink", "/J"]).arg(&link).arg(&outside).output().unwrap();
+        assert!(made.status.success());
+        assert!(!sb.holds(&link.join("new.txt")), "lands outside");
+        assert!(sb.holds(&d.join("site").join("new.txt")));
+        assert!(refuse("echo hi > site\\link\\new.txt", &d, &sb).is_some());
+        let _ = std::fs::remove_dir(&link);
+        let _ = std::fs::remove_dir_all(&outside);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -40,7 +40,7 @@ pub fn note(state: &AppState, c: &Cipher) -> String {
     let cal = if cal.is_empty() { "none connected (events saved on this PC still work)".to_string() } else { format!("{} (check it with calendar_events)", cal.join(", ")) };
     format!(
         "\n\n## SulcusAI\nYou are the assistant inside SulcusAI, a desktop app. Its pages: Chat, Notes, Tasks, Mail, Calendar, Translate, \
-         Meetings, Studio (pictures, video, music), and Settings, Models and Features in the ⚙ menu. Internet mode: {}. \
+         Meetings, Studio (pictures, video, music), and Settings, Models and Features in the Settings & more menu at the bottom of the sidebar. Internet mode: {}. \
          Email: {mail}. Calendars: {cal}. Only if the user asks to connect an email or calendar account, use connect_account \
          (Google or Microsoft sign-in; for other providers, open_page). Answer questions from what's already here first. \
          Look things up with the tool that fits: events and plans: calendar_events; email: email_search (put who it is from in the query); notes: search_notes; tasks: list_tasks; connecting Gmail, Outlook or a calendar: connect_account.",

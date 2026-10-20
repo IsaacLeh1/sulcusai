@@ -30,7 +30,7 @@ export const FEATURES: Record<FeatureId, Info> = {
   },
   email: {
     name: tx("Email"),
-    detail: tx("Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming."),
+    detail: tx("Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first."),
   },
   calendar: {
     name: tx("Calendar"),
@@ -60,7 +60,7 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Music and audio"),
     detail: tx("Songs from a description, with lyrics and vocals or instrumental, rough sound effects, and narration read by your voices. A player with trim, loop and save."),
   },
-  files: { name: tx("Files and coding"), detail: tx("Share folders so the assistant can read and change files and run commands, with your approval.") },
+  files: { name: tx("Files and coding"), detail: tx("Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.") },
   memory: { name: tx("Memory"), detail: tx("Remembers facts across chats. You can see and edit everything it remembers.") },
   projects: { name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
   scheduled: { name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },

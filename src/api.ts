@@ -986,6 +986,8 @@ export interface PendingApproval {
   tool: string;
   risk: "read" | "write" | "execute" | "connector" | "memory" | "submit";
   preview: Preview;
+  /** Only this one call can be allowed (a delete, a send): no "for this chat". */
+  once?: boolean;
 }
 
 /** Whether the assistant may use anything on the Desktop. */

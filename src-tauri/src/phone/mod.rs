@@ -206,17 +206,23 @@ async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes
     let Some(plain) = open(&key, std::str::from_utf8(&body).unwrap_or_default()) else { return bad() };
     let Ok(call) = serde_json::from_slice::<Call>(&plain) else { return (StatusCode::BAD_REQUEST, "Unreadable request.").into_response() };
     let now = db::now_ms();
-    if (now - call.ts).abs() > 5 * 60 * 1000 || call.ts <= phone.last_ts {
-        return (StatusCode::CONFLICT, "This request is out of date. Check the phone's clock, then reload the page.").into_response();
-    }
-    {
+    // Checked and moved on under one lock, so two copies of one request
+    // arriving together can't both pass.
+    let fresh = {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
-        if let Some(p) = s.phones.iter_mut().find(|p| p.id == id) {
-            p.last_ts = call.ts;
-            p.last_seen = Some(now);
+        match s.phones.iter_mut().find(|p| p.id == id) {
+            Some(p) if (now - call.ts).abs() <= 5 * 60 * 1000 && call.ts > p.last_ts => {
+                p.last_ts = call.ts;
+                p.last_seen = Some(now);
+                let _ = db::set(&conn, KEY, &s);
+                true
+            }
+            _ => false,
         }
-        let _ = db::set(&conn, KEY, &s);
+    };
+    if !fresh {
+        return (StatusCode::CONFLICT, "This request is out of date. Check the phone's clock, then reload the page.").into_response();
     }
     let answer = if phone.pass_hash.is_empty() {
         json!({ "ok": false, "error": "This phone was paired before phones had passwords. Pair it again from SulcusAI on your PC (Settings, Phone)." })
@@ -386,7 +392,12 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
         }
         "approve" => {
             let call_id = arg(args, "call_id")?;
-            let d = crate::agent::Decision::parse(arg(args, "decision")?).ok_or("Unknown answer.")?;
+            // Allow or Don't allow, one call at a time: a phone can't allow a kind for the whole chat.
+            let d = match arg(args, "decision")? {
+                "allow" => crate::agent::Decision::Allow,
+                "deny" => crate::agent::Decision::Deny,
+                _ => return Err("Unknown answer.".into()),
+            };
             // A system folder needs the warning the PC shows, confirmed there.
             if d != crate::agent::Decision::Deny {
                 crate::workspace::phone_may_allow(call_id)?;
@@ -394,7 +405,7 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
             if !state.approvals.answer(call_id, d) {
                 return Err("That question was already answered.".into());
             }
-            state.log("agent", &format!("Answered the assistant's question from {}", phone.name));
+            state.log("security", &format!("Answered the assistant's question from {}", phone.name));
             Ok(Value::Null)
         }
         "tasks" => {

@@ -373,6 +373,13 @@ async fn fetch(State(ctx): State<Ctx>, method: Method, headers: HeaderMap, uri: 
         return refuse(StatusCode::BAD_REQUEST, "Give the address to fetch as ?url=");
     };
     let shown = |u: &reqwest::Url| format!("{}{}", u.host_str().unwrap_or_default(), u.path());
+    // A key or password in the address would leave this PC with it (the
+    // approved key is added here, never written into the page).
+    if crate::practice::yourcode::SECRET_TEXT.is_match(&asked) {
+        let what = reqwest::Url::parse(&asked).map(|u| shown(&u)).unwrap_or_else(|_| asked.chars().take(80).collect());
+        note(&ctx, "live_failed", format!("{what}: the address holds what looks like a key or password, so it wasn't sent; leave keys out of the page (request_api_key adds an approved one here)"));
+        return refuse(StatusCode::FORBIDDEN, "The address holds a key or password, so it wasn't sent.");
+    }
     if !crate::web::allowed_for_chat(&ctx.state.db.lock().unwrap(), &ctx.chat_id) {
         let what = reqwest::Url::parse(&asked).map(|u| shown(&u)).unwrap_or_else(|_| asked.chars().take(80).collect());
         note(&ctx, "live_blocked", what);

@@ -87,11 +87,14 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
     }
 }
 
-/// A call the user sees before it runs even in Auto mode: deleting, or a
-/// command the guard flags as destructive (`guard::destructive`).
+/// A call the user sees before it runs even in Auto mode: deleting, a
+/// command the guard flags (`guard::asks_why`), and the calls that reach
+/// past this PC's files and say they ask first: signing in to an account,
+/// a task that runs again and again, an event in the person's calendar, and
+/// replacing a note's whole text (notes have no Undo).
 pub fn destructive_call(name: &str, args: &Value) -> bool {
     match name {
-        "delete_path" => true,
+        "delete_path" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" => true,
         "run_command" => args.get("command").and_then(Value::as_str).is_none_or(guard::destructive),
         _ => false,
     }

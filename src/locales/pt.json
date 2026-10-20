@@ -210,7 +210,6 @@
  "Change PIN": "Alterar PIN",
  "Change it": "Alterar",
  "Change, move or delete files": "Alterar, mover ou excluir arquivos",
- "Changes files and runs commands without asking. Undo still works for file changes.": "Altera arquivos e executa comandos sem perguntar. Desfazer continua funcionando para alterações de arquivos.",
  "Changes from that reply were undone.": "As alterações daquela resposta foram desfeitas.",
  "Chat": "Chat",
  "Chat name": "Nome do chat",
@@ -256,7 +255,6 @@
  "Commands can't be undone, so their effects stay.": "Comandos não podem ser desfeitos, então seus efeitos permanecem.",
  "Connect": "Conectar",
  "Connect an email account": "Conectar uma conta de e-mail",
- "Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming.": "Conecte seu e-mail (IMAP) para que você e o assistente possam ler, pesquisar e resumir mensagens e redigir respostas. Uma cópia fica criptografada neste PC; enviar sempre pergunta a você antes. O login com Gmail e Outlook está chegando.",
  "Connected with {provider}. Your recent mail is copied to this PC.": "Conectado com {provider}. Seus e-mails recentes são copiados para este PC.",
  "Connected. 1 tool available.": "Conectado. 1 ferramenta disponível.",
  "Connected. Your recent mail is copied to this PC.": "Conectado. Seus e-mails recentes são copiados para este PC.",
@@ -874,7 +872,6 @@
  "Read the translation aloud": "Ler a tradução em voz alta",
  "Reading aloud": "Lendo em voz alta",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "Lê a página de resultados simples do DuckDuckGo. Se as pesquisas forem limitadas, mude para Brave ou SearXNG.",
- "Reads freely; asks before changing files or running commands.": "Lê livremente; pergunta antes de alterar arquivos ou executar comandos.",
  "Recording": "Gravando",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "As leis sobre gravação variam, e em alguns lugares todos precisam concordar em ser gravados.",
  "Recording meeting": "Gravando reunião",
@@ -987,7 +984,6 @@
  "Settings, models, features and activity": "Configurações, modelos, recursos e atividade",
  "Setup steps": "Etapas da configuração",
  "Share a folder with SulcusAI": "Compartilhar uma pasta com o SulcusAI",
- "Share folders so the assistant can read and change files and run commands, with your approval.": "Compartilhe pastas para que o assistente possa ler e alterar arquivos e executar comandos, com a sua aprovação.",
  "Shared folders": "Pastas compartilhadas",
  "Shares graphics card and memory": "Compartilha placa de vídeo e memória",
  "Short clips (a few seconds) from a description, or bring a picture to life. The heaviest feature: it needs a graphics card with 6 GB or more, and a clip takes a few minutes.": "Clipes curtos (alguns segundos) a partir de uma descrição, ou dê vida a uma imagem. O recurso mais pesado: precisa de uma placa de vídeo com 6 GB ou mais, e um clipe leva alguns minutos.",
@@ -3357,5 +3353,9 @@
  "Asking because this sends something off your PC.": "Perguntando porque isto envia algo para fora do seu PC.",
  "Deny to leave it out; the model is told it was left out.": "Negue para deixar de fora; o modelo é informado de que foi deixado de fora.",
  "Secret": "Segredo",
- "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "Eles recebem tudo o que o comando envia (arquivos, texto ou o código do seu projeto) e podem guardar, ler ou repassar."
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "Eles recebem tudo o que o comando envia (arquivos, texto ou o código do seu projeto) e podem guardar, ler ou repassar.",
+ "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "Altera arquivos e executa comandos por conta própria. Pergunta antes de excluir, antes de qualquer coisa sair deste PC e antes de comandos que descartam trabalho.",
+ "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "Altera arquivos e executa comandos sem perguntar, inclusive exclusões. Enviar algo para fora deste PC ainda pergunta. Desfazer continua funcionando para alterações de arquivos.",
+ "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "Conecte o Gmail, o Outlook ou qualquer outra conta de e-mail para que você e o assistente possam ler, pesquisar, resumir e rascunhar respostas. Uma cópia fica criptografada neste PC; enviar sempre pergunta antes.",
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "Compartilhe pastas para que o assistente possa ler e alterar arquivos e executar comandos. Ele pergunta antes de excluir ou de enviar qualquer coisa para fora deste PC."
 }

@@ -178,7 +178,10 @@ impl Sandbox {
     /// Whether a path (which may not exist yet) is inside a granted folder,
     /// for checking a command before it runs.
     pub fn holds(&self, p: &Path) -> bool {
-        let p = canonical(p).unwrap_or_else(|| p.to_path_buf());
+        // A path that doesn't exist yet is placed by its nearest folder that
+        // does, links followed, so a junction inside a shared folder can't
+        // carry a new file somewhere else.
+        let p = canonical(p).or_else(|| would_be(p)).unwrap_or_else(|| p.to_path_buf());
         self.roots.iter().any(|r| is_inside(&p, r))
     }
 

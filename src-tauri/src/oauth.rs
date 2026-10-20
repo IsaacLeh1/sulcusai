@@ -332,7 +332,7 @@ pub async fn sign_in(state: &crate::AppState, p: Provider, f: For, hint: Option<
     if t.email.is_empty() {
         return Err(format!("{} didn't say which account signed in.", p.name()));
     }
-    state.log("privacy", &format!("Signed in to {} as {}", p.name(), t.email));
+    state.log("privacy", &format!("Signed in to {}", p.name()));
     Ok(t)
 }
 

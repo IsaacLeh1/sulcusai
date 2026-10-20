@@ -48,8 +48,10 @@ and stops it, and keeps your data.
     Windows security, plainly deleting outside your shared folders) and stops
     commands that use too much memory or fill the disk. That's a safety net,
     not a sandbox: read a command before you approve it.
-  - **Plan / Auto / Bypass** run modes. Auto asks before every change and shows
-    a diff first.
+  - **Plan / Auto / Bypass** run modes. Auto changes files and runs commands on
+    its own, and asks before deleting, before a command that throws work away,
+    and before anything leaves the PC. Bypass asks only before something leaves
+    the PC, and always warns when a key or password would go with it.
   - **Undo** for the file changes from any reply (not for what a command did).
 - **Memory** across chats. It's encrypted, and you can view, edit and delete it.
   Incognito chats neither use nor save memories.

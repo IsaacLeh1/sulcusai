@@ -396,7 +396,10 @@ pub fn preview(args: &Value, sb: &Sandbox) -> Result<Preview, String> {
         title: format!("Run a command in {}", sb.display(&dir)),
         kind: "command",
         detail: Some(arg_str(args, "command")?.to_string()),
-        note: Some("Commands can change things that Undo can't put back.".into()),
+        note: Some(match crate::tools::guard::asks_why(arg_str(args, "command")?) {
+            Some(why) => format!("Asking because {why}. Commands can change things that Undo can't put back."),
+            None => "Commands can change things that Undo can't put back.".into(),
+        }),
     })
 }
 
@@ -537,7 +540,13 @@ async fn run_to_end(mut child: tokio::process::Child, command: &str, dir: &std::
         (None, Some(c)) => format!("Exit code {c}: the command failed. Read the output above, fix the cause (a wrong path or name, a missing program, a typo) and run it again."),
         (None, None) => "The command ended without an exit code.".into(),
     };
-    let text = if combined.is_empty() { format!("(no output)\n{footer}") } else { format!("{combined}\n{footer}") };
+    // Start-Process runs the program apart, so what it printed never comes back.
+    let apart = if combined.is_empty() && command.to_lowercase().contains("start-process") {
+        "\nStart-Process ran it apart from this command, so its output was lost. To see what it prints, run it directly (`cmd /c file.bat`, `& .\\script.ps1`)."
+    } else {
+        ""
+    };
+    let text = if combined.is_empty() { format!("(no output)\n{footer}{apart}") } else { format!("{combined}\n{footer}") };
     let ok = stopped.is_none() && code == Some(0);
     let detail = format!("> {command}\n\n{text}");
     let mut outcome = Outcome::ok(text, title, "command", Some(detail));

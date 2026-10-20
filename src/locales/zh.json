@@ -210,7 +210,6 @@
  "Change PIN": "更改 PIN",
  "Change it": "修改它",
  "Change, move or delete files": "更改、移动或删除文件",
- "Changes files and runs commands without asking. Undo still works for file changes.": "无需询问即可更改文件和运行命令。文件更改仍可撤销。",
  "Changes from that reply were undone.": "该回复所做的更改已撤销。",
  "Chat": "聊天",
  "Chat name": "聊天名称",
@@ -256,7 +255,6 @@
  "Commands can't be undone, so their effects stay.": "命令无法撤销，因此其效果会保留。",
  "Connect": "连接",
  "Connect an email account": "连接电子邮件账户",
- "Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming.": "连接你的电子邮件（IMAP），让你和助手可以阅读、搜索、总结邮件并起草回复。副本会加密保存在这台电脑上；发送前始终先询问你。Gmail 和 Outlook 登录即将推出。",
  "Connected with {provider}. Your recent mail is copied to this PC.": "已通过 {provider} 连接。你最近的邮件已复制到这台电脑。",
  "Connected. 1 tool available.": "已连接。有 1 个工具可用。",
  "Connected. Your recent mail is copied to this PC.": "已连接。你最近的邮件已复制到这台电脑。",
@@ -874,7 +872,6 @@
  "Read the translation aloud": "朗读译文",
  "Reading aloud": "正在朗读",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "读取 DuckDuckGo 的纯文本结果页面。如果搜索受到限制，请切换到 Brave 或 SearXNG。",
- "Reads freely; asks before changing files or running commands.": "可自由读取；更改文件或运行命令前会先询问。",
  "Recording": "正在录制",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "各地关于录音的法律不同，在某些地方必须所有人都同意才能录音。",
  "Recording meeting": "正在录制会议",
@@ -987,7 +984,6 @@
  "Settings, models, features and activity": "设置、模型、功能和活动",
  "Setup steps": "设置步骤",
  "Share a folder with SulcusAI": "与 SulcusAI 共享文件夹",
- "Share folders so the assistant can read and change files and run commands, with your approval.": "共享文件夹，让助手在你批准后读取和更改文件以及运行命令。",
  "Shared folders": "共享文件夹",
  "Shares graphics card and memory": "共享显卡和内存",
  "Short clips (a few seconds) from a description, or bring a picture to life. The heaviest feature: it needs a graphics card with 6 GB or more, and a clip takes a few minutes.": "根据描述生成短片（几秒钟），或让图片动起来。这是最吃资源的功能：需要 6 GB 或以上显存的显卡，生成一个片段需要几分钟。",
@@ -3357,5 +3353,9 @@
  "Asking because this sends something off your PC.": "之所以询问，是因为这会把内容发送到你的电脑之外。",
  "Deny to leave it out; the model is told it was left out.": "拒绝即可略去；模型会被告知已略去。",
  "Secret": "机密",
- "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "对方会收到该命令发送的所有内容（文件、文本或你项目的代码），并可以保存、读取或转给他人。"
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "对方会收到该命令发送的所有内容（文件、文本或你项目的代码），并可以保存、读取或转给他人。",
+ "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "自行修改文件和运行命令。在删除之前、在任何内容离开这台电脑之前，以及在会丢弃工作的命令之前，会先询问。",
+ "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "不经询问就修改文件和运行命令，包括删除。把内容发送到这台电脑之外仍会询问。文件更改仍可撤销。",
+ "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "连接 Gmail、Outlook 或其他任何邮箱账户，你和助手就能阅读、搜索、总结邮件并起草回复。副本加密保存在这台电脑上；发送前总会先问你。",
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "共享文件夹后，助手可以读取和修改文件并运行命令。它会在删除之前或把任何内容发送到这台电脑之外之前先询问。"
 }

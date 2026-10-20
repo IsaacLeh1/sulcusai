@@ -153,7 +153,7 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
         <button className="btn primary" disabled={busy} onClick={() => answer("allow")} autoFocus>
           {t("Allow")}
         </button>
-        {p.risk !== "submit" && (
+        {p.risk !== "submit" && !p.once && (
           <button className="btn" disabled={busy} onClick={() => answer("always")} title={always.title}>
             {always.label}
           </button>

@@ -210,7 +210,6 @@
  "Change PIN": "PINを変更",
  "Change it": "変更する",
  "Change, move or delete files": "ファイルの変更、移動、削除",
- "Changes files and runs commands without asking. Undo still works for file changes.": "確認なしでファイルを変更し、コマンドを実行します。ファイルの変更は元に戻せます。",
  "Changes from that reply were undone.": "その返信による変更を元に戻しました。",
  "Chat": "チャット",
  "Chat name": "チャット名",
@@ -256,7 +255,6 @@
  "Commands can't be undone, so their effects stay.": "コマンドは元に戻せないため、その結果は残ります。",
  "Connect": "接続",
  "Connect an email account": "メールアカウントを接続",
- "Connect your email (IMAP) so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first. Gmail and Outlook sign-in are coming.": "メール（IMAP）を接続すると、あなたとアシスタントがメールを読んだり、検索・要約したり、返信の下書きを作ったりできます。コピーはこのPCに暗号化して保存され、送信前には必ず確認します。GmailとOutlookのサインインは近日対応予定です。",
  "Connected with {provider}. Your recent mail is copied to this PC.": "{provider} で接続しました。最近のメールをこのPCにコピーします。",
  "Connected. 1 tool available.": "接続しました。1個のツールを使えます。",
  "Connected. Your recent mail is copied to this PC.": "接続しました。最近のメールをこのPCにコピーします。",
@@ -874,7 +872,6 @@
  "Read the translation aloud": "翻訳を読み上げ",
  "Reading aloud": "読み上げ中",
  "Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.": "DuckDuckGoのシンプルな検索結果ページを読み取ります。検索が制限される場合は、BraveまたはSearXNGに切り替えてください。",
- "Reads freely; asks before changing files or running commands.": "自由に読み取り、ファイルの変更やコマンドの実行前には確認します。",
  "Recording": "録音中",
  "Recording laws differ, and in some places everyone must agree to be recorded.": "録音に関する法律は地域によって異なり、全員の同意が必要な場合もあります。",
  "Recording meeting": "会議を録音中",
@@ -987,7 +984,6 @@
  "Settings, models, features and activity": "設定、モデル、機能、アクティビティ",
  "Setup steps": "セットアップの手順",
  "Share a folder with SulcusAI": "SulcusAIとフォルダーを共有",
- "Share folders so the assistant can read and change files and run commands, with your approval.": "フォルダーを共有すると、あなたの承認のもとで、アシスタントがファイルを読んだり変更したり、コマンドを実行したりできます。",
  "Shared folders": "共有フォルダー",
  "Shares graphics card and memory": "グラフィックカードとメモリを共有",
  "Short clips (a few seconds) from a description, or bring a picture to life. The heaviest feature: it needs a graphics card with 6 GB or more, and a clip takes a few minutes.": "説明から短いクリップ（数秒）を作成したり、画像を動かしたりできます。最も重い機能です: 6 GB以上のグラフィックカードが必要で、1クリップに数分かかります。",
@@ -3357,5 +3353,9 @@
  "Asking because this sends something off your PC.": "PCの外に何かを送るため、確認しています。",
  "Deny to leave it out; the model is told it was left out.": "拒否すると除外されます。除外されたことはモデルに伝えられます。",
  "Secret": "秘密情報",
- "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "送信先は、コマンドが送るもの（ファイル、テキスト、プロジェクトのコード）をすべて受け取り、保存、閲覧、他者への提供ができます。"
+ "They get whatever the command sends (files, text or your project's code) and can keep, read or pass it on.": "送信先は、コマンドが送るもの（ファイル、テキスト、プロジェクトのコード）をすべて受け取り、保存、閲覧、他者への提供ができます。",
+ "Changes files and runs commands on its own. Asks before deleting, before anything leaves this PC, and before commands that throw work away.": "ファイルの変更とコマンドの実行を自分で行います。削除の前、何かがこのPCの外に出る前、作業を捨てるコマンドの前には確認します。",
+ "Changes files and runs commands without asking, deletes included. Sending something off this PC still asks. Undo still works for file changes.": "確認せずにファイルを変更し、コマンドを実行します（削除も含む）。このPCの外に何かを送るときは引き続き確認します。ファイルの変更は元に戻せます。",
+ "Connect Gmail, Outlook or any other email account so you and the assistant can read, search and summarize it, and draft replies. A copy is kept encrypted on this PC; sending always asks you first.": "Gmail、Outlook、その他のメールアカウントを接続すると、あなたとアシスタントがメールを読み、検索し、要約し、返信の下書きを作れます。コピーはこのPCに暗号化して保存され、送信の前には必ず確認します。",
+ "Share folders so the assistant can read and change files and run commands. It asks before deleting, or before sending anything off this PC.": "フォルダーを共有すると、アシスタントがファイルを読んで変更し、コマンドを実行できます。削除の前と、このPCの外に何かを送る前には確認します。"
 }
