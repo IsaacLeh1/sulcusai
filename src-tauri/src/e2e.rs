@@ -2470,6 +2470,224 @@ async fn e2e_media() {
     println!("measured: {measured:?}");
 }
 
+/// An MP3 as mono samples and their rate, decoded by Windows (Media Foundation).
+#[cfg(windows)]
+fn decode_mp3(bytes: &[u8]) -> (Vec<f32>, u32) {
+    use windows::core::HSTRING;
+    use windows::Win32::Media::MediaFoundation::*;
+    use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+    let path = std::env::temp_dir().join(format!("sulcusai-song-{}.mp3", uuid::Uuid::new_v4()));
+    std::fs::write(&path, bytes).unwrap();
+    let mut mono = Vec::new();
+    let rate;
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).unwrap();
+        let reader = MFCreateSourceReaderFromURL(&HSTRING::from(path.as_os_str()), None).unwrap();
+        let stream = MF_SOURCE_READER_FIRST_AUDIO_STREAM.0 as u32;
+        let want = MFCreateMediaType().unwrap();
+        want.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).unwrap();
+        want.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_Float).unwrap();
+        reader.SetCurrentMediaType(stream, None, &want).unwrap();
+        let got = reader.GetCurrentMediaType(stream).unwrap();
+        rate = got.GetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND).unwrap();
+        let channels = got.GetUINT32(&MF_MT_AUDIO_NUM_CHANNELS).unwrap().max(1) as usize;
+        loop {
+            let mut flags = 0u32;
+            let mut sample: Option<IMFSample> = None;
+            reader.ReadSample(stream, 0, None, Some(&mut flags as *mut u32), None, Some(&mut sample as *mut Option<IMFSample>)).unwrap();
+            if let Some(s) = sample {
+                let buf = s.ConvertToContiguousBuffer().unwrap();
+                let (mut p, mut len) = (std::ptr::null_mut::<u8>(), 0u32);
+                buf.Lock(&mut p, None, Some(&mut len as *mut u32)).unwrap();
+                let floats = std::slice::from_raw_parts(p as *const f32, len as usize / 4);
+                mono.extend(floats.chunks(channels).map(|f| f.iter().sum::<f32>() / channels as f32));
+                buf.Unlock().unwrap();
+            }
+            if flags & MF_SOURCE_READERF_ENDOFSTREAM.0 as u32 != 0 {
+                break;
+            }
+        }
+        drop(reader);
+        let _ = MFShutdown();
+    }
+    std::fs::remove_file(&path).ok();
+    (mono, rate)
+}
+
+/// Lowercase words of at least four letters, for comparing lyrics with
+/// what speech recognition heard.
+#[cfg(windows)]
+fn sung_words(text: &str) -> std::collections::BTreeSet<String> {
+    text.lines()
+        .filter(|l| !l.trim_start().starts_with('['))
+        .flat_map(|l| l.split(|c: char| !c.is_alphanumeric() && c != '\''))
+        .map(|w| w.trim_matches('\'').to_lowercase())
+        .filter(|w| w.chars().count() >= 4)
+        .collect()
+}
+
+/// Songs made the way the Studio and chats make them, with the real music
+/// engine: lyrics written by the chat model (English and Spanish), the
+/// person's own lyrics, an instrumental, a song with no chat model to write
+/// its lyrics, a sound effect, and a music model installed from a pasted
+/// Hugging Face link (its own file deleted afterwards). Each is checked for
+/// length and sound, and the sung ones by speech recognition (Whisper large
+/// v3 turbo, installed the way the app installs it): the words it hears
+/// against the lyrics. SULCUSAI_SONGS picks cases (default all);
+/// SULCUSAI_MEDIA_OUT keeps the MP3s; SULCUSAI_LYRICS_MODEL is the chat
+/// model (default qwen3-4b-2507); SULCUSAI_HUB_SONG the link.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_songs() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").unwrap_or_else(|_| std::env::temp_dir().join("sulcusai-music-out").display().to_string()));
+    std::fs::create_dir_all(&out).unwrap();
+    let cases = std::env::var("SULCUSAI_SONGS").unwrap_or_else(|_| "sound,instrumental,no_chat_model,written,spanish,own,hub".into());
+    let want = |p: &str| cases.split(',').any(|x| x == p);
+    let started = std::time::Instant::now();
+    media::install_for_test(&state, "ace-step-1.5").await.unwrap();
+    println!("installed ACE-Step 1.5 in {:.0}s", started.elapsed().as_secs_f64());
+
+    // (name, what was asked, item made or why not, language to listen for)
+    let mut made: Vec<(String, Request, Result<media::MediaItem, String>, Option<&str>)> = Vec::new();
+    let make = |name: &str, req: Request| {
+        let state = state.clone();
+        let name = name.to_string();
+        async move {
+            let t = std::time::Instant::now();
+            let r = media::run(&state, store::new_id(), req).await.map(|mut v| v.remove(0));
+            println!("{name}: {:.0}s -> {}", t.elapsed().as_secs_f64(), match &r {
+                Ok(i) => format!("{:.1}s, lyrics {:?}", i.seconds, i.lyrics.as_deref().map(|l| l.chars().take(120).collect::<String>())),
+                Err(e) => e.clone(),
+            });
+            r
+        }
+    };
+    let folk = "upbeat acoustic folk song about a road trip through the mountains, warm male vocals, guitar and harmonica";
+    if want("sound") {
+        let req = Request { op: "sound".into(), prompt: "rain on a tin roof with distant thunder".into(), seconds: Some(10.0), ..Default::default() };
+        made.push(("sound".into(), req.clone(), make("sound", req).await, None));
+    }
+    if want("instrumental") {
+        let req = Request { op: "music".into(), prompt: "mellow lofi hip hop beat with soft piano and vinyl crackle".into(), seconds: Some(30.0), instrumental: Some(true), ..Default::default() };
+        made.push(("instrumental".into(), req.clone(), make("instrumental", req).await, None));
+    }
+    // No chat model on this PC yet: the music model writes the lyrics itself.
+    if want("no_chat_model") {
+        let req = Request { op: "music".into(), prompt: "anthemic rock song about old friends, powerful male vocals, electric guitars and drums".into(), seconds: Some(30.0), ..Default::default() };
+        made.push(("no_chat_model".into(), req.clone(), make("no_chat_model", req).await, Some("en")));
+    }
+    // A chat model, as the default (not loaded yet): it writes the lyrics.
+    let chat = std::env::var("SULCUSAI_LYRICS_MODEL").unwrap_or_else(|_| "qwen3-4b-2507".into());
+    {
+        let spec = state.catalog.model(&chat).unwrap();
+        let v = spec.variant("Q4_K_M").unwrap();
+        let path = state.paths.models.join(&spec.id).join(&v.file);
+        assert!(path.exists(), "the chat model is installed: {}", path.display());
+        let conn = state.db.lock().unwrap();
+        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+        crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
+    }
+    if want("written") {
+        let req = Request { op: "music".into(), prompt: folk.into(), seconds: Some(30.0), ..Default::default() };
+        made.push(("written".into(), req.clone(), make("written", req).await, Some("en")));
+    }
+    if want("spanish") {
+        let req = Request { op: "music".into(), prompt: "energetic latin pop song about summer nights by the sea, bright female vocals".into(), seconds: Some(30.0), language: Some("es".into()), ..Default::default() };
+        made.push(("spanish".into(), req.clone(), make("spanish", req).await, Some("es")));
+    }
+    if want("own") {
+        let lyrics = "[Verse]\nMorning light across the kitchen floor\nCoffee waiting by the open door\nEvery little thing I need is here\nSinging softly so the world can hear\n\n[Chorus]\nHold on, hold on to the sunrise\nHold on, never say goodbye";
+        let req = Request { op: "music".into(), prompt: "gentle pop ballad, soft female vocals, piano and strings".into(), seconds: Some(30.0), lyrics: Some(lyrics.into()), language: Some("en".into()), ..Default::default() };
+        made.push(("own".into(), req.clone(), make("own", req).await, Some("en")));
+    }
+    // A music model from a pasted Hugging Face link, sharing the catalog model's files.
+    let mut hub_file = None;
+    if want("hub") {
+        let link = std::env::var("SULCUSAI_HUB_SONG").unwrap_or_else(|_| "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/blob/main/acestep-v15-xl-turbo-Q4_K_M.gguf".into());
+        let (repo, file) = crate::hub::parse_link(&link).unwrap();
+        let client = crate::hub::client(&state).unwrap();
+        let r = crate::hub::repo(&client, &repo).await.unwrap();
+        let (found, kind) = media::hub::from_link(&state, &r).expect("a music model SulcusAI runs");
+        assert_eq!(kind, "music");
+        let file = file.expect("the link names a file");
+        let offer = found.files.iter().find(|f| f.file == file).expect("the linked file is offered");
+        println!("hub: {} {} ({:.2} GB, {:.2} GB to download), runs: {}", found.name, offer.quant, offer.size as f64 / 1e9, offer.download as f64 / 1e9, offer.runnable);
+        let spec = media::hub::prepare(&state, &repo, &file).await.unwrap();
+        println!("hub files: {:?}", spec.files.iter().map(|f| (&f.role, &f.file, f.size)).collect::<Vec<_>>());
+        let t = std::time::Instant::now();
+        media::install_for_test(&state, &spec.id).await.unwrap();
+        println!("installed {} in {:.0}s", spec.name, t.elapsed().as_secs_f64());
+        hub_file = spec.files.iter().find(|f| f.file.starts_with("hfm-")).map(|f| media::model_dir(&state.paths, &spec).join(&f.file));
+        let req = Request { op: "music".into(), model_id: Some(spec.id.clone()), prompt: folk.into(), seconds: Some(30.0), ..Default::default() };
+        let r = make("hub", req.clone()).await;
+        if let Ok(i) = &r {
+            assert_eq!(i.model_id.as_deref(), Some(spec.id.as_str()), "made with the Hugging Face model");
+        }
+        made.push(("hub".into(), req, r, Some("en")));
+    }
+    state.engine.lock().await.stop().await;
+
+    // Listening: length, sound, and the words speech recognition hears.
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    let mut failed = Vec::new();
+    for (name, req, r, lang) in &made {
+        let item = match r {
+            Ok(i) => i,
+            Err(e) => {
+                failed.push(format!("{name}: {e}"));
+                continue;
+            }
+        };
+        let bytes = store::read(&state.paths, &c, &item.id).unwrap();
+        std::fs::write(out.join(format!("{name}.mp3")), &bytes).unwrap();
+        let (samples, rate) = decode_mp3(&bytes);
+        let secs = samples.len() as f64 / rate as f64;
+        let rms = crate::audio::rms(&samples);
+        let asked = req.seconds.unwrap_or(30.0) as f64;
+        let heard = crate::speech::transcribe(&ep, &crate::audio::resample(&samples, rate, crate::audio::RATE), &crate::speech::Options { language: lang.map(str::to_string), ..Default::default() })
+            .await
+            .map(|t| t.text)
+            .unwrap_or_else(|e| format!("(not transcribed: {e})"));
+        let words = sung_words(&heard);
+        let lyrics = item.lyrics.clone().unwrap_or_default();
+        let wanted = sung_words(&lyrics);
+        let matched = wanted.iter().filter(|w| words.contains(*w)).count();
+        println!(
+            "{name}: {secs:.1}s (asked {asked:.0}s), level {rms:.3}, {} words heard, {matched} of {} lyric words\n  heard: {}\n  lyrics: {}",
+            words.len(),
+            wanted.len(),
+            heard.chars().take(300).collect::<String>(),
+            lyrics.replace('\n', " / ").chars().take(300).collect::<String>()
+        );
+        if (secs - asked).abs() > 3.0 {
+            failed.push(format!("{name}: {secs:.1}s long, asked for {asked:.0}s"));
+        }
+        if rms < 0.01 {
+            failed.push(format!("{name}: nearly silent ({rms:.4})"));
+        }
+        let sung = lang.is_some();
+        if sung && (wanted.is_empty() || matched * 5 < wanted.len()) {
+            failed.push(format!("{name}: few of the lyrics were heard ({matched} of {})", wanted.len()));
+        }
+        if !sung && item.lyrics.is_some() {
+            failed.push(format!("{name}: has lyrics but shouldn't be sung"));
+        }
+    }
+    crate::speech::stop(&state).await;
+    if let Some(p) = hub_file {
+        std::fs::remove_file(&p).ok();
+    }
+    println!("results in {}", out.display());
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
 /// A model that can see: Qwen3 VL 4B with its image encoder describes a
 /// picture sent the way chats send attachments. SULCUSAI_VISION_IMAGE is
 /// the picture (a PNG or JPEG); SULCUSAI_VISION_EXPECT a word the answer

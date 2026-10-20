@@ -1549,6 +1549,75 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## After 0.9.17 (2026-10-19 night): every audit item, asking before anything leaves the PC, and music shaped any way (not built)
+
+He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overnight, plus music with lyrics, any length, his own audio to edit, and every musical setting. Commits on phase7 from 24f09b1 to the music commit; nothing pushed or published.
+
+- **Nothing leaves without his word** (his rule: local models may read anything; a send asks; a secret leaving always warns, Bypass too):
+  - `guard::egress` finds commands that upload, post, push, copy to another machine or reach this PC's network (curl/wget data, iwr/irm posts, git push, scp/ssh/rsync, mail, cloud copies, publishing, raw sockets). It names the host, what goes, and any secret: key files, .env, browser logins, or a key typed in the command.
+  - Such a call is `Risk::Submit`: it asks in every mode and never "for the whole chat". It's reviewed in `outgoing` (Sent; Secret at level 5) and listed under What left this PC.
+  - A level-5 review (a secret in a search, an email, a message) always asks.
+  - Online-model chats: the home folder's secret files stay closed (`Sandbox::for_online`). A tool result holding a key asks before it goes; Deny leaves it out.
+  - Calendar events written to an account, and online picture/video jobs started from a chat, are reviewed and listed. Studio cloud jobs are listed.
+- **Other command checks** (`guard::asks_why`, shown on the card): these ask even in Auto.
+  - Deletes written other ways: quoted, encoded, iex, .NET, Python, Node, cmd's `^`. Also renames.
+  - Startup entries, loosened protection, admin rights, folder links.
+  - Copies may only land in shared folders, and `Sandbox::holds` follows a junction's real target.
+  - Commit messages and echoed text aren't read as moves.
+  - "Allow for this chat" never covers a delete or a send (`PendingApproval::once`), and phones can only allow one call at a time.
+  - connect_account, schedule_task, calendar_create_event and update_note ask again, as their descriptions say.
+- **Privacy**:
+  - `clear_incognito` takes everything an incognito chat left: pasted and made media, file backups, sent-log lines and Activity lines.
+  - The relay address and the local API key are sealed with DPAPI (`crypto::local_seal`).
+  - The redactor knows the Windows account name and international phone numbers.
+  - Fully offline gates pairing and the cloud.
+  - The phone's replay check is atomic. The sign-in log line drops the address.
+- **Core**:
+  - `engine::Hold`: background jobs hold the model, so a chat waits instead of stopping it, and an answering model can't be removed.
+  - Stop ends compaction and handoff summaries.
+  - An automatic update waits after its download until nothing runs.
+  - Run now keeps the task's next time, and a sync can't undo a mark-read.
+  - Activity is pruned at 90 days, the app log starts first, the legacy-encryption scan runs once, and test runs clear old `%TEMP%\sulcusai-*`.
+- **Graphics card**:
+  - A "window" reason says when a bigger memory window moved layers off the card.
+  - The status reads the picked card.
+  - Radeon 780M-style and Intel UHD/Iris names count as built-in.
+  - An engine that dies at once with an empty log is started once more.
+- **Pictures**:
+  - A checked picture or edit under 85% carries `missing` (and a `note` for a redrawn scene), shown in the Studio, a toast and the chat.
+  - judge_edit weighs "must be there" twice.
+  - A redrawn scene comes back at the photo's size.
+  - Stop reaches helper models (task-local `vision::JOB_STOP`).
+  - Clear edits aren't asked about (`clarify::needless`).
+  - Upscaling keeps the chat model loaded, and checked edits keep their own time.
+  - The coach gets its trainer first and cleans up.
+- **Window**:
+  - A core error nothing caught becomes a toast, not a crash report (main.tsx `sulcus:error`).
+  - The live reply is drawn every 80 ms.
+  - Focus outlines and aria-labels added; menus close on Escape.
+  - Speeds show in words a second, and plain words replace GGUF, MCP, cache and context window. Singular forms are fixed.
+- **Release/CI**: `release.ps1` refuses a dirty tree, an installer older than HEAD with -SkipBuild -Publish, and versions that differ. CI runs `cargo deny check advisories licenses`; the accepted advisories are listed in `deny.toml` with reasons. inout 0.2.3 (yanked) became 0.2.5.
+- **Music** (merged from the music helper's branch, then extended):
+  - Lyrics are written for songs with vocals (`media/lyrics.rs`). The Studio's model menu always shows, with More models… and a Hugging Face link box; music links are checked by GGUF header.
+  - `MusicSpec` on requests carries genre, mood, instruments, voice and beat, folded into the caption. Bpm, key and time signature become ACE-Step's own fields.
+  - Length goes up to 10 minutes. A song to sound like is passed as `--ref-audio`.
+  - Work on a song he has (`task`):
+    - cover (`audio_cover_strength`);
+    - repaint (`region`);
+    - extend (repaint past the end, `extend_by`);
+    - add, extract and complete (lego/extract/complete with `track`).
+  - These go straight to ace-synth with the song as `--src-audio`, skipping ace-lm. A cover or a redo sings the song's own lyrics unless new ones are given.
+  - Add, extract and complete need **ACE-Step 1.5 Base** (new catalog model, `can: parts`; turbo is "incoherent" for stems, per acestep.cpp).
+  - `audio_in`: M4A, AAC, FLAC and WMA are decoded by Media Foundation into a WAV. Imported songs get their length.
+  - `music_write_lyrics` lets him read and edit lyrics before making the song. create_music in chats takes all the settings and can work on a song from the chat.
+  - Studio music tab: New song / From a song you have / Sound effect.
+- **Not done (need real-edit tuning)**:
+  - keep_unchanged rejecting a bad line-up, and per-block tone matching (E2c, P9).
+  - Keeping one picture reader alive across an edit (P4's bigger part).
+  - The coach's per-picture progress.
+  - Translating core errors built with `format!` (U8).
+  - Moving the zip pin to 9.
+
 ## 0.9.17 (2026-10-19): the agent does the task, graphics card picker, models stay on the card, picture edits, typing help
 
 **Published and installed 2026-10-19**, built from cc2bdbe (main = phase7, tag checked). Notes are in `C:\dev\tools\notes-0917.md`. It carries the sections below down to "Typing help". The prompt coach's core is in, without its Studio button. Both gpt-oss-20b models (stock and huihui-ai's) are in the desktop's models folder, not yet installed in the app: install from Models (stock) and from the Hugging Face link (bartowski's Q4_K_M); both reuse the file.

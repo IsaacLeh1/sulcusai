@@ -81,6 +81,16 @@ and stops it, and keeps your data.
   - A searchable library, Markdown export, "Ask about this meeting" chats,
     and meeting tools any chat can use.
   - A reminder to tell people you're recording.
+- **Studio** for pictures, video and music made on this PC, kept encrypted in
+  a gallery.
+  - Pictures from a description, edits from an instruction (planned, checked,
+    and made again when something's missing), filling in, extending,
+    restyling, upscaling, cut-outs and desktop wallpapers.
+  - Short videos from a description or a picture.
+  - Songs up to 10 minutes: style, mood, instruments, voice, beat, tempo, key
+    and time signature; lyrics written for you (to read and change first) or
+    your own; and work on a song you have (restyle it, make part of it again,
+    make it longer, add or take out a part such as vocals or drums).
 - **Translation** of text and text documents (subtitles keep their timing),
   with language detection and read-aloud.
 
