@@ -98,12 +98,14 @@ pub fn quant_of(file: &str) -> String {
     "Q4_K_M".to_string()
 }
 
-/// The conversation a training example keeps of what the writer gets: the
-/// system message's first sentence (what it writes, and for which model)
-/// and the request. The whole prompt, with the instructions and worked
-/// examples, runs to about 1,070 tokens for FLUX.2 and 800 for an edit plan
-/// (Qwen3's tokens), far past `TRAIN_CTX`; this is about 250. The coached
-/// writer still gets the whole prompt, and the after-test scores it that way.
+/// The short form of what the writer gets, for training and for the coached
+/// writer: the system message's first sentence (what it writes, and for
+/// which model) and the request. The whole prompt, with the instructions and
+/// worked examples, runs to about 1,070 tokens for FLUX.2 and 800 for an
+/// edit plan (Qwen3's tokens), far past `TRAIN_CTX`; this is about 250.
+/// Trained on these and given the whole prompt instead, the first coach
+/// barely changed what it wrote (79% → 74%, 2026-10-20), so a coached writer
+/// gets these too (`prompts::writer_messages`, `planner_messages`).
 pub fn compact(messages: &[Value]) -> Vec<Value> {
     let system = messages.first().and_then(|m| m["content"].as_str()).unwrap_or_default();
     let first = system.split_inclusive(". ").next().unwrap_or(system).trim();
@@ -274,14 +276,14 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     for c in &news {
         if let Some((best, s)) = c.tries.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
             if *s >= GOOD_PICTURE {
-                lines.push(example(&compact(&prompts::messages(&program, &c.ask)), &json!({ "prompt": best.prompt, "negative": best.negative }).to_string(), qwen3));
+                lines.push(example(&prompts::writer_messages(&program, &c.ask, true), &json!({ "prompt": best.prompt, "negative": best.negative }).to_string(), qwen3));
             }
         }
     }
     for e in &edits {
         if let Some((best, s)) = e.tries.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
             if *s >= GOOD_EDIT {
-                lines.push(example(&compact(&prompts::words_messages(&e.caption, &e.request)), &best.changes.to_string(), qwen3));
+                lines.push(example(&prompts::planner_messages(&e.caption, &e.request, true), &best.changes.to_string(), qwen3));
             }
         }
     }
@@ -367,7 +369,9 @@ fn scores_line(news: &[NewCase], edits: &[EditCase]) -> String {
 }
 
 /// Makes every try (new pictures, then edits) and scores them with the
-/// picture reader. Returns how many pictures were made.
+/// picture reader. Returns how many pictures were made. Every try at one
+/// request is made with that request's own seed, before training and after,
+/// so the scores differ by the prompt or plan only.
 #[allow(clippy::too_many_arguments)]
 async fn score_all(
     state: &Arc<AppState>,
@@ -384,28 +388,28 @@ async fn score_all(
     let mut made = 0usize;
     let step = |n: usize| from + (to - from) * 0.8 * n as f64 / total.max(1) as f64;
     let mut new_pics: Vec<Vec<Option<image::DynamicImage>>> = Vec::new();
-    for c in news.iter() {
+    for (i, c) in news.iter().enumerate() {
         let mut row = Vec::new();
-        for (k, (x, _)) in c.tries.iter().enumerate() {
+        for (x, _) in &c.tries {
             if cancel.load(Ordering::Relaxed) {
                 return Err(crate::download::CANCELLED.into());
             }
             progress(&format!("Making practice picture {} of {total}", made + 1), step(made));
-            row.push(render(x.prompt.clone(), x.negative.clone(), 2000 + k as u64).await.ok());
+            row.push(render(x.prompt.clone(), x.negative.clone(), 2000 + i as u64).await.ok());
             made += 1;
         }
         new_pics.push(row);
     }
     let mut edit_pics: Vec<Vec<Option<image::DynamicImage>>> = Vec::new();
-    for e in edits.iter() {
+    for (i, e) in edits.iter().enumerate() {
         let mut row = Vec::new();
-        for (k, (p, _)) in e.tries.iter().enumerate() {
+        for (p, _) in &e.tries {
             if cancel.load(Ordering::Relaxed) {
                 return Err(crate::download::CANCELLED.into());
             }
             progress(&format!("Making practice picture {} of {total}", made + 1), step(made));
             let out = match edit {
-                Some(run) => run(e.source.clone(), p.steps.clone(), 5000 + k as i64).await.ok(),
+                Some(run) => run(e.source.clone(), p.steps.clone(), 5000 + i as i64).await.ok(),
                 None => None,
             };
             row.push(out);
@@ -478,6 +482,20 @@ mod tests {
         // characters a token in Qwen3's vocabulary).
         let long = format!("{{\"prompt\": \"{}\", \"negative\": \"\"}}", "a warm wooden cabin room ".repeat(36));
         assert!(example(&short, &long, true).len() < TRAIN_CTX as usize * 4, "{}", example(&short, &long, true).len());
+    }
+
+    #[test]
+    fn a_coached_writer_gets_what_it_was_trained_on() {
+        let program = prompts::bundled("flux2");
+        let ask = Ask { request: "three red apples in a wooden bowl".into(), look: "photo".into(), ..Default::default() };
+        assert_eq!(prompts::writer_messages(&program, &ask, false), prompts::messages(&program, &ask), "an untrained writer gets the whole program");
+        assert_eq!(prompts::planner_messages("A man on a stool.", "have him stand", false), prompts::words_messages("A man on a stool.", "have him stand"));
+        // A training line, less its answer, is what the coached writer is asked.
+        let line: Value = serde_json::from_str(&example(&prompts::writer_messages(&program, &ask, true), "{}", true)).unwrap();
+        let asked = line["messages"].as_array().unwrap();
+        assert_eq!(asked[..asked.len() - 1], prompts::writer_messages(&program, &ask, true)[..]);
+        assert_eq!(prompts::writer_messages(&program, &ask, true), compact(&prompts::messages(&program, &ask)));
+        assert_eq!(prompts::planner_messages("A man on a stool.", "have him stand", true), compact(&prompts::words_messages("A man on a stool.", "have him stand")));
     }
 
     #[test]

@@ -3555,5 +3555,14 @@
  "coached": "已微调",
  "{model} brings its own language model to write with. It can practise on {model} and learn from what worked.": "{model} 自带用于撰写的语言模型。它可以在 {model} 上练习，并从效果好的尝试中学习。",
  "{model}'s own language model writes prompts and edit plans for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} 自带的语言模型为练习图片撰写提示词和编辑计划。{model} 逐一生成，{reader} 检查结果，撰写器再用其最佳尝试进行训练。",
- "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} 自带的语言模型为练习图片撰写提示词。{model} 逐一生成，{reader} 检查结果，撰写器再用其最佳尝试进行训练。"
+ "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} 自带的语言模型为练习图片撰写提示词。{model} 逐一生成，{reader} 检查结果，撰写器再用其最佳尝试进行训练。",
+ "Edits: first plans now do {now}% of what was asked for ({first}% at the start).": "编辑：首个方案现在能完成要求内容的 {now}%（起初为 {first}%）。",
+ "It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.": "它会从每张经过检查的图片和每次编辑中学习：哪些出现了、哪些没有，以及哪种措辞解决了问题。",
+ "Learn from what I make, so prompts fit {model} better each time": "从我生成的内容中学习，让提示词每次都更适合 {model}",
+ "Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.": "已从 {jobs} 张经过检查的图片和编辑中学习：{examples} 个成功示例，以及 {rules} 条关于 {model} 如何理解提示词的规则。",
+ "New pictures: first tries now show {now}% of what was asked for ({first}% at the start).": "新图片：首次尝试现在能呈现要求内容的 {now}%（起初为 {first}%）。",
+ "Nothing to write again.": "没有需要重写的内容。",
+ "The edit didn't come out.": "编辑没有成功。",
+ "What it learns is kept encrypted on this PC. Incognito chats never teach it.": "它学到的内容加密保存在这台电脑上。无痕聊天永远不会用于学习。",
+ "learned from {n}": "已从 {n} 个中学习"
 }

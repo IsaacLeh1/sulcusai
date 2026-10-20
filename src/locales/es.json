@@ -3555,5 +3555,14 @@
  "coached": "entrenado",
  "{model} brings its own language model to write with. It can practise on {model} and learn from what worked.": "{model} trae su propio modelo de lenguaje para escribir. Puede practicar con {model} y aprender de lo que funcionó.",
  "{model}'s own language model writes prompts and edit plans for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "El modelo de lenguaje propio de {model} escribe prompts y planes de edición para imágenes de práctica. {model} hace cada una, {reader} revisa el resultado y el redactor se entrena con sus mejores intentos.",
- "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "El modelo de lenguaje propio de {model} escribe prompts para imágenes de práctica. {model} hace cada una, {reader} revisa el resultado y el redactor se entrena con sus mejores intentos."
+ "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "El modelo de lenguaje propio de {model} escribe prompts para imágenes de práctica. {model} hace cada una, {reader} revisa el resultado y el redactor se entrena con sus mejores intentos.",
+ "Edits: first plans now do {now}% of what was asked for ({first}% at the start).": "Ediciones: los primeros planes ya logran el {now}% de lo pedido ({first}% al principio).",
+ "It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.": "Aprende de cada imagen y edición revisada: lo que apareció, lo que no y qué redacción lo arregló.",
+ "Learn from what I make, so prompts fit {model} better each time": "Aprender de lo que hago, para que los prompts se ajusten mejor a {model} cada vez",
+ "Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.": "Aprendido de {jobs} imágenes y ediciones revisadas: {examples} que funcionaron y {rules} reglas sobre cómo lee los prompts {model}.",
+ "New pictures: first tries now show {now}% of what was asked for ({first}% at the start).": "Imágenes nuevas: los primeros intentos ya muestran el {now}% de lo pedido ({first}% al principio).",
+ "Nothing to write again.": "No hay nada que volver a escribir.",
+ "The edit didn't come out.": "La edición no salió.",
+ "What it learns is kept encrypted on this PC. Incognito chats never teach it.": "Lo que aprende se guarda cifrado en este PC. Los chats de incógnito nunca le enseñan.",
+ "learned from {n}": "aprendido de {n}"
 }

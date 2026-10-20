@@ -3555,5 +3555,14 @@
  "coached": "トレーニング済み",
  "{model} brings its own language model to write with. It can practise on {model} and learn from what worked.": "{model} には文章を書くための独自の言語モデルが付いています。{model} で練習して、うまくいったことから学べます。",
  "{model}'s own language model writes prompts and edit plans for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} の言語モデルが練習画像用のプロンプトと編集プランを書きます。{model} がそれぞれを作り、{reader} が結果を確認し、ライターは最も良かった試行で訓練されます。",
- "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} の言語モデルが練習画像用のプロンプトを書きます。{model} がそれぞれを作り、{reader} が結果を確認し、ライターは最も良かった試行で訓練されます。"
+ "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "{model} の言語モデルが練習画像用のプロンプトを書きます。{model} がそれぞれを作り、{reader} が結果を確認し、ライターは最も良かった試行で訓練されます。",
+ "Edits: first plans now do {now}% of what was asked for ({first}% at the start).": "編集：最初のプランが依頼内容の {now}% を実現しています（最初は {first}%）。",
+ "It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.": "確認された画像と編集のすべてから学習します：何が表示され、何が表示されず、どの言い回しで直ったか。",
+ "Learn from what I make, so prompts fit {model} better each time": "作成したものから学習し、プロンプトを毎回 {model} により合うようにする",
+ "Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.": "確認済みの画像と編集 {jobs} 件から学習：うまくいった例 {examples} 件と、{model} のプロンプトの読み方についてのルール {rules} 件。",
+ "New pictures: first tries now show {now}% of what was asked for ({first}% at the start).": "新しい画像：最初の試行で依頼内容の {now}% が表示されています（最初は {first}%）。",
+ "Nothing to write again.": "書き直すものがありません。",
+ "The edit didn't come out.": "編集がうまくいきませんでした。",
+ "What it learns is kept encrypted on this PC. Incognito chats never teach it.": "学習した内容はこのPCに暗号化して保存されます。シークレットチャットから学習することはありません。",
+ "learned from {n}": "{n} 件から学習"
 }

@@ -2325,16 +2325,7 @@ async fn e2e_coach_the_prompt_writer() {
     let state = media_state();
     crate::applog::init(&state.paths.logs);
     let model = std::env::var("SULCUSAI_COACH_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
-    let reader = std::env::var("SULCUSAI_READER").unwrap_or_else(|_| "qwen3.5-9b".into());
-    let file = std::fs::read_dir(state.paths.models.join(&reader))
-        .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .find(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"))
-        .expect("the reader's model file");
-    let size = std::fs::metadata(state.paths.models.join(&reader).join(&file)).unwrap().len();
-    crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: reader.clone(), quant: "Q4_K_M".into(), path: file, size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
-    assert!(crate::vision::can_read(&state, None), "{reader} reads pictures");
+    let reader = add_reader(&state);
     media::install_for_test(&state, &model).await.unwrap();
     let m = media::models(&state).into_iter().find(|x| x.id == model).expect("a known picture model");
     let writer = media::installed_file(&state, &m, "llm").expect("the picture model's own language model");
@@ -2377,6 +2368,188 @@ async fn e2e_coach_the_prompt_writer() {
         None => println!("no coach kept"),
     }
     result.unwrap();
+}
+
+/// Registers the installed chat model that reads pictures in a test's own
+/// list: SULCUSAI_READER, or Qwen3.5 9B.
+fn add_reader(state: &crate::AppState) -> String {
+    let reader = std::env::var("SULCUSAI_READER").unwrap_or_else(|_| "qwen3.5-9b".into());
+    let file = std::fs::read_dir(state.paths.models.join(&reader))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"))
+        .expect("the reader's model file");
+    let size = std::fs::metadata(state.paths.models.join(&reader).join(&file)).unwrap().len();
+    crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: reader.clone(), quant: "Q4_K_M".into(), path: file, size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+    assert!(crate::vision::can_read(state, None), "{reader} reads pictures");
+    reader
+}
+
+/// The prompt writer learning as it's used (`media::learn`): checked new
+/// pictures and edits, each written again from the reviewer's notes until
+/// it shows what was asked (up to 5 makes), then the same kinds of request
+/// again with what it learnt. Prints every job's tries, the rules and
+/// examples it kept, and how first tries did in each half. Stops a job if
+/// the card reaches 83 °C. SULCUSAI_LEARN_MODEL: the picture model (FLUX.2
+/// klein 4B unless set); SULCUSAI_READER as in `add_reader`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_prompt_writer_learns() {
+    use crate::media::{self, learn, store, Request};
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    let model = std::env::var("SULCUSAI_LEARN_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
+    let reader = add_reader(&state);
+    media::install_for_test(&state, &model).await.unwrap();
+    let m = media::models(&state).into_iter().find(|x| x.id == model).expect("a known picture model");
+    println!("{} learning, reviewed by {reader}", m.name);
+    // SULCUSAI_MEDIA_OUT: where every kept picture goes, to check the reviewer by eye.
+    let out = std::env::var("SULCUSAI_MEDIA_OUT").ok().map(std::path::PathBuf::from);
+    let c = state.cipher().unwrap();
+    let keep = |name: &str, id: &str| {
+        if let Some(dir) = &out {
+            let _ = std::fs::create_dir_all(dir);
+            if let Ok(png) = store::read(&state.paths, &c, id) {
+                let _ = std::fs::write(dir.join(format!("{name}.png")), png);
+            }
+        }
+    };
+    let started = std::time::Instant::now();
+    let hot = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch = {
+        let hot = hot.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                for j in media::list_jobs() {
+                    if j.gpu_temp.is_some_and(|t| t >= 83.0) {
+                        println!("the card reached {:.0} °C: stopping", j.gpu_temp.unwrap_or(0.0));
+                        hot.store(true, std::sync::atomic::Ordering::Relaxed);
+                        media::cancel(&j.id);
+                    }
+                }
+            }
+        })
+    };
+    let log_path = state.paths.logs.join(crate::applog::APP_LOG);
+    let mut seen = 0usize;
+    // The job's own lines in the log since the last one.
+    let mut news = || {
+        let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let lines: Vec<String> = log.lines().skip(seen).map(str::to_string).collect();
+        seen += lines.len();
+        lines.into_iter().filter(|l| l.contains("[media]") && (l.contains("Picture ") || l.contains("Edit ") || l.contains("Kept picture") || l.contains("learnt") || l.contains("Made again") || l.contains("reviewer"))).collect::<Vec<_>>()
+    };
+    let first_score = |lines: &[String], word: &str| -> Option<f32> {
+        let l = lines.iter().find(|l| l.contains(word))?;
+        let pct = l.split(": it ").nth(1)?.split_whitespace().find(|w| w.ends_with('%'))?;
+        pct.trim_end_matches('%').parse::<f32>().ok()
+    };
+    let pictures = [
+        ("a bakery storefront with a striped awning and a sign that says \"SUNRISE BAKERY\"", "a coffee shop storefront with a green awning and a sign that says \"MORNING BREW\""),
+        ("three red apples and one green pear in a wooden bowl on a white kitchen table", "two yellow lemons and three green limes on a white plate on a wooden table"),
+        ("an astronaut riding a horse across a desert at sunset, two moons in the sky", "a knight riding a camel across sand dunes at noon, three suns in the sky"),
+        ("a girl in a yellow raincoat holding a blue umbrella, a red bicycle on the left", "a boy in a green jacket holding an orange kite, a black dog on the right"),
+        ("a birthday cake with five lit candles and the words \"HAPPY 5TH\" in blue icing", "a wedding cake with two lit candles and the words \"JUST MARRIED\" in gold icing"),
+        ("a chessboard with a white queen and a black knight in front, shallow depth of field", "a checkers board with two red pieces and one black piece in front, shallow depth of field"),
+    ];
+    let edits = [
+        (("a photo of a park bench where an old man reads a newspaper, a red bicycle leaning on a tree behind the bench", "remove the bicycle"), ("a photo of a quiet street with a blue car parked at the curb and a green trash can on the sidewalk", "remove the trash can")),
+        (("a photo of a boy in a green t-shirt standing on grass next to a black and white soccer ball", "the boy holds the soccer ball above his head with both hands"), ("a photo of a girl in a red dress standing in a garden next to a yellow beach ball", "the girl holds the beach ball above her head with both hands")),
+    ];
+    // Three passes: learning; alike requests with what it learnt; the same
+    // alike requests (same seeds, same pictures to edit) with nothing learnt
+    // and learning off, to compare first tries pair by pair.
+    let mut firsts: [Vec<Option<f32>>; 3] = Default::default();
+    let mut edit_firsts: [Vec<Option<f32>>; 3] = Default::default();
+    let mut sources: Vec<String> = Vec::new();
+    let mut learnt = None;
+    for half in 0..3 {
+        if half == 2 {
+            let l = learn::load(&state, &m);
+            learn::forget(&state, &m);
+            learn::set_on(&state, false).unwrap();
+            learnt = Some(l);
+        }
+        println!("\n=== {} ===", ["first pass: learning", "second pass: alike requests, with what it learnt", "third pass: the same alike requests, nothing learnt (learning off)"][half]);
+        for (i, pair) in pictures.iter().enumerate() {
+            if hot.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let prompt = if half == 0 { pair.0 } else { pair.1 };
+            let t0 = std::time::Instant::now();
+            let req = Request { op: "generate".into(), prompt: prompt.into(), model_id: Some(model.clone()), shape: Some("square".into()), seed: Some(40 + i as i64), write_prompt: Some(true), check: Some(true), ..Default::default() };
+            let made = media::run(&state, store::new_id(), req).await;
+            if let Some(item) = made.as_ref().ok().and_then(|v| v.first()) {
+                keep(&format!("pass{}-picture{}", half + 1, i + 1), &item.id);
+            }
+            let lines = news();
+            println!("\n[{:5.1} min] {prompt} ({:.0} s){}", started.elapsed().as_secs_f64() / 60.0, t0.elapsed().as_secs_f64(), made.as_ref().err().map(|e| format!(" FAILED: {e}")).unwrap_or_default());
+            for l in &lines {
+                println!("  {}", l.split("[media] ").nth(1).unwrap_or(l));
+            }
+            firsts[half].push(first_score(&lines, "Picture 1 of"));
+        }
+        for (i, pair) in edits.iter().enumerate() {
+            if hot.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let (scene, change) = if half == 0 { pair.0 } else { pair.1 };
+            // The third pass edits the second pass's pictures.
+            let picture = match sources.get(i).filter(|_| half == 2) {
+                Some(id) => id.clone(),
+                None => {
+                    let source = Request { op: "generate".into(), prompt: scene.into(), model_id: Some(model.clone()), shape: Some("landscape".into()), seed: Some(70 + i as i64), ..Default::default() };
+                    let Ok(made) = media::run(&state, store::new_id(), source).await else { continue };
+                    news();
+                    if half == 1 {
+                        sources.push(made[0].id.clone());
+                    }
+                    made[0].id.clone()
+                }
+            };
+            let t0 = std::time::Instant::now();
+            let req = Request { op: "edit".into(), prompt: change.into(), source: Some(picture), model_id: Some(model.clone()), seed: Some(90 + i as i64), ..Default::default() };
+            let done = media::run(&state, store::new_id(), req).await;
+            if let Some(item) = done.as_ref().ok().and_then(|v| v.first()) {
+                keep(&format!("pass{}-edit{}", half + 1, i + 1), &item.id);
+                if let Some(parent) = &item.parent {
+                    keep(&format!("pass{}-edit{}-before", half + 1, i + 1), parent);
+                }
+            }
+            let lines = news();
+            println!("\n[{:5.1} min] edit: {change} ({:.0} s){}", started.elapsed().as_secs_f64() / 60.0, t0.elapsed().as_secs_f64(), done.as_ref().err().map(|e| format!(" FAILED: {e}")).unwrap_or_default());
+            for l in &lines {
+                println!("  {}", l.split("[media] ").nth(1).unwrap_or(l));
+            }
+            edit_firsts[half].push(first_score(&lines, "Edit 1 of"));
+        }
+    }
+    watch.abort();
+    let l = learnt.unwrap_or_else(|| learn::load(&state, &m));
+    println!("\n=== what it learnt ({:.1} min) ===", started.elapsed().as_secs_f64() / 60.0);
+    println!("examples: {} pictures, {} edits", l.pictures.len(), l.edits.len());
+    for r in l.rules.iter().chain(&l.edit_rules) {
+        println!("rule (helped {}): {}", r.helped, r.text);
+    }
+    let mean = |v: &[Option<f32>]| {
+        let got: Vec<f32> = v.iter().flatten().copied().collect();
+        if got.is_empty() { f32::NAN } else { got.iter().sum::<f32>() / got.len() as f32 }
+    };
+    // With what it learnt against without, on the same request, seed and picture.
+    let paired = |with: &[Option<f32>], without: &[Option<f32>]| -> (Vec<f32>, f32) {
+        let d: Vec<f32> = with.iter().zip(without).filter_map(|(a, b)| Some(a.as_ref()? - b.as_ref()?)).collect();
+        let m = if d.is_empty() { f32::NAN } else { d.iter().sum::<f32>() / d.len() as f32 };
+        (d, m)
+    };
+    for (what, v) in [("new pictures", &firsts), ("edits", &edit_firsts)] {
+        println!("first tries, {what}: learning {:?} (mean {:.0}%); alike, with it {:?} (mean {:.0}%); the same, without {:?} (mean {:.0}%)", v[0], mean(&v[0]), v[1], mean(&v[1]), v[2], mean(&v[2]));
+        let (d, m) = paired(&v[1], &v[2]);
+        println!("  with minus without, request by request: {d:?} points (mean {m:+.1})");
+    }
+    assert!(!hot.load(std::sync::atomic::Ordering::Relaxed), "stopped: the card got too hot");
+    assert!(l.firsts.len() + l.edit_firsts.len() > 0, "it learnt from the checked jobs");
 }
 
 /// A model from Hugging Face, installed the way the Studio installs one

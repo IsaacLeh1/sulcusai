@@ -164,6 +164,9 @@ pub struct Helper {
     /// Graphics memory its own engine holds (0 on the processor, or when
     /// it's the chat model).
     pub card_bytes: u64,
+    /// It runs with the prompt coach's adapter, so it writes prompts and
+    /// plans from the short messages it was trained on (`coach::compact`).
+    pub coached: bool,
     _turn: tokio::sync::MutexGuard<'static, ()>,
 }
 
@@ -210,7 +213,7 @@ impl Helper {
             ))
             .await;
         match started {
-            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, card_bytes: if on_card { need } else { 0 }, _turn: turn }),
+            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, card_bytes: if on_card { need } else { 0 }, coached: lora.is_some(), _turn: turn }),
             Err(e) => {
                 eng.stop().await;
                 if let Some(p) = paused {
@@ -233,7 +236,7 @@ impl Helper {
             crate::background_endpoint(state).await?
         };
         let sees = pictures && spec.vision.is_some();
-        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _hold: Some(hold), card_bytes: 0, _turn: turn })
+        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _hold: Some(hold), card_bytes: 0, coached: false, _turn: turn })
     }
 
     /// One answer (thinking is off: `chat::complete` asks for that).

@@ -154,9 +154,10 @@ export function usePromptHelp(modelId: string | undefined): {
       live = false;
     };
   }, [modelId, n]);
-  // Teaching or coaching finished: show what it learned.
+  // Teaching, coaching or a checked job finished: show what it learned.
   useEffect(() => {
-    const subs = [on("media:tuned", () => setN((x) => x + 1)), on("media:coached", () => setN((x) => x + 1))];
+    const again = () => setN((x) => x + 1);
+    const subs = [on("media:tuned", again), on("media:coached", again), on("media:done", again)];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, []);
   return {
@@ -247,6 +248,10 @@ export function PictureQuestions({ questions, prompt, onMake }: { questions: str
 const PRACTICE_PICTURES = 27;
 /** Practice pictures and edit steps when coaching, as the core estimates it. */
 const COACH_PICTURES = 110;
+/** Coaching trains the writer's own weights (coach.rs). Out of sight: its
+ * first real run did worse (79% → 74%, not kept), and the writer learns
+ * from what's made instead (learn.rs). */
+const SHOW_COACH = false;
 
 /** "Prompt writer" settings under the composer, and teaching it a model. */
 export function PromptHelpPanel({
@@ -271,6 +276,8 @@ export function PromptHelpPanel({
   if (!model || model.id.startsWith("cloud:")) return null;
   const tuned = s?.tuned;
   const coach = s?.coach;
+  const learned = s?.learned;
+  const pct = (x: number) => Math.round(x * 100);
   return (
     <details className="prompt-help small">
       <summary>
@@ -280,6 +287,7 @@ export function PromptHelpPanel({
         {help.ask && canAsk ? ` · ${t("asks when unclear")}` : ""}
         {tuned ? ` · ${t("taught")}` : ""}
         {coach ? ` · ${t("coached")}` : ""}
+        {learned?.jobs ? ` · ${t("learned from {n}", { n: learned.jobs })}` : ""}
       </summary>
       <label className="check">
         <input type="checkbox" checked={help.write} onChange={(e) => help.setWrite(e.target.checked)} />
@@ -313,6 +321,38 @@ export function PromptHelpPanel({
           </button>
         </p>
       )}
+      <label className="check" title={t("What it learns is kept encrypted on this PC. Incognito chats never teach it.")}>
+        <input
+          type="checkbox"
+          checked={!!s?.learning}
+          disabled={!s}
+          onChange={(e) =>
+            api
+              .mediaSetLearning(e.target.checked)
+              .then(help.reload)
+              .catch((err) => toast(errorText(err), "error"))
+          }
+        />
+        {t("Learn from what I make, so prompts fit {model} better each time", { model: model.name })}
+      </label>
+      {(s?.learning || !!learned?.jobs) && (
+        <p className="muted">
+          {learned?.jobs
+            ? t("Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.", {
+                jobs: learned.jobs,
+                examples: learned.pictures + learned.edits,
+                rules: learned.rules,
+                model: model.name,
+              })
+            : t("It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.")}
+          {learned?.now != null && learned.first != null && (
+            <> {t("New pictures: first tries now show {now}% of what was asked for ({first}% at the start).", { now: pct(learned.now), first: pct(learned.first) })}</>
+          )}
+          {learned?.edit_now != null && learned.edit_first != null && (
+            <> {t("Edits: first plans now do {now}% of what was asked for ({first}% at the start).", { now: pct(learned.edit_now), first: pct(learned.edit_first) })}</>
+          )}
+        </p>
+      )}
       <div className="row wrap">
         {tuned ? (
           <span className="muted">
@@ -330,7 +370,7 @@ export function PromptHelpPanel({
           {tuned ? t("Teach it again…") : t("Teach it this model…")}
         </button>
       </div>
-      {s?.own_writer && (
+      {SHOW_COACH && s?.own_writer && (
         <div className="row wrap">
           {coach ? (
             <span className="muted">
@@ -350,7 +390,7 @@ export function PromptHelpPanel({
           </button>
         </div>
       )}
-      {(tuned || coach) && (
+      {(tuned || coach || !!learned?.jobs) && (
         <div className="row">
           <span className="spacer" />
           <button

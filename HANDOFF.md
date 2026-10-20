@@ -1549,7 +1549,42 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## The prompt writer learns from use, DSPy-style (2026-10-20, after 0.9.18, not built)
+
+His request: no weight training. Model 1 (the writer for new pictures, the planner for edits) puts the request into words for model 2 (the picture model). The review model compares what came out with what was asked for and sends that back to model 1, which either prompts model 2 again or hands the picture over as done. The more it's used, the better model 1 knows how model 2 reads prompts. His answers: up to 5 pictures a request; the reviewer must understand both his request and model 1's prompt; pictures and edits both learn; the weight coach stays in the code but out of sight (it didn't help, below).
+
+- **The loop, new pictures** (`media::made_well`, when "Check the picture" is on):
+  - The reviewer (the picture reader) makes the checklist from the person's request at its first look and keeps it for every make. klein's own 4B writer once gave back none, so a picture went unchecked.
+  - Each make is judged (`prompts::judge`). Below 85% the reviewer also writes notes (`prompts::review`). It sees the picture, the request and model 1's prompt, and says for each miss whether the prompt asked for it, what shows instead, and how to say it.
+  - Model 1 then writes again (`prompts::revise`). It sees every try so far with its score and misses, plus the latest notes, and also gives a "lesson": the rule about model 2 that its rewrite follows.
+  - Every make uses the same seed, so they differ by their words only.
+  - It stops at 85%, at 5 pictures, after two rewrites that don't beat the best (`learn::finished`), or when the writer repeats itself. The best is kept and the rest are deleted. Each stop is logged with its reason ("Stopped writing again: …").
+- **The loop, edits** (`media::edited_well`): plan, make, `judge_edit`, then `replan_edit` from the best try so far (its picture and misses) with a lesson. The same stop rules apply, and the best is kept, with the 0.1 bonus for fitting back into the photo. Re-planning from the last try instead wandered off after a worse one (82% → 45% → 45%).
+- **Learning** (`media/learn.rs`, kept per picture model in `data/prompt_learning/<model>.json`, encrypted with `work_cipher`; never from incognito chats, `may_learn`):
+  - Examples: a prompt (or edit plan) that passed review at 85% or more. For a new request, the 3 whose requests share the most words (`alike`, `picks`) become model 1's worked examples, ahead of the program's own (`learn::apply` in `prompts::prepare`; `planner_help` → `plan_edit_with`/`replan_edit`). At most 40 of each kind; a better one for the same request replaces the old.
+  - Rules: a rewrite's lesson counts when that rewrite scored higher than the try it was made from and showed something that try missed (`confirmed`, with `Try::from` for edits). Said again, a rule counts twice. The 8 most confirmed go into model 1's instructions (`rules_text`).
+  - First-try scores over time (`summary`: the first five against the last ten).
+  - No prompt text goes to app.log, only scores and counts.
+- **Studio** (`PromptHelpPanel`): "Learn from what I make, so prompts fit {model} better each time" (on by default; `media_set_learning`). Below it: what was learnt (jobs, examples, rules) and first-try trends once there are 8 jobs. "Forget what it learned" also clears this (`media_forget_tuning` → `learn::forget`). The summary line shows "learned from N". The panel reloads after every finished job. The coach button is behind `SHOW_COACH = false`.
+- "Teach it this model…" (`tune`) now uses the writer without a coach (`plain_writer`), since a coached writer doesn't read the program it tunes.
+- **Real run** (`e2e_prompt_writer_learns`, FLUX.2 klein 4B, Qwen3-4B writing, Qwen3.5 9B reviewing, 2026-10-20, 22.4 min, no errors). Three passes: 6 pictures and 2 edits learning; 6 alike pictures and 2 alike edits with what it learnt; then the same alike ones with nothing learnt and learning off (same seeds, same pictures to edit).
+  - The loop helps what's handed over. Jobs that fell short at first and got better:
+    - MORNING BREW sign 67 → 100.
+    - Three suns 75 → 100.
+    - Checkers 60 → 100.
+    - Soccer-ball lift 45 → 82.
+    - Bicycle removal 55 → 64.
+  - A few didn't improve and were handed over with what's missing (three suns once at 75, the JUST MARRIED cake at 67, trash-can removal at 45).
+  - Learnt: 10 picture examples, 1 edit example, 3 rules. The rules were generic: "specify exact text early"; "when removing an object, describe it precisely and say what remains in its place"; "when an object is moved or lifted, describe its exact appearance and what remains where it was".
+  - **No measurable gain from learning yet.**
+    - New pictures, first tries: alike requests with learning [67 100 75 100 67 100] against the same without [100 100 75 100 100 60], or −4 points on average. One request swung +40 and two −33, which is the writer's own randomness (temperature 0.4), so the noise is far bigger than any effect six pairs can show.
+    - Edits: [45 91] against [78 91]. The checklists differ between the two (the plan makes them), so they don't compare.
+  - First-pass requests were too easy: 6 of 6 passed at once.
+- **To know whether learning helps**, as the coordinating session also said, it needs many paired requests (hard ones), fixed seeds and a steadier writer. Keeping a rule or example only once it beats the program without it on a held-out set would guard against noise; not built. `SULCUSAI_MEDIA_OUT` now saves every kept picture from the learning test, to check the reviewer by eye.
+
 ## Prompt coach: Studio button and first real run (2026-10-20, after 0.9.18, not built)
+
+**Since then**: the button is hidden (`SHOW_COACH`); the coached writer now gets the short messages it was trained on (`prompts::writer_messages`/`planner_messages`, untested in a real run); the coach's before and after use one seed per request. See the section above.
 
 - **Studio** (`StudioExtras.tsx` `PromptHelpPanel`): a picture model that brings its own language model (`own_writer`) gets a second row under "Teach it this model…". "Coach the prompt writer…" opens a dialog that says what happens, that the result is kept only if it does better, and how long it takes (the core's estimate, `est_secs × 110 × 0.6 + 1500`). It then starts `{ op: "coach", prompt: "", model_id }`.
   - Once coached, the row gives the date, the before → after score and how many attempts it learned from, and the button becomes "Coach it again…". The button is off when nothing reads pictures.

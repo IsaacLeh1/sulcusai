@@ -1971,6 +1971,21 @@ export interface PromptStatus {
   /** The model's own writer, trained on this PC on its best practice
    * attempts (kept only when it scored higher than before). */
   coach: { at: number; model_id: string; writer: string; before: number; after: number; examples: number } | null;
+  /** What the writer and edit planner learned from checked pictures and
+   * edits: examples that worked, rules about the model, and how first tries
+   * score (the first five against the last ten, once there are eight). */
+  learned: {
+    pictures: number;
+    edits: number;
+    rules: number;
+    jobs: number;
+    first: number | null;
+    now: number | null;
+    edit_first: number | null;
+    edit_now: number | null;
+  };
+  /** Learning from what's made is on. */
+  learning: boolean;
 }
 
 /** Base64 of bytes (for sending files to the core). */
@@ -2353,6 +2368,7 @@ export const api = {
   mediaCancel: (jobId: string) => invoke<void>("media_cancel", { jobId }),
   mediaPromptStatus: (modelId: string) => invoke<PromptStatus>("media_prompt_status", { modelId }),
   mediaForgetTuning: (modelId: string) => invoke<void>("media_forget_tuning", { modelId }),
+  mediaSetLearning: (on: boolean) => invoke<void>("media_set_learning", { on }),
   /** Questions worth asking before a new picture or a change (usually none). */
   mediaQuestions: (op: "generate" | "edit", prompt: string, source: string | null, modelId: string | null, examples = 0) =>
     invoke<string[]>("media_questions", { op, prompt, source, modelId, examples }),
