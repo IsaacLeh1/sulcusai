@@ -1611,6 +1611,15 @@ He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overni
   - ace-synth alone, given the lyrics, description, bpm/key/time signature (`music::settle` picks any that are missing from the style and mood) and duration, makes exactly the length asked. Whisper heard its words ("Sunrise paints the ridge in gold…"), and it's 5–15 s on the RTX 5070.
   - The 2 GB `lm` file was dropped from the music models' downloads.
   - With no chat model to write lyrics, a sung song now stops at once and says so.
+  - **Words you can hear** (tested with Whisper large v3 turbo run directly; the app's server's Silero detector took singing over music for no speech):
+    - 8 lines in 30 s came out mumbled every time; 4 lines in 30 s, or 8 in 60 s, were heard line by line. So `lyrics::lines_for` is 7.5 s a line, `words_for` 0.6 words a second, and `fit_lines` cuts written lyrics to both (three lines at least).
+    - The Studio warns when your own lyrics need more time. Chats lengthen the song to fit the lyrics they give.
+    - The vocal language is always named (`guess_language`), and guidance is 3 for sung songs.
+    - About three songs in four come out clearly sung (seed luck), so the Studio makes 2 versions by default on the graphics card (`synth_batch_size`).
+    - Synthwave's vocals stay blurred however it's asked (a trait of the model). The Studio says so for synthwave, ambient, techno, house, lo-fi and drum and bass.
+  - **Songs in chats**: the paperclip takes songs. The model is told the song's id, and create_music works on it. For "extend" it takes seconds to add or `to` (the new length), else reads the amount from the person's words (Qwen3 4B gave `to: 40` and once `from: 0, to: 0`).
+  - The Studio viewer's song buttons open the music tab with that song and task.
+  - Real-model tests: `e2e_music_songs` (SULCUSAI_SONGS picks cases), `e2e_chat_works_on_an_attached_song`, `e2e_agent_asks_before_sending`.
   - Add, extract and complete need **ACE-Step 1.5 Base** (new catalog model, `can: parts`; turbo is "incoherent" for stems, per acestep.cpp).
   - `audio_in`: M4A, AAC, FLAC and WMA are decoded by Media Foundation into a WAV. Imported songs get their length.
   - `music_write_lyrics` lets him read and edit lyrics before making the song. create_music in chats takes all the settings and can work on a song from the chat.
