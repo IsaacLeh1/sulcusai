@@ -4,7 +4,7 @@
 // the wallpaper maker.
 import { useEffect, useState } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type MediaItem, type MediaModelCard, type MediaRequest, type PromptStatus, type Screen } from "../api";
+import { api, errorText, on, type MediaItem, type MediaModelCard, type MediaRequest, type PromptStatus, type Screen } from "../api";
 import { t, tx } from "../i18n";
 import { useMediaUrl, waitLabel } from "../media";
 import { MediaTile } from "./MediaBits";
@@ -154,6 +154,12 @@ export function usePromptHelp(modelId: string | undefined): {
       live = false;
     };
   }, [modelId, n]);
+  // Teaching, coaching or a checked job finished: show what it learned.
+  useEffect(() => {
+    const again = () => setN((x) => x + 1);
+    const subs = [on("media:tuned", again), on("media:coached", again), on("media:done", again)];
+    return () => subs.forEach((s) => s.then((un) => un()));
+  }, []);
   return {
     status,
     write,
@@ -240,6 +246,12 @@ export function PictureQuestions({ questions, prompt, onMake }: { questions: str
 }
 
 const PRACTICE_PICTURES = 27;
+/** Practice pictures and edit steps when coaching, as the core estimates it. */
+const COACH_PICTURES = 110;
+/** Coaching trains the writer's own weights (coach.rs). Out of sight: its
+ * first real run did worse (79% → 74%, not kept), and the writer learns
+ * from what's made instead (learn.rs). */
+const SHOW_COACH = false;
 
 /** "Prompt writer" settings under the composer, and teaching it a model. */
 export function PromptHelpPanel({
@@ -259,9 +271,13 @@ export function PromptHelpPanel({
   canAsk?: boolean;
 }) {
   const [teaching, setTeaching] = useState(false);
+  const [coaching, setCoaching] = useState(false);
   const s = help.status;
   if (!model || model.id.startsWith("cloud:")) return null;
   const tuned = s?.tuned;
+  const coach = s?.coach;
+  const learned = s?.learned;
+  const pct = (x: number) => Math.round(x * 100);
   return (
     <details className="prompt-help small">
       <summary>
@@ -270,6 +286,8 @@ export function PromptHelpPanel({
         {help.check && canCheck ? ` · ${t("checks pictures")}` : ""}
         {help.ask && canAsk ? ` · ${t("asks when unclear")}` : ""}
         {tuned ? ` · ${t("taught")}` : ""}
+        {coach ? ` · ${t("coached")}` : ""}
+        {learned?.jobs ? ` · ${t("learned from {n}", { n: learned.jobs })}` : ""}
       </summary>
       <label className="check">
         <input type="checkbox" checked={help.write} onChange={(e) => help.setWrite(e.target.checked)} />
@@ -303,6 +321,38 @@ export function PromptHelpPanel({
           </button>
         </p>
       )}
+      <label className="check" title={t("What it learns is kept encrypted on this PC. Incognito chats never teach it.")}>
+        <input
+          type="checkbox"
+          checked={!!s?.learning}
+          disabled={!s}
+          onChange={(e) =>
+            api
+              .mediaSetLearning(e.target.checked)
+              .then(help.reload)
+              .catch((err) => toast(errorText(err), "error"))
+          }
+        />
+        {t("Learn from what I make, so prompts fit {model} better each time", { model: model.name })}
+      </label>
+      {(s?.learning || !!learned?.jobs) && (
+        <p className="muted">
+          {learned?.jobs
+            ? t("Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.", {
+                jobs: learned.jobs,
+                examples: learned.pictures + learned.edits,
+                rules: learned.rules,
+                model: model.name,
+              })
+            : t("It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.")}
+          {learned?.now != null && learned.first != null && (
+            <> {t("New pictures: first tries now show {now}% of what was asked for ({first}% at the start).", { now: pct(learned.now), first: pct(learned.first) })}</>
+          )}
+          {learned?.edit_now != null && learned.edit_first != null && (
+            <> {t("Edits: first plans now do {now}% of what was asked for ({first}% at the start).", { now: pct(learned.edit_now), first: pct(learned.edit_first) })}</>
+          )}
+        </p>
+      )}
       <div className="row wrap">
         {tuned ? (
           <span className="muted">
@@ -319,9 +369,33 @@ export function PromptHelpPanel({
         <button className="btn small" disabled={!s?.reader} title={s?.reader ? undefined : t("Teaching needs a model that can see pictures.")} onClick={() => setTeaching(true)}>
           {tuned ? t("Teach it again…") : t("Teach it this model…")}
         </button>
-        {tuned && (
+      </div>
+      {SHOW_COACH && s?.own_writer && (
+        <div className="row wrap">
+          {coach ? (
+            <span className="muted">
+              {t("Coached on {date}: its practice pictures scored {before}% → {after}%, learning from {n} of its best attempts.", {
+                date: new Date(coach.at).toLocaleDateString(),
+                before: Math.round(coach.before * 100),
+                after: Math.round(coach.after * 100),
+                n: coach.examples,
+              })}
+            </span>
+          ) : (
+            <span className="muted">{t("{model} brings its own language model to write with. It can practise on {model} and learn from what worked.", { model: model.name })}</span>
+          )}
+          <span className="spacer" />
+          <button className="btn small" disabled={!s.reader} title={s.reader ? undefined : t("Coaching needs a model that can see pictures.")} onClick={() => setCoaching(true)}>
+            {coach ? t("Coach it again…") : t("Coach the prompt writer…")}
+          </button>
+        </div>
+      )}
+      {(tuned || coach || !!learned?.jobs) && (
+        <div className="row">
+          <span className="spacer" />
           <button
             className="link"
+            title={t("Goes back to the built-in examples and the writer as it came.")}
             onClick={() =>
               api
                 .mediaForgetTuning(model.id)
@@ -331,13 +405,13 @@ export function PromptHelpPanel({
           >
             {t("Forget what it learned")}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {teaching && (
         <Modal title={t("Teach the prompt writer {model}", { model: model.name })} onClose={() => setTeaching(false)}>
           <p>{t("It writes prompts for {n} practice pictures, makes each one, checks what came out against what was asked for, and keeps the instructions and examples that worked best. Your pictures afterwards follow what you ask more closely.", { n: PRACTICE_PICTURES })}</p>
           <p className="small muted">
-            {t("Takes about {time}. The graphics card is busy the whole time; the practice pictures aren't kept.", {
+            {t("Takes {time}. The graphics card is busy the whole time; the practice pictures aren't kept.", {
               time: waitLabel(model.fit.est_secs * PRACTICE_PICTURES * 0.6 + 300),
             })}
           </p>
@@ -351,6 +425,33 @@ export function PromptHelpPanel({
               }}
             >
               {t("Start teaching")}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {coaching && (
+        <Modal title={t("Coach {model}'s prompt writer", { model: model.name })} onClose={() => setCoaching(false)}>
+          <p>
+            {model.can.includes("edit")
+              ? t("{model}'s own language model writes prompts and edit plans for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.", { model: model.name, reader: s?.reader ?? "" })
+              : t("{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.", { model: model.name, reader: s?.reader ?? "" })}
+          </p>
+          <p>{t("The trained writer is kept only if its pictures then come out better than before.")}</p>
+          <p className="small muted">
+            {t("Takes {time}. The graphics card is busy the whole time; the practice pictures aren't kept.", {
+              time: waitLabel(model.fit.est_secs * COACH_PICTURES * 0.6 + 1500),
+            })}
+          </p>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setCoaching(false)}>{t("Cancel")}</button>
+            <button
+              className="btn primary"
+              autoFocus
+              onClick={async () => {
+                if (await onStart({ op: "coach", prompt: "", model_id: model.id })) setCoaching(false);
+              }}
+            >
+              {t("Start coaching")}
             </button>
           </div>
         </Modal>

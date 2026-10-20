@@ -92,9 +92,15 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
     const tuned = on("media:tuned", (r) =>
       toast(t("The prompt writer learned this model: {before}% → {after}% of what was asked for showed up.", { before: Math.round(r.baseline * 100), after: Math.round(r.score * 100) }), "success"),
     );
+    const coached = on("media:coached", (r) => {
+      const scores = { before: Math.round(r.before * 100), after: Math.round(r.after * 100) };
+      if (r.kept) toast(t("The prompt writer was coached: its practice pictures scored {before}% → {after}%.", scores), "success");
+      else toast(t("Coaching didn't make the prompt writer better ({before}% → {after}%), so it writes as it did before.", scores), "info");
+    });
     return () => {
       sub.then((un) => un());
       tuned.then((un) => un());
+      coached.then((un) => un());
     };
   }, [load, toast]);
 

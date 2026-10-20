@@ -59,6 +59,10 @@ const GOOD_EDIT: f32 = 0.5;
 const MIN_EXAMPLES: usize = 10;
 /// How much better the coach must do to be kept.
 const MARGIN: f32 = 0.03;
+/// Tokens per training example. On a 12 GB card a 4B trains in 8.3 GB at
+/// 512 and spills 4.6 GB into the computer's memory at 768 (practice's
+/// `TRAIN_CTX`); the attention the trainer keeps grows with its square.
+const TRAIN_CTX: u32 = 512;
 
 fn dir(paths: &crate::paths::Paths, model_id: &str) -> PathBuf {
     let safe: String = model_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
@@ -92,6 +96,22 @@ pub fn quant_of(file: &str) -> String {
         }
     }
     "Q4_K_M".to_string()
+}
+
+/// The short form of what the writer gets, for training and for the coached
+/// writer: the system message's first sentence (what it writes, and for
+/// which model) and the request. The whole prompt, with the instructions and
+/// worked examples, runs to about 1,070 tokens for FLUX.2 and 800 for an
+/// edit plan (Qwen3's tokens), far past `TRAIN_CTX`; this is about 250.
+/// Trained on these and given the whole prompt instead, the first coach
+/// barely changed what it wrote (79% → 74%, 2026-10-20), so a coached writer
+/// gets these too (`prompts::writer_messages`, `planner_messages`).
+pub fn compact(messages: &[Value]) -> Vec<Value> {
+    let system = messages.first().and_then(|m| m["content"].as_str()).unwrap_or_default();
+    let first = system.split_inclusive(". ").next().unwrap_or(system).trim();
+    let mut out = vec![json!({ "role": "system", "content": format!("{first} Reply with only JSON.") })];
+    out.extend(messages.last().filter(|m| m["role"] == "user").cloned());
+    out
 }
 
 /// One training example: the messages the writer gets, and the answer it
@@ -245,6 +265,7 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
 
     // 3. Model 2 makes every try; the reader scores them all.
     let made = score_all(state, m, render, edit, &mut news, &mut edits, progress, cancel, (0.17, 0.6)).await?;
+    crate::applog::line("media", &format!("Coaching {}, the untrained writer's tries: {}", m.name, scores_line(&news, &edits)));
     // The score to beat: the writer's steadiest try on each request (its
     // own plan, for an edit; the reader's is the first try there).
     let firsts: Vec<f32> = news.iter().filter_map(|c| c.tries.first().map(|t| t.1)).chain(edits.iter().filter_map(|e| e.tries.get(1).map(|t| t.1))).collect();
@@ -255,14 +276,14 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     for c in &news {
         if let Some((best, s)) = c.tries.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
             if *s >= GOOD_PICTURE {
-                lines.push(example(&prompts::messages(&program, &c.ask), &json!({ "prompt": best.prompt, "negative": best.negative }).to_string(), qwen3));
+                lines.push(example(&prompts::writer_messages(&program, &c.ask, true), &json!({ "prompt": best.prompt, "negative": best.negative }).to_string(), qwen3));
             }
         }
     }
     for e in &edits {
         if let Some((best, s)) = e.tries.iter().max_by(|a, b| a.1.total_cmp(&b.1)) {
             if *s >= GOOD_EDIT {
-                lines.push(example(&prompts::words_messages(&e.caption, &e.request), &best.changes.to_string(), qwen3));
+                lines.push(example(&prompts::planner_messages(&e.caption, &e.request, true), &best.changes.to_string(), qwen3));
             }
         }
     }
@@ -299,7 +320,7 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     std::fs::write(&data, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
     progress("Training the prompt writer", 0.62);
     let ready = crate::finetune::prepare(state, &installed, &work, 0.62, cancel).await?;
-    let setup = crate::finetune::Setup { conversations: true, epochs: 3, strength: "normal", own_words: true, ctx: 2048, template: None, span: (0.62, 0.8) };
+    let setup = crate::finetune::Setup { conversations: true, epochs: 3, strength: "normal", own_words: true, ctx: TRAIN_CTX, template: None, span: (0.62, 0.8) };
     ready.train(state, &format!("coach-{}", m.id), &data, &setup, cancel).await?;
     drop(ready);
     drop(ended);
@@ -321,6 +342,7 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     }
     w.done(state).await;
     score_all(state, m, render, edit, &mut news, &mut edits, progress, cancel, (0.82, 0.98)).await?;
+    crate::applog::line("media", &format!("Coaching {}, the coached writer's tries: {}", m.name, scores_line(&news, &edits)));
     let all: Vec<f32> = news.iter().map(|c| c.tries.first().map_or(0.0, |t| t.1)).chain(edits.iter().map(|e| e.tries.first().map_or(0.0, |t| t.1))).collect();
     let after = all.iter().sum::<f32>() / all.len().max(1) as f32;
     let kept = after > before + MARGIN;
@@ -336,8 +358,20 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     Ok(Report { before, after, examples: lines.len(), kept })
 }
 
+/// Every try's score in percent, a request at a time, for the log: new
+/// pictures, then edits (the reader's own plan first there, before the
+/// untrained writer's).
+fn scores_line(news: &[NewCase], edits: &[EditCase]) -> String {
+    let pct = |tries: Vec<f32>| tries.iter().map(|s| format!("{:.0}", s * 100.0)).collect::<Vec<_>>().join(" ");
+    let pictures: Vec<String> = news.iter().map(|c| format!("[{}]", pct(c.tries.iter().map(|t| t.1).collect()))).collect();
+    let changes: Vec<String> = edits.iter().map(|e| format!("[{}]", pct(e.tries.iter().map(|t| t.1).collect()))).collect();
+    format!("pictures {}; edits {}", pictures.join(" "), if changes.is_empty() { "none".to_string() } else { changes.join(" ") })
+}
+
 /// Makes every try (new pictures, then edits) and scores them with the
-/// picture reader. Returns how many pictures were made.
+/// picture reader. Returns how many pictures were made. Every try at one
+/// request is made with that request's own seed, before training and after,
+/// so the scores differ by the prompt or plan only.
 #[allow(clippy::too_many_arguments)]
 async fn score_all(
     state: &Arc<AppState>,
@@ -354,28 +388,28 @@ async fn score_all(
     let mut made = 0usize;
     let step = |n: usize| from + (to - from) * 0.8 * n as f64 / total.max(1) as f64;
     let mut new_pics: Vec<Vec<Option<image::DynamicImage>>> = Vec::new();
-    for c in news.iter() {
+    for (i, c) in news.iter().enumerate() {
         let mut row = Vec::new();
-        for (k, (x, _)) in c.tries.iter().enumerate() {
+        for (x, _) in &c.tries {
             if cancel.load(Ordering::Relaxed) {
                 return Err(crate::download::CANCELLED.into());
             }
             progress(&format!("Making practice picture {} of {total}", made + 1), step(made));
-            row.push(render(x.prompt.clone(), x.negative.clone(), 2000 + k as u64).await.ok());
+            row.push(render(x.prompt.clone(), x.negative.clone(), 2000 + i as u64).await.ok());
             made += 1;
         }
         new_pics.push(row);
     }
     let mut edit_pics: Vec<Vec<Option<image::DynamicImage>>> = Vec::new();
-    for e in edits.iter() {
+    for (i, e) in edits.iter().enumerate() {
         let mut row = Vec::new();
-        for (k, (p, _)) in e.tries.iter().enumerate() {
+        for (p, _) in &e.tries {
             if cancel.load(Ordering::Relaxed) {
                 return Err(crate::download::CANCELLED.into());
             }
             progress(&format!("Making practice picture {} of {total}", made + 1), step(made));
             let out = match edit {
-                Some(run) => run(e.source.clone(), p.steps.clone(), 5000 + k as i64).await.ok(),
+                Some(run) => run(e.source.clone(), p.steps.clone(), 5000 + i as i64).await.ok(),
                 None => None,
             };
             row.push(out);
@@ -431,6 +465,37 @@ mod tests {
         assert!(last["content"].as_str().unwrap().starts_with("<think>\n\n</think>\n\n{"), "Qwen3 answers after an empty thinking block");
         assert!(!example(&msgs, "{}", false).contains("<think>"));
         assert!(all[all.len() - 2]["content"].as_str().unwrap().contains("(The picture: A man on a stool"));
+    }
+
+    #[test]
+    fn a_training_example_keeps_what_the_writer_is_for_and_the_request() {
+        let ask = Ask { request: "a cozy cabin interior with a fireplace on the left".into(), look: "photo".into(), shape: "square".into(), ..Default::default() };
+        let full = prompts::messages(&prompts::bundled("flux2"), &ask);
+        let short = compact(&full);
+        assert_eq!(short.len(), 2, "no worked examples");
+        assert_eq!(short[0]["content"], "You write prompts for FLUX.2, a picture model that reads plain, natural sentences with a strong language model. Reply with only JSON.");
+        assert_eq!(short[1], *full.last().unwrap(), "the request as the writer gets it");
+        let plan = compact(&prompts::words_messages("A man on a stool, a guitar on the wall.", "have him play the guitar"));
+        assert_eq!(plan[0]["content"], "You plan a change to a picture for an edit model. Reply with only JSON.");
+        assert!(plan[1]["content"].as_str().unwrap().starts_with("The request: have him play the guitar (The picture: A man on a stool"));
+        // Well inside the trainer's window with a long answer (about 4.4
+        // characters a token in Qwen3's vocabulary).
+        let long = format!("{{\"prompt\": \"{}\", \"negative\": \"\"}}", "a warm wooden cabin room ".repeat(36));
+        assert!(example(&short, &long, true).len() < TRAIN_CTX as usize * 4, "{}", example(&short, &long, true).len());
+    }
+
+    #[test]
+    fn a_coached_writer_gets_what_it_was_trained_on() {
+        let program = prompts::bundled("flux2");
+        let ask = Ask { request: "three red apples in a wooden bowl".into(), look: "photo".into(), ..Default::default() };
+        assert_eq!(prompts::writer_messages(&program, &ask, false), prompts::messages(&program, &ask), "an untrained writer gets the whole program");
+        assert_eq!(prompts::planner_messages("A man on a stool.", "have him stand", false), prompts::words_messages("A man on a stool.", "have him stand"));
+        // A training line, less its answer, is what the coached writer is asked.
+        let line: Value = serde_json::from_str(&example(&prompts::writer_messages(&program, &ask, true), "{}", true)).unwrap();
+        let asked = line["messages"].as_array().unwrap();
+        assert_eq!(asked[..asked.len() - 1], prompts::writer_messages(&program, &ask, true)[..]);
+        assert_eq!(prompts::writer_messages(&program, &ask, true), compact(&prompts::messages(&program, &ask)));
+        assert_eq!(prompts::planner_messages("A man on a stool.", "have him stand", true), compact(&prompts::words_messages("A man on a stool.", "have him stand")));
     }
 
     #[test]

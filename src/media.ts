@@ -176,6 +176,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   sound: tx("Making a sound"),
   narrate: tx("Reading aloud"),
   tune: tx("Teaching the prompt writer"),
+  coach: tx("Coaching the prompt writer"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

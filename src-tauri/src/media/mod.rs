@@ -13,6 +13,7 @@ mod cutout;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
+pub mod learn;
 pub(crate) mod lyrics;
 mod audio_in;
 pub(crate) mod music;
@@ -1840,67 +1841,165 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
         // The writer already put the look in.
         first_req.style = Some("as_written".into());
     }
-    let mut items = run_kind(state, id, &first_req, Some(m), cancel, progress).await?;
+    // Checked: the first make fills part of the bar, and each one after it a share of the rest.
+    let checking = p.check && req.op == "generate";
+    let slice = |round: usize| -> (f64, f64) {
+        let rest = 0.35 / (learn::MAX_MAKES - 1) as f64;
+        match round {
+            0 if checking => (0.0, 0.6),
+            0 => (0.0, 1.0),
+            r => (0.6 + rest * (r - 1) as f64, rest),
+        }
+    };
+    let (from, len) = slice(0);
+    let bar = |stage: &str, f: f64| progress(stage, from + len * f.clamp(0.0, 1.0));
+    let mut items = run_kind(state, id, &first_req, Some(m), cancel, &bar).await?;
     // Checking: one picture, a checklist worth checking, and something to check with.
-    if p.checklist.len() < 3 || items.len() != 1 || items[0].kind != "image" || cancel.load(Ordering::Relaxed) {
+    if !checking || items.len() != 1 || items[0].kind != "image" || cancel.load(Ordering::Relaxed) {
         return Ok(items);
     }
     let c = state.work_cipher()?;
-    let first = items[0].clone();
-    let img = store::read(&state.paths, &c, &first.id).and_then(|b| imaging::decode(&b))?;
-    progress("Checking the picture against what you asked for", 0.0);
-    let Ok(r) = prompts::reader(state, Some(m)).await else { return Ok(items) };
-    let verdict = prompts::judge(&r, &img, &p.checklist).await;
-    r.done(state).await;
-    let Ok(verdict) = verdict else { return Ok(items) };
-    crate::applog::line("media", &format!("The picture showed {:.0}% of what was asked for", verdict.score * 100.0));
-    if verdict.missing.is_empty() || verdict.score >= 0.85 || cancel.load(Ordering::Relaxed) {
-        if verdict.score < 0.85 {
-            items = said_missing(state, items, &verdict.missing);
-        }
-        return Ok(items);
-    }
-    // Once more, with a description that brings out what was missing.
-    progress("Making it again so it shows everything you asked for", 0.0);
-    let w = prompts::writer(state, m).await?;
-    let before = p.written.clone().unwrap_or(prompts::Written { prompt: req.prompt.clone(), negative: req.negative.clone().unwrap_or_default() });
-    let better = prompts::revise(&w, &p.program, &p.ask, &before, &verdict.missing).await;
-    w.done(state).await;
-    let Ok(better) = better else { return Ok(said_missing(state, items, &verdict.missing)) };
-    let mut again = first_req.clone();
-    again.prompt = better.prompt;
-    again.negative = (!better.negative.is_empty()).then_some(better.negative);
-    again.style = Some("as_written".into());
-    again.seed = None;
-    let second = match run_kind(state, &format!("{id}-again"), &again, Some(m), cancel, progress).await {
-        Ok(s) if s.len() == 1 => s,
-        Ok(s) => {
-            // More than one came back: none of them is kept beside the first.
-            for extra in s {
-                let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &extra.id);
+    // The same seed for every make, so each differs by its words only.
+    let seed = items[0].seed;
+    let mut item = items.remove(0);
+    let mut written = p.written.clone().unwrap_or(prompts::Written { prompt: req.prompt.clone(), negative: req.negative.clone().unwrap_or_default() });
+    let mut lesson: Option<String> = None;
+    let (mut made, mut rounds, mut tries): (Vec<MediaItem>, Vec<prompts::Round>, Vec<learn::Try>) = (Vec::new(), Vec::new(), Vec::new());
+    // What must show, as the reviewer reads the request (once, for every make).
+    let mut checklist: Vec<String> = Vec::new();
+    loop {
+        // The reviewer: what shows, and for what doesn't, why.
+        progress("Checking the picture against what you asked for", slice(made.len()).0 + slice(made.len()).1);
+        let checked: Result<Option<(prompts::Verdict, Vec<String>)>, String> = async {
+            let img = store::read(&state.paths, &c, &item.id).and_then(|b| imaging::decode(&b))?;
+            let r = prompts::reader(state, Some(m)).await?;
+            if checklist.is_empty() {
+                checklist = prompts::checklist(&r, &req.prompt).await;
+                crate::applog::line("media", &format!("The reviewer listed {} things to check", checklist.len()));
             }
-            return Ok(said_missing(state, items, &verdict.missing));
+            // Too little to check against.
+            if checklist.len() < 3 {
+                r.done(state).await;
+                return Ok(None);
+            }
+            let v = prompts::judge(&r, &img, &checklist).await;
+            let notes = match &v {
+                Ok(v) if v.score < learn::GOOD => prompts::review(&r, &img, &req.prompt, &written.prompt, &v.missing).await,
+                _ => Vec::new(),
+            };
+            r.done(state).await;
+            v.map(|v| Some((v, notes)))
         }
-        Err(_) => return Ok(said_missing(state, items, &verdict.missing)),
-    };
-    let second_check = async {
-        let img2 = store::read(&state.paths, &c, &second[0].id).and_then(|b| imaging::decode(&b))?;
-        let r = prompts::reader(state, Some(m)).await?;
-        let v = prompts::judge(&r, &img2, &p.checklist).await;
-        r.done(state).await;
-        v
+        .await;
+        let Ok(Some((verdict, notes))) = checked else {
+            // Couldn't check it: the first stays as it is; a later one goes.
+            if made.is_empty() {
+                return Ok(vec![item]);
+            }
+            let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &item.id);
+            break;
+        };
+        crate::applog::line("media", &format!("Picture {} of at most {}: it showed {:.0}% of what was asked for", made.len() + 1, learn::MAX_MAKES, verdict.score * 100.0));
+        tries.push(learn::Try { score: verdict.score, missing: verdict.missing.clone(), lesson: lesson.take(), from: None });
+        rounds.push(prompts::Round { written: written.clone(), score: verdict.score, missing: verdict.missing.clone(), notes });
+        made.push(item);
+        let stop = |why: &str| crate::applog::line("media", &format!("Stopped writing again: {why}"));
+        if learn::finished(&tries) || verdict.missing.is_empty() || cancel.load(Ordering::Relaxed) {
+            if made.len() > 1 || verdict.score < learn::GOOD {
+                stop(if verdict.score >= learn::GOOD || verdict.missing.is_empty() { "it shows what was asked" } else if made.len() >= learn::MAX_MAKES { "the most pictures for one request" } else if cancel.load(Ordering::Relaxed) { "stopped" } else { "two rewrites did no better" });
+            }
+            break;
+        }
+        // Model 1 writes again, seeing every try so far and the reviewer's notes.
+        let (from, len) = slice(made.len());
+        progress("Writing the description again from what was missing", from);
+        let Ok(w) = prompts::writer(state, m).await else {
+            stop("the writer didn't start");
+            break;
+        };
+        let mut again = prompts::revise(&w, &p.program, &p.ask, &rounds, 0.4).await;
+        // The same words again would make the same picture: asked once more, with more variety.
+        if again.as_ref().is_ok_and(|(n, _)| rounds.iter().any(|r| r.written.prompt == n.prompt)) {
+            again = prompts::revise(&w, &p.program, &p.ask, &rounds, 0.9).await;
+        }
+        w.done(state).await;
+        let (next, said) = match again {
+            Ok(x) => x,
+            Err(e) => {
+                stop(&format!("the writer failed ({e})"));
+                break;
+            }
+        };
+        if rounds.iter().any(|r| r.written.prompt == next.prompt) {
+            stop("the writer gave back a prompt it had tried, twice");
+            break;
+        }
+        let mut again_req = first_req.clone();
+        again_req.asked = Some(req.prompt.clone());
+        again_req.prompt = next.prompt.clone();
+        again_req.negative = (!next.negative.is_empty()).then(|| next.negative.clone());
+        again_req.style = Some("as_written".into());
+        again_req.seed = seed;
+        again_req.count = Some(1);
+        let bar = |stage: &str, f: f64| progress(stage, from + len * f.clamp(0.0, 1.0));
+        match run_kind(state, &format!("{id}-{}", made.len()), &again_req, Some(m), cancel, &bar).await {
+            Ok(mut s) if s.len() == 1 => item = s.remove(0),
+            Ok(s) => {
+                for extra in s {
+                    let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &extra.id);
+                }
+                stop("the picture model made more than one");
+                break;
+            }
+            Err(e) => {
+                stop(&format!("the picture model failed ({e})"));
+                break;
+            }
+        }
+        written = next;
+        lesson = said;
     }
-    .await;
-    // Couldn't check the second: the first (checked) one stays, alone.
-    let Ok(verdict2) = second_check else {
-        let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &second[0].id);
-        return Ok(said_missing(state, items, &verdict.missing));
-    };
-    crate::applog::line("media", &format!("Made again: it showed {:.0}% of what was asked for (the first {:.0}%)", verdict2.score * 100.0, verdict.score * 100.0));
-    // Keep the better one only.
-    let (keep, drop, v) = if verdict2.score > verdict.score { (second, first, verdict2) } else { (items, second[0].clone(), verdict) };
-    let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &drop.id);
-    Ok(if v.score < 0.85 { said_missing(state, keep, &v.missing) } else { keep })
+    // The best is kept (the first of equals); the others go.
+    let best = (0..tries.len()).fold(0, |b, i| if tries[i].score > tries[b].score { i } else { b });
+    if made.len() > 1 {
+        crate::applog::line("media", &format!("Kept picture {} of {}: {:.0}% of what was asked for (the first {:.0}%)", best + 1, made.len(), tries[best].score * 100.0, tries[0].score * 100.0));
+    }
+    let mut keep = Vec::new();
+    for (i, it) in made.into_iter().enumerate() {
+        if i == best {
+            keep.push(it);
+        } else {
+            let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &it.id);
+        }
+    }
+    if learn::may_learn(state, req.chat_id.as_deref()) {
+        learn_from_picture(state, m, req, &p, &rounds, &tries, best);
+    }
+    Ok(if tries[best].score < learn::GOOD { said_missing(state, keep, &tries[best].missing) } else { keep })
+}
+
+/// What the writer keeps from a checked picture: how its first try did, the
+/// rules that made missing things show, and the prompt that passed.
+fn learn_from_picture(state: &AppState, m: &MediaModel, req: &Request, p: &prompts::Prepared, rounds: &[prompts::Round], tries: &[learn::Try], best: usize) {
+    let mut l = learn::load(state, m);
+    let now = db::now_ms();
+    learn::add_first(&mut l.firsts, tries[0].score);
+    let rules = learn::confirmed(tries);
+    for r in &rules {
+        learn::add_rule(&mut l.rules, r, now);
+    }
+    // A prompt the writer wrote (not the person's words as given) that passed.
+    let wrote = p.written.is_some() || best > 0;
+    let passed = tries[best].score >= learn::GOOD && wrote;
+    if passed {
+        let w = &rounds[best].written;
+        let answer = json!({ "prompt": w.prompt, "negative": w.negative }).to_string();
+        learn::add_example(&mut l.pictures, learn::Example { request: req.prompt.clone(), ask: p.ask.render(), answer, score: tries[best].score, makes: best as u32 + 1, at: now });
+    }
+    match learn::save(state, m, &l) {
+        Ok(()) => crate::applog::line("media", &format!("The prompt writer learnt from this picture: {}{} ({} examples and {} rules for {} so far)", if passed { "an example" } else { "its first try's score" }, if rules.is_empty() { String::new() } else { format!(", {} rule(s)", rules.len()) }, l.pictures.len(), l.rules.len(), m.name)),
+        Err(e) => crate::applog::line("media", &format!("Couldn't keep what the prompt writer learnt: {e}")),
+    }
 }
 
 /// An edit with the picture reader at work. Asked to have a child lift the
@@ -1933,13 +2032,15 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let stopped = || cancel.load(Ordering::Relaxed);
 
     progress("Looking at the picture and planning the change", 0.0);
+    // What the planner has learnt about this edit model: rules, and edits like this one.
+    let help = learn::planner_help(&learn::load(state, m), &req.prompt);
     let coached = coach::trained(state, m).is_some();
     // One picture reader for the whole edit when the card holds it beside
     // the picture model: it was started and stopped three to five times.
     let mut kept: Option<crate::vision::Helper> = None;
     let (plan, rubric) = match prompts::reader(state, Some(m)).await {
         Ok(r) => {
-            let p = prompts::plan_edit(&r, &before, &req.prompt).await;
+            let p = prompts::plan_edit_with(&r, &before, &req.prompt, &help).await;
             // A writer coached for this model plans from a description of
             // the picture, the way it practised.
             let caption = if coached { prompts::caption(&r, &before).await.ok() } else { None };
@@ -1983,27 +2084,68 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let local = plan.changes["leaving"].as_array().is_some_and(|l| !l.is_empty());
     // The picture model leaves room for a reader kept on the card.
     let room = |k: &Option<crate::vision::Helper>| RunCtx { state, req, cancel, progress, reserved: reserved + k.as_ref().map_or(0, |r| r.card_bytes) };
-    let first = edit_steps(&room(&kept), m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a"), (0.1, 0.45)).await?;
-    // Back into the full-size original, when it fits (None: the edit model redrew the whole scene).
-    let first_kept = imaging::keep_unchanged(&full, &before, &first);
-    if local && first_kept.is_none() {
-        crate::applog::line("media", "The edit redrew the whole scene, so it doesn't fit back into the original");
-    }
-    let mut v1 = None;
-    let mut steps_again = None;
-    if check.checklist.len() >= 2 && !stopped() {
-        progress("Checking the change against what you asked for", 0.55);
-        let r = match kept.take() {
-            Some(r) => Ok(r),
-            None => prompts::reader(state, Some(m)).await,
+    // Made, checked by the reader and planned again from what was missing,
+    // up to `learn::MAX_MAKES` times; the best is kept.
+    let checks = check.checklist.len() >= 2;
+    let (mut plan_now, mut seed_now, mut lesson) = (plan.clone(), seed, None::<String>);
+    let mut tries: Vec<learn::Try> = Vec::new();
+    // The best so far: its points, the picture, whether it redrew the whole
+    // scene, its verdict, its plan and which make it was.
+    let mut best: Option<(f32, image::DynamicImage, bool, Option<prompts::Verdict>, prompts::EditPlan, usize)> = None;
+    // The best one as the edit model made it, and which try it was.
+    let mut best_made: Option<(image::DynamicImage, Option<usize>)> = None;
+    // The try the next plan was made from.
+    let mut from: Option<usize> = None;
+    let rest = 0.45 / (learn::MAX_MAKES - 1) as f64;
+    for round in 0..learn::MAX_MAKES {
+        let slice = if round == 0 { (0.1, 0.45) } else { (0.55 + rest * (round - 1) as f64, rest * 0.7) };
+        if round > 0 {
+            progress("Making it again so it shows everything you asked for", slice.0);
+        }
+        let made = match edit_steps(&room(&kept), m, &before, original.as_ref(), &plan_now.steps, seed_now, &work.0.join(round.to_string()), slice).await {
+            Ok(x) => x,
+            Err(e) if round == 0 => return Err(e),
+            Err(_) => break,
         };
-        if let Ok(r) = r {
-            if let Ok(v) = prompts::judge_edit(&r, &before, &first, &check).await {
-                crate::applog::line("media", &format!("The edit did {:.0}% of what was asked for", v.score * 100.0));
-                if v.score < 0.85 && !v.missing.is_empty() && !stopped() {
-                    steps_again = prompts::replan_edit(&r, &before, &first, &req.prompt, &plan, &v.missing).await.ok().map(|p| p.steps);
+        // Back into the full-size original, when it fits (None: the edit model redrew the whole scene).
+        let made_kept = imaging::keep_unchanged(&full, &before, &made);
+        let whole = local && made_kept.is_none();
+        if whole {
+            crate::applog::line("media", "The edit redrew the whole scene, so it doesn't fit back into the original");
+        }
+        let (mut verdict, mut next, mut reader) = (None, None, None);
+        if checks && !stopped() {
+            progress("Checking the change against what you asked for", slice.0 + slice.1);
+            let r = match kept.take() {
+                Some(r) => Ok(r),
+                None => prompts::reader(state, Some(m)).await,
+            };
+            if let Ok(r) = r {
+                if let Ok(v) = prompts::judge_edit(&r, &before, &made, &check).await {
+                    crate::applog::line("media", &format!("Edit {} of at most {}: it did {:.0}% of what was asked for", round + 1, learn::MAX_MAKES, v.score * 100.0));
+                    tries.push(learn::Try { score: v.score, missing: v.missing.clone(), lesson: lesson.take(), from: from.take() });
+                    verdict = Some(v);
                 }
-                v1 = Some(v);
+                reader = Some(r);
+            }
+        }
+        // The better one, with a little extra for one that fits back into the original.
+        let points = verdict.as_ref().map_or(0.0, |v| v.score) + if local && made_kept.is_some() { 0.1 } else { 0.0 };
+        if round > 0 {
+            crate::applog::line("media", &format!("Made again: {:.0} points against {:.0} for the best before", points * 100.0, best.as_ref().map_or(0.0, |b| b.0) * 100.0));
+        }
+        if best.as_ref().is_none_or(|b| points > b.0) {
+            best = Some((points, made_kept.clone().unwrap_or_else(|| made.clone()), made_kept.is_none(), verdict.clone(), plan_now.clone(), round));
+            best_made = Some((made.clone(), tries.len().checked_sub(1)));
+        }
+        // Planned again from the best so far (its picture and what it
+        // missed), not the last: after a worse try, that wandered off.
+        if let Some(r) = reader {
+            if let (Some((_, _, _, Some(bv), bplan, _)), Some((bmade, bi))) = (best.as_ref(), best_made.as_ref()) {
+                if bv.score < learn::GOOD && !bv.missing.is_empty() && !learn::finished(&tries) && !stopped() {
+                    next = prompts::replan_edit(&r, &before, bmade, &req.prompt, bplan, &bv.missing, &help).await.ok();
+                    from = *bi;
+                }
             }
             if reader_fits(state, &r, m).await {
                 kept = Some(r);
@@ -2011,40 +2153,27 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
                 r.done(state).await;
             }
         }
-    }
-    // Once more: with better steps when things were missing, or the same
-    // steps with a new seed when it redrew the whole scene.
-    if steps_again.is_none() && local && first_kept.is_none() {
-        steps_again = Some(plan.steps.clone());
-    }
-    let mut redrawn = first_kept.is_none();
-    let mut result = first_kept.clone().unwrap_or_else(|| first.clone());
-    if let Some(steps) = steps_again.filter(|_| !stopped()) {
-        progress("Making it again so it shows everything you asked for", 0.6);
-        if let Ok(second) = edit_steps(&room(&kept), m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b"), (0.6, 0.33)).await {
-            let second_kept = imaging::keep_unchanged(&full, &before, &second);
-            let mut v2 = None;
-            if v1.is_some() {
-                let r = match kept.take() {
-                    Some(r) => Ok(r),
-                    None => prompts::reader(state, Some(m)).await,
-                };
-                if let Ok(r) = r {
-                    v2 = prompts::judge_edit(&r, &before, &second, &check).await.ok();
-                    r.done(state).await;
+        if stopped() {
+            break;
+        }
+        // Next: a new plan for what was missing, with the same seed so it
+        // differs by its plan; or, when the first redrew the whole scene for
+        // a change in one place, the same steps with a new seed.
+        match next {
+            Some((p, said)) => {
+                plan_now = p;
+                lesson = said;
+                if whole {
+                    seed_now = random_seed();
                 }
             }
-            // The better one, with a little extra for one that fits back into the original.
-            let fits = |k: &Option<image::DynamicImage>| if local && k.is_some() { 0.1 } else { 0.0 };
-            let s1 = v1.as_ref().map_or(0.0, |v| v.score) + fits(&first_kept);
-            let s2 = v2.as_ref().map_or(0.0, |v| v.score) + fits(&second_kept);
-            crate::applog::line("media", &format!("Made again: {:.0} points against {:.0} for the first", s2 * 100.0, s1 * 100.0));
-            if s2 > s1 {
-                redrawn = second_kept.is_none();
-                result = second_kept.unwrap_or(second);
-                v1 = v2.or(v1);
-            }
+            None if round == 0 && whole => seed_now = random_seed(),
+            None => break,
         }
+    }
+    let (_, mut result, redrawn, v1, best_plan, best_round) = best.ok_or("The edit didn't come out.")?;
+    if learn::may_learn(state, req.chat_id.as_deref()) && !tries.is_empty() {
+        learn_from_edit(state, m, req, &tries, v1.as_ref(), &best_plan, best_round, kept.as_ref(), &before).await;
     }
     if let Some(r) = kept.take() {
         r.done(state).await;
@@ -2072,6 +2201,34 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
         }
     }
     Ok(items)
+}
+
+/// What the planner keeps from a checked edit: how its first plan did, the
+/// rules that made missing things show, and the plan that passed (with the
+/// picture in words: the reader's, when it's still on the card).
+#[allow(clippy::too_many_arguments)]
+async fn learn_from_edit(state: &AppState, m: &MediaModel, req: &Request, tries: &[learn::Try], best: Option<&prompts::Verdict>, plan: &prompts::EditPlan, round: usize, reader: Option<&crate::vision::Helper>, before: &image::DynamicImage) {
+    let mut l = learn::load(state, m);
+    let now = db::now_ms();
+    learn::add_first(&mut l.edit_firsts, tries[0].score);
+    let rules = learn::confirmed(tries);
+    for r in &rules {
+        learn::add_rule(&mut l.edit_rules, r, now);
+    }
+    let passed = best.is_some_and(|v| v.score >= learn::GOOD) && !plan.changes.is_null();
+    if passed {
+        let words = match reader {
+            Some(r) => prompts::caption(r, before).await.ok(),
+            None => None,
+        };
+        let scene = words.unwrap_or_else(|| learn::scene_of(&plan.changes));
+        let ask = format!("The request: {} (The picture: {})", req.prompt.trim().trim_end_matches('.'), scene);
+        learn::add_example(&mut l.edits, learn::Example { request: req.prompt.clone(), ask, answer: plan.changes.to_string(), score: best.map_or(0.0, |v| v.score), makes: round as u32 + 1, at: now });
+    }
+    match learn::save(state, m, &l) {
+        Ok(()) => crate::applog::line("media", &format!("The edit planner learnt from this edit: {}{} ({} examples and {} rules for {} so far)", if passed { "an example" } else { "its first plan's score" }, if rules.is_empty() { String::new() } else { format!(", {} rule(s)", rules.len()) }, l.edits.len(), l.edit_rules.len(), m.name)),
+        Err(e) => crate::applog::line("media", &format!("Couldn't keep what the edit planner learnt: {e}")),
+    }
 }
 
 /// A picture reader on its own engine can stay on the card through an
@@ -3192,7 +3349,8 @@ pub async fn media_prompt_status(state: AppStateRef<'_>, model_id: String) -> Re
     let own = installed_file(&state, &m, "llm").is_some();
     let own_eyes = own && installed_file(&state, &m, "llm_vision").is_some();
     let reader = if own_eyes { Some(m.name.clone()) } else { crate::vision::readers(&state).into_iter().next().map(|r| r.name) };
-    Ok(json!({ "family": fam, "tuned": tuned, "own_writer": own, "reader": reader, "coach": coach::trained(&state, &m) }))
+    let learned = learn::summary(&learn::load(&state, &m));
+    Ok(json!({ "family": fam, "tuned": tuned, "own_writer": own, "reader": reader, "coach": coach::trained(&state, &m), "learned": learned, "learning": learn::on(&state) }))
 }
 
 /// Goes back to the prompt writer's bundled instructions for a model's family.
@@ -3202,6 +3360,7 @@ pub fn media_forget_tuning(state: AppStateRef, model_id: String) -> Result<(), S
     let m = models(&state).into_iter().find(|m| m.id == model_id).ok_or("That model isn't in the list.")?;
     prompts::forget_tuning(&state.paths, prompts::family(&m));
     coach::forget(&state, &m);
+    learn::forget(&state, &m);
     db::log_action(&state.db.lock().unwrap(), "model", &format!("Forgot the prompt writer's tuning for {}", m.name));
     Ok(())
 }

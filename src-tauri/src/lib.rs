@@ -2431,6 +2431,7 @@ pub fn run() {
             media::clarify::media_questions,
             media::clarify::media_with_answers,
             media::clarify::media_set_ask_questions,
+            media::learn::media_set_learning,
             media::wallpaper_screens,
             media::wallpaper_set,
             media::media_jobs,

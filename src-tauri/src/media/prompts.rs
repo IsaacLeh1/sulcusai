@@ -152,7 +152,7 @@ pub struct Ask {
 }
 
 impl Ask {
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         let mut s = format!("What they want: {}", self.request.trim());
         let look = match self.look.as_str() {
             "" | "auto" => "photo unless they named one".to_string(),
@@ -220,9 +220,20 @@ fn cut_words(s: &str, max: u32) -> String {
     words[..(max as usize) * 13 / 10].join(" ")
 }
 
+/// What the writer gets for one request: the program's messages, or, for a
+/// writer coached on this PC, the short ones its adapter was trained on.
+pub fn writer_messages(p: &Program, ask: &Ask, coached: bool) -> Vec<Value> {
+    let all = messages(p, ask);
+    if coached {
+        super::coach::compact(&all)
+    } else {
+        all
+    }
+}
+
 /// Runs the program: the prompt (and negative) for one request.
 pub async fn write(h: &Helper, p: &Program, ask: &Ask, temperature: f32) -> Result<Written, String> {
-    let v = h.ask_json(messages(p, ask), schema(), 900, temperature).await?;
+    let v = h.ask_json(writer_messages(p, ask, h.coached), schema(), 900, temperature).await?;
     let prompt = v["prompt"].as_str().map(str::trim).unwrap_or_default();
     if prompt.split_whitespace().count() < 3 {
         return Err("The prompt writer gave back an empty description.".into());
@@ -235,20 +246,92 @@ pub async fn write(h: &Helper, p: &Program, ask: &Ask, temperature: f32) -> Resu
 }
 
 /// Rewrites a prompt whose picture missed things the request asked for.
-pub async fn revise(h: &Helper, p: &Program, ask: &Ask, before: &Written, missing: &[String]) -> Result<Written, String> {
-    let mut msgs = messages(p, ask);
-    msgs.push(json!({ "role": "assistant", "content": json!({ "prompt": before.prompt, "negative": before.negative }).to_string() }));
-    msgs.push(json!({ "role": "user", "content": format!(
-        "The picture made from that prompt was missing: {}. Rewrite the prompt so each of these comes through clearly: name each one early and \
-         plainly, with its count, color and position, and drop minor details that compete with them. Reply with only the JSON.",
-        missing.join("; ")
-    ) }));
-    let v = h.ask_json(msgs, schema(), 900, 0.4).await?;
+/// One picture made for a request, as the writer sees it when it writes
+/// again: its prompt, how it scored, what was missing, and the reviewer's
+/// notes on why.
+#[derive(Debug, Clone, Default)]
+pub struct Round {
+    pub written: Written,
+    pub score: f32,
+    pub missing: Vec<String>,
+    pub notes: Vec<String>,
+}
+
+/// The conversation for writing again: the writer's messages, then each try
+/// so far with what came of it, the last with the reviewer's notes.
+pub fn revise_messages(p: &Program, ask: &Ask, rounds: &[Round], coached: bool) -> Vec<Value> {
+    let mut msgs = writer_messages(p, ask, coached);
+    for (i, r) in rounds.iter().enumerate() {
+        msgs.push(json!({ "role": "assistant", "content": json!({ "prompt": r.written.prompt, "negative": r.written.negative }).to_string() }));
+        let shown = format!("The picture made from that prompt showed {:.0}% of what was asked for. Missing: {}.", r.score * 100.0, r.missing.join("; "));
+        if i + 1 < rounds.len() {
+            msgs.push(json!({ "role": "user", "content": format!("{shown} Write it again.") }));
+            continue;
+        }
+        let notes = if r.notes.is_empty() { String::new() } else { format!(" The reviewer, who saw the picture, the request and your prompt, says:\n- {}\n", r.notes.join("\n- ")) };
+        msgs.push(json!({ "role": "user", "content": format!(
+            "{shown}{notes} Rewrite the prompt so each missing thing comes through clearly: name each one early and plainly, with its count, \
+             color and position, and drop minor details that compete with them. Don't repeat wording that didn't work above. Also give \
+             \"lesson\": one short general rule about how this picture model reads prompts that your rewrite follows (about wording, order \
+             or emphasis, not about this picture), or \"\" if there is none. Reply with only the JSON."
+        ) }));
+    }
+    msgs
+}
+
+/// Writes the prompt again after the picture fell short, seeing every try so
+/// far: the new prompt, and the rule about the picture model it says it follows.
+/// `temperature`: 0.4 at first; higher when it gave back a prompt it had tried.
+pub async fn revise(h: &Helper, p: &Program, ask: &Ask, rounds: &[Round], temperature: f32) -> Result<(Written, Option<String>), String> {
+    let last = rounds.last().ok_or("Nothing to write again.")?;
+    let schema = json!({ "type": "object", "properties": { "prompt": { "type": "string" }, "negative": { "type": "string" }, "lesson": { "type": "string" } }, "required": ["prompt", "negative", "lesson"] });
+    let v = h.ask_json(revise_messages(p, ask, rounds, h.coached), schema, 1000, temperature).await?;
     let prompt = v["prompt"].as_str().map(str::trim).unwrap_or_default();
     if prompt.split_whitespace().count() < 3 {
-        return Ok(before.clone());
+        return Ok((last.written.clone(), None));
     }
-    Ok(Written { prompt: cut_words(prompt, p.max_words), negative: v["negative"].as_str().map(str::trim).filter(|n| !n.is_empty()).map_or(before.negative.clone(), str::to_string) })
+    let lesson = v["lesson"].as_str().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string);
+    let negative = v["negative"].as_str().map(str::trim).filter(|n| !n.is_empty()).map_or(last.written.negative.clone(), str::to_string);
+    Ok((Written { prompt: cut_words(prompt, p.max_words), negative }, lesson))
+}
+
+/// The reviewer's notes on what a picture missed: it sees the picture, the
+/// person's request and the prompt the picture model got, and says for each
+/// missing thing whether the prompt asked for it clearly, what shows
+/// instead, and how to say it so this picture model draws it.
+pub async fn review(reader: &Helper, img: &image::DynamicImage, request: &str, prompt: &str, missing: &[String]) -> Vec<String> {
+    if missing.is_empty() || !reader.sees {
+        return Vec::new();
+    }
+    let Ok(url) = crate::vision::data_url(img) else { return Vec::new() };
+    let msgs = vec![
+        json!({ "role": "system", "content": "You review pictures made by a picture model from a prompt that another model wrote for a person's request. You help that model write better prompts. Be specific and brief. Reply with only JSON." }),
+        json!({ "role": "user", "content": [
+            { "type": "image_url", "image_url": { "url": url } },
+            { "type": "text", "text": format!(
+                "The person asked for: {request}\nThe prompt the picture model got: {prompt}\nThese don't show in the picture: {}.\n\
+                 For each one: \"asked\": whether the prompt asked for it clearly; \"instead\": what the picture shows there instead, in a few words; \
+                 \"advice\": how the prompt should say it so this picture model draws it, in one sentence.",
+                missing.join("; ")
+            ) },
+        ] }),
+    ];
+    let text = |max: u32| json!({ "type": "string", "maxLength": max });
+    let schema = json!({ "type": "object", "properties": { "notes": { "type": "array", "maxItems": 8, "items": { "type": "object", "properties": {
+        "item": text(120), "asked": { "type": "boolean" }, "instead": text(160), "advice": text(240) }, "required": ["item", "asked", "instead", "advice"] } } }, "required": ["notes"] });
+    let Ok(v) = reader.ask_json(msgs, schema, 700, 0.1).await else { return Vec::new() };
+    v["notes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|n| {
+            let item = n["item"].as_str()?.trim();
+            let asked = if n["asked"].as_bool() == Some(true) { "the prompt asked for it, but the picture model didn't draw it" } else { "the prompt didn't ask for it clearly" };
+            let instead = n["instead"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| format!("; the picture shows {s} instead")).unwrap_or_default();
+            let advice = n["advice"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(|s| format!(". {s}")).unwrap_or_default();
+            (!item.is_empty()).then(|| format!("{item}: {asked}{instead}{advice}"))
+        })
+        .collect()
 }
 
 /// The things a request asks to see, as short checkable items ("3 red apples",
@@ -511,13 +594,26 @@ async fn add_moved_thing(h: &Helper, img: &image::DynamicImage, request: &str, m
     v
 }
 
+/// The planner's instructions and worked examples, with what it has learnt
+/// about this edit model (rules, and earlier edits like this one).
+fn planner_start(help: &super::learn::PlannerHelp) -> Vec<Value> {
+    let mut msgs = vec![json!({ "role": "system", "content": format!("{EDIT_PLANNER}{}", help.rules) })];
+    msgs.extend(plan_demo());
+    msgs.extend(help.demos.iter().cloned());
+    msgs
+}
+
 /// Plans an edit, looking at the picture.
 pub async fn plan_edit(h: &Helper, img: &image::DynamicImage, request: &str) -> Result<EditPlan, String> {
+    plan_edit_with(h, img, request, &Default::default()).await
+}
+
+/// The same, with what the planner has learnt about this edit model.
+pub async fn plan_edit_with(h: &Helper, img: &image::DynamicImage, request: &str, help: &super::learn::PlannerHelp) -> Result<EditPlan, String> {
     if !h.sees {
         return Err(format!("{} can't see pictures.", h.name));
     }
-    let mut msgs = vec![json!({ "role": "system", "content": EDIT_PLANNER })];
-    msgs.extend(plan_demo());
+    let mut msgs = planner_start(help);
     msgs.push(json!({ "role": "user", "content": [
         { "type": "text", "text": format!("The request: {}", request.trim()) },
         { "type": "image_url", "image_url": { "url": crate::vision::data_url(img)? } },
@@ -555,18 +651,29 @@ pub fn words_messages(caption: &str, request: &str) -> Vec<Value> {
     msgs
 }
 
+/// What the planner gets from a description: as `words_messages`, or, for a
+/// writer coached on this PC, the short messages its adapter was trained on.
+pub fn planner_messages(caption: &str, request: &str, coached: bool) -> Vec<Value> {
+    let all = words_messages(caption, request);
+    if coached {
+        super::coach::compact(&all)
+    } else {
+        all
+    }
+}
+
 /// Plans an edit from a description of the picture (the prompt coach).
 pub async fn plan_from_words(h: &Helper, caption: &str, request: &str, temperature: f32) -> Result<EditPlan, String> {
-    let v = h.ask_json(words_messages(caption, request), plan_schema(), 1200, temperature).await?;
+    let v = h.ask_json(planner_messages(caption, request, h.coached), plan_schema(), 1200, temperature).await?;
     parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())
 }
 
 /// Plans an edit again after its result fell short: the planner sees the
 /// picture before, the result, and what was wrong with it. The checklist
-/// stays the first one, so both results are scored the same way.
-pub async fn replan_edit(h: &Helper, before: &image::DynamicImage, after: &image::DynamicImage, request: &str, plan: &EditPlan, wrong: &[String]) -> Result<EditPlan, String> {
-    let mut msgs = vec![json!({ "role": "system", "content": EDIT_PLANNER })];
-    msgs.extend(plan_demo());
+/// stays the first one, so both results are scored the same way. Also
+/// gives the rule about the edit model it says the new plan follows.
+pub async fn replan_edit(h: &Helper, before: &image::DynamicImage, after: &image::DynamicImage, request: &str, plan: &EditPlan, wrong: &[String], help: &super::learn::PlannerHelp) -> Result<(EditPlan, Option<String>), String> {
+    let mut msgs = planner_start(help);
     msgs.push(json!({ "role": "user", "content": [
         { "type": "text", "text": format!("The request: {}", request.trim()) },
         { "type": "image_url", "image_url": { "url": crate::vision::data_url(before)? } },
@@ -575,15 +682,24 @@ pub async fn replan_edit(h: &Helper, before: &image::DynamicImage, after: &image
     msgs.push(json!({ "role": "user", "content": [
         { "type": "text", "text": format!(
             "The edit model made this picture from that, and it fell short: {}. List the changes again so each of these comes out right: \
-             describe more exactly what must go and what shows there instead, where each thing ends up, and how it looks. Reply with only the JSON.",
+             describe more exactly what must go and what shows there instead, where each thing ends up, and how it looks. Also give \
+             \"lesson\": one short general rule about how this edit model follows instructions that your new plan follows (not about this \
+             picture), or \"\" if there is none. Reply with only the JSON.",
             wrong.join("; ")
         ) },
         { "type": "image_url", "image_url": { "url": crate::vision::data_url(after)? } },
     ] }));
-    let v = h.ask_json(msgs, plan_schema(), 1200, 0.4).await?;
+    let mut schema = plan_schema();
+    schema["properties"]["lesson"] = json!({ "type": "string" });
+    let mut v = h.ask_json(msgs, schema, 1300, 0.4).await?;
+    let lesson = v["lesson"].as_str().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string);
+    // The plan alone is what's shown and kept.
+    if let Some(o) = v.as_object_mut() {
+        o.remove("lesson");
+    }
     let v = add_moved_thing(h, before, request, v).await;
     let again = parse_plan(&v).ok_or_else(|| "The planner gave back no changes.".to_string())?;
-    Ok(EditPlan { checklist: plan.checklist.clone(), ..again })
+    Ok((EditPlan { checklist: plan.checklist.clone(), ..again }, lesson))
 }
 
 /// A checklist item as a yes-or-no question about the finished picture, and
@@ -668,10 +784,20 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
 /// The language model that writes prompts for `m`: its own (the text reader
 /// it ships with), else a vision model on this PC, else the chat model.
 pub async fn writer(state: &Arc<AppState>, m: &MediaModel) -> Result<Helper, String> {
+    start_writer(state, m, true).await
+}
+
+/// The writer as it came, without a coach: teaching tunes the program's
+/// instructions and examples, which a coached writer doesn't read.
+async fn plain_writer(state: &Arc<AppState>, m: &MediaModel) -> Result<Helper, String> {
+    start_writer(state, m, false).await
+}
+
+async fn start_writer(state: &Arc<AppState>, m: &MediaModel, coached: bool) -> Result<Helper, String> {
     if let Some(llm) = super::installed_file(state, m, "llm") {
         let vision = super::installed_file(state, m, "llm_vision");
         // Coached on this PC for this picture model: with what it learned.
-        let coach = super::coach::trained(state, m);
+        let coach = super::coach::trained(state, m).filter(|_| coached);
         return Helper::start_tuned(state, &format!("{}'s language model", m.name), &llm, vision.as_deref(), coach.as_ref().map(|c| c.adapter.as_path())).await;
     }
     if let Some(r) = crate::vision::readers(state).into_iter().next() {
@@ -701,8 +827,9 @@ pub async fn reader(state: &Arc<AppState>, m: Option<&MediaModel>) -> Result<Hel
 pub struct Prepared {
     /// The writer's description (None: the request's own is used).
     pub written: Option<Written>,
-    /// What to check the picture for (empty: no check).
-    pub checklist: Vec<String>,
+    /// The picture is to be checked: the reviewer makes the checklist from
+    /// the request when it first looks.
+    pub check: bool,
     pub ask: Ask,
     pub program: Program,
 }
@@ -765,7 +892,11 @@ pub async fn prepare(state: &Arc<AppState>, req: &super::Request, m: &MediaModel
         }
     }
     progress("Writing the description for the picture model", 0.0);
-    let program = program(&state.paths, fam);
+    let mut program = program(&state.paths, fam);
+    // What the writer has learnt making pictures with this model.
+    if picture {
+        super::learn::apply(&mut program, &super::learn::load(state, m), &req.prompt);
+    }
     let ask = Ask {
         request: req.prompt.clone(),
         look: req.style.clone().unwrap_or_default(),
@@ -775,24 +906,24 @@ pub async fn prepare(state: &Arc<AppState>, req: &super::Request, m: &MediaModel
         notes: [req.notes.clone().unwrap_or_default(), req.wallpaper.as_ref().map(|w| super::wallpaper::notes(w, req.op == "video")).unwrap_or_default()].join(" ").trim().to_string(),
         refs_to_model: if picture && m.can("edit") && req.example_use.as_deref() != Some("layout") { examples.len() } else { 0 },
     };
-    let w = writer(state, m).await?;
     let written = if write_it {
-        match write(&w, &program, &ask, 0.4).await {
+        let w = writer(state, m).await?;
+        let x = match write(&w, &program, &ask, 0.4).await {
             Ok(x) => Some(x),
             Err(e) => {
                 crate::applog::line("media", &format!("The prompt writer failed ({e}); using the description as written"));
                 None
             }
-        }
+        };
+        w.done(state).await;
+        x
     } else {
         None
     };
-    let checklist = if check_it { checklist(&w, &req.prompt).await } else { Vec::new() };
-    w.done(state).await;
     if let Some(x) = &written {
-        crate::applog::line("media", &format!("Wrote a {fam} description of {} words; {} things to check", x.prompt.split_whitespace().count(), checklist.len()));
+        crate::applog::line("media", &format!("Wrote a {fam} description of {} words", x.prompt.split_whitespace().count()));
     }
-    Ok(Some(Prepared { written, checklist, ask, program }))
+    Ok(Some(Prepared { written, check: check_it, ask, program }))
 }
 
 /// Requests the optimizer practices on: varied, each with things that are
@@ -841,7 +972,7 @@ pub async fn tune(state: &Arc<AppState>, m: &MediaModel, tries: usize, render: R
 
     // 1. Checklists and candidate prompts, with the writer loaded once.
     progress("Writing practice prompts", 0.02);
-    let w = writer(state, m).await?;
+    let w = plain_writer(state, m).await?;
     let mut cases: Vec<(Ask, Vec<String>, Vec<Written>)> = Vec::new();
     for (i, (request, look, shape)) in PRACTICE.iter().enumerate() {
         if cancelled() {
@@ -943,7 +1074,7 @@ pub async fn tune(state: &Arc<AppState>, m: &MediaModel, tries: usize, render: R
     let mut new_instructions = false;
     if !missed.is_empty() && !cancelled() {
         progress("Looking for better instructions", 0.9);
-        let w = writer(state, m).await?;
+        let w = plain_writer(state, m).await?;
         let msgs = vec![
             json!({ "role": "system", "content": "You improve the instructions a prompt writer follows for a picture model. Keep what works; add short, specific rules that would have prevented the misses. Same length or a little longer, plain sentences." }),
             json!({ "role": "user", "content": format!(
