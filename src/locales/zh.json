@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "运营该日历的公司会保存这个日程，与该日历共享的任何人都能看到它。",
  "Something kept running for an hour after the download, so it wasn't installed.": "下载后有任务持续运行了一个小时，因此没有安装。",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "此聊天记住了 {k}K 的对话内容，因此 {card} 只能容纳模型 {total} 层中的 {n} 层，其余在处理器上运行。把记忆调小（聊天顶部的计量条）就能全部放下。",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "此模型正在回答。请等它结束（或停止回复）后再删除。"
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "此模型正在回答。请等它结束（或停止回复）后再删除。",
+ "A picture, video or song didn't finish: {error}": "有图片、视频或歌曲没有完成：{error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "已完成，但检查没有找到你要求的全部内容：{missing}。请在工作室中打开它并修改，说明要添加什么。",
+ "The check didn't find everything asked for: {missing}.": "检查没有找到要求的全部内容：{missing}。",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "这次编辑重新绘制了整个画面，因此其中的一切都是重新画的（按编辑模型的细节水平），而不是保留照片原样。"
 }

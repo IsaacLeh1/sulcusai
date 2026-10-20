@@ -287,6 +287,13 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         );
       }),
       on("task:reminder", (p) => toast(t("Reminder: {title}", { title: p.title }), "success")),
+      // Picture, video and song jobs end here whatever page is open: a
+      // failure on another page used to vanish without a word.
+      on("media:done", (d) => {
+        if (d.error && !d.cancelled) toast(t("A picture, video or song didn't finish: {error}", { error: errorText(d.error) }), "error");
+        const missing = (d.items ?? []).flatMap((i) => i.missing ?? []);
+        if (d.ok && missing.length) toast(t("Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.", { missing: missing.join("; ") }), "info");
+      }),
       on("schedule:ran", (p) => {
         refreshChats();
         if (p.error) toast(t("Scheduled task “{name}” didn't run: {error}", { name: p.name, error: errorText(p.error) }), "error");

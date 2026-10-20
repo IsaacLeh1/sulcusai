@@ -106,13 +106,22 @@ pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(
     }
     drop(tx);
 
-    let mut log = std::fs::File::create(r.log).ok();
+    // Added to, so a several-step edit's runs are all there; cut when it gets big.
+    if std::fs::metadata(r.log).is_ok_and(|m| m.len() > 8 * 1024 * 1024) {
+        let _ = std::fs::remove_file(r.log);
+    }
+    let mut log = std::fs::OpenOptions::new().create(true).append(true).open(r.log).ok();
+    if let Some(f) = log.as_mut() {
+        let _ = writeln!(f, "---- {} ----", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+    }
     let mut errors: Vec<String> = Vec::new();
     let mut last: Vec<String> = Vec::new();
     loop {
         if cancel.load(Ordering::Relaxed) {
             child.start_kill().ok();
-            let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+            // Until it has really ended (a dying engine can still hold the
+            // card), so the next job doesn't start on a card that isn't free.
+            let _ = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
             return Err(CANCELLED.into());
         }
         let why = tokio::select! {

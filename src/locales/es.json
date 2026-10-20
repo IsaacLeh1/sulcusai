@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "La empresa que gestiona el calendario guarda el evento, y cualquiera con quien se comparta el calendario puede verlo.",
  "Something kept running for an hour after the download, so it wasn't installed.": "Algo siguió ejecutándose durante una hora después de la descarga, así que no se instaló.",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "Este chat mantiene {k}K de conversación en mente, así que {card} lleva {n} de las {total} capas del modelo y el resto funciona en el procesador. Un ajuste de memoria menor (el medidor en la parte superior del chat) cabe entero.",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Este modelo está respondiendo ahora mismo. Espera a que termine (o detén la respuesta) y luego quítalo."
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Este modelo está respondiendo ahora mismo. Espera a que termine (o detén la respuesta) y luego quítalo.",
+ "A picture, video or song didn't finish: {error}": "Una imagen, un video o una canción no terminó: {error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "Listo, pero la revisión no encontró todo lo que pediste: {missing}. Ábrelo en el Estudio y cámbialo diciendo qué añadir.",
+ "The check didn't find everything asked for: {missing}.": "La revisión no encontró todo lo pedido: {missing}.",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "La edición redibujó toda la escena, así que todo en ella se dibujó de nuevo (con el detalle del modelo de edición) en lugar de conservarse de la foto."
 }

@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "カレンダーを運営する会社がこの予定を保存し、カレンダーを共有している人は誰でも見ることができます。",
  "Something kept running for an hour after the download, so it wasn't installed.": "ダウンロード後1時間、何かが動き続けていたため、インストールされませんでした。",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "このチャットは会話を {k}K 分覚えているため、{card} にはモデルの {total} 層のうち {n} 層しか載らず、残りはプロセッサーで動きます。記憶量を小さくすると（チャット上部のメーター）すべて載ります。",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "このモデルは今応答中です。終わるまで待つか応答を止めてから、削除してください。"
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "このモデルは今応答中です。終わるまで待つか応答を止めてから、削除してください。",
+ "A picture, video or song didn't finish: {error}": "画像・動画・曲のいずれかが完成しませんでした：{error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "完成しましたが、チェックで依頼内容の一部が見つかりませんでした：{missing}。スタジオで開き、追加したいものを伝えて変更してください。",
+ "The check didn't find everything asked for: {missing}.": "チェックで依頼内容の一部が見つかりませんでした：{missing}。",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "編集でシーン全体が描き直されたため、写真から残すのではなく、すべてが（編集モデルの細かさで）描き直されています。"
 }

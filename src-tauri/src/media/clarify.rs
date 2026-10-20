@@ -47,9 +47,11 @@ const CHANGE: &str = "You look at someone's picture and the change they asked fo
      well as it stands. Ask only when the answer would really change the result and no sensible choice covers it: which one they mean \
      when the picture has several that fit (\"change her shirt\" with two women in it); the words to write when they ask for text \
      without giving it; what \"better\", \"nicer\" or \"fix it\" should mean; a particular person, pet or thing of theirs to add \
-     (\"put my dog in it\") with no picture or description of it. Most changes are clear: then the list is empty. Never ask about style, \
-     colors, light or other details a sensible choice covers, and never about anything the request already says. At most 3 questions, \
-     each short and plain, about one thing, asked of the person. Reply with only JSON: {\"questions\": [...]}.";
+     (\"put my dog in it\") with no picture or description of it. Most changes are clear: then the list is empty. A change that says \
+     what to add, take away or change (\"add a black top hat on my head\", \"remove the car\") is clear: ask nothing about how it \
+     should look. Never ask about style, colors, size, light or other details a sensible choice covers, and never about anything the \
+     request already says. At most 3 questions, each short and plain, about one thing, asked of the person. Reply with only JSON: \
+     {\"questions\": [...]}.";
 
 const UNSEEN: &str = " You can't see their picture: ask only about what the words leave open, never about what's in the picture.";
 
@@ -60,7 +62,32 @@ const NEW_DEMOS: &[(&str, &[&str])] = &[
     ("a cozy reading nook by a big window on a rainy day", &[]),
     ("my dog wearing a space suit", &["What does your dog look like: the breed, colors and size?"]),
 ];
-const CHANGE_DEMOS: &[(&str, &[&str])] = &[("make it night", &[]), ("make it better", &["Better in what way: brighter colors, sharper, a different background, or something else?"])];
+const CHANGE_DEMOS: &[(&str, &[&str])] = &[
+    ("make it night", &[]),
+    ("add a black top hat on my head and keep everything else the same", &[]),
+    ("make it better", &["Better in what way: brighter colors, sharper, a different background, or something else?"]),
+    ("remove the car and put a red bike there", &[]),
+];
+
+/// Words naming a color: a request that names one has chosen it.
+const COLORS: &[&str] = &[
+    "black", "white", "red", "blue", "green", "yellow", "orange", "purple", "pink", "brown", "gray", "grey", "gold", "golden", "silver",
+    "beige", "navy", "teal", "maroon", "violet", "cream", "tan",
+];
+
+/// A question about what a sensible choice covers, or what the request
+/// already says: asked "add a black top hat", a model asked what style of
+/// black top hat, and the edit never happened.
+fn needless(q: &str, prompt: &str) -> bool {
+    let q = q.to_lowercase();
+    let p = prompt.to_lowercase();
+    let has = |s: &str, w: &str| s.split(|c: char| !c.is_alphanumeric()).any(|x| x == w);
+    has(&q, "style")
+        || has(&q, "size")
+        || q.contains("how big")
+        || q.contains("how large")
+        || ((has(&q, "color") || has(&q, "colour") || has(&q, "shade")) && COLORS.iter().any(|c| has(&p, c)))
+}
 
 fn ask_text(op: &str, prompt: &str) -> String {
     if op == "edit" {
@@ -144,7 +171,7 @@ pub async fn questions(state: &Arc<AppState>, op: &str, prompt: &str, source: Op
     h.done(state).await;
     match said {
         Ok(v) => {
-            let q = keep_questions(&v);
+            let q: Vec<String> = keep_questions(&v).into_iter().filter(|q| !needless(q, prompt)).collect();
             if !q.is_empty() {
                 crate::applog::line("media", &format!("{name} had {} question(s) before the {}", q.len(), if op == "edit" { "change" } else { "picture" }));
             }
@@ -297,6 +324,9 @@ pub async fn media_questions(state: AppStateRef<'_>, op: String, prompt: String,
     let m = super::choose(&state, &op, model_id.as_deref(), source.is_some()).ok();
     let picture = source.and_then(|id| super::store::read(&state.paths, &c, &id).ok()).and_then(|b| super::imaging::decode(&b).ok());
     let prompt = noting_examples(&prompt, examples.unwrap_or(0) as usize);
+    // The picture model's own writer only for a change (as in a chat): loading
+    // it for every new picture took seconds, and the job loads it again.
+    let m = m.filter(|_| op == "edit");
     Ok(questions(state.inner(), &op, &prompt, picture.as_ref(), m.as_ref()).await)
 }
 
@@ -315,6 +345,18 @@ pub fn media_set_ask_questions(state: AppStateRef, on: bool) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// His top hat: the request named the hat and its color, so a style or
+    /// color question is dropped; which person is "me" still is asked.
+    #[test]
+    fn questions_a_sensible_choice_covers_are_dropped() {
+        let ask = "Add a black top hat on my head and keep everything else the same.";
+        assert!(needless("What style of black top hat do you want?", ask));
+        assert!(needless("What color should the hat be?", ask));
+        assert!(needless("What size should the hat be?", ask));
+        assert!(!needless("Which person in the photo is you?", ask));
+        assert!(!needless("What color is your dog?", "put my dog in it"));
+    }
 
     fn qs(v: Value) -> Vec<String> {
         keep_questions(&v)

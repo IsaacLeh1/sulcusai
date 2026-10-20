@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "Das Unternehmen, das den Kalender betreibt, speichert den Termin, und alle, mit denen der Kalender geteilt ist, können ihn sehen.",
  "Something kept running for an hour after the download, so it wasn't installed.": "Nach dem Herunterladen lief eine Stunde lang noch etwas, deshalb wurde es nicht installiert.",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "Dieser Chat behält {k}K des Gesprächs im Gedächtnis, daher hält {card} {n} der {total} Schichten des Modells, und der Rest läuft auf dem Prozessor. Eine kleinere Gedächtniseinstellung (die Anzeige oben im Chat) passt ganz darauf.",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Dieses Modell antwortet gerade. Warte, bis es fertig ist (oder stoppe die Antwort), und entferne es dann."
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Dieses Modell antwortet gerade. Warte, bis es fertig ist (oder stoppe die Antwort), und entferne es dann.",
+ "A picture, video or song didn't finish: {error}": "Ein Bild, Video oder Lied wurde nicht fertig: {error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "Fertig, aber die Prüfung hat nicht alles gefunden, was du wolltest: {missing}. Öffne es im Studio und ändere es, indem du sagst, was hinzukommen soll.",
+ "The check didn't find everything asked for: {missing}.": "Die Prüfung hat nicht alles Gewünschte gefunden: {missing}.",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "Die Bearbeitung hat die ganze Szene neu gezeichnet, daher wurde alles darin neu gezeichnet (in der Detailtreue des Bearbeitungsmodells), statt aus dem Foto übernommen zu werden."
 }

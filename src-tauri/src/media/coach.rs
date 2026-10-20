@@ -167,6 +167,10 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
         return Err(format!("{}'s language model ({arch}) can't be trained here yet.", m.name));
     }
     crate::finetune::fits_card(state, &installed)?;
+    // The trainer first: Offline, or a download that fails, now stops it
+    // here rather than after half an hour of practice pictures.
+    progress("Getting the trainer", 0.01);
+    crate::finetune::ensure_trainer(state, cancel, 0.01).await?;
     let qwen3 = arch.starts_with("qwen3");
     let name = format!("{}'s language model", m.name);
     let program = prompts::program(&state.paths, prompts::family(m));
@@ -274,6 +278,23 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     let folder = dir(&state.paths, &m.id);
     let work = folder.join("training");
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    // Its data, the writer's copy and checkpoints (GBs) go however this ends.
+    struct Gone(std::path::PathBuf);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _gone = Gone(work.clone());
+    // While it trains, chats don't load a model onto the card beside it.
+    crate::finetune::begin(crate::finetune::Job::new(&format!("coach-{}", m.id), &format!("{}'s prompt writer", m.name), &m.name, 3))?;
+    struct Ended;
+    impl Drop for Ended {
+        fn drop(&mut self) {
+            crate::finetune::end("done");
+        }
+    }
+    let ended = Ended;
     let data = work.join("data.jsonl");
     std::fs::write(&data, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
     progress("Training the prompt writer", 0.62);
@@ -281,6 +302,7 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     let setup = crate::finetune::Setup { conversations: true, epochs: 3, strength: "normal", own_words: true, ctx: 2048, template: None, span: (0.62, 0.8) };
     ready.train(state, &format!("coach-{}", m.id), &data, &setup, cancel).await?;
     drop(ready);
+    drop(ended);
     let adapter = work.join("adapter.gguf");
     if !adapter.exists() {
         return Err("The trainer finished without saving the prompt writer's adapter.".into());

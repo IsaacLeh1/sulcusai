@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "L’entreprise qui gère le calendrier conserve l’événement, et toute personne avec qui le calendrier est partagé peut le voir.",
  "Something kept running for an hour after the download, so it wasn't installed.": "Quelque chose a continué de tourner pendant une heure après le téléchargement, donc elle n’a pas été installée.",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "Cette discussion garde {k}K de conversation en tête, donc {card} contient {n} des {total} couches du modèle et le reste tourne sur le processeur. Un réglage de mémoire plus petit (la jauge en haut de la discussion) le fait tenir entièrement.",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Ce modèle est en train de répondre. Attendez qu’il ait fini (ou arrêtez la réponse), puis supprimez-le."
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Ce modèle est en train de répondre. Attendez qu’il ait fini (ou arrêtez la réponse), puis supprimez-le.",
+ "A picture, video or song didn't finish: {error}": "Une image, une vidéo ou une chanson n’a pas abouti : {error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "Terminé, mais la vérification n’a pas trouvé tout ce que vous avez demandé : {missing}. Ouvrez-le dans le Studio et modifiez-le en disant quoi ajouter.",
+ "The check didn't find everything asked for: {missing}.": "La vérification n’a pas trouvé tout ce qui était demandé : {missing}.",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "La retouche a redessiné toute la scène : tout y a été redessiné (avec le niveau de détail du modèle de retouche) au lieu d’être conservé de la photo."
 }

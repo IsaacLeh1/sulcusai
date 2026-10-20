@@ -1693,6 +1693,10 @@ export interface MediaItem {
   poster: boolean;
   /** What making it took (older items have none). */
   stats: MadeStats | null;
+  /** What was asked for that the check didn't find in it. */
+  missing?: string[];
+  /** Something else to know about it ("the whole scene was redrawn"). */
+  note?: string | null;
 }
 
 /** How long making an item took, and what it used. */

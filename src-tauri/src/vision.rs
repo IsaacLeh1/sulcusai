@@ -14,6 +14,28 @@ use serde_json::{json, Value};
 
 use crate::{engine, AppState};
 
+tokio::task_local! {
+    /// The Stop flag of the media job this task runs, if any: helpers started
+    /// for it stop loading or answering when it's pressed.
+    pub static JOB_STOP: Arc<std::sync::atomic::AtomicBool>;
+}
+
+/// Runs `work`, ending it early (with "cancelled") when the job's Stop is pressed.
+async fn until_stopped<T>(work: impl std::future::Future<Output = Result<T, String>>) -> Result<T, String> {
+    let Ok(flag) = JOB_STOP.try_with(|f| f.clone()) else { return work.await };
+    if flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(crate::download::CANCELLED.into());
+    }
+    tokio::select! {
+        r = work => r,
+        _ = async {
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        } => Err(crate::download::CANCELLED.into()),
+    }
+}
+
 /// A vision model on this PC that can read pictures on its own.
 #[derive(Debug, Clone)]
 pub struct Reader {
@@ -163,7 +185,7 @@ impl Helper {
         let limits = state.limits();
         let mut eng = engine::Engine::default();
         let log = state.paths.data.join("logs").join("helper.log");
-        let started = eng
+        let started = until_stopped(eng
             .ensure(
                 engine::LaunchSpec {
                     exe: &exe,
@@ -181,11 +203,12 @@ impl Helper {
                     lora,
                 },
                 state.job(),
-            )
+            ))
             .await;
         match started {
             Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, _turn: turn }),
             Err(e) => {
+                eng.stop().await;
                 if let Some(p) = paused {
                     crate::media::give_back(state, p).await;
                 }
@@ -211,7 +234,7 @@ impl Helper {
 
     /// One answer (thinking is off: `chat::complete` asks for that).
     pub async fn ask(&self, messages: Vec<Value>, max_tokens: u32, temperature: f32) -> Result<String, String> {
-        crate::chat::complete(&self.ep, messages, json!({ "temperature": temperature }), max_tokens).await.map(|s| s.trim().to_string())
+        until_stopped(crate::chat::complete(&self.ep, messages, json!({ "temperature": temperature }), max_tokens)).await.map(|s| s.trim().to_string())
     }
 
     /// One answer as JSON matching `schema`.
@@ -220,7 +243,7 @@ impl Helper {
             "temperature": temperature,
             "response_format": { "type": "json_schema", "json_schema": { "name": "answer", "schema": schema } },
         });
-        let said = crate::chat::complete(&self.ep, messages, extra, max_tokens).await?;
+        let said = until_stopped(crate::chat::complete(&self.ep, messages, extra, max_tokens)).await?;
         serde_json::from_str(&said).or_else(|_| {
             // Some answers wrap the JSON in words or a code block.
             let start = said.find('{').ok_or("The model didn't answer in JSON.")?;

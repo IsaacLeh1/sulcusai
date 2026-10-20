@@ -17,7 +17,7 @@ import {
   type Voice,
 } from "../api";
 import { clock } from "../format";
-import { t, tx } from "../i18n";
+import { t, tf, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, useMediaJobs } from "../components/MediaBits";
 import { MediaModels, useMediaView } from "../components/MediaModels";
@@ -79,10 +79,11 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
 
   useEffect(() => {
     const sub = on("media:done", (d) => {
+      // (A failure's message is shown by the app, whatever page is open.)
       if (d.ok && d.items?.length) {
         setFresh((s) => new Set([...s, ...d.items!.map((i) => i.id)]));
         load();
-      } else if (d.error) toast(errorText(d.error), "error");
+      }
     });
     const tuned = on("media:tuned", (r) =>
       toast(t("The prompt writer learned this model: {before}% → {after}% of what was asked for showed up.", { before: Math.round(r.baseline * 100), after: Math.round(r.score * 100) }), "success"),
@@ -909,6 +910,10 @@ function Viewer({
             {item.seed != null && ` · ${t("seed {seed}", { seed: item.seed })}`}
           </p>
           <MadeStatsLine item={item} />
+          {item.missing && item.missing.length > 0 && (
+            <p className="small warn-text">{t("The check didn't find everything asked for: {missing}.", { missing: item.missing.join("; ") })}</p>
+          )}
+          {item.note && <p className="small muted">{tf(item.note)}</p>}
           {item.parent && (
             <button className="link small" onClick={() => api.mediaGet(item.parent!).then(onOpen).catch(() => toast(t("The original is no longer in the gallery."), "error"))}>
               {t("← The original")}

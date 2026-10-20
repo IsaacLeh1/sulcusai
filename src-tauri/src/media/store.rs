@@ -48,6 +48,13 @@ pub struct MediaItem {
     /// model can't see them), read once and kept.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// What was asked for that the check didn't find in it (a checked
+    /// picture or edit under the pass mark), said to the person.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    /// Something else to know about it ("the whole scene was redrawn").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// How long making an item took, and what it used.

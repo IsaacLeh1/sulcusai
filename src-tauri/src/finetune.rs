@@ -277,6 +277,14 @@ pub(crate) fn begin(job: Job) -> Result<Arc<AtomicBool>, String> {
     Ok(cancel)
 }
 
+/// Ends a teaching job that has no window to report to (the prompt coach's
+/// training): `training()` is false again, so chats can load their models.
+pub(crate) fn end(status: &str) {
+    if let Some((job, _)) = JOB.lock().unwrap().as_mut() {
+        job.status = status.to_string();
+    }
+}
+
 /// The same, for code that has the app's state rather than its handle (the
 /// trainer's steps, which also run from picture jobs and tests).
 pub(crate) fn update_in(state: &AppState, f: impl FnOnce(&mut Job)) {

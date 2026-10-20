@@ -3364,5 +3364,9 @@
  "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "A empresa que administra a agenda guarda o evento, e qualquer pessoa com quem a agenda é compartilhada pode vê-lo.",
  "Something kept running for an hour after the download, so it wasn't installed.": "Algo continuou em execução por uma hora após o download, então não foi instalado.",
  "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "Este chat mantém {k}K de conversa em mente, então {card} comporta {n} das {total} camadas do modelo e o resto roda no processador. Uma configuração de memória menor (o medidor no topo do chat) faz caber inteiro.",
- "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Este modelo está respondendo agora. Espere terminar (ou pare a resposta) e depois remova-o."
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Este modelo está respondendo agora. Espere terminar (ou pare a resposta) e depois remova-o.",
+ "A picture, video or song didn't finish: {error}": "Uma imagem, vídeo ou música não terminou: {error}",
+ "Done, but the check didn't find everything you asked for: {missing}. Open it in the Studio and change it, saying what to add.": "Pronto, mas a verificação não encontrou tudo o que você pediu: {missing}. Abra no Estúdio e altere, dizendo o que adicionar.",
+ "The check didn't find everything asked for: {missing}.": "A verificação não encontrou tudo o que foi pedido: {missing}.",
+ "The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.": "A edição redesenhou a cena inteira, então tudo nela foi desenhado de novo (com o detalhe do modelo de edição) em vez de mantido da foto."
 }

@@ -251,6 +251,9 @@ pub struct InstalledMedia {
     /// Measured seconds for one default job, once it has run.
     #[serde(default)]
     pub secs: Option<f64>,
+    /// The same for a checked edit (planned, made, checked, maybe made again).
+    #[serde(default)]
+    pub edit_secs: Option<f64>,
 }
 
 const INSTALLED_KEY: &str = "media_installed";
@@ -476,7 +479,7 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     if !list.iter().any(|i| i.model_id == spec.id) {
-        list.push(InstalledMedia { model_id: spec.id.clone(), installed_at: db::now_ms(), secs: None });
+        list.push(InstalledMedia { model_id: spec.id.clone(), installed_at: db::now_ms(), secs: None, edit_secs: None });
     }
     save_installed(&conn, &list)
 }
@@ -517,7 +520,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
         {
             let conn = state.db.lock().unwrap();
             let mut list = installed(&conn);
-            list.push(InstalledMedia { model_id: m.id.clone(), installed_at: db::now_ms(), secs: None });
+            list.push(InstalledMedia { model_id: m.id.clone(), installed_at: db::now_ms(), secs: None, edit_secs: None });
             if save_installed(&conn, &list).is_err() {
                 continue;
             }
@@ -993,7 +996,8 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
                 Err(e) => Err(e),
             }
         }
-        None => run_job(state, &id, &req, model.as_ref(), &cancel, &progress).await,
+        // Stop reaches the helper models too (planning, checking, writing).
+        None => crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)).await,
     };
     if let (Ok(items), Some(m)) = (&result, &model) {
         if !items.is_empty() {
@@ -1098,7 +1102,13 @@ fn job_scale(m: &MediaModel, req: &Request) -> f64 {
 
 fn estimate(state: &AppState, m: &MediaModel, req: &Request) -> f64 {
     let hw = state.hardware.read().unwrap().clone();
-    let measured = installed(&state.db.lock().unwrap()).into_iter().find(|i| i.model_id == m.id).and_then(|i| i.secs);
+    let record = installed(&state.db.lock().unwrap()).into_iter().find(|i| i.model_id == m.id);
+    if req.op == "edit" {
+        if let Some(s) = record.as_ref().and_then(|i| i.edit_secs) {
+            return s.max(3.0);
+        }
+    }
+    let measured = record.and_then(|i| i.secs);
     let f = fit(m, &hw, &state.budget(), 0, measured);
     if req.op == "tune" {
         // About 27 practice pictures at 768 pixels, plus writing and checking them.
@@ -1109,7 +1119,9 @@ fn estimate(state: &AppState, m: &MediaModel, req: &Request) -> f64 {
         // checking, and a training run.
         return f.est_secs * 110.0 * 0.6 + 1500.0;
     }
-    (f.est_secs * job_scale(m, req)).max(3.0)
+    // A checked edit not timed yet: about three plain pictures (plan, make, check).
+    let edit = if req.op == "edit" { 3.0 } else { 1.0 };
+    (f.est_secs * job_scale(m, req) * edit).max(3.0)
 }
 
 /// Keeps a running average of how long a default job takes here.
@@ -1118,7 +1130,8 @@ fn learn_speed(state: &AppState, m: &MediaModel, req: &Request, secs: f64) {
     let conn = state.db.lock().unwrap();
     let mut list = installed(&conn);
     if let Some(i) = list.iter_mut().find(|i| i.model_id == m.id) {
-        i.secs = Some(match i.secs {
+        let slot = if req.op == "edit" { &mut i.edit_secs } else { &mut i.secs };
+        *slot = Some(match *slot {
             Some(old) => (old * 0.6 + per * 0.4).round(),
             None => per.round(),
         });
@@ -1150,6 +1163,14 @@ pub fn clean_work(paths: &Paths) {
     if let Ok(entries) = std::fs::read_dir(store::dir(paths).join("work")) {
         for e in entries.flatten() {
             std::fs::remove_dir_all(e.path()).ok();
+        }
+    }
+    // Half-written gallery files a crash left (written as .part, then named).
+    if let Ok(entries) = std::fs::read_dir(store::dir(paths)) {
+        for e in entries.flatten() {
+            if e.path().extension().is_some_and(|x| x == "part") {
+                std::fs::remove_file(e.path()).ok();
+            }
         }
     }
 }
@@ -1625,7 +1646,9 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     } else {
         req
     };
-    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach") {
+    // Not for upscaling: its model is 64 MB, and stopping a 14 GB chat model
+    // for it cost the next message a reload.
+    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach") {
         make_room(state, req, model).await
     } else {
         None
@@ -1669,7 +1692,7 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
         // The writer already put the look in.
         first_req.style = Some("as_written".into());
     }
-    let items = run_kind(state, id, &first_req, Some(m), cancel, progress).await?;
+    let mut items = run_kind(state, id, &first_req, Some(m), cancel, progress).await?;
     // Checking: one picture, a checklist worth checking, and something to check with.
     if p.checklist.len() < 3 || items.len() != 1 || items[0].kind != "image" || cancel.load(Ordering::Relaxed) {
         return Ok(items);
@@ -1684,6 +1707,9 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
     let Ok(verdict) = verdict else { return Ok(items) };
     crate::applog::line("media", &format!("The picture showed {:.0}% of what was asked for", verdict.score * 100.0));
     if verdict.missing.is_empty() || verdict.score >= 0.85 || cancel.load(Ordering::Relaxed) {
+        if verdict.score < 0.85 {
+            items = said_missing(state, items, &verdict.missing);
+        }
         return Ok(items);
     }
     // Once more, with a description that brings out what was missing.
@@ -1692,7 +1718,7 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
     let before = p.written.clone().unwrap_or(prompts::Written { prompt: req.prompt.clone(), negative: req.negative.clone().unwrap_or_default() });
     let better = prompts::revise(&w, &p.program, &p.ask, &before, &verdict.missing).await;
     w.done(state).await;
-    let Ok(better) = better else { return Ok(items) };
+    let Ok(better) = better else { return Ok(said_missing(state, items, &verdict.missing)) };
     let mut again = first_req.clone();
     again.prompt = better.prompt;
     again.negative = (!better.negative.is_empty()).then_some(better.negative);
@@ -1700,17 +1726,33 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
     again.seed = None;
     let second = match run_kind(state, &format!("{id}-again"), &again, Some(m), cancel, progress).await {
         Ok(s) if s.len() == 1 => s,
-        _ => return Ok(items),
+        Ok(s) => {
+            // More than one came back: none of them is kept beside the first.
+            for extra in s {
+                let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &extra.id);
+            }
+            return Ok(said_missing(state, items, &verdict.missing));
+        }
+        Err(_) => return Ok(said_missing(state, items, &verdict.missing)),
     };
-    let img2 = store::read(&state.paths, &c, &second[0].id).and_then(|b| imaging::decode(&b))?;
-    let Ok(r) = prompts::reader(state, Some(m)).await else { return Ok(second) };
-    let verdict2 = prompts::judge(&r, &img2, &p.checklist).await.unwrap_or_default();
-    r.done(state).await;
+    let second_check = async {
+        let img2 = store::read(&state.paths, &c, &second[0].id).and_then(|b| imaging::decode(&b))?;
+        let r = prompts::reader(state, Some(m)).await?;
+        let v = prompts::judge(&r, &img2, &p.checklist).await;
+        r.done(state).await;
+        v
+    }
+    .await;
+    // Couldn't check the second: the first (checked) one stays, alone.
+    let Ok(verdict2) = second_check else {
+        let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &second[0].id);
+        return Ok(said_missing(state, items, &verdict.missing));
+    };
     crate::applog::line("media", &format!("Made again: it showed {:.0}% of what was asked for (the first {:.0}%)", verdict2.score * 100.0, verdict.score * 100.0));
     // Keep the better one only.
-    let (keep, drop) = if verdict2.score > verdict.score { (second, first) } else { (items, second[0].clone()) };
+    let (keep, drop, v) = if verdict2.score > verdict.score { (second, first, verdict2) } else { (items, second[0].clone(), verdict) };
     let _ = store::delete(&state.db.lock().unwrap(), &state.paths, &drop.id);
-    Ok(keep)
+    Ok(if v.score < 0.85 { said_missing(state, keep, &v.missing) } else { keep })
 }
 
 /// An edit with the picture reader at work. Asked to have a child lift the
@@ -1783,7 +1825,7 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let seed = req.seed.unwrap_or_else(random_seed);
     // Something taken away or moved: a change in one place, so the rest stays put.
     let local = plan.changes["leaving"].as_array().is_some_and(|l| !l.is_empty());
-    let first = edit_steps(&ctx, m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a")).await?;
+    let first = edit_steps(&ctx, m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a"), (0.1, 0.45)).await?;
     // Back into the full-size original, when it fits (None: the edit model redrew the whole scene).
     let first_kept = imaging::keep_unchanged(&full, &before, &first);
     if local && first_kept.is_none() {
@@ -1792,7 +1834,7 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let mut v1 = None;
     let mut steps_again = None;
     if check.checklist.len() >= 2 && !stopped() {
-        progress("Checking the change against what you asked for", 0.0);
+        progress("Checking the change against what you asked for", 0.55);
         if let Ok(r) = prompts::reader(state, Some(m)).await {
             if let Ok(v) = prompts::judge_edit(&r, &before, &first, &check).await {
                 crate::applog::line("media", &format!("The edit did {:.0}% of what was asked for", v.score * 100.0));
@@ -1809,10 +1851,11 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     if steps_again.is_none() && local && first_kept.is_none() {
         steps_again = Some(plan.steps.clone());
     }
+    let mut redrawn = first_kept.is_none();
     let mut result = first_kept.clone().unwrap_or_else(|| first.clone());
     if let Some(steps) = steps_again.filter(|_| !stopped()) {
-        progress("Making it again so it shows everything you asked for", 0.0);
-        if let Ok(second) = edit_steps(&ctx, m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b")).await {
+        progress("Making it again so it shows everything you asked for", 0.6);
+        if let Ok(second) = edit_steps(&ctx, m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b"), (0.6, 0.33)).await {
             let second_kept = imaging::keep_unchanged(&full, &before, &second);
             let mut v2 = None;
             if v1.is_some() {
@@ -1827,26 +1870,64 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
             let s2 = v2.as_ref().map_or(0.0, |v| v.score) + fits(&second_kept);
             crate::applog::line("media", &format!("Made again: {:.0} points against {:.0} for the first", s2 * 100.0, s1 * 100.0));
             if s2 > s1 {
+                redrawn = second_kept.is_none();
                 result = second_kept.unwrap_or(second);
+                v1 = v2.or(v1);
             }
         }
     }
     if stopped() {
         return Err(download::CANCELLED.into());
     }
-    Ok(vec![ctx.keep_picture(&result, Some(m), Some(&item.id), Some(seed))?])
+    // The whole scene redrawn: back to the photo's size (with the upscaler
+    // when there is one), not left at the edit model's working size.
+    let mut note = None;
+    if redrawn && result.dimensions() != full.dimensions() {
+        let big = ctx.enlarge_for(&result, full.width(), full.height(), &work.0).await;
+        result = big.resize_exact(full.width(), full.height(), image::imageops::FilterType::Lanczos3);
+        note = Some("The edit redrew the whole scene, so everything in it was drawn again (at the edit model's detail) rather than kept from the photo.".to_string());
+    }
+    let kept = ctx.keep_picture(&result, Some(m), Some(&item.id), Some(seed))?;
+    let missing = v1.filter(|v| v.score < 0.85).map(|v| v.missing).unwrap_or_default();
+    let mut items = said_missing(state, vec![kept], &missing);
+    if let Some(n) = note {
+        if let Some(i) = items.first_mut() {
+            i.note = Some(n);
+            if let Ok(c) = state.work_cipher() {
+                let _ = store::update(&state.db.lock().unwrap(), &c, i);
+            }
+        }
+    }
+    Ok(items)
+}
+
+/// The kept picture says what the check didn't find in it, so the person
+/// hears it (the Studio card, the chat) instead of it only reaching the log.
+fn said_missing(state: &AppState, mut items: Vec<MediaItem>, missing: &[String]) -> Vec<MediaItem> {
+    if missing.is_empty() || items.len() != 1 {
+        return items;
+    }
+    items[0].missing = missing.to_vec();
+    if let Ok(c) = state.work_cipher() {
+        let _ = store::update(&state.db.lock().unwrap(), &c, &items[0]);
+    }
+    items
 }
 
 /// Runs an edit's steps in order, each on the last one's result, at the
 /// size of `before`. Nothing is kept in the gallery.
-async fn edit_steps(ctx: &RunCtx<'_>, m: &MediaModel, before: &image::DynamicImage, original: Option<&image::DynamicImage>, steps: &[String], seed: i64, dir: &std::path::Path) -> Result<image::DynamicImage, String> {
+/// `slice`: the part of the job's bar (start, length) these steps fill.
+async fn edit_steps(ctx: &RunCtx<'_>, m: &MediaModel, before: &image::DynamicImage, original: Option<&image::DynamicImage>, steps: &[String], seed: i64, dir: &std::path::Path, slice: (f64, f64)) -> Result<image::DynamicImage, String> {
     let d = &m.defaults;
     let (w, h) = (before.width(), before.height());
     let mut img = before.clone();
+    let n = steps.len().max(1) as f64;
     for (i, step) in steps.iter().enumerate() {
         if ctx.cancel.load(Ordering::Relaxed) {
             return Err(download::CANCELLED.into());
         }
+        let part = |label: &str, f: f64| (ctx.progress)(label, slice.0 + slice.1 * (i as f64 + f.clamp(0.0, 1.0)) / n);
+        let ctx = &RunCtx { state: ctx.state, req: ctx.req, cancel: ctx.cancel, progress: &part, reserved: ctx.reserved };
         let dir = dir.join(i.to_string());
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let src = dir.join("source.png");
@@ -1939,7 +2020,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             let edit = |before: image::DynamicImage, steps: Vec<String>, seed: i64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
                 let dir = base.join(format!("e{}", n.fetch_add(1, Ordering::Relaxed)));
                 let ctx = &ctx;
-                Box::pin(async move { edit_steps(ctx, m, &before, None, &steps, seed, &dir).await })
+                Box::pin(async move { edit_steps(ctx, m, &before, None, &steps, seed, &dir, (0.0, 1.0)).await })
             };
             let report = coach::train(state, m, &render, Some(&edit), progress, cancel).await?;
             emit(state, "media:coached", json!(report));
@@ -2230,7 +2311,8 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
             let (iw, ih) = img.dimensions();
             let area = (w * h) as f64;
             let k = (area / (iw as f64 * ih as f64)).sqrt();
-            (w, h) = (imaging::round16(iw as f64 * k), imaging::round16(ih as f64 * k));
+            // Within what the models take (a wide panorama asked for 2832x144 and failed after loading).
+            (w, h) = (imaging::round16(iw as f64 * k).clamp(256, 1920), imaging::round16(ih as f64 * k).clamp(256, 1920));
             let p = work.join("start.png");
             let start = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
             std::fs::write(&p, imaging::png(&start)?).map_err(|e| e.to_string())?;

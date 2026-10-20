@@ -278,12 +278,24 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     media::job_done(&state, &job_id, &result);
     match result {
         Ok(items) => {
-            let text = format!(
+            let mut text = format!(
                 "Made {}: {}. It's already shown to the user in the chat. Tell them in a sentence what you made; don't paste ids or links. \
                  To change it, call edit_image with an instruction.",
                 if items.len() > 1 { format!("{} versions", items.len()) } else { what.to_string() },
                 summary(&items)
             );
+            // The check found things missing: said plainly, not passed off as done.
+            let missing: Vec<&str> = items.iter().flat_map(|i| i.missing.iter().map(String::as_str)).collect();
+            if !missing.is_empty() {
+                text.push_str(&format!(
+                    " But the check didn't find everything that was asked for: {}. Tell the user plainly what's missing, and offer to try again \
+                     (edit_image on the result, saying what to add or fix).",
+                    missing.join("; ")
+                ));
+            }
+            if let Some(n) = items.iter().find_map(|i| i.note.as_deref()) {
+                text.push_str(&format!(" Also tell them: {n}"));
+            }
             let mut o = Outcome::ok(text, format!("Made {what}"), "text", None);
             o.meta["media"] = json!(items);
             o

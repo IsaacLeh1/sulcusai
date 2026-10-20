@@ -626,21 +626,30 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
     }
     let after_url = crate::vision::data_url(after)?;
     let yes_no = json!({ "type": "object", "properties": { "answer": { "type": "string", "enum": ["yes", "no"] } }, "required": ["answer"] });
-    let (mut missing, mut total) = (Vec::new(), 0usize);
+    // What must be there weighs twice what must be gone: both klein edits of
+    // the barbell photo took away what was asked and drew no barbell, and
+    // still scored 77 and 67.
+    let (mut missing, mut total, mut lost) = (Vec::new(), 0usize, 0usize);
     for item in &plan.checklist {
         let (q, want) = item_question(item);
         let v = ask_about(reader, &after_url, &format!("{q} Answer yes or no."), yes_no.clone()).await?;
-        total += 1;
+        let weight = if want { 2 } else { 1 };
+        total += weight;
         if (v["answer"].as_str() == Some("yes")) != want {
             missing.push(item.clone());
+            lost += weight;
         }
     }
     for thing in &plan.moved {
         let v = ask_about(reader, &after_url, &format!("How many of these can you see in this picture: {thing}? Count each one, even one partly hidden."), count_schema()).await?;
-        total += 1;
+        total += 2;
         let n = v["count"].as_u64().unwrap_or(0);
         if n > 1 {
             missing.push(format!("only one {thing}, not {n}"));
+            lost += 1;
+        } else if n == 0 {
+            missing.push(format!("the {thing}"));
+            lost += 2;
         }
     }
     let people = "How many people can you see in this picture? Count every person, even one shown only in part (just legs, arms or a hand).";
@@ -651,8 +660,9 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
     let expected = n0.saturating_sub(plan.people_gone as u64);
     if n1 > expected {
         missing.push(format!("no people added ({n1} people where there should be {expected})"));
+        lost += 1;
     }
-    Ok(Verdict { score: 1.0 - missing.len() as f32 / total.max(1) as f32, missing })
+    Ok(Verdict { score: 1.0 - lost as f32 / total.max(1) as f32, missing })
 }
 
 /// The language model that writes prompts for `m`: its own (the text reader
