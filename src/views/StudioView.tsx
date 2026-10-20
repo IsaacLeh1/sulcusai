@@ -188,7 +188,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             key={view?.defaults?.image ?? "no-default"}
             models={installedOf("image")}
             defaultId={view?.defaults?.image ?? null}
-            onSetDefault={(id) => api.mediaSetDefault("image", id).then(reloadView).catch(() => {})}
+            onSetDefault={(id) => api.mediaSetDefault("image", id).then(reloadView)}
             onStart={start}
             onEditPhoto={importFile}
             lifelike={view?.models.find((m) => m.id === "z-image-turbo" && !m.installed && m.fit.runnable) ?? null}
@@ -201,7 +201,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             key={view?.defaults?.video ?? "no-default"}
             models={installedOf("video")}
             defaultId={view?.defaults?.video ?? null}
-            onSetDefault={(id) => api.mediaSetDefault("video", id).then(reloadView).catch(() => {})}
+            onSetDefault={(id) => api.mediaSetDefault("video", id).then(reloadView)}
             source={source}
             onPickSource={setSource}
             gallery={items}
@@ -493,7 +493,7 @@ function PictureComposer({
         className="input"
         rows={3}
         value={prompt}
-        placeholder={t("Describe the picture: the subject, the setting, the light and mood. Pick a look below.")}
+        placeholder={t("Describe the picture: the subject, the setting, the light and mood. Pick a look below.")} aria-label={t("Describe the picture: the subject, the setting, the light and mood. Pick a look below.")}
         onChange={(e) => {
           setPrompt(e.target.value);
           // Rewording it asks afresh on Create.
@@ -787,7 +787,7 @@ function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStar
   };
   return (
     <div className="form">
-      <textarea className="input" rows={6} value={text} placeholder={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} onChange={(e) => setText(e.target.value)} autoFocus />
+      <textarea className="input" rows={6} value={text} placeholder={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} aria-label={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} onChange={(e) => setText(e.target.value)} autoFocus />
       <div className="row wrap">
         {cloud.length > 0 && (
           <select value={engine} onChange={(e) => setEngine(e.target.value)} title={t("Voices from")}>
@@ -944,7 +944,7 @@ function Viewer({
                       setText(e.target.value);
                       ask.clear();
                     }}
-                    placeholder={t("E.g. make it night, add a red scarf, remove the car")}
+                    placeholder={t("E.g. make it night, add a red scarf, remove the car")} aria-label={t("E.g. make it night, add a red scarf, remove the car")}
                     autoFocus
                     onKeyDown={(e) => e.key === "Enter" && change()}
                   />
@@ -957,7 +957,7 @@ function Viewer({
                   <label className="small row">
                     {t("Brush")} <input type="range" min={10} max={120} value={brush} onChange={(e) => setBrush(+e.target.value)} />
                   </label>
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What goes there (optional)")} />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What goes there (optional)")} aria-label={t("What goes there (optional)")} />
                   <div className="row">
                     <button className="btn small" disabled={!painted} onClick={() => painter.current?.clear()}>{t("Clear")}</button>
                     <button className="btn primary small" disabled={!painted} onClick={fill}>{t("Fill in")}</button>
@@ -966,7 +966,7 @@ function Viewer({
               )}
               {tool === "extend" && (
                 <div className="form">
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What's beyond the edges (optional)")} />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("What's beyond the edges (optional)")} aria-label={t("What's beyond the edges (optional)")} />
                   <div className="row">
                     <button className="btn small" onClick={() => extend("wide")}>{t("Wider")}</button>
                     <button className="btn small" onClick={() => extend("tall")}>{t("Taller")}</button>
@@ -981,7 +981,7 @@ function Viewer({
                       <button key={s} className="chip" onClick={() => run({ op: "restyle", prompt: s })}>{t(s)}</button>
                     ))}
                   </div>
-                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Or describe a style")} onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "restyle", prompt: text })} />
+                  <input className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Or describe a style")} aria-label={t("Or describe a style")} onKeyDown={(e) => e.key === "Enter" && text.trim() && run({ op: "restyle", prompt: text })} />
                 </div>
               )}
               <div className="row wrap">

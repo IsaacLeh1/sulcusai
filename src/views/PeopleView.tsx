@@ -312,7 +312,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
             ⋯
           </button>
           {menu && (
-            <div className="menu-pop" role="menu">
+            <div className="menu-pop" role="menu" onKeyDown={(e) => e.key === "Escape" && setMenu(false)}>
               <button
                 role="menuitem"
                 onClick={() => {
@@ -733,7 +733,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
             aria-label={t("Message")}
           />
           {mine ? (
-            <button className="btn" onClick={() => api.peopleSharedStop(c.id, chat.id).catch(() => {})}>
+            <button className="btn" onClick={() => api.peopleSharedStop(c.id, chat.id)}>
               {t("Stop")}
             </button>
           ) : (

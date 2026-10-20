@@ -27,7 +27,7 @@ function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudPro
         <p className="muted">{t("Asking {name} which models it offers…", { name: provider.name })}</p>
       ) : (
         <>
-          <input className="input" placeholder={t("Filter")} value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
+          <input className="input" placeholder={t("Filter")} aria-label={t("Filter")} value={filter} onChange={(e) => setFilter(e.target.value)} autoFocus />
           <div className="cloud-pick">
             {shown.map((m) => (
               <label key={m.id} className="check">
@@ -232,7 +232,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
         <div className="adv-head">
           <span className="small">
             {t("This month:")} <strong>{money(v.spend.usd)}</strong>
-            {v.budget ? ` ${t("of {budget}", { budget: money(v.budget) })}` : ""} · {t("{n} requests", { n: v.spend.requests })} · {t("{n} tokens", { n: (v.spend.input_tokens + v.spend.output_tokens).toLocaleString() })}
+            {v.budget ? ` ${t("of {budget}", { budget: money(v.budget) })}` : ""} · {v.spend.requests === 1 ? t("1 request") : t("{n} requests", { n: v.spend.requests })} · {t("{n} tokens", { n: (v.spend.input_tokens + v.spend.output_tokens).toLocaleString() })}
           </span>
         </div>
         {v.budget ? <div className={`progress ${used >= 0.9 ? "warn" : ""}`}><span style={{ width: `${used * 100}%` }} /></div> : null}
@@ -241,7 +241,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
       <div className="row wrap">
         <label className="adv-field">
           <span>{t("Monthly budget (US$)")}</span>
-          <input className="input" type="number" min={0} step={1} value={budget} placeholder={t("No limit")} onChange={(e) => setBudget(e.target.value)} onBlur={() => run(() => api.setCloudOptions(budget === "" ? null : Number(budget), v.redact))} />
+          <input className="input" type="number" min={0} step={1} value={budget} placeholder={t("No limit")} aria-label={t("No limit")} onChange={(e) => setBudget(e.target.value)} onBlur={() => run(() => api.setCloudOptions(budget === "" ? null : Number(budget), v.redact))} />
         </label>
       </div>
       <label className="check">

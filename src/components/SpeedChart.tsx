@@ -4,7 +4,7 @@
 // speed test for each installed one (or all of them).
 import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type ModelCard, type SpeedStatus } from "../api";
-import { speedLabel } from "../format";
+import { speedLabel, words } from "../format";
 import { speedOf } from "../ranking";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -46,7 +46,7 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
     setStatus((s) => ({ running: true, all: false, model_id: m.id, done: 0, total: 1, errors: s?.errors ?? {} }));
     try {
       const sp = await api.measureModelSpeed(m.id);
-      toast(t("{model}: writes {speed} tokens/sec on this PC.", { model: m.name, speed: sp.tps.toFixed(1) }), "success");
+      toast(t("{model}: writes about {speed} words a second on this PC.", { model: m.name, speed: words(sp.tps) }), "success");
     } catch (e) {
       toast(errorText(e), "error");
       api.speedTestStatus().then(setStatus).catch(() => {});
@@ -111,9 +111,9 @@ export function SpeedChart({ models, onRefresh, toast }: { models: ModelCard[]; 
               <div className="speed-value small">
                 {value > 0 ? (
                   <>
-                    <strong>{value.toFixed(value < 10 ? 1 : 0)}</strong> {t("tok/s")}
+                    <strong>{words(value)}</strong> {t("words a second")}
                     <span className="muted"> · {measured !== null ? speedLabel(value) : t("estimated")}</span>
-                    {m.installed?.prompt_tps ? <span className="muted block">{t("reads {n} tok/s", { n: Math.round(m.installed.prompt_tps) })}</span> : null}
+                    {m.installed?.prompt_tps ? <span className="muted block">{t("reads about {n} words a second", { n: words(m.installed.prompt_tps) })}</span> : null}
                   </>
                 ) : (
                   <span className="muted">{t("Not measured yet")}</span>

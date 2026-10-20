@@ -231,7 +231,7 @@ fn engine_slot() -> &'static Mutex<Option<Engine>> {
 pub fn runtime_ready(dll: &Path) -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
-        let builder = ort::init_from(dll).map_err(|e| format!("Couldn't load ONNX Runtime: {e}"))?;
+        let builder = ort::init_from(dll).map_err(|e| format!("Couldn't start the natural voices' speech engine (ONNX Runtime): {e}"))?;
         builder.commit();
         Ok(())
     })

@@ -100,7 +100,8 @@ function FirstModel({ catalog, progress, onNext, onBack, toast }: { catalog: Cat
   const [looking, setLooking] = useState(true);
   const [found, setFound] = useState<FoundModels | null>(null);
   useEffect(() => {
-    api.findModels().then(setFound).catch(() => {}).finally(() => setLooking(false));
+    // A failed search says so (main.tsx shows it), rather than reading as "none found".
+    api.findModels().then(setFound).finally(() => setLooking(false));
   }, []);
   if (!catalog || looking) return <p className="muted">{t("Looking for models already on this PC…")}</p>;
   const installed = catalog.models.filter((m) => m.installed);
@@ -190,15 +191,15 @@ function AboutYou({ onNext, onBack, toast }: { onNext: () => void; onBack: () =>
       <div className="form">
         <label>
           {t("Name")}
-          <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} maxLength={80} />
+          <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} aria-label={t("What should it call you?")} maxLength={80} />
         </label>
         <label>
           {t("About you")}
-          <textarea className="input" rows={3} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, studies or interests.")} maxLength={4000} />
+          <textarea className="input" rows={3} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, studies or interests.")} aria-label={t("Your work, studies or interests.")} maxLength={4000} />
         </label>
         <label>
           {t("How it should respond")}
-          <textarea className="input" rows={2} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: short answers, plain language.")} maxLength={4000} />
+          <textarea className="input" rows={2} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: short answers, plain language.")} aria-label={t("For example: short answers, plain language.")} maxLength={4000} />
         </label>
       </div>
       <Nav onBack={onBack} onNext={filled ? save : onNext} nextLabel={filled ? t("Save and continue") : t("Skip")} />

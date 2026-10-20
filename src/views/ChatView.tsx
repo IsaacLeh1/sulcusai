@@ -33,7 +33,7 @@ import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
-import { insertDictation } from "../format";
+import { insertDictation, words } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
 import { GlobeIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
@@ -104,7 +104,34 @@ export function ChatView(props: Props) {
 
 function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streaming, setStreaming] = useState<Streaming | null>(null);
+  const [streaming, setStreamingNow] = useState<Streaming | null>(null);
+  // Tokens arrive dozens a second and the live reply is drawn as Markdown
+  // (with maths): they're gathered and drawn at most every 80 ms, not each.
+  const buffered = useRef<Streaming | null>(null);
+  const flushTimer = useRef<number | undefined>(undefined);
+  const setStreaming = useCallback((v: Streaming | null | ((s: Streaming | null) => Streaming | null)) => {
+    buffered.current = null;
+    window.clearTimeout(flushTimer.current);
+    flushTimer.current = undefined;
+    setStreamingNow(v);
+  }, []);
+  const addDelta = useCallback((id: string, content: string, thinking: string) => {
+    const b = buffered.current;
+    if (b && b.id === id) {
+      b.content += content;
+      b.thinking += thinking;
+    } else {
+      buffered.current = { id, content, thinking };
+    }
+    if (flushTimer.current !== undefined) return;
+    flushTimer.current = window.setTimeout(() => {
+      flushTimer.current = undefined;
+      const p = buffered.current;
+      buffered.current = null;
+      if (p) setStreamingNow((s) => (s && s.id === p.id ? { ...s, content: s.content + p.content, thinking: s.thinking + p.thinking } : s));
+    }, 80);
+  }, []);
+  useEffect(() => () => window.clearTimeout(flushTimer.current), []);
   const [status, setStatus] = useState<Status>("idle");
   // What screen readers hear: when a reply starts and when it's ready (not
   // every streamed word).
@@ -287,9 +314,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       })),
       on("chat:delta", mine((p) => {
         if (p.content) setStatus("writing");
-        setStreaming((s) =>
-          s && s.id === p.message_id ? { ...s, content: s.content + (p.content ?? ""), thinking: s.thinking + (p.thinking ?? "") } : s,
-        );
+        addDelta(p.message_id, p.content ?? "", p.thinking ?? "");
       })),
       on("agent:step", mine(() => {
         setStreaming(null);
@@ -701,7 +726,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               {queue.map((q) => (
                 <span key={q.id} className="queue-chip" title={q.text}>
                   <span className="ellipsis">{q.text || t("(a picture)")}</span>
-                  <button className="link" aria-label={t("Remove")} onClick={() => api.chatQueueRemove(chat.id, q.id).then(setQueue).catch(() => {})}>
+                  <button className="link" aria-label={t("Remove")} onClick={() => api.chatQueueRemove(chat.id, q.id).then(setQueue)}>
                     ×
                   </button>
                 </span>
@@ -798,7 +823,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             </select>
             {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
             <span className="spacer" />
-            {tps !== null && !busy && <span className="muted small">{t("{n} tokens/sec", { n: tps })}</span>}
+            {tps !== null && !busy && <span className="muted small">{t("about {n} words a second", { n: words(tps) })}</span>}
             {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}
             {features.has("voice_chat") && (
               <button
@@ -1074,7 +1099,12 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
 function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void }) {
   const src = useMediaUrl({ id, mime: "image/jpeg", kind: "image" }, true);
   if (!src) return null;
-  return <img src={src} alt={t("Attached picture")} onClick={() => api.mediaGet(id).then((i) => onOpen?.(i)).catch(() => {})} />;
+  // A button, so the keyboard reaches it too.
+  return (
+    <button className="msg-image-btn" onClick={() => api.mediaGet(id).then((i) => onOpen?.(i))} title={t("Open")}>
+      <img src={src} alt={t("Attached picture")} />
+    </button>
+  );
 }
 
 function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {

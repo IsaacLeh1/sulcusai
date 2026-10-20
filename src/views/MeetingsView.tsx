@@ -198,7 +198,7 @@ function StartDialog({ onClose, onStarted, toast }: { onClose: () => void; onSta
       <div className="form">
         <label>
           {t("Name")} <span className="muted small">{t("(optional; it's named from the notes otherwise)")}</span>
-          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Weekly team sync")} maxLength={120} autoFocus />
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Weekly team sync")} aria-label={t("Weekly team sync")} maxLength={120} autoFocus />
         </label>
         <label className="check">
           <input type="checkbox" checked={mic} onChange={(e) => setMic(e.target.checked)} />

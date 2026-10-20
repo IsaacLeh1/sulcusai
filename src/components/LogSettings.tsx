@@ -74,7 +74,7 @@ export function LogSettings({ toast }: { toast: PushToast }) {
             <strong className="small">{t("Last lines of {name}", { name: open })}</strong>
             <span className="row">
               <button className="btn ghost small" onClick={() => show(open)}>{t("Refresh")}</button>
-              <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(text).then(() => toast(t("Copied."), "success")).catch(() => {})}>{t("Copy")}</button>
+              <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(text).then(() => toast(t("Copied."), "success")).catch(() => toast(t("Couldn't copy it."), "error"))}>{t("Copy")}</button>
             </span>
           </div>
           <pre className="log-text">{text || t("(empty)")}</pre>

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { api, errorText, type ContextInfo, type ContextOptions } from "../api";
-import { bytes, percent, placementLabel, tokens } from "../format";
+import { bytes, percent, placementLabel, tokens, words } from "../format";
 import { t } from "../i18n";
 import { Modal } from "./Modal";
 
@@ -133,7 +133,7 @@ function ContextPanel({ info, used, ctx, parts, modelId, canCompact, onCompact, 
                 {t("{size} tokens", { size: short(o.ctx) })}
                 <span className="muted small block">
                   {o.placement
-                    ? `${placementLabel(o.placement)} · ${t("about {n} tokens/sec", { n: Math.round(o.est_tps) })}`
+                    ? `${placementLabel(o.placement)} · ${t("about {n} words a second", { n: words(o.est_tps) })}`
                     : t("Too much for this PC (needs about {needed})", { needed: bytes(o.needed) })}
                 </span>
               </span>

@@ -84,7 +84,7 @@ export function KeyPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat
             onKeyDown={(e) => {
               if (e.key === "Enter" && key.trim()) connect();
             }}
-            placeholder={t("Paste your key")}
+            placeholder={t("Paste your key")} aria-label={t("Paste your key")}
             autoComplete="off"
             autoFocus
           />

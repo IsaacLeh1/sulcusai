@@ -95,7 +95,7 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
             <div className="form">
               <label>
                 {t("Name it")}
-                <input className="input" value={adding.name} autoFocus placeholder={t("e.g. My iPhone")} maxLength={40} onChange={(e) => setAdding({ ...adding, name: e.target.value })} />
+                <input className="input" value={adding.name} autoFocus placeholder={t("e.g. My iPhone")} aria-label={t("e.g. My iPhone")} maxLength={40} onChange={(e) => setAdding({ ...adding, name: e.target.value })} />
               </label>
               <label>
                 {t("A password for this phone")}

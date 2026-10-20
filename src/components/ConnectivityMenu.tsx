@@ -58,8 +58,13 @@ export function ConnectivityMenu({ level, onChange, onRefresh }: { level: Connec
     const close = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", esc);
+    };
   }, [open]);
 
   const pick = (l: Connectivity) => {

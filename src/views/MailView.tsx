@@ -112,7 +112,7 @@ function linkify(text: string): ReactNode[] {
   const parts = text.split(/(https?:\/\/[^\s<>"')\]]+)/g);
   return parts.map((p, i) =>
     i % 2 === 1 ? (
-      <a key={i} href={p} onClick={(e) => { e.preventDefault(); api.openWeb(p).catch(() => {}); }}>{p}</a>
+      <a key={i} href={p} onClick={(e) => { e.preventDefault(); api.openWeb(p); }}>{p}</a>
     ) : (
       <Fragment key={i}>{p}</Fragment>
     ),
@@ -624,7 +624,7 @@ export function MailView({ toast }: { toast: PushToast }) {
               <span>{t(FOLDERS.find((f) => f.id === folder)!.label)}</span>
               {undoMark}
               <span className="spacer" />
-              {shown.length > 0 && <span>{t("{n} messages", { n: shown.length })}</span>}
+              {shown.length > 0 && <span>{shown.length === 1 ? t("1 message") : t("{n} messages", { n: shown.length })}</span>}
             </div>
             <div className="mail-list" role="list">
               {shown.length === 0 && (

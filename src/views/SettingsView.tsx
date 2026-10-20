@@ -308,11 +308,11 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
           <div className="form">
             <label>
               {t("Name")}
-              <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} maxLength={80} />
+              <input className="input" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} placeholder={t("What should it call you?")} aria-label={t("What should it call you?")} maxLength={80} />
             </label>
             <label>
               {t("About you")}
-              <textarea className="input" rows={4} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, interests, or anything that helps it understand you.")} maxLength={4000} />
+              <textarea className="input" rows={4} value={profile.about} onChange={(e) => setProfile({ ...profile, about: e.target.value })} placeholder={t("Your work, interests, or anything that helps it understand you.")} aria-label={t("Your work, interests, or anything that helps it understand you.")} maxLength={4000} />
             </label>
             <label>
               {t("Where you are")}
@@ -321,7 +321,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
                   className="input"
                   value={profile.location ?? ""}
                   onChange={(e) => setProfile({ ...profile, location: e.target.value, lat: null, lon: null })}
-                  placeholder={t("Your city, e.g. Orem, Utah")}
+                  placeholder={t("Your city, e.g. Orem, Utah")} aria-label={t("Your city, e.g. Orem, Utah")}
                   maxLength={120}
                 />
                 <button
@@ -346,7 +346,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
             </label>
             <label>
               {t("How it should respond")}
-              <textarea className="input" rows={3} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: keep answers short, use plain language, give examples.")} maxLength={4000} />
+              <textarea className="input" rows={3} value={profile.preferences} onChange={(e) => setProfile({ ...profile, preferences: e.target.value })} placeholder={t("For example: keep answers short, use plain language, give examples.")} aria-label={t("For example: keep answers short, use plain language, give examples.")} maxLength={4000} />
             </label>
             <div>
               <button className="btn primary" onClick={save} disabled={!dirty}>

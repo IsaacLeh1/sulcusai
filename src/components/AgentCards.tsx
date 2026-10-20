@@ -108,7 +108,7 @@ export function ToolCard({
       )}
       {meta?.file && status === "ok" && (
         <div className="tool-actions">
-          <button className="btn small" onClick={() => api.openDocument(meta.file!).catch(() => {})}>{t("Open")}</button>
+          <button className="btn small" onClick={() => api.openDocument(meta.file!)}>{t("Open")}</button>
         </div>
       )}
       {open && call.name === "delegate" && output && <pre className="tool-output">{output}</pre>}

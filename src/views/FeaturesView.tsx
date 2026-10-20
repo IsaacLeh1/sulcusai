@@ -64,7 +64,7 @@ export const FEATURES: Record<FeatureId, Info> = {
   memory: { name: tx("Memory"), detail: tx("Remembers facts across chats. You can see and edit everything it remembers.") },
   projects: { name: tx("Projects"), detail: tx("Group chats with their own instructions, folders and memories.") },
   scheduled: { name: tx("Scheduled tasks"), detail: tx("Run prompts on a schedule, such as a morning summary.") },
-  connectors: { name: tx("Connectors and plugins"), detail: tx("Add tools from MCP servers and plugins on this PC.") },
+  connectors: { name: tx("Connectors and plugins"), detail: tx("Add tools from connector programs and plugins on this PC.") },
   chat_team: {
     name: tx("Chats working together"),
     detail: tx("The assistant can look through your other chats, read them, and hand another chat a question or a piece of work: it works on it there, with the same model, and the answer comes back. Incognito chats are never included."),

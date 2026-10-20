@@ -96,7 +96,7 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
               maxLength={8000}
-              placeholder={t("What should the assistant know or do in this project? For example: This is my thesis on coral reefs. Use APA citations and a formal tone.")}
+              placeholder={t("What should the assistant know or do in this project? For example: This is my thesis on coral reefs. Use APA citations and a formal tone.")} aria-label={t("What should the assistant know or do in this project? For example: This is my thesis on coral reefs. Use APA citations and a formal tone.")}
             />
           </label>
           <div>

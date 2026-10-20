@@ -248,9 +248,9 @@ function reasonText(r: PlaceReason, total: number | null): string {
     case "cool_mode":
       return t("Cool & quiet mode leaves part of the graphics card free.");
     case "too_small":
-      if (n === 0) return t("{card} is too small for this model. A smaller model, or a smaller context window, fits it.", { card });
+      if (n === 0) return t("{card} is too small for this model. A smaller model, or keeping less of the chat in mind, fits it.", { card });
       if (total !== null && n >= total) return t("{card} holds every layer of this model but not all its experts; those wait in system memory. A smaller model fits it whole.", { card });
-      return t("{card} holds {n} of this model's {total} layers; the rest runs on the processor. A smaller model, or a smaller context window, fits it whole.", { card, n, total: total ?? "?" });
+      return t("{card} holds {n} of this model's {total} layers; the rest runs on the processor. A smaller model, or keeping less of the chat in mind, fits it whole.", { card, n, total: total ?? "?" });
     case "window":
       return t("This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.", { k: r.ctx_k ?? "?", card, n, total: total ?? "?" });
     default:

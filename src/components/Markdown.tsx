@@ -20,7 +20,7 @@ const COMPONENTS: Components = {
         title={href}
         onClick={(e) => {
           e.preventDefault();
-          api.openWeb(href).catch(() => {});
+          api.openWeb(href);
         }}
       >
         {children}

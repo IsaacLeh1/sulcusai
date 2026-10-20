@@ -254,7 +254,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
         <div className="teach-form form">
           <label>
             {t("Name")}
-            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t("e.g. My writing style")} maxLength={60} />
+            <input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t("e.g. My writing style")} aria-label={t("e.g. My writing style")} maxLength={60} />
           </label>
           <label>
             {t("Model to teach")}

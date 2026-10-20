@@ -6,7 +6,7 @@ import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 
 const MODES: { id: PerfMode; label: string; detail: string }[] = [
-  { id: "cool", label: tx("Cool & quiet"), detail: tx("About half the processor, a smaller context window, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.") },
+  { id: "cool", label: tx("Cool & quiet"), detail: tx("About half the processor, less of the chat kept in mind, low priority, and still the whole graphics card. Models unload after 5 idle minutes. Best on a laptop.") },
   { id: "balanced", label: tx("Balanced"), detail: tx("Uses what the PC can comfortably spare and leaves room for your other apps.") },
   { id: "turbo", label: tx("Turbo"), detail: tx("You choose how much it may use, up to what this PC can safely give.") },
 ];

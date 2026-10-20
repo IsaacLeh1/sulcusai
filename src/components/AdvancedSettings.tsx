@@ -5,6 +5,7 @@ import { api, errorText, type Advanced, type ModelCard } from "../api";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { TeachModel } from "./TeachModel";
+import { words } from "../format";
 
 const DEFAULTS: Advanced = {
   enabled: false,
@@ -37,7 +38,7 @@ function Num({ label, value, onChange, placeholder, step, min, max, hint }: { la
 const NEVER: { id: string; label: string }[] = [
   { id: "write", label: tx("Change, move or delete files") },
   { id: "execute", label: tx("Run programs and commands") },
-  { id: "connector", label: tx("Use connector tools (MCP servers)") },
+  { id: "connector", label: tx("Use connector tools (programs on this PC that add tools)") },
 ];
 
 export function AdvancedSettings({ toast }: { toast: PushToast }) {
@@ -162,12 +163,12 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
                 rows={4}
                 value={g.instructions ?? ""}
                 onChange={(e) => set("guardrails", { ...g, instructions: e.target.value || null })}
-                placeholder={t("Leave empty to use the app's own instructions (its role, honesty and how it uses tools). Anything here replaces them.")}
+                placeholder={t("Leave empty to use the app's own instructions (its role, honesty and how it uses tools). Anything here replaces them.")} aria-label={t("Leave empty to use the app's own instructions (its role, honesty and how it uses tools). Anything here replaces them.")}
               />
             </label>
             <label className="adv-field wide">
               <span>{t("Extra instructions")}</span>
-              <textarea className="input" rows={2} value={g.extra} onChange={(e) => set("guardrails", { ...g, extra: e.target.value })} placeholder={t("Added after the instructions, e.g. “Never give medical advice.”")} />
+              <textarea className="input" rows={2} value={g.extra} onChange={(e) => set("guardrails", { ...g, extra: e.target.value })} placeholder={t("Added after the instructions, e.g. “Never give medical advice.”")} aria-label={t("Added after the instructions, e.g. “Never give medical advice.”")} />
             </label>
             <span className="small">{t("Never let the assistant:")}</span>
             {NEVER.map((n) => (
@@ -246,7 +247,7 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
               <button
                 className="btn"
                 onClick={async () => {
-                  const path = await openFile({ multiple: false, filters: [{ name: t("GGUF model"), extensions: ["gguf"] }] });
+                  const path = await openFile({ multiple: false, filters: [{ name: t("Model file (.gguf)"), extensions: ["gguf"] }] });
                   if (typeof path !== "string") return;
                   try {
                     const name = await api.importModelFile(path);
@@ -273,7 +274,7 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
                     setMeasuring(true);
                     try {
                       const { tps } = await api.measureModelSpeed(speedModel);
-                      toast(t("{model}: {speed} tokens/sec on this PC.", { model: String(models.find((m) => m.id === speedModel)?.name), speed: tps.toFixed(1) }), "success");
+                      toast(t("{model}: about {speed} words a second on this PC.", { model: String(models.find((m) => m.id === speedModel)?.name), speed: words(tps) }), "success");
                     } catch (e) {
                       toast(errorText(e), "error");
                     } finally {

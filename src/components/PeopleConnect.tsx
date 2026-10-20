@@ -101,7 +101,7 @@ function YourCodes({ v, onView, toast }: { v: PeopleView; onView: (v: PeopleView
         </label>
         <label>
           {t("Name (optional)")}
-          <input className="input" value={label} maxLength={40} placeholder={t("e.g. For Sam")} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && make()} />
+          <input className="input" value={label} maxLength={40} placeholder={t("e.g. For Sam")} aria-label={t("e.g. For Sam")} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && make()} />
         </label>
         <button className="btn primary" onClick={make}>
           {t("+ New code")}

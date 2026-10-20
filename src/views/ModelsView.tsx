@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
-import { bytes, percent, placementLabel, speedLabel } from "../format";
+import { bytes, percent, placementLabel, speedLabel, words } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
@@ -414,7 +414,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
           {f.file === m.recommended && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
           {f.placement ? (
             <span className="muted small">
-              {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} tokens/sec", { n: Math.round(f.est_tps) })}
+              {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} words a second", { n: words(f.est_tps) })}
             </span>
           ) : (
             <span className="warn-text small" title={cantRun({ quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk }, budget)}>
@@ -476,7 +476,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
           <p className="muted small" role="status">
             {results.models.length === 0
               ? t("Nothing found that this PC can run. Try another search.")
-              : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
+              : results.models.length === 1 ? t("1 model with versions this PC can run.") : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
             {results.hidden > 0 && t("{n} more were left out: too big for this PC, or only in formats SulcusAI can't use.", { n: results.hidden })}
           </p>
           <div className="hub-list">
@@ -578,7 +578,7 @@ function cantRun(f: VariantFit | undefined, b: Budget): string {
   if (f.needed_bytes > Math.max(b.vram + b.ram, b.ram)) {
     return t("It needs about {needed} of memory; this PC has {vram} on the graphics card and {ram} for models.", { needed: bytes(f.needed_bytes), vram: bytes(b.vram), ram: bytes(b.ram) });
   }
-  return t("It would run too slowly here (about {n} tokens/sec).", { n: Math.max(0.1, f.est_tps).toFixed(1) });
+  return t("It would run too slowly here (about {n} words a second).", { n: words(Math.max(0.1, f.est_tps)) });
 }
 
 /** Installing something this PC probably can't run: say so first. */
@@ -653,7 +653,7 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
       )}
       {fit && variant && !progress && (runs ? (
         <p className="muted small fit-line">
-          {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} tokens/sec, estimated)", { n: Math.round(fit.est_tps) })}
+          {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} words a second, estimated)", { n: words(fit.est_tps) })}
         </p>
       ) : (
         <p className="warn-text small fit-line" role="note">{t("This PC probably can't run this version.")} {cantRun(fit, budget)}</p>
@@ -866,12 +866,12 @@ function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: Model
     <div className="optimize small">
       {tuning ? (
         <span>
-          {t("Optimized for this PC: {tps} tokens/sec", { tps: tuning.tps })}
+          {t("Optimized for this PC: about {tps} words a second", { tps: words(tuning.tps) })}
           {tuning.before_tps > 0 && Math.abs(tuning.tps - tuning.before_tps) >= 0.5 && <span className="muted"> {t("(automatic settings: {tps})", { tps: tuning.before_tps })}</span>}
           <span className="muted">
             {" · "}
             {tuning.gpu_layers >= tuning.all_layers ? t("all of it on the graphics card") : t("{n} of {all} layers on the graphics card", { n: tuning.gpu_layers, all: tuning.all_layers })}
-            {tuning.kv_q8 ? ` · ${t("compressed cache")}` : ""}
+            {tuning.kv_q8 ? ` · ${t("compressed memory of the chat")}` : ""}
           </span>
         </span>
       ) : null}
@@ -891,7 +891,7 @@ function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: Model
       </span>
       {offer && (
         <p className="callout">
-          {t("With a {k}K window, the whole model fits the graphics card: {tps} tokens/sec instead of {now}. A smaller window means it remembers less of a long chat.", { k: Math.round(offer.ctx / 1024), tps: offer.tps, now: measuredTps })}{" "}
+          {t("Keeping {k}K of the chat in mind, the whole model fits the graphics card: about {tps} words a second instead of {now}. It remembers less of a long chat that way.", { k: Math.round(offer.ctx / 1024), tps: words(offer.tps), now: words(measuredTps) })}{" "}
           <button
             className="link"
             onClick={() =>
@@ -965,7 +965,7 @@ function InstalledCard({
       {!m.local && <Tags m={m} />}
       <p className="small fit-line">
         {inst.tps !== null
-          ? t("Measured on this PC: {tps} tokens/sec ({speed})", { tps: inst.tps, speed: speedLabel(inst.tps).toLowerCase() })
+          ? t("Measured on this PC: about {tps} words a second ({speed})", { tps: words(inst.tps), speed: speedLabel(inst.tps).toLowerCase() })
           : t("Speed not measured yet")}
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>

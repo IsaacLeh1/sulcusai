@@ -242,7 +242,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
           <p className="muted small" role="status">
             {results.models.length === 0
               ? t("Nothing found that this PC can run. Try another search.")
-              : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
+              : results.models.length === 1 ? t("1 model with versions this PC can run.") : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
             {results.hidden > 0 && t("{n} more were left out: too big for this PC, add-ons, or in formats SulcusAI can't use.", { n: results.hidden })}
           </p>
           <div className="hub-list">

@@ -2,7 +2,7 @@
 // A pasted Hugging Face link: the model it points at, ready to install.
 import { useState } from "react";
 import { api, errorText, type HubLinkResult, type InstallProgress } from "../api";
-import { bytes, percent, placementLabel } from "../format";
+import { bytes, percent, placementLabel, words } from "../format";
 import { t } from "../i18n";
 import { waitLabel } from "../media";
 import type { PushToast } from "./Toasts";
@@ -54,7 +54,7 @@ export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { prog
           quant: f.quant,
           size: f.size,
           runs: f.placement !== null,
-          what: f.placement ? `${t(f.quality)} · ${placementLabel(f.placement)} · ${t("about {n} tokens/sec", { n: Math.round(f.est_tps) })}` : t("too much for this PC"),
+          what: f.placement ? `${t(f.quality)} · ${placementLabel(f.placement)} · ${t("about {n} words a second", { n: words(f.est_tps) })}` : t("too much for this PC"),
         }))
       : found.model.files.map((f) => ({
           file: f.file,
@@ -141,7 +141,7 @@ export function HubLinkBox({ progress, isInstalled, toast, onInstalled }: { prog
           </div>
           {found.kind === "chat" && found.found_for && (
             <p className="small muted">
-              {t("{original} isn't in GGUF, the format SulcusAI runs chat models in, so this is its most popular GGUF copy on Hugging Face.", { original: found.found_for })}
+              {t("{original} isn't a .gguf model file, the kind SulcusAI runs chat models from, so this is its most popular .gguf copy on Hugging Face.", { original: found.found_for })}
             </p>
           )}
           {shown.map((r) => {

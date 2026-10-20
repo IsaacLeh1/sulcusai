@@ -91,6 +91,12 @@ export default function App() {
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const toasts = useToasts();
+  // Actions that failed with nothing to catch them say so (see main.tsx).
+  useEffect(() => {
+    const show = (e: Event) => toasts.push(errorText((e as CustomEvent<string>).detail), "error");
+    window.addEventListener("sulcus:error", show);
+    return () => window.removeEventListener("sulcus:error", show);
+  }, [toasts.push]);
 
   const refreshSecurity = useCallback(async () => setSecurity(await api.security()), []);
   useEffect(() => {
@@ -1063,7 +1069,7 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
         }}
       >
         <p className="muted small">{t("A project keeps its own instructions, folders and memories for a set of related chats.")}</p>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Project name, e.g. Thesis")} autoFocus maxLength={80} />
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Project name, e.g. Thesis")} aria-label={t("Project name, e.g. Thesis")} autoFocus maxLength={80} />
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
           <button type="submit" className="btn primary" disabled={!name.trim()}>{t("Create")}</button>

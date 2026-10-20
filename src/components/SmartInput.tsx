@@ -229,6 +229,8 @@ export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartI
         ref={box}
         value={value}
         placeholder={offer ? "" : placeholder}
+        // Named for screen readers even while a suggestion hides the placeholder.
+        aria-label={rest["aria-label"] ?? placeholder}
         onChange={(e) => change(e.target.value)}
         onKeyDown={key}
         onKeyUp={sync}

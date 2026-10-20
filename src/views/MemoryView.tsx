@@ -86,7 +86,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
             }
           }}
         >
-          <input className="input" placeholder={t("Add something to remember, e.g. I prefer metric units")} value={adding} onChange={(e) => setAdding(e.target.value)} maxLength={500} />
+          <input className="input" placeholder={t("Add something to remember, e.g. I prefer metric units")} aria-label={t("Add something to remember, e.g. I prefer metric units")} value={adding} onChange={(e) => setAdding(e.target.value)} maxLength={500} />
           <button className="btn primary" type="submit" disabled={!adding.trim()}>{t("Add")}</button>
         </form>
 

@@ -14,8 +14,8 @@ const CACHE_TEXT: Record<string, { name: string; what: string }> = {
   old_engines: { name: tx("Old engine versions"), what: tx("Engines from earlier versions of SulcusAI. The ones it uses now are kept.") },
   undo: { name: tx("Undo copies of files the assistant changed"), what: tx("Copies kept so the assistant's file changes can be undone. Changes made before clearing can't be undone afterwards.") },
   browser: { name: tx("Built-in browser data"), what: tx("History, cookies and sign-ins of SulcusAI's built-in browser. Sites there will ask you to sign in again.") },
-  window: { name: tx("The app window's cache"), what: tx("Files the app's window keeps to start faster. It makes them again as needed. Files in use stay until SulcusAI restarts.") },
-  tor: { name: tx("Private connection (Tor) cache"), what: tx("The saved list of Tor relays. It's downloaded again the next time the private connection starts.") },
+  window: { name: tx("The app window's temporary files"), what: tx("Files the app's window keeps to start faster. It makes them again as needed. Files in use stay until SulcusAI restarts.") },
+  tor: { name: tx("Private connection (Tor) saved list"), what: tx("The saved list of Tor relays. It's downloaded again the next time the private connection starts.") },
   restore_copies: { name: tx("Copies kept from before a restore"), what: tx("Your old data, kept when a backup was restored over it.") },
   crashes: { name: tx("Saved crash reports"), what: tx("Crash reports that weren't sent. The crash log in Settings → Logs stays.") },
   screens: { name: tx("Screenshots for questions about the screen"), what: tx("Pictures of the screen taken when you asked about it.") },
@@ -146,7 +146,7 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
       </section>
 
       <section className="card cleanup">
-        <h2>{t("Clear cache")}</h2>
+        <h2>{t("Clear temporary files")}</h2>
         <p className="muted small">{t("Free up space. Your chats, notes, gallery, settings and installed models are never touched.")}</p>
         {!cache ? (
           <p className="muted small">{t("Loading…")}</p>

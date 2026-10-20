@@ -592,7 +592,7 @@ export function NewEventDialog({ day, hour, initial, heading, note, accounts, on
           </label>
         )}
         {calendar && (
-          <label>{t("Invite (email addresses)")}<input className="input" value={attendees} onChange={(e) => setAttendees(e.target.value)} placeholder={t("Your calendar may email them an invitation")} /></label>
+          <label>{t("Invite (email addresses)")}<input className="input" value={attendees} onChange={(e) => setAttendees(e.target.value)} placeholder={t("Your calendar may email them an invitation")} aria-label={t("Your calendar may email them an invitation")} /></label>
         )}
       </div>
       <div className="modal-actions">

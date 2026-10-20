@@ -179,7 +179,7 @@ function ScheduleEditor({
       >
         <label>
           {t("Name")}
-          <input className="input" value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder={t("Morning summary")} maxLength={80} autoFocus />
+          <input className="input" value={s.name} onChange={(e) => setS({ ...s, name: e.target.value })} placeholder={t("Morning summary")} aria-label={t("Morning summary")} maxLength={80} autoFocus />
         </label>
         <label>
           {t("What to do")}
@@ -188,7 +188,7 @@ function ScheduleEditor({
             rows={4}
             value={s.prompt}
             onChange={(e) => setS({ ...s, prompt: e.target.value })}
-            placeholder={t("Read the files in notes/ that changed this week and summarize them in five bullet points.")}
+            placeholder={t("Read the files in notes/ that changed this week and summarize them in five bullet points.")} aria-label={t("Read the files in notes/ that changed this week and summarize them in five bullet points.")}
           />
         </label>
         <div className="row wrap">

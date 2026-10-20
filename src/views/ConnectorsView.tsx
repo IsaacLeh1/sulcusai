@@ -47,7 +47,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
           <div>
             <h1>{t("Connectors & plugins")}</h1>
             <p className="muted">
-              {t("Connectors give the assistant extra tools through MCP servers running on this PC. Plugins bundle skills (instructions it can follow) and connectors.")}
+              {t("Connectors give the assistant extra tools through small programs on this PC (MCP servers). Plugins bundle skills (instructions it can follow) and connectors.")}
             </p>
           </div>
         </header>
@@ -293,11 +293,11 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
       >
         <label>
           {t("Name")}
-          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("files, calendar, notes…")} maxLength={40} autoFocus />
+          <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("files, calendar, notes…")} aria-label={t("files, calendar, notes…")} maxLength={40} autoFocus />
         </label>
         <label>
           {t("Command")}
-          <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t("npx, uvx, python, or a program path")} />
+          <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t("npx, uvx, python, or a program path")} aria-label={t("npx, uvx, python, or a program path")} />
         </label>
         <label>
           {t("Arguments")} <span className="muted small">{t("(one per line)")}</span>

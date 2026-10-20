@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
-import { bytes, clock, duration, insertDictation, percent, placementLabel, speedLabel, tokens } from "./format";
+import { bytes, clock, duration, insertDictation, percent, placementLabel, speedLabel, tokens, words } from "./format";
 
 describe("format", () => {
   it("formats sizes the way people read them", () => {
@@ -11,6 +11,12 @@ describe("format", () => {
 
   it("formats token counts with separators", () => {
     expect(tokens(8192)).toBe("8,192");
+  });
+
+  it("says a model's speed in words a second", () => {
+    expect(words(40)).toBe(30);
+    expect(words(4)).toBe(3);
+    expect(words(2.1)).toBe(1.6);
   });
 
   it("clamps percentages", () => {

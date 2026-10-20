@@ -68,7 +68,7 @@ export function MemoryWarningPopup() {
       )}
       <p className="muted small">
         {w.short_vram && !w.short_ram
-          ? t("Loading it anyway can make the PC and a running game stutter. Closing the game, a smaller context window or a smaller model avoids that. A lower GPU limit at the top of the chat does too, but runs part of the model on the processor: slower and hotter.")
+          ? t("Loading it anyway can make the PC and a running game stutter. Closing the game, keeping less of the chat in mind or a smaller model avoids that. A lower GPU limit at the top of the chat does too, but runs part of the model on the processor: slower and hotter.")
           : t("Loading it anyway can make the PC (and a running game) stutter or freeze while memory runs out. Closing apps you aren't using, or a smaller model, avoids that.")}
       </p>
       <div className="modal-actions">

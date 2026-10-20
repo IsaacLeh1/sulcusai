@@ -5,6 +5,13 @@ import { t } from "./i18n";
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 
+/** A model's speed as words a second (a token is about three quarters of a
+ * word): what people can picture, where "tokens/sec" meant nothing. */
+export function words(tps: number): number {
+  const w = tps * 0.75;
+  return w < 10 ? Math.round(w * 10) / 10 : Math.round(w);
+}
+
 export function bytes(n: number): string {
   if (n >= GIB) return t("{n} GB", { n: (n / GIB).toFixed(n >= 10 * GIB ? 0 : 1) });
   if (n >= MIB) return t("{n} MB", { n: Math.round(n / MIB) });

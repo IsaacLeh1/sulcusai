@@ -24,6 +24,14 @@ if (!quick) {
   });
   window.addEventListener("unhandledrejection", (e) => {
     const r = e.reason;
+    // A plain message from SulcusAI's core (an action that couldn't be done,
+    // such as deleting a note that's gone): shown to the person, not kept as
+    // a crash. A real error in the window's code is still reported.
+    if (typeof r === "string") {
+      e.preventDefault();
+      window.dispatchEvent(new CustomEvent("sulcus:error", { detail: r }));
+      return;
+    }
     import("./api").then(({ api }) => api.reportWindowError(String(r?.message ?? r), r?.stack ?? null).catch(() => {}));
   });
   const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));

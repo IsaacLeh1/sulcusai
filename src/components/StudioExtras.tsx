@@ -171,7 +171,7 @@ export function usePromptHelp(modelId: string | undefined): {
       setAskState(on);
       remember(ASK_KEY, on);
       // Chats follow the same choice.
-      api.mediaSetAskQuestions(on).catch(() => {});
+      api.mediaSetAskQuestions(on);
     },
     reload: () => setN((x) => x + 1),
   };
@@ -584,7 +584,7 @@ export function SetWallpaperButton({ item, toast }: { item: MediaItem; toast: Pu
           <p className="small muted">{saved}</p>
           <div className="modal-actions">
             <a className="btn" href="https://rocksdanister.github.io/lively/" target="_blank" rel="noreferrer">{t("Get Lively Wallpaper")}</a>
-            <button className="btn" onClick={() => api.showInFolder(saved).catch(() => {})}>{t("Show in folder")}</button>
+            <button className="btn" onClick={() => api.showInFolder(saved)}>{t("Show in folder")}</button>
             <button className="btn primary" onClick={() => setSaved(null)}>{t("Done")}</button>
           </div>
         </Modal>
