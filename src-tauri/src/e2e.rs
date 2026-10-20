@@ -354,7 +354,10 @@ async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, ru
 async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
     let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
     let ctx: u32 = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(16_384);
-    let cpu_moe: u32 = std::env::var("SULCUSAI_TEST_CPU_MOE").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+    // Only a mixture of experts has experts to keep in memory (llama-server
+    // ignored the flag for dense models, so the test never matched them).
+    let experts = crate::gguf::read(&gguf).ok().is_some_and(|m| m.iter().any(|(k, v)| k.ends_with(".expert_count") && v.int().is_some_and(|n| n > 1)));
+    let cpu_moe: u32 = std::env::var("SULCUSAI_TEST_CPU_MOE").ok().and_then(|v| v.parse().ok()).unwrap_or(if experts { 6 } else { 0 });
     let real = Paths::new(app_data_dir()).unwrap();
     let hw = hardware::detect(&real.models);
     let budget = Budget::from_hardware(&hw);

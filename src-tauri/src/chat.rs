@@ -522,7 +522,9 @@ pub async fn stream(
     // answered: once more, without thinking.
     if cut_off && first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled {
         let mut quick = ep.clone();
-        quick.extra["chat_template_kwargs"] = json!({ "enable_thinking": false });
+        // gpt-oss ignores enable_thinking and reads its effort from the
+        // template's settings: "low" there too, or the retry repeated itself.
+        quick.extra["chat_template_kwargs"] = json!({ "enable_thinking": false, "reasoning_effort": "low" });
         quick.extra["reasoning_effort"] = json!("low");
         let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
         again.thinking = format!("{}{}", first.thinking, again.thinking);

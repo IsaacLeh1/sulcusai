@@ -255,7 +255,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "open_path", risk: Risk::Write, params: open_path_params,
         description: "Open a file from a shared folder, or a web address, for the user: in their browser or the app that opens it. Use it to show them what you made, e.g. the site you just started at http://localhost:5173. Never runs programs." },
     ToolDef { name: "remember", risk: Risk::Memory, params: memory::remember_params,
-        description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Never save secrets." },
+        description: "Save one lasting fact about the user, their work or their preferences, to recall in future chats. One short sentence. Not about a one-off task (a file you just made or ran). Never save secrets." },
     ToolDef { name: "search_memory", risk: Risk::Read, params: memory::search_memory_params,
         description: "Search what you remember from earlier chats." },
     ToolDef { name: "search_meetings", risk: Risk::Read, params: meetings::search_meetings_params,

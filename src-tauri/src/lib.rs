@@ -2098,7 +2098,8 @@ pub(crate) async fn llm_endpoint(
 /// gpt-oss, or a model built on it (huihui-ai's abliterated one): it speaks
 /// OpenAI's Harmony format, with channels and `to=functions.x` tool calls.
 pub(crate) fn harmony(spec: &ModelSpec) -> bool {
-    format!("{} {} {}", spec.id, spec.name, spec.source).to_lowercase().contains("gpt-oss")
+    let s = format!("{} {} {}", spec.id, spec.name, spec.source).to_lowercase();
+    s.contains("gpt-oss") || s.contains("gpt_oss") || s.contains("gptoss")
 }
 
 /// The model thinks before it answers (Qwen3, gpt-oss, DeepSeek R1, QwQ),
