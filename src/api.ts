@@ -1039,13 +1039,15 @@ export interface EngineStatus {
 
 /** Why some or all of the model runs on the processor (placement.rs `reasons`). */
 export interface PlaceReason {
-  code: "no_card" | "no_driver" | "engine_no_card" | "gpu_layers" | "gpu_limit" | "cool_on_battery" | "cool_mode" | "too_small";
+  code: "no_card" | "no_driver" | "engine_no_card" | "gpu_layers" | "gpu_limit" | "cool_on_battery" | "cool_mode" | "too_small" | "window";
   /** In English, for when the window has no wording for the code. */
   message: string;
   fix: "gpu_full" | "recheck" | "perf_settings" | "advanced_settings" | null;
   card: string | null;
   maker: string | null;
   number: number | null;
+  /** "window": how much the chat keeps in mind, in thousands of tokens. */
+  ctx_k?: number | null;
 }
 
 export interface WhereItRuns {

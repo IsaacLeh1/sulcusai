@@ -3361,5 +3361,8 @@
  "Invites": "招待",
  "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "シークレット：このチャットは保存されず、メモリを使ったり作ったりしません。チャットを離れると、ここで作成または貼り付けた画像や曲とともに削除されます（残したいものは保存してください）。",
  "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI は完全オフラインのため、クラウドには何も送られません。",
- "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "カレンダーを運営する会社がこの予定を保存し、カレンダーを共有している人は誰でも見ることができます。"
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "カレンダーを運営する会社がこの予定を保存し、カレンダーを共有している人は誰でも見ることができます。",
+ "Something kept running for an hour after the download, so it wasn't installed.": "ダウンロード後1時間、何かが動き続けていたため、インストールされませんでした。",
+ "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "このチャットは会話を {k}K 分覚えているため、{card} にはモデルの {total} 層のうち {n} 層しか載らず、残りはプロセッサーで動きます。記憶量を小さくすると（チャット上部のメーター）すべて載ります。",
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "このモデルは今応答中です。終わるまで待つか応答を止めてから、削除してください。"
 }

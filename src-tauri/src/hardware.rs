@@ -58,6 +58,25 @@ pub fn main_choice() -> Option<String> {
     MAIN.lock().unwrap().clone()
 }
 
+/// Two names for one card (nvidia-smi says "NVIDIA GeForce RTX 5070",
+/// Windows may add or drop the maker).
+pub fn same_name(a: &str, b: &str) -> bool {
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    a == b || a.contains(&b) || b.contains(&a)
+}
+
+/// Graphics built into the processor, by name: AMD's "Radeon(TM) Graphics"
+/// and "Radeon(TM) 780M Graphics", Intel's UHD, Iris and HD Graphics. Some
+/// laptops give these several GB of memory, so size alone can't tell.
+pub fn built_in_name(name: &str) -> bool {
+    let low = name.to_lowercase().replace("(tm)", "").replace("(r)", "");
+    let words: Vec<&str> = low.split_whitespace().collect();
+    let amd = words.contains(&"radeon") && words.last() == Some(&"graphics") && !words.iter().any(|w| matches!(*w, "rx" | "pro" | "vega"))
+        && words.iter().skip_while(|w| **w != "radeon").skip(1).all(|w| *w == "graphics" || (w.ends_with('m') && w[..w.len() - 1].chars().all(|c| c.is_ascii_digit()) && w.len() > 1));
+    let intel = words.contains(&"intel") && (words.contains(&"uhd") || words.contains(&"iris") || (words.contains(&"hd") && words.contains(&"graphics")));
+    amd || intel
+}
+
 /// The card models use: the dedicated card picked by name when it's there,
 /// else the dedicated card with the most memory. Integrated graphics never.
 pub fn main_of<'a>(gpus: &'a [Gpu], chosen: Option<&str>) -> Option<&'a Gpu> {
@@ -313,8 +332,9 @@ fn adapters(_ram: u64) -> (Vec<Gpu>, Vec<AdapterInfo>) {
             }
             out.push(Gpu {
                 vendor: vendor_name(desc.VendorId).to_string(),
-                // Integrated chips report a small carve-out of system memory.
-                integrated: vram < crate::catalog::GIB,
+                // Integrated chips report a small carve-out of system memory
+                // (or a big one some laptops give them; then the name says).
+                integrated: vram < crate::catalog::GIB || built_in_name(&name),
                 vram_bytes: vram,
                 name,
                 luid: Some(((desc.AdapterLuid.HighPart as i64) << 32) | desc.AdapterLuid.LowPart as i64),
@@ -436,6 +456,19 @@ pub fn on_battery() -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Built-in graphics are known by name too (some get GB of memory);
+    /// separate cards aren't mistaken for them.
+    #[test]
+    fn built_in_graphics_are_known_by_name() {
+        for n in ["AMD Radeon(TM) Graphics", "AMD Radeon(TM) 780M Graphics", "AMD Radeon 890M Graphics", "Intel(R) UHD Graphics 770", "Intel(R) Iris(R) Xe Graphics"] {
+            assert!(built_in_name(n), "{n}");
+        }
+        for n in ["AMD Radeon RX 7800 XT", "AMD Radeon RX 6500M", "AMD Radeon Pro W7600", "NVIDIA GeForce RTX 5070", "Intel(R) Arc(TM) A770 Graphics"] {
+            assert!(!built_in_name(n), "{n}");
+        }
+        assert!(same_name("NVIDIA GeForce RTX 5070", "GeForce RTX 5070") && !same_name("RTX 4060", "RTX 5070"));
+    }
 
     fn adapter(name: &str, pnp: &str, problem: u32, class: &str) -> AdapterInfo {
         AdapterInfo { name: name.into(), pnp_id: pnp.into(), problem, class: class.into() }

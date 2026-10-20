@@ -176,7 +176,7 @@ fn built_in(name: &str, cards: &[crate::hardware::Gpu]) -> bool {
     let low = name.to_lowercase();
     let maker = |c: &crate::hardware::Gpu| format!("{} {}", c.vendor, c.name).to_lowercase();
     let separate_other = |m: &str| cards.iter().any(|c| !c.integrated && !maker(c).contains(m));
-    (low.contains("intel") && separate_other("intel")) || ((low.contains("radeon(tm) graphics") || low == "amd radeon graphics") && separate_other("amd"))
+    (low.contains("intel") && separate_other("intel")) || ((low.contains("radeon(tm) graphics") || low == "amd radeon graphics" || crate::hardware::built_in_name(name)) && separate_other("amd"))
 }
 
 /// The devices `exe` (a llama.cpp program) sees, asked once until the PC is
@@ -508,6 +508,7 @@ fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Clone, Copy)]
 pub struct LaunchSpec<'a> {
     pub exe: &'a Path,
     pub model_path: &'a Path,
@@ -740,6 +741,20 @@ impl Engine {
     }
 
     pub async fn ensure_tuned(&mut self, spec: LaunchSpec<'_>, tuning: Tuning, job: Option<&JobRef>) -> Result<Endpoint, String> {
+        let started = Instant::now();
+        match self.ensure_tuned_once(spec, tuning, job).await {
+            // Gone at once with nothing in its log: something hooking into
+            // new GPU programs (a game overlay) or a driver hiccup at start,
+            // which a second start gets past.
+            Err(e) if started.elapsed() < Duration::from_secs(8) && e.trim_end() == STOPPED_LOADING => {
+                crate::applog::line("engine", "The engine stopped as it started, with nothing in its log; starting it once more");
+                self.ensure_tuned_once(spec, tuning, job).await
+            }
+            r => r,
+        }
+    }
+
+    async fn ensure_tuned_once(&mut self, spec: LaunchSpec<'_>, tuning: Tuning, job: Option<&JobRef>) -> Result<Endpoint, String> {
         if self.matches_tuned(&spec, tuning) {
             return Ok(self.running.as_ref().unwrap().endpoint());
         }
@@ -868,7 +883,7 @@ impl Engine {
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(300) {
             if !self.alive() {
-                return Err(format!("The engine stopped while loading the model.\n{}", log_tail(log, 12)));
+                return Err(format!("{STOPPED_LOADING}\n{}", log_tail(log, 12)));
             }
             if let Ok(resp) = client.get(ep.url("/health")).timeout(Duration::from_secs(2)).send().await {
                 if resp.status().is_success() {
@@ -990,6 +1005,8 @@ impl Users {
 pub type JobRef = crate::winjob::Job;
 #[cfg(not(windows))]
 pub type JobRef = ();
+
+const STOPPED_LOADING: &str = "The engine stopped while loading the model.";
 
 pub fn free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;

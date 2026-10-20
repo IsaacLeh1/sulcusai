@@ -26,7 +26,7 @@ pub enum Place {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Reason {
     /// "no_card", "no_driver", "engine_no_card", "gpu_layers", "gpu_limit",
-    /// "cool_on_battery", "cool_mode" or "too_small".
+    /// "cool_on_battery", "cool_mode", "too_small" or "window".
     pub code: &'static str,
     /// In English, for the app log; the window words it from `code`.
     pub message: String,
@@ -41,6 +41,8 @@ pub struct Reason {
     /// The GPU limit (percent), the layers Advanced or the card allow, or
     /// Device Manager's problem code.
     pub number: Option<u32>,
+    /// "window": how much the chat keeps in mind (thousands of tokens).
+    pub ctx_k: Option<u32>,
 }
 
 /// What decides where the model runs, gathered from the PC and the settings.
@@ -71,6 +73,8 @@ pub struct Facts {
     pub actual: Option<u32>,
     /// A mixture-of-experts model whose experts wait in system memory.
     pub experts_in_memory: bool,
+    /// How much the running model keeps in mind (its context window).
+    pub ctx: u32,
 }
 
 pub fn place(f: &Facts) -> Place {
@@ -85,7 +89,7 @@ pub fn place(f: &Facts) -> Place {
 }
 
 fn reason(code: &'static str, message: impl Into<String>, fix: Option<&'static str>) -> Reason {
-    Reason { code, message: message.into(), fix, card: None, maker: None, number: None }
+    Reason { code, message: message.into(), fix, card: None, maker: None, number: None, ctx_k: None }
 }
 
 /// Why the model isn't wholly on the graphics card, most decisive first.
@@ -169,8 +173,23 @@ pub fn reasons(f: &Facts) -> Vec<Reason> {
             },
             None,
         );
-        r.card = Some(card);
+        r.card = Some(card.clone());
         r.number = Some(can);
+        out.push(r);
+    }
+    // Nothing else holds it back and the card takes it whole at the
+    // automatic window: a bigger window (chosen, or the 16K tool models
+    // get) moved layers off to make room for what it keeps in mind.
+    if out.is_empty() && f.card_can_take.is_some_and(|n| n >= f.total) && f.planned < f.total && f.ctx > 0 {
+        let k = f.ctx / 1024;
+        let mut r = reason(
+            "window",
+            format!("This chat keeps {k}K of conversation in mind, so {card} holds {} of the model's {} layers and the rest runs on the processor. A smaller memory setting fits it whole.", f.planned, f.total),
+            None,
+        );
+        r.card = Some(card);
+        r.number = Some(f.planned);
+        r.ctx_k = Some(k);
         out.push(r);
     }
     out
@@ -188,6 +207,7 @@ pub fn short(r: &Reason) -> String {
         "gpu_limit" => format!("the GPU limit is {}%", r.number.unwrap_or(0)),
         "cool_on_battery" => "Cool & quiet runs on battery".into(),
         "cool_mode" => "Cool & quiet mode is on".into(),
+        "window" => "the chat keeps more in mind than the card has room for".into(),
         _ => "the graphics card is too small for this model".into(),
     }
 }
@@ -236,7 +256,7 @@ fn setting_facts(f: &mut Facts, spec: &ModelSpec, quant: &str, hw: &Hardware, s:
 }
 
 /// Everything `reasons` needs, for the model loaded now.
-fn facts(state: &AppState, spec: &ModelSpec, quant: &str, planned: u32, experts: bool, actual: Option<u32>, total: Option<u32>) -> Facts {
+fn facts(state: &AppState, spec: &ModelSpec, quant: &str, planned: u32, experts: bool, actual: Option<u32>, total: Option<u32>, ctx: u32) -> Facts {
     let hw = state.hardware.read().unwrap().clone();
     let s = perf::settings(&state.db.lock().unwrap());
     let on_battery = crate::hardware::on_battery() == Some(true);
@@ -252,6 +272,7 @@ fn facts(state: &AppState, spec: &ModelSpec, quant: &str, planned: u32, experts:
         total,
         actual,
         experts_in_memory: experts,
+        ctx,
         ..Default::default()
     };
     if f.card.is_some() {
@@ -280,9 +301,14 @@ pub struct WhereItRuns {
 /// Where the loaded model runs and why, without waiting for a model that
 /// is loading (None then).
 pub fn now(state: &AppState) -> Option<WhereItRuns> {
-    let (model_id, quant, planned, cpu_moe, placed) = state.engine.try_lock().ok()?.placement()?;
+    let (model_id, quant, planned, cpu_moe, placed, ctx) = {
+        let mut eng = state.engine.try_lock().ok()?;
+        let (model_id, quant, planned, cpu_moe, placed) = eng.placement()?;
+        let ctx = eng.loaded().map_or(0, |l| l.3);
+        (model_id, quant, planned, cpu_moe, placed, ctx)
+    };
     let spec = state.model_spec(&model_id)?;
-    let f = facts(state, &spec, &quant, planned, cpu_moe.is_some(), placed.on_card(), placed.total());
+    let f = facts(state, &spec, &quant, planned, cpu_moe.is_some(), placed.on_card(), placed.total(), ctx);
     Some(WhereItRuns {
         place: Some(place(&f)),
         model_id: Some(model_id),
@@ -450,6 +476,19 @@ mod tests {
         let moe = Facts { experts_in_memory: true, card_can_take: Some(49), planned: 49, total: 49, actual: Some(49), ..laptop() };
         assert_eq!(place(&moe), Place::Partly);
         assert_eq!(codes(&moe), ["too_small"]);
+    }
+
+    /// The card takes it whole at the automatic window, but the chat's
+    /// bigger window moved layers off: said, not left blank.
+    #[test]
+    fn a_bigger_window_that_moved_layers_off_is_named() {
+        let big = Facts { planned: 30, actual: Some(30), ctx: 32 * 1024, ..laptop() };
+        assert_eq!(place(&big), Place::Partly);
+        let r = reasons(&big);
+        assert_eq!(r.iter().map(|r| r.code).collect::<Vec<_>>(), ["window"]);
+        assert_eq!((r[0].number, r[0].ctx_k), (Some(30), Some(32)));
+        // Another cause comes first, and alone.
+        assert_eq!(codes(&Facts { gpu_limit: 50, ..big }), ["gpu_limit"]);
     }
 
     /// His brother's laptop: Intel graphics plus a dedicated card, the

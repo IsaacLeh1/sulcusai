@@ -568,7 +568,21 @@ pub(crate) async fn nvidia_now() -> Option<GpuNow> {
                 working: true,
             })
         })
-        .max_by_key(|g| g.mem_total.unwrap_or(0))
+        .fold(Vec::new(), |mut all: Vec<GpuNow>, g| {
+            all.push(g);
+            all
+        })
+        .into_iter()
+        // The card picked in the menu, when there are two; else the biggest.
+        .reduce(|a, b| {
+            let picked = |g: &GpuNow| crate::hardware::main_choice().is_some_and(|m| g.name.as_deref().is_some_and(|n| crate::hardware::same_name(n, &m)));
+            match (picked(&a), picked(&b)) {
+                (true, _) => a,
+                (_, true) => b,
+                _ if b.mem_total.unwrap_or(0) > a.mem_total.unwrap_or(0) => b,
+                _ => a,
+            }
+        })
 }
 
 /// A card on Windows: how busy it is, the way Task Manager counts it (its

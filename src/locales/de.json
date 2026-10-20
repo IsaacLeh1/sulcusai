@@ -3361,5 +3361,8 @@
  "Invites": "Einladungen",
  "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "Inkognito: Dieser Chat wird nicht gespeichert und nutzt oder erstellt keine Erinnerungen. Er wird gelöscht, wenn du ihn verlässt, zusammen mit den hier erstellten oder eingefügten Bildern und Liedern (speichere, was du behalten willst).",
  "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI ist vollständig offline, daher geht nichts in die Cloud.",
- "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "Das Unternehmen, das den Kalender betreibt, speichert den Termin, und alle, mit denen der Kalender geteilt ist, können ihn sehen."
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "Das Unternehmen, das den Kalender betreibt, speichert den Termin, und alle, mit denen der Kalender geteilt ist, können ihn sehen.",
+ "Something kept running for an hour after the download, so it wasn't installed.": "Nach dem Herunterladen lief eine Stunde lang noch etwas, deshalb wurde es nicht installiert.",
+ "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "Dieser Chat behält {k}K des Gesprächs im Gedächtnis, daher hält {card} {n} der {total} Schichten des Modells, und der Rest läuft auf dem Prozessor. Eine kleinere Gedächtniseinstellung (die Anzeige oben im Chat) passt ganz darauf.",
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "Dieses Modell antwortet gerade. Warte, bis es fertig ist (oder stoppe die Antwort), und entferne es dann."
 }

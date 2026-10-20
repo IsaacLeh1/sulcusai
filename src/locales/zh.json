@@ -3361,5 +3361,8 @@
  "Invites": "邀请",
  "Incognito: this chat isn't saved and doesn't use or create memories. It's deleted when you leave it, with the pictures and songs made or pasted here (save any you want to keep).": "无痕：此聊天不会保存，也不会使用或创建记忆。离开时它会被删除，连同在这里生成或粘贴的图片和歌曲（想保留的请先保存）。",
  "SulcusAI is fully offline, so nothing goes to the cloud.": "SulcusAI 处于完全离线状态，因此不会向云端发送任何内容。",
- "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "运营该日历的公司会保存这个日程，与该日历共享的任何人都能看到它。"
+ "The company that runs the calendar keeps the event, and anyone the calendar is shared with can see it.": "运营该日历的公司会保存这个日程，与该日历共享的任何人都能看到它。",
+ "Something kept running for an hour after the download, so it wasn't installed.": "下载后有任务持续运行了一个小时，因此没有安装。",
+ "This chat keeps {k}K of conversation in mind, so {card} holds {n} of the model's {total} layers and the rest runs on the processor. A smaller memory setting (the meter at the top of the chat) fits it whole.": "此聊天记住了 {k}K 的对话内容，因此 {card} 只能容纳模型 {total} 层中的 {n} 层，其余在处理器上运行。把记忆调小（聊天顶部的计量条）就能全部放下。",
+ "This model is answering right now. Wait for it to finish (or stop the reply), then remove it.": "此模型正在回答。请等它结束（或停止回复）后再删除。"
 }
