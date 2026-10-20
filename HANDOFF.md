@@ -1581,6 +1581,25 @@ His request: no weight training. Model 1 (the writer for new pictures, the plann
     - Edits: [45 91] against [78 91]. The checklists differ between the two (the plan makes them), so they don't compare.
   - First-pass requests were too easy: 6 of 6 passed at once.
 - **To know whether learning helps**, as the coordinating session also said, it needs many paired requests (hard ones), fixed seeds and a steadier writer. Keeping a rule or example only once it beats the program without it on a held-out set would guard against noise; not built. `SULCUSAI_MEDIA_OUT` now saves every kept picture from the learning test, to check the reviewer by eye.
+- **The bigger evaluation** (`e2e_prompt_learning_eval`, 2026-10-20, 46 min, no errors, card at most about 77 °C). Pictures and `verdicts.txt` are in `C:\dev\sulcusai\.claude\learning-eval-2026-10-20` (git-excluded).
+  - Training was 10 hard pictures (counts, words, left and right, odd colors, a clock) and 3 edits, with learning on.
+    - 6 of the 10 pictures fell short at first, and 5 of those reached 100% by rewriting.
+    - It learnt 9 picture examples, 1 edit example and 3 rules. Two of the rules were said twice: "specify counts, colors and positions early and plainly" and "specify exact text and its spelling early and plainly".
+  - Then learning was frozen. 10 held-out pictures × 2 seeds and 3 held-out edits each ran with and without what it learnt, back to back, in alternating order, with the same seed and the same picture to edit. At the end everything handed over was judged again against checklists written by hand.
+  - **Result: no measurable gain from learning.**
+    - New pictures, 20 pairs, with minus without: first try −2.5 (standard error 5.2); handed over by the hand-written checklists −2.5 (3.5); makes needed −0.1 (0.2). 15 to 17 pairs came out level, mostly both at 100%.
+    - Edits, 3 pairs: too few to say (+5.6 ± 5.6 by hand, −8.3 ± 8.3 by the system's own checks).
+  - **Checked by eye: the reviewer is the weak link.** Of the 4 disagreements looked at, Qwen3.5 9B passed something wrong in 3:
+    - A yellow "orange cucumber" passed at 100%.
+    - A table clock at about ten past ten passed as "a wall clock showing half past seven".
+    - "Remove the dog" left a faded ghost dog under the table, and "Is there any dog?" got no.
+    - In the fourth (the bottle lift) the reviewer was right and my checklist was wrong.
+    - A wrong pass hands over a picture that misses things, and also stores it as an example to learn from.
+  - Fixed after the run: a rewrite that repeats a prompt already tried is asked for once more at temperature 0.9 before giving up. That had stopped the JUST MARRIED cake and one held-out painter at a single 67% picture.
+- **What would help next**, in order:
+  1. A stricter reviewer. Have it read things out and compare them in code, rather than answer yes or no: the words on a sign, the time on a clock, how many of each thing, the color of each named thing. For "no X", ask it to look for X even when faint or partly hidden.
+  2. Learn an example only when that stricter check passes.
+  3. Then judge learning on a picture model with more room to improve than klein, which already does most requests at once (an SDXL or SD 1.5 model, whose tag-style prompts the writer has to learn).
 
 ## Prompt coach: Studio button and first real run (2026-10-20, after 0.9.18, not built)
 

@@ -1917,7 +1917,11 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
             stop("the writer didn't start");
             break;
         };
-        let again = prompts::revise(&w, &p.program, &p.ask, &rounds).await;
+        let mut again = prompts::revise(&w, &p.program, &p.ask, &rounds, 0.4).await;
+        // The same words again would make the same picture: asked once more, with more variety.
+        if again.as_ref().is_ok_and(|(n, _)| rounds.iter().any(|r| r.written.prompt == n.prompt)) {
+            again = prompts::revise(&w, &p.program, &p.ask, &rounds, 0.9).await;
+        }
         w.done(state).await;
         let (next, said) = match again {
             Ok(x) => x,
@@ -1926,9 +1930,8 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
                 break;
             }
         };
-        // The same words again would make the same picture.
         if rounds.iter().any(|r| r.written.prompt == next.prompt) {
-            stop("the writer gave back a prompt it had tried");
+            stop("the writer gave back a prompt it had tried, twice");
             break;
         }
         let mut again_req = first_req.clone();

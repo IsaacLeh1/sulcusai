@@ -281,10 +281,11 @@ pub fn revise_messages(p: &Program, ask: &Ask, rounds: &[Round], coached: bool) 
 
 /// Writes the prompt again after the picture fell short, seeing every try so
 /// far: the new prompt, and the rule about the picture model it says it follows.
-pub async fn revise(h: &Helper, p: &Program, ask: &Ask, rounds: &[Round]) -> Result<(Written, Option<String>), String> {
+/// `temperature`: 0.4 at first; higher when it gave back a prompt it had tried.
+pub async fn revise(h: &Helper, p: &Program, ask: &Ask, rounds: &[Round], temperature: f32) -> Result<(Written, Option<String>), String> {
     let last = rounds.last().ok_or("Nothing to write again.")?;
     let schema = json!({ "type": "object", "properties": { "prompt": { "type": "string" }, "negative": { "type": "string" }, "lesson": { "type": "string" } }, "required": ["prompt", "negative", "lesson"] });
-    let v = h.ask_json(revise_messages(p, ask, rounds, h.coached), schema, 1000, 0.4).await?;
+    let v = h.ask_json(revise_messages(p, ask, rounds, h.coached), schema, 1000, temperature).await?;
     let prompt = v["prompt"].as_str().map(str::trim).unwrap_or_default();
     if prompt.split_whitespace().count() < 3 {
         return Ok((last.written.clone(), None));

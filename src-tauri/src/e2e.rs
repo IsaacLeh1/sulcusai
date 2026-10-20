@@ -2552,6 +2552,292 @@ async fn e2e_prompt_writer_learns() {
     assert!(l.firsts.len() + l.edit_firsts.len() > 0, "it learnt from the checked jobs");
 }
 
+/// The app log's picture-job lines since `seen` (without their time and tag).
+fn media_lines(state: &crate::AppState, seen: &mut usize) -> Vec<String> {
+    let log = std::fs::read_to_string(state.paths.logs.join(crate::applog::APP_LOG)).unwrap_or_default();
+    let lines: Vec<String> = log.lines().skip(*seen).map(str::to_string).collect();
+    *seen += lines.len();
+    lines.iter().filter_map(|l| l.split("[media] ").nth(1)).map(str::to_string).collect()
+}
+
+/// Each make's score in a checked job, in order, from lines like "Picture 2
+/// of at most 5: it showed 75% of what was asked for".
+fn make_scores(lines: &[String]) -> Vec<f32> {
+    lines
+        .iter()
+        .filter(|l| (l.starts_with("Picture ") || l.starts_with("Edit ")) && l.contains(" of at most "))
+        .filter_map(|l| l.split(": it ").nth(1)?.split_whitespace().find(|w| w.ends_with('%'))?.trim_end_matches('%').parse().ok())
+        .collect()
+}
+
+/// One held-out job in the learning evaluation.
+struct Tried {
+    name: String,
+    edit: bool,
+    case: usize,
+    seed: usize,
+    with: bool,
+    item: Option<String>,
+    before: Option<String>,
+    /// The system's own score for each make.
+    scores: Vec<f32>,
+    /// What was handed over, against a checklist written by hand.
+    fixed: Option<f32>,
+    missed: Vec<String>,
+}
+
+/// Paired differences: how many, their mean, its standard error, and how
+/// many came out ahead and behind.
+fn paired(d: &[f32]) -> (usize, f32, f32, usize, usize) {
+    let n = d.len();
+    if n == 0 {
+        return (0, f32::NAN, f32::NAN, 0, 0);
+    }
+    let mean = d.iter().sum::<f32>() / n as f32;
+    let var = if n > 1 { d.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / (n - 1) as f32 } else { 0.0 };
+    (n, mean, (var / n as f32).sqrt(), d.iter().filter(|x| **x > 0.0).count(), d.iter().filter(|x| **x < 0.0).count())
+}
+
+/// Whether learning from use helps, on requests it hasn't seen. Training:
+/// 10 hard pictures and 3 edits, learning on. Then learning is frozen and
+/// each held-out request runs twice back to back, with what it learnt and
+/// with nothing learnt (alternating which goes first), with the same seed
+/// (two seeds a picture request) and the same picture to edit. Every job is
+/// the product as it is: written, made, reviewed and written again, up to 5
+/// makes. At the end one reader judges everything handed over against
+/// checklists written by hand, so the yardstick doesn't depend on what the
+/// system wrote. Prints each job and the paired differences, and writes the
+/// pictures and `verdicts.txt` to SULCUSAI_MEDIA_OUT (or a temp folder). About
+/// 80 minutes on an RTX 5070; a job is stopped if the card reaches 83 °C.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_prompt_learning_eval() {
+    use crate::media::{self, learn, prompts, store, Request};
+    use std::sync::atomic::Ordering::Relaxed;
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    let model = std::env::var("SULCUSAI_LEARN_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
+    let reader = add_reader(&state);
+    media::install_for_test(&state, &model).await.unwrap();
+    let m = media::models(&state).into_iter().find(|x| x.id == model).expect("a known picture model");
+    let out = std::env::var("SULCUSAI_MEDIA_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| std::env::temp_dir().join("sulcusai-learning-eval"));
+    std::fs::create_dir_all(&out).unwrap();
+    println!("{} learning evaluation, reviewed by {reader}; pictures in {}", m.name, out.display());
+    let c = state.cipher().unwrap();
+    let save = |name: &str, id: &str| {
+        if let Ok(png) = store::read(&state.paths, &c, id) {
+            let _ = std::fs::write(out.join(format!("{name}.png")), png);
+        }
+    };
+    let hot = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch = {
+        let hot = hot.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                for j in media::list_jobs() {
+                    if j.gpu_temp.is_some_and(|t| t >= 83.0) {
+                        println!("the card reached {:.0} °C: stopping", j.gpu_temp.unwrap_or(0.0));
+                        hot.store(true, Relaxed);
+                        media::cancel(&j.id);
+                    }
+                }
+            }
+        })
+    };
+    let started = std::time::Instant::now();
+    let min = || started.elapsed().as_secs_f64() / 60.0;
+    let mut seen = 0usize;
+    let picture = |prompt: &str, seed: i64| Request { op: "generate".into(), prompt: prompt.into(), model_id: Some(model.clone()), shape: Some("square".into()), seed: Some(seed), write_prompt: Some(true), check: Some(true), ..Default::default() };
+    let scene = |prompt: &str, seed: i64| Request { op: "generate".into(), prompt: prompt.into(), model_id: Some(model.clone()), shape: Some("landscape".into()), seed: Some(seed), ..Default::default() };
+    let edit = |change: &str, source: &str, seed: i64| Request { op: "edit".into(), prompt: change.into(), source: Some(source.into()), model_id: Some(model.clone()), seed: Some(seed), ..Default::default() };
+
+    // Hard on purpose: counts, words, left and right, odd colors, a clock.
+    const TRAIN: &[&str] = &[
+        "a bookshelf with exactly four red books on the top shelf and two green books on the bottom shelf",
+        "a street sign that says \"MAPLE AVE\" above a stop sign",
+        "a woman in a red coat on the left and a man in a yellow raincoat on the right, both holding coffee cups",
+        "a blue banana and a purple apple on a wooden cutting board",
+        "a wall clock showing a quarter past three",
+        "five balloons tied to a park bench: red, orange, yellow, green and blue",
+        "a cat sitting inside a cardboard box that says \"FRAGILE\" in black letters",
+        "a chef holding a frying pan in his left hand and a wooden spoon in his right hand",
+        "a snowman wearing sunglasses and a striped scarf on a sunny beach",
+        "a neon sign that reads \"OPEN 24 HOURS\" in a dark diner window",
+    ];
+    const TEST: &[(&str, &[&str])] = &[
+        ("a kitchen shelf with exactly three blue mugs on the top shelf and two white bowls on the bottom shelf", &["a kitchen shelf", "three blue mugs on the top shelf", "two white bowls on the bottom shelf"]),
+        ("a shop sign that says \"HARBOR BOOKS\" above a red door", &["a sign that says \"HARBOR BOOKS\"", "a red door", "the sign is above the door"]),
+        ("a boy in a green hoodie on the left and a girl in a purple dress on the right, both holding ice cream cones", &["a boy in a green hoodie on the left", "a girl in a purple dress on the right", "the boy holds an ice cream cone", "the girl holds an ice cream cone"]),
+        ("a pink lemon and an orange cucumber on a white plate", &["a pink lemon", "an orange cucumber", "a white plate"]),
+        ("a wall clock showing half past seven", &["a wall clock", "the clock shows half past seven"]),
+        ("four kites in the sky above a hill: red, yellow, green and blue", &["exactly four kites in the sky", "a red kite", "a yellow kite", "a green kite", "a blue kite", "a hill"]),
+        ("a puppy sitting inside a wooden crate that says \"HANDLE WITH CARE\" in red letters", &["a puppy sitting inside a wooden crate", "the crate says \"HANDLE WITH CARE\"", "the letters are red"]),
+        ("a painter holding a brush in her right hand and a palette in her left hand", &["a painter holding a brush in her right hand", "the painter holds a palette in her left hand"]),
+        ("a penguin wearing a straw hat and a flower necklace in a desert", &["a penguin", "the penguin wears a straw hat", "the penguin wears a flower necklace", "a desert"]),
+        ("a chalkboard sign that reads \"FRESH COFFEE\" outside a cafe", &["a chalkboard sign that reads \"FRESH COFFEE\"", "the sign stands outside a cafe"]),
+    ];
+    const TRAIN_EDITS: &[(&str, &str)] = &[
+        ("a photo of a living room with a grey sofa, a red cushion on the sofa and a black cat on the floor", "remove the cat"),
+        ("a photo of a girl standing in a park holding a red balloon on a string", "make the balloon blue and add a second, yellow balloon"),
+        ("a photo of a man sitting at a desk with a laptop and a white coffee mug", "the man lifts the coffee mug to his mouth"),
+    ];
+    // Scene, change, checklist written by hand, and the thing that moves (one of it after).
+    const TEST_EDITS: &[(&str, &str, &[&str], &str)] = &[
+        ("a photo of a kitchen with a white table, a bowl of oranges on the table and a brown dog on the floor", "remove the dog", &["no dog in the picture", "the white table is still there", "the bowl of oranges is still on the table"], ""),
+        ("a photo of a boy standing on a beach holding a green kite", "make the kite red and add a second, blue kite in the sky", &["the boy holds a red kite", "a blue kite in the sky", "no green kite"], ""),
+        ("a photo of a woman sitting on a bench with a book and a water bottle beside her", "the woman lifts the water bottle to her mouth", &["the woman holds the water bottle at her mouth", "the book is still on the bench"], "bottle"),
+    ];
+
+    // 1. Training, learning on.
+    println!("\n=== training: {} pictures and {} edits, learning on ===", TRAIN.len(), TRAIN_EDITS.len());
+    for (i, prompt) in TRAIN.iter().enumerate() {
+        if hot.load(Relaxed) {
+            break;
+        }
+        let made = media::run(&state, store::new_id(), picture(prompt, 100 + i as i64)).await;
+        let lines = media_lines(&state, &mut seen);
+        println!("[{:5.1} min] train {}: {:?} {}", min(), i + 1, make_scores(&lines), made.as_ref().err().map(|e| format!("FAILED: {e}")).unwrap_or_default());
+        for l in lines.iter().filter(|l| l.starts_with("Stopped") || l.contains("learnt")) {
+            println!("    {l}");
+        }
+        if let Some(it) = made.ok().and_then(|v| v.into_iter().next()) {
+            save(&format!("train-picture{:02}", i + 1), &it.id);
+        }
+    }
+    for (i, (place, change)) in TRAIN_EDITS.iter().enumerate() {
+        if hot.load(Relaxed) {
+            break;
+        }
+        let Ok(src) = media::run(&state, store::new_id(), scene(place, 200 + i as i64)).await else { continue };
+        media_lines(&state, &mut seen);
+        let made = media::run(&state, store::new_id(), edit(change, &src[0].id, 300 + i as i64)).await;
+        let lines = media_lines(&state, &mut seen);
+        println!("[{:5.1} min] train edit {}: {:?} {change}", min(), i + 1, make_scores(&lines));
+        for l in lines.iter().filter(|l| l.starts_with("Stopped") || l.contains("learnt")) {
+            println!("    {l}");
+        }
+        if let Some(it) = made.ok().and_then(|v| v.into_iter().next()) {
+            save(&format!("train-edit{}", i + 1), &it.id);
+        }
+    }
+    let snapshot = learn::load(&state, &m);
+    learn::set_on(&state, false).unwrap();
+    println!("\nlearnt: {} picture examples, {} edit examples", snapshot.pictures.len(), snapshot.edits.len());
+    for r in snapshot.rules.iter().chain(&snapshot.edit_rules) {
+        println!("rule (helped {}): {}", r.helped, r.text);
+    }
+
+    // 2. Held out, learning frozen: with and without, back to back.
+    println!("\n=== held out: {} pictures x 2 seeds and {} edits, each with and without what it learnt ===", TEST.len(), TEST_EDITS.len());
+    let use_learning = |on: bool| {
+        if on {
+            learn::save(&state, &m, &snapshot).unwrap();
+        } else {
+            learn::forget(&state, &m);
+        }
+    };
+    let mut tried: Vec<Tried> = Vec::new();
+    for (i, (prompt, _)) in TEST.iter().enumerate() {
+        for k in 0..2 {
+            let order = if (i + k) % 2 == 0 { [true, false] } else { [false, true] };
+            for with in order {
+                if hot.load(Relaxed) {
+                    break;
+                }
+                use_learning(with);
+                let made = media::run(&state, store::new_id(), picture(prompt, 500 + (2 * i + k) as i64)).await;
+                let lines = media_lines(&state, &mut seen);
+                let name = format!("test{:02}-seed{}-{}", i + 1, k + 1, if with { "with" } else { "without" });
+                let item = made.ok().and_then(|v| v.into_iter().next()).map(|x| x.id);
+                if let Some(id) = &item {
+                    save(&name, id);
+                }
+                let scores = make_scores(&lines);
+                println!("[{:5.1} min] {name}: {scores:?}", min());
+                tried.push(Tried { name, edit: false, case: i, seed: k, with, item, before: None, scores, fixed: None, missed: Vec::new() });
+            }
+        }
+    }
+    for (i, (place, change, _, _)) in TEST_EDITS.iter().enumerate() {
+        if hot.load(Relaxed) {
+            break;
+        }
+        let Ok(src) = media::run(&state, store::new_id(), scene(place, 600 + i as i64)).await else { continue };
+        media_lines(&state, &mut seen);
+        let source = src[0].id.clone();
+        save(&format!("test-edit{}-before", i + 1), &source);
+        let order = if i % 2 == 0 { [true, false] } else { [false, true] };
+        for with in order {
+            if hot.load(Relaxed) {
+                break;
+            }
+            use_learning(with);
+            let made = media::run(&state, store::new_id(), edit(change, &source, 700 + i as i64)).await;
+            let lines = media_lines(&state, &mut seen);
+            let name = format!("test-edit{}-{}", i + 1, if with { "with" } else { "without" });
+            let item = made.ok().and_then(|v| v.into_iter().next()).map(|x| x.id);
+            if let Some(id) = &item {
+                save(&name, id);
+            }
+            let scores = make_scores(&lines);
+            println!("[{:5.1} min] {name}: {scores:?}", min());
+            tried.push(Tried { name, edit: true, case: i, seed: 0, with, item, before: Some(source.clone()), scores, fixed: None, missed: Vec::new() });
+        }
+    }
+    watch.abort();
+
+    // 3. Everything handed over, judged against the checklists written by hand.
+    println!("\n=== judging what was handed over against fixed checklists ({:.1} min) ===", min());
+    let r = prompts::reader(&state, Some(&m)).await.unwrap();
+    let decode = |id: &str| store::read(&state.paths, &c, id).and_then(|b| media::imaging::decode(&b));
+    for t in &mut tried {
+        let Some(after) = t.item.as_deref().and_then(|id| decode(id).ok()) else { continue };
+        let v = if t.edit {
+            let (_, _, list, moved) = TEST_EDITS[t.case];
+            let Some(before) = t.before.as_deref().and_then(|id| decode(id).ok()) else { continue };
+            let plan = prompts::EditPlan { checklist: list.iter().map(|s| s.to_string()).collect(), moved: if moved.is_empty() { Vec::new() } else { vec![moved.to_string()] }, ..Default::default() };
+            prompts::judge_edit(&r, &before, &after, &plan).await
+        } else {
+            prompts::judge(&r, &after, &TEST[t.case].1.iter().map(|s| s.to_string()).collect::<Vec<_>>()).await
+        };
+        if let Ok(v) = v {
+            t.fixed = Some(v.score * 100.0);
+            t.missed = v.missing;
+        }
+    }
+    r.done(&state).await;
+
+    // 4. Results.
+    let mut report = String::new();
+    for t in &tried {
+        let line = format!("{}: system's scores {:?}, by hand {}{}", t.name, t.scores, t.fixed.map_or("-".to_string(), |f| format!("{f:.0}%")), if t.missed.is_empty() { String::new() } else { format!(" (missing: {})", t.missed.join("; ")) });
+        println!("{line}");
+        report.push_str(&line);
+        report.push('\n');
+    }
+    for edits in [false, true] {
+        let pairs: Vec<(&Tried, &Tried)> = tried.iter().filter(|t| t.edit == edits && t.with).filter_map(|a| tried.iter().find(|b| b.edit == edits && !b.with && b.case == a.case && b.seed == a.seed).map(|b| (a, b))).collect();
+        let diff = |f: &dyn Fn(&Tried) -> Option<f32>| -> Vec<f32> { pairs.iter().filter_map(|(a, b)| Some(f(a)? - f(b)?)).collect() };
+        let what = if edits { "edits" } else { "new pictures" };
+        for (label, d) in [
+            ("first try (system's checklist)", diff(&|t: &Tried| t.scores.first().copied())),
+            ("handed over (system's checklist)", diff(&|t: &Tried| t.scores.iter().copied().reduce(f32::max))),
+            ("handed over (checklist by hand)", diff(&|t: &Tried| t.fixed)),
+            ("makes needed (fewer is better)", diff(&|t: &Tried| (!t.scores.is_empty()).then_some(t.scores.len() as f32))),
+        ] {
+            let (n, mean, se, ahead, behind) = paired(&d);
+            let line = format!("{what}, {label}: with minus without over {n} pairs: mean {mean:+.1} (standard error {se:.1}); with ahead {ahead}, behind {behind}, level {}", n - ahead - behind);
+            println!("{line}");
+            report.push_str(&line);
+            report.push('\n');
+        }
+    }
+    let _ = std::fs::write(out.join("verdicts.txt"), report);
+    println!("\n{:.1} min in all", min());
+    assert!(!hot.load(Relaxed), "stopped: the card got too hot");
+}
+
 /// A model from Hugging Face, installed the way the Studio installs one
 /// (sharing the catalog model's text reader and decoder), makes a picture.
 /// SULCUSAI_HUB_REPO / SULCUSAI_HUB_FILE pick it (a FLUX.2 klein 4B
