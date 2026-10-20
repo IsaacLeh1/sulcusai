@@ -415,6 +415,18 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
 /// that can't see a photo told to say so refused "add a top hat to me").
 /// `described`: what the picture reader saw in pictures (by id), for a model
 /// that can't see them: it gets those words instead.
+/// Adds a line to a message's text, whether it's plain text or parts (text and pictures).
+pub fn add_text(slot: &mut Value, note: &str) {
+    match &mut slot["content"] {
+        Value::String(s) => {
+            s.push('\n');
+            s.push_str(note);
+        }
+        Value::Array(parts) => parts.push(json!({ "type": "text", "text": note })),
+        other => *other = json!(note),
+    }
+}
+
 pub fn attach_images(out: &mut [Value], history: &[Message], see: Option<&dyn Fn(&str) -> Option<String>>, can_edit: bool, described: &[(String, String)]) {
     let mut left = 4usize;
     for (i, m) in history.iter().enumerate().rev() {

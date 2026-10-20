@@ -687,7 +687,43 @@ impl Turn {
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
                 let see: Option<&dyn Fn(&str) -> Option<String>> = if self.vision { Some(&see) } else { None };
                 let can_edit = tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some("edit_image")));
-                chat::attach_images(&mut messages, &kept, see, can_edit, &described);
+                // Songs attached (to work on with create_music) aren't pictures:
+                // left out of those, and named in the message instead.
+                let songs: Vec<(usize, String, String)> = {
+                    let conn = self.state.db.lock().unwrap();
+                    kept.iter()
+                        .enumerate()
+                        .filter(|(_, m)| m.role == "user")
+                        .flat_map(|(i, m)| m.meta.as_ref().and_then(|v| v.get("images")).and_then(Value::as_array).cloned().unwrap_or_default().into_iter().map(move |v| (i, v)))
+                        .filter_map(|(i, v)| {
+                            let id = v.as_str()?.to_string();
+                            let item = crate::media::store::get(&conn, &self.cipher, &id).filter(|it| it.kind == "audio")?;
+                            let name = if item.prompt.trim().is_empty() { String::new() } else { format!(" “{}”", item.prompt.trim()) };
+                            Some((i, id.clone(), format!("[The user attached a song{name} (id {id}, {:.0} s). To work on it, call create_music with song \"{id}\" and the change they ask for.]", item.seconds)))
+                        })
+                        .collect()
+                };
+                if songs.is_empty() {
+                    chat::attach_images(&mut messages, &kept, see, can_edit, &described);
+                } else {
+                    let song_ids: Vec<&str> = songs.iter().map(|(_, id, _)| id.as_str()).collect();
+                    let pictures: Vec<Message> = kept
+                        .iter()
+                        .map(|m| {
+                            let mut m = m.clone();
+                            if let Some(list) = m.meta.as_mut().and_then(|v| v.get_mut("images")).and_then(Value::as_array_mut) {
+                                list.retain(|v| v.as_str().is_none_or(|id| !song_ids.contains(&id)));
+                            }
+                            m
+                        })
+                        .collect();
+                    chat::attach_images(&mut messages, &pictures, see, can_edit, &described);
+                    for (i, _, note) in &songs {
+                        if let Some(slot) = messages.get_mut(i + 1) {
+                            chat::add_text(slot, note);
+                        }
+                    }
+                }
                 if let Some((_, f)) = &forced {
                     messages.push(json!({ "role": "user", "content": f.nudge }));
                 }

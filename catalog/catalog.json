@@ -3017,13 +3017,6 @@
             "sha256": "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b"
           },
           {
-            "role": "lm",
-            "file": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "size": 1975837568,
-            "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"
-          },
-          {
             "role": "embedding",
             "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
             "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -3040,7 +3033,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 95,
+        "secs": 40,
         "quality": 8,
         "defaults": {
           "seconds": 30
@@ -3086,13 +3079,6 @@
             "sha256": "4f1044fb646374fb5730e10f64325766883eb2fc02a643c1b403f2d61f39dc19"
           },
           {
-            "role": "lm",
-            "file": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "size": 1975837568,
-            "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"
-          },
-          {
             "role": "embedding",
             "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
             "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -3109,7 +3095,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 171,
+        "secs": 80,
         "quality": 9,
         "defaults": {
           "seconds": 30
@@ -3153,13 +3139,6 @@
             "sha256": "10329f321010cedc3571c24b6371d002ce49238f48be47def4a1c76bf27ee150"
           },
           {
-            "role": "lm",
-            "file": "acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-1.7B-Q8_0.gguf",
-            "size": 1975837568,
-            "sha256": "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"
-          },
-          {
             "role": "embedding",
             "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
             "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -3176,7 +3155,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 300,
+        "secs": 60,
         "quality": 8,
         "defaults": {
           "seconds": 30
@@ -3207,13 +3186,6 @@
             "sha256": "55b4d8514850f3d0f82536f37e99673aaf48df802b5ae5b153eea32a2e2daa5e"
           },
           {
-            "role": "lm",
-            "file": "acestep-5Hz-lm-0.6B-Q8_0.gguf",
-            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-5Hz-lm-0.6B-Q8_0.gguf",
-            "size": 709846656,
-            "sha256": "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec"
-          },
-          {
             "role": "embedding",
             "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
             "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
@@ -3230,7 +3202,7 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 60,
+        "secs": 25,
         "quality": 5,
         "defaults": {
           "seconds": 30

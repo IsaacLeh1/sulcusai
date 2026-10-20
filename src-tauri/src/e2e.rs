@@ -2515,6 +2515,23 @@ fn decode_mp3(bytes: &[u8]) -> (Vec<f32>, u32) {
     (mono, rate)
 }
 
+/// What Whisper (large v3 turbo, as installed) hears in a sound file, run
+/// directly with no voice detector.
+#[cfg(windows)]
+fn whisper_hears(state: &crate::AppState, file: &std::path::Path, lang: Option<&str>) -> String {
+    let exe = std::fs::read_dir(&state.paths.engines)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("whisper-v"))
+        .flat_map(|e| [e.path().join("Release").join("whisper-cli.exe"), e.path().join("whisper-cli.exe")])
+        .find(|p| p.exists());
+    let model = std::fs::read_dir(state.paths.models.join("whisper-large-v3-turbo")).into_iter().flatten().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "bin"));
+    let (Some(exe), Some(model)) = (exe, model) else { return "(no whisper-cli)".into() };
+    let out = std::process::Command::new(exe).arg("-m").arg(model).arg("-f").arg(file).args(["-nt", "-t", "8", "-l", lang.unwrap_or("auto")]).output();
+    out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("(not transcribed: {e})"))
+}
+
 /// Lowercase words of at least four letters, for comparing lyrics with
 /// what speech recognition heard.
 #[cfg(windows)]
@@ -2546,7 +2563,7 @@ async fn e2e_music_songs() {
     let c = state.cipher().unwrap();
     let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").unwrap_or_else(|_| std::env::temp_dir().join("sulcusai-music-out").display().to_string()));
     std::fs::create_dir_all(&out).unwrap();
-    let cases = std::env::var("SULCUSAI_SONGS").unwrap_or_else(|_| "sound,instrumental,no_chat_model,written,spanish,own,hub".into());
+    let cases = std::env::var("SULCUSAI_SONGS").unwrap_or_else(|_| "sound,instrumental,no_chat_model,written,spanish,own,shaped,long,cover,repaint,extend,parts,hub".into());
     let want = |p: &str| cases.split(',').any(|x| x == p);
     let started = std::time::Instant::now();
     media::install_for_test(&state, "ace-step-1.5").await.unwrap();
@@ -2602,8 +2619,64 @@ async fn e2e_music_songs() {
     }
     if want("own") {
         let lyrics = "[Verse]\nMorning light across the kitchen floor\nCoffee waiting by the open door\nEvery little thing I need is here\nSinging softly so the world can hear\n\n[Chorus]\nHold on, hold on to the sunrise\nHold on, never say goodbye";
-        let req = Request { op: "music".into(), prompt: "gentle pop ballad, soft female vocals, piano and strings".into(), seconds: Some(30.0), lyrics: Some(lyrics.into()), language: Some("en".into()), ..Default::default() };
+        let req = Request { op: "music".into(), prompt: "gentle pop ballad, soft female vocals, piano and strings".into(), seconds: Some(60.0), lyrics: Some(lyrics.into()), language: Some("en".into()), ..Default::default() };
         made.push(("own".into(), req.clone(), make("own", req).await, Some("en")));
+    }
+    // Shaped in the Studio: style, mood, instruments, voice, beat, tempo, key and time signature.
+    if want("shaped") {
+        let music = media::MusicSpec {
+            // Synthwave's vocals come out blurred (a trait of the style here): pop, to hear the words.
+            genre: Some("Synth pop".into()),
+            mood: Some("Nostalgic".into()),
+            instruments: vec!["Synth".into(), "Drums".into(), "Electric guitar".into()],
+            voice: Some("female".into()),
+            beat: Some("Four on the floor".into()),
+            bpm: Some(118),
+            key: Some("A minor".into()),
+            time_signature: Some("4/4".into()),
+            ..Default::default()
+        };
+        let req = Request { op: "music".into(), prompt: "driving through a neon city at night".into(), seconds: Some(40.0), music: Some(music), language: Some("en".into()), ..Default::default() };
+        made.push(("shaped".into(), req.clone(), make("shaped", req).await, Some("en")));
+    }
+    // A long song: as long as asked.
+    if want("long") {
+        let req = Request { op: "music".into(), prompt: "slow soulful blues ballad about a long road home, raspy male vocals, electric guitar and organ".into(), seconds: Some(150.0), ..Default::default() };
+        made.push(("long".into(), req.clone(), make("long", req).await, Some("en")));
+    }
+    // Work on a song: the written one (or the first song made), the
+    // instrumental for adding a part.
+    let first_song = made.iter().find(|m| m.0 == "written").or_else(|| made.iter().find(|m| m.3.is_some())).and_then(|m| m.2.as_ref().ok()).cloned();
+    let work = |task: &str, song: &media::MediaItem, extra: media::MusicSpec| media::MusicSpec { task: Some(task.into()), audio: Some(song.id.clone()), ..extra };
+    if let (true, Some(song)) = (want("cover"), first_song.as_ref()) {
+        let spec = work("cover", song, media::MusicSpec { genre: Some("Jazz".into()), instruments: vec!["Piano".into(), "Saxophone".into()], strength: Some(0.5), ..Default::default() });
+        let req = Request { op: "music".into(), prompt: "as a smoky late-night jazz club song".into(), seconds: Some(song.seconds as f32), music: Some(spec), ..Default::default() };
+        made.push(("cover".into(), req.clone(), make("cover", req).await, Some("en")));
+    }
+    if let (true, Some(song)) = (want("repaint"), first_song.as_ref()) {
+        let spec = work("repaint", song, media::MusicSpec { region: Some([10.0, 20.0]), ..Default::default() });
+        let req = Request { op: "music".into(), prompt: "a soaring guitar solo".into(), seconds: Some(song.seconds as f32), music: Some(spec), ..Default::default() };
+        made.push(("repaint".into(), req.clone(), make("repaint", req).await, Some("en")));
+    }
+    if let (true, Some(song)) = (want("extend"), first_song.as_ref()) {
+        let spec = work("extend", song, media::MusicSpec { extend_by: Some(20.0), ..Default::default() });
+        let req = Request { op: "music".into(), prompt: String::new(), seconds: Some(song.seconds as f32 + 20.0), music: Some(spec), ..Default::default() };
+        made.push(("extend".into(), req.clone(), make("extend", req).await, Some("en")));
+    }
+    // Parts need ACE-Step 1.5 Base: installed for these.
+    if want("parts") {
+        media::install_for_test(&state, "ace-step-1.5-base").await.unwrap();
+        if let Some(song) = first_song.as_ref() {
+            let spec = work("extract", song, media::MusicSpec { track: Some("vocals".into()), ..Default::default() });
+            let req = Request { op: "music".into(), prompt: String::new(), seconds: Some(song.seconds as f32), music: Some(spec), ..Default::default() };
+            made.push(("extract_vocals".into(), req.clone(), make("extract_vocals", req).await, None));
+        }
+        let beat = made.iter().find(|m| m.0 == "instrumental").and_then(|m| m.2.as_ref().ok()).cloned();
+        if let Some(song) = beat {
+            let spec = work("add", &song, media::MusicSpec { track: Some("drums".into()), ..Default::default() });
+            let req = Request { op: "music".into(), prompt: "punchy live drums".into(), seconds: Some(song.seconds as f32), music: Some(spec), ..Default::default() };
+            made.push(("add_drums".into(), req.clone(), make("add_drums", req).await, None));
+        }
     }
     // A music model from a pasted Hugging Face link, sharing the catalog model's files.
     let mut hub_file = None;
@@ -2635,11 +2708,16 @@ async fn e2e_music_songs() {
     // Listening: length, sound, and the words speech recognition hears.
     let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
     crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
-    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
     let mut failed = Vec::new();
     for (name, req, r, lang) in &made {
         let item = match r {
             Ok(i) => i,
+            // No chat model to write lyrics: said plainly, not sung as made-up
+            // words (the music model's own lyrics came out as garbage).
+            Err(e) if name == "no_chat_model" && e.contains("lyrics") => {
+                println!("{name}: said why, as it should: {e}");
+                continue;
+            }
             Err(e) => {
                 failed.push(format!("{name}: {e}"));
                 continue;
@@ -2651,10 +2729,9 @@ async fn e2e_music_songs() {
         let secs = samples.len() as f64 / rate as f64;
         let rms = crate::audio::rms(&samples);
         let asked = req.seconds.unwrap_or(30.0) as f64;
-        let heard = crate::speech::transcribe(&ep, &crate::audio::resample(&samples, rate, crate::audio::RATE), &crate::speech::Options { language: lang.map(str::to_string), ..Default::default() })
-            .await
-            .map(|t| t.text)
-            .unwrap_or_else(|e| format!("(not transcribed: {e})"));
+        // Whisper without the voice detector the app's server uses: the
+        // detector took singing over music for no speech at all.
+        let heard = whisper_hears(&state, &out.join(format!("{name}.mp3")), *lang);
         let words = sung_words(&heard);
         let lyrics = item.lyrics.clone().unwrap_or_default();
         let wanted = sung_words(&lyrics);
@@ -2680,7 +2757,6 @@ async fn e2e_music_songs() {
             failed.push(format!("{name}: has lyrics but shouldn't be sung"));
         }
     }
-    crate::speech::stop(&state).await;
     if let Some(p) = hub_file {
         std::fs::remove_file(&p).ok();
     }

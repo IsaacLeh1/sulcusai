@@ -161,6 +161,9 @@ pub struct Helper {
     paused: Option<engine::Paused>,
     /// The chat model, held while the helper uses it.
     _hold: Option<engine::Hold>,
+    /// Graphics memory its own engine holds (0 on the processor, or when
+    /// it's the chat model).
+    pub card_bytes: u64,
     _turn: tokio::sync::MutexGuard<'static, ()>,
 }
 
@@ -183,6 +186,7 @@ impl Helper {
         let reserved = crate::media::chat_model_vram(state).await;
         let paused = if vram > 0 && reserved > 0 && vram.saturating_sub(reserved) < need { state.engine.lock().await.pause().await } else { None };
         let limits = state.limits();
+        let on_card = backend != engine::cpu_key() && vram >= need;
         let mut eng = engine::Engine::default();
         let log = state.paths.data.join("logs").join("helper.log");
         let started = until_stopped(eng
@@ -194,7 +198,7 @@ impl Helper {
                     // Shown in the log: "Loaded helper (Qwen3 VL 4B, …)".
                     quant: name,
                     ctx: 8192,
-                    gpu_layers: if backend == engine::cpu_key() || vram < need { 0 } else { 999 },
+                    gpu_layers: if on_card { 999 } else { 0 },
                     threads: limits.threads,
                     low_priority: limits.low_priority,
                     log: &log,
@@ -206,7 +210,7 @@ impl Helper {
             ))
             .await;
         match started {
-            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, _turn: turn }),
+            Ok(ep) => Ok(Helper { ep, name: name.to_string(), sees: mmproj.is_some(), eng: Some(eng), paused, _hold: None, card_bytes: if on_card { need } else { 0 }, _turn: turn }),
             Err(e) => {
                 eng.stop().await;
                 if let Some(p) = paused {
@@ -229,7 +233,7 @@ impl Helper {
             crate::background_endpoint(state).await?
         };
         let sees = pictures && spec.vision.is_some();
-        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _hold: Some(hold), _turn: turn })
+        Ok(Helper { ep, name: spec.name, sees, eng: None, paused: None, _hold: Some(hold), card_bytes: 0, _turn: turn })
     }
 
     /// One answer (thinking is off: `chat::complete` asks for that).

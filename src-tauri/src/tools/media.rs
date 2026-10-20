@@ -49,7 +49,7 @@ pub fn create_music_params() -> Value {
         "bpm": { "type": "integer", "description": "Tempo in beats a minute (60 slow, 100 medium, 128 dance, 160+ fast)." },
         "key": { "type": "string", "description": "e.g. C major, A minor." },
         "time_signature": { "type": "string", "enum": ["4/4", "3/4", "6/8", "2/4"] },
-        "lyrics": { "type": "string", "description": "Lyrics to sing, with [Verse] and [Chorus] lines. Leave out to have them written." },
+        "lyrics": { "type": "string", "description": "Lyrics to sing, with [Verse] and [Chorus] lines: about 4 lines for each 30 seconds (more get mumbled; the song is made longer to fit). Leave out to have them written." },
         "language": { "type": "string", "description": "The language the vocals are sung in, as a two-letter code (en, es, fr, de, it, pt, ja, ko, zh). Leave out for the language of the lyrics or description." },
         "instrumental": { "type": "boolean", "description": "No vocals." },
         "sound_effect": { "type": "boolean", "description": "A sound effect rather than music." },
@@ -261,7 +261,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                     .or_else(|| media::store::latest_in_chat(&conn, ctx.memory.cipher, ctx.memory.chat_id, "audio").map(|i| i.id))
             });
             if change.is_some() && song.is_none() {
-                return Outcome::error("Couldn't work on a song", "There's no song in this chat to work on. Make one with create_music first, or ask the user to add theirs in the Studio.");
+                return Outcome::error("Couldn't work on a song", "There's no song in this chat to work on. Make one with create_music first, or ask the user to attach theirs (the paperclip takes songs too).");
             }
             let music = media::MusicSpec {
                 genre: s("genre"),
@@ -282,13 +282,22 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 audio: song,
                 ..Default::default()
             };
+            // Lyrics it gives need time to be heard (7.5 s a line): a song
+            // too short for them comes out mumbled, so it's made long enough.
+            let seconds = match (s("lyrics"), num("seconds")) {
+                (Some(l), asked) if music.task.is_none() => {
+                    let needs = media::lyrics::seconds_for(&l).min(600.0);
+                    Some(asked.map_or(needs, |a| a.max(needs)))
+                }
+                (_, asked) => asked,
+            };
             Request {
                 op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
                 prompt: s("description").unwrap_or_default(),
                 lyrics: s("lyrics"),
                 language: s("language").and_then(|l| media::lyrics::language_code(&l)),
                 instrumental: args.get("instrumental").and_then(Value::as_bool),
-                seconds: num("seconds"),
+                seconds,
                 music: Some(music),
                 chat_id,
                 ..Default::default()

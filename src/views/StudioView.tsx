@@ -58,6 +58,8 @@ interface Props {
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
+  // A song picked in the viewer to work on in the music tab.
+  const [songToWork, setSongToWork] = useState<{ item: MediaItem; task: SongTask } | null>(null);
   const [view, reloadView] = useMediaView();
   const jobs = useMediaJobs();
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -223,6 +225,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             onStart={start}
             gallery={items}
             toast={toast}
+            seed={songToWork}
           />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
@@ -280,6 +283,11 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           onAnimate={(i) => {
             setSource(i);
             setTab("video");
+            setViewing(null);
+          }}
+          onWorkOn={(i, task) => {
+            setSongToWork({ item: i, task });
+            setTab("music");
             setViewing(null);
           }}
           onChanged={(i) => {
@@ -752,6 +760,22 @@ const TASKS: [SongTask, string, string][] = [
   ["complete", tx("Build a full song around it"), tx("For a lone part (a vocal, a guitar riff): the rest of the band added.")],
 ];
 
+/** Styles whose vocals the music model blurs or buries (synthwave's words weren't heard however it was asked). */
+const SOFT_VOCALS = ["Synthwave", "Ambient", "Techno", "House", "Lo-fi", "Drum and bass"];
+
+/** Seconds of song a sung line needs to be heard (media/lyrics.rs `SECS_PER_LINE`). */
+const SECS_PER_LINE = 7.5;
+
+/** Sung lines in lyrics: not the [Verse] tags or blank lines. */
+function sungLines(lyrics: string): number {
+  return lyrics.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("[")).length;
+}
+
+/** A length that fits the lyrics, in steps of 10 seconds, at most 10 minutes. */
+function fitFor(lyrics: string): number {
+  return Math.min(600, Math.ceil((sungLines(lyrics) * SECS_PER_LINE) / 10) * 10);
+}
+
 /** Seconds as "1:05". */
 function mmss(s: number): string {
   const m = Math.floor(s / 60);
@@ -867,6 +891,7 @@ function MusicComposer({
   onStart,
   gallery,
   toast,
+  seed,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -875,6 +900,8 @@ function MusicComposer({
   onStart: (r: MediaRequest) => Promise<boolean>;
   gallery: MediaItem[];
   toast: PushToast;
+  /** A song picked in the viewer to work on. */
+  seed?: { item: MediaItem; task: SongTask } | null;
 }) {
   const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
   const [prompt, setPrompt] = useState("");
@@ -900,6 +927,16 @@ function MusicComposer({
   const [to, setTo] = useState(30);
   const [extendBy, setExtendBy] = useState(30);
   const [strength, setStrength] = useState(0.5);
+  useEffect(() => {
+    if (!seed) return;
+    setMode("edit");
+    setSong(seed.item);
+    setTask(seed.task);
+    if (seed.item.seconds) {
+      setFrom(0);
+      setTo(Math.min(30, Math.round(seed.item.seconds)));
+    }
+  }, [seed]);
   const parts = task === "add" || task === "extract" || task === "complete";
   const needOp = mode === "sound" ? "sound" : mode === "edit" && parts ? "parts" : "music";
   const fit = models.filter((m) => (m.can ?? ["music", "sound"]).includes(needOp));
@@ -1042,6 +1079,9 @@ function MusicComposer({
         </>
       )}
 
+      {mode === "song" && vocals !== "none" && SOFT_VOCALS.includes(genre) && (
+        <p className="small muted">{t("Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.")}</p>
+      )}
       {mode === "song" && (
         <div className="music-field">
           <span className="music-label">{t("Vocals")}</span>
@@ -1086,6 +1126,12 @@ function MusicComposer({
           </div>
           {(vocals === "mine" || mode === "edit") && (
             <textarea className="input lyrics-box" rows={8} value={lyrics} aria-label={t("Lyrics")} placeholder={"[Verse]\n…\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
+          )}
+          {mode === "song" && vocals === "mine" && sungLines(lyrics) > Math.round(secs / SECS_PER_LINE) * 1.25 && (
+            <p className="callout small">
+              {t("{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.", { n: sungLines(lyrics), time: mmss(fitFor(lyrics)), length: mmss(secs) })}{" "}
+              <button className="link" onClick={() => setSeconds(fitFor(lyrics))}>{t("Make it {time}", { time: mmss(fitFor(lyrics)) })}</button>
+            </p>
           )}
           {vocals === "write" && mode === "song" && <p className="small muted">{t("They're written when the song is made. To read and change them first, press Write lyrics for me.")}</p>}
         </div>
@@ -1233,6 +1279,7 @@ function Viewer({
   onOpen,
   onStart,
   onAnimate,
+  onWorkOn,
   onChanged,
   onDeleted,
   onSaved,
@@ -1245,6 +1292,7 @@ function Viewer({
   onOpen: (i: MediaItem) => void;
   onStart: (r: MediaRequest) => void;
   onAnimate: (i: MediaItem) => void;
+  onWorkOn: (i: MediaItem, task: SongTask) => void;
   onChanged: (i: MediaItem) => void;
   onDeleted: (id: string) => void;
   onSaved: () => void;
@@ -1329,6 +1377,15 @@ function Viewer({
               <summary>{t("Lyrics")}</summary>
               <pre className="lyrics">{item.lyrics}</pre>
             </details>
+          )}
+          {item.kind === "audio" && features.has("music") && (
+            <div className="viewer-tools">
+              <div className="filters tight wrap">
+                {(["cover", "extend", "repaint", "add", "extract"] as SongTask[]).map((task) => (
+                  <button key={task} className="chip" onClick={() => onWorkOn(item, task)}>{t(TASKS.find(([id]) => id === task)![1])}</button>
+                ))}
+              </div>
+            </div>
           )}
 
           {item.kind === "image" && features.has("images") && (

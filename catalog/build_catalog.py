@@ -326,7 +326,8 @@ SD_ENGINE = {
     },
 }
 
-# acestep.cpp (MIT) runs ACE-Step music models. Upstream publishes no
+# acestep.cpp (MIT) runs ACE-Step music models (only ace-synth is used, so the
+# models don't carry the 2 GB planning model; see media/music.rs). Upstream publishes no
 # versioned Windows builds, so this is our build of commit d881ad2 (MSVC
 # 2022, static runtime, CPU backends): HANDOFF.md says how it's made and
 # where it has to be published.
@@ -448,10 +449,9 @@ MEDIA_MODELS = [
         "license": MIT, "kind": "music", "can": ["music", "sound"],
         "files": [
             mf("dit", ACE, "acestep-v15-turbo-Q8_0.gguf", 2549528000, "288f708a61cfc241013a98a62f98ba331f83fe34d0d3559acdd9b0f6a2f7cd6b"),
-            mf("lm", ACE, "acestep-5Hz-lm-1.7B-Q8_0.gguf", 1975837568, "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"),
             ACE_EMBED, ACE_VAE,
         ],
-        "min_vram_gb": 0, "cpu": True, "secs": 95, "quality": 8,
+        "min_vram_gb": 0, "cpu": True, "secs": 40, "quality": 8,
         "defaults": {"seconds": 30},
     },
     {
@@ -461,10 +461,9 @@ MEDIA_MODELS = [
         "license": MIT, "kind": "music", "can": ["music", "parts"],
         "files": [
             mf("dit", ACE, "acestep-v15-base-Q8_0.gguf", 2549527936, "10329f321010cedc3571c24b6371d002ce49238f48be47def4a1c76bf27ee150"),
-            mf("lm", ACE, "acestep-5Hz-lm-1.7B-Q8_0.gguf", 1975837568, "726f99a82f050b32ebc5c5e36acaa9d7acd06bfe5e579a62b00e0d0d6d0b7ec6"),
             ACE_EMBED, ACE_VAE,
         ],
-        "min_vram_gb": 0, "cpu": True, "secs": 300, "quality": 8,
+        "min_vram_gb": 0, "cpu": True, "secs": 60, "quality": 8,
         "defaults": {"seconds": 30},
     },
     {
@@ -474,10 +473,9 @@ MEDIA_MODELS = [
         "license": MIT, "kind": "music", "can": ["music", "sound"],
         "files": [
             mf("dit", ACE, "acestep-v15-turbo-Q4_K_M.gguf", 1445710272, "55b4d8514850f3d0f82536f37e99673aaf48df802b5ae5b153eea32a2e2daa5e"),
-            mf("lm", ACE, "acestep-5Hz-lm-0.6B-Q8_0.gguf", 709846656, "bdaf9e292d4470f31c19cafeaca1b74936a114667e3a85e5d33b65247e9908ec"),
             ACE_EMBED, ACE_VAE,
         ],
-        "min_vram_gb": 0, "cpu": True, "secs": 60, "quality": 5,
+        "min_vram_gb": 0, "cpu": True, "secs": 25, "quality": 5,
         "defaults": {"seconds": 30},
     },
 ]

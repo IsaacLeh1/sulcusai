@@ -1606,7 +1606,11 @@ He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overni
     - repaint (`region`);
     - extend (repaint past the end, `extend_by`);
     - add, extract and complete (lego/extract/complete with `track`).
-  - These go straight to ace-synth with the song as `--src-audio`, skipping ace-lm. A cover or a redo sings the song's own lyrics unless new ones are given.
+  - These go to ace-synth with the song as `--src-audio`. A cover or a redo sings the song's own lyrics unless new ones are given.
+  - **ace-lm (the planning model) isn't used at all any more.** On this engine its music plan ended where it liked: 40 s asked became 23.4 s, 150 s became 170 s, and 10 s became 30 s. It squeezed the lyrics into that plan until Whisper heard none of them. When filling a missing tempo or key, or writing lyrics itself, it often produced garbage ("caption: 202 202 202…"), which corrupted song0.json so ace-synth failed.
+  - ace-synth alone, given the lyrics, description, bpm/key/time signature (`music::settle` picks any that are missing from the style and mood) and duration, makes exactly the length asked. Whisper heard its words ("Sunrise paints the ridge in gold…"), and it's 5–15 s on the RTX 5070.
+  - The 2 GB `lm` file was dropped from the music models' downloads.
+  - With no chat model to write lyrics, a sung song now stops at once and says so.
   - Add, extract and complete need **ACE-Step 1.5 Base** (new catalog model, `can: parts`; turbo is "incoherent" for stems, per acestep.cpp).
   - `audio_in`: M4A, AAC, FLAC and WMA are decoded by Media Foundation into a WAV. Imported songs get their length.
   - `music_write_lyrics` lets him read and edit lyrics before making the song. create_music in chats takes all the settings and can work on a song from the chat.

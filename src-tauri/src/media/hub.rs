@@ -657,7 +657,7 @@ mod tests {
         assert_eq!(got, [("acestep-v15-turbo-Q6_K.gguf", "ace-step-1.5"), ("acestep-v15-xl-turbo-Q5_K_M.gguf", "ace-step-1.5-xl")]);
         let m = derive(offers[0].1, "someone/ACE-Step-1.5-GGUF", &info, offers[0].0, "u".into());
         assert!(m.file("dit").unwrap().file.starts_with("hfm-") && m.file("dit").unwrap().file.ends_with("acestep-v15-turbo-Q6_K.gguf"));
-        assert_eq!(m.file("lm").unwrap().file, "acestep-5Hz-lm-1.7B-Q8_0.gguf", "shared with ACE-Step 1.5");
+        assert!(m.file("lm").is_none(), "no planning model: only ace-synth runs");
         assert_eq!((m.file("embedding").unwrap().file.as_str(), m.file("vae").unwrap().file.as_str()), ("Qwen3-Embedding-0.6B-Q8_0.gguf", "vae-BF16.gguf"));
         assert_eq!(m.kind, Kind::Music);
         assert!(m.can("music") && m.can("sound"));

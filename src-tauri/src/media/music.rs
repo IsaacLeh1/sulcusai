@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! acestep.cpp: a song is two runs. `ace-lm` plans it (style details,
-//! lyrics if asked, and the music as codes), then `ace-synth` renders the
-//! codes to audio. Work on a song the person has (a cover in another style,
-//! part of it made again, more after its end, a part added, one taken out)
-//! goes straight to `ace-synth` with that song as its source.
+//! acestep.cpp: a song is one run of `ace-synth`, from its description,
+//! lyrics and settings (tempo, key, time signature, length); its planning
+//! model `ace-lm` isn't used (see `make`). Work on a song the person has (a
+//! cover in another style, part of it made again, more after its end, a part
+//! added, one taken out) gives that song to `ace-synth` as its source.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -51,6 +51,46 @@ pub struct SongRequest<'a> {
     pub source: Option<&'a Path>,
     /// A song whose sound (voices and instruments) to follow.
     pub reference: Option<&'a Path>,
+}
+
+/// Tempo, key and time signature for a new song, from what the person set
+/// and, for the rest, from its description: the music model's planner wrote
+/// them itself when they were missing, and on this engine that text often
+/// came out as garbage ("caption: 202 202 202…"), which broke the plan file
+/// so the song failed. Given all of them, it only plans the music.
+pub fn settle(caption: &str, bpm: Option<u32>, key: Option<&str>, time_signature: Option<&str>, seed: i64) -> (u32, String, String) {
+    let c = caption.to_lowercase();
+    let has = |w: &str| c.split(|ch: char| !ch.is_alphanumeric() && ch != '-' && ch != '&').any(|x| x == w) || (w.contains(' ') && c.contains(w));
+    // The first match wins: specific styles before general words.
+    const TEMPOS: &[(&str, u32)] = &[
+        ("drum and bass", 172), ("dnb", 172), ("punk", 170), ("metal", 140), ("trap", 140), ("dubstep", 140), ("techno", 128), ("house", 124),
+        ("edm", 128), ("disco", 120), ("k-pop", 120), ("synthwave", 110), ("funk", 105), ("pop", 110), ("rock", 120), ("country", 100),
+        ("folk", 100), ("latin", 100), ("reggaeton", 95), ("hip hop", 90), ("hip-hop", 90), ("rap", 90), ("boom bap", 90), ("r&b", 85),
+        ("soul", 85), ("gospel", 80), ("reggae", 80), ("lo-fi", 80), ("lofi", 80), ("blues", 80), ("jazz", 120), ("swing", 140),
+        ("waltz", 90), ("classical", 90), ("soundtrack", 90), ("cinematic", 90), ("ambient", 70), ("ballad", 70),
+    ];
+    const PACE: &[(&str, u32)] = &[("very fast", 170), ("fast", 140), ("energetic", 128), ("upbeat", 120), ("relaxed", 90), ("calm", 80), ("slow", 70)];
+    let bpm = bpm
+        .filter(|b| (30..=300).contains(b))
+        .or_else(|| PACE.iter().find(|(w, _)| has(w)).map(|(_, b)| *b))
+        .or_else(|| TEMPOS.iter().find(|(w, _)| has(w)).map(|(_, b)| *b))
+        .unwrap_or(100);
+    let key = key.map(str::trim).filter(|k| !k.is_empty()).map(str::to_string).unwrap_or_else(|| {
+        let minor = ["sad", "dark", "angry", "nostalgic", "melancholy", "melancholic", "haunting", "minor", "moody", "epic"].iter().any(|w| has(w));
+        // A common key, the same for the same seed.
+        let roots = if minor { ["A", "E", "D", "C", "G", "B"] } else { ["C", "G", "D", "A", "F", "E"] };
+        format!("{} {}", roots[(seed.unsigned_abs() % 6) as usize], if minor { "minor" } else { "major" })
+    });
+    let time = time_signature.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or_else(|| {
+        if has("waltz") || c.contains("3/4") {
+            "3/4".into()
+        } else if c.contains("6/8") {
+            "6/8".into()
+        } else {
+            "4/4".into()
+        }
+    });
+    (bpm, key, time)
 }
 
 /// The parts the music engine knows by name, for adding, taking out or
@@ -131,7 +171,6 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
         "caption": r.caption,
         "lyrics": r.lyrics,
         "seed": r.seed,
-        "lm_model": r.lm_file,
         "synth_model": r.dit_file,
         "output_format": "mp3",
     });
@@ -141,6 +180,9 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     }
     if let Some(l) = r.language.filter(|l| !l.is_empty() && *l != "auto") {
         v["vocal_language"] = json!(l);
+    }
+    if !r.lm_file.is_empty() {
+        v["lm_model"] = json!(r.lm_file);
     }
     if let Some(b) = r.bpm.filter(|b| (30..=300).contains(b)) {
         v["bpm"] = json!(b);
@@ -172,73 +214,62 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     let exe = |name: &str| -> Result<PathBuf, String> {
         crate::engine::find_exe(e.dir, name).ok_or_else(|| "The music engine isn't fully installed. Reinstall the music model from the Studio's Models list.".to_string())
     };
-    let plan = work.join("song.json");
-    std::fs::write(&plan, request_json(r).to_string()).map_err(|e| e.to_string())?;
+    // One run of ace-synth, from the lyrics, the description and the
+    // settings. The planning model (ace-lm) isn't used: on this engine its
+    // music plan ended where it liked (a 40-second song came out at 23
+    // seconds, a 10-second sound at 30) and squeezed the words into it until
+    // speech recognition heard none, and the lyrics it wrote itself were
+    // garbage. Without it, a song is exactly as long as asked and its words
+    // are heard ("Sunrise paints the ridge in gold" came back from Whisper).
+    let request = work.join("song.json");
+    std::fs::write(&request, request_json(r).to_string()).map_err(|e| e.to_string())?;
     let mut t = Tracker::new(r.seconds);
     progress(t.label(), t.fraction());
-    let mut on_line = |l: &str| {
-        if t.line(l) {
-            progress(t.label(), t.fraction());
-        }
-    };
-    // Work on a song the person has: the song itself is the plan's music,
-    // so the planning run is skipped.
-    let planned = if r.source.is_some() {
-        plan.clone()
-    } else {
-        proc::run(
-            Run {
-                exe: &exe(if cfg!(windows) { "ace-lm.exe" } else { "ace-lm" })?,
-                args: vec!["--models".into(), e.models.into(), "--request".into(), plan.clone().into()],
-                cwd: work,
-                log: &e.logs.join("music-lm.log"),
-                low_priority: e.low_priority,
-                job: e.job,
-            },
-            cancel,
-            &mut on_line,
-        )
-        .await?;
-        let planned = work.join("song0.json");
-        if !planned.exists() {
-            return Err("The music model didn't finish planning the song.".into());
-        }
-        planned
-    };
-    let mut synth_args: Vec<std::ffi::OsString> = vec!["--models".into(), e.models.into(), "--request".into(), planned.clone().into()];
+    let mut made_secs = None::<f64>;
+    let mut args: Vec<std::ffi::OsString> = vec!["--models".into(), e.models.into(), "--request".into(), request.clone().into()];
     if let Some(s) = r.source {
-        synth_args.extend(["--src-audio".into(), s.into()]);
+        args.extend(["--src-audio".into(), s.into()]);
     }
     if let Some(s) = r.reference {
-        synth_args.extend(["--ref-audio".into(), s.into()]);
+        args.extend(["--ref-audio".into(), s.into()]);
     }
     proc::run(
         Run {
             exe: &exe(if cfg!(windows) { "ace-synth.exe" } else { "ace-synth" })?,
-            args: synth_args,
+            args,
             cwd: work,
             log: &e.logs.join("music-synth.log"),
             low_priority: e.low_priority,
             job: e.job,
         },
         cancel,
-        &mut on_line,
+        |l: &str| {
+            if let Some(s) = decoded_secs(l) {
+                made_secs = Some(s);
+            }
+            if t.line(l) {
+                progress(t.label(), t.fraction());
+            }
+        },
     )
     .await?;
-    // Named after the request file: song00.mp3 from song0.json, song.mp3-like
-    // names from song.json (work on a song); the first MP3 it wrote.
-    let out = ["song00.mp3", "song0.mp3", "song.mp3"].iter().map(|n| work.join(n)).find(|p| p.exists()).or_else(|| {
-        std::fs::read_dir(work).ok()?.flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "mp3"))
-    });
-    let mp3 = std::fs::read(out.ok_or("The music model didn't produce a song.")?).map_err(|_| "The music model didn't produce a song.".to_string())?;
-    let info: Value = std::fs::read_to_string(&planned).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-    Ok(Song {
-        mp3,
-        seconds: info["duration"].as_f64().unwrap_or(r.seconds as f64),
-        // What was sung: the plan's lyrics (the music model's own, when it
-        // wrote them), else the ones it was given.
-        lyrics: info["lyrics"].as_str().unwrap_or(r.lyrics).to_string(),
-    })
+    // Named after the request file (song.json writes song0.mp3); else the first MP3 it wrote.
+    let mut out = work.join("song0.mp3");
+    if !out.exists() {
+        out = std::fs::read_dir(work).ok().and_then(|d| d.flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "mp3"))).ok_or("The music model didn't produce a song.")?;
+    }
+    let mp3 = std::fs::read(&out).map_err(|_| "The music model didn't produce a song.".to_string())?;
+    Ok(Song { mp3, seconds: made_secs.unwrap_or(r.seconds as f64), lyrics: r.lyrics.to_string() })
+}
+
+/// The length the synth says it wrote: "[VAE] Decoded: … (23.44s @ 48kHz)".
+fn decoded_secs(line: &str) -> Option<f64> {
+    if !line.starts_with("[VAE]") {
+        return None;
+    }
+    let at = line.find("s @ 48kHz")?;
+    let start = line[..at].rfind('(')? + 1;
+    line[start..at].trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -272,6 +303,26 @@ mod tests {
 
     /// Tempo, key and time signature as the engine reads them; work on a
     /// song names its task and part, and its length is the song's.
+    /// The length the synth wrote.
+    #[test]
+    fn the_real_length_is_read() {
+        assert_eq!(decoded_secs("[VAE] Decoded: T_latent=586 -> T_audio=1125120 (23.44s @ 48kHz)"), Some(23.44));
+        assert_eq!(decoded_secs("[VAE] Tiled decode done: 5 tiles -> T_audio=8171520 (170.24s @ 48kHz)"), Some(170.24));
+        assert_eq!(decoded_secs("[DiT] Step 4/8"), None);
+    }
+
+    /// Missing tempo, key and time signature are picked from the description.
+    #[test]
+    fn a_new_song_gets_all_its_settings() {
+        assert_eq!(settle("upbeat pop about summer", None, None, None, 0), (120, "C major".into(), "4/4".into()));
+        let (b, k, t) = settle("sad slow piano ballad", None, None, None, 1);
+        assert_eq!((b, k.ends_with("minor"), t.as_str()), (70, true, "4/4"));
+        assert_eq!(settle("a viennese waltz", None, None, None, 0).2, "3/4");
+        assert_eq!(settle("drum and bass roller", None, None, None, 0).0, 172);
+        assert_eq!(settle("anything", Some(92), Some("F# minor"), Some("6/8"), 0), (92, "F# minor".into(), "6/8".into()));
+        assert_eq!(settle("rap over a boom bap beat", None, None, None, 0).0, 90);
+    }
+
     #[test]
     fn the_musical_settings_and_tasks_reach_the_engine() {
         let r = SongRequest { caption: "jazz", bpm: Some(92), key: Some("F# minor"), time_signature: Some("6/8"), seconds: 60.0, ..Default::default() };

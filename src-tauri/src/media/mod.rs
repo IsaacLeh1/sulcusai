@@ -1934,13 +1934,21 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
 
     progress("Looking at the picture and planning the change", 0.0);
     let coached = coach::trained(state, m).is_some();
+    // One picture reader for the whole edit when the card holds it beside
+    // the picture model: it was started and stopped three to five times.
+    let mut kept: Option<crate::vision::Helper> = None;
     let (plan, rubric) = match prompts::reader(state, Some(m)).await {
         Ok(r) => {
             let p = prompts::plan_edit(&r, &before, &req.prompt).await;
             // A writer coached for this model plans from a description of
             // the picture, the way it practised.
             let caption = if coached { prompts::caption(&r, &before).await.ok() } else { None };
-            r.done(state).await;
+            // (Not kept when the coached writer plans next: one helper at a time.)
+            if !coached && reader_fits(state, &r, m).await {
+                kept = Some(r);
+            } else {
+                r.done(state).await;
+            }
             let p = p.map_err(|e| crate::applog::line("media", &format!("Couldn't plan the edit ({e}); using the instruction as written"))).ok();
             let mine = match caption {
                 Some(c) => match prompts::writer(state, m).await {
@@ -1973,7 +1981,9 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let seed = req.seed.unwrap_or_else(random_seed);
     // Something taken away or moved: a change in one place, so the rest stays put.
     let local = plan.changes["leaving"].as_array().is_some_and(|l| !l.is_empty());
-    let first = edit_steps(&ctx, m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a"), (0.1, 0.45)).await?;
+    // The picture model leaves room for a reader kept on the card.
+    let room = |k: &Option<crate::vision::Helper>| RunCtx { state, req, cancel, progress, reserved: reserved + k.as_ref().map_or(0, |r| r.card_bytes) };
+    let first = edit_steps(&room(&kept), m, &before, original.as_ref(), &plan.steps, seed, &work.0.join("a"), (0.1, 0.45)).await?;
     // Back into the full-size original, when it fits (None: the edit model redrew the whole scene).
     let first_kept = imaging::keep_unchanged(&full, &before, &first);
     if local && first_kept.is_none() {
@@ -1983,7 +1993,11 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let mut steps_again = None;
     if check.checklist.len() >= 2 && !stopped() {
         progress("Checking the change against what you asked for", 0.55);
-        if let Ok(r) = prompts::reader(state, Some(m)).await {
+        let r = match kept.take() {
+            Some(r) => Ok(r),
+            None => prompts::reader(state, Some(m)).await,
+        };
+        if let Ok(r) = r {
             if let Ok(v) = prompts::judge_edit(&r, &before, &first, &check).await {
                 crate::applog::line("media", &format!("The edit did {:.0}% of what was asked for", v.score * 100.0));
                 if v.score < 0.85 && !v.missing.is_empty() && !stopped() {
@@ -1991,7 +2005,11 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
                 }
                 v1 = Some(v);
             }
-            r.done(state).await;
+            if reader_fits(state, &r, m).await {
+                kept = Some(r);
+            } else {
+                r.done(state).await;
+            }
         }
     }
     // Once more: with better steps when things were missing, or the same
@@ -2003,11 +2021,15 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
     let mut result = first_kept.clone().unwrap_or_else(|| first.clone());
     if let Some(steps) = steps_again.filter(|_| !stopped()) {
         progress("Making it again so it shows everything you asked for", 0.6);
-        if let Ok(second) = edit_steps(&ctx, m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b"), (0.6, 0.33)).await {
+        if let Ok(second) = edit_steps(&room(&kept), m, &before, original.as_ref(), &steps, random_seed(), &work.0.join("b"), (0.6, 0.33)).await {
             let second_kept = imaging::keep_unchanged(&full, &before, &second);
             let mut v2 = None;
             if v1.is_some() {
-                if let Ok(r) = prompts::reader(state, Some(m)).await {
+                let r = match kept.take() {
+                    Some(r) => Ok(r),
+                    None => prompts::reader(state, Some(m)).await,
+                };
+                if let Ok(r) = r {
                     v2 = prompts::judge_edit(&r, &before, &second, &check).await.ok();
                     r.done(state).await;
                 }
@@ -2023,6 +2045,9 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
                 v1 = v2.or(v1);
             }
         }
+    }
+    if let Some(r) = kept.take() {
+        r.done(state).await;
     }
     if stopped() {
         return Err(download::CANCELLED.into());
@@ -2047,6 +2072,16 @@ async fn edited_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMo
         }
     }
     Ok(items)
+}
+
+/// A picture reader on its own engine can stay on the card through an
+/// edit when the card holds it, the chat model's share and the picture
+/// model (with a gigabyte to spare).
+async fn reader_fits(state: &Arc<AppState>, r: &crate::vision::Helper, m: &MediaModel) -> bool {
+    let vram = state.budget().vram;
+    let chat = chat_model_vram(state).await;
+    let picture = (m.min_vram_gb * GIB as f64) as u64;
+    r.card_bytes > 0 && vram >= chat + r.card_bytes + picture + GIB
 }
 
 /// The kept picture says what the check didn't find in it, so the person
@@ -2147,6 +2182,10 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             let m = model.ok_or("No picture model.")?;
             let n = std::sync::atomic::AtomicUsize::new(0);
             let base = work.0.clone();
+            // Each practice picture's own progress stays out of the bar: the
+            // tuning says how far it is overall (it bounced between the two).
+            let quiet = |_: &str, _: f64| {};
+            let ctx = RunCtx { state, req, cancel, progress: &quiet, reserved };
             let render = |prompt: String, negative: String, seed: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
                 let dir = base.join(format!("t{}", n.fetch_add(1, Ordering::Relaxed)));
                 let ctx = &ctx;
@@ -2160,6 +2199,9 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             let m = model.ok_or("No picture model.")?;
             let n = std::sync::atomic::AtomicUsize::new(0);
             let base = work.0.clone();
+            // As for tuning: the coach's own progress, not each picture's.
+            let quiet = |_: &str, _: f64| {};
+            let ctx = RunCtx { state, req, cancel, progress: &quiet, reserved };
             let render = |prompt: String, negative: String, seed: u64| -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<image::DynamicImage, String>> + Send + '_>> {
                 let dir = base.join(format!("p{}", n.fetch_add(1, Ordering::Relaxed)));
                 let ctx = &ctx;
@@ -2644,11 +2686,12 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
 /// lyrics and none asked for, English (left to itself, the music model can
 /// sing made-up words); else none, and it tells from the lyrics.
 fn vocal_language(asked: Option<&str>, words: &lyrics::Words) -> Option<String> {
-    match asked.filter(|l| !l.is_empty() && *l != "auto") {
-        _ if *words == lyrics::Words::Instrumental => None,
-        Some(l) => Some(l.to_string()),
-        None if *words == lyrics::Words::MusicModelWrites => Some("en".into()),
-        None => None,
+    match (asked.filter(|l| !l.is_empty() && *l != "auto"), words) {
+        (_, lyrics::Words::Instrumental) => None,
+        (Some(l), _) => Some(l.to_string()),
+        // Always named: the music model sings more clearly told the language.
+        (None, lyrics::Words::Sung(l)) => Some(lyrics::guess_language(l).to_string()),
+        (None, lyrics::Words::MusicModelWrites) => Some("en".into()),
     }
 }
 
@@ -2724,9 +2767,11 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     } else if sings {
         lyrics::words(sound, req.instrumental == Some(true), req.lyrics.as_deref())
     } else {
-        // A cover or a part made again sings the words given, if any.
-        match req.lyrics.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-            Some(l) => lyrics::Words::Sung(l.to_string()),
+        // A cover, a part made again or more after the end sings the words
+        // given, else the song's own (a cover of a song keeps its words).
+        let own = source.as_ref().and_then(|s| s.0.lyrics.clone()).filter(|l| lyrics::has_singing(l));
+        match req.lyrics.as_deref().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).or(own) {
+            Some(l) => lyrics::Words::Sung(l),
             None if req.instrumental == Some(true) => lyrics::Words::Instrumental,
             None => lyrics::Words::MusicModelWrites,
         }
@@ -2748,8 +2793,22 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     } else {
         caption_words.clone()
     };
-    let (lm, dit) = (m.file("lm").ok_or("The music model is missing a file.")?, m.file("dit").ok_or("The music model is missing a file.")?);
+    // The planning model isn't used (see `music::make`); older installs still have it.
+    let dit = m.file("dit").ok_or("The music model is missing a file.")?;
+    let lm_file = m.file("lm").map(|f| f.file.clone()).unwrap_or_default();
     let seed = req.seed.unwrap_or_else(random_seed);
+    // Words to sing and nothing wrote them: said now, not after the whole
+    // song (the music model's own lyrics came out as garbage).
+    if sings && words == lyrics::Words::MusicModelWrites && !sound {
+        return Err(lyrics::no_singing_message(problem.as_ref()));
+    }
+    // A new song gets its tempo, key and time signature (see `music::settle`).
+    let (bpm, key, time_signature) = if task.is_none() {
+        let (b, k, t) = music::settle(&caption, spec.bpm, spec.key.as_deref(), spec.time_signature.as_deref(), seed);
+        (Some(b), Some(k), Some(t))
+    } else {
+        (spec.bpm, spec.key.clone(), spec.time_signature.clone())
+    };
     let language = vocal_language(req.language.as_deref(), &words);
     let lyrics_text = if task.is_some() && words == lyrics::Words::MusicModelWrites { String::new() } else { words.for_engine().to_string() };
     let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
@@ -2763,11 +2822,11 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             seconds: if task.is_some() { source_len.max(10.0) } else { seconds },
             seed,
             language: language.as_deref(),
-            lm_file: &lm.file,
+            lm_file: &lm_file,
             dit_file: &dit.file,
-            bpm: spec.bpm,
-            key: spec.key.as_deref(),
-            time_signature: spec.time_signature.as_deref(),
+            bpm,
+            key: key.as_deref(),
+            time_signature: time_signature.as_deref(),
             task: engine_task,
             track: track.as_deref(),
             region,
@@ -3328,9 +3387,10 @@ const MAX_IMPORT: u64 = 200 * 1024 * 1024;
 pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let (kind, mime) = mime_for(&path).ok_or("Pick a picture (PNG, JPEG, WebP), a clip (WebM, MP4) or a sound or song (MP3, WAV, M4A, AAC, FLAC, OGG, WMA).")?;
-    // Attached to a chat: a hidden attachment, deleted with the chat.
-    if chat_id.is_some() && kind != "image" {
-        return Err("Only pictures can be attached to a chat.".into());
+    // Attached to a chat: a hidden attachment, deleted with the chat. Songs
+    // too, for the assistant to work on.
+    if chat_id.is_some() && kind == "video" {
+        return Err("Only pictures and songs can be attached to a chat.".into());
     }
     let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
     if meta.len() > MAX_IMPORT {
@@ -3581,7 +3641,8 @@ mod tests {
                 assert!(f.url.starts_with("https://"));
             }
             match m.kind {
-                Kind::Music => assert!(m.file("lm").is_some() && m.file("dit").is_some()),
+                // Only ace-synth runs: no planning model to download.
+                Kind::Music => assert!(m.file("dit").is_some() && m.file("lm").is_none(), "{}", m.id),
                 // A whole checkpoint (SDXL), or a diffusion model with its decoder.
                 Kind::Image | Kind::Video => assert!(m.file("model").is_some() || (m.file("diffusion").is_some() && m.file("vae").is_some()), "{}", m.id),
                 _ => {}
@@ -3626,7 +3687,8 @@ mod tests {
                 count_hidden(&mut hidden, m.kind, hidden_why(&m, &f));
             }
         }
-        assert_eq!(hidden, vec![Hidden { kind: Kind::Music, why: "memory", count: 2 }]);
+        // Without the planning model's 2 GB, only XL needs more than 8 GB.
+        assert_eq!(hidden, vec![Hidden { kind: Kind::Music, why: "memory", count: 1 }]);
         // Room for all of them but not on the disk: "disk".
         h.ram_total = 32 * GIB;
         h.disk_free = 6 * GIB;
@@ -3656,7 +3718,9 @@ mod tests {
         use lyrics::Words;
         let sung = Words::Sung("[Verse]\nhola".into());
         assert_eq!(vocal_language(Some("es"), &sung).as_deref(), Some("es"));
-        assert_eq!(vocal_language(Some("auto"), &sung), None, "any language: told from the lyrics");
+        // Any language: the lyrics' own, always named (unnamed, words came out mumbled).
+        assert_eq!(vocal_language(Some("auto"), &Words::Sung("[Verse]\nLa luna canta en el mar azul".into())).as_deref(), Some("es"));
+        assert_eq!(vocal_language(None, &Words::Sung("[Verse]\nThe road is calling me".into())).as_deref(), Some("en"));
         assert_eq!(vocal_language(None, &Words::MusicModelWrites).as_deref(), Some("en"), "no words and no choice: English, not made-up words");
         assert_eq!(vocal_language(Some("ja"), &Words::MusicModelWrites).as_deref(), Some("ja"));
         assert_eq!(vocal_language(Some("fr"), &Words::Instrumental), None, "nothing sung");

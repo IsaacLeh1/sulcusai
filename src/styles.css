@@ -1640,3 +1640,7 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .lyrics-box { font-family: var(--mono, ui-monospace, monospace); font-size: 13px; line-height: 1.5; }
 .music-length { display: inline-flex; align-items: center; gap: 8px; }
 .music-more { align-self: flex-start; }
+.attach-chip.song { padding: 4px 8px; max-width: 220px; }
+.attach-chip.song .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-song { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+.user-song audio { height: 32px; max-width: 280px; }

@@ -493,7 +493,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const attachFile = async () => {
-    const picked = await openFile({ multiple: true, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    const picked = await openFile({
+      multiple: true,
+      filters: [
+        { name: t("Pictures and songs"), extensions: ["png", "jpg", "jpeg", "webp", "mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"] },
+        { name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] },
+        { name: t("Songs and sounds"), extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "wma"] },
+      ],
+    });
     const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
     for (const p of paths) {
       try {
@@ -767,7 +774,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           />
           <div className="composer-bar">
             {canTools && features.has("files") && <FolderMenu toast={toast} />}
-            <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one)") : t("Attach a picture. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
+            <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one) or a song") : t("Attach a picture or a song. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
               <PaperclipIcon />
             </button>
             <button
@@ -1097,7 +1104,17 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
 
 /** A picture the user attached, shown above their message. */
 function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void }) {
-  const src = useMediaUrl({ id, mime: "image/jpeg", kind: "image" }, true);
+  // A song attached to work on: heard here, not shown as a picture.
+  const [song, setSong] = useState<MediaItem | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.mediaGet(id).then((i) => live && i.kind === "audio" && setSong(i)).catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [id]);
+  const src = useMediaUrl(song ? null : { id, mime: "image/jpeg", kind: "image" }, true);
+  if (song) return <UserSong item={song} />;
   if (!src) return null;
   // A button, so the keyboard reaches it too.
   return (
@@ -1107,12 +1124,23 @@ function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void
   );
 }
 
-function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
-  const src = useMediaUrl(item, true);
+/** A song the user attached, with a player. */
+function UserSong({ item }: { item: MediaItem }) {
+  const src = useMediaUrl(item);
   return (
-    <span className="attach-chip">
-      {src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">…</span>}
-      <button onClick={onRemove} aria-label={t("Remove picture")}>✕</button>
+    <div className="user-song">
+      <span className="small">{item.prompt || t("A song")}</span>
+      {src && <audio controls src={src} />}
+    </div>
+  );
+}
+
+function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
+  const src = useMediaUrl(item.kind === "image" ? item : null, true);
+  return (
+    <span className={`attach-chip ${item.kind === "audio" ? "song" : ""}`}>
+      {item.kind === "audio" ? <span className="small">{item.prompt || t("A song")}</span> : src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">…</span>}
+      <button onClick={onRemove} aria-label={item.kind === "audio" ? t("Remove song") : t("Remove picture")}>✕</button>
     </span>
   );
 }
