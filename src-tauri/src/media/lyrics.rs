@@ -301,8 +301,8 @@ pub fn fit_lines(lyrics: &str, max: u32, max_words: usize) -> String {
         let tag = t.starts_with('[') && t.ends_with(']');
         if !tag && !t.is_empty() {
             let n = t.split_whitespace().count();
-            // At least two lines, whatever their length.
-            if sung == max || (sung >= 2 && words + n > max_words) {
+            // At least three lines, whatever their length (two were sung over and over).
+            if sung == max || (sung >= 3 && words + n > max_words) {
                 break;
             }
             sung += 1;
@@ -380,9 +380,9 @@ mod tests {
         assert_eq!(fit_lines(l, 4, 99), "[Verse]\nOne\nTwo\nThree\n\n[Chorus]\nFour");
         assert_eq!(fit_lines(l, 3, 99), "[Verse]\nOne\nTwo\nThree");
         assert_eq!(fit_lines(l, 10, 99), l);
-        // Long lines: cut by words too, keeping two lines at least.
-        let long = "[Verse]\none two three four five six seven eight\nnine ten eleven twelve thirteen fourteen fifteen sixteen\nmore words here";
-        assert_eq!(fit_lines(long, 5, 12).lines().count(), 3);
+        // Long lines: cut by words too, keeping three lines at least.
+        let long = "[Verse]\none two three four five six seven eight\nnine ten eleven twelve thirteen fourteen fifteen sixteen\nmore words here\nand a fourth";
+        assert_eq!(fit_lines(long, 5, 12).lines().count(), 4);
     }
 
     #[test]
