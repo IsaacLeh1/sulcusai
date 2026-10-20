@@ -2309,6 +2309,76 @@ async fn e2e_edit_a_photo() {
     assert_eq!((item.width, item.height), (img.width(), img.height()), "the photo's own size");
 }
 
+/// The prompt coach, run as the Studio runs it (`op: "coach"`): a picture
+/// model's own language model writes prompts and edit plans, the picture
+/// model makes them, the picture reader scores them, and the writer is
+/// trained on its best tries (kept only when it then scores higher). About
+/// 30 minutes for FLUX.2 klein 4B on an RTX 5070. Prints the stages as they
+/// go and the job's log lines; stops the job if the card reaches 83 °C.
+/// SULCUSAI_COACH_MODEL: the picture model (FLUX.2 klein 4B unless set);
+/// SULCUSAI_READER: the installed chat model that reads pictures (Qwen3.5 9B
+/// unless set).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_coach_the_prompt_writer() {
+    use crate::media::{self, coach, store, Request};
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    let model = std::env::var("SULCUSAI_COACH_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
+    let reader = std::env::var("SULCUSAI_READER").unwrap_or_else(|_| "qwen3.5-9b".into());
+    let file = std::fs::read_dir(state.paths.models.join(&reader))
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.ends_with(".gguf") && !n.starts_with("mmproj"))
+        .expect("the reader's model file");
+    let size = std::fs::metadata(state.paths.models.join(&reader).join(&file)).unwrap().len();
+    crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: reader.clone(), quant: "Q4_K_M".into(), path: file, size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+    assert!(crate::vision::can_read(&state, None), "{reader} reads pictures");
+    media::install_for_test(&state, &model).await.unwrap();
+    let m = media::models(&state).into_iter().find(|x| x.id == model).expect("a known picture model");
+    let writer = media::installed_file(&state, &m, "llm").expect("the picture model's own language model");
+    println!("coaching {} ({}), scored by {reader}", m.name, writer.display());
+
+    let id = store::new_id();
+    let started = std::time::Instant::now();
+    let watch = {
+        let id = id.clone();
+        tokio::spawn(async move {
+            let mut last = String::new();
+            let mut hottest = 0f32;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                let Some(j) = media::list_jobs().into_iter().find(|j| j.id == id) else { continue };
+                let temp = j.gpu_temp.unwrap_or(0.0);
+                let now = format!("{} ({:.0}%)", j.stage, j.fraction * 100.0);
+                if now != last || temp > hottest + 2.0 {
+                    hottest = hottest.max(temp);
+                    println!("[{:5.1} min] {now} · card {temp:.0} °C, {:.0}% busy", started.elapsed().as_secs_f64() / 60.0, j.gpu_usage.unwrap_or(0.0));
+                    last = now;
+                }
+                if temp >= 83.0 {
+                    println!("the card reached {temp:.0} °C: stopping");
+                    media::cancel(&id);
+                }
+            }
+        })
+    };
+    let req = Request { op: "coach".into(), prompt: String::new(), model_id: Some(model.clone()), ..Default::default() };
+    let result = media::run(&state, id, req).await;
+    watch.abort();
+    println!("finished in {:.1} min", started.elapsed().as_secs_f64() / 60.0);
+    let log = std::fs::read_to_string(state.paths.logs.join(crate::applog::APP_LOG)).unwrap_or_default();
+    for l in log.lines().filter(|l| l.contains("[media]") || l.contains("[model]")) {
+        println!("{l}");
+    }
+    match coach::trained(&state, &m) {
+        Some(c) => println!("kept: {c:?}"),
+        None => println!("no coach kept"),
+    }
+    result.unwrap();
+}
+
 /// A model from Hugging Face, installed the way the Studio installs one
 /// (sharing the catalog model's text reader and decoder), makes a picture.
 /// SULCUSAI_HUB_REPO / SULCUSAI_HUB_FILE pick it (a FLUX.2 klein 4B

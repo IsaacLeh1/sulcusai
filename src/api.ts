@@ -1811,7 +1811,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach";
 
 export interface DevModeView {
   on: boolean;
@@ -1968,6 +1968,9 @@ export interface PromptStatus {
   own_writer: boolean;
   /** What reads pictures here (checking, example pictures), if anything. */
   reader: string | null;
+  /** The model's own writer, trained on this PC on its best practice
+   * attempts (kept only when it scored higher than before). */
+  coach: { at: number; model_id: string; writer: string; before: number; after: number; examples: number } | null;
 }
 
 /** Base64 of bytes (for sending files to the core). */
@@ -2537,6 +2540,7 @@ export interface ChatEvents {
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
   "media:tuned": { family: string; baseline: number; score: number; pictures: number; demos: number; new_instructions: boolean };
+  "media:coached": { before: number; after: number; examples: number; kept: boolean };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };

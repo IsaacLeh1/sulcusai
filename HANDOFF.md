@@ -1549,6 +1549,28 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## Prompt coach: Studio button and first real run (2026-10-20, after 0.9.18, not built)
+
+- **Studio** (`StudioExtras.tsx` `PromptHelpPanel`): a picture model that brings its own language model (`own_writer`) gets a second row under "Teach it this model…". "Coach the prompt writer…" opens a dialog that says what happens, that the result is kept only if it does better, and how long it takes (the core's estimate, `est_secs × 110 × 0.6 + 1500`). It then starts `{ op: "coach", prompt: "", model_id }`.
+  - Once coached, the row gives the date, the before → after score and how many attempts it learned from, and the button becomes "Coach it again…". The button is off when nothing reads pictures.
+  - One "Forget what it learned" link now sits under both rows. It forgets both, as `media_forget_tuning` does. The summary line adds "coached".
+  - Also added: `PromptStatus.coach`, a toast on `media:coached` (kept or not) and the job label "Coaching the prompt writer". The panel reloads its status after `media:tuned` and `media:coached`.
+  - Both dialogs said "Takes about about 46 min", because `waitLabel` already says "about". The text is now "Takes {time}…" in all six languages.
+  - Mock (`src/mock.tsx`, also copied to the main checkout's): `media_prompt_status`, `media_forget_tuning`, and a `media_start` that finishes a coach run at once. Query flags: `?coached`, `?coachfail`, `?noreader`. Checked there: start, the toast both ways, the reload, Forget, and the button off without a reader.
+- **Fix: the coach trained with a 2048-token window.** On the 12 GB card a 4B trains at 512 (8.3 GB) and spills at 768, so 2048 would have overflowed the card. llama-tokenize on klein's Qwen3-4B measured the whole writer conversation (instructions, 3 worked examples, the request, the answer) at 1,070 tokens, and an edit plan's at 805. Training examples now keep only the system message's first sentence and the request (`coach::compact`, about 250 tokens), trained at 512 (`TRAIN_CTX`). The coached writer is still used with its whole prompt, and the after-test scores it that way.
+- Each scoring round logs every try's score ("Coaching X, the untrained writer's tries: …").
+- **First real run**: `e2e_coach_the_prompt_writer` runs the job as the Studio does. Setup: FLUX.2 klein 4B, its Qwen3-4B as the writer, Qwen3.5 9B as the reader, on the RTX 5070.
+  - It took 29.4 min with no errors: 109 renders at about 6 s each, and a peak of 78 °C.
+  - Training used a Q4_0 copy: 15 examples × 3 rounds in about 8 min, loss 2.8 → 1.3. It peaked at 9.8 GB of 12.2.
+  - Untrained writer: pictures [100 100 80], then all 100. Edits, each the reader's plan and then the writer's two: [92 110 110] [95 95 95] [100 45 82] [27 27 27] [74 74 74] [55 55 55] [100 11 11] [56 41 56]. That is 79% before. 15 tries were good enough to learn from: 8 pictures and 7 edits, 2 of them the reader's plans.
+  - Coached writer: pictures [80], then all 100. Edits [92] [95] [45] [17] [74] [37] [11] [41]. That is **74%, so it wasn't kept**. Nothing was left on disk.
+- **What the run says** (not acted on yet):
+  - New pictures can't show a gain. The checklists are the writer's own and easy, and klein met them in 23 of 24 tries. Harder requests, or the reader's checklists, would give a signal.
+  - Five of the eight edits scored exactly as before, including the two where it was meant to learn the reader's better plan (45 and 11 stayed). With its whole prompt in front of it, an adapter trained without the instructions and examples barely changes what the writer writes, and where it did, the result was worse. Next to try: give the coached writer the same short prompt it was trained on (`compact`), or more practice requests.
+  - Before and after are scored on the same requests it trained on. An edit's writer try is also made with seed 5001 before and 5000 after. Held-out requests and the same seeds would make the keep rule fairer.
+  - The job estimated about 46 min (the catalog's 19 s a picture for klein), but it took 29.
+  - While it trains, the bar sits at 62% for about 8 min. The trainer's progress goes to the finetune job, not the picture job.
+
 ## After 0.9.17 (2026-10-19 night): every audit item, asking before anything leaves the PC, and music shaped any way (not built)
 
 He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overnight, plus music with lyrics, any length, his own audio to edit, and every musical setting. Commits on phase7 from 24f09b1 to the music commit; nothing pushed or published.
@@ -1679,7 +1701,7 @@ What changed:
 - The adapter is kept only when the coached writer does more than 3 points better on the same requests. It's saved to `data/prompt_coach/<model>/` (`coach.json` plus the adapter).
 - `prompts::writer` loads it (`Helper::start_tuned`). `edited_well` plans with it from the reader's description when there is one, and still checks against the reader's plan.
 - It's started as media job `op: "coach"`. `media_prompt_status` reports `coach`, and `media_forget_tuning` forgets it too.
-- **Not done**: the Studio button and a real run (about 45 minutes on the GPU).
+- The Studio button and the first real run came on 2026-10-20: see "Prompt coach: Studio button and first real run".
 
 ## Models stay on the graphics card (2026-10-19, after 0.9.16, not built)
 
