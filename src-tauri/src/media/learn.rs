@@ -39,7 +39,7 @@ const RULES: usize = 30;
 const RULES_SHOWN: usize = 8;
 /// First-try scores kept.
 const HISTORY: usize = 200;
-/// The setting: learn from what's made (on unless turned off).
+/// The setting: learn from what's made (off unless turned on).
 const ON_KEY: &str = "prompt_writer_learns";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -120,9 +120,10 @@ pub fn forget(state: &AppState, m: &MediaModel) {
     let _ = std::fs::remove_file(path(state, m));
 }
 
-/// Learning from what's made is on.
+/// Learning from what's made is on. Off unless turned on: three held-out
+/// tests found first tries no better with it (-2.5, -4.9 and -5.7 points).
 pub fn on(state: &AppState) -> bool {
-    crate::db::get(&state.db.lock().unwrap(), ON_KEY).unwrap_or(true)
+    crate::db::get(&state.db.lock().unwrap(), ON_KEY).unwrap_or(false)
 }
 
 pub fn set_on(state: &AppState, on: bool) -> Result<(), String> {

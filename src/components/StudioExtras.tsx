@@ -321,7 +321,7 @@ export function PromptHelpPanel({
           </button>
         </p>
       )}
-      <label className="check" title={t("What it learns is kept encrypted on this PC. Incognito chats never teach it.")}>
+      <label className="check" title={t("What it learns is kept encrypted on this PC. Incognito chats never teach it. In tests so far, it didn't make first tries better.")}>
         <input
           type="checkbox"
           checked={!!s?.learning}
@@ -333,7 +333,7 @@ export function PromptHelpPanel({
               .catch((err) => toast(errorText(err), "error"))
           }
         />
-        {t("Learn from what I make, so prompts fit {model} better each time", { model: model.name })}
+        {t("Learn from what I make with {model} (experimental)", { model: model.name })}
       </label>
       {(s?.learning || !!learned?.jobs) && (
         <p className="muted">

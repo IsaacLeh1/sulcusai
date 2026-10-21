@@ -3561,11 +3561,11 @@
  "{model}'s own language model writes prompts for practice pictures. {model} makes each one, {reader} checks what came out, and the writer is trained on its best attempts.": "Le modèle de langage de {model} écrit des prompts pour des images d'entraînement. {model} réalise chacune, {reader} vérifie le résultat, et le rédacteur est formé sur ses meilleures tentatives.",
  "Edits: first plans now do {now}% of what was asked for ({first}% at the start).": "Retouches : les premiers plans atteignent maintenant {now} % de ce qui était demandé ({first} % au début).",
  "It learns from every picture and edit that's checked: what showed, what didn't, and which wording fixed it.": "Il apprend de chaque image et retouche vérifiée : ce qui est apparu, ce qui manquait et quelle formulation l'a corrigé.",
- "Learn from what I make, so prompts fit {model} better each time": "Apprendre de ce que je crée, pour que les prompts conviennent mieux à {model} à chaque fois",
  "Learned from {jobs} checked pictures and edits: {examples} that worked and {rules} rules about how {model} reads prompts.": "Appris de {jobs} images et retouches vérifiées : {examples} qui ont marché et {rules} règles sur la façon dont {model} lit les prompts.",
  "New pictures: first tries now show {now}% of what was asked for ({first}% at the start).": "Nouvelles images : les premiers essais montrent maintenant {now} % de ce qui était demandé ({first} % au début).",
  "Nothing to write again.": "Rien à réécrire.",
  "The edit didn't come out.": "La retouche n'a pas abouti.",
- "What it learns is kept encrypted on this PC. Incognito chats never teach it.": "Ce qu'il apprend reste chiffré sur ce PC. Les discussions en navigation privée ne lui apprennent jamais rien.",
- "learned from {n}": "appris de {n}"
+ "learned from {n}": "appris de {n}",
+ "Learn from what I make with {model} (experimental)": "Apprendre de ce que je crée avec {model} (expérimental)",
+ "What it learns is kept encrypted on this PC. Incognito chats never teach it. In tests so far, it didn't make first tries better.": "Ce qu’il apprend reste chiffré sur ce PC. Les discussions en navigation privée ne lui apprennent jamais rien. Dans les tests jusqu’ici, il n’a pas amélioré les premiers essais."
 }

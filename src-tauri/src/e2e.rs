@@ -2399,6 +2399,8 @@ async fn e2e_prompt_writer_learns() {
     use crate::media::{self, learn, store, Request};
     let state = media_state();
     crate::applog::init(&state.paths.logs);
+    // Off unless turned on (since 0.9.20).
+    learn::set_on(&state, true).unwrap();
     let model = std::env::var("SULCUSAI_LEARN_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
     let reader = add_reader(&state);
     media::install_for_test(&state, &model).await.unwrap();
@@ -2616,6 +2618,8 @@ async fn e2e_prompt_learning_eval() {
     use std::sync::atomic::Ordering::Relaxed;
     let state = media_state();
     crate::applog::init(&state.paths.logs);
+    // Off unless turned on (since 0.9.20).
+    learn::set_on(&state, true).unwrap();
     let model = std::env::var("SULCUSAI_LEARN_MODEL").unwrap_or_else(|_| "flux2-klein-4b".into());
     let reader = add_reader(&state);
     media::install_for_test(&state, &model).await.unwrap();
