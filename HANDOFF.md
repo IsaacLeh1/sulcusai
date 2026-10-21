@@ -1555,6 +1555,28 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Cancel download** (`components/CancelInstall.tsx`): one button on every install's progress, "Cancel download" while downloading and "Cancel" otherwise, hidden while the model is tested (`TESTING`). It's on the Models page, the Studio's model list and Hugging Face search, the Hugging Face link box (`HubLink`, which had none), the first model in setup (`Onboarding`, none before), Features and Speech.
 - **A cancel deletes what that install downloaded** (`download::existing` before it starts, `download::discard_new` on a cancel): files that were here before stay ("Set up (no download)", shared files), and a folder goes only when it's left empty. Picture, video and music models use `media::discard_download`, which also keeps files another installed model uses (`delete_files`, shared with `remove_now`) and forgets a Hugging Face model never installed. Speech models, the voice pack and the speaker model use `discard_new` directly. Chat models already deleted their parts (`downloads::delete_parts`); a finished main file cancelled during the picture reader's download still stays.
 
+## A stricter reviewer (2026-10-21, after 0.9.19, not built)
+
+The evaluation below showed the reviewer (Qwen3.5 9B) passing wrong pictures. Isaac approved making it stricter. `media/look.rs` decides how each checklist item is checked (`check_of`), and `look::shown` checks it. `prompts::judge` (new pictures) and `judge_edit` (edits) now go item by item through it:
+
+| Item | Example | How it's checked |
+|---|---|---|
+| Quoted words | a sign that says "HARBOR BOOKS" | The reader reads out every word; code compares, allowing one slip in eight letters, with spaces and line breaks ignored (`text_matches`). |
+| A clock's time | the clock shows half past seven | The reader gives H:MM; code compares within 10 minutes (`time_in`, `times_match`). |
+| A count first | three blue mugs on the top shelf | The reader counts; code compares. |
+| A color before its thing | a pink lemon / the letters are red | The reader lists the color of every one of that thing; code compares, with near names (`color_matches`). Asked for "the kite" among four, it named one color and three counted as missing. |
+| "no X" | no dog in the picture | Looked for even when faint, blurry, see-through or partly hidden. |
+| Anything else | | Yes or no, as before. |
+
+- The checklist the reviewer makes now asks for items in those forms.
+- An example is learnt only from a picture that passed these checks: learning sees the same verdicts.
+- `SULCUSAI_LOOK_LOG=1` prints what the reviewer read out (to stderr, never the app log).
+- **On klein** (`e2e_prompt_learning_eval`, 59 min; pictures in `C:\dev\sulcusai\.claude\learning-eval-strict-klein`):
+  - It now catches what passed before: no clock showed half past seven (klein can't draw a set time), a faint dog left after "remove the dog", and misspelt signs.
+  - It learnt from fewer pictures: 6 examples, not 9.
+  - **Learning still made no gain on klein.** New pictures, 20 pairs, with minus without: first try −4.9 (standard error 4.1; with learning ahead 2, behind 6); handed over, by the hand-written checklists, +1.7 (5.7); pictures needed +0.4 (0.2), more with learning in 6 pairs and fewer in 1. Edits, 3 pairs: −5.6 by hand, too few to say.
+  - That run used the one-color question; the kite pairs scored 50% by hand where the question was at fault.
+
 ## The prompt writer learns from use, DSPy-style (2026-10-20, after 0.9.18, not built)
 
 His request: no weight training. Model 1 (the writer for new pictures, the planner for edits) puts the request into words for model 2 (the picture model). The review model compares what came out with what was asked for and sends that back to model 1, which either prompts model 2 again or hands the picture over as done. The more it's used, the better model 1 knows how model 2 reads prompts. His answers: up to 5 pictures a request; the reviewer must understand both his request and model 1's prompt; pictures and edits both learn; the weight coach stays in the code but out of sight (it didn't help, below).

@@ -2705,8 +2705,10 @@ async fn e2e_prompt_learning_eval() {
             save(&format!("train-picture{:02}", i + 1), &it.id);
         }
     }
+    // A picture model that doesn't edit is judged on new pictures only.
+    let edits_too = m.can("edit");
     for (i, (place, change)) in TRAIN_EDITS.iter().enumerate() {
-        if hot.load(Relaxed) {
+        if hot.load(Relaxed) || !edits_too {
             break;
         }
         let Ok(src) = media::run(&state, store::new_id(), scene(place, 200 + i as i64)).await else { continue };
@@ -2760,7 +2762,7 @@ async fn e2e_prompt_learning_eval() {
         }
     }
     for (i, (place, change, _, _)) in TEST_EDITS.iter().enumerate() {
-        if hot.load(Relaxed) {
+        if hot.load(Relaxed) || !edits_too {
             break;
         }
         let Ok(src) = media::run(&state, store::new_id(), scene(place, 600 + i as i64)).await else { continue };

@@ -338,7 +338,8 @@ pub async fn review(reader: &Helper, img: &image::DynamicImage, request: &str, p
 /// the text "OPEN" on the sign, "sunset light"), at most 10.
 pub async fn checklist(h: &Helper, request: &str) -> Vec<String> {
     let msgs = vec![
-        json!({ "role": "system", "content": "You turn a request for a picture into a checklist of what must be visible in it. Each item is short, concrete and checkable by looking: an object or person with its key color, count or position, an action, exact text in quotes, the setting, the light or the style. Only what the request itself says, nothing added or inferred: a short request gets 2 to 5 items, a detailed one up to 10. Include a count when one is given or implied (\"a dog\" is one dog). Most important first." }),
+        json!({ "role": "system", "content": "You turn a request for a picture into a checklist of what must be visible in it. Each item is short, concrete and checkable by looking: an object or person with its key color, count or position, an action, exact text in quotes, the setting, the light or the style. Only what the request itself says, nothing added or inferred: a short request gets 2 to 5 items, a detailed one up to 10. Include a count when one is given or implied (\"a dog\" is one dog). Most important first. \
+             Write items so they can be checked by reading them off the picture: a count first (\"three blue mugs on the top shelf\"), a color right before its thing (\"a pink lemon\"), words to be written in double quotes (a sign that says \"OPEN\"), a clock's time in words (\"the clock shows half past seven\"), and what must not be there as \"no …\"." }),
         json!({ "role": "user", "content": request }),
     ];
     let schema = json!({ "type": "object", "properties": { "items": { "type": "array", "items": { "type": "string" }, "maxItems": 10 } }, "required": ["items"] });
@@ -363,18 +364,15 @@ pub async fn judge(reader: &Helper, img: &image::DynamicImage, items: &[String])
     if !reader.sees {
         return Err(format!("{} can't see pictures.", reader.name));
     }
-    let list = items.iter().enumerate().map(|(i, x)| format!("{}. {x}", i + 1)).collect::<Vec<_>>().join("\n");
-    let msgs = vec![
-        json!({ "role": "system", "content": "You check pictures strictly against a list. An item counts as shown only if it is clearly visible as described (right count, color, text spelled exactly, position). When unsure, it isn't shown." }),
-        json!({ "role": "user", "content": [
-            { "type": "text", "text": format!("Does the picture show each item?\n{list}\nReply with JSON: {{\"shown\": [true or false for each item, in order]}}.") },
-            { "type": "image_url", "image_url": { "url": crate::vision::data_url(img)? } },
-        ] }),
-    ];
-    let schema = json!({ "type": "object", "properties": { "shown": { "type": "array", "items": { "type": "boolean" } } }, "required": ["shown"] });
-    let v = reader.ask_json(msgs, schema, 300, 0.0).await?;
-    let shown: Vec<bool> = v["shown"].as_array().into_iter().flatten().map(|b| b.as_bool().unwrap_or(false)).collect();
-    let missing: Vec<String> = items.iter().enumerate().filter(|(i, _)| !shown.get(*i).copied().unwrap_or(false)).map(|(_, x)| x.clone()).collect();
+    // One item at a time, read out where it can be (`look`): asked about the
+    // whole list at once, it passed things that weren't there.
+    let url = crate::vision::data_url(img)?;
+    let mut missing = Vec::new();
+    for item in items {
+        if !super::look::shown(reader, &url, item).await? {
+            missing.push(item.clone());
+        }
+    }
     Ok(Verdict { score: 1.0 - missing.len() as f32 / items.len() as f32, missing })
 }
 
@@ -715,7 +713,7 @@ pub fn item_question(item: &str) -> (String, bool) {
 
 /// One question about one picture, answered in JSON. The picture comes
 /// first, so the engine reuses it from one question to the next.
-async fn ask_about(reader: &Helper, url: &str, question: &str, schema: Value) -> Result<Value, String> {
+pub(crate) async fn ask_about(reader: &Helper, url: &str, question: &str, schema: Value) -> Result<Value, String> {
     let msgs = vec![
         json!({ "role": "system", "content": "You look at a picture and answer a question about it strictly and literally. When unsure, answer no. Reply with only JSON." }),
         json!({ "role": "user", "content": [
@@ -726,7 +724,7 @@ async fn ask_about(reader: &Helper, url: &str, question: &str, schema: Value) ->
     reader.ask_json(msgs, schema, 60, 0.0).await
 }
 
-fn count_schema() -> Value {
+pub(crate) fn count_schema() -> Value {
     json!({ "type": "object", "properties": { "count": { "type": "integer", "minimum": 0, "maximum": 30 } }, "required": ["count"] })
 }
 
@@ -741,17 +739,15 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
         return Err(format!("{} can't see pictures.", reader.name));
     }
     let after_url = crate::vision::data_url(after)?;
-    let yes_no = json!({ "type": "object", "properties": { "answer": { "type": "string", "enum": ["yes", "no"] } }, "required": ["answer"] });
-    // What must be there weighs twice what must be gone: both klein edits of
+    // Each item read out where it can be (`look`). What must be there weighs
+    // twice what must be gone: both klein edits of
     // the barbell photo took away what was asked and drew no barbell, and
     // still scored 77 and 67.
     let (mut missing, mut total, mut lost) = (Vec::new(), 0usize, 0usize);
     for item in &plan.checklist {
-        let (q, want) = item_question(item);
-        let v = ask_about(reader, &after_url, &format!("{q} Answer yes or no."), yes_no.clone()).await?;
-        let weight = if want { 2 } else { 1 };
+        let weight = if matches!(super::look::check_of(item), super::look::Check::Absent(_)) { 1 } else { 2 };
         total += weight;
-        if (v["answer"].as_str() == Some("yes")) != want {
+        if !super::look::shown(reader, &after_url, item).await? {
             missing.push(item.clone());
             lost += weight;
         }

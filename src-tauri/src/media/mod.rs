@@ -14,6 +14,7 @@ pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
 pub mod learn;
+pub mod look;
 pub(crate) mod lyrics;
 mod audio_in;
 pub(crate) mod music;
