@@ -1549,6 +1549,11 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.20 (2026-10-21): a stricter picture check, prompt learning off by default
+
+- The stricter reviewer (`media/look.rs`, commits 7417917 and 3b78036 from the prompt coach session) went in. See its section below for how it reads out and compares.
+- **Learning is off unless turned on** (`learn::on` defaults to false; the Studio label says "(experimental)" and its tooltip gives the result). Three held-out tests, first try with learning against without: klein with the old reviewer -2.5 (standard error 5.2), klein strict -4.9 (4.1), SDXL strict -5.7 (3.3). Each alone is within noise, but all three lean worse; the likely cause is a small writer copying its stored examples too closely. Copies that never touched the switch go off with the update; one turned on by hand stays on. The two learning e2e tests turn it on themselves.
+
 ## 0.9.19 (2026-10-20): checked pictures made again, prompt learning, cancel any download
 
 - The two sections below (prompt learning, prompt coach) went in, merged from the prompt coach session's branch. Learning stays on by default: the held-out test found no gain and no clear harm (-2.5 points, standard error 5.2, 20 pairs), and a wrongly passed example still holds a sensible prompt. The stricter reviewer is the next step.
