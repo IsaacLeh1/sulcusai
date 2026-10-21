@@ -1549,6 +1549,53 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.21 (2026-10-21): the whole app on a phone, from anywhere (phone link)
+
+His ask: phone pairing showed a white page for him and his brother (iPhone). He wanted phones linked through his Cloudflare, each PC hosting its own phone, with full access (chats, new chats, models, Studio, everything) and a phone-only PC tab with Stop all.
+- **Why the white page:** the PC's phone server worked (loaded fine over the Wi-Fi address from the PC, firewall allowed it). The phone simply couldn't reach the PC: router client isolation, another network, or an iPhone app's Local Network permission. A page that never loads = dropped packets. The relay route avoids all of it.
+- **Relay** (`relay/worker.js`, `Link` Durable Object, migration v3, deployed 2026-10-21 as version 2b843aeb):
+  - `GET /v1/link/<id>/host` is the PC's WebSocket (Bearer token; the first connection stores its hash). A new connection replaces the old. A `ping`/`pong` auto-response keeps it alive without waking the object.
+  - `GET /l/<id>/<path>` (the app's files) and `POST /l/<id>/api` (sealed requests) are passed to the PC as JSON frames. Bodies are base64 in parts under 1 MB; answers stream back as parts arrive.
+  - No PC connected: 503 and a "Your PC isn't reachable" page. 1200 requests a minute per link. A link unused for 90 days is erased.
+  - Open like the feedback inbox: not behind RELAY_SECRET.
+- **PC** (`phone/link.rs`): one WebSocket to the relay (tokio-tungstenite over tokio-rustls with `mail::tls_config`; plain ws only for a loopback test relay). It reconnects with backoff (1 s to 60 s), pings every 25 s, and drops after 70 s of silence.
+  - It's on while the phone page is on, `anywhere` (default true) is on and a phone is paired.
+  - The link id and token are in the phone settings; the token is sealed with `local_seal`.
+  - Gated by Fully offline (`Keep::LocalNetwork`), not by the connectivity level: it only carries sealed traffic between his own PC and phone.
+- **Shared phone server** (`phone/mod.rs`): `answer()` serves both the LAN axum route and the relay. `serve_file()` serves `phone.html` and the built assets through Tauri's asset resolver.
+  - Careful: Tauri hands back `index.html` for any name it lacks, so `phone.html` is checked for its `sulcusai-phone` meta, and a non-HTML name that comes back as HTML is a 404.
+  - Replay protection is now "not seen before" (nonce cache, 5 minutes) rather than "newer than the last", because the full app sends many requests at once.
+  - `last_seen` is written at most once a minute.
+  - New ops: `invoke`, `result`, `listen`/`unlisten`, `events` (long-poll, 20 s; `listening: 0` after a PC restart makes the phone re-subscribe), `upload` (a file picked on the phone goes to `%TEMP%\sulcusai-phone-uploads\<random>\`, 15 MB max, cleared after a day).
+- **Commands from the phone** (`phone/remote.rs`): `Webview::on_message` with the main webview's URL and `app.invoke_key()`, so ACLs apply as for the PC's window.
+  - Raw responses (`media_file`, `media_thumb`) come back as `{__raw: base64}`, 60 MB max.
+  - Over 15 s gives a ticket, collected by `result` (e.g. `send_message` waits for the whole reply).
+  - `DENIED`: phones, locks/PINs, API/site keys, OAuth clients, sync relay, dev mode, desktop access, Fully offline, backups, plugins, the firewall, pairing PCs, browser sign-ins, and anything that opens on the PC's screen. Also all `plugin:*` (the phone answers those itself).
+  - `answer_approval` from a phone: allow or deny only (no "always"), plus `workspace::phone_may_allow`.
+- **Phone side** (`phone.html` and `src/phone/remote.ts`; vite has two inputs and `base: "./"`, so files load under `/l/<id>/`; logos are now relative): stands in for `__TAURI_INTERNALS__`.
+  - invoke → sealed `call("invoke")`. Events → `listen` + the long-poll pump.
+  - `plugin:dialog|ask/confirm/message` use the phone's dialogs; `open` uses the phone's file picker then `upload` (the PC path comes back, so Studio's `mediaImport(path)` just works); `save` throws (MediaBits `saveAs` downloads to the phone instead).
+  - `plugin:opener` → `window.open`; window calls do nothing.
+  - TweetNaCl is imported from `src-tauri/src/phone/nacl-fast.min.js`. The bundler wraps it as CommonJS, so use the default import, not `self.nacl`.
+  - A password screen comes first (and again when the session lapses); a red bar shows while the PC can't be reached.
+  - `window.__SULCUS_PHONE__` (`src/phone/env.ts`, `onPhone()`) tells the app it's on a phone.
+- **Phone layout and PC tab** (`App.tsx`):
+  - `.app.phone`: the sidebar is a drawer, with a `phone-bar` (menu, title, PC button) and a horizontally scrolling status bar (the model picker is there).
+  - Headers wrap; the TopBar is hidden; inputs are 16 px.
+  - `PcView` uses `pc_status` (`pcstatus.rs`: temperatures, processor, RAM, GPU, cooling level, loaded model, jobs) every 3 s.
+  - `stop_all` stops replies, media jobs and teaching, unloads the model and emits `engine:unloaded`; downloads carry on.
+- **Tests:**
+  - `e2e_phone_through_relay` (ignored; `SULCUSAI_RELAY_TEST`, a local `npx wrangler@4 dev` in relay/ or the live relay): passed on both. It covers the link, the page, sealed requests, a refused replay, a 1.5 MB upload in parts, and 503 with the link off.
+  - `prepare_phone_profile` (ignored) makes a data folder (`SULCUSAI_PHONE_PROFILE`) for a second copy of the app (`SULCUSAI_DATA_DIR`) with a test phone. Its link and password are in `phone-test.txt` there, never shown.
+  - With that copy (a debug build plus vite on 1430) and the in-app browser at phone size through the local relay, these all worked from the "phone":
+    - sign-in;
+    - a new chat with Qwen3 4B (tool step and reply streamed);
+    - the PC tab with real readings;
+    - Stop all;
+    - switching the default model;
+    - a Studio picture (klein 9B, checked at 100%; thumbnails come back as bytes).
+- **Not tried on a real iPhone yet:** he'll pair at home (Settings, Phone, Add a phone, scan, password). Safari's file picker, the downloads, and how the drawer feels are the things to watch.
+
 ## 0.9.20 (2026-10-21): a stricter picture check, prompt learning off by default
 
 - The stricter reviewer (`media/look.rs`, commits 7417917 and 3b78036 from the prompt coach session) went in. See its section below for how it reads out and compares.
