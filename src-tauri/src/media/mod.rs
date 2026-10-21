@@ -1892,6 +1892,9 @@ async fn made_well(state: &Arc<AppState>, id: &str, req: &Request, m: &MediaMode
             v.map(|v| Some((v, notes)))
         }
         .await;
+        if let Err(e) = &checked {
+            crate::applog::line("media", &format!("Couldn't check picture {}: {e}", made.len() + 1));
+        }
         let Ok(Some((verdict, notes))) = checked else {
             // Couldn't check it: the first stays as it is; a later one goes.
             if made.is_empty() {

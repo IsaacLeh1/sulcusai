@@ -339,7 +339,7 @@ pub async fn review(reader: &Helper, img: &image::DynamicImage, request: &str, p
 pub async fn checklist(h: &Helper, request: &str) -> Vec<String> {
     let msgs = vec![
         json!({ "role": "system", "content": "You turn a request for a picture into a checklist of what must be visible in it. Each item is short, concrete and checkable by looking: an object or person with its key color, count or position, an action, exact text in quotes, the setting, the light or the style. Only what the request itself says, nothing added or inferred: a short request gets 2 to 5 items, a detailed one up to 10. Include a count when one is given or implied (\"a dog\" is one dog). Most important first. \
-             Write items so they can be checked by reading them off the picture: a count first (\"three blue mugs on the top shelf\"), a color right before its thing (\"a pink lemon\"), words to be written in double quotes (a sign that says \"OPEN\"), a clock's time in words (\"the clock shows half past seven\"), and what must not be there as \"no …\"." }),
+             Write items so they can be checked by reading them off the picture: a count first (\"three blue mugs on the top shelf\"), a color right before its thing (\"a pink lemon\"), words to be written in double quotes (a sign that says \"OPEN\"), a clock's time in words (\"the clock shows half past seven\"), and something the request itself says must not be there as \"no …\". Never add \"no other …\" items: a picture may hold more than was asked for." }),
         json!({ "role": "user", "content": request }),
     ];
     let schema = json!({ "type": "object", "properties": { "items": { "type": "array", "items": { "type": "string" }, "maxItems": 10 } }, "required": ["items"] });
@@ -367,12 +367,8 @@ pub async fn judge(reader: &Helper, img: &image::DynamicImage, items: &[String])
     // One item at a time, read out where it can be (`look`): asked about the
     // whole list at once, it passed things that weren't there.
     let url = crate::vision::data_url(img)?;
-    let mut missing = Vec::new();
-    for item in items {
-        if !super::look::shown(reader, &url, item).await? {
-            missing.push(item.clone());
-        }
-    }
+    let shown = super::look::check_all(reader, &url, items).await?;
+    let missing: Vec<String> = items.iter().zip(&shown).filter(|(_, s)| !**s).map(|(x, _)| x.clone()).collect();
     Ok(Verdict { score: 1.0 - missing.len() as f32 / items.len() as f32, missing })
 }
 
@@ -744,10 +740,11 @@ pub async fn judge_edit(reader: &Helper, before: &image::DynamicImage, after: &i
     // the barbell photo took away what was asked and drew no barbell, and
     // still scored 77 and 67.
     let (mut missing, mut total, mut lost) = (Vec::new(), 0usize, 0usize);
-    for item in &plan.checklist {
+    let shown = super::look::check_all(reader, &after_url, &plan.checklist).await?;
+    for (item, ok) in plan.checklist.iter().zip(shown) {
         let weight = if matches!(super::look::check_of(item), super::look::Check::Absent(_)) { 1 } else { 2 };
         total += weight;
-        if !super::look::shown(reader, &after_url, item).await? {
+        if !ok {
             missing.push(item.clone());
             lost += weight;
         }

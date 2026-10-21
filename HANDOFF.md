@@ -1576,6 +1576,14 @@ The evaluation below showed the reviewer (Qwen3.5 9B) passing wrong pictures. Is
   - It learnt from fewer pictures: 6 examples, not 9.
   - **Learning still made no gain on klein.** New pictures, 20 pairs, with minus without: first try −4.9 (standard error 4.1; with learning ahead 2, behind 6); handed over, by the hand-written checklists, +1.7 (5.7); pictures needed +0.4 (0.2), more with learning in 6 pairs and fewer in 1. Edits, 3 pairs: −5.6 by hand, too few to say.
   - That run used the one-color question; the kite pairs scored 50% by hand where the question was at fault.
+- **On SDXL** (RealVisXL v5 Lightning, downloaded for this into the app's models folder with Isaac's OK; Qwen3.5 9B writing and reviewing; 68 min; pictures in `C:\dev\sulcusai\.claude\learning-eval-sdxl`). It has far more room: 9 of 10 training pictures fell short, and rewriting fixed none of them. It drew 6 to 10 books for "exactly four red books", "STIP STOP" and "DYE MAPE" for "MAPLE AVE", and no blue banana. So it learnt 1 example and 2 rules.
+  - **Learning was slightly worse.** New pictures, 19 pairs: first try −5.7 (standard error 3.3; ahead 0, behind 3); handed over by hand −6.6 (4.5; ahead 1, behind 6); pictures needed +0.3 (0.1), more with learning in 7 pairs and fewer in 2.
+- **All three held-out evaluations together** (klein with the old reviewer, klein strict, SDXL strict): first tries with learning against without came out −2.5, −4.9 and −5.7. That shows no gain, and leans slightly worse.
+  - The likely cause is the rules. The writer's own lessons are long and generic ("explicitly negate unwanted variations to prevent hallucinations"), and few examples pass when the picture model can't do what's asked.
+  - Learning is on by default (0.9.19). It's worth turning it off by default, or keeping a rule or example only once it beats the program without it on held-out requests (the coordinating session's idea; not built). The review-and-rewrite loop and the stricter reviewer are worth keeping either way.
+- Fixed after these runs:
+  - The reviewer's checklist no longer invents "no other people" or "no other fruits" items, which a right picture failed; "no other …" is now a plain yes or no.
+  - One malformed answer no longer leaves a picture unchecked (`look::check_all`): the item is asked again, then counts as not shown. Only a check where every item fails counts as "couldn't check", and that's logged.
 
 ## The prompt writer learns from use, DSPy-style (2026-10-20, after 0.9.18, not built)
 

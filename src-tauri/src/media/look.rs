@@ -76,7 +76,9 @@ pub fn check_of(item: &str) -> Check {
         return Check::Text(words);
     }
     let low = t.to_lowercase();
-    if low.starts_with("no ") {
+    // "No other people": the ones asked for are there, so looking for any
+    // person fails a right picture. That's a yes or no about the whole.
+    if low.starts_with("no ") && !low.starts_with("no other ") {
         return Check::Absent(t[3..].trim().to_string());
     }
     if ["clock", "watch", "time"].iter().any(|w| low.contains(w)) {
@@ -221,6 +223,29 @@ fn seen(item: &str, read: &Value) {
     }
 }
 
+/// Each item's answer: asked once more when the reader's answer didn't come
+/// back right, and then not shown. An error when no item could be checked
+/// (one bad answer used to leave a picture unchecked).
+pub async fn check_all(reader: &Helper, url: &str, items: &[String]) -> Result<Vec<bool>, String> {
+    let (mut out, mut failed, mut last) = (Vec::new(), 0, String::new());
+    for item in items {
+        let first = shown(reader, url, item).await;
+        let answer = match first {
+            Ok(x) => Ok(x),
+            Err(_) => shown(reader, url, item).await,
+        };
+        out.push(answer.as_ref().is_ok_and(|x| *x));
+        if let Err(e) = answer {
+            failed += 1;
+            last = e;
+        }
+    }
+    if failed > 0 && failed == items.len() {
+        return Err(last);
+    }
+    Ok(out)
+}
+
 /// Whether the picture (as a data URL) shows `item`.
 pub async fn shown(reader: &Helper, url: &str, item: &str) -> Result<bool, String> {
     Ok(match check_of(item) {
@@ -284,6 +309,7 @@ mod tests {
         assert_eq!(check_of("the letters are red"), Check::Color("red".into(), "letters".into()));
         assert_eq!(check_of("no dog in the picture"), Check::Absent("dog in the picture".into()));
         assert_eq!(check_of("No bicycle left leaning on the tree."), Check::Absent("bicycle left leaning on the tree".into()));
+        assert_eq!(check_of("no other people in the image"), Check::Plain, "the people asked for are there");
         // Not something to read out.
         assert_eq!(check_of("a boy in a green hoodie on the left"), Check::Plain);
         assert_eq!(check_of("a red and white striped awning"), Check::Plain, "two colors: no one color to ask about");
