@@ -54,6 +54,25 @@ export function GlobeIcon(p: IconProps) {
   );
 }
 
+/** Three lines: opens the menu (on a phone). */
+export function MenuIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </Icon>
+  );
+}
+
+/** A computer screen: the PC (on a phone). */
+export function PcIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </Icon>
+  );
+}
+
 export function FolderIcon(p: IconProps) {
   return (
     <Icon {...p}>

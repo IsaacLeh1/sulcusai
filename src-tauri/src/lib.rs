@@ -65,6 +65,7 @@ mod optimize;
 mod outgoing;
 mod oauth;
 mod paths;
+mod pcstatus;
 mod perf;
 mod placement;
 mod places;
@@ -2552,6 +2553,9 @@ pub fn run() {
             phone::add_phone,
             phone::remove_phone,
             phone::set_phone_while_locked,
+            phone::set_phone_link,
+            pcstatus::pc_status,
+            pcstatus::stop_all,
             storage::storage_view,
             storage::move_models,
             sync::sync_view,

@@ -128,7 +128,7 @@ export function QuickAsk() {
   return (
     <div className="quick" data-tauri-drag-region>
       <div className="quick-head" data-tauri-drag-region>
-        <img src="/logo.svg" alt="" width={20} height={20} />
+        <img src="logo.svg" alt="" width={20} height={20} />
         <SmartInput
           ref={input}
           className="quick-input"

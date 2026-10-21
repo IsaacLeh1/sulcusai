@@ -1,19 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The phone companion: a small web page this PC serves on the local
-//! network, so a phone on the same Wi-Fi can chat, see tasks and notes, and
-//! answer the assistant's questions, with nothing installed on the phone.
+//! The phone companion: the whole app on a paired phone, served by this PC,
+//! with nothing installed on the phone.
 //!
 //! - Off until turned on. Each phone is added with a QR code holding the
 //!   page's address and a random 256-bit key after `#`, which browsers never
-//!   send over the network. Phones can be removed one by one.
-//! - Phone browsers can't use their built-in encryption on a plain local
-//!   address, so the page carries TweetNaCl (public domain) and every
-//!   request and answer is sealed with that key (XSalsa20-Poly1305). A
-//!   request older than five minutes, or not newer than the last one, is
-//!   refused, so recorded traffic can't be replayed.
-//! - The page itself travels unencrypted: someone able to rewrite traffic on
-//!   the network could alter it. The settings say to use it on a trusted
-//!   home or office network.
+//!   send over the network, and it signs in with a password chosen on the PC.
+//! - Two ways in: this PC's address on the local network (the same Wi-Fi),
+//!   and, with "Reach this phone from anywhere" on, SulcusAI's relay on
+//!   Cloudflare (`link`), which works on any network: the PC keeps a
+//!   connection open to it and answers through it.
+//! - Either way the phone gets the app's own files (`serve_file`, the
+//!   `phone.html` build) and every request and answer is sealed with the
+//!   phone's key (XSalsa20-Poly1305, TweetNaCl on the phone, since a plain
+//!   local address has no built-in encryption). A request older than five
+//!   minutes, or one seen before, is refused, so recorded traffic can't be
+//!   replayed. Its commands run as the PC's window would run them (`remote`).
+//! - On the local network the page itself travels unencrypted, so someone
+//!   able to rewrite traffic there could alter it; through the relay it comes
+//!   over HTTPS, and whoever runs the relay could alter it.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -36,12 +40,15 @@ use tokio::sync::oneshot;
 use crate::crypto::Cipher;
 use crate::{db, notes, AppState, AppStateRef};
 
+mod link;
+pub(crate) mod remote;
+
 const KEY: &str = "phone";
 const PORT: u16 = 47818;
 const PAGE: &str = include_str!("page.html");
 const NACL: &str = include_str!("nacl-fast.min.js");
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub enabled: bool,
@@ -49,6 +56,26 @@ pub struct Settings {
     /// Paired phones keep working while SulcusAI is locked on the PC (with
     /// "Keep working while locked" on; a full lock removes the key anyway).
     pub while_locked: bool,
+    /// Reach the phone from anywhere, through the relay (on unless turned off).
+    pub anywhere: bool,
+    /// This PC's link on the relay: its id, and its key (sealed to this
+    /// Windows account).
+    link_id: String,
+    link_token: String,
+    /// Another relay than SulcusAI's (empty: SulcusAI's).
+    pub relay: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings { enabled: false, phones: Vec::new(), while_locked: false, anywhere: true, link_id: String::new(), link_token: String::new(), relay: String::new() }
+    }
+}
+
+impl Settings {
+    fn relay_base(&self) -> String {
+        if self.relay.trim().is_empty() { link::RELAY.to_string() } else { self.relay.trim().trim_end_matches('/').to_string() }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -69,6 +96,9 @@ pub struct Phone {
     fails: u32,
     wait_until: i64,
 }
+
+/// The biggest file a phone sends (what would be picked on the PC).
+const MAX_UPLOAD: usize = 15 * 1024 * 1024;
 
 /// A phone's password: at least this long.
 const MIN_PASSWORD: usize = 6;
@@ -107,8 +137,33 @@ static PROBLEM: Mutex<Option<String>> = Mutex::new(None);
 /// Replies being written for phone chats: chat id → text so far.
 static PARTIAL: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
 
+/// Starts or stops the link through the relay: on while the phone page is
+/// on, "Reach this phone from anywhere" is on and a phone is paired. Makes
+/// the link's id and key the first time.
+fn apply_link(state: &Arc<AppState>) {
+    let wanted = {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        if s.enabled && s.anywhere && !s.phones.is_empty() {
+            if s.link_id.is_empty() || crate::crypto::local_open(&s.link_token).is_empty() {
+                s.link_id = hex::encode(crate::sync::random_bytes::<16>());
+                s.link_token = crate::crypto::local_seal(&hex::encode(crate::sync::random_bytes::<32>()));
+                let _ = db::set(&conn, KEY, &s);
+            }
+            Some((s.relay_base(), s.link_id.clone(), crate::crypto::local_open(&s.link_token)))
+        } else {
+            None
+        }
+    };
+    match wanted {
+        Some((relay, id, token)) => link::apply(state.clone(), Some(relay), id, token),
+        None => link::apply(state.clone(), None, String::new(), String::new()),
+    }
+}
+
 /// Starts or stops the server to match the settings.
 pub fn apply(state: Arc<AppState>) {
+    apply_link(&state);
     let on = settings(&state.db.lock().unwrap()).enabled;
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
@@ -145,24 +200,59 @@ pub fn apply(state: Arc<AppState>) {
         };
         let port = listener.local_addr().map(|a| a.port()).unwrap_or(PORT);
         *SERVER.lock().unwrap() = Some(Running { port, stop: tx });
-        let app = Router::new().route("/", get(page)).route("/api", post(api)).with_state(state);
+        let app = Router::new().route("/", get(file)).route("/api", post(api)).route("/{*path}", get(file)).with_state(state);
         let _ = axum::serve(listener, app).with_graceful_shutdown(async { rx.await.ok(); }).await;
     });
 }
 
-async fn page() -> Response {
-    let html = PAGE.replace("/*NACL*/", NACL);
-    (
-        [
-            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-            (header::X_FRAME_OPTIONS, "DENY"),
-            (header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:"),
-        ],
-        html,
-    )
-        .into_response()
+async fn file(State(state): State<Arc<AppState>>, uri: axum::http::Uri) -> Response {
+    let (status, headers, body) = serve_file(&state, uri.path());
+    let mut r = (StatusCode::from_u16(status).unwrap_or(StatusCode::NOT_FOUND), body).into_response();
+    for (k, v) in headers.as_object().into_iter().flatten() {
+        if let (Ok(name), Some(Ok(value))) = (header::HeaderName::from_bytes(k.as_bytes()), v.as_str().map(header::HeaderValue::from_str)) {
+            r.headers_mut().insert(name, value);
+        }
+    }
+    r
+}
+
+/// In `phone.html` only (Tauri hands out the PC's page for names it lacks).
+const PHONE_MARK: &[u8] = b"name=\"sulcusai-phone\"";
+
+/// What the phone's page may load: the app's own files and nothing else.
+const PHONE_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
+/// One of the app's files for the phone (`path` as the phone asked for it:
+/// "/", "/assets/index-….js"): status, headers and bytes. "/" is the phone's
+/// page (`phone.html`); without that build (a development run) it's the
+/// small page with chats, tasks and notes.
+pub(crate) fn serve_file(state: &AppState, path: &str) -> (u16, Value, Vec<u8>) {
+    let path = path.split(['?', '#']).next().unwrap_or("/").trim_start_matches('/');
+    let path = if path.is_empty() || path == "index.html" { "phone.html" } else { path };
+    let ok_name = !path.contains("..") && !path.contains('\\') && path.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '-' | '_'));
+    let page_headers = |ctype: &str, csp: &str| json!({ "content-type": ctype, "cache-control": "no-store", "content-security-policy": csp, "x-frame-options": "DENY", "referrer-policy": "no-referrer" });
+    // A name Tauri doesn't have comes back as the PC's own page: not that.
+    let asset = if ok_name { state.app.get().and_then(|app| app.asset_resolver().get(path.to_string())) } else { None }.filter(|a| {
+        if path == "phone.html" {
+            a.bytes.windows(PHONE_MARK.len()).any(|w| w == PHONE_MARK)
+        } else {
+            path.ends_with(".html") || !a.mime_type.starts_with("text/html")
+        }
+    });
+    match asset {
+        Some(a) if path == "phone.html" => (200, page_headers("text/html; charset=utf-8", PHONE_CSP), a.bytes),
+        Some(a) => {
+            // Built files carry their content's hash in the name: kept for good.
+            let cache = if path.starts_with("assets/") { "public, max-age=31536000, immutable" } else { "no-cache" };
+            (200, json!({ "content-type": a.mime_type, "cache-control": cache }), a.bytes)
+        }
+        None if path == "phone.html" => (
+            200,
+            page_headers("text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:"),
+            PAGE.replace("/*NACL*/", NACL).into_bytes(),
+        ),
+        None => (404, json!({ "content-type": "text/plain" }), b"Not found".to_vec()),
+    }
 }
 
 fn seal(key: &[u8; 32], plain: &[u8]) -> String {
@@ -171,13 +261,41 @@ fn seal(key: &[u8; 32], plain: &[u8]) -> String {
     B64.encode([nonce.as_slice(), &ct].concat())
 }
 
-fn open(key: &[u8; 32], sealed: &str) -> Option<Vec<u8>> {
+/// Opens a sealed request: its nonce (each request's own) and what it says.
+fn open(key: &[u8; 32], sealed: &str) -> Option<([u8; 24], Vec<u8>)> {
     let raw = B64.decode(sealed.trim()).ok()?;
     if raw.len() < 24 + 16 {
         return None;
     }
     let (nonce, ct) = raw.split_at(24);
-    XSalsa20Poly1305::new(key.into()).decrypt(Nonce::from_slice(nonce), ct).ok()
+    let plain = XSalsa20Poly1305::new(key.into()).decrypt(Nonce::from_slice(nonce), ct).ok()?;
+    Some((nonce.try_into().ok()?, plain))
+}
+
+/// How old a request may be, by the phone's clock.
+const FRESH_MS: i64 = 5 * 60 * 1000;
+/// Requests seen lately, by phone: their nonces and when they came.
+static SEEN: LazyLock<Mutex<HashMap<String, std::collections::VecDeque<([u8; 24], i64)>>>> = LazyLock::new(Default::default);
+
+/// A request not too old and not seen before (a recorded one sent again
+/// isn't); many may be on their way at once, in any order.
+fn fresh(phone: &str, nonce: [u8; 24], ts: i64, now: i64) -> bool {
+    if (now - ts).abs() > FRESH_MS {
+        return false;
+    }
+    let mut all = SEEN.lock().unwrap();
+    let seen = all.entry(phone.to_string()).or_default();
+    while seen.front().is_some_and(|(_, at)| now - at > 2 * FRESH_MS) {
+        seen.pop_front();
+    }
+    if seen.iter().any(|(n, _)| *n == nonce) {
+        return false;
+    }
+    seen.push_back((nonce, now));
+    if seen.len() > 50_000 {
+        seen.pop_front();
+    }
+    true
 }
 
 #[derive(Deserialize)]
@@ -192,37 +310,40 @@ struct Call {
 }
 
 async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes) -> Response {
-    let bad = || (StatusCode::UNAUTHORIZED, "This phone isn't paired. Scan a new code from SulcusAI on your PC.").into_response();
-    let Some(id) = headers.get("x-phone").and_then(|h| h.to_str().ok()).map(String::from) else { return bad() };
+    let phone = headers.get("x-phone").and_then(|h| h.to_str().ok());
+    let (status, text) = answer(&state, phone, std::str::from_utf8(&body).unwrap_or_default()).await;
+    (status, [(header::CONTENT_TYPE, "text/plain; charset=utf-8"), (header::CACHE_CONTROL, "no-store")], text).into_response()
+}
+
+/// A sealed request from a phone (`phone`: its id) and what to send back:
+/// the sealed answer, or why not in plain words. The same for the local
+/// network and the relay.
+pub(crate) async fn answer(state: &Arc<AppState>, phone: Option<&str>, body: &str) -> (StatusCode, String) {
+    let bad = || (StatusCode::UNAUTHORIZED, "This phone isn't paired. Scan a new code from SulcusAI on your PC.".to_string());
+    let Some(id) = phone.filter(|p| !p.is_empty()).map(String::from) else { return bad() };
     let s = settings(&state.db.lock().unwrap());
     // While the app is locked, nothing can be read or written, unless the
     // person let paired phones keep working then (and work goes on locked).
     let c = if s.while_locked { state.work_cipher() } else { state.cipher() };
     let Ok(c) = c else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "SulcusAI is locked on your PC. Unlock it there first.").into_response();
+        return (StatusCode::SERVICE_UNAVAILABLE, "SulcusAI is locked on your PC. Unlock it there first.".to_string());
     };
     let Some(phone) = s.phones.into_iter().find(|p| p.id == id) else { return bad() };
     let Some(key) = phone_key(&c, &phone) else { return bad() };
-    let Some(plain) = open(&key, std::str::from_utf8(&body).unwrap_or_default()) else { return bad() };
-    let Ok(call) = serde_json::from_slice::<Call>(&plain) else { return (StatusCode::BAD_REQUEST, "Unreadable request.").into_response() };
+    let Some((nonce, plain)) = open(&key, body) else { return bad() };
+    let Ok(call) = serde_json::from_slice::<Call>(&plain) else { return (StatusCode::BAD_REQUEST, "Unreadable request.".to_string()) };
     let now = db::now_ms();
-    // Checked and moved on under one lock, so two copies of one request
-    // arriving together can't both pass.
-    let fresh = {
+    if !fresh(&id, nonce, call.ts, now) {
+        return (StatusCode::CONFLICT, "This request is out of date. Check the phone's clock, then reload the page.".to_string());
+    }
+    // When it was last used, at most once a minute (the app asks often).
+    if phone.last_seen.is_none_or(|t| now - t > 60_000) {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
-        match s.phones.iter_mut().find(|p| p.id == id) {
-            Some(p) if (now - call.ts).abs() <= 5 * 60 * 1000 && call.ts > p.last_ts => {
-                p.last_ts = call.ts;
-                p.last_seen = Some(now);
-                let _ = db::set(&conn, KEY, &s);
-                true
-            }
-            _ => false,
+        if let Some(p) = s.phones.iter_mut().find(|p| p.id == id) {
+            p.last_seen = Some(now);
+            let _ = db::set(&conn, KEY, &s);
         }
-    };
-    if !fresh {
-        return (StatusCode::CONFLICT, "This request is out of date. Check the phone's clock, then reload the page.").into_response();
     }
     let answer = if phone.pass_hash.is_empty() {
         json!({ "ok": false, "error": "This phone was paired before phones had passwords. Pair it again from SulcusAI on your PC (Settings, Phone)." })
@@ -235,18 +356,15 @@ async fn api(State(state): State<Arc<AppState>>, headers: HeaderMap, body: Bytes
         json!({ "ok": false, "error": "Enter this phone's password.", "login": true })
     } else if call.op == "logout" {
         SESSIONS.lock().unwrap().remove(&phone.id);
+        remote::forget(&phone.id);
         json!({ "ok": true, "data": null })
     } else {
-        match handle(&state, &c, &phone, &call.op, &call.args).await {
+        match handle(state, &c, &phone, &call.op, &call.args).await {
             Ok(data) => json!({ "ok": true, "data": data }),
             Err(e) => json!({ "ok": false, "error": e }),
         }
     };
-    (
-        [(header::CONTENT_TYPE, "text/plain"), (header::CACHE_CONTROL, "no-store")],
-        seal(&key, answer.to_string().as_bytes()),
-    )
-        .into_response()
+    (StatusCode::OK, seal(&key, answer.to_string().as_bytes()))
 }
 
 /// Whether the phone signed in with its password, and recently; keeps it signed in.
@@ -314,7 +432,53 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
         "hello" => {
             let conn = state.db.lock().unwrap();
             let name = db::profile(&conn, c).name;
-            Ok(json!({ "pc": std::env::var("COMPUTERNAME").unwrap_or_default(), "name": name, "phone": phone.name }))
+            Ok(json!({ "pc": std::env::var("COMPUTERNAME").unwrap_or_default(), "name": name, "phone": phone.name, "version": env!("CARGO_PKG_VERSION") }))
+        }
+        // The whole app: a command, a slow one's result, and its events.
+        "invoke" => {
+            let app = state.app.get().ok_or("The app isn't ready yet.")?.clone();
+            let cmd = arg(args, "cmd")?;
+            remote::invoke(app, &phone.id, cmd, args["args"].clone()).await
+        }
+        "result" => remote::result(&phone.id, arg(args, "ticket")?).await,
+        "listen" => {
+            let app = state.app.get().ok_or("The app isn't ready yet.")?;
+            remote::listen(app, &phone.id, arg(args, "event")?)?;
+            Ok(Value::Null)
+        }
+        "unlisten" => {
+            remote::unlisten(&phone.id, arg(args, "event")?);
+            Ok(Value::Null)
+        }
+        "events" => Ok(remote::events(&phone.id, args["after"].as_u64().unwrap_or(0), remote::WAIT).await),
+        // A file chosen on the phone, for what would pick one on the PC: saved
+        // in a folder of its own under Temp; the answer is its path here.
+        "upload" => {
+            let data = B64.decode(arg(args, "data")?).map_err(|_| "The file didn't arrive whole.")?;
+            if data.len() > MAX_UPLOAD {
+                return Err("That file is too big to send from the phone (15 MB at most).".into());
+            }
+            let name: String = arg(args, "name")?
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("file")
+                .chars()
+                .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | ' ') { c } else { '_' })
+                .take(100)
+                .collect();
+            let name = if name.trim_matches('.').is_empty() { "file".to_string() } else { name };
+            let root = std::env::temp_dir().join("sulcusai-phone-uploads");
+            // Ones from before today go.
+            for e in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+                if e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d.as_secs() > 86_400)) {
+                    let _ = std::fs::remove_dir_all(e.path());
+                }
+            }
+            let dir = root.join(hex::encode(crate::sync::random_bytes::<8>()));
+            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            let path = dir.join(name);
+            std::fs::write(&path, data).map_err(|e| e.to_string())?;
+            Ok(json!(path.display().to_string()))
         }
         "chats" => {
             let running: Vec<String> = state.generations.lock().unwrap().keys().cloned().collect();
@@ -474,6 +638,9 @@ pub struct PhoneView {
     while_locked: bool,
     /// "Keep working while locked" (Settings → Security), which it needs.
     keep_working: bool,
+    /// "Reach this phone from anywhere", and the link through the relay.
+    anywhere: bool,
+    link: link::Status,
 }
 
 #[derive(Serialize)]
@@ -497,7 +664,24 @@ fn view(state: &AppState) -> PhoneView {
         phones: s.phones.iter().map(|p| PhoneRow { id: p.id.clone(), name: p.name.clone(), added: p.added, last_seen: p.last_seen, has_password: !p.pass_hash.is_empty() }).collect(),
         while_locked: s.while_locked,
         keep_working: crate::security::keep_working(state),
+        anywhere: s.anywhere,
+        link: link::status(),
     }
+}
+
+/// Turns "Reach this phone from anywhere" on or off.
+#[tauri::command(async)]
+pub fn set_phone_link(state: AppStateRef, anywhere: bool) -> Result<PhoneView, String> {
+    state.cipher()?;
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        s.anywhere = anywhere;
+        db::set(&conn, KEY, &s)?;
+    }
+    state.log("settings", if anywhere { "Paired phones can now reach this PC from anywhere, through SulcusAI's relay" } else { "Paired phones now reach this PC on the local network only" });
+    apply_link(state.inner());
+    Ok(view(&state))
 }
 
 /// Whether paired phones keep working while SulcusAI is locked on the PC.
@@ -553,7 +737,13 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
     let salt: [u8; 16] = crate::sync::random_bytes();
     let hash = hash_password(&password, &salt)?;
     let v = view(&state);
-    let base = v.address.ok_or("Turn on the phone page first, and make sure this PC is on a network.")?;
+    if !v.enabled {
+        return Err("Turn on the phone page first.".into());
+    }
+    let lan = v.address.clone();
+    if !v.anywhere && lan.is_none() {
+        return Err("Make sure this PC is on a network, or turn on \"Reach this phone from anywhere\".".into());
+    }
     let key: [u8; 32] = crate::sync::random_bytes();
     let id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
     let name = match name.trim() {
@@ -567,6 +757,7 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
         let replaced = !s.phones.is_empty();
         for old in &s.phones {
             SESSIONS.lock().unwrap().remove(&old.id);
+            remote::forget(&old.id);
         }
         s.phones = vec![Phone {
             id: id.clone(),
@@ -583,6 +774,15 @@ pub fn add_phone(state: AppStateRef, name: String, password: String) -> Result<N
         }
     }
     state.log("settings", &format!("Added {name} to the phone page"));
+    remote::forget(&id);
+    // With a phone paired, the link through the relay starts (and gets its id).
+    apply_link(state.inner());
+    let s = settings(&state.db.lock().unwrap());
+    let base = if s.anywhere && !s.link_id.is_empty() {
+        link::page_address(&s.relay_base(), &s.link_id).trim_end_matches('/').to_string()
+    } else {
+        lan.ok_or("Make sure this PC is on a network.")?
+    };
     let link = format!("{base}/#p={id}.{}", B64URL.encode(key));
     let qr = qrcode::QrCode::with_error_correction_level(link.as_bytes(), qrcode::EcLevel::M)
         .map_err(|e| e.to_string())?
@@ -602,7 +802,9 @@ pub fn remove_phone(state: AppStateRef, id: String) -> Result<PhoneView, String>
         db::set(&conn, KEY, &s)?;
     }
     SESSIONS.lock().unwrap().remove(&id);
+    remote::forget(&id);
     state.log("settings", "Removed a phone from the phone page");
+    apply_link(state.inner());
     Ok(view(&state))
 }
 
@@ -654,11 +856,13 @@ mod tests {
 const nacl = require("./nacl.js");
 const [url, phone, keyB64] = process.argv.slice(2);
 const key = Uint8Array.from(Buffer.from(keyB64, "base64"));
-let last = 0, session = "";
-async function raw(op, args, ts, k = key) {
+let last = 0, session = "", lastBody = "";
+async function raw(op, args, ts, k = key, again = false) {
   const nonce = nacl.randomBytes(24);
   const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify({ op, args, ts, session })), nonce, k);
-  const r = await fetch(url + "/api", { method: "POST", headers: { "X-Phone": phone }, body: Buffer.concat([Buffer.from(nonce), Buffer.from(box)]).toString("base64") });
+  const body = again ? lastBody : Buffer.concat([Buffer.from(nonce), Buffer.from(box)]).toString("base64");
+  lastBody = body;
+  const r = await fetch(url + "/api", { method: "POST", headers: { "X-Phone": phone }, body });
   const text = await r.text();
   if (!r.ok) return { status: r.status, text };
   const b = Buffer.from(text, "base64");
@@ -686,7 +890,8 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
   out.notes = await call("notes");
   out.chats = await call("chats");
   out.unknown = await call("approve", { call_id: "nope", decision: "allow" });
-  out.replay = await raw("hello", {}, last);
+  out.replay = await raw("hello", {}, last, key, true);
+  out.stale = await raw("hello", {}, Date.now() - 10 * 60 * 1000);
   out.wrongKey = await raw("hello", {}, Date.now() + 5, new Uint8Array(32));
   console.log(JSON.stringify(out));
 })();
@@ -714,7 +919,8 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         assert_eq!(v["after"]["data"].as_array().unwrap().len(), 0, "done tasks drop off");
         assert_eq!(v["notes"]["data"][0]["title"], "Groceries");
         assert_eq!(v["unknown"]["ok"], false);
-        assert_eq!(v["replay"]["status"], 409);
+        assert_eq!(v["replay"]["status"], 409, "the same request sent again");
+        assert_eq!(v["stale"]["status"], 409, "a request ten minutes old");
         assert_eq!(v["wrongKey"]["status"], 401);
         assert!(settings(&state.db.lock().unwrap()).phones[0].last_seen.is_some());
 
@@ -798,9 +1004,179 @@ Day 3: Trastevere
         let ct = XSalsa20Poly1305::new((&key).into()).encrypt(Nonce::from_slice(&nonce), b"hello".as_slice()).unwrap();
         let sealed = B64.encode([nonce.as_slice(), &ct].concat());
         assert_eq!(sealed, "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBcofRSI69/FovMXOb2VNxu0qyaEg4");
-        assert_eq!(open(&key, &sealed).unwrap(), b"hello");
+        assert_eq!(open(&key, &sealed).unwrap(), (nonce, b"hello".to_vec()));
         assert!(open(&[3u8; 32], &sealed).is_none());
         let again = seal(&key, b"hi there");
-        assert_eq!(open(&key, &again).unwrap(), b"hi there");
+        assert_eq!(open(&key, &again).unwrap().1, b"hi there");
+    }
+
+    /// A phone reaching this PC through the relay: relay/worker.js run by
+    /// `npx wrangler dev` in relay/ (at SULCUSAI_RELAY_TEST, by default
+    /// http://127.0.0.1:8787). The link connects, the phone's page and its
+    /// sealed requests (one in parts, over 1 MB) come through, a request sent
+    /// again is refused, and with the link off the phone hears the PC is away.
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn e2e_phone_through_relay() {
+        let relay = std::env::var("SULCUSAI_RELAY_TEST").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
+        let state = crate::e2e::scratch_state();
+        let c = state.cipher().unwrap();
+        let key: [u8; 32] = crate::sync::random_bytes();
+        {
+            let conn = state.db.lock().unwrap();
+            let salt = [7u8; 16];
+            let p = Phone {
+                id: "ph2".into(),
+                name: "Relay phone".into(),
+                key: c.encrypt(&hex::encode(key)),
+                added: 1,
+                pass_hash: hex::encode(hash_password("sunflower", &salt).unwrap()),
+                pass_salt: hex::encode(salt),
+                ..Default::default()
+            };
+            db::set(&conn, KEY, &Settings { enabled: true, anywhere: true, relay: relay.clone(), phones: vec![p], ..Default::default() }).unwrap();
+        }
+        apply(state.clone());
+        for _ in 0..150 {
+            if link::status().connected {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(link::status().connected, "the link connects: {:?}", link::status().problem);
+        let id = settings(&state.db.lock().unwrap()).link_id;
+        let base = format!("{relay}/l/{id}");
+        let page = reqwest::get(format!("{base}/")).await.unwrap();
+        assert_eq!(page.status(), 200);
+        assert!(page.text().await.unwrap().contains("secretbox"), "the phone's page comes from the PC");
+
+        let dir = std::env::temp_dir().join(format!("sulcus-relay-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("nacl.js"), NACL).unwrap();
+        let script = r#"
+const nacl = require("./nacl.js");
+const [base, phone, keyB64] = process.argv.slice(2);
+const key = Uint8Array.from(Buffer.from(keyB64, "base64"));
+let session = "", lastBody = "";
+async function raw(op, args, again = false) {
+  const nonce = nacl.randomBytes(24);
+  const box = nacl.secretbox(new TextEncoder().encode(JSON.stringify({ op, args, ts: Date.now(), session })), nonce, key);
+  const body = again ? lastBody : Buffer.concat([Buffer.from(nonce), Buffer.from(box)]).toString("base64");
+  lastBody = body;
+  const r = await fetch(base + "/api", { method: "POST", headers: { "X-Phone": phone }, body });
+  const text = await r.text();
+  if (!r.ok) return { status: r.status, text };
+  const b = Buffer.from(text, "base64");
+  return JSON.parse(new TextDecoder().decode(nacl.secretbox.open(new Uint8Array(b.subarray(24)), new Uint8Array(b.subarray(0, 24)), key)));
+}
+(async () => {
+  const out = {};
+  const li = await raw("login", { password: "sunflower" });
+  session = li.data.session;
+  out.hello = await raw("hello");
+  out.replay = await raw("hello", {}, true);
+  // Over 1 MB: it travels to the PC in parts.
+  out.upload = await raw("upload", { name: "photo.jpg", data: Buffer.alloc(1_500_000, 7).toString("base64") });
+  out.events = await raw("events", { after: 0 });
+  console.log(JSON.stringify(out));
+})();
+"#;
+        std::fs::write(dir.join("client.js"), script).unwrap();
+        let out = tokio::process::Command::new("node").current_dir(&dir).args(["client.js", &base, "ph2", &B64.encode(key)]).output().await.unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let v: Value = serde_json::from_str(text.trim()).unwrap_or_else(|_| panic!("client output: {text} {}", String::from_utf8_lossy(&out.stderr)));
+        assert_eq!(v["hello"]["ok"], true, "{v}");
+        assert_eq!(v["hello"]["data"]["phone"], "Relay phone");
+        assert_eq!(v["replay"]["status"], 409, "the same request sent again");
+        let path = v["upload"]["data"].as_str().expect("the upload's path");
+        assert_eq!(std::fs::metadata(path).unwrap().len(), 1_500_000, "every part arrived");
+        assert_eq!(v["events"]["ok"], true);
+        std::fs::remove_dir_all(std::path::Path::new(path).parent().unwrap()).ok();
+        std::fs::remove_dir_all(&dir).ok();
+
+        // The link off: the phone hears the PC is away.
+        {
+            let conn = state.db.lock().unwrap();
+            let mut s = settings(&conn);
+            s.anywhere = false;
+            db::set(&conn, KEY, &s).unwrap();
+        }
+        apply_link(&state);
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        let away = reqwest::get(format!("{base}/")).await.unwrap();
+        assert_eq!(away.status(), 503);
+        assert!(away.text().await.unwrap().contains("isn't reachable"));
+    }
+
+    /// A data folder for trying the phone against the real app: a second copy
+    /// run with SULCUSAI_DATA_DIR set to SULCUSAI_PHONE_PROFILE. Onboarding is
+    /// done, the phone page and its link are on (to SULCUSAI_RELAY_TEST), one
+    /// phone is paired with a test key and password (written to
+    /// phone-test.txt there), and Qwen3 4B from the real models folder is the
+    /// chat model.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn prepare_phone_profile() {
+        let dir = std::path::PathBuf::from(std::env::var("SULCUSAI_PHONE_PROFILE").expect("SULCUSAI_PHONE_PROFILE"));
+        let relay = std::env::var("SULCUSAI_RELAY_TEST").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
+        let real = std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("app.sulcusai.desktop");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(crate::storage::LOCATION_FILE), real.join("models").display().to_string()).unwrap();
+        let paths = crate::paths::Paths::new(dir.clone()).unwrap();
+        let conn = db::open(&paths.db).unwrap();
+        let vault = crate::open_vault(&paths).unwrap();
+        let c = vault.cipher().expect("a new vault opens unlocked");
+        crate::features::enable_all(&conn);
+        let model = "qwen3-4b-2507";
+        db::update_settings(&conn, |s| {
+            s.onboarded = true;
+            s.default_model = Some(model.into());
+        })
+        .unwrap();
+        let spec = crate::catalog::Catalog::bundled().models.into_iter().find(|m| m.id == model).unwrap();
+        let file = real.join("models").join(model).join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+        let variant = spec.variants.iter().find(|v| v.file.ends_with("Q4_K_M.gguf")).unwrap();
+        db::save_installed(
+            &conn,
+            &db::InstalledModel { model_id: model.into(), quant: variant.quant.clone(), path: file.display().to_string(), size: std::fs::metadata(&file).unwrap().len(), installed_at: db::now_ms(), tps: None, prompt_tps: None },
+        )
+        .unwrap();
+        let key: [u8; 32] = crate::sync::random_bytes();
+        let password = hex::encode(crate::sync::random_bytes::<6>());
+        let salt: [u8; 16] = crate::sync::random_bytes();
+        let p = Phone {
+            id: "phonetest".into(),
+            name: "Test iPhone".into(),
+            key: c.encrypt(&hex::encode(key)),
+            added: db::now_ms(),
+            pass_hash: hex::encode(hash_password(&password, &salt).unwrap()),
+            pass_salt: hex::encode(salt),
+            ..Default::default()
+        };
+        let link_id = hex::encode(crate::sync::random_bytes::<16>());
+        let s = Settings {
+            enabled: true,
+            anywhere: true,
+            relay: relay.clone(),
+            phones: vec![p],
+            link_id: link_id.clone(),
+            link_token: crate::crypto::local_seal(&hex::encode(crate::sync::random_bytes::<32>())),
+            ..Default::default()
+        };
+        db::set(&conn, KEY, &s).unwrap();
+        let link = format!("{}#p=phonetest.{}", link::page_address(&relay, &link_id), B64URL.encode(key));
+        std::fs::write(dir.join("phone-test.txt"), format!("{link}\n{password}\n")).unwrap();
+    }
+
+    #[test]
+    fn many_requests_at_once_pass_but_none_twice() {
+        let now = db::now_ms();
+        let (a, b) = ([1u8; 24], [2u8; 24]);
+        assert!(fresh("p-fresh", b, now + 5, now), "a later one first");
+        assert!(fresh("p-fresh", a, now, now), "then an earlier one: both pass");
+        assert!(!fresh("p-fresh", a, now, now), "the same one again doesn't");
+        assert!(!fresh("p-fresh", [3u8; 24], now - FRESH_MS - 1000, now), "too old");
     }
 }

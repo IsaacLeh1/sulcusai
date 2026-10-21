@@ -6,6 +6,7 @@ import { api, errorText, on, toBase64, type MadeStats, type MediaItem, type Medi
 import { clock } from "../format";
 import { t } from "../i18n";
 import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
+import { onPhone } from "../phone/env";
 import type { PushToast } from "./Toasts";
 
 /** A gallery tile: the picture, or a card for a clip or sound. */
@@ -166,6 +167,19 @@ export function useMediaJobs(): MediaJob[] {
 export async function saveAs(item: MediaItem, toast: PushToast) {
   const ext = item.mime.split("/")[1]?.replace("mpeg", "mp3").replace("jpeg", "jpg") ?? "bin";
   const base = (item.prompt || item.op || "sulcusai").replace(/[^\w\- ]+/g, "").trim().slice(0, 40).replace(/\s+/g, "-") || "sulcusai";
+  // On a paired phone it's saved to the phone, as its browser downloads files.
+  if (onPhone()) {
+    try {
+      const url = await fileUrl(item);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${base}.${ext}`;
+      a.click();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+    return;
+  }
   const path = await save({ defaultPath: `${base}.${ext}`, filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
   if (!path) return;
   try {

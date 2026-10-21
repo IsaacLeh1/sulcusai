@@ -238,6 +238,24 @@ export interface PhoneView {
   while_locked: boolean;
   /** "Keep working while locked" (Settings → Security), which that needs. */
   keep_working: boolean;
+  /** "Reach this phone from anywhere", through SulcusAI's relay. */
+  anywhere: boolean;
+  link: { connected: boolean; problem: string | null; address: string | null };
+}
+
+/** How the PC is doing, for the phone's PC tab. */
+export interface PcStatus {
+  pc: string;
+  cpu: number;
+  cpu_temp: number | null;
+  ram_used: number;
+  ram_total: number;
+  gpu: GpuNow;
+  gpu_temp: number | null;
+  /** Adaptive cooling's level now (0: not cooling, 3: the most). */
+  cooling: number;
+  model: string | null;
+  jobs: { kind: "chat" | "media" | "install" | "training"; title: string; detail: string; fraction: number | null }[];
 }
 
 export interface NewPhone {
@@ -2033,6 +2051,9 @@ export const api = {
   addPhone: (name: string, password: string) => invoke<NewPhone>("add_phone", { name, password }),
   removePhone: (id: string) => invoke<PhoneView>("remove_phone", { id }),
   setPhoneWhileLocked: (on: boolean) => invoke<PhoneView>("set_phone_while_locked", { on }),
+  setPhoneLink: (anywhere: boolean) => invoke<PhoneView>("set_phone_link", { anywhere }),
+  pcStatus: () => invoke<PcStatus>("pc_status"),
+  stopAll: () => invoke<number>("stop_all"),
   syncView: () => invoke<SyncView>("sync_view"),
   setSync: (enabled: boolean, name: string | null) => invoke<SyncView>("set_sync", { enabled, name }),
   startPairing: () => invoke<SyncView>("start_pairing"),

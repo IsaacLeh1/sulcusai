@@ -25,6 +25,22 @@
 //   GET    /feedback/inbox?key=<key>    the developer's page: everything sent, newest first
 //   POST   /feedback/delete?key=<key>   form field id (or "all")
 // The key is the FEEDBACK_KEY secret (wrangler secret put FEEDBACK_KEY).
+//
+// Phone link (a person's phone reaching their own PC from anywhere), one
+// Durable Object per PC. The PC hosts: it keeps one WebSocket open here and
+// answers everything; the relay only passes messages on. What passes is the
+// app's own files (the same for everyone) or requests and answers sealed
+// with the phone's key, which the relay can't read. With the PC away, the
+// phone is told so.
+//   GET    /v1/link/<id>/host           the PC's WebSocket, "Authorization: Bearer <token>"
+//                                       (64 hex); the first connection records a hash of it
+//   GET    /l/<id>/<path>               the app's files, from the PC
+//   POST   /l/<id>/api                  a sealed request ("X-Phone: <phone id>"); the PC's answer
+// id = 32 hex characters. A link whose PC hasn't connected for 90 days is erased.
+// Frames on the WebSocket are JSON. To the PC: {t: "get", rid, path} or
+// {t: "api", rid, phone, data, more?}. From the PC: {rid, status?, headers?,
+// data?, more?}. data is base64, in parts of under 1 MB (more: true until the
+// last); an answer streams to the phone as its parts arrive.
 
 const MAX_BYTES = 2_000_000;
 const KEEP_MS = 30 * 24 * 3600 * 1000;
@@ -49,6 +65,13 @@ export default {
     if (url.pathname === "/feedback" || url.pathname.startsWith("/feedback/")) {
       if (!env.INBOX) return json({ error: "not found" }, 404);
       return env.INBOX.get(env.INBOX.idFromName("inbox")).fetch(request);
+    }
+    // The phone link: open to anyone who has the link's address, like the
+    // feedback inbox (what passes is sealed, and only the PC can answer).
+    const link = url.pathname.match(LINK_PATH);
+    if (link) {
+      if (!env.LINK) return json({ error: "not found" }, 404);
+      return env.LINK.get(env.LINK.idFromName(link[2])).fetch(request);
     }
     // With RELAY_SECRET set (wrangler secret put RELAY_SECRET), only
     // addresses that start with /k/<secret> are served, so strangers can't
@@ -203,5 +226,183 @@ export class Inbox {
       return new Response(page, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
     }
     return json({ error: "not found" }, 404);
+  }
+}
+
+const LINK_PATH = /^\/(l|v1\/link)\/([0-9a-f]{32})(\/.*)?$/;
+// How long the phone waits for the PC to start answering.
+const LINK_WAIT_MS = 35_000;
+// What a phone may send in one request, and requests a minute.
+const LINK_MAX_BODY = 30_000_000;
+const LINK_PER_MINUTE = 1200;
+// Parts sent to the PC (WebSocket messages stay under 1 MB).
+const LINK_PART = 600_000;
+const LINK_KEEP_MS = 90 * 24 * 3600 * 1000;
+// Headers the PC may set on what it sends the phone.
+const LINK_HEADERS = ["content-type", "cache-control", "content-security-policy", "x-frame-options", "referrer-policy", "x-content-type-options"];
+
+const unbase64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+function away(path) {
+  const page =
+    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SulcusAI</title>` +
+    `<style>body{font:16px/1.5 system-ui,sans-serif;max-width:420px;margin:18vh auto 0;padding:0 20px;text-align:center;background:#f6f7f8;color:#1b1f23}` +
+    `@media (prefers-color-scheme:dark){body{background:#111417;color:#e6e8eb}}button{font:inherit;padding:10px 18px;border-radius:10px;border:1px solid #888;background:none;color:inherit}</style>` +
+    `<h1>Your PC isn't reachable</h1><p>Make sure your PC is on, SulcusAI is open on it, and "Reach this phone from anywhere" is on in Settings, Phone.</p>` +
+    `<p><button onclick="location.reload()">Try again</button></p>`;
+  const html = path === "/" || path === "" || path.endsWith(".html");
+  return new Response(html ? page : "Your PC isn't reachable right now.", {
+    status: 503,
+    headers: { "content-type": html ? "text/html; charset=utf-8" : "text/plain", "cache-control": "no-store", "retry-after": "10" },
+  });
+}
+
+export class Link {
+  constructor(ctx) {
+    this.ctx = ctx;
+    // Requests waiting for the PC: rid -> { resolve, timer, writer }.
+    this.waiting = new Map();
+    this.next = 1;
+    this.minute = 0;
+    this.count = 0;
+    // The PC's keep-alive, answered without waking this object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  host() {
+    return this.ctx.getWebSockets("host")[0];
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+    const m = url.pathname.match(LINK_PATH);
+    if (!m) return json({ error: "not found" }, 404);
+    const rest = m[3] || "";
+
+    if (m[1] === "v1/link") {
+      if (rest !== "/host" || request.headers.get("upgrade") !== "websocket") return json({ error: "not found" }, 404);
+      const auth = request.headers.get("authorization") || "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+      if (!/^[0-9a-f]{64}$/.test(token)) return json({ error: "unauthorized" }, 401);
+      const have = await sha256(token);
+      const stored = await this.ctx.storage.get("auth");
+      if (stored && stored !== have) return json({ error: "unauthorized" }, 401);
+      if (!stored) await this.ctx.storage.put("auth", have);
+      // One PC per link: a new connection replaces the old one.
+      for (const old of this.ctx.getWebSockets("host")) {
+        try {
+          old.close(4000, "replaced");
+        } catch {}
+      }
+      const pair = new WebSocketPair();
+      this.ctx.acceptWebSocket(pair[1], ["host"]);
+      await this.ctx.storage.setAlarm(Date.now() + LINK_KEEP_MS);
+      return new Response(null, { status: 101, webSocket: pair[0] });
+    }
+
+    if (rest === "") return Response.redirect(`${url.origin}${url.pathname}/`, 302);
+    const minute = Math.floor(Date.now() / 60_000);
+    if (minute !== this.minute) {
+      this.minute = minute;
+      this.count = 0;
+    }
+    if (++this.count > LINK_PER_MINUTE) return new Response("Too many requests. Wait a minute.", { status: 429 });
+    const ws = this.host();
+    if (!ws) return away(rest);
+    if (request.method === "POST" && rest === "/api") {
+      const body = await request.text();
+      if (!body || body.length > LINK_MAX_BODY) return new Response("Too big.", { status: 413 });
+      return this.ask(ws, { t: "api", phone: (request.headers.get("x-phone") || "").slice(0, 64) }, body);
+    }
+    if (request.method === "GET") return this.ask(ws, { t: "get", path: rest.slice(0, 300) }, "");
+    return json({ error: "method" }, 405);
+  }
+
+  /** Sends a request to the PC (data in parts) and waits for its answer to start. */
+  ask(ws, msg, data) {
+    const rid = this.next++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => this.finish(rid, new Response("Your PC didn't answer in time.", { status: 504, headers: { "cache-control": "no-store" } })), LINK_WAIT_MS);
+      this.waiting.set(rid, { resolve, timer, writer: null, ws });
+      try {
+        if (!data) {
+          ws.send(JSON.stringify({ ...msg, rid }));
+        } else {
+          for (let i = 0; i < data.length; i += LINK_PART) {
+            const part = data.slice(i, i + LINK_PART);
+            ws.send(JSON.stringify({ ...msg, rid, data: part, more: i + LINK_PART < data.length }));
+          }
+        }
+      } catch {
+        this.finish(rid, away(msg.path || "/api"));
+      }
+    });
+  }
+
+  /** Answers a waiting request that hasn't started streaming. */
+  finish(rid, response) {
+    const w = this.waiting.get(rid);
+    if (!w) return;
+    clearTimeout(w.timer);
+    this.waiting.delete(rid);
+    if (w.writer) {
+      w.writer.abort("the PC went away").catch(() => {});
+    } else {
+      w.resolve(response);
+    }
+  }
+
+  async webSocketMessage(ws, message) {
+    if (typeof message !== "string") return;
+    let m;
+    try {
+      m = JSON.parse(message);
+    } catch {
+      return;
+    }
+    const w = this.waiting.get(m.rid);
+    if (!w) return;
+    const bytes = m.data ? unbase64(m.data) : new Uint8Array(0);
+    if (!w.writer) {
+      clearTimeout(w.timer);
+      const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
+      for (const [k, v] of Object.entries(m.headers || {})) {
+        if (LINK_HEADERS.includes(k.toLowerCase())) headers[k.toLowerCase()] = String(v);
+      }
+      if (!m.more) {
+        this.waiting.delete(m.rid);
+        w.resolve(new Response(bytes, { status: m.status || 200, headers }));
+        return;
+      }
+      // A long answer: the phone gets it as the parts arrive.
+      const { readable, writable } = new TransformStream();
+      w.writer = writable.getWriter();
+      w.resolve(new Response(readable, { status: m.status || 200, headers }));
+    }
+    await w.writer.write(bytes);
+    if (!m.more) {
+      this.waiting.delete(m.rid);
+      await w.writer.close();
+    }
+  }
+
+  webSocketClose(ws) {
+    this.drop(ws);
+  }
+
+  webSocketError(ws) {
+    this.drop(ws);
+  }
+
+  /** The PC's connection closed: what it was answering won't come. */
+  drop(ws) {
+    for (const [rid, w] of [...this.waiting]) {
+      if (w.ws === ws) this.finish(rid, away("/api"));
+    }
+  }
+
+  async alarm() {
+    if (this.host()) await this.ctx.storage.setAlarm(Date.now() + LINK_KEEP_MS);
+    else await this.ctx.storage.deleteAll();
   }
 }

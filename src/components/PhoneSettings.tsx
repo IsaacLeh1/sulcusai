@@ -5,7 +5,7 @@ import { t } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
-/** Settings → Phone: chat, tasks and notes from a phone on the same Wi-Fi. */
+/** Settings → Phone: the whole app from a paired phone, on this Wi-Fi or (through SulcusAI's relay) anywhere. */
 export function PhoneSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<PhoneView | null>(null);
   const [adding, setAdding] = useState<{ name: string; password: string; again: string; result: NewPhone | null } | null>(null);
@@ -27,8 +27,8 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
     <section className="card">
       <h2>{t("Phone")}</h2>
       <p className="muted small">
-        {t("Use SulcusAI from your phone's browser while it's on the same Wi-Fi as this PC: chat (it runs here, on this PC's models), add and tick off tasks, read notes, and answer the assistant's questions.")}{" "}
-        {t("Nothing is installed on the phone, and everything sent between them is encrypted with a key only the two share. Use it on a home or office network you trust.")}
+        {t("Use all of SulcusAI from your phone's browser: your chats and new ones, the Studio, switching models and the rest. Everything runs here, on this PC, and the phone has a PC tab showing its temperatures and work, with Stop all.")}{" "}
+        {t("Nothing is installed on the phone, and everything sent between them is encrypted with a key only the two share.")}
       </p>
       <div className="toggle-row">
         <div>
@@ -49,6 +49,29 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
         </div>
         <label className="switch" title={v.enabled ? t("On") : t("Off")}>
           <input type="checkbox" checked={v.enabled} onChange={(e) => run(() => api.setPhone(e.target.checked))} aria-label={t("Phone page")} />
+          <span />
+        </label>
+      </div>
+      <div className="toggle-row">
+        <div>
+          <strong>{t("Reach this phone from anywhere")}</strong>
+          <span className="small muted block">
+            {t("Through SulcusAI's relay on Cloudflare, so the phone works on mobile data and other networks too. This PC still does all the work: the relay only passes on sealed messages it can't read. While this PC is off or SulcusAI is closed, the phone can't reach it.")}
+          </span>
+          {v.enabled && v.anywhere && (
+            <span className={`small block ${v.link.problem && !v.link.connected ? "warn-text" : "muted"}`}>
+              {v.phones.length === 0
+                ? t("It connects once a phone is paired.")
+                : v.link.connected
+                  ? t("Connected.")
+                  : v.link.problem
+                    ? t("Not connected: {why}", { why: v.link.problem })
+                    : t("Connecting…")}
+            </span>
+          )}
+        </div>
+        <label className="switch" title={v.anywhere ? t("On") : t("Off")}>
+          <input type="checkbox" checked={v.anywhere} onChange={(e) => run(() => api.setPhoneLink(e.target.checked))} aria-label={t("Reach this phone from anywhere")} />
           <span />
         </label>
       </div>
@@ -82,13 +105,13 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
           ))}
         </ul>
       )}
-      {v.enabled && v.running && (
+      {v.enabled && (v.running || v.anywhere) && (
         <button className="btn" onClick={() => setAdding({ name: "", password: "", again: "", result: null })}>
           {v.phones.length > 0 ? t("Pair a different phone…") : t("Add a phone…")}
         </button>
       )}
       {v.enabled && <p className="muted small">{t("Only one phone can be paired, and it asks for its password each time the page is opened. Pairing another phone unpairs this one.")}</p>}
-      {v.enabled && <p className="muted small">{t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the phone can't reach this PC.")}</p>}
+      {v.enabled && !v.anywhere && <p className="muted small">{t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the phone can't reach this PC.")}</p>}
       {adding && (
         <Modal title={t("Add a phone")} onClose={() => setAdding(null)}>
           {!adding.result ? (
@@ -130,7 +153,11 @@ export function PhoneSettings({ toast }: { toast: PushToast }) {
               <p className="small">{t("Point the phone's camera at this code and open the link. Then add the page to its home screen to keep it handy.")}</p>
               <div className="qr" dangerouslySetInnerHTML={{ __html: adding.result.qr }} />
               <p className="muted small">{t("This code is the phone's key: don't share a picture of it. It isn't shown again; remove the phone and add it again to get a new one.")}</p>
-              <p className="muted small">{t("The page reaches this PC over your network without HTTPS. Its messages are encrypted, but on a network you don't trust, someone could change the page itself and catch the password. Use it on your home or office Wi-Fi.")}</p>
+              <p className="muted small">
+                {adding.result.link.startsWith("https://")
+                  ? t("The page comes over HTTPS through SulcusAI's relay, and its messages are encrypted with the phone's key, so the relay can't read them.")
+                  : t("The page reaches this PC over your network without HTTPS. Its messages are encrypted, but on a network you don't trust, someone could change the page itself and catch the password. Use it on your home or office Wi-Fi.")}
+              </p>
               <div className="modal-actions">
                 <button className="btn" onClick={() => setAdding(null)}>
                   {t("Done")}

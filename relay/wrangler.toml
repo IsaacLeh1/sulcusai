@@ -24,3 +24,12 @@ class_name = "Inbox"
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["Inbox"]
+
+# The phone link (Settings → Phone → Reach this phone from anywhere): one object per PC.
+[[durable_objects.bindings]]
+name = "LINK"
+class_name = "Link"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["Link"]

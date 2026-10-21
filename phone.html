@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- The app on a paired phone: served by the PC (phone/mod.rs serve_file). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="sulcusai-phone" content="1" />
+    <meta name="theme-color" content="#1f6f5c" />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="logo.svg" />
+    <title>SulcusAI</title>
+  </head>
+  <body class="on-phone">
+    <div id="root"></div>
+    <script type="module" src="/src/phone/remote.ts"></script>
+  </body>
+</html>

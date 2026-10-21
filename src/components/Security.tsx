@@ -154,7 +154,7 @@ export function LockScreen({ status, onUnlocked }: { status: SecurityStatus; onU
   return (
     <div className="lock">
       <div className="lock-card">
-        <img src="/logo.svg" alt="" width={56} height={56} />
+        <img src="logo.svg" alt="" width={56} height={56} />
         <h1>{t("{app} is locked", { app: APP_NAME })}</h1>
         {mode === "reset" && (
           <>

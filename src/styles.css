@@ -1647,3 +1647,47 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .attach-chip.song .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .user-song { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
 .user-song audio { height: 32px; max-width: 280px; }
+
+/* ---------- on a paired phone (phone.html) ---------- */
+.app.phone { grid-template-columns: 1fr; grid-template-rows: 1fr auto; height: 100dvh; }
+.app.phone > .sidebar {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 60; width: min(310px, 86vw);
+  transform: translateX(-104%); transition: transform 0.2s ease;
+  padding-top: max(14px, env(safe-area-inset-top)); padding-bottom: max(14px, env(safe-area-inset-bottom));
+  box-shadow: 8px 0 30px rgba(0, 0, 0, 0.25);
+}
+.app.phone.menu-open > .sidebar { transform: none; }
+.phone-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(0, 0, 0, 0.4); }
+.app.phone > .main { grid-column: 1; grid-row: 1; }
+.app.phone > .statusbar { grid-column: 1; overflow-x: auto; gap: 12px; padding-bottom: max(4px, env(safe-area-inset-bottom)); scrollbar-width: none; }
+.phone-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; padding-top: max(6px, env(safe-area-inset-top)); border-bottom: 1px solid var(--border); background: var(--sidebar); }
+.phone-bar .icon-btn { width: 40px; height: 40px; }
+.phone-bar .icon-btn.active { color: var(--accent); }
+.phone-title { flex: 1; font-weight: 600; text-align: center; }
+.app.phone .page { padding: 16px 14px 32px; }
+.app.phone .page-head { flex-wrap: wrap; align-items: flex-start; }
+.app.phone .nav button, .app.phone .chat-item { padding: 10px 12px; }
+/* 16px stops phones zooming into a field when it's tapped. */
+.app.phone input, .app.phone textarea, .app.phone select { font-size: 16px; }
+.app.phone .modal { max-width: calc(100vw - 24px); }
+
+/* The phone's PC tab. */
+.pc-page .card { margin-bottom: 12px; }
+.pc-temps { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.pc-temp { display: flex; flex-direction: column; align-items: center; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
+.pc-temp-value { font-size: 26px; font-weight: 700; }
+.pc-temp.cool .pc-temp-value { color: var(--success); }
+.pc-temp.warm .pc-temp-value { color: var(--warn); }
+.pc-temp.hot .pc-temp-value { color: var(--danger); }
+.pc-meter { margin: 10px 0; }
+.pc-meter-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.pc-jobs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.pc-jobs li { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pc-stop { margin-top: 8px; padding: 14px; font-size: 16px; }
+/* A chat's header: its title is already in the phone's bar; the rest wraps. */
+.app.phone .chat-header { flex-wrap: wrap; row-gap: 6px; padding-left: 10px; padding-right: 10px; }
+.app.phone .chat-header > h1 { display: none; }
+.app.phone .chat-actions { flex-wrap: wrap; }
+/* Rows of buttons in a page's header wrap instead of running off the screen. */
+.app.phone .main header { flex-wrap: wrap; row-gap: 6px; }
+.app.phone .main .empty { max-width: 100%; }

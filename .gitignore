@@ -7,3 +7,6 @@ src-tauri/gen/schemas/
 .vscode/
 .idea/
 __pycache__/
+
+# The relay's local test runs (npx wrangler dev).
+relay/.wrangler/

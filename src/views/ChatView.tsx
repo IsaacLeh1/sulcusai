@@ -76,7 +76,7 @@ export function ChatView(props: Props) {
   if (installed.length === 0) {
     return (
       <div className="empty">
-        <img src="/logo.svg" alt="" width={64} height={64} />
+        <img src="logo.svg" alt="" width={64} height={64} />
         <h1>{t("Welcome to {app}", { app: APP_NAME })}</h1>
         <p className="muted">{t("Install a model to start chatting. Everything runs privately on this PC.")}</p>
         <button className="btn primary" onClick={props.onGoModels}>
@@ -90,7 +90,7 @@ export function ChatView(props: Props) {
   if (!chat) {
     return (
       <div className="empty">
-        <img src="/logo.svg" alt="" width={64} height={64} />
+        <img src="logo.svg" alt="" width={64} height={64} />
         <h1>{t("What can I help with?")}</h1>
         <p className="muted">{t("Start a new chat, or pick one from the sidebar.")}</p>
         <button className="btn primary" onClick={props.onNewChat}>

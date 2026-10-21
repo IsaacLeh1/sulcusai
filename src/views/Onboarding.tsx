@@ -57,7 +57,7 @@ function Nav({ onBack, onNext, nextLabel = t("Continue"), nextDisabled }: { onBa
 function Welcome({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
   return (
     <>
-      <img src="/logo.svg" alt="" width={64} height={64} className="onboarding-logo" />
+      <img src="logo.svg" alt="" width={64} height={64} className="onboarding-logo" />
       <h1>{t("Welcome to {app}", { app: APP_NAME })}</h1>
       <p>{t("An AI assistant that runs on your own computer.")}</p>
       <ul className="bullets">

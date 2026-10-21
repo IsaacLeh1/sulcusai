@@ -18,7 +18,9 @@ tauri = { version = "2", features = ["tray-icon"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 tokio = { version = "1", features = ["full"] }
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
+# The phone link's WebSocket to the relay (TLS from tokio-rustls, as for mail).
+tokio-tungstenite = { version = "0.27", default-features = false, features = ["handshake"] }
 # rustls keeps TLS identical on every OS and avoids OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "multipart", "socks"] }
 rusqlite = { version = "0.37", features = ["bundled"] }

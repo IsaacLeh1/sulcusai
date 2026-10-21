@@ -43,7 +43,8 @@ import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 import { IncognitoIcon } from "./components/IncognitoIcon";
-import { BookIcon, GlobeIcon, LockIcon, PeopleIcon } from "./components/Icons";
+import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon } from "./components/Icons";
+import { onPhone } from "./phone/env";
 import { SharePermission } from "./components/SharePermission";
 
 // Pages load the first time they are opened, so the app starts faster.
@@ -65,8 +66,9 @@ const StudioView = lazy(() => import("./views/StudioView").then((m) => ({ defaul
 const PeopleView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.PeopleView })));
 const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ default: m.SharedChatView })));
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
+const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -143,6 +145,10 @@ interface Nav {
 
 function Workspace({ security, onSecurityChanged, toast, nav }: { security: SecurityStatus; onSecurityChanged: () => void; toast: PushToast; nav: Nav }) {
   const { view, setView, activeChat, setActiveChat, activeProject, setActiveProject } = nav;
+  // On a paired phone: the sidebar slides in as a menu, closed again on the way somewhere.
+  const phone = onPhone();
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => setMenuOpen(false), [view, activeChat, activeProject]);
   // Settings' sidebar: where Back returns to, a quick link to scroll to, and
   // the section being read.
   const backTo = useRef<View>("chat");
@@ -509,10 +515,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   );
 
   return (
-    <div className="app">
+    <div className={phone ? `app phone${menuOpen ? " menu-open" : ""}` : "app"}>
+      {phone && menuOpen && <div className="phone-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />}
       <aside className="sidebar">
         <div className="brand">
-          <img src="/logo.svg" alt="" width={26} height={26} />
+          <img src="logo.svg" alt="" width={26} height={26} />
           <span>{APP_NAME}</span>
           {security.lock_enabled && (
             <button className="icon-btn lock-btn" title={t("Lock now")} aria-label={t("Lock now")} onClick={() => api.lockNow()}>
@@ -548,6 +555,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         </div>
         <nav className="nav" aria-label={t("Main")}>
+          {phone && (
+            <button className={view === "pc" ? "active" : ""} onClick={() => setView("pc")}>
+              <PcIcon /> {t("PC")}
+            </button>
+          )}
           {creates && (
             <button className={view === "studio" ? "active" : ""} onClick={() => setView("studio")}>
               {t("Studio")}
@@ -873,8 +885,20 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       )}
 
       <main className="main">
-        <TopBar browserOn={has("browser")} toast={toast} />
+        {phone && (
+          <div className="phone-bar">
+            <button className="icon-btn" aria-label={t("Menu")} title={t("Menu")} onClick={() => setMenuOpen(true)}>
+              <MenuIcon size="1.4em" />
+            </button>
+            <span className="phone-title ellipsis">{view === "chat" && current ? current.title : APP_NAME}</span>
+            <button className={`icon-btn${view === "pc" ? " active" : ""}`} aria-label={t("How the PC is doing")} title={t("How the PC is doing")} onClick={() => setView("pc")}>
+              <PcIcon size="1.4em" />
+            </button>
+          </div>
+        )}
+        {!phone && <TopBar browserOn={has("browser")} toast={toast} />}
         <Suspense fallback={<PageLoading />}>
+        {view === "pc" && <PcView toast={toast} />}
         {view === "chat" && (
           <ChatView
             chat={current}
