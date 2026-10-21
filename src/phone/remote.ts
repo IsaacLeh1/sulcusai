@@ -53,25 +53,29 @@ function stored(k: string): string {
   }
 }
 
-// The key arrives after "#" in the QR code's link (never sent over the
-// network) and stays on this phone.
+// The key arrives after "#" in the QR code's link, which browsers never send
+// over the network, and stays there: a refresh, a reopened tab and a home
+// screen shortcut (which on an iPhone gets storage of its own) all find it
+// again, as does a viewer that keeps nothing. It's also kept in this
+// browser's storage, by link, for an address opened without it.
 let phone = "";
 let key: Uint8Array | null = null;
 (function pair() {
+  const slot = (name: string) => (base ? `sulcus.${name}:${base}` : `sulcus.${name}`);
   const m = /p=([0-9A-Za-z]+)\.([A-Za-z0-9_-]+)/.exec(location.hash);
   if (m) {
     try {
-      localStorage.setItem("sulcus.phone", m[1]);
-      localStorage.setItem("sulcus.key", m[2]);
+      localStorage.setItem(slot("phone"), m[1]);
+      localStorage.setItem(slot("key"), m[2]);
     } catch {
-      /* kept for this visit only */
+      /* the address keeps it */
     }
-    phone = m[1];
-    history.replaceState(null, "", location.pathname);
   }
-  phone = phone || stored("sulcus.phone");
-  const k = m ? m[2] : stored("sulcus.key");
+  phone = m ? m[1] : stored(slot("phone"));
+  const k = m ? m[2] : stored(slot("key"));
   if (k) key = fromB64(k.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((k.length + 3) % 4));
+  // Opened without it but known here: put it back, so a shortcut made now works.
+  if (!m && phone && k) history.replaceState(null, "", `${location.pathname}#p=${phone}.${k}`);
 })();
 
 let session = "";
