@@ -221,7 +221,7 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 
 ## Tests
 
-- **Trying changes without a release:** `powershell -File scripts\dev.ps1` (or double-click `scripts\dev.cmd`) runs the app from the code (`pnpm tauri dev` with the sign-in IDs from `sulcusai-oauth.env`). Window changes appear on save; Rust changes rebuild and restart it. It uses the real data folder, so it refuses while the installed app is running (closing its window only hides it; Quit from the tray). `-TestData` uses `%LOCALAPPDATA%\app.sulcusai.desktop-dev` instead (`SULCUSAI_DATA_DIR`). Publishing is only for releases. Started from a Claude session it would run inside Claude's MSIX container and see the container's AppData copy; to start it for him with his real data, open `scripts\dev.cmd` through `explorer.exe`.
+- **Trying changes without a release:** `powershell -File scripts\dev.ps1` (or double-click `scripts\dev.cmd`) runs the app from the code (`pnpm tauri dev` with the sign-in IDs from `sulcusai-oauth.env`). Window changes appear on save; Rust changes rebuild and restart it. It uses the real data folder, so it refuses while the installed app is running (closing its window only hides it; Quit from the tray). `-TestData` uses `%LOCALAPPDATA%\app.sulcusai.desktop-dev` instead (`SULCUSAI_DATA_DIR`). Publishing is only for releases. Started from a sandboxed (MSIX-packaged) app's shell it would run inside that app's container and see the container's AppData copy; to start it with my real data, open `scripts\dev.cmd` through `explorer.exe`.
 - `cd src-tauri && cargo test` (127 tests): catalog, fit rule, connectivity gate, database, prompt building, encryption, app lock, the agent, plus audio formats, voice detection, speech-model choice, speech cleanup, meetings (storage, echo, batching, notes, export), translation, filterbank/FFT and speaker grouping.
 - `cd src-tauri && cargo test e2e -- --ignored --nocapture --test-threads 1`: the real engines and models (Qwen3 1.7B, Whisper Small and Large v3 Turbo, Supertonic 3, WeSpeaker). It downloads about 2.5 GB the first time and reuses the app's data folder. Run them one at a time; they share the engines.
 - `pnpm test`: UI helpers, including starter-model choice.
@@ -237,7 +237,7 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - The CSP blocks the window from making any network request. All HTTP goes through Rust and `net.rs`.
 - Model links are shown but not clickable, and remote images aren't loaded. Opening links externally waits for the Web level and an opener.
 - Every command that reads chats or the profile calls `state.cipher()?`, which returns `"locked"` while the app is locked. New commands that touch encrypted data must do the same.
-- Sandboxed shells (such as the Claude desktop app's) can see `%LOCALAPPDATA%` redirected to `...\Packages\<app>\LocalCache\Local`. A dev build started from such a shell uses that copy, not the real data folder.
+- Sandboxed shells (such as an MSIX-packaged app's) can see `%LOCALAPPDATA%` redirected to `...\Packages\<app>\LocalCache\Local`. A dev build started from such a shell uses that copy, not the real data folder.
 - A capture or playback test opens the real microphone or speakers. Ask the user before running one.
 - Losing `keys.json` loses every encrypted chat. Back it up together with `sulcusai.db` (a future backup feature must include both).
 
@@ -274,7 +274,7 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 - Main browser (`browsers.rs`; Settings › Connectivity): built-in, Windows default (`explorer.exe <url>`), or any browser registered under `Clients\StartMenuInternet` (looked up again at each launch; only http/https). The 🌐 button at the top of the page (`TopBar` in App.tsx) opens it, and web links in answers open there too.
 - Keep working while locked (Security › app lock): `Vault::lock_screen` keeps the key; `cipher()` refuses for the window while `work_cipher()` serves the scheduler, mail/calendar sync and reminders (which then hide the task text). Running replies hold their own key clone and aren't cancelled.
 - Browser control (`bridge.rs`, `extension/`, Browser control feature): MV3 extension with a fixed ID (`inkpcpcjmnholkpjadbgaiilchjfjopg`, from the `key` in its manifest; the private key was thrown away, since unpacked loading only needs the public one). The app registers itself as native-messaging host `app.sulcusai.bridge` (HKCU, for Chrome, Edge, Chromium and Brave; manifest and `connection.json` in `%LOCALAPPDATA%\SulcusAI-bridge`). Chrome starts `sulcusai.exe chrome-extension://…`, and `main.rs` runs connector mode, relaying to the app over a random pipe name with a per-run token. The connector must use overlapped (tokio) pipe I/O: blocking I/O on one handle deadlocked. Browser tools use the extension when it's connected, else the built-in browser.
-  - `e2e_browser_extension` runs headless Edge with `--load-extension` (needs `--disable-features=DisableLoadExtensionCommandLineSwitch`) and passes. He still has to Load unpacked once in his browser.
+  - `e2e_browser_extension` runs headless Edge with `--load-extension` (needs `--disable-features=DisableLoadExtensionCommandLineSwitch`) and passes. It still has to be loaded unpacked once in the browser.
 - Web answers: `weather` tool (Open-Meteo; free API is non-commercial, so a commercial release needs a plan or another source), `web::excerpts` auto-reads the top 3 pages in `web_search`, and `chat::salvage_tool_calls` runs `<tool_call>` blocks that small models write into their thinking or their text.
 - The assistant gathers what it needs (`location.rs`, 2026-10-08): Settings › About you has "Where you are" (`Profile.location/lat/lon`) with "Use this PC's location" (Windows Geolocator, named via Nominatim). With no place given, `weather` uses the saved place, else `location::detect()`. A place the model made up is dropped (`named_in` checks it against the user's recent messages; Qwen3 1.7B invented "Toronto"). The system prompt says to look things up with tools before asking and never to guess figures, and `api_messages` prefixes each user message with "(Sent …)", fixed per message so the prompt cache holds.
 - Version 0.4.0 installer: `pnpm tauri build` in this worktree (not in `main`, so the running dev app isn't touched) → `src-tauri/target/release/bundle/nsis/`.
@@ -286,10 +286,10 @@ Work happens in this worktree so the running dev app in `C:\dev\sulcusai` isn't 
 
 **Queued request (2026-10-07, choice and button done 2026-10-08; extension next):** browser choice and placement.
 - Let users pick their main browser: Chrome, Edge, Safari (Mac only) or DuckDuckGo, alongside the built-in one. Driving Chrome or Edge safely needs an extension or native messaging, never a remote-debugging port (DESIGN.md rule). DuckDuckGo's browser has no automation API, so it could only be opened, not controlled.
-- He decided: **browser control is its own switch on the Features page, and that feature includes the extension.** Turning it on installs or sets up a SulcusAI extension for Chrome or Edge that talks to the app over native messaging (no debug port). The assistant then works in his real browser. With it off, the assistant can't touch his browsers. The built-in browser remains the option that needs no extension.
+- Decided: **browser control is its own switch on the Features page, and that feature includes the extension.** Turning it on installs or sets up a SulcusAI extension for Chrome or Edge that talks to the app over native messaging (no debug port). The assistant then works in the user's real browser. With it off, the assistant can't touch the user's browsers. The built-in browser remains the option that needs no extension.
 - Move the Browser button out of the left sidebar to a web (🌐/🧭) icon at the top of the page.
 
-**Phase 4 still to check live:** the browser, quick ask, mail and calendar against his real accounts. (Microsoft/Google sign-in was built in Phase 5.)
+**Phase 4 still to check live:** the browser, quick ask, mail and calendar against my real accounts. (Microsoft/Google sign-in was built in Phase 5.)
 
 ## Phase 5 (Media) and sign-in (branch `phase5`, same worktree `C:\dev\sulcusai-phase4`)
 
@@ -308,14 +308,14 @@ Phase 4 was merged into `main` and released as the 0.4.0 installer (2026-10-08).
 - Gallery (`store.rs`, table `media`): files sealed with the data key in `<data>/media/<id>` plus a `.thumb`; details encrypted. `hidden` rows are chat attachments and screenshots (not in the Studio; deleted with their chat). The window gets bytes through `tauri::ipc::Response` and makes blob URLs (`src/media.ts`).
 - Studio (`StudioView.tsx`): tabs, composer per kind with time estimates, job cards, gallery with filters, viewer (change it, paint to fill in via `MaskPainter`, extend, restyle, upscale, cut out, bring to life, more like this, favorite, save as, delete), `AudioPlayer` (waveform, trim, loop, save the trimmed part as WAV, save as). Models: Studio › Models and Models › "Pictures, video, music" (`MediaModels.tsx`).
 - Chat tools (`tools/media.rs`): `create_image`, `edit_image` (defaults to the newest picture in the chat; also restyle, upscale, remove_background), `create_video`, `create_music`. Offered when the feature is on and a model of that kind is installed; results show in the chat (`MediaInline`); stopping the reply stops the job.
-- Timings on his RTX 5070 Ti Laptop (measured, now the catalog's `secs`): picture 19 s (1184×880), edit/fill/extend/restyle about 30 s, upscale 40 s, cut-out 20 s (processor), 20-second song 63 s (processor), sound 38 s, Wan 2.2 2-second image-to-video 238 s.
+- Timings on my RTX 5070 Ti Laptop (measured, now the catalog's `secs`): picture 19 s (1184×880), edit/fill/extend/restyle about 30 s, upscale 40 s, cut-out 20 s (processor), 20-second song 63 s (processor), sound 38 s, Wan 2.2 2-second image-to-video 238 s.
 
 **Vision:** catalog `vision` (mmproj) for Gemma 3 4B/12B and the new Qwen3 VL 4B/8B. Installing downloads it; older installs fetch it the first time a picture is sent (`ensure_vision`). llama-server starts with `--mmproj` when the chat has pictures and keeps it once loaded. User messages carry `meta.images`; `chat::attach_images` sends the newest four as image parts (JPEG ≤1.5 MP data URLs), or tells a model without vision that it can't see them. Composer: 📎 attach, paste a picture. Quick ask: 📷 takes a screenshot of the monitor under the mouse (`media/screen.rs`, GDI) as a hidden attachment.
 
 **Sign in with Microsoft or Google (`oauth.rs`):** OAuth 2.0 + PKCE in the user's own browser (main browser if one is chosen, else the Windows default; never the built-in one), back to a one-time listener on 127.0.0.1 (Microsoft redirect `http://localhost:<port>`, Google `http://127.0.0.1:<port>`). Tokens stored encrypted with the account; refreshed when within two minutes of expiry.
 - Mail: XOAUTH2 for IMAP (`async_imap::Authenticator`) and SMTP (lettre `Mechanism::Xoauth2`); Outlook uses outlook.office365.com / smtp.office365.com:587, Gmail imap/smtp.gmail.com.
 - Calendars: Microsoft through Graph (`/me/calendars`, `calendarView` with `Prefer: outlook.timezone="UTC"`, create and delete); Google through CalDAV with a bearer token (`apidata.googleusercontent.com/caldav/v2/<email>/user`, falling back to the main calendar's events collection).
-- **App registrations (made 2026-10-12, 0.8.3):** Google Cloud project `sulcusai` (Desktop client, CalDAV API on, External in Testing: only listed test users can sign in, and their sign-in lasts 7 days until Google verifies the app). Microsoft app "SulcusAI" in his own Default Directory (any Entra tenant + personal accounts; public client `http://localhost`; the Exchange IMAP/SMTP scopes are asked for at sign-in). Release builds get the IDs from `%USERPROFILE%\.tauri\sulcusai-oauth.env` (`scripts/release.ps1` loads it; never commit it). Settings › "Microsoft and Google sign-in" shows each as ready and keeps a person's own registration as an override (`oauth::resolve`).
+- **App registrations (made 2026-10-12, 0.8.3):** Google Cloud project `sulcusai` (Desktop client, CalDAV API on, External in Testing: only listed test users can sign in, and their sign-in lasts 7 days until Google verifies the app). Microsoft app "SulcusAI" in my own Default Directory (any Entra tenant + personal accounts; public client `http://localhost`; the Exchange IMAP/SMTP scopes are asked for at sign-in). Release builds get the IDs from `%USERPROFILE%\.tauri\sulcusai-oauth.env` (`scripts/release.ps1` loads it; never commit it). Settings › "Microsoft and Google sign-in" shows each as ready and keeps a person's own registration as an override (`oauth::resolve`).
 - Still to do for everyone to sign in: Google verification (public homepage and privacy policy, drafted in `docs/`; a verified domain; a demo video; a paid CASA assessment for the restricted Gmail scope), and Microsoft publisher verification (MPN ID) so work and school accounts can consent.
 
 **Tests:** 197 unit tests. Ignored e2e (real engines, real data folder for engines and models, throwaway database and gallery): `e2e_media` (SULCUSAI_MEDIA=picture,upscale,cutout,music,narrate,video; SULCUSAI_MEDIA_OUT), `e2e_vision` (SULCUSAI_VISION_IMAGE), `e2e_chat_makes_pictures` (Qwen3 VL 4B calls create_image then edit_image). All pass. Run them one at a time: they load the GPU fully.
@@ -445,15 +445,15 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 - `relay/worker.js` is a dependency-free Cloudflare Worker with one SQLite-backed Durable Object per mailbox (free plan; KV's free tier allows only ~1,000 writes and lists a day, too few for 2-minute checks). Messages ≤ 2 MB (the app splits letters at 1.4 MB); a mailbox untouched for 30 days is erased by an alarm. `relay/local.mjs` runs the same worker in Node 22+ with `node:sqlite` standing in for the object's storage (`node relay/local.mjs 8787`).
 - Each direction of a pair has a mailbox named `HKDF(pair key, sender id)`; its token is derived the same way, and the relay keeps only its SHA-256 (set on the first write). Messages are JSON letters of changes (like a LAN batch), AES-256-GCM sealed with a third derived key, with the box and message number as associated data. The reader applies them (same later-edit-wins rule), remembers the last number, and deletes what it read. Positions are per peer (`Peer.relay`); a restore resends everything.
 - Test: `cargo test --lib e2e_sync_through_relay -- --ignored --nocapture` (Node runs the worker; two PCs sync both ways through it, a wrong token gets nothing, read mail is deleted, nothing happens off the Cloud level).
-- **Deployed 2026-10-09** on his Cloudflare account (free plan) as `sulcusai-relay` at https://sulcusai-relay.isaacleh1.workers.dev, with a `RELAY_SECRET` so only addresses ending in `/k/<secret>` are served. The full address is in `C:\dev\sulcusai-dist\relay-address.txt` (not in the repo). Redeploy: `npx wrangler deploy` in `relay/` (wrangler is logged in as his account).
+- **Deployed 2026-10-09** on my Cloudflare account (free plan) as `sulcusai-relay` at https://sulcusai-relay.isaacleh1.workers.dev, with a `RELAY_SECRET` so only addresses ending in `/k/<secret>` are served. The full address is in `C:\dev\sulcusai-dist\relay-address.txt` (not in the repo). Redeploy: `npx wrangler deploy` in `relay/` (wrangler is logged in as my account).
 
 ## Look and design (2026-10-13)
 
 - **Themes:** `src/theme.ts` keeps the choice (System, Light, Dark, OLED black) in localStorage `sulcusai.theme`, sets `data-theme` on `<html>` before the first paint, follows Windows for System, and sets the window's title bar with `setTheme` (capability `core:window:allow-set-theme`). Pickers: Settings › Appearance (cards) and the ⚙ menu (compact row), both `components/ThemePicker.tsx`.
-- **Colors** are variables at the top of `styles.css`: light is `:root`, dark and OLED are `:root[data-theme=…]`. OLED is true black with thin borders and no shadows. The logo gradient (`--brand-gradient`) is used only for the app name next to the logo (his choice: buttons and markers stay solid, for a simpler look). Accent: #6447e8 light, #9d8cff dark/OLED.
+- **Colors** are variables at the top of `styles.css`: light is `:root`, dark and OLED are `:root[data-theme=…]`. OLED is true black with thin borders and no shadows. The logo gradient (`--brand-gradient`) is used only for the app name next to the logo (my choice: buttons and markers stay solid, for a simpler look). Accent: #6447e8 light, #9d8cff dark/OLED.
 - **Mail** (`views/MailView.tsx`): webmail layout. Folder rail (Inbox, Unread, Sent, All mail; folders other than INBOX count as Sent), rows with avatars, read/unread (`mail_set_seen`, local only), the message in place of the list, and a compose panel at the bottom right.
 - **Calendar** (`views/CalendarView.tsx`): Day, Week and Month views (the choice is kept in localStorage), a rail with a mini month and calendars that can be hidden, clicking a time slot creates an event at that hour, and clicking an event shows its details. This PC's events are #6447e8; account calendars use their own color or a logo hue.
-- **Buttons** (his choice): the main ones (`.btn.primary`, Compose/Create, Send) are black with a 1.5px accent border, a soft top-down sheen and a light shadow; other buttons stay plain.
+- **Buttons** (my choice): the main ones (`.btn.primary`, Compose/Create, Send) are black with a 1.5px accent border, a soft top-down sheen and a light shadow; other buttons stay plain.
 - **Sort unread** (`triage.rs`, Mail top bar): the loaded or default model reads unread INBOX mail in batches of 6 (sender, subject, first 600 characters), held to a JSON schema on local engines, and says important or not, a one-line reason and a next step (reply, calendar, pay, review, read later, none). Unimportant mail is marked read locally; a message it couldn't judge stays unread. Verdicts are stored encrypted in `mail_triage` (run meta in settings `mail_triage_run`); the **AI report** folder shows "Needs your attention" and "Marked as read by the AI" with Undo (`mail_triage_undo`). Test: `e2e_mail_triage_on_model` (30 emails: 14B 54 s, Qwen3-VL 4B 17 s; both kept people, alerts and reminders and cleared all 22 promotions).
 - **Mail changes reach the server** (2026-10-14): `mail::change` applies read/unread/archive/trash here at once and queues it in `mail_pending`; `flush_pending` (right away when online, via `flush_soon`) and every sync push the queue first (`push_pending`: STORE \Seen, or MOVE to the archive (Gmail: All Mail) or trash folder found by SPECIAL-USE or usual names; copy + expunge where MOVE is missing; never a hard delete). Each sync then pulls read state for the last 500 inbox messages and moves mail that left the inbox elsewhere to the local `Archive` folder (`pull_state`). Failures go to the Activity log and are retried for a week. Test: `mail_changes_reach_the_server_and_back` (pymap on 11430, started fresh; its own Trash is read-only so the test uses Deleted Items).
 - **Auto-sort** (`triage::after_sync`): off by default (`mail_auto_sort`); after a sync brings new mail and no chat is answering, it sorts only unsorted unread mail and sends one Windows notification naming who needs the user. The AI report shows the past week's verdicts.
@@ -466,7 +466,7 @@ Phase 6 (with `local-models`) was merged into `main` and pushed as 0.6.0 (2026-1
 
 ## Private connection (2026-10-14)
 
-His brief: nothing hosted by us; sites SulcusAI contacts shouldn't learn the user's address or location. `privacy.rs`, `components/PrivacySettings.tsx` (Settings, above Your devices) and a status-bar pill (`PrivacyPill`, shown only while on).
+Brief: nothing hosted by us; sites SulcusAI contacts shouldn't learn the user's address or location. `privacy.rs`, `components/PrivacySettings.tsx` (Settings, above Your devices) and a status-bar pill (`PrivacyPill`, shown only while on).
 - **Two ways:** Tor built in (Arti `arti-client` 0.47, in-process, state/cache in `<data>/tor`), or the user's own SOCKS5/HTTP proxy or VPN (`normalize` turns `host:port` and `socks5://` into `socks5h://` so names are looked up at the far end).
 - **Tor gateway:** a SOCKS5 server on 127.0.0.1 (random port, random user name and password per run) that carries each CONNECT through Arti, so every client uses the same `socks5h://` address. It fails closed: while Tor is starting, requests wait (120 s); they never go out directly. Once Tor has been stuck for 20 s (`STUCK_GRACE`), requests fail at once with the reason (`privacy::check`, called by `net::routed`, `net::connect` and the updater).
 - **Status:** `TOR_STATUS` follows Arti's `bootstrap_events` (progress %, `blocked()` mapped to plain words by `problem_words`); `privacy:status` events tell the window to re-read `privacy_view`.
@@ -500,7 +500,7 @@ His brief: nothing hosted by us; sites SulcusAI contacts shouldn't learn the use
 
 ## People (2026-10-15, phases 1-5, not built)
 
-His brief: link with someone else's SulcusAI by a code, Radmin-style direct connection, a chat between the people that never goes to a model; their agents can talk to each other and they can see each other's work. Built in five phases (commits 2d09f24, b037817, 4e31691, 38a9d9f). Feature `people` (off by default; group "With other people"), page `views/PeopleView.tsx`, core `sync/people/` (DESIGN.md §4.11).
+Brief: link with someone else's SulcusAI by a code, Radmin-style direct connection, a chat between the people that never goes to a model; their agents can talk to each other and they can see each other's work. Built in five phases (commits 2d09f24, b037817, 4e31691, 38a9d9f). Feature `people` (off by default; group "With other people"), page `views/PeopleView.tsx`, core `sync/people/` (DESIGN.md §4.11).
 - **Linking** (`mod.rs`) reuses sync's pairing (SPAKE2 code, `Open`/`PairReply`, `transcript`, `wire::pair_key`) under `want: "person"`, with its own code (`people::CODE`). A person is a **contact** (settings key `people`: `{name, contacts:[{id, name, key (sealed), addr, last_seen, allow, offer_relay, their_relay (sealed), box_next, box_got}], shares:[{chat_id, with}]}`), never a paired PC: `sync::answer` sends `want: "people"` to `people::answer` before the paired-PC lookup, so a contact can't sync, list or copy models (tests check `peers` stays empty).
 - **Listening:** the sync loop listens when sync is on **or** `people::wants_calls` (feature on, and a contact exists or a code is showing); `sync::wake()` runs when the feature is toggled. With only People on nothing is broadcast unless a code is showing (`Announce.person`).
 - **The live link** (`link.rs`): one TCP connection per person, kept open while both apps run (ping every 30 s, gone after 90 s quiet), sealed frames both ways (`Frame`, tagged by `k`; unknown kinds are skipped). Whoever can reach the other calls; one reachable side is enough. Crossed calls: both keep the call made by the smaller app id (`register`, within 10 s). Not connected: retries 0 s, 10 s … 2 min. The callee answers on its own task (`answer` spawns `run`), so the sync listener's 600 s limit and 8 slots don't apply. Online = connected.
@@ -517,14 +517,14 @@ His brief: link with someone else's SulcusAI by a code, Radmin-style direct conn
 ## After 0.9.1 (2026-10-15, not built)
 
 0.9.1 (People, compaction, downloads) is published. Since then, on phase7:
-- **Suggestion per PC** (`catalog::best_for`, `ModelCard.best`, badge "Best for this PC", `starter.ts`): the highest-rated chat model with tools whose best version runs at 15+ tokens/sec, entirely on the graphics card when there is one (else anywhere; on a slow PC the fastest). The catalog's fixed "recommended" tag is gone. Test `the_suggestion_grows_with_the_graphics_card`: 8 GB → Qwen3 8B, 12 GB (his RTX 5070 Ti laptop) → Qwen3 14B, 16 GB (his friend's) → gpt-oss 20B, 24 GB → Qwen3 32B; never the coder.
+- **Suggestion per PC** (`catalog::best_for`, `ModelCard.best`, badge "Best for this PC", `starter.ts`): the highest-rated chat model with tools whose best version runs at 15+ tokens/sec, entirely on the graphics card when there is one (else anywhere; on a slow PC the fastest). The catalog's fixed "recommended" tag is gone. Test `the_suggestion_grows_with_the_graphics_card`: 8 GB → Qwen3 8B, 12 GB (my RTX 5070 Ti laptop) → Qwen3 14B, 16 GB (my friend's) → gpt-oss 20B, 24 GB → Qwen3 32B; never the coder.
 - **Five bigger catalog models** (sizes and SHA-256 from Hugging Face's API, architecture from each model's config.json): Mistral Small 3.2 24B (vision), Qwen3 30B-A3B Instruct 2507, Gemma 3 27B (vision), Qwen3 32B, Qwen3 Coder 30B-A3B. Before this, a 12 GB card could already run every catalog model, so a 16 GB card saw nothing more.
 - **Trying a model out** (after an install, and the speed test): install progress now has phases `loading` then `benchmark`; `components/Testing.tsx` shows a ticking "0:12 so far" and says it may take a minute and stops by itself. With Windows' animations off (`prefers-reduced-motion`) the indeterminate bar used to vanish, so it looked frozen; it now stays visible.
 - **Model cards** wrap their rows and let the quality menu shrink, so nothing spills past the card (the installed card's "Stop using" did by ~25 px).
 
 ## Folders and building things (2026-10-15)
 
-His friend's model "gave them all the code but never ran anything": no folder was shared, so it had no file tools. Now:
+A friend's model "gave them all the code but never ran anything": no folder was shared, so it had no file tools. Now:
 - **`request_folder`** (group `app`, offered whenever tools are on): the model names a reason and a folder (a full path, or a new folder's name on the Desktop). `agent::request_folder` asks through the approval flow with `Preview { kind: "folder", detail: reason, note: path }`; the popup is `components/FolderPermission.tsx` (mounted in App, filtered out of the chat's inline cards), with "Pick another…" (`choose_folder` → `workspace::FOLDER_ASKS`). A yes turns on Files and coding, shares it (`workspace::share_folder`, which makes it if new: one level, removed again if refused), emits `folders:changed`, and returns `meta.folder_granted`: the turn rebuilds the sandbox, swaps the tool instructions in the system prompt and adds the file tools from the next step. Inside an already shared folder it doesn't ask.
 - **Desktop access:** "Let the assistant use anything on my Desktop" in the 📁 menu and Settings → Shared folders (`desktop_access`/`set_desktop_access`; the Desktop via Tauri's `desktop_dir`, so OneDrive's Desktop too). It's just the Desktop shared as a folder.
 - **Background commands** (`run_command` with `background: true`; `command_output`, `stop_command`) for dev servers and watchers, and **`open_path`** (Write; files in shared folders or http(s) addresses; refuses anything that runs). The instructions tell it to build, run and open the result instead of pasting code.
@@ -532,32 +532,32 @@ His friend's model "gave them all the code but never ran anything": no folder wa
 
 ## Keeping the PC safe (2026-10-15, for 0.9.2)
 
-His brother's PC crashed while the assistant built a "NYSE live website", and Steam then said "corrupt disk". SulcusAI can't damage a drive, but a crash or a full disk mid-write corrupts Steam's download cache. What could have let the app or its commands take a PC down is now closed:
+My brother's PC crashed while the assistant built a "NYSE live website", and Steam then said "corrupt disk". SulcusAI can't damage a drive, but a crash or a full disk mid-write corrupts Steam's download cache. What could have let the app or its commands take a PC down is now closed:
 - **Commands** (`tools/shell.rs`, `tools/guard.rs`): output kept to its first 50 KB and latest 150 KB (`Kept`; foreground output used to be read whole into memory for up to 10 minutes). Commands run in their own job object (`winjob::Job::limited`): half the PC's memory and 256 processes between them, below-normal priority, ended with the app. `guard::refuse` never runs disk/partition/boot/backup/Defender/firewall/HKLM/shutdown commands (`NEVER`), nor ones that delete, move or overwrite anything outside the shared folders (paths found by regex, variables and `..` expanded; best effort, it's a backstop). The approval card is refused the same way. No command starts with under 4 GB free on its folder's drive or the system drive; running ones (foreground and background) are stopped under 2 GB.
 - **Downloads** (`download.rs`): free space checked before writing and every 5 s while downloading (always leaving 2 GB); the `.part` is kept so it resumes. `sync_all` before the rename. (`start_install`'s own check still uses the startup snapshot `disk_free`.)
 - **Crash-safe writes:** `storage::write_safely` (temp beside it, fsync, rename; written in place if another app holds the file) for keys.json (it had no fsync), restored keys, models-location, device-id, checkpoint restores and the agent's `write_file`/`edit_file`.
 - **Updates install on their own** (`updates.rs`): `UpdateSettings.chosen` is new, so everyone who never chose (all 0.9.1 users had `install: false` stored) now installs updates when idle (`installs()`); `idle()` also waits for the assistant's running commands. Copies on 0.9.1 still need one click on the update prompt.
 - **Not done:** the engine's fit uses total RAM, not what's free now (`hardware.rs` collects `ram_available` but nothing uses it); engine/media logs have no size cap while running; checkpoint backups have no total cap.
-- **Afterwards:** the brother's Event Viewer showed Event 7 "\Device\Harddisk0\DR0 has a bad block" several times a second: his drive is failing (hardware), which explains the crash and Steam's error.
+- **Afterwards:** my brother's Event Viewer showed Event 7 "\Device\Harddisk0\DR0 has a bad block" several times a second: his drive is failing (hardware), which explains the crash and Steam's error.
 
 ## Security review of 0.9.2 (2026-10-15; done 2026-10-16, see "Where each finding stands")
 
-An outside static review of the 0.9.2 source zip (his copy: `Downloads\SulcusAI-0.9.2-security-review.md`) found no malware, embedded keys or credential theft, and seven weaknesses. Each was checked against the code here and is real. Suggested fixes follow each.
+An outside static review of the 0.9.2 source zip (my copy: `Downloads\SulcusAI-0.9.2-security-review.md`) found no malware, embedded keys or credential theft, and seven weaknesses. Each was checked against the code here and is real. Suggested fixes follow each.
 - **F1 (high): commands aren't confined to the shared folders.** `run_command` runs PowerShell/bash as the user; the working folder, `guard::refuse` (a regex backstop) and the job object (resources only) don't stop an interpreter, build script or package from reading, writing or going online anywhere the user can. "Allow for this chat" and Bypass skip the per-command card. README's "Agent mode" lines read stronger than that. Fix: say plainly in README, the approval card and Settings what a command can reach; consider always asking for `run_command` even when "allowed for this chat"; a real boundary would be an AppContainer / restricted-token / separate low-privilege account, with ACLs on the shared folders.
 - **F2 (high off Windows): folder checks ignore capitalization everywhere** (`sandbox.rs` `key()` lowercases). Harmless on normal Windows/NTFS; on Linux (and case-sensitive macOS volumes) `/x/Project` grants `/x/project`. Fix: case-insensitive only on Windows, exact comparison of canonical paths elsewhere, test with two folders differing only in case. `guard.rs` reuses `Sandbox::holds`, so it inherits the fix.
 - **F3 (high, feature off by default): the phone page is served over plain HTTP** on every interface (`phone/mod.rs:93`, `:368`; `phone/page.html`), so someone who can tamper with LAN traffic can swap the script and take the pairing key from the URL fragment/localStorage, then read chats and notes and answer approvals. Known and warned about in Settings. Fix: an authenticated transport for the page (HTTPS with a certificate the QR pins can't be checked by a browser, so this needs thought: e.g. the companion as an installed PWA fetched once over HTTPS from the website, talking to the PC with the existing sealed API); until then keep the warning and add "forget all phones".
 - **F4 (medium): web fetches can reach the local network** through DNS: `web::check_url` resolves and checks once, the request resolves again (rebinding), and the redirect policy (`web.rs:119`) only rejects literal private IPs, `localhost` and `.local`, not names that resolve to private addresses. Fix: a custom `reqwest` DNS resolver (`ClientBuilder::dns_resolver`) that drops non-public addresses, so every connection and redirect is checked at connect time; mind the private-connection proxy path (the proxy resolves, so check there or refuse private names).
 - **F5 (medium): a paired phone can read while the app is screen-locked** with "Keep working while locked" on: `phone::api` uses `state.work_cipher()` (`phone/mod.rs:159`), whose comment and the Phone settings say nothing can be read while locked. Fix: use `cipher()` (refuses while screen-locked) for phone requests, or a separate, explained setting.
 - **F6 (medium): "localhost" checks are string prefixes** (`cloud.rs:931`, `sync/mod.rs:969`), so `http://localhost.attacker.example` or `http://127.0.0.1.evil.example` pass and keys/prompts go out unencrypted. Fix: parse the URL; allow plain http only for host exactly `localhost` or a loopback IP; https otherwise; no redirects that downgrade.
-- **F7 (privacy): Offline still checks for (and now installs) updates** (`updates.rs`; auto-install by default since 0.9.2, at his request so fixes reach everyone). Signatures are verified. Fix: say it in onboarding, the Offline description and Settings → Updates; maybe a "strictly offline" switch that turns update checks off too.
+- **F7 (privacy): Offline still checks for (and now installs) updates** (`updates.rs`; auto-install by default since 0.9.2, at my request so fixes reach everyone). Signatures are verified. Fix: say it in onboarding, the Offline description and Settings → Updates; maybe a "strictly offline" switch that turns update checks off too.
 - **Other notes:** the browser extension asks for all sites + tabs/scripting/native messaging (needed for browser control; worth explaining on install); macOS/Linux fall back to `protector.key` in the data folder when there's no keychain; fine-tuning writes plaintext training examples that a crash leaves behind (`finetune.rs:278`, `:300`; clean up stale `finetune-*` folders at startup). Positives it listed: SHA-256-checked downloads, signed updates, authenticated loopback endpoints, AES-GCM + Argon2id, Markdown without raw HTML or remote images.
 - **Also recommended:** a full dependency advisory audit (`cargo deny check advisories` and `pnpm audit`) before the next release.
 
-**His decisions (2026-10-15), to do later. Don't start until he asks.** Rule for all of these: fix what really needs it, but skip any fix that would break something that works today.
+**Decisions (2026-10-15), to do later.** Rule for all of these: fix what really needs it, but skip any fix that would break something that works today.
 - **F5 → a setting, not a block.** Approved (paired) phones may see chats while the PC app is locked, but only when the user has turned that on. Make it its own explained setting (e.g. Settings → Phone: "Let paired phones use SulcusAI while it's locked"), separate from "Keep working while locked". With it off, `phone::api` refuses while screen-locked (`cipher()`). Fix the comment and the Phone settings text that say nothing can be read while locked.
-- **F6 → fix it (left to me).** Parse the URL; plain http only for host exactly `localhost`, `127.0.0.1`/loopback or `[::1]`, https for everything else; no downgrading redirects. Existing local setups (Ollama, LM Studio on localhost) must keep working. His rule on API keys: sending them is fine as long as they can't leak to where anyone else can get them, i.e. only over https or true loopback.
+- **F6 → fix it.** Parse the URL; plain http only for host exactly `localhost`, `127.0.0.1`/loopback or `[::1]`, https for everything else; no downgrading redirects. Existing local setups (Ollama, LM Studio on localhost) must keep working. My rule on API keys: sending them is fine as long as they can't leak to where anyone else can get them, i.e. only over https or true loopback.
 - **New: an entirely offline mode with zero traffic.** No update checks, no downloads, nothing outbound. When it's turned on, list the settings that need traffic (automatic update checks/installs, and anything else found: sync relay, cloud providers, web, private connection, People/phone/sync on the LAN, connectors…) and let the user keep each one on or turn it off. This also answers F7.
-- **F1 → keep it as it is.** He likes the current behavior: commands are held in by the guard and the per-command card, or not, when the user approves (allow for chat, Bypass). No sandbox work. (Still open: whether to soften the 0.9.2 release notes/README wording that says commands never change anything outside shared folders. Ask him.)
+- **F1 → keep it as it is.** I like the current behavior: commands are held in by the guard and the per-command card, or not, when the user approves (allow for chat, Bypass). No sandbox work. (Still open: whether to soften the 0.9.2 release notes/README wording that says commands never change anything outside shared folders.)
 - **F2, F3, F4 and the other notes:** do whichever really need it, without breaking anything:
   - F2 (case-folding off Windows) should be safe to fix.
   - F4 (DNS resolver that drops private addresses) is fine as long as web search, fetching pages and the private connection (Tor/proxy) still work.
@@ -570,7 +570,7 @@ An outside static review of the 0.9.2 source zip (his copy: `Downloads\SulcusAI-
 - **F4, done:** web pages and redirects resolve through `web::PublicOnly` (a `reqwest` DNS resolver that drops non-public addresses at connect time). The SearXNG search uses `searxng_client` (plain lookup), because it's often on localhost or the LAN. With a private-connection proxy the far end resolves, so the resolver isn't installed. Test `names_inside_the_network_are_refused_when_connecting`.
 - **F7 → Fully offline, done:** see that section.
 - **F3, left as is.** A browser can't check a certificate this PC makes without warnings or breaking pairing. An HTTPS page from the website can't call `http://<LAN>` either (mixed content and Chrome's Private Network Access). It stays off by default with the trusted-network warning.
-- **F1, kept** at his choice.
+- **F1, kept** by choice.
 - **Other notes:** interrupted teaching data is now cleaned at startup (`finetune::clean_leftovers`). The extension permissions and the macOS/Linux `protector.key` fallback are unchanged.
 - **Dependencies:** rustls 0.23.46 and quick-xml 0.41 fixed six advisories; `pnpm audit` is clean. Left with no fix available:
   - rsa (Marvin, through Arti, which doesn't decrypt with it)
@@ -645,12 +645,12 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 - The GPU pill reads every 5 s instead of every 3. Each reading starts nvidia-smi, which costs processor time and can keep a laptop's graphics card out of its idle state.
 
 ## Feedback, crash reports, read receipts, shared chats you can join (2026-10-16, after 0.9.3)
-- **Feedback inbox** (his choice: on his own relay):
+- **Feedback inbox** (my choice: on my own relay):
   - `relay/worker.js` has an `Inbox` Durable Object (migration v2, binding `INBOX`). `POST /feedback` takes `{kind: bug|idea|crash, text, version?, contact?}`:
     - text up to 8,000 characters
     - 8 an hour per sender, counted under an hourly hash of the address and key (deleted after the hour)
     - 400 a day
-  - `/feedback/inbox?key=` is his page (with delete); the key is the `FEEDBACK_KEY` secret. The link is ONLY in `C:\dev\sulcusai-dist\feedback-inbox.txt`, never in the repo.
+  - `/feedback/inbox?key=` is my page (with delete); the key is the `FEEDBACK_KEY` secret. The link is ONLY in `C:\dev\sulcusai-dist\feedback-inbox.txt`, never in the repo.
   - Deployed with `cd relay && npx -y wrangler@4.149.0 deploy`. A Durable Object stub's `fetch` takes no extra argument, so the object reads the secret from its own `env` (`local.mjs` mirrors that).
   - App side: `feedback.rs` sends at every level, except Fully offline unless Web is kept.
   - `FeedbackButton` sits in the top bar (`TopBar` in App.tsx). It sends only the text, plus a reply address and the version if the person chooses.
@@ -683,9 +683,9 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - `prefer_dedicated` sets `GGML_VK_VISIBLE_DEVICES` for media/speech engines, only when the engine saw every card (so the indices line up).
   - Status bar (`perf::gpu_now`) reads only the dedicated card: nvidia-smi for NVIDIA; otherwise PDH counters filtered by the card's LUID (`Gpu.luid` from DXGI) plus `card_temp` (D3DKMT adapter perf data, the Task Manager sensor). `gpu_temp` falls back to that too.
 - **Making files instead of pasting code:**
-  - His qwen2.5-coder:14b (Ollama) ignored tools entirely: 0 tool calls in 18 messages.
+  - My qwen2.5-coder:14b (Ollama) ignored tools entirely: 0 tool calls in 18 messages.
   - `chat::builds_in_chat` catches a request to make something answered with code or steps. `forced_build` retries once with a JSON schema allowing only `write_file`/`make_folder` (or `request_folder`), the same way `forced_lookup` works.
-  - `e2e_makes_files_on_ollama_model` (SULCUSAI_TEST_GGUF = the blob) passes. It approves the folder request into its own temp folder and denies open_path/open_page. An earlier version put two folders on his Desktop (`sweetcrumbs-website`, `SweetCrumbsWebsite`); he can delete them.
+  - `e2e_makes_files_on_ollama_model` (SULCUSAI_TEST_GGUF = the blob) passes. It approves the folder request into its own temp folder and denies open_path/open_page. An earlier version put two folders on my Desktop (`sweetcrumbs-website`, `SweetCrumbsWebsite`); they can be deleted.
   - Imported models get catalog ratings by family (`local::known_ratings`).
 - **Activity:** Today / Past week / Past month / All time (`list_actions` takes `since`).
 - **Settings search** (`SettingsSearch.tsx` + `fuzzy.ts`, tested in `fuzzy.test.ts`): indexes the page's headings, labels, callouts and aria-labelled inputs. Handles typos (Damerau distance), prefixes and a synonym map, and shows "Showing results for …". Picking a result scrolls there and highlights it.
@@ -702,7 +702,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - When the card fails twice (`card_trouble`), a picture is made with the processor build (`cpu_engine` downloads ~18 MB once). The half-VRAM retry now adds `--vae-tiling`.
   - There's a Files panel per chat (top right: pictures made or attached, files written). `write_file` results carry `meta.file`. `open_document` allows pages and pictures (never scripts); `show_in_folder` uses `explorer /select`.
   - Save buttons under pictures in chats. Badges for what media models make. "✨ Improve" in the Studio rewrites the idea with the chat model; "✏ Edit a photo…" imports and opens the editor.
-- Not done: a model or engine to make the brother's card work (no logs from his PC). The fallback should get him a picture either way.
+- Not done: a model or engine to make my brother's card work (no logs from that PC). The fallback should get a picture either way.
 - **Servers and ports** (`ports.rs`, Settings → Servers and ports):
   - Lists listening TCP ports from `GetExtendedTcpTable` (v4+v6) with each owner's program (sysinfo). Windows' own (`SYSTEM`, pid ≤ 4) are hidden by default and never stopped.
   - The assistant's background commands (`shell::servers()`; `STOPPED` keeps the last 10) can be stopped and started again (`start_server` re-runs the same command in the same folder via `spawn_shell`).
@@ -718,9 +718,9 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Files already at the target with the same size are kept, not copied again.
   - Links and junctions are followed and copied, never renamed or emptied (what they point at stays). The link itself is removed at the end.
   - Tested in `a_failed_move_puts_everything_back`, `files_already_there_are_kept_not_copied_again` and `linked_folders_are_copied_not_emptied`.
-  - His "move didn't happen" (2026-10-14, to D:) wasn't this bug. His real app's models folder was empty. The 27 GB under `app.sulcusai.desktop\models` existed only in Claude's MSIX container (`Packages\Claude_*\LocalCache`), downloaded by session-launched runs. It was moved to `D:\SulcusAI models` on 2026-10-16 with robocopy run through WMI, and the duplicates were hash-checked first.
-- **Making files with small models** (after 0.9.4). His real app (qwen2.5-coder 1.5B by default) still didn't make files.
-  - **What his real chats showed** (decrypted from a copy with `inspect_a_chat_copy`):
+  - My "move didn't happen" (2026-10-14, to D:) wasn't this bug. My real app's models folder was empty. The 27 GB under `app.sulcusai.desktop\models` existed only in an MSIX container (`Packages\<app>_*\LocalCache`), downloaded by runs launched from a sandboxed app. It was moved to `D:\SulcusAI models` on 2026-10-16 with robocopy run through WMI, and the duplicates were hash-checked first.
+- **Making files with small models** (after 0.9.4). My real app (qwen2.5-coder 1.5B by default) still didn't make files.
+  - **What my real chats showed** (decrypted from a copy with `inspect_a_chat_copy`):
     - The 1.5B called `create_document` with "stock-exchange-site" four times, getting the same error each time.
     - The 14B, after pasting instructions, answered "try again to do it for me" with "As an AI, I can't…".
   - **Fixes:**
@@ -730,23 +730,23 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
     - When the model stops, `Turn` follows through: `missing_pieces` finds css/js files a written page uses but which don't exist, and `forced_write` writes each with the path fixed in the schema. A build ask with nothing written yet gets `forced_build`. Up to 4 follow-ups.
     - A call that failed isn't run again unchanged, and two identical failing repeats end the turn with the error spelled out.
     - The `create_document` error points to `write_file`. ChatView warns under the composer when a model is under 3B.
-  - Verified with his models through `e2e_makes_files_on_ollama_model`, using `SULCUSAI_TEST_ASKS` and `SULCUSAI_TEST_BEFORE` for the follow-up case:
+  - Verified with my models through `e2e_makes_files_on_ollama_model`, using `SULCUSAI_TEST_ASKS` and `SULCUSAI_TEST_BEFORE` for the follow-up case:
     - The 1.5B now writes index.html, styles.css and script.js. They're very basic, which is the model's limit.
     - The 14B now writes a working index.html after "try again to do it for me".
-- **Logs on the PC** (`applog.rs`, after 0.9.5). His brother's 20-minute picture can't be explained without logs.
+- **Logs on the PC** (`applog.rs`, after 0.9.5). My brother's 20-minute picture can't be explained without logs.
   - **app.log:** every Activity entry (`db::log_action` mirrors in) plus a startup line with the hardware, model loads and failures (`engine.rs`), media jobs with model, time and errors, the card's failures and the processor fallback, downloads, and tool failures (name only).
   - **crashes.log:** every panic, unclean exit and window error, even with crash reports off; `crash::write` always logs and saves a report to send only when on.
   - Logs past 2 MB start over and keep the old file as `.old.log`. They never include chat text, prompts or file contents.
   - Settings → Logs lists the files with what each holds, shows the last 400 lines (`read_log`, logs folder only), opens the logs or data folder (`open_app_folder`), and can clear them. About has the folder buttons too.
 - **Keeping pictures on the graphics card** (after 0.9.5):
-  - **What we found:** on his laptop, `sd-cli` without a pinned device used the first Vulkan device. With `--backend te=cpu` its auto-fit put the DiT on **Intel graphics** (Vulkan1: more "free" shared memory), taking 193 s instead of 17. A PC that lists its built-in graphics first gets every picture there; likely the brother's 20 minutes.
+  - **What we found:** on my laptop, `sd-cli` without a pinned device used the first Vulkan device. With `--backend te=cpu` its auto-fit put the DiT on **Intel graphics** (Vulkan1: more "free" shared memory), taking 193 s instead of 17. A PC that lists its built-in graphics first gets every picture there; likely the brother's 20 minutes.
   - **Pinning:** `prefer_dedicated` (GGML_VK_VISIBLE_DEVICES) only worked after a chat model had loaded. `engine::learn_devices` now runs the installed llama-server `--list-devices` before any media job or speech start.
   - **First try:** `card_friendly` keeps 1 GiB free (`--max-vram -1`) and tiles the VAE on cards under 12 GB or above 1.2 MP.
   - **Two lighter tries on the card:** `lighter_on_card` frees more (`-3`, or half a set budget), drops `--diffusion-fa`, adds `--vae-tiling`, and with the card pinned adds `--backend diffusion=Vulkan0,te=cpu,vae=Vulkan0`. The second of them is also at 768 px.
   - Only then the processor, at 640 px (`smaller`).
   - `choose` prefers an installed model whose `min_vram_gb` fits the card.
 - **Models: Grid / List** (remembered in localStorage). List mode is CSS on the same cards (`.model-grid.list`; the card is a column flexbox, so the rows set `flex-direction: row`).
-- **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with his prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
+- **Phone photo look** (`phone_photo` in `STYLES`): words for a candid, unedited phone snapshot. Compared on FLUX.2 klein and Z-Image Turbo with my prompts (dragon and castle, frisbee, Halloween group, Christmas living room). The pictures are in the session scratchpad.
 
 ## Batch for 0.9.6 (2026-10-17)
 
@@ -778,7 +778,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - Installing a model whose license isn't commercial asks first (`licenseOk`); Hugging Face installs always ask (their license is the repository's).
 - **Tests with model overrides:** `e2e_realistic_picture_and_edits` takes `SULCUSAI_EDIT_MODEL`; `e2e_media` takes `SULCUSAI_MUSIC_MODEL`. Both print the stats.
 - **Release builds use thin LTO** (`[profile.release]`). Full LTO in one codegen unit made every release a long single-threaded link.
-- **From 0.9.7 on, building, testing and publishing move to his desktop** (RTX 5070 12 GB, 32 GB). A release compile took the laptop's processor to 98 °C. Setup steps and the rules are in `C:\dev\sulcusai-dist\DESKTOP-HANDOFF.md`, kept outside the repo next to the signing files.
+- **From 0.9.7 on, building, testing and publishing move to my desktop** (RTX 5070 12 GB, 32 GB). A release compile took the laptop's processor to 98 °C. Setup steps and the rules are in `C:\dev\sulcusai-dist\DESKTOP-HANDOFF.md`, kept outside the repo next to the signing files.
 
 ## After 0.9.6 (2026-10-17, for 0.9.7; written on the laptop, not built — build it on the desktop)
 
@@ -788,7 +788,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
   - The file the link named is shown first ("From your link"). Installing goes through `hub_install` / `media_hub_install`.
   - Families can now also match on a tag (`HubFamily.tags`). SDXL has `diffusers:StableDiffusionXLPipeline`, because RealVisXL V5.0 and others name no base model.
   - Tests: `pasted_links_name_the_model_and_file` (unit) and `pasted_links_find_the_right_kind_of_model` (live, ignored).
-- **Default picture, video and music models** (`media_defaults` key, `media_set_default`). His report: chats always used FLUX, and the Studio went back to FLUX after switching tabs.
+- **Default picture, video and music models** (`media_defaults` key, `media_set_default`). My report: chats always used FLUX, and the Studio went back to FLUX after switching tabs.
   - **Cause:** `choose` picked the best model that fit the card's *free* memory, which is small while a chat model is loaded.
   - **Fix:** the default now wins (the job frees the card first anyway).
   - "Make default" is on the Models rows and next to the Studio's picker.
@@ -845,7 +845,7 @@ The first entry in the status-bar level menu (✈). It is Offline, and nothing g
 
 **Published and installed 2026-10-17** (main = phase7 = d899332). The release build took 5.7 min (incremental, 8 jobs). Notes are in `C:\dev\tools\notes-098.md`; the body and latest.json were checked.
 
-From his brother's report (a "Legend of Zelda" picture came out as a generic blond swordsman) and his own ("a live stock exchange website" came out basic, with nothing working).
+From my brother's report (a "Legend of Zelda" picture came out as a generic blond swordsman) and mine ("a live stock exchange website" came out basic, with nothing working).
 
 - **Looking up what it doesn't know** (`chat.rs`, `agent.rs`):
   - The base prompt says not to guess at names, titles or terms it doesn't recognize, and `request_web`'s description covers that case.
@@ -892,7 +892,7 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
   - `paths_stay_inside_the_site`, `the_check_names_what_doesnt_work` and `a_site_is_served_on_this_pc_only_and_follows_the_chats_web` (preview).
   - `src/preview.test.ts`.
   - The panel was tried in the UI mock: the site runs, a click inside it works, and the edge resizes it.
-- **Live test in dev mode** (desktop, his real data, Qwen2.5-Coder 14B at 8K context, Z-Image Turbo; driven over WebView2's DevTools port with `C:\dev\tools\drive.mjs` / `watch.mjs`; test chats, folder and model removed afterwards). Verified: the iframe under the real CSP, the hidden check window, the forced preview and fix steps, the picture lookup. What it found and what changed:
+- **Live test in dev mode** (desktop, my real data, Qwen2.5-Coder 14B at 8K context, Z-Image Turbo; driven over WebView2's DevTools port with `C:\dev\tools\drive.mjs` / `watch.mjs`; test chats, folder and model removed afterwards). Verified: the iframe under the real CSP, the hidden check window, the forced preview and fix steps, the picture lookup. What it found and what changed:
   - **Tool descriptions filled the window:**
     - Every tool's description took 4,655 of 8,192 tokens, which left about 330 for the conversation, so the first file overflowed it.
     - A build ask on a local model with ctx ≤ 16K is now offered only `tools::for_building` tools (files, web, `request_folder`, `open_path`), with no media, people or chat notes (`lean`). That's 1,815 tokens.
@@ -929,7 +929,7 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
     - The stock site came out working on most runs after the fixes (prices move, Buy/Sell change cash and holdings, verified by hand).
     - The finance tracker passed in 60 s, including the filled-in form click.
     - Some runs still stall on a bug the model can't reason out. Larger models and contexts do better.
-- **Hugging Face picture links** (his brother only ever got the old "It runs GGUF chat models…" refusal):
+- **Hugging Face picture links** (my brother only ever got the old "It runs GGUF chat models…" refusal):
   - That was the "not a supported family" message; SD 1.5 and FLUX.1 models hit it.
   - Added Realistic Vision V6.0 (SD 1.5, fp16 + vae-ft-mse) to the catalog, whose `hub` family "Stable Diffusion 1.5" opens SD 1.5 repos. Live-tested: 704×896 on the card in 9 s.
   - `hub_why_not` explains by kind: FLUX.1 not supported yet; picture repos only in diffusers folders (unet/, vae/) need a single file; video needs Wan, music ACE-Step; chat models need GGUF.
@@ -937,9 +937,9 @@ From his brother's report (a "Legend of Zelda" picture came out as a generic blo
 
 ## 0.9.9 (2026-10-17): pictures that don't drift
 
-**Published and installed 2026-10-17** (main = phase7 = 438989d). The release build took 5.3 min. Notes are in `C:\dev\tools\notes-099.md`; the body and latest.json were checked. His brother (Deathron96) was told on Discord, at his request.
+**Published and installed 2026-10-17** (main = phase7 = 438989d). The release build took 5.3 min. Notes are in `C:\dev\tools\notes-099.md`; the body and latest.json were checked. My brother (Deathron96) was told on Discord.
 
-His brother: within a few prompts, pictures (edits and new ones) "lose what he wants". A live test in dev mode (Qwen2.5-Coder 14B, Z-Image Turbo, FLUX.2 klein 4B; test chats and klein removed afterwards) found three causes:
+My brother: within a few prompts, pictures (edits and new ones) "lose what he wants". A live test in dev mode (Qwen2.5-Coder 14B, Z-Image Turbo, FLUX.2 klein 4B; test chats and klein removed afterwards) found three causes:
 - **Wrong picture edited:** the model passed `"<image-id>"` (copied from the parameter's wording), so the edit failed, and then kept passing the first picture's id, so every edit started over from the original.
   - `tools/media.rs edit_source`: the newest picture in the chat, unless the model named a real picture and the person's message points back ("first", "original", "earlier", "go back"…).
   - The parameter's description now says to leave it out.
@@ -952,7 +952,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - The media note asks for each description in full, on its own: what's wanted now, plus anything earlier the user asked to keep, nothing else; and edit_image for changes.
   - Five pictures in a row in one chat each matched only their own ask.
 - Verified by eye: four-step chain (portrait → red top hat → birthday party → night with string lights), the same face and hat throughout, about 22-26 s per edit on the card.
-- **GGUF copies of pasted originals:** his brother pasted openai/gpt-oss-120b (no GGUF) and got "has no GGUF file".
+- **GGUF copies of pasted originals:** my brother pasted openai/gpt-oss-120b (no GGUF) and got "has no GGUF file".
   - `hub::gguf_copies` asks Hugging Face for `base_model:quantized:<id>` (most downloaded first, with GGUF, no account), and `gguf_copy_of` (lib.rs) offers the first that `is_chat`.
   - `HubLink::Chat.found_for` names the original, and the window says it's a GGUF copy.
   - It also runs for gated originals before the "needs an account" message.
@@ -963,7 +963,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 
 **Published and installed 2026-10-17** (main = phase7 = d0c0b71). The release build took 6.5 min. Notes are in `C:\dev\tools\notes-0910.md`; the release assets and latest.json were checked.
 
-- **His brother's live stock exchange (20B model, "settings online") never got live data:**
+- **My brother's live stock exchange (20B model, "settings online") never got live data:**
   - Bug: `tools/site.rs` and `preview_open` used `browser::allowed_for_chat` (the chat's globe only), while the chat's web tools use `web::allowed_for_chat` (globe or the Web search feature). With Web search on and the app Offline, the site was served with the offline CSP and every request was blocked, and the check suggested `request_web`, which isn't offered then. Both now use `web::allowed_for_chat`.
   - Even with web on, pages can't read most sources (CORS) or need keys. Each preview server now has `GET /__sulcus/fetch?url=<address>` (`preview.rs fetch`):
     - Allowed only while the chat may use the web, only from the site's own pages (`Sec-Fetch-Site`), public http(s) only (`web::check_url`), 120 a minute, 5 MB.
@@ -974,13 +974,13 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
     - Tells the model to fetch through the route every 15-30 s and update numbers in place.
     - Names the free sources, all verified: Yahoo chart v8 (needs a browser User-Agent; v7 quote is 401), CoinGecko simple/price and Open-Meteo.
   - The check ignores "nothing changes by itself" once real data came in (a 15 s refresh doesn't change within the 5 s it watches).
-- **API keys (his ask: tell the user, say what's needed, let them approve):** `request_api_key`, with platform, address, reason, signup and key_param or key_header.
+- **API keys (my ask: tell the user, say what's needed, let them approve):** `request_api_key`, with platform, address, reason, signup and key_param or key_header.
   - The popup is `KeyPermission.tsx`; the key travels by `site_key_give` before the allow.
   - `sitekeys.rs` stores keys encrypted in settings (`site_keys`), per host, with the chats allowed to use them. `fetch` adds the key as the parameter (replacing any stand-in) or the header ("Authorization" gets "Bearer").
   - Settings → Connectivity lists the saved keys, with Remove.
   - Known free hosts get "needs no key" (`sitekeys::keyless`): the 14B asked for a Yahoo key. Both places given: the parameter wins.
 - **Site check additions:** buttons whose click only pops up a message (`Report.popups`) are a problem when the ask wants actions. `quote_lines` adds the line a script error points to; an apostrophe inside '…' gets a hint (the 14B wrote `alert('You don't have…')`). preview_site called before any file was written forces the first file (`forced_build`).
-- **Tools like ChatGPT/Claude (he asked for "all the tools they use"):**
+- **Tools like ChatGPT/Claude (I asked for "all the tools they use"):**
   - `calculate` and `run_code` (`jsrun.rs`, QuickJS via rquickjs 0.14):
     - Limits: no network, 10 s, 256 MB. Helpers are globals on globalThis (so the code's own `const sum` works). `readFile`, `readCSV` and `readJSON` read shared folders only.
     - `chart()` draws charts, which `ChartView.tsx` renders under the tool card; `save_chart` saves them as SVG.
@@ -992,7 +992,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - **Small memories (`fit_small`):** with every feature on, an 8K model couldn't start a chat at all ("no longer fits").
   - When base, notes and tools leave less than a quarter of the context for the chat, tool groups the ask doesn't mention are left out, in `tools::SPARE` order, together with their notes.
   - Never left out: calculate, the web and file tools, and connectors. 25 tools went for a plain question.
-- **Live test** (dev mode, his real data, Qwen2.5-Coder 14B at 8K):
+- **Live test** (dev mode, my real data, Qwen2.5-Coder 14B at 8K):
   - Stock site: real prices from Yahoo through the route, with the check reporting "It got live data from query1.finance.yahoo.com".
   - 18.5% of 2,340 = 432.9 (calculate).
   - AAPL with a 1-month chart (market_quote).
@@ -1030,7 +1030,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - After the live test, a separate session timed Wan 2.2 at its trained 1280×704 size. A 5 s clip took 663 s there and 217 s at 832×480, so the default stays 832×480. Video now takes a requested width and height (b5818b4).
 
 - **The graphics card at idle** (`perf.rs`, `components/Performance.tsx`):
-  - The 12% he saw at idle was Chrome (a site preview) and dwm at 160 Hz; it stayed with SulcusAI closed.
+  - The 12% I saw at idle was Chrome (a site preview) and dwm at 160 Hz; it stayed with SulcusAI closed.
   - SulcusAI's own idle costs were `nvidia-smi` every 5 s (the status pill), temperature reads every 10 s while a model was loaded, and a loaded model holding 11 GB for 30 minutes. Starting nvidia-smi wakes the card.
   - Usage now comes from Windows' `\GPU Engine(*)\Utilization Percentage` counters per process (no wake). SulcusAI's share is its own process tree (`our_pids`, cached 10 s). nvidia-smi only runs while something is working (`perf::working`: a reply, a media job, speech, the engine lock, or the engine used in the last 20 s). Temperatures use the driver's sensor (`card_temp`, D3DKMT, NVIDIA too) before nvidia-smi.
   - `perf_view` (the pill, every 30 s while visible) uses `quiet_temps` while idle: the driver's sensor or the last reading, never nvidia-smi.
@@ -1124,8 +1124,8 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - Video was off in Features; it was turned on for the test and turned off again afterwards.
   - A chat with Qwen2.5 Coder 14B (no vision) and the cabin picture attached: Qwen3 VL 4B read it, and the answer was right ("one animal: a golden retriever; the sign says WELCOME"). 93 s, both models loaded.
   - Teaching the prompt writer Z-Image: 24 practice pictures in 5.4 min, 95% → 100%, 4 demos saved on this PC. Not promoted to the catalog (`scripts/promote_prompt_programs.py --write` does it).
-  - The test chat was deleted. The test results are in his gallery: 3 pictures, 2 still and 2 moving wallpapers, and 2 clips.
-- **Not tested live**: "Set as wallpaper" (it would change his desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
+  - The test chat was deleted. The test results are in my gallery: 3 pictures, 2 still and 2 moving wallpapers, and 2 clips.
+- **Not tested live**: "Set as wallpaper" (it would change my desktop), Lively Wallpaper, FLUX.2/Qwen-Image examples as references (not installed), clips over 10 s, and a release build of any of this.
 
 ## 0.9.13 (2026-10-18): faster video decoding
 
@@ -1134,14 +1134,14 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - Video decodes with `--vae-tile-overlap 0.25 --vae-conv-direct` (`sd::clip_args`), found by the Wan size-test session.
   - It measured 3.4× faster decoding at 1280×704 (225 s to 66 s for 49 frames), using 3 GB less of the card.
   - Checked here at 832×480 with 25 frames, 10 steps and the same seed: decoding took 19 s against 47 s. The frames differed from the old settings by 0.15 of 255 on average and at most 4 levels, so there are no visible seams. Tile edges show up only as a 0.5-level bump at x=416.
-- Heat on the desktop: a full 121-frame Wan run reaches 80 °C at 100% within a minute on the stock fan curve. He asked to keep the card under about 75-80 °C, so test with short clips (25 frames, 10 steps peaked at 73 °C) and cool to 50 °C between runs.
+- Heat on the desktop: a full 121-frame Wan run reaches 80 °C at 100% within a minute on the stock fan curve. The card should stay under about 75-80 °C, so test with short clips (25 frames, 10 steps peaked at 73 °C) and cool to 50 °C between runs.
 
 ## After 0.9.13 (2026-10-18): the compressed chat cache
 
-- `catalog::with_q8_cache` (used in `launch_plan`) starts llama-server with `-ctk q8_0 -ctv q8_0`, which needs flash attention. The b11450 Vulkan build turns it on by itself (`-fa auto`) on his RTX.
+- `catalog::with_q8_cache` (used in `launch_plan`) starts llama-server with `-ctk q8_0 -ctv q8_0`, which needs flash attention. The b11450 Vulkan build turns it on by itself (`-fa auto`) on my RTX.
   - It's used when it puts more of the model on the card at the same window, or when no window was chosen and it gives 16K where the normal cache can't.
   - It's skipped when advanced mode sets the window or layers, or the GPU share is below 100%. `memcheck::need` and the engine's reuse check know about it, and the log says "compressed cache".
-- Why: his Qwen2.5-Coder 14B with his chosen 16K window had only 39 of 49 layers on the 12 GB card.
+- Why: my Qwen2.5-Coder 14B with my chosen 16K window had only 39 of 49 layers on the 12 GB card.
 - Measured with llama-bench (`-dev Vulkan0`, at 8K depth):
   - 39 layers, normal cache: 15.5 tokens/s writing, 990 tokens/s reading.
   - 47 layers, compressed cache: 33.8 writing, 1,520 reading.
@@ -1166,8 +1166,8 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
 - Choosing: the fastest wins, unless another within 3% leaves more room. The result is saved per model with its window and card budget (`Tuned`, setting `model_tuning`). `plan_with` uses it only when those match.
 - Window offer: when the whole model didn't fit at the window, it also times a 12K or 8K window with everything on the card, and offers it on the card. It never applies it itself.
 - Between setups it waits for the card to cool to 65 °C (90 s at most), and stops at 85 °C.
-- Lesson: Windows quietly moves what doesn't fit to shared memory. His 14B with 49 layers and the normal cache at 16K "fit", with 2.1 GB in shared memory, and llama.cpp logged "failed to fit params". A short test still looked fast (51 tokens/s), so the first version wrongly chose it. The spill check fixed that.
-- Live on his 14B at 16K: the automatic setup (47 layers, compressed) stays at 46.5 tokens/s. The other setups were rejected (spill; 591 MB free). It offered a 12K window with everything on the card at 58.9 tokens/s. A run takes 99 s and the card stayed under 40 °C.
+- Lesson: Windows quietly moves what doesn't fit to shared memory. My 14B with 49 layers and the normal cache at 16K "fit", with 2.1 GB in shared memory, and llama.cpp logged "failed to fit params". A short test still looked fast (51 tokens/s), so the first version wrongly chose it. The spill check fixed that.
+- Live on my 14B at 16K: the automatic setup (47 layers, compressed) stays at 46.5 tokens/s. The other setups were rejected (spill; 591 MB free). It offered a 12K window with everything on the card at 58.9 tokens/s. A run takes 99 s and the card stayed under 40 °C.
 
 ## Practice: making a model better at checkable skills (2026-10-18, for 0.9.14)
 
@@ -1201,9 +1201,9 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
   - number-to-words, text justification, regex matching, an LRU cache, Dijkstra and topological order in code.
 
   The first version had only level-1 tasks, and Qwen3 4B 2507 got 59 of 60 right.
-- Training window: 512 tokens, measured on his 12 GB card with the 4B. 512 takes 8.3 GB; 768 spills 4.6 GB into shared memory; 1,024 spilled 6.9 GB and didn't finish a step in 3 minutes; `-ub` below `-c` crashes the trainer (GGML_ASSERT ggml_can_repeat). So tool tasks offer at most 4 tools (Qwen's tool instructions are long), coding replies are asked for without explanation, and practice runs with thinking off.
+- Training window: 512 tokens, measured on my 12 GB card with the 4B. 512 takes 8.3 GB; 768 spills 4.6 GB into shared memory; 1,024 spilled 6.9 GB and didn't finish a step in 3 minutes; `-ub` below `-c` crashes the trainer (GGML_ASSERT ggml_can_repeat). So tool tasks offer at most 4 tools (Qwen's tool instructions are long), coding replies are asked for without explanation, and practice runs with thinking off.
 - Training copy: the trainer's Vulkan backward pass handles Q4_0, Q8_0 and F16 on the card, but falls back to the processor for K-quants. Per 512-token example on the 4B: Q4_K_M 50 s, Q4_0 10 s, Q8_0 6 s (Q8_0 also spilled 1.8 GB). `finetune::training_copy` makes the copy with the trainer's own `llama-quantize --allow-requantize` before training, checks free disk space first, and deletes the copy after. "Teach a model" gets the same speed-up.
-  - Q8_0 is used where it fits with 1 GB to spare (see "Training that fits the card"; on his 12 GB card a 4B gets Q4_0). Copied from the installed Q4_K_M it keeps the same weights.
+  - Q8_0 is used where it fits with 1 GB to spare (see "Training that fits the card"; on my 12 GB card a 4B gets Q4_0). Copied from the installed Q4_K_M it keeps the same weights.
   - A Q4_0 copy rounds the weights again. On the model's own replies its loss started at 0.94, against 0.67 for Q8_0, so the adapter partly learns to undo Q4_0's rounding, and that hurt on the real model. Q4_0 stays as the fallback for bigger models; the before/after test still decides whether to keep the result.
 - Learning rate: the model's own replies need a much gentler rate. At 1e-4 constant, the 4B's loss climbed to 1.8 by the end of round 2, and it then got 0 of 48 test tasks right (nothing kept). Practice now uses 2e-5 (1e-5 light, 5e-5 strong) with a cosine schedule and 10% warm-up (`Setup::own_words`). "Teach a model" keeps 1e-4 for the person's own examples. A short Q8_0 run at 1e-4 on practice data did fall (0.67 to 0.2 in 20 steps), so the climb came from the rate over two rounds.
 - What it learns from: every task solved after a retry or with the hint, but only 30% of those solved first time (`EASY_SHARE`). Learning everything it already knew made it no better (35 to 31 of 48). The test answers at temperature 0, so before and after differ only by the adapter.
@@ -1234,7 +1234,7 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
     The student's and the teacher's examples are shuffled together, so neither comes all at the end, where the rate has tapered off.
   - Also fixed: a word-problem, counting or date task the student got right first time but didn't pick for learning (`EASY_SHARE`) still got the told-answer try. So it counted twice and was learnt from anyway.
   - While it runs, the job says "{teacher} is answering the tasks it got wrong: n of total, k right answers kept". A kept adapter says "practised with {teacher} teaching". The new texts are in all six languages.
-  - **Live run** (2026-10-18; Qwen3 4B 2507 taught by his qwen2.5-coder:14b; coding, writing, research, tools; 2 rounds, normal strength):
+  - **Live run** (2026-10-18; Qwen3 4B 2507 taught by my qwen2.5-coder:14b; coding, writing, research, tools; 2 rounds, normal strength):
     - Before: 35 of 48, as in every run (coding 8, writing 8, research 10, tools 9).
     - Practice: 118 of 156 right, and it learns from 42 of its own answers. 30 missed tasks went to the teacher. 8 more had requests too long to leave room for a reply.
     - Teacher: 13 of the 30 right. All 13 were still right, and within 512 tokens, in the student's format (5 of the 55 training lines had tool calls, all in the 4B's own layout). Its turn took 4.3 minutes, after a 64 s load.
@@ -1245,9 +1245,9 @@ His brother: within a few prompts, pictures (edits and new ones) "lose what he w
     - The teacher's answers improve the skills they cover. The losses elsewhere look like the small, narrow set pulling the model: 55 examples, two rounds, loss down to 0.11.
     - Training ran at 34 s an example, not the 6 s measured earlier. Windows' desktop compositor (dwm.exe) held 2.7 GB of the card, so the trainer had 9.3 GB on the card and 2.8 GB in shared memory (1.8 GB when 6 s was measured). Other open windows can make training several times slower.
     - The teacher loaded with only 33 of its 49 layers on the card, and the normal cache. Adaptive cooling had stepped down during practice, and its "back to full speed" came 3 s after the teacher's load was planned. Practice also plans layers for the model's chat window (16K here), not its own 4K one, where all 49 would fit. Here that kept the card cool (52 °C) at about 8 s a task.
-  - Next to try, one run each (ask him first): 1 round, or "Lightly", to stop the memorising; and keeping more of the student's own right answers for the skills that fell, so they're replayed alongside the teacher's.
-  - Live runs while another session edits this folder: `tauri dev` restarts the app on any save under `src-tauri`, which ends a run. Instead, run a copy of `target\debug\sulcusai.exe` with your own vite on port 1430 (`C:\dev\tools\teacher-run\start.cmd`, through Explorer for his real data).
-- Not built, on purpose: training on his own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. Built instead: practising code navigation on his real projects, checked against the files (next section).
+  - Next to try, one run each (decide first): 1 round, or "Lightly", to stop the memorising; and keeping more of the student's own right answers for the skills that fell, so they're replayed alongside the teacher's.
+  - Live runs while another process edits this folder: `tauri dev` restarts the app on any save under `src-tauri`, which ends a run. Instead, run a copy of `target\debug\sulcusai.exe` with your own vite on port 1430 (`C:\dev\tools\teacher-run\start.cmd`, through Explorer for the real data).
+- Not built, on purpose: training on my own code folders. The chat model already reads them with read_file/search_files, which is exact and current. Training a small model on raw code gives fuzzy recall and makes it worse at chat. Built instead: practising code navigation on my real projects, checked against the files (next section).
 
 ## Practice on your own code (2026-10-18)
 
@@ -1260,12 +1260,12 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
     - Rust `fn`;
     - TS/JS `function`, `const x = (…) =>`, `const x = function` and class or object methods;
     - Python `def`.
-  - For each it records the parameter names (not `self`, `this` or `cls`), how many lines the signature spans, and the body's lines. A call is the name followed by `(`, in code, inside a body. On his repo: 244 files with code, 4,009 functions, 1.9 s in a debug build.
+  - For each it records the parameter names (not `self`, `this` or `cls`), how many lines the signature spans, and the body's lines. A call is the name followed by `(`, in code, inside a body. On my repo: 244 files with code, 4,009 functions, 1.9 s in a debug build.
 - **Tasks**, 6 levels, each with exactly one right answer from the scan:
   1. Which file defines a function few files mention.
   2. The same for one that 3 or more files mention, so a plain name search finds too much.
   3. Its parameters, with the signature on one line.
-  4. Its parameters, with the signature over several lines, so reading is needed. His repo has only 7, since its signatures are mostly one line; the level falls back to 3.
+  4. Its parameters, with the signature over several lines, so reading is needed. My repo has only 7, since its signatures are mostly one line; the level falls back to 3.
   5. The one function that calls it.
   6. All 2-3 functions that call it.
 
@@ -1315,7 +1315,7 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
     So it learns the lookups it practises, but a 4B gets too few right in 512 tokens to move a test it already half passes.
 - **Where gains would come from:**
   1. A teacher for code tasks: built 2026-10-19 (next bullet).
-  2. Training the part of a right try that fits (the request and its first searches) when the whole try doesn't. This breaks the whole-try rule this was built to, so it's his call.
+  2. Training the part of a right try that fits (the request and its first searches) when the whole try doesn't. This breaks the whole-try rule this was built to, so it's my call.
   3. Checking free card memory before picking the Q8_0 copy, or using Q4_0 when the desktop holds too much (done: "Training that fits the card").
 
   Picked with other skills, "your code" adds its lookup tries to theirs.
@@ -1359,12 +1359,12 @@ The "Your code" skill in the practice form (`practice/yourcode.rs`, skill `proje
   - `scan_a_real_folder` scans `SULCUSAI_SCAN` and prints a task of each level.
   - `e2e_code_tries` runs real tries on it against a llama-server started with `--jinja` (`SULCUSAI_TEST_PORT`/`_KEY`, `SULCUSAI_TRIES` a level, `SULCUSAI_SHOW` for transcripts). With `SULCUSAI_DUMP` it writes the lines practice would keep, for running the trainer by hand.
   - `e2e_code_test` runs practice's 12-task test against a server with or without `--lora`; `SULCUSAI_TOOLS` swaps in other tool definitions.
-- Speed: the content check first used Unicode `\b`, which sends the regex crate to its slow engine on non-ASCII text (the locale tables, arrows in comments). Unoptimized, it took 25 s on his repo. ASCII `(?-u:\b)` brought it to 1.9 s.
-- On his repo the content check also leaves out `src/locales/de.json` and `ja.json`: a translated "token"/"password" line looks like one. They aren't code, so nothing is lost. `yourcode.rs` writes its test key and token in pieces (`concat!`) so it doesn't leave itself out.
+- Speed: the content check first used Unicode `\b`, which sends the regex crate to its slow engine on non-ASCII text (the locale tables, arrows in comments). Unoptimized, it took 25 s on my repo. ASCII `(?-u:\b)` brought it to 1.9 s.
+- On my repo the content check also leaves out `src/locales/de.json` and `ja.json`: a translated "token"/"password" line looks like one. They aren't code, so nothing is lost. `yourcode.rs` writes its test key and token in pieces (`concat!`) so it doesn't leave itself out.
 
 ## Overnight batch (2026-10-19, branch `night`, worktree C:\dev\sulcusai-night)
 
-He went to bed and left free rein to add and refine things, then build and publish one large update. This work was done in a separate worktree, because two practice sessions were editing C:\dev\sulcusai. Builds use a separate target folder, C:\dev\sulcusai-night-target.
+Overnight, with free rein to add and refine things, then build and publish one large update. This work was done in a separate worktree, because two practice runs were editing C:\dev\sulcusai. Builds use a separate target folder, C:\dev\sulcusai-night-target.
 
 - **Newer chat models** (catalog): Qwen3.5 2B/4B/9B, Qwen3.6 27B and 35B-A3B, Gemma 4 E4B/12B/26B-A4B, all with picture readers.
   - Files and layouts were read from the real headers by `scratchpad/gather_models.py` (HTTP range requests). The ratings are estimates from public benchmarks, placed against the catalog's own.
@@ -1383,9 +1383,9 @@ He went to bed and left free rein to add and refine things, then build and publi
 - **Installing a new version of the model a chat is replying with** waits for the reply (up to 3 minutes, `waiting` phase) instead of cutting it off.
 - Models from other apps get ratings when only dashes or dots differ ("gemma3:12b" → gemma-3-12b).
 - Checked and already done (the old notes were stale): free-memory check before loading (`memcheck`), log caps while running (`capped_log`), scheduled tasks claiming their reply first.
-- **Live on his PC after the merge** (dev build, 2026-10-19):
+- **Live on my PC after the merge** (dev build, 2026-10-19):
   - FLUX.1 schnell made a 1024 × 1024 lighthouse in 16 s, with the card at 60 °C.
-  - Qwen3.5 9B (Q4_K_M) loaded in 7.4 s with a 32K window, every layer on the card and its picture reader. It wrote 87 tokens/s, using 7.3 GB of the card and 95 MB of shared memory. His Qwen2.5-Coder 14B does about 46 at 16K.
+  - Qwen3.5 9B (Q4_K_M) loaded in 7.4 s with a 32K window, every layer on the card and its picture reader. It wrote 87 tokens/s, using 7.3 GB of the card and 95 MB of shared memory. My Qwen2.5-Coder 14B does about 46 at 16K.
 - **After the merge**: the training copy is Q8_0 only when 2.8 times its size fits the card's free memory (`finetune::q8_fits`, since replaced by `finetune::plan`: see "Training that fits the card"). Llama and Gemma 4 learn from documents only (`finetune::conversations_ok`), and practice leaves out Gemma 4.
 - Found, not fixable here: the trainer (QVAC b7349, its latest release, March 2026) finds turns only in ChatML and Gemma 3 formats. Gemma 4 (`<|turn>model`) and Llama 3 can't be taught from conversations or practise; documents still work.
 
@@ -1400,7 +1400,7 @@ He went to bed and left free rein to add and refine things, then build and publi
 
 ## Training that fits the card (2026-10-19, branch `trainfit`)
 
-Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his RTX 5070 12 GB. One app run slowed from 7 s a step to 37 s at step 8, then sat on step 13 for 28 minutes. Another "crashed at step 8" (0xC0000409). The teacher run went at 34 s a step.
+Practice and teaching runs stalled or crashed when the QVAC trainer outgrew my RTX 5070 12 GB. One app run slowed from 7 s a step to 37 s at step 8, then sat on step 13 for 28 minutes. Another "crashed at step 8" (0xC0000409). The teacher run went at 34 s a step.
 
 - **Measured by hand** (`llama-finetune-lora` with practice's arguments: 512 tokens, rank 16), reading the trainer's own counters (`GPU Process Memory`, dedicated and shared) every ~1.5 s, on Qwen3 4B 2507:
 
@@ -1410,13 +1410,13 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   | Q8_0 | 4.28 GB | 9,776 MB, then 9,850 at step 8 | 741 → 1,770 MB at step 8 | 5.5 s | 11,174, then 12,087 of 12,227 MB at step 8 |
 
   The shared 0.66-0.74 GB is there from the first step in both: it's part of how the trainer works, not a spill.
-- **Going over the card's memory can reset the graphics driver.** The Q8_0 run above took the card to 12,087 of 12,227 MB at step 8. Two seconds later the NVIDIA driver reset (System log: nvlddmkm event 153, four times, 07:59:16-20). The trainer crashed with 0xC0000409 at 07:59:22 (Application log 1000, ucrtbase), with nothing in its own log. The NVIDIA overlay was then left as a black always-on-top layer over his main monitor until it was restarted. So the app runs that "crashed at step 8" were very likely this same driver reset. **Never run a training (or a test of one) that can take the card within 1 GB of full.**
+- **Going over the card's memory can reset the graphics driver.** The Q8_0 run above took the card to 12,087 of 12,227 MB at step 8. Two seconds later the NVIDIA driver reset (System log: nvlddmkm event 153, four times, 07:59:16-20). The trainer crashed with 0xC0000409 at 07:59:22 (Application log 1000, ucrtbase), with nothing in its own log. The NVIDIA overlay was then left as a black always-on-top layer over my main monitor until it was restarted. So the app runs that "crashed at step 8" were very likely this same driver reset. **Never run a training (or a test of one) that can take the card within 1 GB of full.**
 - **The plan** (`finetune::plan`, used by `training_copy` for practice and teaching):
   - The memory a run needs is the copy's weights plus, per weight, what a step needs besides them (`per_weight`: 1.5 bytes for Q4_0, 1.8 for Q8_0 and F16; it covers the step-8 jump). The weights are counted from the file's size and format (`bits`), all parts of a split model included (`model_size`).
   - It takes the most faithful format that leaves **1 GB free** beyond that (`HEADROOM`):
     - a file the card trains as it is (Q4_0, Q8_0, F16) stays as it is, and is only ever copied smaller;
     - otherwise a Q8_0 copy, else a Q4_0 copy.
-  - On his card, with the desktop holding about 1.4 GB, a 4B trains on Q4_0 (estimated 8.3 GB, against 8.15 measured at its peak, plus the 1 GB). Q8_0 is estimated at 10.9 GB, so it takes a card with about 12 GB free, such as a 16 GB one.
+  - On my card, with the desktop holding about 1.4 GB, a 4B trains on Q4_0 (estimated 8.3 GB, against 8.15 measured at its peak, plus the 1 GB). Q8_0 is estimated at 10.9 GB, so it takes a card with about 12 GB free, such as a 16 GB one.
   - `card_free` reads the card until the count stops falling, since Windows' count lags a moment behind a server that has just quit.
 - **When nothing fits** at training time:
   - It waits up to 3 minutes, reading the card again every 5 s. The job shows "The graphics card is short of free memory for training. Closing other apps…" (`Job.low_memory`).
@@ -1431,7 +1431,7 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
   - A gap of more than 30 s between looks means the PC slept with the trainer paused, so the wait starts again.
   - **The card is watched too** (`CardWatch`, every 2 s). It reads the whole card's use and the trainer's own, on the card and in shared memory (`perf::process_card_memory` with the pid that `run_watched` now passes).
     - Each rise of 256 MB or more is logged with whose it was: "During training the graphics card's use rose from … to …; the trainer's own went from … to …".
-    - When the card comes within 0.5 GB of the size Windows reports for it (11,921 MB on his card; nvidia-smi says 12,227), the run stops with `NO_ROOM` before the driver can reset.
+    - When the card comes within 0.5 GB of the size Windows reports for it (11,921 MB on my card; nvidia-smi says 12,227), the run stops with `NO_ROOM` before the driver can reset.
 - **The late jump** (code-teacher's in-app run, Q4_0 copy, 18 lines, 2 rounds): the card total held 9,476-9,528 MB through round 1. In round 2, at steps 3-7 (the trainer's own log ends at step 6), it went to 9,916 MB and then 11,461 MB, with step times unchanged. Their watcher stopped it. Data: `C:\dev\tools\yourcode-run\jump-data\`. What the trainer's source (QVAC b7349) says:
   - Every example is padded to the window (`common_opt_sft_dataset_init`: `sample_tokens.resize(ne_datapoint, pad_token)`). Each round walks the examples in the same order, with no shuffle (`llama_context::opt_epoch`). So every training step builds the same graph with the same shapes. A longer line can't grow anything, and round 2's step 7 had already run in round 1 without a jump.
   - ggml-opt rebuilds the graph each step (`opt_epoch_iter`, `ggml_opt_alloc`). The scheduler's memory planner reallocates only when a graph needs more than it already holds. The only change between rounds is the held-out check (one forward-only step) at the end of round 1.
@@ -1449,14 +1449,14 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
 
   - So the trainer itself grows once, by 391 MB, when training resumes after the first held-out check, most likely because the memory planner lays out the training graph again after the forward-only one. It then levels off, and there was no second jump. code-teacher's run rose by exactly the same 391 MB at the same point (9,525 → 9,916).
   - Its further 1.5 GB (to 11,461) was another program. It didn't happen here with the same setup, and perskill's four practice runs held 9.5-9.9 GB with no jump. Nothing else on the card moved by 200 MB during this run. The card peaked at 74 °C.
-  - `per_weight` for Q4_0 went from 1.5 to 1.6, so the estimate (8.3 GB) covers the 8.15 GB peak. It changes no decision on his card: a 4B needs 9.3 GB with the margin, against about 10.5 GB free. One trainer process per round isn't worth it for a one-time 0.39 GB.
+  - `per_weight` for Q4_0 went from 1.5 to 1.6, so the estimate (8.3 GB) covers the 8.15 GB peak. It changes no decision on my card: a 4B needs 9.3 GB with the margin, against about 10.5 GB free. One trainer process per round isn't worth it for a one-time 0.39 GB.
   - The card watch (`CardWatch`) logs a rise like this one as the trainer's own. A rise from another program is logged as the card's, and the run stops 0.5 GB before the card is full.
   - The NVIDIA Overlay's own counter reads an impossible 270,000-390,000 MB on this card since the driver reset, and grows. Leave it out of any per-program total. The adapter-wide counter the app reads isn't affected.
 - **Limits of the estimate:** `per_weight` comes from one model. For bigger models, the memory beyond the weights grows more slowly than the weights (activations go with layers × width), so it asks too much for 8B and up: safe, but an 8B on a 16 GB card may be refused when it would just fit. A small model with a big vocabulary (Gemma 3's 262K) may need more per weight than it says.
 - Five new texts, in all six languages: the window's short-of-memory line, and the core's `NO_ROOM`, `TOO_BIG`, `TRAINER_STALLED` and `TRAINER_QUIT`.
 - Tests (`finetune::tests`):
   - `training_need_covers_the_measured_peaks`;
-  - `the_training_format_fits_the_free_card_memory`, which covers his card with 1.4 GB or 5.4 GB taken, 16 GB cards, 1.7B and 8B models, Q4_0/Q8_0/F16 files and no card;
+  - `the_training_format_fits_the_free_card_memory`, which covers my card with 1.4 GB or 5.4 GB taken, 16 GB cards, 1.7B and 8B models, Q4_0/Q8_0/F16 files and no card;
   - `a_model_too_big_for_the_card_is_refused_at_the_start`;
   - `a_stalled_trainer_is_stopped`, `a_slowed_trainer_is_flagged` (the 7 → 37 s run) and `sleep_is_not_a_stall`.
 - **What the 5.6 GB beyond the weights is, and why Q8_0 can't fit a 4B on 12 GB.** Take the copy away and both runs hold exactly the same: Q4_0 7,954 − 2,260 MB and Q8_0 9,776 − 4,082 MB are both 5,694 MB. So it doesn't depend on the format. It's what a 512-token step keeps for the backward pass, all in 32-bit floats:
@@ -1466,11 +1466,11 @@ Practice and teaching runs stalled or crashed when the QVAC trainer outgrew his 
 
   The LoRA and its optimizer are small (45.6 MB adapter).
 - **No safe lever in the trainer's options** (QVAC b7349, read from its help text): no gradient checkpointing, no 16-bit activations, no training of only the last layers. `--lora-modules` only adds trainable weights. `-ub` below `-c` crashes it. A shorter window cuts the activations but drops the 512-token examples practice is built around. So on a 12 GB card a 4B trains on Q4_0.
-  - Tried 2026-10-19 (he said "Run your experiments"; same 20 lines as the table above, killed if the card came within 1 GB of full; no driver events):
+  - Tried 2026-10-19 (same 20 lines as the table above, killed if the card came within 1 GB of full; no driver events):
     - `-fa on` doesn't train. The trainer stops before its first step with "ggml_compute_backward: unsupported ggml op for backward pass: FLASH_ATTN_EXT". So the attention matrices can't be saved this way.
     - A Q5_1 copy (3.05 GB) trains, but on the processor: 80 s a step, with the card idle at 37-40 °C (Q4_0 13 s, Q8_0 5.5 s). Its memory is as the estimate says: 8,603 MB on the card (2,909 MB of weights plus the same 5,694 MB) and 660 MB shared. It's faithful: the step-2 loss was 5.348, against 5.335 for Q8_0 and 5.401 for Q4_0. But it's 6 times slower than Q4_0, so not used.
   - So on a 12 GB card a 4B trains on Q4_0. Q8_0's quality there would need a trainer with gradient checkpointing, or flash attention with a backward pass.
-- Live check of a whole 4B practice run: the coordinating session had code-teacher's and perskill's practice runs (after merging this branch) stand in for a separate one.
+- Live check of a whole 4B practice run: code-teacher's and perskill's practice runs (after merging this branch) stood in for a separate one.
 
 ## Practice skill by skill (2026-10-19, branch `perskill`)
 
@@ -1498,7 +1498,7 @@ Why: on Qwen3 4B 2507, one adapter learnt from every skill's right answers nets 
   - 16 new texts in all six languages.
 - Tests (`practice::tests`): `the_test_is_counted_skill_by_skill`, `one_skills_gain_cant_pay_for_anothers_loss` (on last night's numbers), `each_skill_is_learnt_on_its_own_first`, `a_try_holds_the_other_skills_with_anchors`, `the_second_test_is_new_tasks`. `e2e_practice_test` (ignored) runs the practice test by hand against a llama-server, with any seed (`SULCUSAI_SEED`) and skills, and counts what changed against a saved result (`SULCUSAI_OUT`, `SULCUSAI_BEFORE`).
 - **Live run** (Qwen3 4B 2507, teacher qwen2.5-coder:14b; coding, writing, research, tools; 2 rounds, normal; the same settings as last night's 35 → 34 run). Besides the per-skill rule, anchors and the second test, this run differs from last night's in two ways: the teacher's tool calls are now read (code-teacher's rescue; before, every teacher answer to a tool task was lost), and training is on a Q4_0 copy (trainfit's plan; last night's was a Q8_0 that spilled).
-  - **Result (09:50-10:45, run d3c04ee3): kept.** The adapter that learnt writing is "Qwen3 4B Instruct + Practised" in his model menu.
+  - **Result (09:50-10:45, run d3c04ee3): kept.** The adapter that learnt writing is "Qwen3 4B Instruct + Practised" in my model menu.
     - Before: 35 of 48 (coding 8, writing 8, research 10, tools 9), the same as every run.
     - Practice: 113 of 156 right, 38 kept to learn from. Teacher: 22 of the 39 it missed right (last night 13 of 30), all 22 learnt. Replays (`top_up`): tools 3. So 63 lines: coding 27, writing 12, research 12, tools 12.
     - The tries, each on the whole 48-task test:
@@ -1523,7 +1523,7 @@ Why: on Qwen3 4B 2507, one adapter learnt from every skill's right answers nets 
 
 ## Privacy mode, incognito icon, website look (2026-10-19, after 0.9.14)
 
-He asked for: "each external call a model must make, they tell the user what data the external source receives and what could be done with that info. They scale it on a privacy scale. User can then approve external information share or specify what specifically they allow", with the scale 1 no personal information, 2 a first or last name (not both), 3 interests and searches, 4 identifying (full name, email), 5 sensitive (keys, secrets, address, contact information).
+I asked for: "each external call a model must make, they tell the user what data the external source receives and what could be done with that info. They scale it on a privacy scale. User can then approve external information share or specify what specifically they allow", with the scale 1 no personal information, 2 a first or last name (not both), 3 interests and searches, 4 identifying (full name, email), 5 sensitive (keys, secrets, address, contact information).
 
 - **`outgoing.rs`**:
   - `find()` rates text with the cloud redactor's patterns (`cloud::PATTERNS`, `luhn`, now `pub(crate)`), `yourcode::SECRET_TEXT` (now `pub(crate)`), a "password: …" pattern, key-like tokens, street addresses, and the profile's first/last name and town plus the mail accounts' addresses (`Me`).
@@ -1547,16 +1547,16 @@ He asked for: "each external call a model must make, they tell the user what dat
   - Checked in the UI mock (`mock.html?privacy`): the popup, an edit sent as `{query}` with allow, and the settings section.
   - Not yet run against a real model in the app.
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
-- **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
+- **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
 ## 0.9.22 (2026-10-21): the phone keeps its pairing
 
-- His first real iPhone test (through the test copy and the live relay) worked: a chat and a picture. But after a refresh it said "scan the code". He'd opened the link from a file in the Claude app, whose viewer keeps no storage. `pair()` had stored the key and then stripped it from the address.
+- My first real iPhone test (through the test copy and the live relay) worked: a chat and a picture. But after a refresh it said "scan the code". The link had been opened from a file in a chat app, whose viewer keeps no storage. `pair()` had stored the key and then stripped it from the address.
 - Now the key stays in the address after `#` (never sent). That also makes an iPhone home-screen shortcut work, since those get their own storage. The key is still kept in localStorage per link (`sulcus.key:/l/<id>`), so one phone can pair with several PCs. An address opened without the key but known locally gets it put back.
 
 ## 0.9.21 (2026-10-21): the whole app on a phone, from anywhere (phone link)
 
-His ask: phone pairing showed a white page for him and his brother (iPhone). He wanted phones linked through his Cloudflare, each PC hosting its own phone, with full access (chats, new chats, models, Studio, everything) and a phone-only PC tab with Stop all.
+Ask: phone pairing showed a white page for me and my brother (iPhone). Phones linked through my Cloudflare, each PC hosting its own phone, with full access (chats, new chats, models, Studio, everything) and a phone-only PC tab with Stop all.
 - **Why the white page:** the PC's phone server worked (loaded fine over the Wi-Fi address from the PC, firewall allowed it). The phone simply couldn't reach the PC: router client isolation, another network, or an iPhone app's Local Network permission. A page that never loads = dropped packets. The relay route avoids all of it.
 - **Relay** (`relay/worker.js`, `Link` Durable Object, migration v3, deployed 2026-10-21 as version 2b843aeb):
   - `GET /v1/link/<id>/host` is the PC's WebSocket (Bearer token; the first connection stores its hash). A new connection replaces the old. A `ping`/`pong` auto-response keeps it alive without waking the object.
@@ -1566,7 +1566,7 @@ His ask: phone pairing showed a white page for him and his brother (iPhone). He 
 - **PC** (`phone/link.rs`): one WebSocket to the relay (tokio-tungstenite over tokio-rustls with `mail::tls_config`; plain ws only for a loopback test relay). It reconnects with backoff (1 s to 60 s), pings every 25 s, and drops after 70 s of silence.
   - It's on while the phone page is on, `anywhere` (default true) is on and a phone is paired.
   - The link id and token are in the phone settings; the token is sealed with `local_seal`.
-  - Gated by Fully offline (`Keep::LocalNetwork`), not by the connectivity level: it only carries sealed traffic between his own PC and phone.
+  - Gated by Fully offline (`Keep::LocalNetwork`), not by the connectivity level: it only carries sealed traffic between my own PC and phone.
 - **Shared phone server** (`phone/mod.rs`): `answer()` serves both the LAN axum route and the relay. `serve_file()` serves `phone.html` and the built assets through Tauri's asset resolver.
   - Careful: Tauri hands back `index.html` for any name it lacks, so `phone.html` is checked for its `sulcusai-phone` meta, and a non-HTML name that comes back as HTML is a 404.
   - Replay protection is now "not seen before" (nonce cache, 5 minutes) rather than "newer than the last", because the full app sends many requests at once.
@@ -1599,16 +1599,16 @@ His ask: phone pairing showed a white page for him and his brother (iPhone). He 
     - Stop all;
     - switching the default model;
     - a Studio picture (klein 9B, checked at 100%; thumbnails come back as bytes).
-- **Not tried on a real iPhone yet:** he'll pair at home (Settings, Phone, Add a phone, scan, password). Safari's file picker, the downloads, and how the drawer feels are the things to watch.
+- **Not tried on a real iPhone yet:** pair at home (Settings, Phone, Add a phone, scan, password). Safari's file picker, the downloads, and how the drawer feels are the things to watch.
 
 ## 0.9.20 (2026-10-21): a stricter picture check, prompt learning off by default
 
-- The stricter reviewer (`media/look.rs`, commits 7417917 and 3b78036 from the prompt coach session) went in. See its section below for how it reads out and compares.
+- The stricter reviewer (`media/look.rs`, commits 6e19403 and 5818163) went in. See its section below for how it reads out and compares.
 - **Learning is off unless turned on** (`learn::on` defaults to false; the Studio label says "(experimental)" and its tooltip gives the result). Three held-out tests, first try with learning against without: klein with the old reviewer -2.5 (standard error 5.2), klein strict -4.9 (4.1), SDXL strict -5.7 (3.3). Each alone is within noise, but all three lean worse; the likely cause is a small writer copying its stored examples too closely. Copies that never touched the switch go off with the update; one turned on by hand stays on. The two learning e2e tests turn it on themselves.
 
 ## 0.9.19 (2026-10-20): checked pictures made again, prompt learning, cancel any download
 
-- The two sections below (prompt learning, prompt coach) went in, merged from the prompt coach session's branch. Learning stays on by default: the held-out test found no gain and no clear harm (-2.5 points, standard error 5.2, 20 pairs), and a wrongly passed example still holds a sensible prompt. The stricter reviewer is the next step.
+- The two sections below (prompt learning, prompt coach) went in, merged from a separate branch. Learning stays on by default: the held-out test found no gain and no clear harm (-2.5 points, standard error 5.2, 20 pairs), and a wrongly passed example still holds a sensible prompt. The stricter reviewer is the next step.
 - **Cancel download** (`components/CancelInstall.tsx`): one button on every install's progress, "Cancel download" while downloading and "Cancel" otherwise, hidden while the model is tested (`TESTING`). It's on the Models page, the Studio's model list and Hugging Face search, the Hugging Face link box (`HubLink`, which had none), the first model in setup (`Onboarding`, none before), Features and Speech.
 - **A cancel deletes what that install downloaded** (`download::existing` before it starts, `download::discard_new` on a cancel): files that were here before stay ("Set up (no download)", shared files), and a folder goes only when it's left empty. Picture, video and music models use `media::discard_download`, which also keeps files another installed model uses (`delete_files`, shared with `remove_now`) and forgets a Hugging Face model never installed. Speech models, the voice pack and the speaker model use `discard_new` directly. Chat models already deleted their parts (`downloads::delete_parts`); a finished main file cancelled during the picture reader's download still stays.
 
@@ -1637,14 +1637,14 @@ The evaluation below showed the reviewer (Qwen3.5 9B) passing wrong pictures. Is
   - **Learning was slightly worse.** New pictures, 19 pairs: first try −5.7 (standard error 3.3; ahead 0, behind 3); handed over by hand −6.6 (4.5; ahead 1, behind 6); pictures needed +0.3 (0.1), more with learning in 7 pairs and fewer in 2.
 - **All three held-out evaluations together** (klein with the old reviewer, klein strict, SDXL strict): first tries with learning against without came out −2.5, −4.9 and −5.7. That shows no gain, and leans slightly worse.
   - The likely cause is the rules. The writer's own lessons are long and generic ("explicitly negate unwanted variations to prevent hallucinations"), and few examples pass when the picture model can't do what's asked.
-  - Learning is on by default (0.9.19). It's worth turning it off by default, or keeping a rule or example only once it beats the program without it on held-out requests (the coordinating session's idea; not built). The review-and-rewrite loop and the stricter reviewer are worth keeping either way.
+  - Learning is on by default (0.9.19). It's worth turning it off by default, or keeping a rule or example only once it beats the program without it on held-out requests (not built). The review-and-rewrite loop and the stricter reviewer are worth keeping either way.
 - Fixed after these runs:
   - The reviewer's checklist no longer invents "no other people" or "no other fruits" items, which a right picture failed; "no other …" is now a plain yes or no.
   - One malformed answer no longer leaves a picture unchecked (`look::check_all`): the item is asked again, then counts as not shown. Only a check where every item fails counts as "couldn't check", and that's logged.
 
 ## The prompt writer learns from use, DSPy-style (2026-10-20, after 0.9.18, not built)
 
-His request: no weight training. Model 1 (the writer for new pictures, the planner for edits) puts the request into words for model 2 (the picture model). The review model compares what came out with what was asked for and sends that back to model 1, which either prompts model 2 again or hands the picture over as done. The more it's used, the better model 1 knows how model 2 reads prompts. His answers: up to 5 pictures a request; the reviewer must understand both his request and model 1's prompt; pictures and edits both learn; the weight coach stays in the code but out of sight (it didn't help, below).
+Request: no weight training. Model 1 (the writer for new pictures, the planner for edits) puts the request into words for model 2 (the picture model). The review model compares what came out with what was asked for and sends that back to model 1, which either prompts model 2 again or hands the picture over as done. The more it's used, the better model 1 knows how model 2 reads prompts. My answers: up to 5 pictures a request; the reviewer must understand both my request and model 1's prompt; pictures and edits both learn; the weight coach stays in the code but out of sight (it didn't help, below).
 
 - **The loop, new pictures** (`media::made_well`, when "Check the picture" is on):
   - The reviewer (the picture reader) makes the checklist from the person's request at its first look and keeps it for every make. klein's own 4B writer once gave back none, so a picture went unchecked.
@@ -1673,7 +1673,7 @@ His request: no weight training. Model 1 (the writer for new pictures, the plann
     - New pictures, first tries: alike requests with learning [67 100 75 100 67 100] against the same without [100 100 75 100 100 60], or −4 points on average. One request swung +40 and two −33, which is the writer's own randomness (temperature 0.4), so the noise is far bigger than any effect six pairs can show.
     - Edits: [45 91] against [78 91]. The checklists differ between the two (the plan makes them), so they don't compare.
   - First-pass requests were too easy: 6 of 6 passed at once.
-- **To know whether learning helps**, as the coordinating session also said, it needs many paired requests (hard ones), fixed seeds and a steadier writer. Keeping a rule or example only once it beats the program without it on a held-out set would guard against noise; not built. `SULCUSAI_MEDIA_OUT` now saves every kept picture from the learning test, to check the reviewer by eye.
+- **To know whether learning helps**, it needs many paired requests (hard ones), fixed seeds and a steadier writer. Keeping a rule or example only once it beats the program without it on a held-out set would guard against noise; not built. `SULCUSAI_MEDIA_OUT` now saves every kept picture from the learning test, to check the reviewer by eye.
 - **The bigger evaluation** (`e2e_prompt_learning_eval`, 2026-10-20, 46 min, no errors, card at most about 77 °C). Pictures and `verdicts.txt` are in `C:\dev\sulcusai\.claude\learning-eval-2026-10-20` (git-excluded).
   - Training was 10 hard pictures (counts, words, left and right, odd colors, a clock) and 3 edits, with learning on.
     - 6 of the 10 pictures fell short at first, and 5 of those reached 100% by rewriting.
@@ -1720,9 +1720,9 @@ His request: no weight training. Model 1 (the writer for new pictures, the plann
 
 ## After 0.9.17 (2026-10-19 night): every audit item, asking before anything leaves the PC, and music shaped any way (not built)
 
-He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overnight, plus music with lyrics, any length, his own audio to edit, and every musical setting. Commits on phase7 from 24f09b1 to the music commit; nothing pushed or published.
+I asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overnight, plus music with lyrics, any length, my own audio to edit, and every musical setting. Commits on phase7 from 24f09b1 to the music commit; nothing pushed or published.
 
-- **Nothing leaves without his word** (his rule: local models may read anything; a send asks; a secret leaving always warns, Bypass too):
+- **Nothing leaves without my word** (my rule: local models may read anything; a send asks; a secret leaving always warns, Bypass too):
   - `guard::egress` finds commands that upload, post, push, copy to another machine or reach this PC's network (curl/wget data, iwr/irm posts, git push, scp/ssh/rsync, mail, cloud copies, publishing, raw sockets). It names the host, what goes, and any secret: key files, .env, browser logins, or a key typed in the command.
   - Such a call is `Risk::Submit`: it asks in every mode and never "for the whole chat". It's reviewed in `outgoing` (Sent; Secret at level 5) and listed under What left this PC.
   - A level-5 review (a secret in a search, an email, a message) always asks.
@@ -1766,11 +1766,11 @@ He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overni
   - Focus outlines and aria-labels added; menus close on Escape.
   - Speeds show in words a second, and plain words replace GGUF, MCP, cache and context window. Singular forms are fixed.
 - **Release/CI**: `release.ps1` refuses a dirty tree, an installer older than HEAD with -SkipBuild -Publish, and versions that differ. CI runs `cargo deny check advisories licenses`; the accepted advisories are listed in `deny.toml` with reasons. inout 0.2.3 (yanked) became 0.2.5.
-- **Music** (merged from the music helper's branch, then extended):
+- **Music** (merged from a separate branch, then extended):
   - Lyrics are written for songs with vocals (`media/lyrics.rs`). The Studio's model menu always shows, with More models… and a Hugging Face link box; music links are checked by GGUF header.
   - `MusicSpec` on requests carries genre, mood, instruments, voice and beat, folded into the caption. Bpm, key and time signature become ACE-Step's own fields.
   - Length goes up to 10 minutes. A song to sound like is passed as `--ref-audio`.
-  - Work on a song he has (`task`):
+  - Work on a song the user has (`task`):
     - cover (`audio_cover_strength`);
     - repaint (`region`);
     - extend (repaint past the end, `extend_by`);
@@ -1791,7 +1791,7 @@ He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overni
   - Real-model tests: `e2e_music_songs` (SULCUSAI_SONGS picks cases), `e2e_chat_works_on_an_attached_song`, `e2e_agent_asks_before_sending`.
   - Add, extract and complete need **ACE-Step 1.5 Base** (new catalog model, `can: parts`; turbo is "incoherent" for stems, per acestep.cpp).
   - `audio_in`: M4A, AAC, FLAC and WMA are decoded by Media Foundation into a WAV. Imported songs get their length.
-  - `music_write_lyrics` lets him read and edit lyrics before making the song. create_music in chats takes all the settings and can work on a song from the chat.
+  - `music_write_lyrics` lets the user read and edit lyrics before making the song. create_music in chats takes all the settings and can work on a song from the chat.
   - Studio music tab: New song / From a song you have / Sound effect.
 - **Not done (need real-edit tuning)**:
   - keep_unchanged rejecting a bad line-up, and per-block tone matching (E2c, P9).
@@ -1806,7 +1806,7 @@ He asked for the whole audit (`AUDIT-0.9.17.md`, 53 findings) to be fixed overni
 
 ## The agent does the task (2026-10-19, for 0.9.17)
 
-His report, running huihui-ai's abliterated gpt-oss-20b at 16K on the RTX 5070: the agent asked permission over and over, didn't find files, and explained a web page's steps instead of doing them. The causes:
+My report, running huihui-ai's abliterated gpt-oss-20b at 16K on the RTX 5070: the agent asked permission over and over, didn't find files, and explained a web page's steps instead of doing them. The causes:
 - Auto mode asked before every change and command.
 - request_web brought up a popup each time.
 - Search covered shared folders only, and the glob was case-sensitive.
@@ -1823,20 +1823,20 @@ What changed:
   - find_files matches names without regard to capitals. With nothing in the shared folders, it searches the home folder next (not AppData or hidden folders, 8 levels deep).
   - With nothing shared, the read tools and run_command are still offered, and run_command runs in the home folder.
 - **Auto-run** (`agent.rs`, `tools::destructive_call`, `guard::destructive`): Write and Execute run without asking in Auto mode. Still asking: delete_path, plus commands that delete, move, change permissions, hard-reset, force-push, kill programs or uninstall. Submit (forms, email) still asks.
-  - request_web turns the web on for the chat without a popup, except with Connectivity Offline (going online would override his own setting) or in Plan mode.
+  - request_web turns the web on for the chat without a popup, except with Connectivity Offline (going online would override the user's own setting) or in Plan mode.
 - **Guard**: delete/move words (`DESTROYS`) still need every path inside a shared folder. For write words (`WRITES`, redirects), only the write target does, so reading from home into a report in a shared folder works. A changing command run in a folder that isn't shared is refused.
 - **Harmony** (`chat::harmony_calls`, `harmony_alias`):
   - A call left in the text (`<|channel|>commentary to=functions.x … {json}`, with or without the special tokens) now runs.
   - browser.search, browser.open, python and container.exec map to web_search, fetch_page, run_code and run_command.
   - Reasoning goes back with each tool-call turn (`reasoning_content`; `stream` strips it for online models).
   - `reasoning_effort` (Advanced `processing.reasoning_effort`, default medium) is sent at the top level and in `chat_template_kwargs` for any gpt-oss-based model (`lib::harmony`).
-- **Not explaining**: if he asked for something to be done (`asks_to_act`) and a reply at any step only explains or asks "should I?" (`explains_instead`), with nothing changed or run yet this turn, the reply is dropped and `CARRY_ON` is sent (once per turn).
+- **Not explaining**: if the user asked for something to be done (`asks_to_act`) and a reply at any step only explains or asks "should I?" (`explains_instead`), with nothing changed or run yet this turn, the reply is dropped and `CARRY_ON` is sent (once per turn).
 - **Room**: tool models get at least 16K (`TOOL_CTX`, in `plan_with`, also past Cool mode's 8K), and "small" starts below 16K. Failed commands say plainly to fix the cause and retry; "Not found" says where it looked.
 - **Tested on this desktop with both models** (installed into the models folder, checksums matching Hugging Face): `gpt-oss-20b/gpt-oss-20b-Q4_K_M.gguf` (unsloth, the catalog's) and `hf-bb5f99561ccf/huihui-ai_Huihui-gpt-oss-20b-BF16-abliterated-Q4_K_M.gguf` (bartowski). Run at 16K with 6 layers' experts in memory.
   - `e2e_harmony_raw`: both templates are Harmony, and llama.cpp parsed every tool call (none left in the text).
   - `e2e_agent_finds_runs_and_reports`: a .bat hidden in the home folder was found, run and its output reported, with no approval card. 11 s with huihui, 8 s with stock.
   - `e2e_agent_applies_a_page`: GitHub's Node .gitignore was fetched and written into the folder. 26 s and 18 s; huihui dropped one line while retyping it.
-- **Trade-off he was told about**: commands now run unasked, and an upload (curl and the like) isn't flagged. Pages are told to ignore requests the user didn't make, but that isn't enforced.
+- **Known trade-off**: commands now run unasked, and an upload (curl and the like) isn't flagged. Pages are told to ignore requests the user didn't make, but that isn't enforced.
 
 ## Prompt coach (2026-10-19, core only, for 0.9.17)
 
@@ -1852,11 +1852,11 @@ What changed:
 
 ## Models stay on the graphics card (2026-10-19, after 0.9.16, not built)
 
-His laptop (Core Ultra 9 275HX with Intel graphics, RTX 5070 Ti Laptop 12 GB, 32 GB) ran a chat model with RAM at 100% and the card at 13%; RAM fell to 30% when the model was unloaded. His brother saw the same on his laptop. His rule: system memory only when the card truly can't hold it. Three things could send a model to RAM, and all three are fixed:
+My laptop (Core Ultra 9 275HX with Intel graphics, RTX 5070 Ti Laptop 12 GB, 32 GB) ran a chat model with RAM at 100% and the card at 13%; RAM fell to 30% when the model was unloaded. My brother saw the same on his laptop. My rule: system memory only when the card truly can't hold it. Three things could send a model to RAM, and all three are fixed:
 - **Heat moved layers off the card.** Adaptive cooling cut the card's share to 85/70/55% as it warmed, and Cool & quiet (which runs on battery by default) capped the card at 70%. Now heat only cuts processor threads and adds rests between steps, starting at 1 s from the first level (`perf::scaled`, `step_pause`). Cool & quiet uses the whole card, like Balanced, and keeps its fewer threads, 8K window and low priority. Only the GPU limit the person sets can keep layers off the card. The picker's "cooling" reason is gone.
 - **A mapped model file.** llama-server ran with mmap. On Windows, llama.cpp keeps the mapped file in memory after copying it to the card, so RAM filled by the model's size for nothing. Now `--load-mode none` is passed whenever any layer is on the card (llama.cpp b11450 replaced `--no-mmap` with it; `--no-mmap` stops the engine at once with "invalid argument").
 - **The built-in graphics.** When the engine's device names didn't match Windows', the engine was left to choose, and Intel graphics list ~18 GB of "memory" that is really RAM. `dedicated_of` now falls back to every device that isn't built-in (`built_in`: named like an integrated card, or Intel or AMD graphics without a model of their own beside a card from another maker).
-- Not tried on his laptop yet. If it still happens, app.log's "Graphics devices the engines see" and "running X/Y layers on …" lines (from the picker work) say where the model went.
+- Not tried on my laptop yet. If it still happens, app.log's "Graphics devices the engines see" and "running X/Y layers on …" lines (from the picker work) say where the model went.
 
 ## Picture edits that do what was asked (2026-10-19, after 0.9.16, not built)
 
@@ -1889,7 +1889,7 @@ Three new Features in a "Typing" group, all off by default like every feature: *
 
 ## Mail round 2 and no emoji (2026-10-19, for 0.9.16)
 
-- **No emoji in the window.** He asked for "remove all emoji's used for explanation".
+- **No emoji in the window.** I asked for "remove all emoji's used for explanation".
   - Icon-only buttons and markers use drawn icons: `src/components/Icons.tsx` (lock, globe, folder, people, book, pin, bell, paperclip, microphone, speaker, stop, voice, camera, gear, theme shapes, warning), and `MailIcons.tsx` for the mail folders, compose, search and row actions. Tooltips and aria-labels are unchanged.
   - Emoji that sat in front of words were dropped. Plain marks (✓ ✕ ↩ ▾ ★ ●) stay.
   - Left on purpose: `preview.rs` 🗑/🔍 (checked on buttons in sites the assistant builds), `natural.rs` ♥ (stripped before reading aloud), and test data.
@@ -1937,7 +1937,7 @@ Three new Features in a "Typing" group, all off by default like every feature: *
 
 ## Mail: Marked read, subscriptions, a report that sorts everything (2026-10-19, after 0.9.14)
 
-He asked for: "Auto unsubscribe to emails (Shows subscriptions). When I click mark read, it goes into a marked read tab automatically so I can quickly click repeatedly to speed mark read. Automatic calendar add button that works. The reply button within the ai report doesn't work. Within the report, have it label important missed emails that need replies and emails with to-do action items and work / promotional. Have it categorize everything."
+I asked for: "Auto unsubscribe to emails (Shows subscriptions). When I click mark read, it goes into a marked read tab automatically so I can quickly click repeatedly to speed mark read. Automatic calendar add button that works. The reply button within the ai report doesn't work. Within the report, have it label important missed emails that need replies and emails with to-do action items and work / promotional. Have it categorize everything."
 
 - **Marked read**:
   - `mail_messages.marked_at` is set by the ✓ button and cleared by marking unread, or when the server says it's unread again.
@@ -1958,11 +1958,11 @@ He asked for: "Auto unsubscribe to emails (Shows subscriptions). When I click ma
   - On an open message and on calendar items. The model reads the event (JSON schema), falling back to `notes::parse_due`, then today.
   - It uses CalendarView's form, now exported with `initial`, defaulting to the first connected calendar.
   - The form is single-day, so a multi-day end is dropped.
-- **Checked** in the UI mock: two ✓ clicks in one spot marked two messages, and the Marked read tab, report grouping, Missed label, Reply composer (right account, quoted), the prefilled event form and Subscriptions all work. Not run against his real mail.
+- **Checked** in the UI mock: two ✓ clicks in one spot marked two messages, and the Marked read tab, report grouping, Missed label, Reply composer (right account, quoted), the prefilled event form and Subscriptions all work. Not run against my real mail.
 - Translations were added as one sorted run at the end of each table rather than re-sorting it (re-sorting rewrites about 1,400 lines and clashes with other branches).
 
 ## Website (2026-10-12)
 
-`docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (his Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of his sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
+`docs/` (home, privacy policy, terms, 404) is served by a Cloudflare Worker with static assets: `website/wrangler.jsonc`, deployed with `cd website && npx -y wrangler@4.149.0 deploy` (my Cloudflare account, which wrangler on this PC is signed in to). Live at https://sulcusai.sseditor.com (a subdomain of my sseditor.com for now). Links use clean URLs (`/privacy`, `/terms`); Cloudflare redirects `*.html` to them.
 - Don't run `wrangler pages project create` or `wrangler deploy` in the repo root: wrangler 4.149 "autoconfigures" the Vite app and rewrites package.json, the lockfile and vite.config.ts.
 - Moving to its own domain (option B, e.g. sulcusai.app): buy it in Cloudflare, add `{ "pattern": "<domain>", "custom_domain": true }` to `routes` and deploy, verify the domain in Google Search Console (DNS TXT), then change the homepage, privacy and terms links and the authorized domain in Google Auth Platform › Branding. Keep sulcusai.sseditor.com as a second route so old links keep working.
