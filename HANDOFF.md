@@ -1549,6 +1549,11 @@ He asked for: "each external call a model must make, they tell the user what dat
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` once he says so.
 
+## 0.9.22 (2026-10-21): the phone keeps its pairing
+
+- His first real iPhone test (through the test copy and the live relay) worked: a chat and a picture. But after a refresh it said "scan the code". He'd opened the link from a file in the Claude app, whose viewer keeps no storage. `pair()` had stored the key and then stripped it from the address.
+- Now the key stays in the address after `#` (never sent). That also makes an iPhone home-screen shortcut work, since those get their own storage. The key is still kept in localStorage per link (`sulcus.key:/l/<id>`), so one phone can pair with several PCs. An address opened without the key but known locally gets it put back.
+
 ## 0.9.21 (2026-10-21): the whole app on a phone, from anywhere (phone link)
 
 His ask: phone pairing showed a white page for him and his brother (iPhone). He wanted phones linked through his Cloudflare, each PC hosting its own phone, with full access (chats, new chats, models, Studio, everything) and a phone-only PC tab with Stop all.
