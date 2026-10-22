@@ -1743,7 +1743,9 @@ fn chat_live(state: AppStateRef, chat_id: String) -> Option<serde_json::Value> {
 
 #[tauri::command]
 async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<Option<Message>, String> {
-    run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None).await
+    // The turn is built on the heap: a command starts on the main thread,
+    // and in 0.9.26 sending a message overflowed its stack (the app closed).
+    Box::pin(run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None)).await
 }
 
 /// Also receives every event of a turn (voice mode speaks the reply from it).
