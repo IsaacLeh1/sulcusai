@@ -1576,6 +1576,31 @@ Ask: rap didn't work at all; make sure music can make a whole variety of songs; 
   - Real songs: left to the writer, "a little jingle for a bakery" came out 2:35 and a full pop song 4:35. With `short_piece` and a tighter idea of a full song (two-line intro and outro, two verses, 20 to 26 lines), they were 30 s and 2:30, with 4 of 13 and 40 of 55 words heard.
   - The Studio shows "about 2:50" for a chosen structure or your own lyrics, else "fits the song"; turning Auto off brings back the slider.
 
+### Artists, and more music models (same release)
+
+Ask: save voices and everything about the music so several songs sound like the same artist; is there a better music model, add more with their strengths and weaknesses; voices sound robotic and get drowned out.
+- **Artists** (`media/persona.rs`, kept encrypted in the settings as `music_personas`): a name, their sound (every style setting except a single song's parts: `sound_of`), their language, their voice words, and the seed and voice song from their first song.
+  - Picking one in the Studio fills in their whole sound. "Save these settings as an artist", "Save changes to …" and "Remove" are in the Artist row.
+  - Songs carry `persona`; `with_persona` applies the artist under the song's own choices and adds their seed. Chats can name one (`create_music` `artist`).
+- **What keeps one voice:**
+  - Each artist gets voice words of their own (`voice_words_for`: a register and a texture from their name, like "warm alto with a slight rasp"; editable). They go into every song's caption (`voice_detail`).
+  - Each artist's songs start from their first song's seed.
+  - Following the first song as `--ref-audio` hurt the words: 5 of 18 lyric words heard following the whole song, 0 of 14 following its vocals alone (taken out with ACE-Step 1.5 Base), against 14 of 18 and 14 of 17 without. That attempt is gone; following the voice song is an opt-in ("closer voice, but the words can come out less clear").
+  - With words and seed: the second song 11 of 28 words heard; its pitch (189 Hz) and breathiness nearer the first's (233 Hz) than the control's (117 Hz). Crude prints (`voice_print`, from separated vocals), so listen too.
+- **More music models** (straight into `catalog.json`; `build_catalog.py` hasn't been kept up since the Qwen3.6 additions, so don't regenerate from it): XL SFT (best quality, 50 steps), XL SFT Turbo, SFT, SFT Turbo, Clear voice (turbo shift 3), XL Base (parts at XL quality, listed before Base so layering and taking parts out use it when both are there).
+  - Media models have `strengths` and `weaknesses`, shown on their cards ("Good at", "Less good at").
+- **Robotic, buried voices** were the standard model (`e2e_music_voice_quality`: the same lyrics on seeds 11 and 22, 60 s, words Whisper heard of 18, the voice's loudness against the song from vocals taken out with Base):
+  - standard turbo: 12 s, 6 and 7, 0.73;
+  - with "clear lead vocals upfront in the mix, natural human voice" in the description: 8 and 0, worse, so not used;
+  - **Clear voice** (turbo shift 3): 12 s, 17 and 16, 0.92 to 0.98;
+  - **SFT Turbo**: 20 s, 18 and 18, 0.67 to 0.83;
+  - **XL Turbo**: 67 to 80 s, 18 and 18, 0.78 to 0.90;
+  - XL SFT: 346 to 412 s, 2 and 12.
+  - Quality ratings and seconds (a 30-second song on an RTX 5070-class card) now come from these numbers.
+  - Music's time estimate now assumes the graphics card when there is one (it assumed the processor, so XL never counted as quick enough). The model offered is now XL on a card like the 5070 and Clear voice on the processor (`music_offers_the_clearest_model_that_keeps_up`).
+  - The Studio tells people on the standard or small model about XL and Clear voice.
+- Research notes on other music engines: yue2.cpp (YuE2-3B, best on its makers' benchmark, non-commercial, English and Chinese) and audio.cpp (HeartMuLa-3B Apache, MiniMax Music 3 with license terms). Not added yet.
+
 ## 0.9.25 (2026-10-22): folders per chat, a thinking limit, steadier permissions
 
 Asks:

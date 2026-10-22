@@ -244,6 +244,9 @@ fn derive(donor: &MediaModel, repo_id: &str, info: &Value, f: &RemoteFile, url: 
     m.publisher = info["author"].as_str().map(str::to_string).unwrap_or_else(|| repo_id.split('/').next().unwrap_or("").to_string());
     m.source = format!("{}/{repo_id}", hf::SITE);
     m.description = format!("From Hugging Face ({repo_id}), built on {}. It's downloaded to this PC; removing it deletes its own file.", h.name);
+    // The catalog model's strengths are its own, not this file's.
+    m.strengths.clear();
+    m.weaknesses.clear();
     let license = info["cardData"]["license"].as_str().map(str::to_string);
     m.license = License {
         name: license.unwrap_or_else(|| "See the model's page".into()),

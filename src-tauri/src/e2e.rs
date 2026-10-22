@@ -3254,6 +3254,32 @@ fn whisper_hears(state: &crate::AppState, file: &std::path::Path, lang: Option<&
     out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("(not transcribed: {e})"))
 }
 
+/// A rough print of a singing voice (from a vocals-only track): its middle
+/// pitch over the voiced moments (autocorrelation, 80 to 800 Hz) and how
+/// often it crosses zero there (brightness, breathiness). Two songs by one
+/// singer land close together; different singers, further apart.
+#[cfg(windows)]
+fn voice_print(samples: &[f32], rate: u32) -> (f32, f32) {
+    let frame = (rate as usize) / 20;
+    let loudest = samples.chunks(frame).map(crate::audio::rms).fold(0.0f32, f32::max).max(1e-6);
+    let (lo, hi) = (rate as usize / 800, rate as usize / 80);
+    let mut pitches = Vec::new();
+    let mut crossings = Vec::new();
+    for f in samples.chunks(frame).filter(|f| f.len() == frame && crate::audio::rms(f) > loudest * 0.25) {
+        let energy: f32 = f.iter().map(|x| x * x).sum::<f32>().max(1e-9);
+        let (lag, peak) = (lo..hi.min(frame - 1)).map(|l| (l, f.iter().zip(&f[l..]).map(|(a, b)| a * b).sum::<f32>() / energy)).fold((0, 0.0f32), |best, x| if x.1 > best.1 { x } else { best });
+        if peak > 0.5 && lag > 0 {
+            pitches.push(rate as f32 / lag as f32);
+            crossings.push(f.windows(2).filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0)).count() as f32 / frame as f32);
+        }
+    }
+    let middle = |mut v: Vec<f32>| {
+        v.sort_by(|a, b| a.total_cmp(b));
+        v.get(v.len() / 2).copied().unwrap_or(0.0)
+    };
+    (middle(pitches), middle(crossings))
+}
+
 /// Whisper's timed lines ("[00:00:12.000 --> 00:00:15.000]  words") as
 /// their words, and the second the first real words start (None: none heard).
 #[cfg(windows)]
@@ -3376,6 +3402,79 @@ async fn e2e_lyrics_fill_the_song() {
     }
     state.engine.lock().await.stop().await;
     assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// Which music model, and which words, give the most natural voice above
+/// the band: the same lyrics and seeds on each, with the words Whisper hears,
+/// the voice's loudness against the whole song (from the vocals taken out by
+/// ACE-Step 1.5 Base) and the time. SULCUSAI_VOICE_MODELS picks the models.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_voice_quality() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::env::temp_dir().join("sulcusai-voice-quality");
+    std::fs::create_dir_all(&out).unwrap();
+    let models = std::env::var("SULCUSAI_VOICE_MODELS").unwrap_or_else(|_| "ace-step-1.5,ace-step-1.5-xl,ace-step-1.5-xl-sft,ace-step-1.5-sftturbo,ace-step-1.5-clear".into());
+    let lyrics = "[Verse]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let music = || media::MusicSpec { genre: Some("Pop".into()), voice: Some("female".into()), instruments: vec!["Piano".into(), "Drums".into(), "Bass".into()], ..Default::default() };
+    // (name, model, words added to the description)
+    let mut runs: Vec<(String, String, &str)> = Vec::new();
+    for m in models.split(',') {
+        runs.push((m.to_string(), m.to_string(), ""));
+    }
+    runs.insert(1, ("ace-step-1.5+upfront".into(), "ace-step-1.5".into(), ", clear lead vocals upfront in the mix, natural human voice"));
+    media::install_for_test(&state, "ace-step-1.5-base").await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let mut rows = Vec::new();
+    for (name, model, extra) in &runs {
+        media::install_for_test(&state, model).await.unwrap();
+        for seed in [11i64, 22] {
+            let req = Request {
+                op: "music".into(),
+                model_id: Some(model.clone()),
+                prompt: format!("a hopeful morning song{extra}"),
+                lyrics: Some(lyrics.into()),
+                seconds: Some(60.0),
+                seed: Some(seed),
+                music: Some(music()),
+                language: Some("en".into()),
+                ..Default::default()
+            };
+            let t = std::time::Instant::now();
+            let item = match media::run(&state, store::new_id(), req).await {
+                Ok(mut v) => v.remove(0),
+                Err(e) => {
+                    rows.push(format!("{name} seed {seed}: failed ({e})"));
+                    continue;
+                }
+            };
+            let took = t.elapsed().as_secs_f64();
+            let bytes = store::read(&state.paths, &c, &item.id).unwrap();
+            let file = out.join(format!("{}-{seed}.mp3", name.replace('+', "-")));
+            std::fs::write(&file, &bytes).unwrap();
+            let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+            let words = sung_words(&heard);
+            let wanted = sung_words(lyrics);
+            let matched = wanted.iter().filter(|w| words.contains(*w)).count();
+            let spec = media::MusicSpec { task: Some("extract".into()), audio: Some(item.id.clone()), track: Some("vocals".into()), ..Default::default() };
+            let over = match media::run(&state, store::new_id(), Request { op: "music".into(), seconds: Some(60.0), music: Some(spec), ..Default::default() }).await {
+                Ok(mut v) => {
+                    let (voc, _) = decode_mp3(&store::read(&state.paths, &c, &v.remove(0).id).unwrap());
+                    let (mix, _) = decode_mp3(&bytes);
+                    crate::audio::rms(&voc) / crate::audio::rms(&mix).max(1e-6)
+                }
+                Err(_) => f32::NAN,
+            };
+            rows.push(format!("{name} seed {seed}: {took:.0}s, {matched} of {} lyric words heard, voice to song {over:.2}", wanted.len()));
+            println!("{}", rows.last().unwrap());
+        }
+    }
+    state.engine.lock().await.stop().await;
+    println!("\n{}\nsongs in {}", rows.join("\n"), out.display());
 }
 
 /// Songs made the way the Studio and chats make them, with the real music
@@ -3510,6 +3609,31 @@ async fn e2e_music_songs() {
             made.push((case.into(), Request { seconds: Some(asked), ..req }, r, Some("en")));
         }
     }
+    // A saved artist: the first song becomes the voice, the second follows
+    // it; a third with the same settings and no artist is the control.
+    if want("artist_voice") {
+        let sound = media::MusicSpec { genre: Some("Indie pop".into()), voice: Some("female".into()), vocal_style: Some("breathy".into()), instruments: vec!["Piano".into(), "Acoustic guitar".into()], ..Default::default() };
+        let nova = {
+            let conn = state.db.lock().unwrap();
+            media::persona::save(&conn, &c, media::persona::Persona { name: "Nova".into(), sound: sound.clone(), language: Some("en".into()), ..Default::default() }).unwrap()
+        };
+        let with = |prompt: &str, persona: bool| Request {
+            op: "music".into(),
+            prompt: prompt.into(),
+            seconds: Some(60.0),
+            music: Some(if persona { media::MusicSpec { persona: Some("Nova".into()), ..Default::default() } } else { sound.clone() }),
+            language: Some("en".into()),
+            ..Default::default()
+        };
+        let first = with("city lights on a quiet night", true);
+        made.push(("artist_first".into(), first.clone(), make("artist_first", first).await, Some("en")));
+        let voice = media::persona::find(&state.db.lock().unwrap(), &c, &nova.id).and_then(|p| p.voice_song);
+        println!("Nova's voice song: {voice:?}");
+        let second = with("a road trip with my best friend", true);
+        made.push(("artist_second".into(), second.clone(), make("artist_second", second).await, Some("en")));
+        let control = with("a road trip with my best friend", false);
+        made.push(("artist_control".into(), control.clone(), make("artist_control", control).await, Some("en")));
+    }
     // Many styles, one each (SULCUSAI_SONGS=genres): words heard in every one.
     if want("genres") {
         let styles: [(&str, &str, Option<&str>, &str, Option<&str>); 10] = [
@@ -3643,7 +3767,17 @@ async fn e2e_music_songs() {
             let loudest = levels.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
             let line: String = levels.iter().map(|l| match l / loudest { x if x > 0.5 => '#', x if x > 0.2 => '+', x if x > 0.08 => '.', _ => ' ' }).collect();
             let first = levels.iter().position(|l| l / loudest > 0.2).map(|i| i * 3);
-            println!("{name}: vocals every 3 s |{line}| first at {}", first.map_or("never".into(), |s| format!("{s}s")));
+            let (pitch, bright) = voice_print(&samples, rate);
+            // How loud the voice is against the whole song (drowned out: low).
+            let (mix, _) = decode_mp3(&store::read(&state.paths, &c, &song.id).unwrap());
+            let over = crate::audio::rms(&samples) / crate::audio::rms(&mix).max(1e-6);
+            println!(
+                "{name}: vocals every 3 s |{line}| first at {}, voice {:.0} Hz, brightness {:.3}, voice to song {:.2}",
+                first.map_or("never".into(), |s| format!("{s}s")),
+                pitch,
+                bright,
+                over
+            );
         }
         state.engine.lock().await.stop().await;
     }

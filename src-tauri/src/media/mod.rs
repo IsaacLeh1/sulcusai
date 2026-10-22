@@ -9,6 +9,7 @@
 
 pub(crate) mod artist;
 pub mod clarify;
+pub(crate) mod persona;
 pub mod coach;
 mod cutout;
 pub(crate) mod imaging;
@@ -57,6 +58,8 @@ const REF_GPU_BW: f64 = 380.0;
 const REF_CORES: f64 = 24.0;
 /// How much slower picture models run on the processor than on its card.
 const CPU_SLOWDOWN: f64 = 14.0;
+/// The music engine on the processor, against the graphics card.
+const MUSIC_CPU_SLOWDOWN: f64 = 7.0;
 
 // ---------- catalog ----------
 
@@ -131,6 +134,11 @@ pub struct MediaModel {
     pub cpu: bool,
     pub secs: f64,
     pub quality: u8,
+    /// What it's good at, and less good at, for choosing between models.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub strengths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weaknesses: Vec<String>,
     #[serde(default)]
     pub defaults: Defaults,
     /// Models on Hugging Face built on this one, offered by the Studio's search.
@@ -231,8 +239,12 @@ pub fn fit(m: &MediaModel, hw: &Hardware, b: &Budget, missing: u64, measured: Op
         (false, false, 0.0, Some(format!("needs about {:.0} GB of memory", m.size() as f64 / GIB as f64 + 1.0)))
     } else {
         match m.kind {
-            // These engines run on the processor.
-            Kind::Music | Kind::Background => (true, false, m.secs * cpu_scale, None),
+            // Music runs on the graphics card when there is one (the Vulkan
+            // engine); its seconds are measured on an RTX 5070-class card.
+            Kind::Music if b.vram > 0 => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_gbs.max(50.0), None),
+            Kind::Music => (true, false, m.secs * MUSIC_CPU_SLOWDOWN * cpu_scale, None),
+            // This engine runs on the processor.
+            Kind::Background => (true, false, m.secs * cpu_scale, None),
             _ if gpu_ok => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_gbs.max(50.0), None),
             _ if m.cpu => (true, false, m.secs * CPU_SLOWDOWN * cpu_scale, None),
             _ => {
@@ -651,6 +663,12 @@ pub struct MusicSpec {
     pub energy: Option<String>,
     /// How it ends: "fade", "big-finish", "hard-stop".
     pub ending: Option<String>,
+    /// The singer's voice in the music model's words ("warm alto with a
+    /// slight rasp"): a saved artist's, the same in each of their songs.
+    pub voice_detail: Option<String>,
+    /// A saved artist (`persona::Persona`, by id or name): their sound and
+    /// voice for this song, and the song kept as their voice if it's their first.
+    pub persona: Option<String>,
     /// The length follows the song (`auto_seconds`): a length named in the
     /// description, else what the lyrics or the sections need, else what
     /// the lyrics written for it come to.
@@ -975,6 +993,9 @@ impl MusicSpec {
                 None if rap => parts.push(format!("{style}rap vocals, rapper")),
                 None if !style.is_empty() => parts.push(format!("{style}vocals")),
                 None => {}
+            }
+            if let Some(d) = some(&self.voice_detail) {
+                parts.push(d.trim_end_matches('.').to_string());
             }
             // Rapped, not sung: said plainly, with the flow (rap sung as a
             // melody came out half-sung and thin).
@@ -1509,6 +1530,18 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         if !items.is_empty() {
             learn_speed(state, m, &req, started.elapsed().as_secs_f64());
             crate::cleanup::touch_model(state, &m.id);
+        }
+    }
+    // A saved artist's first new song becomes their voice for the next ones.
+    let artist_of = req.music.as_ref().filter(|m| matches!(m.task.as_deref(), None | Some("new"))).and_then(|m| m.persona.clone());
+    if let (Ok(items), Some(name), Ok(c)) = (&result, artist_of, state.work_cipher()) {
+        if let Some(first) = items.first().filter(|i| i.kind == "audio") {
+            let conn = state.db.lock().unwrap();
+            if let Some(p) = persona::find(&conn, &c, &name) {
+                if persona::first_voice(&conn, &c, &p.id, &first.id, first.seed, |id| store::get(&conn, &c, id).is_some()).unwrap_or(false) {
+                    crate::applog::line("media", &format!("{}'s first song is their voice now", p.name));
+                }
+            }
         }
     }
     let name = match req.op.as_str() {
@@ -2136,6 +2169,9 @@ pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paus
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
+    // A saved artist's sound and voice, under the song's own choices.
+    let as_artist = with_persona(state, req)?;
+    let req = as_artist.as_ref().unwrap_or(req);
     // An artist's style is read by the chat model too, before the lyrics.
     let styled = artist::resolve(state, req, progress).await;
     let req = styled.as_ref().unwrap_or(req);
@@ -3236,6 +3272,21 @@ fn vocal_language(asked: Option<&str>, words: &lyrics::Words) -> Option<String> 
     }
 }
 
+/// The request with its saved artist applied (`MusicSpec::persona`), or
+/// None when it names none. An artist that's gone is said plainly.
+fn with_persona(state: &AppState, req: &Request) -> Result<Option<Request>, String> {
+    let Some(name) = req.music.as_ref().and_then(|m| m.persona.as_deref()).map(str::trim).filter(|n| !n.is_empty()) else { return Ok(None) };
+    let c = state.work_cipher()?;
+    let conn = state.db.lock().unwrap();
+    let p = persona::find(&conn, &c, name).ok_or_else(|| format!("There's no saved artist called {name}."))?;
+    let mut out = req.clone();
+    let spec = out.music.get_or_insert_with(Default::default);
+    p.apply(spec, &mut out.language, |id| store::get(&conn, &c, id).is_some_and(|i| i.kind == "audio"));
+    // Their first song's seed: the same start keeps the voice closer.
+    out.seed = out.seed.or(p.seed);
+    Ok(Some(out))
+}
+
 /// The length of a new song set to Auto, when it's known before any lyrics
 /// are written: one named in the description ("a 90-second jingle"), what
 /// the person's own lyrics need, what the chosen sections take, or a
@@ -4078,6 +4129,26 @@ pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -
     Ok(item)
 }
 
+/// The artists the person saved.
+#[tauri::command]
+pub async fn music_personas(state: AppStateRef<'_>) -> Result<Vec<persona::Persona>, String> {
+    let c = state.cipher()?;
+    Ok(persona::list(&state.db.lock().unwrap(), &c))
+}
+
+/// Saves an artist (a new one without an id).
+#[tauri::command]
+pub async fn music_persona_save(state: AppStateRef<'_>, persona: persona::Persona) -> Result<persona::Persona, String> {
+    let c = state.cipher()?;
+    persona::save(&state.db.lock().unwrap(), &c, persona)
+}
+
+#[tauri::command]
+pub async fn music_persona_delete(state: AppStateRef<'_>, id: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    persona::remove(&state.db.lock().unwrap(), &c, &id)
+}
+
 /// An artist's style for the Studio's "Use their style": the genre, voice,
 /// instruments and tempo to fill in, and their sound and way of writing.
 #[tauri::command]
@@ -4463,6 +4534,29 @@ mod tests {
         let plain: Vec<std::ffi::OsString> = ["-p", "x", "-o", "o.png"].iter().map(|s| s.into()).collect();
         let added: Vec<String> = with_flag(&plain, "--max-vram", Some("-1")).iter().map(|s| s.to_string_lossy().into_owned()).collect();
         assert_eq!(added, ["-p", "x", "--max-vram", "-1", "-o", "o.png"], "before the output path");
+    }
+
+    /// The music model offered is the clearest that keeps up: XL on a
+    /// graphics card like the RTX 5070 (every word heard in tests, about 40
+    /// seconds a 30-second song), the clear-voice model on the processor.
+    #[test]
+    fn music_offers_the_clearest_model_that_keeps_up() {
+        let pick = |vram: u64, cores: usize| {
+            let (h, b) = hw(vram, cores);
+            crate::catalog::Catalog::bundled()
+                .media
+                .models
+                .into_iter()
+                .filter(|m| m.kind == Kind::Music && m.can("music"))
+                .filter(|m| fit(m, &h, &b, 0, None).est_secs <= 60.0)
+                .max_by_key(|m| m.quality)
+                .map(|m| m.id)
+        };
+        assert_eq!(pick(12, 32).as_deref(), Some("ace-step-1.5-xl"));
+        assert_eq!(pick(0, 16).as_deref(), Some("ace-step-1.5-clear"));
+        let (h, b) = hw(12, 32);
+        let xl = fit(&model("ace-step-1.5-xl"), &h, &b, 0, None);
+        assert!(xl.on_gpu && xl.est_secs <= 60.0, "{}", xl.est_secs);
     }
 
     /// A PC with 8 GB and no graphics card runs the small music model; the

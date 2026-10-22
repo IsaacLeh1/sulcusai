@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-10-19",
+  "updated": "2026-10-22",
   "engine": {
     "name": "llama.cpp",
     "license": "MIT",
@@ -3033,8 +3033,8 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 40,
-        "quality": 8,
+        "secs": 6,
+        "quality": 7,
         "defaults": {
           "seconds": 30
         },
@@ -3052,14 +3052,21 @@
           "avoid": [
             "xl"
           ]
-        }
+        },
+        "strengths": [
+          "Quick (8 steps)",
+          "Good for sound effects too"
+        ],
+        "weaknesses": [
+          "Voices can sound synthetic and sit low in the mix: in tests about a third of the words were heard"
+        ]
       },
       {
         "id": "ace-step-1.5-xl",
         "name": "ACE-Step 1.5 XL",
         "publisher": "ACE Studio and StepFun",
         "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
-        "description": "The larger ACE-Step music model (4B): fuller arrangements and clearer vocals than the standard one, at about twice the time.",
+        "description": "The larger ACE-Step music model (4B): the fullest arrangements and the clearest, most natural voices. In tests every word was heard.",
         "license": {
           "name": "MIT",
           "url": "https://opensource.org/license/mit",
@@ -3095,8 +3102,8 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 80,
-        "quality": 9,
+        "secs": 37,
+        "quality": 10,
         "defaults": {
           "seconds": 30
         },
@@ -3112,7 +3119,342 @@
             "xl",
             "turbo"
           ]
-        }
+        },
+        "strengths": [
+          "Every word heard in tests, with the most natural voices",
+          "Fullest arrangements"
+        ],
+        "weaknesses": [
+          "About six times the standard model's time",
+          "5.3 GB download"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-xl-sft",
+        "name": "ACE-Step 1.5 XL SFT (best quality)",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "XL tuned for detail, in 50 steps instead of 8: rich arrangements, but several minutes a song, and in tests its words were less clear than XL's.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-xl-sft-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-xl-sft-Q8_0.gguf",
+            "size": 5305828704,
+            "sha256": "d7b06fadab214375ef5ebcfa44bf4a10489ea364b119f5b9ecbcd870408bdab9"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 190,
+        "quality": 8,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Richest detail in the music"
+        ],
+        "weaknesses": [
+          "Slowest: several minutes for a song",
+          "In tests its words were less clear than XL's",
+          "5.3 GB download"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-xl-sftturbo",
+        "name": "ACE-Step 1.5 XL SFT Turbo",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The XL model with SFT's detail merged into the fast turbo: close to XL SFT's quality in a fraction of the time.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-xl-sftturbo50-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-xl-sftturbo50-Q8_0.gguf",
+            "size": 5305828768,
+            "sha256": "ec6bef50f2aec3176aafa4836401394913f567ceb7a4d53a459948a8b5294e51"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 40,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Near-best quality at turbo speed",
+          "Fuller sound than the standard model"
+        ],
+        "weaknesses": [
+          "Newer and less tested than XL turbo",
+          "5.3 GB download"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-sft",
+        "name": "ACE-Step 1.5 SFT",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The standard-size ACE-Step tuned for detail: more natural voices than the standard model, in 50 steps, so slower.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-sft-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-sft-Q8_0.gguf",
+            "size": 2549527936,
+            "sha256": "17f1984e48aaab27b3eb8ccbf0b754a6656e677884c60ea7003845cfc0059b70"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 95,
+        "quality": 8,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "More natural voices than the standard model",
+          "Smaller than XL"
+        ],
+        "weaknesses": [
+          "Several times slower than the standard model"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-sftturbo",
+        "name": "ACE-Step 1.5 SFT Turbo",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "SFT's detail merged into the fast standard model: in tests every word was heard, in under twice the standard model's time.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-sftturbo50-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-sftturbo50-Q8_0.gguf",
+            "size": 2549527936,
+            "sha256": "3fab14cf0d8efa249edf49b6fd0392bac54f1a80514567a5ae4164853339ecb3"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 10,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Every word heard in tests",
+          "Quick (about 20 seconds a minute of song)"
+        ],
+        "weaknesses": [
+          "Less full than the XL models"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-clear",
+        "name": "ACE-Step 1.5 Clear voice",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The standard model set for a clear, upfront voice (turbo with shift 3): in tests nearly every word was heard, at the standard model's speed.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-turbo-shift3-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-turbo-shift3-Q8_0.gguf",
+            "size": 2549527968,
+            "sha256": "21cc9ec83378c71a28aef4a5c1bacab3fe5025e9de8f76487656b6f9de330d21"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 6,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Clear, upfront voice: 16 to 17 of 18 words heard in tests",
+          "As quick as the standard model"
+        ],
+        "weaknesses": [
+          "Can sound a little dry, with less detail in the music"
+        ]
+      },
+      {
+        "id": "ace-step-1.5-xl-base",
+        "name": "ACE-Step 1.5 XL Base (song parts)",
+        "publisher": "ACE Studio and StepFun",
+        "source": "https://huggingface.co/ACE-Step/Ace-Step1.5",
+        "description": "The XL model for working on songs you have: adds a part (vocals, drums, guitar…), pulls one part out, or builds a full arrangement around a single part, at XL quality. It makes new songs too.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music",
+          "parts"
+        ],
+        "files": [
+          {
+            "role": "dit",
+            "file": "acestep-v15-xl-base-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/acestep-v15-xl-base-Q8_0.gguf",
+            "size": 5305828704,
+            "sha256": "45d05b88ccbfa0ea27208ea618d7f0749b2be040b457cfa661d37646ea39f207"
+          },
+          {
+            "role": "embedding",
+            "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/Qwen3-Embedding-0.6B-Q8_0.gguf",
+            "size": 784144960,
+            "sha256": "972f23255e46adfe744a0eb9a0039f3c63988f65753b0968d776e8b27168c321"
+          },
+          {
+            "role": "vae",
+            "file": "vae-BF16.gguf",
+            "url": "https://huggingface.co/Serveurperso/ACE-Step-1.5-GGUF/resolve/main/vae-BF16.gguf",
+            "size": 337420928,
+            "sha256": "0599862ac5d15cd308e1d2e368373aea6c02e25ebd1737ad4a4562a0901b0ef8"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 190,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Adds, extracts and completes parts at XL quality",
+          "Layered harmonies sound fuller"
+        ],
+        "weaknesses": [
+          "Slow (50 steps)",
+          "5.3 GB download"
+        ]
       },
       {
         "id": "ace-step-1.5-base",
@@ -3155,11 +3497,18 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 60,
+        "secs": 95,
         "quality": 8,
         "defaults": {
           "seconds": 30
-        }
+        },
+        "strengths": [
+          "Adds, extracts and completes song parts"
+        ],
+        "weaknesses": [
+          "Slow (50 steps)",
+          "Not the best for new songs"
+        ]
       },
       {
         "id": "ace-step-1.5-small",
@@ -3202,11 +3551,18 @@
         ],
         "min_vram_gb": 0,
         "cpu": true,
-        "secs": 25,
+        "secs": 5,
         "quality": 5,
         "defaults": {
           "seconds": 30
-        }
+        },
+        "strengths": [
+          "Smallest and quickest",
+          "Runs on modest PCs"
+        ],
+        "weaknesses": [
+          "Simpler songs, less clear words"
+        ]
       }
     ]
   }

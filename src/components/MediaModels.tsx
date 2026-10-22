@@ -380,6 +380,16 @@ function MediaModelRow({
             ))}
           </span>
           <span className="small block">{m.description}</span>
+          {!!m.strengths?.length && (
+            <span className="small block">
+              <strong>{t("Good at:")}</strong> {m.strengths.join(" · ")}
+            </span>
+          )}
+          {!!m.weaknesses?.length && (
+            <span className="small block muted">
+              <strong>{t("Less good at:")}</strong> {m.weaknesses.join(" · ")}
+            </span>
+          )}
           <span className="small muted block">
             {m.fit.on_gpu ? t("Runs on your graphics card") : t("Runs on your processor")} · {t("{time} for {what}", { time: waitLabel(m.fit.est_secs), what: t(per) })} ·{" "}
             {m.installed

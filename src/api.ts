@@ -1684,6 +1684,9 @@ export interface MediaModelCard {
   can: string[];
   files: { role: string; file: string; size: number }[];
   quality: number;
+  /** What it's good at, and less good at, for choosing between models. */
+  strengths?: string[];
+  weaknesses?: string[];
   defaults: { steps: number; width: number; height: number; fps: number; seconds: number; max_frames?: number };
   /** Installed from Hugging Face: its repository there ("owner/name"). */
   from_hub?: string | null;
@@ -1915,6 +1918,10 @@ export interface MusicSpec {
   production?: string | null;
   /** The length follows the song: a length named in the description, the lyrics, the sections, or the lyrics written for it. */
   auto_length?: boolean;
+  /** A saved artist (id or name): their voice and sound for this song. */
+  persona?: string | null;
+  /** The singer's voice in words (a saved artist's). */
+  voice_detail?: string | null;
   /** The feeling in the words and the voice. */
   emotion?: string | null;
   vocal_effects?: VocalEffect[];
@@ -1929,6 +1936,22 @@ export interface MusicSpec {
 export interface VocalEffect {
   how: string;
   on: string;
+}
+
+/** A saved artist (media/persona.rs): the song their voice follows, and their sound. */
+export interface Persona {
+  id: string;
+  name: string;
+  /** Their voice in the music model's words, in every one of their songs. */
+  voice_words: string;
+  /** Their first song: its seed starts their later songs; followed when follow_voice_song. */
+  voice_song: string | null;
+  seed: number | null;
+  follow_voice_song: boolean;
+  sound: MusicSpec;
+  language: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 /** An artist's style as the chat model describes it (media/artist.rs). */
@@ -2470,6 +2493,10 @@ export const api = {
   musicWriteLyrics: (prompt: string, music: MusicSpec | null, seconds: number | null, language: string | null) =>
     invoke<string>("music_write_lyrics", { prompt, music, seconds, language }),
   musicArtistStyle: (name: string) => invoke<ArtistStyle>("music_artist_style", { name }),
+  musicPersonas: () => invoke<Persona[]>("music_personas"),
+  /** Saves an artist (a new one when id is empty). */
+  musicPersonaSave: (persona: Persona) => invoke<Persona>("music_persona_save", { persona }),
+  musicPersonaDelete: (id: string) => invoke<void>("music_persona_delete", { id }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null }) =>
     invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),

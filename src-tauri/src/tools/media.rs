@@ -55,6 +55,7 @@ pub fn create_music_params() -> Value {
             "how": { "type": "string", "description": "vibrato, belting, falsetto, screamed, growled, raspy, breathy, whispered, spoken, rapped, autotune, runs, operatic." },
             "on": { "type": "string", "enum": ["all", "verse", "pre-chorus", "chorus", "bridge", "final-chorus"] } } },
             "description": "Ways of singing on parts of the song, e.g. [{\"how\": \"screamed\", \"on\": \"chorus\"}, {\"how\": \"vibrato\", \"on\": \"all\"}]." },
+        "artist": { "type": "string", "description": "One of the user's saved artists (from the Studio), by name: the song gets their voice and sound, so it sounds like the same artist as their other songs." },
         "sound_like": { "type": "string", "description": "A singer or band whose style the song follows (\"sing as Taylor Swift\"): written and arranged their way, sung by a voice of the same kind (not their own voice)." },
         "beat": { "type": "string", "description": "The beat's feel, e.g. four on the floor, trap, boom bap, swing, half-time." },
         "bpm": { "type": "integer", "description": "Tempo in beats a minute (60 slow, 100 medium, 128 dance, 160+ fast)." },
@@ -304,6 +305,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 emotion: s("emotion"),
                 vocal_effects: args.get("vocal_effects").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()).unwrap_or_default(),
                 sound_like: s("sound_like"),
+                persona: s("artist"),
                 region: match (num("from"), num("to")) {
                     (Some(a), Some(b)) => Some([a, b]),
                     _ => None,

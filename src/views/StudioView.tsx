@@ -15,6 +15,7 @@ import {
   type MediaModelCard,
   type MediaRequest,
   type MusicSpec,
+  type Persona,
   type VocalEffect,
   type Voice,
 } from "../api";
@@ -1118,6 +1119,18 @@ function MusicComposer({
   const [versionsSet, setVersions] = useState<number | null>(null);
   const [more, setMore] = useState(false);
   const [reference, setReference] = useState<MediaItem | null>(null);
+  // Saved artists: one picked fills in their sound and voice; settings can be saved as one.
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [personaId, setPersonaId] = useState("");
+  const [naming, setNaming] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [voiceWords, setVoiceWords] = useState("");
+  const [followVoice, setFollowVoice] = useState(false);
+  const loadPersonas = () => api.musicPersonas().then(setPersonas).catch(() => {});
+  useEffect(() => {
+    loadPersonas();
+  }, []);
+  const persona = personas.find((p) => p.id === personaId);
   const [song, setSong] = useState<MediaItem | null>(null);
   const [task, setTask] = useState<SongTask>("cover");
   const [part, setPart] = useState("vocals");
@@ -1174,6 +1187,8 @@ function MusicComposer({
     ending: ending || null,
     production: production || null,
     auto_length: auto,
+    persona: mode === "song" && personaId ? personaId : null,
+    voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
     emotion: emotion || null,
     vocal_effects: singing ? vocalEffects : [],
     sound_like: soundLike.trim() || null,
@@ -1224,6 +1239,83 @@ function MusicComposer({
       setLookingUp(false);
     }
   };
+  // An artist picked: their whole sound filled in, to see and change, and their voice song to follow.
+  const pickArtist = (id: string) => {
+    setPersonaId(id);
+    setRemoving(false);
+    const p = personas.find((x) => x.id === id);
+    setVoiceWords(p?.voice_words ?? "");
+    setFollowVoice(!!p?.follow_voice_song);
+    if (!p) return;
+    const s = p.sound;
+    const [note, scale] = (s.key ?? "").split(" ");
+    setGenre(s.genre ?? "");
+    setMood(s.mood ?? "");
+    setInstruments(s.instruments ?? []);
+    setVoice(s.voice ?? "");
+    setBeat(s.beat ?? "");
+    setBpm(s.bpm ?? null);
+    setKeyNote(note ?? "");
+    setKeyMode(scale === "minor" ? "minor" : "major");
+    setMeter(s.time_signature ?? "");
+    setVocalStyle(s.vocal_style ?? "");
+    setHarmonyVoice(s.harmony_voice ?? "");
+    setHarmonyInstrument(s.harmony_instrument ?? "");
+    if (s.harmony_style) setHarmonyStyle(s.harmony_style);
+    if (s.harmony_where) setHarmonyWhere(s.harmony_where);
+    setHarmonyLayer(!!s.harmony_layer);
+    setLeadInstrument(s.lead_instrument ?? "");
+    setRhyme(s.rhyme ?? "");
+    setEnergy(s.energy ?? "");
+    setEnding(s.ending ?? "");
+    setProduction(s.production ?? "");
+    setEmotion(s.emotion ?? "");
+    setVocalEffects(s.vocal_effects ?? []);
+    setSoundLike(s.sound_like ?? "");
+    setArtist(s.sound_like && s.artist_sound ? { name: s.sound_like, sound: s.artist_sound, writing: s.artist_writing ?? "" } : null);
+    if (p.language) setLanguage(p.language);
+    setReference(p.follow_voice_song ? gallery.find((g) => g.id === p.voice_song) ?? null : null);
+    if (vocals === "none") setVocals("write");
+  };
+  // These settings as a new artist, or as the picked one's.
+  const saveArtist = async (asNew: boolean) => {
+    const name = asNew ? (naming ?? "").trim() : persona?.name ?? "";
+    if (!name) return;
+    try {
+      const saved = await api.musicPersonaSave({
+        id: asNew ? "" : persona?.id ?? "",
+        name,
+        voice_words: asNew ? "" : voiceWords,
+        voice_song: followVoice && reference ? reference.id : asNew ? null : persona?.voice_song ?? null,
+        seed: asNew ? null : persona?.seed ?? null,
+        follow_voice_song: !asNew && followVoice,
+        sound: spec(),
+        language: language === "auto" ? null : language,
+        created_at: 0,
+        updated_at: 0,
+      });
+      await loadPersonas();
+      setPersonaId(saved.id);
+      setVoiceWords(saved.voice_words);
+      setFollowVoice(saved.follow_voice_song);
+      setNaming(null);
+      toast(
+        asNew ? t("Saved {name}, with a voice of their own: {voice}.", { name, voice: saved.voice_words }) : t("Saved the changes to {name}.", { name }),
+        "success",
+      );
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const removeArtist = async () => {
+    if (!persona) return;
+    if (!removing) return setRemoving(true);
+    await api.musicPersonaDelete(persona.id).catch((e) => toast(errorText(e), "error"));
+    setRemoving(false);
+    setPersonaId("");
+    await loadPersonas();
+  };
+  const voiceSong = persona?.voice_song ? gallery.find((g) => g.id === persona.voice_song) : undefined;
   const tag = (s: string) => setLyrics((l) => `${l}${l && !l.endsWith("\n") ? "\n\n" : ""}[${s}]\n`);
   const ready =
     mode === "sound"
@@ -1255,6 +1347,50 @@ function MusicComposer({
         <button className={`mode ${mode === "edit" ? "active" : ""}`} onClick={() => setMode("edit")}>{t("From a song you have")}</button>
         <button className={`mode ${mode === "sound" ? "active" : ""}`} onClick={() => setMode("sound")}>{t("Sound effect")}</button>
       </div>
+
+      {mode === "song" && (
+        <div className="music-field">
+          <span className="music-label">{t("Artist")}</span>
+          <div className="row wrap">
+            <select value={personaId} onFocus={loadPersonas} onChange={(e) => pickArtist(e.target.value)} aria-label={t("Artist")}>
+              <option value="">{t("No saved artist")}</option>
+              {personas.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {persona && naming === null && (
+              <>
+                <button className="btn ghost small" onClick={() => saveArtist(false)}>{t("Save changes to {name}", { name: persona.name })}</button>
+                <button className="btn ghost small danger" onClick={removeArtist}>{removing ? t("Remove {name}?", { name: persona.name }) : t("Remove")}</button>
+              </>
+            )}
+            {naming === null ? (
+              <button className="btn ghost small" onClick={() => setNaming("")}>{t("Save these settings as an artist")}</button>
+            ) : (
+              <>
+                <input className="input" value={naming} autoFocus placeholder={t("Artist name")} aria-label={t("Artist name")} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void saveArtist(true)} />
+                <button className="btn small" disabled={!naming.trim()} onClick={() => saveArtist(true)}>{t("Save")}</button>
+                <button className="btn ghost small" onClick={() => setNaming(null)}>{t("Cancel")}</button>
+              </>
+            )}
+          </div>
+          {persona ? (
+            <>
+              <label className="small row wrap">
+                {t("Their voice:")}
+                <input className="input grow" value={voiceWords} aria-label={t("Their voice")} onChange={(e) => setVoiceWords(e.target.value)} />
+              </label>
+              <label className="small row" title={t("Their songs follow the voice of their first song (or the one picked under More settings). Closer voice, but the words can come out less clear.")}>
+                <input type="checkbox" checked={followVoice} onChange={(e) => setFollowVoice(e.target.checked)} disabled={!voiceSong} />
+                {voiceSong ? t("Also follow the voice of “{song}”", { song: voiceSong.prompt || t("A song") }) : t("Also follow the voice of their first song, once it's made")}
+              </label>
+              <p className="small muted">{t("The same voice, seed and sound go into each of their songs, so they sound like one artist. Save the changes to keep edits.")}</p>
+            </>
+          ) : (
+            <p className="small muted">{t("Save an artist to make more songs that sound like the same singer: their voice, style, instruments and way of writing are kept.")}</p>
+          )}
+        </div>
+      )}
 
       {mode === "edit" && (
         <>
@@ -1353,6 +1489,12 @@ function MusicComposer({
         </>
       )}
 
+      {mode === "song" && vocals !== "none" && (m?.id === "ace-step-1.5" || m?.id === "ace-step-1.5-small") && (
+        <p className="callout small">
+          {t("Voices from this model can sound synthetic and get buried under the music. For clear, natural vocals, use ACE-Step 1.5 XL (every word heard in tests) or ACE-Step 1.5 Clear voice (just as quick).")}{" "}
+          <button className="link" onClick={onModels}>{t("Get them")}</button>
+        </p>
+      )}
       {mode === "song" && vocals !== "none" && SOFT_VOCALS.includes(genre) && (
         <p className="small muted">{t("Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.")}</p>
       )}
