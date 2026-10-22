@@ -1549,6 +1549,11 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## 0.9.23 (2026-10-21): certificate checks
+
+- CI's `cargo deny check advisories` failed on two new advisories: RUSTSEC-2026-0382 (rustls-webpki 0.103.15 could accept distrusted intermediates) and RUSTSEC-2026-0381 (webpki-roots 1.0.9 still bundled distrusted emSign intermediates). `cargo update -p rustls-webpki -p webpki-roots` gave 0.103.16 and 1.0.10. `cargo deny check advisories licenses` passes, and so do all tests, including the phone link against the live relay over TLS.
+- Also: 0.9.22's Mac/Linux workflow uploaded its files, but its last job failed because the v0.9.22 tag moved while it ran. Mac and Linux aren't in latest.json for any release (only windows-x86_64), so automatic updates there are a separate thing to fix.
+
 ## 0.9.22 (2026-10-21): the phone keeps its pairing
 
 - My first real iPhone test (through the test copy and the live relay) worked: a chat and a picture. But after a refresh it said "scan the code". The link had been opened from a file in a chat app, whose viewer keeps no storage. `pair()` had stored the key and then stripped it from the address.
