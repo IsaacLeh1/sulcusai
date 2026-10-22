@@ -258,9 +258,108 @@ pub fn lines_for(seconds: f32) -> u32 {
 }
 
 /// And how many words: 16 in 30 seconds were heard well, 21 about half,
-/// 40 in 40 seconds hardly at all.
+/// 40 in 40 seconds hardly at all, and 8 lines of five or six words in 60
+/// seconds line by line. The first seconds are mostly music, so it's a
+/// second a word after the first twelve. (At 0.6 words a second, a minute's
+/// song kept three lines of the writer's usual nine words.)
 pub fn words_for(seconds: f32) -> usize {
-    (seconds * 0.6).round().max(12.0) as usize
+    (seconds - 12.0).round().max(12.0) as usize
+}
+
+/// Seconds a played section takes (no lines under it).
+fn played_seconds(section: &str) -> f32 {
+    if section.to_lowercase().contains("solo") {
+        15.0
+    } else {
+        10.0
+    }
+}
+
+/// A sung section's share of the lines, a verse's being 1.
+fn weight(section: &str) -> f32 {
+    let s = section.to_lowercase();
+    if ["pre", "bridge", "hook", "post", "tag", "coda"].iter().any(|w| s.contains(w)) {
+        0.5
+    } else if ["verse", "chorus", "rap", "refrain"].iter().any(|w| s.contains(w)) {
+        1.0
+    } else {
+        0.75
+    }
+}
+
+/// Song shapes by size, for a length given without one: the largest whose
+/// sections get three or four lines and more.
+const SHAPES: &[&[&str]] = &[
+    &["Verse", "Chorus"],
+    &["Verse", "Chorus", "Verse", "Chorus"],
+    &["Intro", "Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus", "Outro"],
+    &["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Chorus", "Outro"],
+    &["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus", "Solo", "Bridge", "Chorus", "Chorus", "Outro"],
+    &["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus", "Instrumental", "Verse", "Pre-Chorus", "Chorus", "Bridge", "Chorus", "Chorus", "Outro"],
+];
+
+/// A section of the plan and the lines sung in it (0: played).
+pub type Planned = (String, u32);
+
+/// The song's sections and the lines under each: the ones chosen (else a
+/// shape for the length), with the lines the length can sing clearly
+/// shared out by section, in even numbers so rhymes come in pairs.
+pub fn plan(seconds: f32, chosen: &[String]) -> Vec<Planned> {
+    let sung_lines = |list: &[String]| {
+        let played: f32 = list.iter().filter(|s| played_tag(s)).map(|s| played_seconds(s)).sum();
+        let units: f32 = list.iter().filter(|s| !played_tag(s)).map(|s| weight(s)).sum();
+        (((seconds - played) / SECS_PER_LINE).round().max(4.0), units)
+    };
+    let list: Vec<String> = if chosen.is_empty() {
+        let shapes: Vec<Vec<String>> = SHAPES.iter().map(|s| s.iter().map(|x| x.to_string()).collect()).collect();
+        shapes
+            .iter()
+            .rev()
+            .find(|s| {
+                let (lines, units) = sung_lines(s);
+                lines >= units * 3.5
+            })
+            .unwrap_or(&shapes[0])
+            .clone()
+    } else {
+        chosen.to_vec()
+    };
+    let (lines, units) = sung_lines(&list);
+    let each = lines / units.max(0.5);
+    list.into_iter()
+        .map(|s| {
+            let n = if played_tag(&s) { 0 } else { ((each * weight(&s) / 2.0).round() * 2.0).clamp(2.0, 16.0) as u32 };
+            (s, n)
+        })
+        .collect()
+}
+
+/// The plan as the writer reads it: "[Intro] 0 lines, [Verse] 4 lines, …".
+/// (Told "[Intro] played (no lines)", Qwen3 4B wrote "played" under it.)
+fn plan_words(plan: &[Planned]) -> String {
+    let list = plan.iter().map(|(s, n)| format!("[{s}] {n} lines")).collect::<Vec<_>>().join(", ");
+    if plan.iter().any(|(_, n)| *n == 0) {
+        format!("{list}. A section with 0 lines is played by the band, not sung: write its tag alone, with nothing under it")
+    } else {
+        list
+    }
+}
+
+/// Written lyrics without lines under a played section ("[Intro]" then
+/// "played" or "(guitar)"): nothing is sung there.
+fn without_played_lines(lyrics: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut played = false;
+    for line in lyrics.lines() {
+        let t = line.trim();
+        if t.starts_with('[') && t.ends_with(']') {
+            played = played_tag(t);
+        } else if played && !t.is_empty() {
+            continue;
+        }
+        out.push(line);
+    }
+    out.join("\n")
 }
 
 /// How long a song needs to be for these lyrics to be heard (seconds).
@@ -268,16 +367,28 @@ pub fn seconds_for(lyrics: &str) -> f32 {
     sung_lines(lyrics) as f32 * SECS_PER_LINE
 }
 
-fn messages(prompt: &str, seconds: f32, language: Option<&str>) -> Vec<serde_json::Value> {
+/// The writer's messages: the sections and their lines (`plan`), short
+/// lines, and `guide`'s rules (rhyme, feeling, echoes in brackets for
+/// harmony singers: `MusicSpec::lyrics_guide`). `shorter`: its last lines
+/// were too long to be heard.
+fn messages(prompt: &str, plan: &[Planned], language: Option<&str>, guide: &str, shorter: bool) -> Vec<serde_json::Value> {
     let lang = language
         .filter(|l| !l.is_empty() && *l != "auto")
         .map(|l| format!(" Write every line in {}.", crate::translate::language_name(l)))
         .unwrap_or_else(|| " Write them in the language the description is written in, unless it asks for another.".into());
+    let total: u32 = plan.iter().map(|(_, n)| n).sum();
+    let choruses = plan.iter().filter(|(s, _)| s.to_lowercase().contains("chorus") && !s.to_lowercase().contains("pre")).count();
+    let same = if choruses > 1 { " Every [Chorus] has the same words." } else { "" };
+    let short = if shorter {
+        " Keep every line very short: at most five words. Longer lines can't be heard."
+    } else {
+        " Keep every line short, four to six words, so every word can be heard."
+    };
     vec![
         json!({ "role": "system", "content": format!(
-            "You write song lyrics to be sung. Reply with the lyrics only: about {} short lines, with section tags in square brackets on their own lines, \
-             such as [Verse], [Chorus] and [Bridge]. No title, no notes, no quotes, no Markdown.{lang}",
-            lines_for(seconds)
+            "You write song lyrics to be sung. Reply with the lyrics only: section tags in square brackets on their own lines, and the lines to sing under them. \
+             No title, no notes, no quotes, no Markdown. Write these sections in this order, with this many lines under each: {}. That's {total} sung lines in all.{short}{same}{lang}{guide}",
+            plan_words(plan)
         ) }),
         json!({ "role": "user", "content": format!("A song: {}", prompt.trim()) }),
     ]
@@ -285,8 +396,29 @@ fn messages(prompt: &str, seconds: f32, language: Option<&str>) -> Vec<serde_jso
 
 /// Lyrics from one model's answer, when they're lyrics.
 fn usable(raw: &str) -> Option<String> {
-    let text = tidy(crate::chat::strip_thinking(raw));
+    let text = without_played_lines(&tidy(crate::chat::strip_thinking(raw)));
     (sung_lines(&text) >= 3).then_some(text)
+}
+
+/// The words the lead sings on a line: echoes in round brackets are the
+/// harmony singers', so they don't crowd the lead.
+fn lead_words(line: &str) -> usize {
+    let mut depth = 0u32;
+    let lead: String = line
+        .chars()
+        .filter(|c| match c {
+            '(' => {
+                depth += 1;
+                false
+            }
+            ')' => {
+                depth = depth.saturating_sub(1);
+                false
+            }
+            _ => depth == 0,
+        })
+        .collect();
+    lead.split_whitespace().count()
 }
 
 /// Written lyrics cut to the lines the song can sing clearly (the writer,
@@ -300,7 +432,7 @@ pub fn fit_lines(lyrics: &str, max: u32, max_words: usize) -> String {
         let t = line.trim();
         let tag = t.starts_with('[') && t.ends_with(']');
         if !tag && !t.is_empty() {
-            let n = t.split_whitespace().count();
+            let n = lead_words(t);
             // At least three lines, whatever their length (two were sung over and over).
             if sung == max || (sung >= 3 && words + n > max_words) {
                 break;
@@ -310,35 +442,79 @@ pub fn fit_lines(lyrics: &str, max: u32, max_words: usize) -> String {
         }
         out.push(line);
     }
-    // No tag or blank line at the end.
+    // No blank line at the end, nor a sung section's tag with nothing under
+    // it; a played one ([Outro], [Solo]) stays, since it's meant empty.
     while out.last().is_some_and(|l| {
         let t = l.trim();
-        t.is_empty() || (t.starts_with('[') && t.ends_with(']'))
+        t.is_empty() || (t.starts_with('[') && t.ends_with(']') && !played_tag(t))
     }) {
         out.pop();
     }
     out.join("\n")
 }
 
+/// The best lyrics written so far, and whether the last were cut for
+/// lines too long to be heard.
+#[derive(Default)]
+struct Draft {
+    text: String,
+    too_long: bool,
+}
+
+impl Draft {
+    /// One answer, fitted to the song: Some when it's whole (nine lines in
+    /// ten of what was written or planned kept), else kept if it's the best
+    /// so far, to be asked again with shorter lines.
+    fn take(&mut self, raw: &str, planned: u32, max_lines: u32, max_words: usize) -> Option<String> {
+        let written = usable(raw)?;
+        let fitted = fit_lines(&written, max_lines, max_words);
+        let kept = sung_lines(&fitted);
+        let wanted = sung_lines(&written).min(planned as usize);
+        if kept * 10 >= wanted * 9 {
+            return Some(fitted);
+        }
+        crate::applog::line("media", &format!("Lyrics too long to be heard: {kept} of {wanted} lines fitted; asking for shorter lines"));
+        self.too_long = true;
+        if kept > sung_lines(&self.text) {
+            self.text = fitted;
+        }
+        None
+    }
+}
+
+/// A section tag for a part that's played, not sung.
+fn played_tag(tag: &str) -> bool {
+    let t = tag.to_lowercase();
+    ["intro", "outro", "instrumental", "solo", "interlude", "break"].iter().any(|w| t.contains(w))
+}
+
 /// Writes lyrics for a song with the chat model (the one loaded, else the
 /// default), else a language model a picture model brought (FLUX.2 klein's
 /// Qwen3, for one). Run before the music engine starts, so they don't share
 /// the graphics card.
-pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: Option<&str>) -> Result<String, NotWritten> {
-    let msgs = messages(prompt, seconds, language);
+pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: Option<&str>, sections: &[String], guide: &str) -> Result<String, NotWritten> {
+    let plan = plan(seconds, sections);
+    let planned: u32 = plan.iter().map(|(_, n)| n).sum();
+    let (max_lines, max_words) = (planned.max(lines_for(seconds)), words_for(seconds));
+    // Room for every line and tag (about 14 tokens a line), and some over.
+    let room = planned * 14 + plan.len() as u32 * 6 + 250;
     let mut why = None;
+    let mut best = Draft::default();
     match crate::background_endpoint(state).await {
         Ok((ep, spec, _hold)) => {
             for temperature in [0.8, 0.6] {
-                // Room for every line (about 14 tokens each), and some over.
-                let room = lines_for(seconds) * 14 + 250;
-                match crate::chat::complete(&ep, msgs.clone(), json!({ "temperature": temperature }), room).await {
-                    Ok(raw) => match usable(&raw).map(|l| fit_lines(&l, lines_for(seconds), words_for(seconds))) {
+                let msgs = messages(prompt, &plan, language, guide, best.too_long);
+                match crate::chat::complete(&ep, msgs, json!({ "temperature": temperature }), room).await {
+                    Ok(raw) => match best.take(&raw, planned, max_lines, max_words) {
                         Some(l) => return Ok(l),
-                        None => why = Some(NotWritten::Unusable(format!("{} answered without lyrics", spec.name))),
+                        None if best.text.is_empty() => why = Some(NotWritten::Unusable(format!("{} answered without lyrics", spec.name))),
+                        None => {}
                     },
                     Err(e) => why = Some(NotWritten::Unusable(e)),
                 }
+            }
+            if !best.text.is_empty() {
+                return Ok(best.text);
             }
         }
         Err(e) => crate::applog::line("media", &format!("No chat model to write lyrics ({e})")),
@@ -351,9 +527,18 @@ pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: 
     for (name, path) in helpers {
         match crate::vision::Helper::start(state, &name, &path, None).await {
             Ok(h) => {
-                let said = h.ask(msgs.clone(), lines_for(seconds) * 14 + 250, 0.8).await;
+                let mut said = None;
+                for temperature in [0.8, 0.6] {
+                    let msgs = messages(prompt, &plan, language, guide, best.too_long);
+                    if let Ok(raw) = h.ask(msgs, room, temperature).await {
+                        said = best.take(&raw, planned, max_lines, max_words);
+                        if said.is_some() {
+                            break;
+                        }
+                    }
+                }
                 h.done(state).await;
-                match said.as_deref().ok().and_then(usable).map(|l| fit_lines(&l, lines_for(seconds), words_for(seconds))) {
+                match said.or_else(|| (!best.text.is_empty()).then(|| best.text.clone())) {
                     Some(l) => {
                         crate::applog::line("media", &format!("Lyrics written by {name}"));
                         return Ok(l);
@@ -383,6 +568,59 @@ mod tests {
         // Long lines: cut by words too, keeping three lines at least.
         let long = "[Verse]\none two three four five six seven eight\nnine ten eleven twelve thirteen fourteen fifteen sixteen\nmore words here\nand a fourth";
         assert_eq!(fit_lines(long, 5, 12).lines().count(), 4);
+    }
+
+    #[test]
+    fn echoes_in_brackets_are_the_harmony_singers() {
+        assert_eq!(lead_words("We'll find our way (find our way)"), 4);
+        assert_eq!(lead_words("(ooh) Hold on (hold on, hold on)"), 2);
+        let l = "[Chorus]\nWe rise (we rise, we rise)\nWe shine (shine on)\nWe fly (we fly)\nTogether (together)";
+        assert_eq!(fit_lines(l, 4, 7), l, "the echoes don't push lines out (7 lead words, 15 in all)");
+    }
+
+    #[test]
+    fn played_sections_keep_their_empty_tags() {
+        let l = "[Intro]\n\n[Verse]\nOne\nTwo\nThree\n\n[Outro]";
+        assert_eq!(fit_lines(l, 8, 99), l, "an intro and an outro have no words, on purpose");
+        assert_eq!(fit_lines("[Verse]\nOne\nTwo\nThree\n\n[Chorus]", 8, 99), "[Verse]\nOne\nTwo\nThree", "an empty chorus goes");
+    }
+
+    #[test]
+    fn the_song_is_planned_for_its_length() {
+        let lines = |p: &[Planned]| p.iter().map(|(_, n)| n).sum::<u32>();
+        let shape = |p: &[Planned]| p.iter().map(|(s, n)| format!("{s} {n}")).collect::<Vec<_>>().join(", ");
+        // A minute: a verse and a chorus of four lines (it was three lines in all).
+        assert_eq!(shape(&plan(60.0, &[])), "Verse 4, Chorus 4");
+        assert_eq!(shape(&plan(120.0, &[])), "Verse 4, Chorus 4, Verse 4, Chorus 4");
+        assert_eq!(shape(&plan(180.0, &[])), "Intro 0, Verse 4, Chorus 4, Verse 4, Chorus 4, Bridge 2, Chorus 4, Outro 0");
+        let long = plan(600.0, &[]);
+        assert!(long.len() == 15 && lines(&long) >= 70, "{}", shape(&long));
+        // The sections chosen, in their order, with the lines the length holds.
+        let chosen: Vec<String> = ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus", "Chorus"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(shape(&plan(200.0, &chosen)), "Intro 0, Verse 4, Chorus 4, Verse 4, Chorus 4, Bridge 2, Chorus 4, Chorus 4");
+        // Too short for them: two lines each still.
+        assert!(plan(30.0, &chosen).iter().all(|(s, n)| *n >= 2 || s == "Intro"));
+        assert!(plan_words(&plan(60.0, &["Intro".into(), "Verse".into()])).starts_with("[Intro] 0 lines, [Verse] 8 lines. A section with 0 lines is played"));
+        assert_eq!(plan_words(&plan(60.0, &[])), "[Verse] 4 lines, [Chorus] 4 lines");
+        // What Qwen3 4B wrote under the played sections is taken out.
+        let wrote = "[Intro]\nplayed\n\n[Verse]\nOne\nTwo\nThree\n\n[Outro]\n(guitar fades)";
+        assert_eq!(usable(wrote).as_deref(), Some("[Intro]\n\n[Verse]\nOne\nTwo\nThree\n\n[Outro]"));
+        assert_eq!(words_for(30.0), 18);
+        assert_eq!(words_for(60.0), 48);
+    }
+
+    #[test]
+    fn lines_too_long_are_asked_again() {
+        let mut best = Draft::default();
+        // Eight lines of ten words for a minute: only four fit, so it's asked again.
+        let wordy = format!("[Verse]\n{}", vec!["one two three four five six seven eight nine ten"; 8].join("\n"));
+        assert_eq!(best.take(&wordy, 8, 8, words_for(60.0)), None);
+        assert!(best.too_long && sung_lines(&best.text) == 4, "the best so far is kept");
+        // Short lines: all eight kept.
+        let short = format!("[Verse]\n{}\n\n[Chorus]\n{}", vec!["walking down the road"; 4].join("\n"), vec!["we sing it loud"; 4].join("\n"));
+        assert_eq!(best.take(&short, 8, 8, words_for(60.0)).map(|l| sung_lines(&l)), Some(8));
+        // Fewer lines than planned are fine as they are.
+        assert!(best.take("[Verse]\nshort line here\nand another\nand one more", 8, 8, 48).is_some());
     }
 
     #[test]
@@ -452,12 +690,14 @@ mod tests {
 
     #[test]
     fn the_writer_is_asked_for_the_language_by_name() {
-        let m = messages("upbeat folk", 30.0, Some("es"));
+        let m = messages("upbeat folk", &plan(30.0, &[]), Some("es"), "", false);
         let sys = m[0]["content"].as_str().unwrap();
-        assert!(sys.contains("Write every line in Spanish.") && sys.contains("about 4 short lines"), "{sys}");
-        let auto = messages("upbeat folk", 120.0, Some("auto"));
-        assert!(auto[0]["content"].as_str().unwrap().contains("language the description is written in"));
-        assert!(auto[0]["content"].as_str().unwrap().contains("about 16 short lines"));
+        assert!(sys.contains("Write every line in Spanish.") && sys.contains("[Verse] 2 lines, [Chorus] 2 lines. That's 4 sung lines in all."), "{sys}");
+        let auto = messages("upbeat folk", &plan(120.0, &[]), Some("auto"), "", false);
+        let sys = auto[0]["content"].as_str().unwrap();
+        assert!(sys.contains("language the description is written in"));
+        assert!(sys.contains("That's 16 sung lines in all.") && sys.contains("Every [Chorus] has the same words.") && sys.contains("four to six words"), "{sys}");
+        assert!(messages("folk", &plan(60.0, &[]), None, "", true)[0]["content"].as_str().unwrap().contains("at most five words"));
         assert_eq!(language_code("Spanish").as_deref(), Some("es"));
         assert_eq!(language_code("ES").as_deref(), Some("es"));
         assert_eq!(language_code("chinese").as_deref(), Some("zh"));

@@ -2473,6 +2473,7 @@ pub fn run() {
             media::media_export,
             media::media_import,
             media::music_write_lyrics,
+            media::music_artist_style,
             media::media_add,
             mail::mail_preset,
             mail::mail_accounts,

@@ -1894,6 +1894,49 @@ export interface MusicSpec {
   extend_by?: number | null;
   track?: string | null;
   strength?: number | null;
+  /** How the lead sings ("breathy", "raspy"…). */
+  vocal_style?: string | null;
+  /** Backing harmony singers. */
+  harmony_voice?: "female" | "male" | "mixed" | "choir" | null;
+  /** An instrument playing a harmony line. */
+  harmony_instrument?: string | null;
+  harmony_where?: "chorus" | "throughout" | "ending" | null;
+  harmony_style?: "thirds" | "octave" | "stacked" | "call" | "oohs" | null;
+  /** Layered on afterwards by ACE-Step 1.5 Base (fuller, slower). */
+  harmony_layer?: boolean;
+  lead_instrument?: string | null;
+  /** Sections in order ("Intro", "Verse", "Chorus"…). */
+  sections?: string[];
+  rhyme?: "aabb" | "abab" | "abcb" | "aaaa" | "free" | null;
+  energy?: "steady" | "builds" | "big-chorus" | "quiet" | null;
+  ending?: "fade" | "big-finish" | "hard-stop" | null;
+  production?: string | null;
+  /** The feeling in the words and the voice. */
+  emotion?: string | null;
+  vocal_effects?: VocalEffect[];
+  /** An artist whose style it follows (the name goes to the lyrics writer only). */
+  sound_like?: string | null;
+  /** Their sound in plain words, for the music model. */
+  artist_sound?: string | null;
+  artist_writing?: string | null;
+}
+
+/** A way of singing on part of a song: on is "all", "verse", "pre-chorus", "chorus", "bridge" or "final-chorus". */
+export interface VocalEffect {
+  how: string;
+  on: string;
+}
+
+/** An artist's style as the chat model describes it (media/artist.rs). */
+export interface ArtistStyle {
+  genre: string;
+  voice: string;
+  vocal: string;
+  instruments: string[];
+  production: string;
+  mood: string;
+  bpm: number | null;
+  writing: string;
 }
 
 export interface MediaRequest {
@@ -2415,6 +2458,7 @@ export const api = {
   mediaImport: (path: string, chatId: string | null = null) => invoke<MediaItem>("media_import", { path, chatId }),
   musicWriteLyrics: (prompt: string, music: MusicSpec | null, seconds: number | null, language: string | null) =>
     invoke<string>("music_write_lyrics", { prompt, music, seconds, language }),
+  musicArtistStyle: (name: string) => invoke<ArtistStyle>("music_artist_style", { name }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null }) =>
     invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),

@@ -7,6 +7,7 @@
 //! engine program once, within the performance limits, one job at a time,
 //! and what it makes goes into the gallery, encrypted.
 
+pub(crate) mod artist;
 pub mod clarify;
 pub mod coach;
 mod cutout;
@@ -622,16 +623,290 @@ pub struct MusicSpec {
     pub track: Option<String>,
     /// A cover: how close to the original it stays (0 to 1).
     pub strength: Option<f32>,
+    /// How the lead sings: "smooth", "powerful", "breathy", "raspy", "soulful",
+    /// "falsetto", "whispered", "belting".
+    pub vocal_style: Option<String>,
+    /// Who sings harmonies: "female", "male", "mixed", "choir" (None: no sung harmonies).
+    pub harmony_voice: Option<String>,
+    /// The instrument playing a harmony line ("strings", "piano"…; None: none).
+    pub harmony_instrument: Option<String>,
+    /// Where harmonies come in: "chorus" (the default), "throughout", "ending".
+    pub harmony_where: Option<String>,
+    /// How they're sung: "thirds" (close), "octave", "stacked", "call" (call and
+    /// response), "oohs".
+    pub harmony_style: Option<String>,
+    /// Layered on in a second pass by a model that adds parts (fuller; slower).
+    pub harmony_layer: bool,
+    /// The instrument that carries the melody's hook and a solo.
+    pub lead_instrument: Option<String>,
+    /// The song's shape: "verse-chorus", "verse-chorus-bridge", "intro-outro",
+    /// "build-drop", "aaba", "story".
+    pub structure: Option<String>,
+    /// Sections in the order chosen ("Intro", "Verse", "Chorus", "Chorus"…);
+    /// when given, they're the shape (`structure` is only a starting point).
+    pub sections: Vec<String>,
+    /// How lines rhyme: "aabb", "abab", "abcb", "aaaa", "free".
+    pub rhyme: Option<String>,
+    /// How it moves: "steady", "builds", "big-chorus", "quiet".
+    pub energy: Option<String>,
+    /// How it ends: "fade", "big-finish", "hard-stop".
+    pub ending: Option<String>,
+    /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
+    /// "1970s", "1980s", "1990s", "modern".
+    pub production: Option<String>,
+    /// The feeling in the words and the voice: "heartbroken", "joyful"…
+    pub emotion: Option<String>,
+    /// How the voice is used, and where: screamed choruses, heavy vibrato throughout.
+    pub vocal_effects: Vec<VocalEffect>,
+    /// An artist whose style the song follows. The name goes to the lyrics
+    /// writer only; the music model gets `artist_sound`.
+    pub sound_like: Option<String>,
+    /// Their sound in plain words, no names (`artist::look_up` fills it).
+    pub artist_sound: Option<String>,
+    /// How they write lyrics, for the lyrics writer.
+    pub artist_writing: Option<String>,
+}
+
+/// A way of singing, and the part of the song it's on.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct VocalEffect {
+    /// "vibrato", "belting", "falsetto", "screamed", "growled", "raspy",
+    /// "breathy", "whispered", "spoken", "rapped", "autotune", "runs",
+    /// "operatic", or the person's own words.
+    pub how: String,
+    /// "all" (the default), "verse", "pre-chorus", "chorus", "bridge", "final-chorus".
+    pub on: String,
+}
+
+impl VocalEffect {
+    /// As the music model's description puts it ("screamed vocals").
+    fn described(&self) -> String {
+        let how = self.how.trim().to_lowercase();
+        match how.as_str() {
+            "vibrato" => "vocals with heavy vibrato".into(),
+            "belting" => "powerful belted vocals".into(),
+            "falsetto" => "falsetto vocals".into(),
+            "screamed" => "screamed vocals, screamo".into(),
+            "growled" => "growled vocals".into(),
+            "raspy" => "raspy, gritty vocals".into(),
+            "breathy" => "breathy vocals".into(),
+            "whispered" => "whispered vocals".into(),
+            "spoken" => "spoken word vocals".into(),
+            "rapped" => "rapped vocals".into(),
+            "autotune" => "auto-tuned vocals".into(),
+            "runs" => "soulful vocal runs and riffs".into(),
+            "operatic" => "operatic vocals".into(),
+            other if other.contains("vocal") || other.contains("voice") => other.to_string(),
+            other => format!("{other} vocals"),
+        }
+    }
+
+    /// As one word on a section's tag ("[Chorus - screamed]"): one only,
+    /// since more were sung as words.
+    fn tag_word(&self) -> String {
+        let how = self.how.trim().to_lowercase();
+        match how.as_str() {
+            "rapped" => "rap".into(),
+            "autotune" => "auto-tuned".into(),
+            "runs" => "vocal runs".into(),
+            "vibrato" => "heavy vibrato".into(),
+            other => other.chars().take(24).collect(),
+        }
+    }
+
+    /// The part of the song, as words ("on the choruses").
+    fn place(&self) -> &'static str {
+        match self.on.trim().to_lowercase().as_str() {
+            "verse" => "on the verses",
+            "pre-chorus" => "on the pre-choruses",
+            "chorus" => "on the choruses",
+            "bridge" => "on the bridge",
+            "final-chorus" => "on the final chorus",
+            _ => "throughout",
+        }
+    }
+}
+
+/// Sections in order for each song shape.
+const STRUCTURES: &[(&str, &[&str])] = &[
+    ("verse-chorus", &["Verse", "Chorus", "Verse", "Chorus"]),
+    ("verse-chorus-bridge", &["Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus"]),
+    ("intro-outro", &["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"]),
+    ("build-drop", &["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus"]),
+    ("aaba", &["Verse", "Verse", "Bridge", "Verse"]),
+    ("story", &["Verse", "Verse", "Verse"]),
+];
+
+/// The music model's name for a harmony instrument's part (`music::PARTS`).
+pub fn part_for(instrument: &str) -> Option<&'static str> {
+    let i = instrument.trim().to_lowercase();
+    let has = |w: &[&str]| w.iter().any(|x| i.contains(x));
+    Some(if has(&["string", "violin", "cello", "viola"]) {
+        "strings"
+    } else if has(&["piano", "organ", "keys", "keyboard", "rhodes"]) {
+        "keyboard"
+    } else if has(&["synth", "pad"]) {
+        "synth"
+    } else if has(&["brass", "trumpet", "horn", "trombone"]) {
+        "brass"
+    } else if has(&["flute", "sax", "clarinet", "woodwind", "oboe"]) {
+        "woodwinds"
+    } else if has(&["guitar"]) {
+        "guitar"
+    } else {
+        return None;
+    })
 }
 
 impl MusicSpec {
+    fn some(o: &Option<String>) -> Option<String> {
+        o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_lowercase())
+    }
+
+    /// Who sings the harmonies, in the music model's words ("male", "male and female").
+    fn harmony_singers(&self) -> Option<String> {
+        Self::some(&self.harmony_voice).map(|v| match v.as_str() {
+            "mixed" => "male and female".to_string(),
+            other => other.to_string(),
+        })
+    }
+
+    /// Where the harmonies come in, as words.
+    fn harmony_place(&self) -> &'static str {
+        match Self::some(&self.harmony_where).as_deref() {
+            Some("throughout") => "throughout the song",
+            Some("ending") => "on the final chorus",
+            _ => "on the choruses",
+        }
+    }
+
+    /// The sung harmonies, described ("female backing harmony vocals in close thirds on the choruses").
+    pub fn harmony_vocals(&self) -> Option<String> {
+        let who = self.harmony_singers()?;
+        let how = match Self::some(&self.harmony_style).as_deref() {
+            Some("octave") => "doubling the melody an octave apart",
+            Some("stacked") => "in rich stacked gospel-style harmonies",
+            Some("call") => "answering the lead in call and response",
+            Some("oohs") => "singing soft oohs and aahs",
+            _ => "in close harmony a third above the lead",
+        };
+        Some(format!("{who} backing harmony vocals {how} {}", self.harmony_place()))
+    }
+
+    /// The instrument harmony, described ("strings playing a harmony line under the melody on the choruses").
+    pub fn harmony_line(&self) -> Option<String> {
+        Self::some(&self.harmony_instrument).map(|i| format!("{i} playing a harmony line under the melody {}", self.harmony_place()))
+    }
+
+    /// The sections, in order, for the lyrics writer: the ones chosen, else
+    /// the shape's (empty: the writer's own choice).
+    pub fn sections(&self) -> Vec<String> {
+        let chosen: Vec<String> = self.sections.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).take(24).collect();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+        let s = Self::some(&self.structure).unwrap_or_default();
+        STRUCTURES.iter().find(|(id, _)| *id == s).map_or(Vec::new(), |(_, list)| list.iter().map(|x| x.to_string()).collect())
+    }
+
+    /// What the lyrics writer is told beyond the song's description and its
+    /// sections (`lyrics::plan`): the artist whose way of writing it follows,
+    /// the feeling, how lines rhyme, lines fit for screaming or rapping, and
+    /// echoes in brackets for the harmony voices.
+    pub fn lyrics_guide(&self) -> String {
+        let mut guide = String::new();
+        if let Some(name) = self.sound_like.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let how = Self::some(&self.artist_writing).map(|w| format!(" ({})", w.trim_end_matches('.'))).unwrap_or_default();
+            guide.push_str(&format!(" Write the way {name} writes songs{how}, in words of your own: never use lines, hooks or titles from their songs."));
+        }
+        if let Some(e) = Self::some(&self.emotion) {
+            guide.push_str(&format!(" The words carry this feeling: {e}."));
+        }
+        for fx in &self.vocal_effects {
+            let rough = match fx.how.trim().to_lowercase().as_str() {
+                "screamed" | "growled" => "screamed: make them short, raw and forceful",
+                "rapped" => "rapped: give them rhythm and rhymes inside the lines, and they can be longer",
+                "spoken" => "spoken, not sung",
+                "whispered" => "whispered: make them soft and close",
+                _ => continue,
+            };
+            let place = match fx.on.trim().to_lowercase().as_str() {
+                "verse" => "under [Verse] tags",
+                "pre-chorus" => "under [Pre-Chorus] tags",
+                "chorus" => "under [Chorus] tags",
+                "bridge" => "under the [Bridge] tag",
+                "final-chorus" => "of the last [Chorus]",
+                _ => "of the song",
+            };
+            guide.push_str(&format!(" The lines {place} are {rough}."));
+        }
+        if let Some(r) = Self::some(&self.rhyme) {
+            guide.push_str(match r.as_str() {
+                "aabb" => " Rhyme in pairs (AABB): lines 1 and 2 rhyme, then lines 3 and 4.",
+                "abab" => " Rhyme alternate lines (ABAB): lines 1 and 3 rhyme, and lines 2 and 4.",
+                "abcb" => " Rhyme the second and fourth lines of each four (ABCB).",
+                "aaaa" => " Make all the lines of a section rhyme with each other (AAAA).",
+                "free" => " Don't rhyme: write free verse.",
+                _ => "",
+            });
+        }
+        if self.harmony_singers().is_some() {
+            let place = match Self::some(&self.harmony_where).as_deref() {
+                Some("throughout") => "on some lines in every section",
+                Some("ending") => "on the lines of the last chorus",
+                _ => "on the chorus lines",
+            };
+            guide.push_str(&format!(
+                " Add short backing-vocal echoes in round brackets at the end of lines {place}, for example: We'll find our way (find our way). \
+                 Only the harmony singers sing what's in brackets, so keep them to two or three words."
+            ));
+        }
+        guide
+    }
+
+    /// Lyrics with each section's way of singing on its tag ("[Chorus]"
+    /// becomes "[Chorus - screamed]"): one word a tag, the part's own effect
+    /// before the whole song's (those are in the description). Tags that
+    /// already say something are left as they are.
+    pub fn mark_sections(&self, lyrics: &str) -> String {
+        let specific: Vec<&VocalEffect> = self.vocal_effects.iter().filter(|f| !f.how.trim().is_empty() && f.place() != "throughout").collect();
+        if specific.is_empty() {
+            return lyrics.to_string();
+        }
+        let last_chorus = lyrics.lines().enumerate().filter(|(_, l)| l.trim().eq_ignore_ascii_case("[chorus]")).map(|(i, _)| i).last();
+        lyrics
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                let t = line.trim();
+                let Some(name) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')).filter(|n| !n.contains('-') || n.eq_ignore_ascii_case("pre-chorus")) else {
+                    return line.to_string();
+                };
+                // "Verse 2" is a verse.
+                let kind = name.trim_end_matches(|c: char| c.is_ascii_digit() || c == ' ').to_lowercase();
+                let fits = |f: &&&VocalEffect| match f.on.trim().to_lowercase().as_str() {
+                    "final-chorus" => Some(i) == last_chorus,
+                    on => on == kind,
+                };
+                let fx = specific.iter().find(|f| f.on.trim().eq_ignore_ascii_case("final-chorus") && fits(f)).or_else(|| specific.iter().find(|f| fits(f)));
+                match fx {
+                    Some(f) => format!("[{name} - {}]", f.tag_word()),
+                    None => line.to_string(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Says enough about the song to make one without other words.
     pub fn describes(&self) -> bool {
         self.genre.as_deref().is_some_and(|g| !g.trim().is_empty()) || !self.instruments.is_empty()
     }
 
     /// The music model's description: the person's words, then the style,
-    /// mood, instruments, voice and beat as ACE-Step's captions put them.
+    /// mood, instruments, voice, harmonies, beat and arrangement as ACE-Step's
+    /// captions put them.
     pub fn caption(&self, words: &str, instrumental: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
         let words = words.trim().trim_end_matches('.');
@@ -642,25 +917,81 @@ impl MusicSpec {
         if let Some(g) = some(&self.genre) {
             parts.push(g.to_lowercase());
         }
+        // An artist's sound in plain words (the music model doesn't know names).
+        if let Some(a) = some(&self.artist_sound) {
+            parts.push(a.trim_end_matches('.').to_string());
+        }
         if let Some(m) = some(&self.mood) {
             parts.push(format!("{} mood", m.to_lowercase()));
+        }
+        if let Some(e) = Self::some(&self.emotion) {
+            parts.push(if instrumental { format!("{e} feeling") } else { format!("{e}, emotional vocal delivery") });
         }
         let inst: Vec<String> = self.instruments.iter().map(|i| i.trim().to_lowercase()).filter(|i| !i.is_empty()).collect();
         if !inst.is_empty() {
             parts.push(inst.join(", "));
         }
+        if let Some(l) = Self::some(&self.lead_instrument) {
+            parts.push(format!("{l} lead melody and solo"));
+        }
         if instrumental {
             parts.push("instrumental, no vocals".into());
-        } else if let Some(v) = some(&self.voice) {
-            let v = v.to_lowercase();
-            parts.push(match v.as_str() {
-                "female" | "male" | "choir" | "rap" => format!("{v} vocals"),
-                "duet" => "male and female duet vocals".into(),
-                other => format!("{other} vocals"),
-            });
+        } else {
+            let style = Self::some(&self.vocal_style).map(|s| format!("{s} ")).unwrap_or_default();
+            match some(&self.voice).map(|v| v.to_lowercase()) {
+                Some(v) => parts.push(match v.as_str() {
+                    "female" | "male" => format!("{style}{v} lead vocals"),
+                    "choir" | "rap" => format!("{style}{v} vocals"),
+                    "duet" => format!("{style}male and female duet vocals"),
+                    other => format!("{style}{other} vocals"),
+                }),
+                None if !style.is_empty() => parts.push(format!("{style}vocals")),
+                None => {}
+            }
+            for fx in self.vocal_effects.iter().filter(|f| !f.how.trim().is_empty()) {
+                parts.push(format!("{} {}", fx.described(), fx.place()));
+            }
+            if let Some(h) = self.harmony_vocals() {
+                parts.push(h);
+            }
+        }
+        if let Some(h) = self.harmony_line() {
+            parts.push(h);
         }
         if let Some(b) = some(&self.beat) {
             parts.push(format!("{} beat", b.to_lowercase()));
+        }
+        if instrumental && !self.sections().is_empty() {
+            let named: Vec<String> = self.sections().iter().map(|s| s.to_lowercase()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            parts.push(format!("arranged with {}", named.join(", ")));
+        }
+        if let Some(e) = Self::some(&self.energy) {
+            parts.push(match e.as_str() {
+                "builds" => "builds up gradually".into(),
+                "big-chorus" => "soft verses and a big, powerful chorus".into(),
+                "quiet" => "quiet and intimate".into(),
+                "steady" => "steady energy".into(),
+                other => other.to_string(),
+            });
+        }
+        if let Some(p) = Self::some(&self.production) {
+            parts.push(match p.as_str() {
+                "studio" => "polished studio production".into(),
+                "live" => "live band recording".into(),
+                "lo-fi" => "lo-fi production".into(),
+                "acoustic" => "acoustic, unplugged".into(),
+                "modern" => "modern production".into(),
+                decade if decade.ends_with('s') => format!("{decade} production"),
+                other => format!("{other} production"),
+            });
+        }
+        if let Some(e) = Self::some(&self.ending) {
+            parts.push(match e.as_str() {
+                "fade" => "fades out at the end".into(),
+                "big-finish" => "ends with a big finish".into(),
+                "hard-stop" => "ends abruptly".into(),
+                other => other.to_string(),
+            });
         }
         parts.join(", ")
     }
@@ -1772,6 +2103,9 @@ pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paus
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
     let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
+    // An artist's style is read by the chat model too, before the lyrics.
+    let styled = artist::resolve(state, req, progress).await;
+    let req = styled.as_ref().unwrap_or(req);
     // Lyrics come from the chat model: written before the card is cleared for
     // the music engine, not after (that loaded the chat model again beside it).
     let mut with_lyrics;
@@ -1780,7 +2114,8 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
         let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 600.0);
         with_lyrics = req.clone();
         // Told the style, mood and voice too, not only the person's words.
-        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref()).await {
+        let spec = req.music.clone().unwrap_or_default();
+        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide()).await {
             Ok(l) => with_lyrics.lyrics = Some(l),
             Err(why) => {
                 // Nothing written here: the music model writes its own.
@@ -2941,7 +3276,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         // Not written before the job (it always is for the Studio's and chats' songs).
         (ctx.progress)("Writing lyrics", 0.02);
         let length = if task.is_some() { source_len.max(10.0) } else { seconds };
-        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref()).await {
+        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide()).await {
             Ok(l) => words = lyrics::Words::Sung(l),
             Err(why) => problem = Some(why),
         }
@@ -2971,7 +3306,14 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         (spec.bpm, spec.key.clone(), spec.time_signature.clone())
     };
     let language = vocal_language(req.language.as_deref(), &words);
-    let lyrics_text = if task.is_some() && words == lyrics::Words::MusicModelWrites { String::new() } else { words.for_engine().to_string() };
+    let lyrics_text = if task.is_some() && words == lyrics::Words::MusicModelWrites {
+        String::new()
+    } else if matches!(words, lyrics::Words::Sung(_)) && task.is_none() {
+        // A screamed chorus or a whispered verse is said on its tag too.
+        spec.mark_sections(words.for_engine())
+    } else {
+        words.for_engine().to_string()
+    };
     let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
     let versions = if task.is_none() && !sound { req.count.unwrap_or(1).clamp(1, 3) } else { 1 };
@@ -3010,6 +3352,65 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             return Err(e);
         }
     }
+    // Harmonies layered on afterwards, by the model that adds parts: the
+    // sung ones as backing vocals, the instrument's as its part.
+    let mut made = made;
+    let mut note = None;
+    if task.is_none() && !sound && spec.harmony_layer {
+        let mut layers: Vec<(&str, String)> = Vec::new();
+        if req.instrumental != Some(true) {
+            if let Some(h) = spec.harmony_vocals() {
+                layers.push(("backing_vocals", h));
+            }
+        }
+        if let (Some(part), Some(h)) = (spec.harmony_instrument.as_deref().and_then(part_for), spec.harmony_line()) {
+            layers.push((part, h));
+        }
+        match (layers.is_empty(), parts_model(ctx.state)) {
+            (true, _) => {}
+            (false, None) => note = Some("The harmonies were made with the song: layering them on afterwards needs ACE-Step 1.5 Base (Models).".to_string()),
+            (false, Some(base)) => {
+                let base_dit = base.file("dit").ok_or("ACE-Step 1.5 Base is missing a file.")?;
+                let base_models = model_dir(&ctx.state.paths, &base);
+                for (vi, song) in made.iter_mut().enumerate() {
+                    for (li, (part, words)) in layers.iter().enumerate() {
+                        (ctx.progress)(if *part == "backing_vocals" { "Layering the harmony vocals" } else { "Layering the harmony instrument" }, 0.0);
+                        let dir = work.join(format!("layer-{vi}-{li}"));
+                        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                        let (src, _) = audio_in::for_engine(&song.mp3, "audio/mpeg", &dir)?;
+                        let layered = music::make(
+                            &music::Engine { dir: &engine_dir, models: &base_models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
+                            &dir,
+                            &music::SongRequest {
+                                caption: &format!("{words}, {caption}"),
+                                lyrics: &song.lyrics,
+                                seconds: song.seconds as f32,
+                                seed,
+                                language: language.as_deref(),
+                                lm_file: "",
+                                dit_file: &base_dit.file,
+                                bpm,
+                                key: key.as_deref(),
+                                time_signature: time_signature.as_deref(),
+                                task: "lego",
+                                track: Some(part),
+                                source: Some(src.as_path()),
+                                versions: 1,
+                                ..Default::default()
+                            },
+                            ctx.cancel,
+                            ctx.progress,
+                        )
+                        .await?;
+                        if let Some(l) = layered.into_iter().next() {
+                            song.mp3 = l.mp3;
+                        }
+                    }
+                }
+                crate::applog::line("media", &format!("Layered {} harmony part(s) with {}", layers.len(), base.name));
+            }
+        }
+    }
     // What it is, in the gallery: the person's words, else what was done to which song.
     let named = |s: &(MediaItem, std::path::PathBuf, f64)| if s.0.prompt.trim().is_empty() { "the song".to_string() } else { format!("“{}”", s.0.prompt.trim()) };
     let prompt = match (task, source.as_ref()) {
@@ -3034,11 +3435,18 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             chat_id: req.chat_id.clone(),
             seed: Some(seed),
             lyrics: (!sound && lyrics::has_singing(&song.lyrics)).then_some(song.lyrics),
+            note: note.clone(),
             ..Default::default()
         };
         items.push(store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &song.mp3, None)?);
     }
     Ok(items)
+}
+
+/// An installed music model that adds parts to a song (ACE-Step 1.5 Base).
+fn parts_model(state: &AppState) -> Option<MediaModel> {
+    let have: Vec<String> = installed(&state.db.lock().unwrap()).into_iter().map(|i| i.model_id).collect();
+    models(state).into_iter().find(|m| m.kind == Kind::Music && m.can("parts") && have.contains(&m.id))
 }
 
 async fn narrate(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
@@ -3606,17 +4014,36 @@ pub fn media_import(state: AppStateRef, path: String, chat_id: Option<String>) -
     Ok(item)
 }
 
+/// An artist's style for the Studio's "Use their style": the genre, voice,
+/// instruments and tempo to fill in, and their sound and way of writing.
+#[tauri::command]
+pub async fn music_artist_style(state: AppStateRef<'_>, name: String) -> Result<artist::Style, String> {
+    state.cipher()?;
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > 60 {
+        return Err("Type the name of a singer or band.".into());
+    }
+    match artist::look_up(state.inner(), name).await? {
+        Some(style) => Ok(style),
+        None => Err(format!("The chat model doesn't know {name}. Describe their style in your own words instead.")),
+    }
+}
+
 /// Lyrics for a song, written before it's made so the person can read and
 /// change them (the Studio's "Write lyrics for me").
 #[tauri::command]
 pub async fn music_write_lyrics(state: AppStateRef<'_>, prompt: String, music: Option<MusicSpec>, seconds: Option<f32>, language: Option<String>) -> Result<String, String> {
     state.cipher()?;
     let req = Request { op: "music".into(), prompt, music, ..Default::default() };
+    // "Sing as …" in the description, or "Sound like" not yet looked up.
+    let styled = artist::resolve(state.inner(), &req, &|_, _| {}).await;
+    let req = styled.unwrap_or(req);
     let words = song_caption(&req);
     if words.trim().is_empty() {
         return Err("Describe the song first (or pick its style), so the lyrics fit it.".into());
     }
-    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"))
+    let spec = req.music.clone().unwrap_or_default();
+    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"), &spec.sections(), &spec.lyrics_guide())
         .await
         .map_err(|why| match why {
             lyrics::NotWritten::NoModel(_) => "There's no chat model on this PC to write lyrics. Install one from Models, or type your own.".to_string(),
@@ -3706,13 +4133,93 @@ pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> 
 mod tests {
     use super::*;
 
+    /// Harmonies, the lead's style and the arrangement become the music
+    /// model's words; the lyrics writer is told the sections and the echoes.
+    #[test]
+    fn harmonies_and_the_arrangement_are_described() {
+        let spec = MusicSpec {
+            genre: Some("Pop".into()),
+            voice: Some("female".into()),
+            vocal_style: Some("Breathy".into()),
+            harmony_voice: Some("male".into()),
+            harmony_style: Some("thirds".into()),
+            harmony_instrument: Some("Strings".into()),
+            lead_instrument: Some("Electric guitar".into()),
+            energy: Some("big-chorus".into()),
+            production: Some("1980s".into()),
+            ending: Some("fade".into()),
+            structure: Some("verse-chorus-bridge".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            spec.caption("summer love", false),
+            "summer love, pop, electric guitar lead melody and solo, breathy female lead vocals, male backing harmony vocals in close harmony a third above the lead on the choruses, \
+             strings playing a harmony line under the melody on the choruses, soft verses and a big, powerful chorus, 1980s production, fades out at the end"
+        );
+        assert!(!spec.caption("", true).contains("harmony vocals"), "an instrumental has no sung harmonies");
+        assert!(spec.caption("", true).contains("strings playing a harmony line"), "but keeps the instrument's");
+        let mixed = MusicSpec { harmony_voice: Some("mixed".into()), harmony_where: Some("ending".into()), harmony_style: Some("oohs".into()), ..Default::default() };
+        assert_eq!(mixed.harmony_vocals().unwrap(), "male and female backing harmony vocals singing soft oohs and aahs on the final chorus");
+        let guide = spec.lyrics_guide();
+        assert_eq!(spec.sections(), ["Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus"]);
+        assert!(guide.contains("round brackets") && guide.contains("chorus lines"), "{guide}");
+        assert_eq!(MusicSpec::default().lyrics_guide(), "");
+        // Sections picked one by one (choruses repeated) and a rhyme pattern.
+        let mine = MusicSpec {
+            sections: ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"].map(String::from).to_vec(),
+            structure: Some("aaba".into()),
+            rhyme: Some("abab".into()),
+            ..Default::default()
+        };
+        assert_eq!(mine.sections(), ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Solo", "Chorus", "Outro"], "the chosen sections win");
+        let g = mine.lyrics_guide();
+        assert!(g.contains("(ABAB)"), "{g}");
+        assert!(mine.caption("", true).contains("arranged with chorus, intro, outro, solo, verse"));
+        for (i, p) in [("Strings", "strings"), ("Grand piano", "keyboard"), ("Synth pad", "synth"), ("Trumpet", "brass"), ("Flute", "woodwinds"), ("Acoustic guitar", "guitar")] {
+            assert_eq!(part_for(i), Some(p), "{i}");
+        }
+        assert_eq!(part_for("Kazoo"), None);
+    }
+
+    /// A feeling, and ways of singing on parts of the song: in the
+    /// description, on the sections' tags (one word each), and for the
+    /// lyrics writer.
+    #[test]
+    fn emotion_and_vocal_effects_are_sung() {
+        let fx = |how: &str, on: &str| VocalEffect { how: how.into(), on: on.into() };
+        let spec = MusicSpec {
+            voice: Some("male".into()),
+            emotion: Some("Heartbroken".into()),
+            vocal_effects: vec![fx("vibrato", "all"), fx("screamed", "chorus"), fx("whispered", "verse"), fx("belting", "final-chorus")],
+            ..Default::default()
+        };
+        assert_eq!(
+            spec.caption("losing you", false),
+            "losing you, heartbroken, emotional vocal delivery, male lead vocals, vocals with heavy vibrato throughout, screamed vocals, screamo on the choruses, \
+             whispered vocals on the verses, powerful belted vocals on the final chorus"
+        );
+        assert_eq!(spec.caption("", true), "heartbroken feeling, instrumental, no vocals", "an instrumental has a feeling but no singing");
+        let lyrics = "[Verse]\na\n\n[Chorus]\nb\n\n[Verse 2]\nc\n\n[Chorus]\nb\n\n[Chorus - softer]\nd\n\n[Chorus]\nb";
+        assert_eq!(
+            spec.mark_sections(lyrics),
+            "[Verse - whispered]\na\n\n[Chorus - screamed]\nb\n\n[Verse 2 - whispered]\nc\n\n[Chorus - screamed]\nb\n\n[Chorus - softer]\nd\n\n[Chorus - belting]\nb",
+            "the whole song's vibrato is only in the description; a tag that says something stays"
+        );
+        assert_eq!(MusicSpec::default().mark_sections(lyrics), lyrics);
+        let g = spec.lyrics_guide();
+        assert!(g.contains("feeling: heartbroken") && g.contains("under [Chorus] tags are screamed") && g.contains("under [Verse] tags are whispered"), "{g}");
+        let custom = MusicSpec { vocal_effects: vec![fx("Yodelling", "bridge")], ..Default::default() };
+        assert_eq!(custom.caption("", false), "yodelling vocals on the bridge");
+        assert_eq!(custom.mark_sections("[Bridge]\nla"), "[Bridge - yodelling]\nla");
+    }
+
     /// The Studio's choices become the music model's description; a part
     /// job asks for the model that does parts; lyrics are written only for
     /// songs that sing.
     #[test]
     fn a_shaped_song_is_described_and_routed() {
         let spec = MusicSpec { genre: Some("Lo-fi hip hop".into()), mood: Some("Calm".into()), instruments: vec!["Piano".into(), "Vinyl crackle".into()], voice: Some("female".into()), beat: Some("Boom bap".into()), ..Default::default() };
-        assert_eq!(spec.caption("rainy evening study session.", false), "rainy evening study session, lo-fi hip hop, calm mood, piano, vinyl crackle, female vocals, boom bap beat");
+        assert_eq!(spec.caption("rainy evening study session.", false), "rainy evening study session, lo-fi hip hop, calm mood, piano, vinyl crackle, female lead vocals, boom bap beat");
         assert_eq!(spec.caption("", true), "lo-fi hip hop, calm mood, piano, vinyl crackle, instrumental, no vocals, boom bap beat");
         assert!(spec.describes() && !MusicSpec::default().describes());
         let part = |task: &str, track: &str| Request { op: "music".into(), music: Some(MusicSpec { task: Some(task.into()), track: Some(track.into()), audio: Some("a".into()), ..Default::default() }), ..Default::default() };

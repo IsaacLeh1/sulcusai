@@ -1549,6 +1549,44 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## Not released yet: songs in depth
+
+Ask: pick the key; harmonies sung by men or women, or played by an instrument; much more depth; the sections (intro, bridge, how many choruses) and rhyme patterns; lyrics that fill the song (they stopped at three lines); an emotion; ways of singing on parts (a screamo chorus, heavy vibrato like Lewis Capaldi); and "sing as Taylor Swift, a song about bears" in the description.
+- **Why three lines:** `words_for` was 0.6 words a second, so a minute allowed 36 words. The writer's lines run 9 to 12 words, so `fit_lines` cut after three.
+  - Now `words_for` is `seconds - 12`. That fits both findings: 16 words in 30 s were heard well, and 8 lines of five or six words in 60 s were heard line by line.
+  - The writer is told four to six words a line, and each section's lines (`lyrics::plan`): the chosen sections, else a shape for the length, in even counts so rhymes pair. Played sections get 0 lines.
+  - A draft that keeps under nine lines in ten after the cut is asked again with "at most five words", and the better one is kept (`Draft`).
+  - Qwen3 4B now writes 8 of 8 lines for a minute, and the whole intro-to-outro shape for three minutes.
+  - Told "[Intro] played (no lines)", it wrote "played" under the tag. Lines under played sections are now taken out of written lyrics.
+- **MusicSpec** gained: vocal_style, the harmony fields (voice, where, style, instrument, layer), lead_instrument, structure and sections, rhyme, energy, ending, production, emotion, vocal_effects, and sound_like with artist_sound and artist_writing.
+  - All of them become words in the caption.
+  - The lyrics writer gets the rhyme, the feeling, the echoes in brackets, how screamed or rapped lines should read, and the artist's way of writing (`lyrics_guide`).
+- **Ways of singing on a part** also go on its tag, one word only ("[Chorus - screamed]"). One word after the tag works with ACE-Step 1.5; more get sung as words. Whole-song ones stay in the caption.
+- **Harmonies:**
+  - Sung ones are in the caption, with echoes in round brackets in the lyrics. Only the backing singers sing those, and `lead_words` leaves them out of the word count.
+  - "Layer them on afterwards" runs a lego pass for each layer on ACE-Step 1.5 Base: backing_vocals, or the instrument's part via `part_for`.
+- **Artist style** (`media/artist.rs`):
+  - The chat model describes the artist as JSON (genre, voice, vocal, instruments, production, mood, bpm, writing) with no names, and their name is scrubbed from whatever it writes anyway.
+  - The music model only gets the plain words. The lyrics writer gets the name and is told never to use their lines, hooks or titles.
+  - "Sing as X", "in the style of X" and "sounds like X" in a description are found (`named_in`) and taken out of the caption. A match the chat model doesn't know as an artist is left alone.
+  - The Studio's "Use their style" fills in genre, voice, instruments, mood and tempo to see and change.
+  - The voice is one of the same kind, never theirs; the Studio says so.
+  - Told the generator "doesn't know anyone's name" and to answer `{"known": false}` for an unknown artist, Qwen3 4B said that even for Taylor Swift. It's now asked to set genre to "unknown" only if it has never heard of them.
+  - Qwen3 4B's descriptions are right but plain: for Lewis Capaldi it gave soul, a male voice and "soft vibrato". A bigger chat model should describe them better.
+- create_music in chats takes emotion, vocal_effects and sound_like too.
+- Studio music tab:
+  - New: song structure (presets, then sections added, moved or taken out, with the chorus count and length), Rhyme, Vocal effects, Harmonies, Key and time, Arrangement, Sound like an artist, and Emotion.
+  - The close-harmony chip is "Close harmony": plain "Close" shared its translation with the window button.
+- **Tests:**
+  - Unit: the plan for each length, the second ask for wordy lines, emotion and vocal effects in captions and tags, finding an artist in a description, and reading a style without names.
+  - `e2e_lyrics_fill_the_song` (real chat model) checks lyrics for 30 s, 60 s, 180 s and a chosen 150 s structure, both artists, and a "sing as" song with a screamed chorus.
+  - `e2e_music_songs` has new cases:
+    - `minute`: 60 s, Whisper heard 14 of 23 lyric words.
+    - `artist`: "Sing as Taylor Swift a song about bears": 5 of 27 once (seed luck), then 14 of 27 and 13 of 30.
+    - `deep`: 120 s with sections, ABAB, D major, heartbroken, female harmonies, vibrato and a belted chorus: 20 of 35.
+    - `layered`: harmonies and strings layered on by the base model: 16 of 23, 47 s to make.
+  - Every song was the length asked. Written lyrics under 70% of the lines a song can hold now fail the test.
+
 ## 0.9.23 (2026-10-21): certificate checks
 
 - CI's `cargo deny check advisories` failed on two new advisories: RUSTSEC-2026-0382 (rustls-webpki 0.103.15 could accept distrusted intermediates) and RUSTSEC-2026-0381 (webpki-roots 1.0.9 still bundled distrusted emSign intermediates). `cargo update -p rustls-webpki -p webpki-roots` gave 0.103.16 and 1.0.10. `cargo deny check advisories licenses` passes, and so do all tests, including the phone link against the live relay over TLS.

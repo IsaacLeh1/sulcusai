@@ -3181,6 +3181,98 @@ fn sung_words(text: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// The chat model that writes lyrics (SULCUSAI_LYRICS_MODEL, default
+/// qwen3-4b-2507), installed as the default and not loaded yet.
+#[cfg(windows)]
+fn lyrics_model(state: &crate::AppState) {
+    let chat = std::env::var("SULCUSAI_LYRICS_MODEL").unwrap_or_else(|_| "qwen3-4b-2507".into());
+    let spec = state.catalog.model(&chat).unwrap();
+    let v = spec.variant("Q4_K_M").unwrap();
+    let path = state.paths.models.join(&spec.id).join(&v.file);
+    assert!(path.exists(), "the chat model is installed: {}", path.display());
+    let conn = state.db.lock().unwrap();
+    crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+    crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
+}
+
+/// Lyrics from a real chat model fill the song: a minute gets a verse and
+/// a chorus (it was three lines), three minutes the whole shape, chosen
+/// sections come in order. An artist's style is read without their name,
+/// and a song in their way, with a feeling and a screamed chorus, is
+/// written and its tags marked.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_lyrics_fill_the_song() {
+    use crate::media::{artist, lyrics, VocalEffect};
+    let state = media_state();
+    lyrics_model(&state);
+    let mut failed = Vec::new();
+    let structure: Vec<String> = ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus", "Outro"].map(String::from).to_vec();
+    let cases: [(f32, Vec<String>, &str); 4] = [
+        (30.0, vec![], "cheerful ukulele pop about a sunny weekend"),
+        (60.0, vec![], "upbeat acoustic folk song about a road trip through the mountains, warm male vocals"),
+        (180.0, vec![], "a heartfelt pop ballad about moving away from home"),
+        (150.0, structure, "anthemic rock song about old friends"),
+    ];
+    for (secs, sections, prompt) in cases {
+        let plan = lyrics::plan(secs, &sections);
+        let planned: u32 = plan.iter().map(|(_, n)| n).sum();
+        let t = std::time::Instant::now();
+        match lyrics::write(&state, prompt, secs, Some("en"), &sections, "").await {
+            Ok(l) => {
+                let n = lyrics::sung_lines(&l);
+                let tags: Vec<&str> = l.lines().filter(|x| x.trim().starts_with('[')).collect();
+                println!("{secs:.0}s: {n} of {planned} lines in {:.0}s, tags {tags:?}\n{l}\n", t.elapsed().as_secs_f64());
+                if (n as f32) < planned as f32 * 0.75 {
+                    failed.push(format!("{secs:.0}s: {n} lines, {planned} planned"));
+                }
+            }
+            Err(e) => failed.push(format!("{secs:.0}s: {e:?}")),
+        }
+    }
+    for name in ["Taylor Swift", "Lewis Capaldi"] {
+        match artist::look_up(&state, name).await {
+            Ok(Some(s)) => {
+                println!("{name}: {s:#?}");
+                let last = name.split(' ').last().unwrap();
+                if s.sound().contains(last) || s.genre.is_empty() {
+                    failed.push(format!("{name}: {s:?}"));
+                }
+            }
+            other => {
+                println!("{name}: not read: {other:?}; it said {:?}", artist::ask(&state, name).await);
+                failed.push(format!("{name}: {other:?}"));
+            }
+        }
+    }
+    let req = crate::media::Request { op: "music".into(), prompt: "Sing as Lewis Capaldi a song about losing someone at the end of summer".into(), ..Default::default() };
+    let Some(styled) = artist::resolve(&state, &req, &|_, _| {}).await else {
+        state.engine.lock().await.stop().await;
+        panic!("the artist wasn't found: {failed:#?}");
+    };
+    let mut spec = styled.music.clone().unwrap();
+    println!("prompt now {:?}; caption: {}", styled.prompt, spec.caption(&styled.prompt, false));
+    if styled.prompt.contains("Capaldi") || spec.caption(&styled.prompt, false).contains("Capaldi") {
+        failed.push(format!("the name reached the music model: {:?}", styled.prompt));
+    }
+    spec.emotion = Some("Heartbroken".into());
+    spec.rhyme = Some("aabb".into());
+    spec.vocal_effects = vec![VocalEffect { how: "screamed".into(), on: "chorus".into() }, VocalEffect { how: "vibrato".into(), on: "all".into() }];
+    match lyrics::write(&state, &spec.caption(&styled.prompt, false), 90.0, Some("en"), &spec.sections(), &spec.lyrics_guide()).await {
+        Ok(l) => {
+            let marked = spec.mark_sections(&l);
+            println!("in their way, heartbroken, screamed chorus:\n{marked}\n");
+            if !marked.contains("[Chorus - screamed]") {
+                failed.push("the chorus tag isn't marked".into());
+            }
+        }
+        Err(e) => failed.push(format!("styled: {e:?}")),
+    }
+    state.engine.lock().await.stop().await;
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
 /// Songs made the way the Studio and chats make them, with the real music
 /// engine: lyrics written by the chat model (English and Spanish), the
 /// person's own lyrics, an instrumental, a song with no chat model to write
@@ -3236,16 +3328,7 @@ async fn e2e_music_songs() {
         made.push(("no_chat_model".into(), req.clone(), make("no_chat_model", req).await, Some("en")));
     }
     // A chat model, as the default (not loaded yet): it writes the lyrics.
-    let chat = std::env::var("SULCUSAI_LYRICS_MODEL").unwrap_or_else(|_| "qwen3-4b-2507".into());
-    {
-        let spec = state.catalog.model(&chat).unwrap();
-        let v = spec.variant("Q4_K_M").unwrap();
-        let path = state.paths.models.join(&spec.id).join(&v.file);
-        assert!(path.exists(), "the chat model is installed: {}", path.display());
-        let conn = state.db.lock().unwrap();
-        crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: path.display().to_string(), size: v.size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
-        crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
-    }
+    lyrics_model(&state);
     if want("written") {
         let req = Request { op: "music".into(), prompt: folk.into(), seconds: Some(30.0), ..Default::default() };
         made.push(("written".into(), req.clone(), make("written", req).await, Some("en")));
@@ -3292,6 +3375,41 @@ async fn e2e_music_songs() {
     if want("long") {
         let req = Request { op: "music".into(), prompt: "slow soulful blues ballad about a long road home, raspy male vocals, electric guitar and organ".into(), seconds: Some(150.0), ..Default::default() };
         made.push(("long".into(), req.clone(), make("long", req).await, Some("en")));
+    }
+    // A minute's song with its lyrics written: a verse and a chorus (it was three lines).
+    if want("minute") {
+        let req = Request { op: "music".into(), prompt: folk.into(), seconds: Some(60.0), ..Default::default() };
+        made.push(("minute".into(), req.clone(), make("minute", req).await, Some("en")));
+    }
+    // In an artist's style, asked in the description.
+    if want("artist") {
+        let req = Request { op: "music".into(), prompt: "Sing as Taylor Swift a song about bears".into(), seconds: Some(60.0), ..Default::default() };
+        made.push(("artist".into(), req.clone(), make("artist", req).await, Some("en")));
+    }
+    // Shaped in depth: sections, rhyme, a key, a feeling, sung harmonies and ways of singing.
+    let deep = |layer: bool| media::MusicSpec {
+        genre: Some("Pop rock".into()),
+        voice: Some("male".into()),
+        emotion: Some("Heartbroken".into()),
+        key: Some("D major".into()),
+        sections: ["Verse", "Chorus", "Verse", "Chorus"].map(String::from).to_vec(),
+        rhyme: Some("abab".into()),
+        harmony_voice: Some("female".into()),
+        harmony_where: Some("chorus".into()),
+        harmony_instrument: layer.then(|| "Strings".into()),
+        harmony_layer: layer,
+        vocal_effects: vec![media::VocalEffect { how: "vibrato".into(), on: "all".into() }, media::VocalEffect { how: "belting".into(), on: "chorus".into() }],
+        ..Default::default()
+    };
+    if want("deep") {
+        let req = Request { op: "music".into(), prompt: "the last night before you moved away".into(), seconds: Some(120.0), music: Some(deep(false)), language: Some("en".into()), ..Default::default() };
+        made.push(("deep".into(), req.clone(), make("deep", req).await, Some("en")));
+    }
+    // The harmonies layered on afterwards by ACE-Step 1.5 Base.
+    if want("layered") {
+        media::install_for_test(&state, "ace-step-1.5-base").await.unwrap();
+        let req = Request { op: "music".into(), prompt: "the last night before you moved away".into(), seconds: Some(60.0), music: Some(deep(true)), language: Some("en".into()), ..Default::default() };
+        made.push(("layered".into(), req.clone(), make("layered", req).await, Some("en")));
     }
     // Work on a song: the written one (or the first song made), the
     // instrumental for adding a part.
@@ -3404,6 +3522,11 @@ async fn e2e_music_songs() {
         }
         if !sung && item.lyrics.is_some() {
             failed.push(format!("{name}: has lyrics but shouldn't be sung"));
+        }
+        // Written lyrics fill the song (a minute had three lines).
+        let lines = crate::media::lyrics::sung_lines(&lyrics);
+        if sung && req.lyrics.is_none() && asked >= 60.0 && (lines as f64) < asked / crate::media::lyrics::SECS_PER_LINE as f64 * 0.7 {
+            failed.push(format!("{name}: only {lines} lines for {asked:.0}s"));
         }
     }
     if let Some(p) = hub_file {

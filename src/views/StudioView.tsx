@@ -15,6 +15,7 @@ import {
   type MediaModelCard,
   type MediaRequest,
   type MusicSpec,
+  type VocalEffect,
   type Voice,
 } from "../api";
 import { clock } from "../format";
@@ -769,6 +770,172 @@ const TASKS: [SongTask, string, string][] = [
 /** Styles whose vocals the music model blurs or buries (synthwave's words weren't heard however it was asked). */
 const SOFT_VOCALS = ["Synthwave", "Ambient", "Techno", "House", "Lo-fi", "Drum and bass"];
 
+/** How the lead sings. */
+const VOCAL_STYLES: [string, string][] = [
+  ["smooth", tx("Smooth")], ["powerful", tx("Powerful")], ["breathy", tx("Breathy")], ["raspy", tx("Raspy")],
+  ["soulful", tx("Soulful")], ["falsetto", tx("Falsetto")], ["whispered", tx("Whispered")], ["belting", tx("Belting")],
+];
+/** The feeling in the words and the voice. */
+const EMOTIONS = [
+  tx("Joyful"), tx("Heartbroken"), tx("Longing"), tx("Hopeful"), tx("Lonely"), tx("In love"), tx("Angry"),
+  tx("Defiant"), tx("Bittersweet"), tx("Nostalgic"), tx("Grateful"), tx("Empowered"), tx("Anxious"), tx("At peace"),
+];
+/** Ways of singing on parts of a song: [id, name]. */
+const VOCAL_EFFECTS: [string, string][] = [
+  ["vibrato", tx("Heavy vibrato")], ["belting", tx("Belting")], ["falsetto", tx("Falsetto")], ["screamed", tx("Screamed (screamo)")],
+  ["growled", tx("Growled")], ["raspy", tx("Raspy and gritty")], ["breathy", tx("Breathy")], ["whispered", tx("Whispered")],
+  ["spoken", tx("Spoken word")], ["rapped", tx("Rapped")], ["autotune", tx("Auto-tune")], ["runs", tx("Runs and riffs")], ["operatic", tx("Operatic")],
+];
+/** Where in the song: [id, name]. */
+const EFFECT_PLACES: [string, string][] = [
+  ["all", tx("Whole song")], ["verse", tx("Verses")], ["pre-chorus", tx("Pre-choruses")], ["chorus", tx("Choruses")], ["bridge", tx("Bridge")], ["final-chorus", tx("Last chorus")],
+];
+
+/** Ways of singing, each on a part of the song: a screamed chorus, heavy vibrato throughout. */
+function VocalEffects({ value, onChange }: { value: VocalEffect[]; onChange: (v: VocalEffect[]) => void }) {
+  const [how, setHow] = useState("vibrato");
+  const [place, setPlace] = useState("all");
+  const name = (list: [string, string][], id: string) => t(list.find(([v]) => v === id)?.[1] ?? id);
+  const added = value.some((f) => f.how === how && f.on === place);
+  return (
+    <div className="music-field">
+      <span className="music-label">{t("Vocal effects")}</span>
+      {value.length > 0 && (
+        <div className="filters tight wrap">
+          {value.map((f, i) => (
+            <button key={`${f.how}-${f.on}`} className="chip active" onClick={() => onChange(value.filter((_, j) => j !== i))} title={t("Remove")}>
+              {name(VOCAL_EFFECTS, f.how)} · {name(EFFECT_PLACES, f.on)} ×
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="row wrap">
+        <select value={how} onChange={(e) => setHow(e.target.value)} aria-label={t("Vocal effect")}>
+          {VOCAL_EFFECTS.map(([v, n]) => (
+            <option key={v} value={v}>{t(n)}</option>
+          ))}
+        </select>
+        <select value={place} onChange={(e) => setPlace(e.target.value)} aria-label={t("Where in the song")}>
+          {EFFECT_PLACES.map(([v, n]) => (
+            <option key={v} value={v}>{t(n)}</option>
+          ))}
+        </select>
+        <button className="btn ghost small" disabled={added || value.length >= 6} onClick={() => onChange([...value, { how, on: place }])}>{t("Add")}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Who sings the harmonies. */
+const HARMONY_VOICES: [MusicSpec["harmony_voice"] | "", string][] = [["", tx("None")], ["female", tx("Female")], ["male", tx("Male")], ["mixed", tx("Male and female")], ["choir", tx("Choir")]];
+/** How they're sung: [id, name, what it means]. */
+const HARMONY_STYLES: [NonNullable<MusicSpec["harmony_style"]>, string, string][] = [
+  ["thirds", tx("Close harmony"), tx("A third above the lead: the classic pop harmony")],
+  ["octave", tx("Octaves"), tx("The melody doubled an octave apart")],
+  ["stacked", tx("Stacked"), tx("Rich gospel-style stacks of voices")],
+  ["call", tx("Call and response"), tx("The harmony singers answer the lead")],
+  ["oohs", tx("Oohs and aahs"), tx("Wordless backing voices")],
+];
+const HARMONY_WHERE: [NonNullable<MusicSpec["harmony_where"]>, string][] = [["chorus", tx("Choruses")], ["throughout", tx("Throughout")], ["ending", tx("Last chorus")]];
+const HARMONY_INSTRUMENTS = [tx("Strings"), tx("Piano"), tx("Synth pad"), tx("Brass"), tx("Organ"), tx("Electric guitar"), tx("Flute"), tx("Choir pad")];
+const LEAD_INSTRUMENTS = [tx("Electric guitar"), tx("Acoustic guitar"), tx("Piano"), tx("Saxophone"), tx("Synth"), tx("Violin"), tx("Trumpet"), tx("Flute"), tx("Harmonica")];
+const ENERGIES: [NonNullable<MusicSpec["energy"]>, string][] = [["steady", tx("Steady")], ["builds", tx("Builds up")], ["big-chorus", tx("Big chorus")], ["quiet", tx("Quiet and intimate")]];
+const ENDINGS: [NonNullable<MusicSpec["ending"]>, string][] = [["fade", tx("Fade out")], ["big-finish", tx("Big finish")], ["hard-stop", tx("Hard stop")]];
+const PRODUCTIONS: [string, string][] = [
+  ["studio", tx("Polished studio")], ["live", tx("Live band")], ["lo-fi", tx("Lo-fi")], ["acoustic", tx("Acoustic")],
+  ["1970s", tx("1970s")], ["1980s", tx("1980s")], ["1990s", tx("1990s")], ["modern", tx("Modern")],
+];
+/** How lines rhyme: [id, name, what it means]. */
+const RHYMES: [NonNullable<MusicSpec["rhyme"]>, string, string][] = [
+  ["aabb", "AABB", tx("Lines rhyme in pairs")],
+  ["abab", "ABAB", tx("Every other line rhymes")],
+  ["abcb", "ABCB", tx("The second and fourth lines rhyme")],
+  ["aaaa", "AAAA", tx("All the lines of a section rhyme")],
+  ["free", tx("No rhyme"), tx("Free verse")],
+];
+/** Sections a song can have: [the music model's tag, what people call it, seconds it takes]. */
+const SECTIONS: [string, string, number][] = [
+  ["Intro", tx("Intro"), 10], ["Verse", tx("Verse"), 30], ["Pre-Chorus", tx("Pre-chorus"), 15], ["Chorus", tx("Chorus"), 30],
+  ["Bridge", tx("Bridge"), 15], ["Solo", tx("Solo"), 15], ["Instrumental", tx("Instrumental break"), 10], ["Outro", tx("Outro"), 10],
+];
+/** Song shapes to start from. */
+const SHAPES: [string, string, string[]][] = [
+  ["verse-chorus", tx("Verse and chorus"), ["Verse", "Chorus", "Verse", "Chorus"]],
+  ["verse-chorus-bridge", tx("With a bridge"), ["Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus"]],
+  ["intro-outro", tx("Intro to outro"), ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"]],
+  ["build-drop", tx("Build-up and drop"), ["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus"]],
+  ["aaba", tx("AABA (classic)"), ["Verse", "Verse", "Bridge", "Verse"]],
+  ["story", tx("Story (no chorus)"), ["Verse", "Verse", "Verse"]],
+];
+
+/** The length a structure needs: sung sections 7.5 s a line, played ones less. */
+function structureSeconds(sections: string[]): number {
+  const s = sections.reduce((n, x) => n + (SECTIONS.find(([id]) => id === x)?.[2] ?? 20), 0);
+  return Math.min(600, Math.max(10, Math.ceil(s / 10) * 10));
+}
+
+/** The song's sections in order: a shape to start from, then added, moved or taken out one by one. */
+function SongSections({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const name = (id: string) => t(SECTIONS.find(([s]) => s === id)?.[1] ?? id);
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= value.length) return;
+    const next = [...value];
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const choruses = value.filter((s) => s === "Chorus").length;
+  return (
+    <div className="music-field">
+      <span className="music-label">{t("Song structure")}</span>
+      <div className="filters tight wrap">
+        <button className={`chip ${value.length === 0 ? "active" : ""}`} onClick={() => onChange([])}>{t("Any")}</button>
+        {SHAPES.map(([id, label, list]) => (
+          <button key={id} className={`chip ${value.join("|") === list.join("|") ? "active" : ""}`} onClick={() => onChange([...list])}>{t(label)}</button>
+        ))}
+      </div>
+      {value.length > 0 && (
+        <ol className="song-sections">
+          {value.map((s, i) => (
+            <li key={`${i}-${s}`} className="song-section">
+              <button className="icon-btn small" disabled={i === 0} onClick={() => move(i, -1)} aria-label={t("Move {name} earlier", { name: name(s) })} title={t("Earlier")}>‹</button>
+              <span>{name(s)}</span>
+              <button className="icon-btn small" disabled={i === value.length - 1} onClick={() => move(i, 1)} aria-label={t("Move {name} later", { name: name(s) })} title={t("Later")}>›</button>
+              <button className="icon-btn small" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={t("Take out {name}", { name: name(s) })} title={t("Take out")}>×</button>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className="row wrap">
+        {SECTIONS.map(([id, label]) => (
+          <button key={id} className="btn ghost small" onClick={() => onChange([...value, id])} disabled={value.length >= 24}>+ {t(label)}</button>
+        ))}
+      </div>
+      {value.length > 0 && (
+        <p className="small muted">
+          {choruses > 1 ? `${t("The chorus {n} times", { n: choruses })} · ` : choruses === 1 ? `${t("The chorus once")} · ` : ""}
+          {t("{n} sections, about {time} long", { n: value.length, time: mmss(structureSeconds(value)) })}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Chips to pick one or none: [value, name, what it means?]. */
+function Chips<T extends string>({ label, options, value, onChange, any = true }: { label: string; options: [T, string, string?][]; value: T | ""; onChange: (v: T | "") => void; any?: boolean }) {
+  return (
+    <div className="music-field">
+      <span className="music-label">{label}</span>
+      <div className="filters tight wrap">
+        {any && <button className={`chip ${value === "" ? "active" : ""}`} onClick={() => onChange("")}>{t("Any")}</button>}
+        {options.map(([v, name, why]) => (
+          <button key={v} className={`chip ${value === v ? "active" : ""}`} onClick={() => onChange(value === v && any ? "" : v)} title={why ? t(why) : undefined}>{t(name)}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Seconds of song a sung line needs to be heard (media/lyrics.rs `SECS_PER_LINE`). */
 const SECS_PER_LINE = 7.5;
 
@@ -922,7 +1089,27 @@ function MusicComposer({
   const [bpm, setBpm] = useState<number | null>(null);
   const [beat, setBeat] = useState("");
   const [meter, setMeter] = useState("");
-  const [key, setKey] = useState("");
+  const [keyNote, setKeyNote] = useState("");
+  const [keyMode, setKeyMode] = useState<"major" | "minor">("major");
+  const [vocalStyle, setVocalStyle] = useState("");
+  const [harmonyVoice, setHarmonyVoice] = useState<MusicSpec["harmony_voice"] | "">("");
+  const [harmonyStyle, setHarmonyStyle] = useState<NonNullable<MusicSpec["harmony_style"]>>("thirds");
+  const [harmonyWhere, setHarmonyWhere] = useState<NonNullable<MusicSpec["harmony_where"]>>("chorus");
+  const [harmonyInstrument, setHarmonyInstrument] = useState("");
+  const [harmonyLayer, setHarmonyLayer] = useState(false);
+  const [leadInstrument, setLeadInstrument] = useState("");
+  const [sections, setSections] = useState<string[]>([]);
+  const [rhyme, setRhyme] = useState<NonNullable<MusicSpec["rhyme"]> | "">("");
+  const [energy, setEnergy] = useState<NonNullable<MusicSpec["energy"]> | "">("");
+  const [ending, setEnding] = useState<NonNullable<MusicSpec["ending"]> | "">("");
+  const [production, setProduction] = useState("");
+  const [emotion, setEmotion] = useState("");
+  const [vocalEffects, setVocalEffects] = useState<VocalEffect[]>([]);
+  // An artist's style: the name typed, and what the chat model said of them.
+  const [soundLike, setSoundLike] = useState("");
+  const [artist, setArtist] = useState<{ name: string; sound: string; writing: string } | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const key = keyNote ? `${keyNote} ${keyMode}` : "";
   const [seconds, setSeconds] = useState(60);
   // Vocals come out clearly about three times in four: two versions on the
   // graphics card (seconds each) make one clear one likely. Changed by hand, it stays.
@@ -955,6 +1142,10 @@ function MusicComposer({
   const secs = mode === "sound" ? Math.min(Math.max(seconds, 10), 30) : seconds;
   const sings = mode === "song" ? vocals !== "none" : mode === "edit" && ((task === "add" && part.includes("vocals")) || task === "cover" || task === "repaint");
   const styled = mode === "song" || (mode === "edit" && (task === "cover" || task === "complete"));
+  const singing = mode === "song" ? vocals !== "none" : sings;
+  const harmonized = (singing && !!harmonyVoice) || !!harmonyInstrument;
+  // Harmonies layered on afterwards need the model that adds parts.
+  const canLayer = models.some((x) => (x.can ?? []).includes("parts"));
   const spec = (): MusicSpec => ({
     genre: genre || null,
     mood: mood || null,
@@ -965,6 +1156,24 @@ function MusicComposer({
     key: key || null,
     time_signature: meter || null,
     reference: reference?.id ?? null,
+    vocal_style: singing ? vocalStyle || null : null,
+    harmony_voice: singing && harmonyVoice ? harmonyVoice : null,
+    harmony_instrument: harmonyInstrument || null,
+    harmony_where: harmonized ? harmonyWhere : null,
+    harmony_style: singing && harmonyVoice ? harmonyStyle : null,
+    harmony_layer: harmonized && harmonyLayer && canLayer,
+    lead_instrument: leadInstrument || null,
+    sections,
+    rhyme: singing && rhyme ? rhyme : null,
+    energy: energy || null,
+    ending: ending || null,
+    production: production || null,
+    emotion: emotion || null,
+    vocal_effects: singing ? vocalEffects : [],
+    sound_like: soundLike.trim() || null,
+    // Looked up for this name (else it's looked up when the song is made).
+    artist_sound: artist && artist.name === soundLike.trim() ? artist.sound : null,
+    artist_writing: artist && artist.name === soundLike.trim() ? artist.writing : null,
     ...(mode === "edit" && song
       ? {
           task,
@@ -985,6 +1194,28 @@ function MusicComposer({
       toast(errorText(e), "error");
     } finally {
       setWriting(false);
+    }
+  };
+  // Their genre, voice, instruments and tempo filled in to see and change;
+  // their sound and way of writing go with the song.
+  const lookUpArtist = async () => {
+    const name = soundLike.trim();
+    if (!name) return;
+    setLookingUp(true);
+    try {
+      const s = await api.musicArtistStyle(name);
+      // "piano" lights the Piano chip rather than adding another.
+      const known = (list: string[], v: string) => list.find((o) => o.toLowerCase() === v.toLowerCase()) ?? v;
+      if (s.genre) setGenre(known(GENRES, s.genre));
+      if (s.voice) setVoice(s.voice);
+      if (s.instruments.length) setInstruments(s.instruments.map((i) => known(INSTRUMENTS, i)));
+      if (s.mood) setMood(known(MOODS, s.mood));
+      if (s.bpm) setBpm(s.bpm);
+      setArtist({ name, sound: [s.vocal, s.production].filter(Boolean).join(", "), writing: s.writing });
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setLookingUp(false);
     }
   };
   const tag = (s: string) => setLyrics((l) => `${l}${l && !l.endsWith("\n") ? "\n\n" : ""}[${s}]\n`);
@@ -1008,7 +1239,9 @@ function MusicComposer({
     });
     if (ok && mode !== "edit") setPrompt("");
   };
-  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs) * (mode === "song" ? versions : 1)) / 30 : 0;
+  // Each layered harmony is another pass, by a slower model (about twice the song's time).
+  const layers = mode === "song" && harmonyLayer && canLayer ? (singing && harmonyVoice ? 1 : 0) + (harmonyInstrument ? 1 : 0) : 0;
+  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs) * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 : 0;
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1083,9 +1316,33 @@ function MusicComposer({
       />
 
       {styled && (
+        <div className="music-field">
+          <span className="music-label">{t("Sound like an artist")}</span>
+          <div className="row wrap">
+            <input
+              className="input grow"
+              value={soundLike}
+              placeholder={t("A singer or band, e.g. Lewis Capaldi")}
+              aria-label={t("Sound like an artist")}
+              onChange={(e) => setSoundLike(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void lookUpArtist()}
+            />
+            <button className="btn small" onClick={lookUpArtist} disabled={!soundLike.trim() || lookingUp}>{lookingUp ? t("Reading their style…") : t("Use their style")}</button>
+          </div>
+          {artist && artist.name === soundLike.trim() && artist.sound && (
+            <p className="small muted">{t("Their sound, as the music model hears it: {sound}", { sound: artist.sound })}</p>
+          )}
+          <p className="small muted">
+            {t("Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".")}
+          </p>
+        </div>
+      )}
+
+      {styled && (
         <>
           <PickOne label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Other style")} />
-          <PickOne label={t("Mood")} options={MOODS} value={mood} onChange={setMood} />
+          <PickOne label={t("Mood of the music")} options={MOODS} value={mood} onChange={setMood} other={t("Other mood")} />
+          {(mode !== "song" || vocals !== "none") && <PickOne label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Other emotion")} />}
           <PickMany label={t("Instruments")} options={INSTRUMENTS} value={instruments} onChange={setInstruments} other={t("Add another (Enter)")} />
         </>
       )}
@@ -1114,6 +1371,12 @@ function MusicComposer({
                   <option value="choir">{t("Choir")}</option>
                   <option value="rap">{t("Rap")}</option>
                 </select>
+                <select value={vocalStyle} onChange={(e) => setVocalStyle(e.target.value)} aria-label={t("How they sing")}>
+                  <option value="">{t("Any singing style")}</option>
+                  {VOCAL_STYLES.map(([v, n]) => (
+                    <option key={v} value={v}>{t(n)}</option>
+                  ))}
+                </select>
                 <select value={language} onChange={(e) => setLanguage(e.target.value)} aria-label={t("Language of the vocals")}>
                   {LANGUAGES.map(([c, n]) => (
                     <option key={c} value={c}>{t(n)}</option>
@@ -1124,6 +1387,20 @@ function MusicComposer({
           </div>
         </div>
       )}
+
+      {mode === "song" && vocals !== "none" && <VocalEffects value={vocalEffects} onChange={setVocalEffects} />}
+
+      {mode === "song" && (
+        <SongSections
+          value={sections}
+          onChange={(v) => {
+            setSections(v);
+            // The length follows the structure (it can still be changed after).
+            if (v.length) setSeconds(structureSeconds(v));
+          }}
+        />
+      )}
+      {mode === "song" && vocals !== "none" && <Chips label={t("Rhyme")} options={RHYMES} value={rhyme} onChange={setRhyme} />}
 
       {sings && (mode === "edit" || vocals !== "none") && (
         <div className="music-field">
@@ -1150,6 +1427,49 @@ function MusicComposer({
 
       {mode === "song" && (
         <div className="music-field">
+          <span className="music-label">{t("Harmonies")}</span>
+          {vocals !== "none" && (
+            <div className="filters tight wrap" role="group" aria-label={t("Harmony singers")}>
+              <span className="small muted">{t("Singers:")}</span>
+              {HARMONY_VOICES.map(([v, n]) => (
+                <button key={v || "none"} className={`chip ${harmonyVoice === v ? "active" : ""}`} onClick={() => setHarmonyVoice(v)}>{t(n)}</button>
+              ))}
+            </div>
+          )}
+          {vocals !== "none" && harmonyVoice && (
+            <div className="filters tight wrap" role="group" aria-label={t("How the harmonies are sung")}>
+              <span className="small muted">{t("Sung:")}</span>
+              {HARMONY_STYLES.map(([v, n, why]) => (
+                <button key={v} className={`chip ${harmonyStyle === v ? "active" : ""}`} onClick={() => setHarmonyStyle(v)} title={t(why)}>{t(n)}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {mode === "song" && <PickOne label={t("Harmony instrument")} options={HARMONY_INSTRUMENTS} value={harmonyInstrument} onChange={setHarmonyInstrument} other={t("Other instrument")} />}
+      {mode === "song" && harmonized && (
+        <div className="music-field">
+          <div className="filters tight wrap" role="group" aria-label={t("Where the harmonies come in")}>
+            <span className="small muted">{t("Where:")}</span>
+            {HARMONY_WHERE.map(([v, n]) => (
+              <button key={v} className={`chip ${harmonyWhere === v ? "active" : ""}`} onClick={() => setHarmonyWhere(v)}>{t(n)}</button>
+            ))}
+          </div>
+          <label className="check small">
+            <input type="checkbox" checked={harmonyLayer && canLayer} disabled={!canLayer} onChange={(e) => setHarmonyLayer(e.target.checked)} />
+            {t("Layer them on afterwards, for fuller harmonies (takes longer)")}
+          </label>
+          {!canLayer && (
+            <p className="small muted">
+              {t("Layering needs ACE-Step 1.5 Base.")} <button className="link" onClick={onModels}>{t("Get it")}</button>
+            </p>
+          )}
+          {vocals === "mine" && harmonyVoice && <p className="small muted">{t("In your lyrics, put what the harmony singers sing in round brackets, e.g. We'll find our way (find our way).")}</p>}
+        </div>
+      )}
+
+      {mode === "song" && (
+        <div className="music-field">
           <span className="music-label">{t("Tempo")}</span>
           <div className="row wrap">
             <div className="filters tight">
@@ -1171,24 +1491,48 @@ function MusicComposer({
       {mode === "song" && <PickOne label={t("Beat")} options={BEATS} value={beat} onChange={setBeat} other={t("Other beat")} />}
 
       {mode !== "sound" && (
+        <div className="music-field">
+          <span className="music-label">{t("Key and time")}</span>
+          <div className="row wrap">
+            <select value={keyNote} onChange={(e) => setKeyNote(e.target.value)} aria-label={t("Key")}>
+              <option value="">{t("Any key")}</option>
+              {NOTES.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            {keyNote && (
+              <div className="filters tight" role="group" aria-label={t("Major or minor")}>
+                <button className={`chip ${keyMode === "major" ? "active" : ""}`} onClick={() => setKeyMode("major")}>{t("Major")}</button>
+                <button className={`chip ${keyMode === "minor" ? "active" : ""}`} onClick={() => setKeyMode("minor")}>{t("Minor")}</button>
+              </div>
+            )}
+            <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
+              <option value="">{t("Any time signature")}</option>
+              {["4/4", "3/4", "6/8", "2/4"].map((x) => (
+                <option key={x} value={x}>{x}</option>
+              ))}
+            </select>
+          </div>
+          {keyNote && <p className="small muted">{keyMode === "major" ? t("Major keys sound bright and settled.") : t("Minor keys sound darker or more emotional.")}</p>}
+        </div>
+      )}
+
+      {mode === "song" && (
+        <>
+          <PickOne label={t("Lead instrument")} options={LEAD_INSTRUMENTS} value={leadInstrument} onChange={setLeadInstrument} other={t("Other instrument")} />
+          <Chips label={t("Energy")} options={ENERGIES} value={energy} onChange={setEnergy} />
+          <Chips label={t("Ending")} options={ENDINGS} value={ending} onChange={setEnding} />
+          <Chips label={t("Production")} options={PRODUCTIONS} value={production} onChange={setProduction} />
+        </>
+      )}
+
+      {mode !== "sound" && (
         <button className="link small music-more" onClick={() => setMore((x) => !x)} aria-expanded={more}>
-          {more ? t("Fewer settings") : t("More settings: key, time signature, a song to sound like")}
+          {more ? t("Fewer settings") : t("More settings: a song to sound like")}
         </button>
       )}
       {more && mode !== "sound" && (
         <div className="row wrap">
-          <select value={key} onChange={(e) => setKey(e.target.value)} aria-label={t("Key")}>
-            <option value="">{t("Any key")}</option>
-            {NOTES.flatMap((n) => [`${n} major`, `${n} minor`]).map((k) => (
-              <option key={k} value={k}>{k}</option>
-            ))}
-          </select>
-          <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
-            <option value="">{t("Any time signature")}</option>
-            {["4/4", "3/4", "6/8", "2/4"].map((x) => (
-              <option key={x} value={x}>{x}</option>
-            ))}
-          </select>
           <span className="small">{t("Sound like:")}</span>
           <select value={reference?.id ?? ""} onChange={(e) => setReference(gallery.find((g) => g.id === e.target.value) ?? null)} aria-label={t("A song to sound like")}>
             <option value="">{t("No song")}</option>
