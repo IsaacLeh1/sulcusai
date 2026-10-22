@@ -899,6 +899,26 @@ impl MusicSpec {
             .join("\n")
     }
 
+    /// Rapped rather than sung: a rap voice, a rap style (hip hop, trap,
+    /// drill, grime), rapping over the whole song, or a rap asked for in
+    /// the person's words.
+    pub fn flow(&self, words: &str) -> lyrics::Flow {
+        let voice = Self::some(&self.voice);
+        let genre = Self::some(&self.genre).unwrap_or_default();
+        // Lo-fi hip hop is soft singing or none.
+        let style = ["hip hop", "hip-hop", "hiphop", "rap", "trap", "drill", "grime", "boom bap"].iter().any(|w| genre.contains(w)) && !["lo-fi", "lofi", "chill"].iter().any(|w| genre.contains(w));
+        let rapped = self.vocal_effects.iter().any(|f| f.how.trim().eq_ignore_ascii_case("rapped") && matches!(f.on.trim(), "" | "all"));
+        let w = words.to_lowercase();
+        let said = w.split(|c: char| !c.is_alphanumeric() && c != '-').any(|x| matches!(x, "rap" | "raps" | "rapper" | "rapping" | "rapped" | "freestyle" | "hip-hop" | "hiphop"))
+            || w.contains("hip hop");
+        let rap = voice.as_deref() == Some("rap") || rapped || ((style || said) && !matches!(voice.as_deref(), Some("choir")));
+        if rap {
+            lyrics::Flow::Rap
+        } else {
+            lyrics::Flow::Sung
+        }
+    }
+
     /// Says enough about the song to make one without other words.
     pub fn describes(&self) -> bool {
         self.genre.as_deref().is_some_and(|g| !g.trim().is_empty()) || !self.instruments.is_empty()
@@ -938,15 +958,24 @@ impl MusicSpec {
             parts.push("instrumental, no vocals".into());
         } else {
             let style = Self::some(&self.vocal_style).map(|s| format!("{s} ")).unwrap_or_default();
+            let rap = self.flow(words) == lyrics::Flow::Rap;
             match some(&self.voice).map(|v| v.to_lowercase()) {
                 Some(v) => parts.push(match v.as_str() {
+                    "female" | "male" if rap => format!("{style}{v} rapper, rap vocals"),
                     "female" | "male" => format!("{style}{v} lead vocals"),
-                    "choir" | "rap" => format!("{style}{v} vocals"),
+                    "rap" => format!("{style}rap vocals, rapper"),
+                    "choir" => format!("{style}choir vocals"),
                     "duet" => format!("{style}male and female duet vocals"),
                     other => format!("{style}{other} vocals"),
                 }),
+                None if rap => parts.push(format!("{style}rap vocals, rapper")),
                 None if !style.is_empty() => parts.push(format!("{style}vocals")),
                 None => {}
+            }
+            // Rapped, not sung: said plainly, with the flow (rap sung as a
+            // melody came out half-sung and thin).
+            if rap {
+                parts.push("rapping with a tight rhythmic flow, spoken rhymes on the beat, not sung".into());
             }
             for fx in self.vocal_effects.iter().filter(|f| !f.how.trim().is_empty()) {
                 parts.push(format!("{} {}", fx.described(), fx.place()));
@@ -2115,7 +2144,7 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
         with_lyrics = req.clone();
         // Told the style, mood and voice too, not only the person's words.
         let spec = req.music.clone().unwrap_or_default();
-        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide()).await {
+        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt)).await {
             Ok(l) => with_lyrics.lyrics = Some(l),
             Err(why) => {
                 // Nothing written here: the music model writes its own.
@@ -3276,7 +3305,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         // Not written before the job (it always is for the Studio's and chats' songs).
         (ctx.progress)("Writing lyrics", 0.02);
         let length = if task.is_some() { source_len.max(10.0) } else { seconds };
-        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide()).await {
+        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt)).await {
             Ok(l) => words = lyrics::Words::Sung(l),
             Err(why) => problem = Some(why),
         }
@@ -4043,7 +4072,7 @@ pub async fn music_write_lyrics(state: AppStateRef<'_>, prompt: String, music: O
         return Err("Describe the song first (or pick its style), so the lyrics fit it.".into());
     }
     let spec = req.music.clone().unwrap_or_default();
-    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"), &spec.sections(), &spec.lyrics_guide())
+    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt))
         .await
         .map_err(|why| match why {
             lyrics::NotWritten::NoModel(_) => "There's no chat model on this PC to write lyrics. Install one from Models, or type your own.".to_string(),

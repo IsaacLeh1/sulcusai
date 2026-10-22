@@ -1549,6 +1549,24 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## Not released yet: rap, sung intros, every style
+
+Ask: rap didn't work at all; make sure music can make a whole variety of songs; intros never had lyrics, just a long instrumental opening.
+- **Why rap failed:** the writer wrote rap as short sung lines (six words, 7.5 s each) under the singing word cap. Whisper heard 0.4 words a second, and the delivery came out half-sung.
+  - Now `MusicSpec::flow` says rap for a rap voice, a rap style (hip hop, trap, drill, grime, boom bap; not lo-fi), rapping over the whole song, or "rap", "rapper" or "hip hop" in the description.
+  - `lyrics::Flow::Rap` plans bars of about 3 s (`SECS_PER_BAR`) with long verses and a short hook, 3 words a second at most, verses of 12 bars and more.
+  - The writer is asked for bars of eight to twelve words with internal rhymes and a punchy hook. The caption says rapper, rap vocals, and "rapping with a tight rhythmic flow… not sung".
+  - Real songs: rap, voice from 0 s to the end, 3.0 then 2.3 words a second, 67 of 73 and 62 of 69 lyric words heard. Trap: 2.6 a second, 60 of 73. (One rap run started at 30 s: seed luck, like the one sung song in four that's mumbled.)
+- **Intros:** `[Intro]` and `[Outro]` were "played" sections with no lines. Now they're sung, two lines or so (weight 0.25). "Instrumental intro" is a new section in the Studio for a band-only opening, played like Solo and Instrumental break.
+  - The voice now comes in at 2 to 12 s, and Whisper hears the intro's lines first.
+  - "short intro, the singing starts right away" in the description didn't help: 15 s, against 12 and 18 s without it. It's not added.
+- **Too few lines:** in a 2½-minute song the writer gave each section 2 lines instead of 4 (12 of 20). The music model then repeated one chorus line to fill the time. A draft with under three quarters of the plan is now asked again: "Write every section in full" (`Retry::Fuller`).
+- **Every style** (`e2e_music_songs` with SULCUSAI_SONGS=genres, a minute each), lyric words heard: country 20/20, rock 18/18, gospel choir 25/25, reggaeton in Spanish 16/17, folk duet 18/25, K-pop 12/15, metal 16/24, jazz 14/23, R&B 9/30 (the weakest: runs are hard to transcribe, but the voice is there from 3 s).
+- **Test tools:**
+  - Whisper now gives word times (`-ml 1 -sow`, `heard_words`).
+  - SULCUSAI_VOCALS=1 has ACE-Step 1.5 Base take the vocals out of each song and prints their loudness every 3 s. Whisper's 30-second windows are too coarse to show where the singing starts.
+  - The song test needs `RUST_MIN_STACK=33554432` now, or its debug build overflows the stack.
+
 ## 0.9.25 (2026-10-22): folders per chat, a thinking limit, steadier permissions
 
 Asks:

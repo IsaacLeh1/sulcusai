@@ -3249,8 +3249,29 @@ fn whisper_hears(state: &crate::AppState, file: &std::path::Path, lang: Option<&
         .find(|p| p.exists());
     let model = std::fs::read_dir(state.paths.models.join("whisper-large-v3-turbo")).into_iter().flatten().flatten().map(|e| e.path()).find(|p| p.extension().is_some_and(|x| x == "bin"));
     let (Some(exe), Some(model)) = (exe, model) else { return "(no whisper-cli)".into() };
-    let out = std::process::Command::new(exe).arg("-m").arg(model).arg("-f").arg(file).args(["-nt", "-t", "8", "-l", lang.unwrap_or("auto")]).output();
+    // A word a line, each with its time (`heard_words` reads them).
+    let out = std::process::Command::new(exe).arg("-m").arg(model).arg("-f").arg(file).args(["-t", "8", "-ml", "1", "-sow", "-l", lang.unwrap_or("auto")]).output();
     out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("(not transcribed: {e})"))
+}
+
+/// Whisper's timed lines ("[00:00:12.000 --> 00:00:15.000]  words") as
+/// their words, and the second the first real words start (None: none heard).
+#[cfg(windows)]
+fn heard_words(timed: &str) -> (String, Option<f32>) {
+    let mut words = Vec::new();
+    let mut first = None;
+    for line in timed.lines() {
+        let Some((stamp, text)) = line.trim().strip_prefix('[').and_then(|l| l.split_once(']')) else { continue };
+        let text = text.trim();
+        let real = text.chars().filter(|c| c.is_alphabetic()).count() >= 3 && !text.to_lowercase().contains("music");
+        if real && first.is_none() {
+            let start = stamp.split("-->").next().unwrap_or_default().trim();
+            let secs: f32 = start.split(':').filter_map(|p| p.parse::<f32>().ok()).fold(0.0, |acc, p| acc * 60.0 + p);
+            first = Some(secs);
+        }
+        words.push(text.to_string());
+    }
+    (words.join(" "), first)
 }
 
 /// Lowercase words of at least four letters, for comparing lyrics with
@@ -3300,10 +3321,10 @@ async fn e2e_lyrics_fill_the_song() {
         (150.0, structure, "anthemic rock song about old friends"),
     ];
     for (secs, sections, prompt) in cases {
-        let plan = lyrics::plan(secs, &sections);
+        let plan = lyrics::plan(secs, &sections, lyrics::Flow::Sung);
         let planned: u32 = plan.iter().map(|(_, n)| n).sum();
         let t = std::time::Instant::now();
-        match lyrics::write(&state, prompt, secs, Some("en"), &sections, "").await {
+        match lyrics::write(&state, prompt, secs, Some("en"), &sections, "", lyrics::Flow::Sung).await {
             Ok(l) => {
                 let n = lyrics::sung_lines(&l);
                 let tags: Vec<&str> = l.lines().filter(|x| x.trim().starts_with('[')).collect();
@@ -3343,7 +3364,7 @@ async fn e2e_lyrics_fill_the_song() {
     spec.emotion = Some("Heartbroken".into());
     spec.rhyme = Some("aabb".into());
     spec.vocal_effects = vec![VocalEffect { how: "screamed".into(), on: "chorus".into() }, VocalEffect { how: "vibrato".into(), on: "all".into() }];
-    match lyrics::write(&state, &spec.caption(&styled.prompt, false), 90.0, Some("en"), &spec.sections(), &spec.lyrics_guide()).await {
+    match lyrics::write(&state, &spec.caption(&styled.prompt, false), 90.0, Some("en"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&styled.prompt)).await {
         Ok(l) => {
             let marked = spec.mark_sections(&l);
             println!("in their way, heartbroken, screamed chorus:\n{marked}\n");
@@ -3460,6 +3481,44 @@ async fn e2e_music_songs() {
         let req = Request { op: "music".into(), prompt: "slow soulful blues ballad about a long road home, raspy male vocals, electric guitar and organ".into(), seconds: Some(150.0), ..Default::default() };
         made.push(("long".into(), req.clone(), make("long", req).await, Some("en")));
     }
+    // Rap, the way the Studio asks for it: hip hop with a rap voice.
+    if want("rap") {
+        let music = media::MusicSpec { genre: Some("Hip hop".into()), voice: Some("rap".into()), ..Default::default() };
+        let req = Request { op: "music".into(), prompt: "rap about grinding at a night job to pay for college".into(), seconds: Some(60.0), music: Some(music), language: Some("en".into()), ..Default::default() };
+        made.push(("rap".into(), req.clone(), make("rap", req).await, Some("en")));
+    }
+    // An intro in the structure: singing should start with it, not after a long instrumental.
+    if want("intro") {
+        let music = media::MusicSpec { genre: Some("Pop".into()), voice: Some("female".into()), sections: ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"].map(String::from).to_vec(), ..Default::default() };
+        let req = Request { op: "music".into(), prompt: "driving home at sunrise after a long night".into(), seconds: Some(150.0), music: Some(music), language: Some("en".into()), ..Default::default() };
+        made.push(("intro".into(), req.clone(), make("intro", req).await, Some("en")));
+    }
+    // The same, told the singing starts right away: does the lead-in shorten?
+    if want("intro_soon") {
+        let music = media::MusicSpec { genre: Some("Pop".into()), voice: Some("female".into()), sections: ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"].map(String::from).to_vec(), ..Default::default() };
+        let req = Request { op: "music".into(), prompt: "driving home at sunrise after a long night, short intro, the singing starts right away".into(), seconds: Some(150.0), music: Some(music), language: Some("en".into()), ..Default::default() };
+        made.push(("intro_soon".into(), req.clone(), make("intro_soon", req).await, Some("en")));
+    }
+    // Many styles, one each (SULCUSAI_SONGS=genres): words heard in every one.
+    if want("genres") {
+        let styles: [(&str, &str, Option<&str>, &str, Option<&str>); 10] = [
+            ("trap", "Trap", Some("rap"), "counting money and ignoring the haters", None),
+            ("country", "Country", Some("male"), "a small town Friday night", None),
+            ("rock", "Rock", Some("male"), "breaking free from a dead-end job", None),
+            ("metal", "Metal", Some("male"), "a storm tearing through the mountains", None),
+            ("rnb", "R&B", Some("female"), "falling for someone slowly", None),
+            ("reggaeton", "Reggaeton", Some("male"), "una fiesta en la playa", Some("es")),
+            ("kpop", "K-pop", Some("female"), "a confident summer dance anthem", None),
+            ("gospel", "Gospel", Some("choir"), "hope after hard times", None),
+            ("jazz", "Jazz", Some("female"), "a rainy night in a city cafe", None),
+            ("folk", "Folk", Some("duet"), "two old friends meeting again", None),
+        ];
+        for (name, genre, voice, prompt, lang) in styles {
+            let music = media::MusicSpec { genre: Some(genre.into()), voice: voice.map(str::to_string), ..Default::default() };
+            let req = Request { op: "music".into(), prompt: prompt.into(), seconds: Some(60.0), music: Some(music), language: Some(lang.unwrap_or("en").into()), ..Default::default() };
+            made.push((name.into(), req.clone(), make(name, req).await, Some(lang.unwrap_or("en"))));
+        }
+    }
     // A minute's song with its lyrics written: a verse and a chorus (it was three lines).
     if want("minute") {
         let req = Request { op: "music".into(), prompt: folk.into(), seconds: Some(60.0), ..Default::default() };
@@ -3556,6 +3615,28 @@ async fn e2e_music_songs() {
     }
     state.engine.lock().await.stop().await;
 
+    // Where the voice is (SULCUSAI_VOCALS=1): ACE-Step 1.5 Base takes the
+    // vocals out of each sung song, and their loudness every 3 seconds shows
+    // when the singing starts (Whisper hears in 30-second windows, too
+    // coarse for a long intro).
+    if std::env::var("SULCUSAI_VOCALS").is_ok() {
+        media::install_for_test(&state, "ace-step-1.5-base").await.unwrap();
+        for (name, _, r, lang) in &made {
+            let (Ok(song), Some(_)) = (r, lang) else { continue };
+            let spec = media::MusicSpec { task: Some("extract".into()), audio: Some(song.id.clone()), track: Some("vocals".into()), ..Default::default() };
+            let req = Request { op: "music".into(), prompt: String::new(), seconds: Some(song.seconds as f32), music: Some(spec), ..Default::default() };
+            let Ok(mut v) = media::run(&state, store::new_id(), req).await else { continue };
+            let (samples, rate) = decode_mp3(&store::read(&state.paths, &c, &v.remove(0).id).unwrap());
+            let step = rate as usize * 3;
+            let levels: Vec<f32> = samples.chunks(step).map(crate::audio::rms).collect();
+            let loudest = levels.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
+            let line: String = levels.iter().map(|l| match l / loudest { x if x > 0.5 => '#', x if x > 0.2 => '+', x if x > 0.08 => '.', _ => ' ' }).collect();
+            let first = levels.iter().position(|l| l / loudest > 0.2).map(|i| i * 3);
+            println!("{name}: vocals every 3 s |{line}| first at {}", first.map_or("never".into(), |s| format!("{s}s")));
+        }
+        state.engine.lock().await.stop().await;
+    }
+
     // Listening: length, sound, and the words speech recognition hears.
     let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
     crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
@@ -3582,17 +3663,21 @@ async fn e2e_music_songs() {
         let asked = req.seconds.unwrap_or(30.0) as f64;
         // Whisper without the voice detector the app's server uses: the
         // detector took singing over music for no speech at all.
-        let heard = whisper_hears(&state, &out.join(format!("{name}.mp3")), *lang);
+        let (heard, starts) = heard_words(&whisper_hears(&state, &out.join(format!("{name}.mp3")), *lang));
         let words = sung_words(&heard);
         let lyrics = item.lyrics.clone().unwrap_or_default();
         let wanted = sung_words(&lyrics);
         let matched = wanted.iter().filter(|w| words.contains(*w)).count();
+        // Words a second heard: rap is dense, a ballad sparse.
+        let spoken = heard.split_whitespace().count();
         println!(
-            "{name}: {secs:.1}s (asked {asked:.0}s), level {rms:.3}, {} words heard, {matched} of {} lyric words\n  heard: {}\n  lyrics: {}",
+            "{name}: {secs:.1}s (asked {asked:.0}s), level {rms:.3}, {} words heard, {matched} of {} lyric words, first words at {}, {spoken} words ({:.1} a second)\n  heard: {}\n  lyrics: {}",
             words.len(),
             wanted.len(),
-            heard.chars().take(300).collect::<String>(),
-            lyrics.replace('\n', " / ").chars().take(300).collect::<String>()
+            starts.map_or("never".to_string(), |s| format!("{s:.0}s")),
+            spoken as f64 / secs.max(1.0),
+            heard.chars().take(400).collect::<String>(),
+            lyrics.replace('\n', " / ").chars().take(500).collect::<String>()
         );
         if (secs - asked).abs() > 3.0 {
             failed.push(format!("{name}: {secs:.1}s long, asked for {asked:.0}s"));

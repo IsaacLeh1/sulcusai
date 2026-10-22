@@ -855,8 +855,8 @@ const RHYMES: [NonNullable<MusicSpec["rhyme"]>, string, string][] = [
 ];
 /** Sections a song can have: [the music model's tag, what people call it, seconds it takes]. */
 const SECTIONS: [string, string, number][] = [
-  ["Intro", tx("Intro"), 10], ["Verse", tx("Verse"), 30], ["Pre-Chorus", tx("Pre-chorus"), 15], ["Chorus", tx("Chorus"), 30],
-  ["Bridge", tx("Bridge"), 15], ["Solo", tx("Solo"), 15], ["Instrumental", tx("Instrumental break"), 10], ["Outro", tx("Outro"), 10],
+  ["Intro", tx("Intro"), 15], ["Instrumental Intro", tx("Instrumental intro"), 10], ["Verse", tx("Verse"), 30], ["Pre-Chorus", tx("Pre-chorus"), 15], ["Chorus", tx("Chorus"), 30],
+  ["Bridge", tx("Bridge"), 15], ["Solo", tx("Solo"), 15], ["Instrumental", tx("Instrumental break"), 10], ["Outro", tx("Outro"), 15],
 ];
 /** Song shapes to start from. */
 const SHAPES: [string, string, string[]][] = [

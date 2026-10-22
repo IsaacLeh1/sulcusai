@@ -3754,5 +3754,6 @@
  "Let every chat use this folder": "Alle Chats dürfen diesen Ordner nutzen",
  "Stops sharing it in every chat": "Beendet die Freigabe in allen Chats",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "Der Assistent kann Dateien nur in diesen Ordnern lesen und ändern. Ein hier freigegebener Ordner gehört nur diesem Chat, außer du hakst „Alle Chats“ an.",
- "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Diese sind für alle Chats freigegeben, die nur hineinschauen, wenn du danach fragst. Ein Ordner, der in einem Chat freigegeben wird (Ordner-Schaltfläche unter dem Nachrichtenfeld), bleibt in diesem Chat."
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Diese sind für alle Chats freigegeben, die nur hineinschauen, wenn du danach fragst. Ein Ordner, der in einem Chat freigegeben wird (Ordner-Schaltfläche unter dem Nachrichtenfeld), bleibt in diesem Chat.",
+ "Instrumental intro": "Instrumentales Intro"
 }

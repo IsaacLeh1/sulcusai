@@ -3754,5 +3754,6 @@
  "Let every chat use this folder": "Deixar todos os chats usarem esta pasta",
  "Stops sharing it in every chat": "Para de compartilhá-la em todos os chats",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "O assistente só pode ler e alterar arquivos nestas pastas. Uma pasta compartilhada aqui é só deste chat, a menos que você marque Todos os chats.",
- "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Estas são compartilhadas com todos os chats, que só olham nelas quando você pergunta sobre elas. Uma pasta compartilhada a partir de um chat (o botão de pasta abaixo da caixa de mensagem) fica nesse chat."
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Estas são compartilhadas com todos os chats, que só olham nelas quando você pergunta sobre elas. Uma pasta compartilhada a partir de um chat (o botão de pasta abaixo da caixa de mensagem) fica nesse chat.",
+ "Instrumental intro": "Intro instrumental"
 }
