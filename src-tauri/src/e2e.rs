@@ -3324,7 +3324,7 @@ async fn e2e_lyrics_fill_the_song() {
         let plan = lyrics::plan(secs, &sections, lyrics::Flow::Sung);
         let planned: u32 = plan.iter().map(|(_, n)| n).sum();
         let t = std::time::Instant::now();
-        match lyrics::write(&state, prompt, secs, Some("en"), &sections, "", lyrics::Flow::Sung).await {
+        match lyrics::write(&state, prompt, Some(secs), Some("en"), &sections, "", lyrics::Flow::Sung).await {
             Ok(l) => {
                 let n = lyrics::sung_lines(&l);
                 let tags: Vec<&str> = l.lines().filter(|x| x.trim().starts_with('[')).collect();
@@ -3364,7 +3364,7 @@ async fn e2e_lyrics_fill_the_song() {
     spec.emotion = Some("Heartbroken".into());
     spec.rhyme = Some("aabb".into());
     spec.vocal_effects = vec![VocalEffect { how: "screamed".into(), on: "chorus".into() }, VocalEffect { how: "vibrato".into(), on: "all".into() }];
-    match lyrics::write(&state, &spec.caption(&styled.prompt, false), 90.0, Some("en"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&styled.prompt)).await {
+    match lyrics::write(&state, &spec.caption(&styled.prompt, false), Some(90.0), Some("en"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&styled.prompt)).await {
         Ok(l) => {
             let marked = spec.mark_sections(&l);
             println!("in their way, heartbroken, screamed chorus:\n{marked}\n");
@@ -3498,6 +3498,17 @@ async fn e2e_music_songs() {
         let music = media::MusicSpec { genre: Some("Pop".into()), voice: Some("female".into()), sections: ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"].map(String::from).to_vec(), ..Default::default() };
         let req = Request { op: "music".into(), prompt: "driving home at sunrise after a long night, short intro, the singing starts right away".into(), seconds: Some(150.0), music: Some(music), language: Some("en".into()), ..Default::default() };
         made.push(("intro_soon".into(), req.clone(), make("intro_soon", req).await, Some("en")));
+    }
+    // Auto length: a jingle comes out short, a full song a few minutes, as the lyrics need.
+    for (case, prompt) in [("auto_jingle", "a cheerful little jingle for a neighborhood bakery"), ("auto_full", "a heartfelt pop song about leaving your hometown for the big city")] {
+        if want(case) {
+            let music = media::MusicSpec { genre: Some("Pop".into()), auto_length: true, ..Default::default() };
+            let req = Request { op: "music".into(), prompt: prompt.into(), music: Some(music), language: Some("en".into()), ..Default::default() };
+            let r = make(case, req.clone()).await;
+            // Checked against the length the song came out at (Auto sets it).
+            let asked = r.as_ref().map_or(30.0, |i| i.seconds as f32);
+            made.push((case.into(), Request { seconds: Some(asked), ..req }, r, Some("en")));
+        }
     }
     // Many styles, one each (SULCUSAI_SONGS=genres): words heard in every one.
     if want("genres") {

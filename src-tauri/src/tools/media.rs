@@ -64,7 +64,7 @@ pub fn create_music_params() -> Value {
         "language": { "type": "string", "description": "The language the vocals are sung in, as a two-letter code (en, es, fr, de, it, pt, ja, ko, zh). Leave out for the language of the lyrics or description." },
         "instrumental": { "type": "boolean", "description": "No vocals." },
         "sound_effect": { "type": "boolean", "description": "A sound effect rather than music." },
-        "seconds": { "type": "number", "description": "Length in seconds (music 10-600, default 30; sound 10-30). With change extend: the seconds to add." },
+        "seconds": { "type": "number", "description": "Length in seconds (music 10-600; sound 10-30). Leave out for a new song to have its length follow the lyrics and the song (a jingle short, a full song about three minutes). With change extend: the seconds to add." },
         "song": { "type": "string", "description": "To work on a song already in the gallery or this chat: its id (from an earlier create_music result)." },
         "change": { "type": "string", "enum": ["cover", "repaint", "extend", "add", "extract", "complete"], "description": "With song: cover = the same song in the style described; repaint = make part of it again (from/to); extend = add more after its end (seconds to add); add = add a part (part); extract = keep only one part (part); complete = build a full song around a lone part." },
         "part": { "type": "string", "enum": ["vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard", "percussion", "strings", "synth", "fx", "brass", "woodwinds"], "description": "With change add or extract." },
@@ -335,6 +335,9 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 }
                 (_, asked) => asked,
             };
+            // No length asked for a new song: it follows the song (Auto).
+            let mut music = music;
+            music.auto_length = seconds.is_none() && music.task.is_none();
             Request {
                 op: if args.get("sound_effect").and_then(Value::as_bool) == Some(true) { "sound".into() } else { "music".into() },
                 prompt: s("description").unwrap_or_default(),

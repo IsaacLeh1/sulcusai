@@ -3755,5 +3755,9 @@
  "Stops sharing it in every chat": "Beendet die Freigabe in allen Chats",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "Der Assistent kann Dateien nur in diesen Ordnern lesen und ändern. Ein hier freigegebener Ordner gehört nur diesem Chat, außer du hakst „Alle Chats“ an.",
  "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Diese sind für alle Chats freigegeben, die nur hineinschauen, wenn du danach fragst. Ein Ordner, der in einem Chat freigegeben wird (Ordner-Schaltfläche unter dem Nachrichtenfeld), bleibt in diesem Chat.",
- "Instrumental intro": "Instrumentales Intro"
+ "Instrumental intro": "Instrumentales Intro",
+ "Auto length": "Länge automatisch",
+ "The song is as long as it needs: a length named in the description, your lyrics or the structure, or the lyrics written for it": "Der Song ist so lang wie nötig: eine Länge aus der Beschreibung, dein Songtext oder der Aufbau, sonst der für ihn geschriebene Text",
+ "about {time}": "etwa {time}",
+ "fits the song": "passend zum Song"
 }

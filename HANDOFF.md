@@ -1566,6 +1566,15 @@ Ask: rap didn't work at all; make sure music can make a whole variety of songs; 
   - Whisper now gives word times (`-ml 1 -sow`, `heard_words`).
   - SULCUSAI_VOCALS=1 has ACE-Step 1.5 Base take the vocals out of each song and prints their loudness every 3 s. Whisper's 30-second windows are too coarse to show where the singing starts.
   - The song test needs `RUST_MIN_STACK=33554432` now, or its debug build overflows the stack.
+- **Auto length** (asked for during this work; `MusicSpec::auto_length`, on by default in the Studio's new songs, and in chats when no length is given). `auto_seconds` picks, in order:
+  1. a length named in the description (`lyrics::named_length`: "a 90-second jingle", "two and a half minutes"; under 15 s doesn't count);
+  2. what the person's own lyrics need (`length_of`: 7.5 s a sung line or a second a word, 3 s a bar, plus played sections and a 5 s lead-in);
+  3. a short piece (`short_piece`: a jingle, ringtone or advert 30 s, a short song or a show's theme 60 s);
+  4. the chosen sections (`length_of_sections`);
+  5. 90 s for an instrumental;
+  6. otherwise the writer gets no plan: it picks the sections the song needs, nothing is cut, and the length is what its lyrics come to.
+  - Real songs: left to the writer, "a little jingle for a bakery" came out 2:35 and a full pop song 4:35. With `short_piece` and a tighter idea of a full song (two-line intro and outro, two verses, 20 to 26 lines), they were 30 s and 2:30, with 4 of 13 and 40 of 55 words heard.
+  - The Studio shows "about 2:50" for a chosen structure or your own lyrics, else "fits the song"; turning Auto off brings back the slider.
 
 ## 0.9.25 (2026-10-22): folders per chat, a thinking limit, steadier permissions
 

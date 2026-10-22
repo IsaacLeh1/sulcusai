@@ -1111,6 +1111,8 @@ function MusicComposer({
   const [lookingUp, setLookingUp] = useState(false);
   const key = keyNote ? `${keyNote} ${keyMode}` : "";
   const [seconds, setSeconds] = useState(60);
+  // Auto: the song is as long as it needs (a jingle short, a full song about three minutes).
+  const [autoLength, setAutoLength] = useState(true);
   // Vocals come out clearly about three times in four: two versions on the
   // graphics card (seconds each) make one clear one likely. Changed by hand, it stays.
   const [versionsSet, setVersions] = useState<number | null>(null);
@@ -1140,6 +1142,9 @@ function MusicComposer({
   const m = fit.find((x) => x.id === model) ?? fit[0];
   const versions = versionsSet ?? (mode === "song" && vocals !== "none" && m?.fit.on_gpu ? 2 : 1);
   const secs = mode === "sound" ? Math.min(Math.max(seconds, 10), 30) : seconds;
+  const auto = mode === "song" && autoLength;
+  // What Auto will likely come to, when it can be told before the song is made.
+  const autoGuess = vocals === "mine" && sungLines(lyrics) > 0 ? fitFor(lyrics) + 5 : sections.length ? structureSeconds(sections) : null;
   const sings = mode === "song" ? vocals !== "none" : mode === "edit" && ((task === "add" && part.includes("vocals")) || task === "cover" || task === "repaint");
   const styled = mode === "song" || (mode === "edit" && (task === "cover" || task === "complete"));
   const singing = mode === "song" ? vocals !== "none" : sings;
@@ -1168,6 +1173,7 @@ function MusicComposer({
     energy: energy || null,
     ending: ending || null,
     production: production || null,
+    auto_length: auto,
     emotion: emotion || null,
     vocal_effects: singing ? vocalEffects : [],
     sound_like: soundLike.trim() || null,
@@ -1188,7 +1194,7 @@ function MusicComposer({
   const writeLyrics = async () => {
     setWriting(true);
     try {
-      setLyrics(await api.musicWriteLyrics(prompt, spec(), secs, language === "auto" ? null : language));
+      setLyrics(await api.musicWriteLyrics(prompt, spec(), auto ? null : secs, language === "auto" ? null : language));
       setVocals("mine");
     } catch (e) {
       toast(errorText(e), "error");
@@ -1229,7 +1235,7 @@ function MusicComposer({
     const ok = await onStart({
       op: mode === "sound" ? "sound" : "music",
       prompt,
-      seconds: mode === "edit" ? (task === "extend" ? extendBy : undefined) : secs,
+      seconds: mode === "edit" ? (task === "extend" ? extendBy : undefined) : auto ? undefined : secs,
       instrumental: mode === "song" ? vocals === "none" : undefined,
       lyrics: sings && (mode === "edit" || vocals === "mine") && lyrics.trim() ? lyrics : null,
       language: sings && language !== "auto" ? language : null,
@@ -1241,7 +1247,7 @@ function MusicComposer({
   };
   // Each layered harmony is another pass, by a slower model (about twice the song's time).
   const layers = mode === "song" && harmonyLayer && canLayer ? (singing && harmonyVoice ? 1 : 0) + (harmonyInstrument ? 1 : 0) : 0;
-  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : secs) * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 : 0;
+  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : auto ? autoGuess ?? 150 : secs) * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 : 0;
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1415,7 +1421,7 @@ function MusicComposer({
           {(vocals === "mine" || mode === "edit") && (
             <textarea className="input lyrics-box" rows={8} value={lyrics} aria-label={t("Lyrics")} placeholder={"[Verse]\n…\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
           )}
-          {mode === "song" && vocals === "mine" && sungLines(lyrics) > Math.round(secs / SECS_PER_LINE) * 1.25 && (
+          {mode === "song" && !auto && vocals === "mine" && sungLines(lyrics) > Math.round(secs / SECS_PER_LINE) * 1.25 && (
             <p className="callout small">
               {t("{n} lines need about {time} to be sung clearly; at {length} the words come out mumbled.", { n: sungLines(lyrics), time: mmss(fitFor(lyrics)), length: mmss(secs) })}{" "}
               <button className="link" onClick={() => setSeconds(fitFor(lyrics))}>{t("Make it {time}", { time: mmss(fitFor(lyrics)) })}</button>
@@ -1544,7 +1550,17 @@ function MusicComposer({
       )}
 
       <div className="row wrap">
-        {mode !== "edit" && (
+        {mode === "song" && (
+          <button
+            className={`chip ${auto ? "active" : ""}`}
+            onClick={() => setAutoLength((a) => !a)}
+            title={t("The song is as long as it needs: a length named in the description, your lyrics or the structure, or the lyrics written for it")}
+          >
+            {t("Auto length")}
+          </button>
+        )}
+        {auto && <span className="small muted">{autoGuess ? t("about {time}", { time: mmss(autoGuess) }) : t("fits the song")}</span>}
+        {mode !== "edit" && !auto && (
           <label className="small music-length">
             {t("Length")}
             <input

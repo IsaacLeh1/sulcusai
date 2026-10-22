@@ -1913,6 +1913,8 @@ export interface MusicSpec {
   energy?: "steady" | "builds" | "big-chorus" | "quiet" | null;
   ending?: "fade" | "big-finish" | "hard-stop" | null;
   production?: string | null;
+  /** The length follows the song: a length named in the description, the lyrics, the sections, or the lyrics written for it. */
+  auto_length?: boolean;
   /** The feeling in the words and the voice. */
   emotion?: string | null;
   vocal_effects?: VocalEffect[];

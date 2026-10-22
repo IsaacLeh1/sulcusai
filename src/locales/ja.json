@@ -3755,5 +3755,9 @@
  "Stops sharing it in every chat": "すべてのチャットで共有を止めます",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "アシスタントがファイルを読んだり変更したりできるのは、これらのフォルダーの中だけです。ここで共有したフォルダーは、「すべてのチャット」にチェックを入れない限りこのチャット専用です。",
  "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "これらはすべてのチャットと共有されていますが、チャットが中を見るのはあなたが尋ねたときだけです。チャットから共有したフォルダー（メッセージ欄の下のフォルダーボタン）は、そのチャット専用です。",
- "Instrumental intro": "インストのイントロ"
+ "Instrumental intro": "インストのイントロ",
+ "Auto length": "長さを自動にする",
+ "The song is as long as it needs: a length named in the description, your lyrics or the structure, or the lyrics written for it": "曲は必要な長さになります。説明に書いた長さ、あなたの歌詞や構成、または曲のために書かれた歌詞に合わせます",
+ "about {time}": "約{time}",
+ "fits the song": "曲に合わせる"
 }

@@ -416,6 +416,96 @@ pub fn seconds_for(lyrics: &str) -> f32 {
     sung_lines(lyrics) as f32 * SECS_PER_LINE
 }
 
+/// Seconds before the first words, in a length worked out from lyrics.
+const LEAD_IN: f32 = 5.0;
+
+/// A length worked out for Auto: rounded up to 5 seconds, 20 s to 10 minutes.
+fn auto_round(secs: f32) -> f32 {
+    ((secs / 5.0).ceil() * 5.0).clamp(20.0, 600.0)
+}
+
+/// The length these lyrics need, for Auto: each sung line its time (a
+/// rapped bar less), or each word a second when the lines are long, plus
+/// the played sections and a short lead-in.
+pub fn length_of(lyrics: &str, flow: Flow) -> f32 {
+    let (mut lines, mut words, mut played) = (0usize, 0usize, 0.0f32);
+    for line in lyrics.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if line.starts_with('[') && line.ends_with(']') {
+            if played_tag(line) {
+                played += played_seconds(line);
+            }
+        } else {
+            lines += 1;
+            words += lead_words(line);
+        }
+    }
+    let sung = match flow {
+        Flow::Sung => (lines as f32 * SECS_PER_LINE).max(words as f32 + 12.0),
+        Flow::Rap => (lines as f32 * SECS_PER_BAR).max(words as f32 / 3.0),
+    };
+    auto_round(sung + played + LEAD_IN)
+}
+
+/// The time a section takes when nothing else says: a verse four sung
+/// lines (fourteen rapped bars), the others by their share (`weight`), two
+/// lines at least; a played section its own seconds.
+fn section_seconds(section: &str, flow: Flow) -> f32 {
+    if played_tag(section) {
+        return played_seconds(section);
+    }
+    let verse = if flow == Flow::Rap { 14.0 } else { 4.0 };
+    (weight(section, flow) * verse).max(2.0) * flow.secs_per_line()
+}
+
+/// The length a chosen structure takes, for Auto.
+pub fn length_of_sections(sections: &[String], flow: Flow) -> f32 {
+    auto_round(sections.iter().map(|s| section_seconds(s, flow)).sum::<f32>() + LEAD_IN)
+}
+
+/// The length of a short piece the description asks for: a jingle, a
+/// ringtone or an advert half a minute, a short song a minute. (Left to
+/// the writer, "a little jingle for a bakery" came out 2:35 long.)
+pub fn short_piece(text: &str) -> Option<f32> {
+    let t = text.to_lowercase();
+    let words: Vec<&str> = t.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let has = |w: &[&str]| words.iter().any(|x| w.contains(x));
+    if has(&["jingle", "jingles", "ringtone", "ringtones", "advert", "commercial", "sting", "stinger", "snippet", "ad"]) {
+        Some(30.0)
+    } else if t.contains("short song") || t.contains("short rap") || t.contains("short tune") || t.contains("quick song") || (has(&["theme", "intro"]) && t.contains("show")) {
+        Some(60.0)
+    } else {
+        None
+    }
+}
+
+/// A length named in a description: "a 90-second jingle", "3 minutes",
+/// "two and a half minutes", "a minute long". None when there's none (or
+/// under 15 seconds, more likely about something else).
+pub fn named_length(text: &str) -> Option<f32> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static NAMED: OnceLock<Regex> = OnceLock::new();
+    let re = NAMED.get_or_init(|| {
+        Regex::new(r"(?i)\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten)(\s+and\s+a\s+half)?[\s-]*(minutes?|mins?|seconds?|secs?)\b").unwrap()
+    });
+    let c = re.captures(text)?;
+    let n: f32 = match c[1].to_lowercase().as_str() {
+        "a" | "an" | "one" => 1.0,
+        "two" => 2.0,
+        "three" => 3.0,
+        "four" => 4.0,
+        "five" => 5.0,
+        "six" => 6.0,
+        "seven" => 7.0,
+        "eight" => 8.0,
+        "nine" => 9.0,
+        "ten" => 10.0,
+        digits => digits.parse().ok()?,
+    } + if c.get(2).is_some() { 0.5 } else { 0.0 };
+    let secs = if c[3].to_lowercase().starts_with("min") { n * 60.0 } else { n };
+    (secs >= 15.0).then(|| secs.min(600.0))
+}
+
 /// The writer's messages: the sections and their lines (`plan`), short
 /// lines, and `guide`'s rules (rhyme, feeling, echoes in brackets for
 /// harmony singers: `MusicSpec::lyrics_guide`). `retry`: what was wrong
@@ -441,11 +531,26 @@ fn messages(prompt: &str, plan: &[Planned], language: Option<&str>, guide: &str,
     let what = if flow == Flow::Rap { "rap lyrics" } else { "song lyrics to be sung" };
     // Too few, and the music model filled the time repeating a chorus line.
     let fuller = if retry == Retry::Fuller { " Write every section in full, with exactly its number of lines: don't stop early or shorten a section." } else { "" };
+    // No plan (Auto length): the writer picks the sections the song needs, and its length follows.
+    let sections = if plan.is_empty() {
+        // Lines take 7.5 s each here, so 26 lines are already over three minutes.
+        let full = if flow == Flow::Rap {
+            "a full rap has a two-bar intro, two verses of twelve to sixteen bars, a hook that repeats, and a two-bar outro"
+        } else {
+            "a full song has a two-line intro, two verses of four lines, a chorus of four lines that repeats, often a bridge of two lines, \
+             and a two-line outro: about 20 to 26 lines in all, unless the user asks for a long one"
+        };
+        format!(
+            "Choose the sections the song needs, in order, with the tags [Intro], [Verse], [Pre-Chorus], [Chorus], [Bridge] and [Outro], \
+             to suit what the user asks for: a short piece (a jingle, a lullaby, a short verse) stays short, and {full}. Every [Chorus] has the same words."
+        )
+    } else {
+        format!("Write these sections in this order, with this many lines under each: {}. That's {total} lines in all.{fuller}", plan_words(plan))
+    };
     vec![
         json!({ "role": "system", "content": format!(
             "You write {what}. Reply with the lyrics only: section tags in square brackets on their own lines, and the lines under them. \
-             No title, no notes, no quotes, no Markdown. Write these sections in this order, with this many lines under each: {}. That's {total} lines in all.{fuller}{short}{same}{lang}{guide}",
-            plan_words(plan)
+             No title, no notes, no quotes, no Markdown. {sections}{short}{same}{lang}{guide}"
         ) }),
         json!({ "role": "user", "content": format!("A song: {}", prompt.trim()) }),
     ]
@@ -573,14 +678,24 @@ fn played_tag(tag: &str) -> bool {
 /// default), else a language model a picture model brought (FLUX.2 klein's
 /// Qwen3, for one). Run before the music engine starts, so they don't share
 /// the graphics card.
-pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: f32, language: Option<&str>, sections: &[String], guide: &str, flow: Flow) -> Result<String, NotWritten> {
-    let plan = plan(seconds, sections, flow);
+pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: Option<f32>, language: Option<&str>, sections: &[String], guide: &str, flow: Flow) -> Result<String, NotWritten> {
+    // No length (Auto) and no sections: the writer picks them, and the
+    // song's length follows the lyrics (`length_of`), so none are cut.
+    let open = seconds.is_none() && sections.is_empty();
+    let seconds = seconds.unwrap_or_else(|| length_of_sections(sections, flow));
+    let plan = if open { Vec::new() } else { plan(seconds, sections, flow) };
     let planned: u32 = plan.iter().map(|(_, n)| n).sum();
-    let max_lines = if flow == Flow::Rap { planned } else { planned.max(lines_for(seconds)) };
-    let max_words = flow.words(seconds);
+    let max_lines = if open {
+        80
+    } else if flow == Flow::Rap {
+        planned
+    } else {
+        planned.max(lines_for(seconds))
+    };
+    let max_words = if open { usize::MAX } else { flow.words(seconds) };
     // Room for every line and tag (about 14 tokens a line, 24 a bar), and some over.
     let per_line = if flow == Flow::Rap { 24 } else { 14 };
-    let room = planned * per_line + plan.len() as u32 * 6 + 250;
+    let room = if open { per_line * 48 + 300 } else { planned * per_line + plan.len() as u32 * 6 + 250 };
     let mut why = None;
     let mut best = Draft::default();
     match crate::background_endpoint(state).await {
@@ -699,6 +814,34 @@ mod tests {
         assert_eq!(rap.words(60.0), 180);
         assert_eq!(words_for(30.0), 18);
         assert_eq!(words_for(60.0), 48);
+    }
+
+    /// Auto: the length a description names, and the length lyrics need.
+    #[test]
+    fn auto_lengths_are_worked_out() {
+        assert_eq!(named_length("a 90-second jingle"), Some(90.0));
+        assert_eq!(named_length("make it 3 minutes long"), Some(180.0));
+        assert_eq!(named_length("two and a half minutes of chill"), Some(150.0));
+        assert_eq!(named_length("about a minute"), Some(60.0));
+        assert_eq!(named_length("a 2.5 min song"), Some(150.0));
+        assert_eq!(named_length("10 minutes"), Some(600.0));
+        assert_eq!(named_length("a song about the 5 seconds before midnight"), None, "too short to be a length");
+        assert_eq!(named_length("a love song"), None);
+        assert_eq!(short_piece("a cheerful little jingle for a neighborhood bakery"), Some(30.0));
+        assert_eq!(short_piece("a short song for my mom's birthday"), Some(60.0));
+        assert_eq!(short_piece("a theme song for my cooking show"), Some(60.0));
+        assert_eq!(short_piece("a heartfelt pop song about leaving home"), None);
+        assert_eq!(short_piece("a song about a road trip"), None, "\"ad\" only as a word");
+        // Played sections add their time; rap bars are quicker than sung lines.
+        assert_eq!(length_of("[Instrumental Intro]\n\n[Verse]\nOne two three\nFour five six\nSeven eight\nNine ten", Flow::Sung), 45.0);
+        let bars = format!("[Verse]\n{}", vec!["eight words in a bar of a rap verse"; 16].join("\n"));
+        assert_eq!(length_of(&bars, Flow::Rap), 55.0, "16 bars of 3 s, and a lead-in");
+        assert_eq!(length_of(&bars, Flow::Sung), 165.0, "sung, the same lines take longer (a second a word)");
+        assert_eq!(length_of_sections(&["Verse".into(), "Chorus".into()], Flow::Rap), 70.0, "14 bars and a 7-bar hook");
+        // No plan: the writer picks the sections.
+        let open = messages("a jingle for a bakery", &[], None, "", Retry::First, Flow::Sung);
+        let sys = open[0]["content"].as_str().unwrap();
+        assert!(sys.contains("Choose the sections the song needs") && sys.contains("a short piece") && !sys.contains("That's"), "{sys}");
     }
 
     #[test]

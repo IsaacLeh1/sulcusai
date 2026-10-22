@@ -3755,5 +3755,9 @@
  "Stops sharing it in every chat": "Arrête de le partager dans toutes les discussions",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "L'assistant ne peut lire et modifier des fichiers que dans ces dossiers. Un dossier partagé ici appartient à cette discussion seule, sauf si vous cochez Toutes les discussions.",
  "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Ils sont partagés avec toutes les discussions, qui n'y regardent que quand vous posez une question à leur sujet. Un dossier partagé depuis une discussion (le bouton dossier sous la zone de message) reste dans cette discussion.",
- "Instrumental intro": "Intro instrumentale"
+ "Instrumental intro": "Intro instrumentale",
+ "Auto length": "Durée automatique",
+ "The song is as long as it needs: a length named in the description, your lyrics or the structure, or the lyrics written for it": "La chanson dure le temps qu'il lui faut : une durée indiquée dans la description, vos paroles ou la structure, ou les paroles écrites pour elle",
+ "about {time}": "environ {time}",
+ "fits the song": "à la mesure de la chanson"
 }

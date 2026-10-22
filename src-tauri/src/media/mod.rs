@@ -651,6 +651,10 @@ pub struct MusicSpec {
     pub energy: Option<String>,
     /// How it ends: "fade", "big-finish", "hard-stop".
     pub ending: Option<String>,
+    /// The length follows the song (`auto_seconds`): a length named in the
+    /// description, else what the lyrics or the sections need, else what
+    /// the lyrics written for it come to.
+    pub auto_length: bool,
     /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
     /// "1970s", "1980s", "1990s", "modern".
     pub production: Option<String>,
@@ -2135,17 +2139,29 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     // An artist's style is read by the chat model too, before the lyrics.
     let styled = artist::resolve(state, req, progress).await;
     let req = styled.as_ref().unwrap_or(req);
+    // Auto length: what's known before the lyrics are written.
+    let timed = auto_seconds(req).map(|s| Request { seconds: Some(s), ..req.clone() });
+    let req = timed.as_ref().unwrap_or(req);
     // Lyrics come from the chat model: written before the card is cleared for
     // the music engine, not after (that loaded the chat model again beside it).
     let mut with_lyrics;
     let req = if wants_written_lyrics(req) {
         progress("Writing lyrics", 0.02);
-        let seconds = req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 600.0);
-        with_lyrics = req.clone();
-        // Told the style, mood and voice too, not only the person's words.
         let spec = req.music.clone().unwrap_or_default();
-        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt)).await {
-            Ok(l) => with_lyrics.lyrics = Some(l),
+        // Auto with nothing to go on: the writer picks the sections, and the
+        // song is as long as they need.
+        let open = spec.auto_length && req.seconds.is_none() && matches!(spec.task.as_deref(), None | Some("new"));
+        let seconds = if open { None } else { Some(req.seconds.unwrap_or(model.map_or(30.0, |m| m.defaults.seconds.max(30.0))).clamp(10.0, 600.0)) };
+        with_lyrics = req.clone();
+        let flow = spec.flow(&req.prompt);
+        // Told the style, mood and voice too, not only the person's words.
+        match lyrics::write(state, &song_caption(req), seconds, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), flow).await {
+            Ok(l) => {
+                if open {
+                    with_lyrics.seconds = Some(lyrics::length_of(&l, flow));
+                }
+                with_lyrics.lyrics = Some(l);
+            }
             Err(why) => {
                 // Nothing written here: the music model writes its own.
                 crate::applog::line("media", &format!("Couldn't write lyrics before the song ({why:?}); the music model writes them"));
@@ -3220,6 +3236,25 @@ fn vocal_language(asked: Option<&str>, words: &lyrics::Words) -> Option<String> 
     }
 }
 
+/// The length of a new song set to Auto, when it's known before any lyrics
+/// are written: one named in the description ("a 90-second jingle"), what
+/// the person's own lyrics need, what the chosen sections take, or a
+/// minute and a half for an instrumental. None otherwise: written lyrics
+/// decide it.
+fn auto_seconds(req: &Request) -> Option<f32> {
+    let spec = req.music.as_ref().filter(|m| m.auto_length && matches!(m.task.as_deref(), None | Some("new")))?;
+    if req.op != "music" || req.seconds.is_some() {
+        return None;
+    }
+    let flow = spec.flow(&req.prompt);
+    let own = req.lyrics.as_deref().filter(|l| lyrics::sung_lines(l) > 0).filter(|_| req.instrumental != Some(true));
+    lyrics::named_length(&req.prompt)
+        .or_else(|| own.map(|l| lyrics::length_of(l, flow)))
+        .or_else(|| lyrics::short_piece(&req.prompt))
+        .or_else(|| (!spec.sections().is_empty()).then(|| lyrics::length_of_sections(&spec.sections(), flow)))
+        .or_else(|| (req.instrumental == Some(true)).then_some(90.0))
+}
+
 /// Whether a song job wants lyrics written before it starts: a new song
 /// with vocals and none given, or vocals added to a song the person has.
 fn wants_written_lyrics(req: &Request) -> bool {
@@ -3305,7 +3340,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         // Not written before the job (it always is for the Studio's and chats' songs).
         (ctx.progress)("Writing lyrics", 0.02);
         let length = if task.is_some() { source_len.max(10.0) } else { seconds };
-        match lyrics::write(ctx.state, &caption_words, length, req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt)).await {
+        match lyrics::write(ctx.state, &caption_words, Some(length), req.language.as_deref(), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt)).await {
             Ok(l) => words = lyrics::Words::Sung(l),
             Err(why) => problem = Some(why),
         }
@@ -4072,7 +4107,9 @@ pub async fn music_write_lyrics(state: AppStateRef<'_>, prompt: String, music: O
         return Err("Describe the song first (or pick its style), so the lyrics fit it.".into());
     }
     let spec = req.music.clone().unwrap_or_default();
-    lyrics::write(state.inner(), &words, seconds.unwrap_or(60.0).clamp(10.0, 600.0), language.as_deref().filter(|l| *l != "auto"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt))
+    // No length (Auto): one named in the description, else the sections', else the writer's choice.
+    let seconds = seconds.map(|s| s.clamp(10.0, 600.0)).or_else(|| lyrics::named_length(&req.prompt));
+    lyrics::write(state.inner(), &words, seconds, language.as_deref().filter(|l| *l != "auto"), &spec.sections(), &spec.lyrics_guide(), spec.flow(&req.prompt))
         .await
         .map_err(|why| match why {
             lyrics::NotWritten::NoModel(_) => "There's no chat model on this PC to write lyrics. Install one from Models, or type your own.".to_string(),
@@ -4208,6 +4245,29 @@ mod tests {
             assert_eq!(part_for(i), Some(p), "{i}");
         }
         assert_eq!(part_for("Kazoo"), None);
+    }
+
+    /// Auto length: a length in the description, else the person's lyrics,
+    /// else the sections, else (written lyrics) none yet.
+    #[test]
+    fn auto_length_follows_the_song() {
+        let auto = |prompt: &str, lyrics: Option<&str>, sections: &[&str], instrumental: bool| {
+            let music = MusicSpec { auto_length: true, sections: sections.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+            auto_seconds(&Request { op: "music".into(), prompt: prompt.into(), lyrics: lyrics.map(str::to_string), instrumental: Some(instrumental), music: Some(music), ..Default::default() })
+        };
+        assert_eq!(auto("a 90-second jingle for a bakery", None, &[], false), Some(90.0));
+        assert_eq!(auto("a little jingle for a bakery", None, &[], false), Some(30.0), "a jingle is short");
+        assert_eq!(auto("an epic ballad, about 4 minutes long", None, &["Verse"], false), Some(240.0), "named beats the sections");
+        let mine = "[Verse]\na b c d\ne f g h\ni j k l\nm n o p\n\n[Chorus]\nq r s t\nu v w x\ny z a b\nc d e f";
+        assert_eq!(auto("a love song", Some(mine), &[], false), Some(65.0), "8 lines of 7.5 s and a lead-in");
+        assert_eq!(auto("a love song", None, &["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"], false), Some(155.0));
+        assert_eq!(auto("chill beats", None, &[], true), Some(90.0), "an instrumental");
+        assert_eq!(auto("a love song", None, &[], false), None, "written lyrics decide it");
+        // Not Auto, or a length given: left alone.
+        let fixed = Request { op: "music".into(), prompt: "a 90-second jingle".into(), seconds: Some(30.0), music: Some(MusicSpec { auto_length: true, ..Default::default() }), ..Default::default() };
+        assert_eq!(auto_seconds(&fixed), None);
+        let off = Request { op: "music".into(), prompt: "a 90-second jingle".into(), music: Some(MusicSpec::default()), ..Default::default() };
+        assert_eq!(auto_seconds(&off), None);
     }
 
     /// A feeling, and ways of singing on parts of the song: in the

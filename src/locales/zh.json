@@ -3755,5 +3755,9 @@
  "Stops sharing it in every chat": "在所有聊天中停止共享",
  "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "助手只能在这些文件夹中读取和修改文件。在这里共享的文件夹只属于此聊天，除非你勾选“所有聊天”。",
  "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "这些文件夹与所有聊天共享，但只有当你问到它们时，聊天才会查看。从聊天中共享的文件夹（消息框下方的文件夹按钮）只留在那个聊天中。",
- "Instrumental intro": "纯音乐前奏"
+ "Instrumental intro": "纯音乐前奏",
+ "Auto length": "自动时长",
+ "The song is as long as it needs: a length named in the description, your lyrics or the structure, or the lyrics written for it": "歌曲按需要的长度生成：描述中写明的时长、你的歌词或结构，或为它写的歌词",
+ "about {time}": "约 {time}",
+ "fits the song": "随歌曲而定"
 }
