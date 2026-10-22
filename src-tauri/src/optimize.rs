@@ -198,6 +198,8 @@ struct Shared<'a> {
     auto: Setup,
     all_layers: u32,
     card: Option<i64>,
+    /// Spread over several cards, as planned.
+    spread: bool,
     total: u64,
 }
 
@@ -234,7 +236,7 @@ async fn attempt(r: &Shared<'_>, engine: &mut engine::Engine, s: Setup, ctx: u32
                 batch: r.batch,
                 lora: None,
             },
-            Tuning { cpu_moe, kv_q8: s.kv_q8, think_budget: None },
+            Tuning { cpu_moe, kv_q8: s.kv_q8, think_budget: None, spread: r.spread },
             r.state.job(),
         )
         .await;
@@ -313,6 +315,7 @@ pub async fn run(state: &Arc<AppState>, model_id: &str, progress: &(dyn Fn(usize
         auto,
         all_layers,
         card,
+        spread: plan.tuning.spread,
         total,
     };
     let windows = smaller_windows(plan.ctx);
@@ -417,7 +420,8 @@ mod tests {
         let m = c.model("qwen3-14b").unwrap();
         let v = m.variant("Q4_K_M").unwrap();
         let all = m.arch.n_layer + 1;
-        let b = Budget { vram: v.size + catalog::kv_cache_bytes_q8(&m.arch, 16_384) + catalog::RUNTIME_OVERHEAD, ram: 32 << 30, disk: 1 << 40, gpu_bw_gbs: 380.0, cpu_bw_gbs: 50.0 };
+        let card = v.size + catalog::kv_cache_bytes_q8(&m.arch, 16_384) + catalog::RUNTIME_OVERHEAD;
+        let b = Budget { vram: card, vram_card: card, cards: 1, ram: 32 << 30, disk: 1 << 40, gpu_bw_gbs: 380.0, gpu_bw_card: 380.0, cpu_bw_gbs: 50.0 };
         let list = setups(m, "Q4_K_M", &b, 16_384, Setup { gpu_layers: 30, kv_q8: false });
         assert_eq!(list[0], Setup { gpu_layers: 30, kv_q8: false }, "the automatic settings first");
         assert!(list.contains(&Setup { gpu_layers: all, kv_q8: false }) && list.contains(&Setup { gpu_layers: all, kv_q8: true }));

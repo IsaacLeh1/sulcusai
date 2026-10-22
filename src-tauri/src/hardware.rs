@@ -84,6 +84,23 @@ pub fn main_of<'a>(gpus: &'a [Gpu], chosen: Option<&str>) -> Option<&'a Gpu> {
     chosen.and_then(|name| dedicated().find(|g| g.name == name)).or_else(|| dedicated().max_by_key(|g| g.vram_bytes))
 }
 
+/// The cards models are spread over: the one the person picked, else every
+/// dedicated card from the biggest one's maker with 4 GB or more (llama.cpp
+/// splits the layers between them by their free memory), biggest first.
+pub fn model_cards<'a>(gpus: &'a [Gpu], chosen: Option<&str>) -> Vec<&'a Gpu> {
+    if let Some(card) = chosen.and_then(|name| gpus.iter().find(|g| !g.integrated && g.name == name)) {
+        return vec![card];
+    }
+    let Some(main) = main_of(gpus, None) else { return Vec::new() };
+    let mut all: Vec<&Gpu> = gpus.iter().filter(|g| !g.integrated && g.vendor == main.vendor && g.vram_bytes >= 4 * (1 << 30)).collect();
+    all.sort_by_key(|g| std::cmp::Reverse(g.vram_bytes));
+    if all.is_empty() {
+        vec![main]
+    } else {
+        all
+    }
+}
+
 /// A graphics card that's there but not working.
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
 pub struct BrokenCard {
@@ -159,6 +176,16 @@ impl Hardware {
     /// most memory. Its memory is what models are fitted to.
     pub fn best_gpu(&self) -> Option<&Gpu> {
         main_of(&self.gpus, self.main.as_deref())
+    }
+
+    /// Every card chat models are spread over (`model_cards`).
+    pub fn model_gpus(&self) -> Vec<&Gpu> {
+        model_cards(&self.gpus, self.main.as_deref())
+    }
+
+    /// Their memory together.
+    pub fn model_vram(&self) -> u64 {
+        self.model_gpus().iter().map(|g| g.vram_bytes).sum()
     }
 }
 

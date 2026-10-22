@@ -425,6 +425,69 @@ pub async fn endpoint(state: &AppState, purpose: Use) -> Result<SpeechEndpoint, 
     endpoint_for(state, &chosen, settings.language).await
 }
 
+const CLI_EXE: &str = if cfg!(windows) { "whisper-cli.exe" } else { "whisper-cli" };
+
+/// Sung words in a song and when they come (16 kHz mono), by the most
+/// accurate speech model installed. Whisper's own program, without the
+/// voice detector the server uses: that one is made for speech, and over a
+/// band it dropped the singing (0 of 47 words heard where this hears 17 of 24).
+pub async fn transcribe_song(state: &AppState, samples: &[f32], language: Option<&str>) -> Result<Vec<Segment>, String> {
+    let (settings, list) = {
+        let conn = state.db.lock().unwrap();
+        (voice_settings(&conn), installed(&conn))
+    };
+    let hw = state.hardware.read().unwrap().clone();
+    let chosen = choose(&list, &settings, &state.catalog.speech.models, &hw, Use::Accurate).ok_or("Install a speech model first: open Models › Speech.")?;
+    let exe = engine::find_exe(&state.paths.engines.join(engine_dir(&state.catalog.speech.engine)), CLI_EXE)
+        .or_else(|| engine::on_path(CLI_EXE))
+        .ok_or("Speech recognition isn't fully installed. Reinstall the speech model from Models › Speech.")?;
+    crate::engine::learn_devices(state).await;
+    let dir = std::env::temp_dir().join(format!("sulcusai-hear-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let wav = dir.join("song.wav");
+    std::fs::write(&wav, audio::wav_encode(samples, audio::RATE)).map_err(|e| e.to_string())?;
+    let threads = threads(&state.hardware.read().unwrap()).min(state.limits().threads.max(2));
+    let mut cmd = tokio::process::Command::new(&exe);
+    cmd.arg("-m")
+        .arg(model_path(&state.paths, &chosen))
+        .arg("-f")
+        .arg(&wav)
+        .args(["-t", &threads.to_string(), "-l", language.filter(|l| !l.is_empty()).unwrap_or("auto"), "-np"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    crate::engine::tie_to_app(&mut cmd);
+    crate::engine::prefer_dedicated(&mut cmd);
+    let out = cmd.output().await;
+    let _ = std::fs::remove_dir_all(&dir);
+    let out = out.map_err(|e| format!("Couldn't start speech recognition: {e}"))?;
+    if !out.status.success() {
+        return Err("Speech recognition couldn't listen to the song.".into());
+    }
+    Ok(timed_lines(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Whisper's printed lines, "[00:00:12.000 --> 00:00:15.000]  words", as
+/// segments (sounds rather than words, "[Music]", left out).
+fn timed_lines(text: &str) -> Vec<Segment> {
+    let secs = |t: &str| -> Option<f64> {
+        let mut parts = t.trim().split(':').rev();
+        let s: f64 = parts.next()?.parse().ok()?;
+        let m: f64 = parts.next().unwrap_or("0").parse().ok()?;
+        let h: f64 = parts.next().unwrap_or("0").parse().ok()?;
+        Some(h * 3600.0 + m * 60.0 + s)
+    };
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            let (times, words) = l.strip_prefix('[')?.split_once(']')?;
+            let (a, b) = times.split_once("-->")?;
+            let words = words.trim().trim_matches('♪').trim().to_string();
+            (!is_annotation(&words)).then(|| Segment { start: secs(a).unwrap_or(0.0), end: secs(b).unwrap_or(0.0), text: words })
+        })
+        .collect()
+}
+
 async fn endpoint_for(state: &AppState, chosen: &InstalledSpeech, language: String) -> Result<SpeechEndpoint, String> {
     // Which card is which, so speech runs on the dedicated one.
     crate::engine::learn_devices(state).await;
@@ -892,6 +955,15 @@ pub async fn audio_devices() -> Result<AudioDevices, String> {
 mod tests {
     use super::*;
     use crate::catalog::GIB;
+
+    #[test]
+    fn a_song_is_heard_as_timed_lines() {
+        let out = "\n[00:00:00.000 --> 00:00:04.200]   Morning light on the window\n[00:00:04.200 --> 00:00:09.000]   [Music]\n[00:01:02.500 --> 00:01:05.000]   \u{266a} Sing it loud \u{266a}\n";
+        let segs = timed_lines(out);
+        assert_eq!(segs.len(), 2);
+        assert_eq!((segs[0].start, segs[0].end, segs[0].text.as_str()), (0.0, 4.2, "Morning light on the window"));
+        assert_eq!((segs[1].start, segs[1].text.as_str()), (62.5, "Sing it loud"));
+    }
 
     fn hw(cores: usize, avx2: bool) -> Hardware {
         Hardware { cpu_cores: Some(cores), cpu_threads: cores * 2, avx2, ram_total: 16 * GIB, disk_free: 100 * GIB, ..Default::default() }

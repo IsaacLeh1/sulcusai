@@ -16,6 +16,8 @@ pub fn model_args(files: &[(String, PathBuf)]) -> Vec<OsString> {
     for (role, path) in files {
         let flag = match role.as_str() {
             "diffusion" => "--diffusion-model",
+            // Wan 2.2 A14B's first stage (the low-noise one is "diffusion").
+            "high_noise" => "--high-noise-diffusion-model",
             "llm" => "--llm",
             "t5xxl" => "--t5xxl",
             "clip_l" => "--clip_l",
@@ -184,6 +186,19 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
     ]);
     if d.flow_shift > 0.0 {
         a.extend(["--flow-shift".into(), format!("{}", d.flow_shift).into()]);
+    }
+    // Two stages (Wan 2.2 A14B): the high-noise expert takes the first steps
+    // with the same guidance and sampler, 8 of them to the low-noise 10 in
+    // stable-diffusion.cpp's own example.
+    if files.iter().any(|(role, _)| role == "high_noise") {
+        a.extend([
+            "--high-noise-cfg-scale".into(),
+            format!("{}", if d.cfg > 0.0 { d.cfg } else { 3.5 }).into(),
+            "--high-noise-sampling-method".into(),
+            if d.sampler.is_empty() { "euler".into() } else { d.sampler.as_str().into() },
+            "--high-noise-steps".into(),
+            ((c.steps * 4 / 5).max(2)).to_string().into(),
+        ]);
     }
     if !d.cache.is_empty() {
         a.extend(["--cache-mode".into(), d.cache.as_str().into()]);
@@ -359,6 +374,26 @@ mod tests {
         assert!(joined.starts_with("-M img_gen --diffusion-model d.gguf --llm q.gguf --vae v.st -p a fox"));
         assert!(joined.contains("--disable-image-metadata") && joined.contains("-b 2") && joined.contains("-t 6") && joined.contains("--max-vram 5.5"));
         assert!(joined.ends_with("-o out_%d.png"));
+    }
+
+    /// Wan 2.2 A14B: both experts, and the high-noise one's own settings,
+    /// as in stable-diffusion.cpp's example (10 steps and 8).
+    #[test]
+    fn two_stage_video_passes_both_experts() {
+        let files = vec![
+            ("diffusion".to_string(), PathBuf::from("low.gguf")),
+            ("high_noise".to_string(), PathBuf::from("high.gguf")),
+            ("t5xxl".to_string(), PathBuf::from("umt5.gguf")),
+            ("vae".to_string(), PathBuf::from("vae.st")),
+        ];
+        let d = Defaults { steps: 10, cfg: 3.5, sampler: "euler".into(), flow_shift: 3.0, ..Default::default() };
+        let out = PathBuf::from("out.webm");
+        let c = Clip { prompt: "a fox", negative: None, width: 832, height: 480, frames: 49, fps: 16, steps: 10, seed: 1, init: None, out: &out };
+        let joined = clip_args(&files, &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert!(joined.contains("--diffusion-model low.gguf --high-noise-diffusion-model high.gguf"), "{joined}");
+        assert!(joined.contains("--steps 10") && joined.contains("--high-noise-cfg-scale 3.5 --high-noise-sampling-method euler --high-noise-steps 8"), "{joined}");
+        let one = clip_args(&files[..1], &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert!(!one.contains("high-noise"), "one stage: no high-noise settings");
     }
 
     #[test]

@@ -74,7 +74,7 @@ pub fn length(_path: &Path) -> Option<f64> {
 
 /// The file's samples as 32-bit floats, interleaved: (samples, rate, channels).
 #[cfg(windows)]
-fn decode(path: &Path) -> Result<(Vec<f32>, u32, u16), String> {
+pub(crate) fn decode(path: &Path) -> Result<(Vec<f32>, u32, u16), String> {
     use windows::core::HSTRING;
     use windows::Win32::Media::MediaFoundation::*;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -117,6 +117,11 @@ fn decode(path: &Path) -> Result<(Vec<f32>, u32, u16), String> {
         let _ = MFShutdown();
         result
     }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn decode(_path: &Path) -> Result<(Vec<f32>, u32, u16), String> {
+    Err("Sound files are read by Windows here.".into())
 }
 
 /// 16-bit PCM WAV of interleaved float samples.

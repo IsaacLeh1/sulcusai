@@ -1809,6 +1809,1771 @@
         "size": 1193058784,
         "sha256": "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f"
       }
+    },
+    {
+      "id": "qwen3.8-27b",
+      "name": "Qwen3.8 27B",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF",
+      "description": "The strongest model of its size: thinks, codes, uses tools and sees pictures, with room for very long documents. The best pick for 16 to 32 GB graphics cards.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "coding"
+      ],
+      "params_b": 27.3,
+      "arch": {
+        "n_layer": 65,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 1.0,
+        "kv_whole": 16
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-IQ3_XXS",
+          "quality": "Smallest",
+          "file": "Qwen3.8-27B-UD-IQ3_XXS.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ3_XXS.gguf",
+          "size": 10934860704,
+          "sha256": "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee"
+        },
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "Qwen3.8-27B-UD-Q3_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q3_K_XL.gguf",
+          "size": 13146393504,
+          "sha256": "8c2a45ff85e7674ca185ec8eb6cdeab0e617ed9d8018caed0b64380eb2a67a5e"
+        },
+        {
+          "quant": "UD-IQ4_XS",
+          "quality": "Good",
+          "file": "Qwen3.8-27B-UD-IQ4_XS.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-IQ4_XS.gguf",
+          "size": 14252845984,
+          "sha256": "40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199"
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+          "size": 17559178144,
+          "sha256": "3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e"
+        },
+        {
+          "quant": "UD-Q6_K",
+          "quality": "Great",
+          "file": "Qwen3.8-27B-UD-Q6_K.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q6_K.gguf",
+          "size": 21983677344,
+          "sha256": "c9c206812fbe4ac7b76a729e25928b63f2ae89d37f69da7a71c20aec763cd436"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Qwen3.8-27B-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-Q8_0.gguf",
+          "size": 29047086048,
+          "sha256": "a680f44a06920e5d689774823782006aa3acc8db95750323373b24139b67e348"
+        }
+      ],
+      "ratings": {
+        "overall": 92,
+        "coding": 10,
+        "writing": 9,
+        "research": 10,
+        "agents": 10,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 927607488,
+        "sha256": "cbb841a9ee0636b2ec172f5bb8df2ea8dfeb01e90fe7c6126581d662a0b4e43e"
+      }
+    },
+    {
+      "id": "ornith-1.5-9b",
+      "name": "Ornith 1.5 9B",
+      "publisher": "Ornith AI",
+      "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF",
+      "description": "A coding specialist built on Qwen3.5 9B: strong at programming and tool use for its size, and fits 8 GB graphics cards.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 9.2,
+      "arch": {
+        "n_layer": 33,
+        "n_kv_heads": 4,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 1.0,
+        "kv_whole": 8
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Ornith-1.5-9B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q4_K_M.gguf",
+          "size": 5780090816,
+          "sha256": "70c112196e0b7023803c9762752e46d29e612a92c83f995bc3ba1ceb07e8fab6"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Ornith-1.5-9B-Q6_K.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q6_K.gguf",
+          "size": 7558901696,
+          "sha256": "b6f76e74f86245b3caee014b797c10dca931c4dfdaabfb134eab655f81e4154a"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Ornith-1.5-9B-Q8_0.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF/resolve/main/Ornith-1.5-9B-Q8_0.gguf",
+          "size": 9786060384,
+          "sha256": "22086870b009dbe9815ee752c48a82de930118a7c5ce5599590892ae03b8b010"
+        }
+      ],
+      "ratings": {
+        "overall": 80,
+        "coding": 9,
+        "writing": 6,
+        "research": 7,
+        "agents": 9,
+        "languages": 7
+      }
+    },
+    {
+      "id": "ornith-1.5-35b-a3b",
+      "name": "Ornith 1.5 35B-A3B",
+      "publisher": "Ornith AI",
+      "source": "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF",
+      "description": "A coding and agent specialist that uses 3B of its 35B per word: quick even partly in system memory, and very strong at programming.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 35.5,
+      "arch": {
+        "n_layer": 41,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 0.128,
+        "kv_whole": 10
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Ornith-1.5-35B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/main/Ornith-1.5-35B-Q4_K_M.gguf",
+          "size": 21713463040,
+          "sha256": "42739874cc2ccfdb8523b23fbe52e29b2a7555c8176737ca9ca0b5d59859d41f"
+        },
+        {
+          "quant": "Q6_K",
+          "quality": "Great",
+          "file": "Ornith-1.5-35B-Q6_K.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-35B-A3B-GGUF/resolve/main/Ornith-1.5-35B-Q6_K.gguf",
+          "size": 29208731392,
+          "sha256": "15d4658bbfc9c6034621729c15bbb50662c82b32a7ddd9624a1e545a74bdbb4b"
+        }
+      ],
+      "ratings": {
+        "overall": 89,
+        "coding": 10,
+        "writing": 7,
+        "research": 8,
+        "agents": 10,
+        "languages": 8
+      }
+    },
+    {
+      "id": "nemotron-3.5-lightning-30b-a3b",
+      "name": "Nemotron 3.5 Lightning 30B-A3B",
+      "publisher": "NVIDIA",
+      "source": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+      "description": "NVIDIA's quick mixture-of-experts model (3B per word) with a design that keeps very long inputs cheap: up to a million tokens of context.",
+      "license": {
+        "name": "NVIDIA OpenMDW-1.1",
+        "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF",
+        "commercial": true,
+        "note": "Check the license on the model's page before using it for work."
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "long-context"
+      ],
+      "params_b": 32.9,
+      "arch": {
+        "n_layer": 53,
+        "n_kv_heads": 2,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.142,
+        "kv_whole": 7
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "MXFP4_MOE",
+          "quality": "Good",
+          "file": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MXFP4_MOE.gguf",
+          "size": 23210817600,
+          "sha256": "c5a1433ecfb206d63be963faaa81d7c1170cb13abb14c73390968fe7c79a99f6"
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-UD-Q4_K_XL.gguf",
+          "size": 25505724480,
+          "sha256": "112bf957489a497c18f60bf8bd44ee1dfa05e87368b8ed7f68998a4e38f275c9"
+        }
+      ],
+      "ratings": {
+        "overall": 86,
+        "coding": 9,
+        "writing": 8,
+        "research": 9,
+        "agents": 9,
+        "languages": 8
+      }
+    },
+    {
+      "id": "north-mini-code-1.0",
+      "name": "North Mini Code 1.0",
+      "publisher": "Cohere",
+      "source": "https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF",
+      "description": "Cohere's coding model: writes, explains and fixes code across many languages, with room for big codebases.",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "tool-calling"
+      ],
+      "params_b": 30.5,
+      "arch": {
+        "n_layer": 49,
+        "n_kv_heads": 4,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.156,
+        "kv_whole": 13,
+        "kv_sliding": 36,
+        "swa_window": 4096
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "North-Mini-Code-1.0-UD-Q4_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF/resolve/main/North-Mini-Code-1.0-UD-Q4_K_XL.gguf",
+          "size": 19253518432,
+          "sha256": "86ba9cf324a1cf53687872abdda3861e3304bfd25d1f606f92a6641017ecbc6e"
+        },
+        {
+          "quant": "UD-Q6_K_XL",
+          "quality": "Great",
+          "file": "North-Mini-Code-1.0-UD-Q6_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF/resolve/main/North-Mini-Code-1.0-UD-Q6_K_XL.gguf",
+          "size": 27853938784,
+          "sha256": "c745f23f0c802bc07a9f3f067cf2ac80f58b415bfc78d7620624bd16eef8d44c"
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "North-Mini-Code-1.0-Q8_0.gguf",
+          "url": "https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF/resolve/main/North-Mini-Code-1.0-Q8_0.gguf",
+          "size": 32437264480,
+          "sha256": "652eeb9932e8020ef7b35374189411848187fa58796ded0ceee258bd9d36426b"
+        }
+      ],
+      "ratings": {
+        "overall": 84,
+        "coding": 10,
+        "writing": 6,
+        "research": 7,
+        "agents": 9,
+        "languages": 7
+      }
+    },
+    {
+      "id": "nemotron-3.5-bolt-74b-a9b",
+      "name": "Nemotron 3.5 Bolt 74B-A9B",
+      "publisher": "NVIDIA",
+      "source": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF",
+      "description": "A big, quick mixture-of-experts model (9B of 74B per word) that sees pictures and handles long work. For PCs with 48 to 64 GB of memory.",
+      "license": {
+        "name": "NVIDIA OpenMDW-1.1",
+        "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF",
+        "commercial": true,
+        "note": "Check the license on the model's page before using it for work."
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "long-context"
+      ],
+      "params_b": 74.0,
+      "arch": {
+        "n_layer": 88,
+        "n_kv_heads": 2,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.116,
+        "kv_whole": 8
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q3_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q3_K_XL.gguf",
+          "size": 39027158016,
+          "sha256": "51077d511c769efb299073cc7b33d31bb007eb4fdaed60938dc1133146b708e3"
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "size": 50219478368,
+          "sha256": "d6f33b5e8a49ea57a0a3ae922dfd0b3033a19429993d3215fc4992f4270aa2df",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "size": 7876160,
+              "sha256": "d6f33b5e8a49ea57a0a3ae922dfd0b3033a19429993d3215fc4992f4270aa2df"
+            },
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "size": 49524981280,
+              "sha256": "93c8485db6f9e9d26085acc368ca3b0993a36aa870e8f8b7748c1fbd174c6276"
+            },
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "size": 686620928,
+              "sha256": "f97b7a5443b3f77150a1bf7bac6c00862411ee2f26b7bf57a599fb61dbe867df"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "quality": "Better",
+          "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00001-of-00003.gguf",
+          "size": 58912632064,
+          "sha256": "5bb0b06d303ccc6d4d0c8c230d5afd70600bf557059a4ba40c338e9451cd3033",
+          "parts": [
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00001-of-00003.gguf",
+              "size": 7876064,
+              "sha256": "5bb0b06d303ccc6d4d0c8c230d5afd70600bf557059a4ba40c338e9451cd3033"
+            },
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00002-of-00003.gguf",
+              "size": 49594839136,
+              "sha256": "f634851a11898c88a6e3a7f162e7dbb6f018def08220e6ada7180a835ca3ec81"
+            },
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-UD-Q5_K_XL-00003-of-00003.gguf",
+              "size": 9309916864,
+              "sha256": "a847a83a82152143b09dc66a3e397a372bc2d15cbd633cc0ce74efc566068213"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 90,
+        "coding": 9,
+        "writing": 9,
+        "research": 9,
+        "agents": 10,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-BF16.gguf",
+        "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-GGUF/resolve/main/mmproj-BF16.gguf",
+        "size": 1733692672,
+        "sha256": "acad03175d80ce7caea6854795e9ecc978e86d4b4caae0125efba5f970216f4f"
+      }
+    },
+    {
+      "id": "ornith-1.5-122b",
+      "name": "Ornith 1.5 122B",
+      "publisher": "Ornith AI",
+      "source": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF",
+      "description": "Ornith's large coding and agent model, built on Qwen3.5 122B; sees pictures. For PCs with 64 to 128 GB of memory.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "thinking",
+        "tool-calling",
+        "vision"
+      ],
+      "params_b": 124.6,
+      "arch": {
+        "n_layer": 49,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 0.128,
+        "kv_whole": 12
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q2_K_XL",
+          "quality": "Smallest",
+          "file": "Ornith-1.5-122B-UD-Q2_K_XL.gguf",
+          "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/Ornith-1.5-122B-UD-Q2_K_XL.gguf",
+          "size": 44533952768,
+          "sha256": "93fb32cfb1c31b34df426b4a41d961bdaffcddbbd217d850262136cf3689ba66"
+        },
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00001-of-00003.gguf",
+          "size": 59761254545,
+          "sha256": "d8a23c487741fdac7026e10013fa8e320502cf01048a2333b2db8ba2a9f74fe5",
+          "parts": [
+            {
+              "file": "UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00001-of-00003.gguf",
+              "size": 10942929,
+              "sha256": "d8a23c487741fdac7026e10013fa8e320502cf01048a2333b2db8ba2a9f74fe5"
+            },
+            {
+              "file": "UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00002-of-00003.gguf",
+              "size": 49791670080,
+              "sha256": "95f76e67ffc49e2b0b4a4dfe5c42269b4b275ecf9e3696f599f3eeac92180323"
+            },
+            {
+              "file": "UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q3_K_XL/Ornith-1.5-122B-UD-Q3_K_XL-00003-of-00003.gguf",
+              "size": 9958641536,
+              "sha256": "1c4b52bbb1d45a21b5b7927429a5c80f264c688f2d14ed50ba0b6da0260d4028"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "size": 79713771665,
+          "sha256": "7159d31a6a6ce5528500b490880383844c3c9b21fcdaad94e66c9e65233ff359",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "size": 10942929,
+              "sha256": "7159d31a6a6ce5528500b490880383844c3c9b21fcdaad94e66c9e65233ff359"
+            },
+            {
+              "file": "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "size": 49971099680,
+              "sha256": "e66952128394bb4c75554c7e10a12a8b63dd1c7f049d876a02885a946e30c1c3"
+            },
+            {
+              "file": "UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q4_K_XL/Ornith-1.5-122B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "size": 29731729056,
+              "sha256": "21325ec18a9e3210eeffada0fc327a25a79171918f1d04f8f0a06b61866ac9ba"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "quality": "Better",
+          "file": "UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00001-of-00003.gguf",
+          "size": 94611939505,
+          "sha256": "8ef82af5830f24e93f1e18b58ec8281f77e6c35542f0965c4de1aa674419a06f",
+          "parts": [
+            {
+              "file": "UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00001-of-00003.gguf",
+              "size": 10942929,
+              "sha256": "8ef82af5830f24e93f1e18b58ec8281f77e6c35542f0965c4de1aa674419a06f"
+            },
+            {
+              "file": "UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00002-of-00003.gguf",
+              "size": 49598966816,
+              "sha256": "7c8cd3439a301802d9888fe61b4c5206f7ff71d322e8060274b8d8e2839152d1"
+            },
+            {
+              "file": "UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/UD-Q5_K_XL/Ornith-1.5-122B-UD-Q5_K_XL-00003-of-00003.gguf",
+              "size": 45002029760,
+              "sha256": "4399a9fce998b7f3d57cea70eb0dfbc475e2776d73973b8b7dfd985fa421ba1e"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 93,
+        "coding": 10,
+        "writing": 8,
+        "research": 9,
+        "agents": 10,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Ornith-1.5-122B-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 908724544,
+        "sha256": "39db176176a904b101f5173a4f03e785990f9279f94ab373c4fd629ae7011817"
+      }
+    },
+    {
+      "id": "qwen3.8-flash-next",
+      "name": "Qwen3.8 Flash Next",
+      "publisher": "Qwen (Alibaba)",
+      "source": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF",
+      "description": "One of the strongest open models, and very fast for its size (6B per word): codes, researches, uses tools and sees pictures. For PCs with 96 to 192 GB of memory.",
+      "license": {
+        "name": "Qwen Community License 1.0",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF",
+        "commercial": false,
+        "note": "Free for most uses; some commercial services need a separate deal with Qwen."
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "coding"
+      ],
+      "params_b": 176.9,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 0.118,
+        "kv_whole": 12
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q2_K_XL",
+          "quality": "Smallest",
+          "file": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf",
+          "size": 78869128864,
+          "sha256": "a4f3b21e77353999829f2f767e9ac21ce9c71d29a74f2cc9eda48c9bf23c8b86",
+          "parts": [
+            {
+              "file": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00001-of-00003.gguf",
+              "size": 10946624,
+              "sha256": "a4f3b21e77353999829f2f767e9ac21ce9c71d29a74f2cc9eda48c9bf23c8b86"
+            },
+            {
+              "file": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00002-of-00003.gguf",
+              "size": 49979779296,
+              "sha256": "2e3bf1ee7d2a04e261e9f342a2d968f696cce5941d082b0e434deb9b1edc12c6"
+            },
+            {
+              "file": "UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q2_K_XL/Qwen3.8-Flash-Next-UD-Q2_K_XL-00003-of-00003.gguf",
+              "size": 28878402944,
+              "sha256": "ec8c106759fdf4f463039c34c0707718d7d8908d53d892bd4f002e71620803f9"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+          "size": 89986353824,
+          "sha256": "f2ef4328929d8b8c8930e2856eef52128dd4ce3425302f04bc3c657431cc4c49",
+          "parts": [
+            {
+              "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00001-of-00003.gguf",
+              "size": 10946624,
+              "sha256": "f2ef4328929d8b8c8930e2856eef52128dd4ce3425302f04bc3c657431cc4c49"
+            },
+            {
+              "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00002-of-00003.gguf",
+              "size": 49983253824,
+              "sha256": "7d230e7c9421d868b89eebaf23033af0ea1a4e046956df00fb156814fb62346e"
+            },
+            {
+              "file": "UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q3_K_XL/Qwen3.8-Flash-Next-UD-Q3_K_XL-00003-of-00003.gguf",
+              "size": 39992153376,
+              "sha256": "21d4f90f9cd7b7c3a1582667c20cb22f7b03de895b88a23bb20aaeaa44f2c199"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "size": 111334654784,
+          "sha256": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+              "size": 10946624,
+              "sha256": "4448186216b3af4cc558bbce2c3213f01608f8f8b2e5267a9767971dd3ec8082"
+            },
+            {
+              "file": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00002-of-00004.gguf",
+              "size": 49859583136,
+              "sha256": "3f342f1c1580473f1ee94ddd5b28206e8c07a70fa1a366f59d1d6c922919a6c9"
+            },
+            {
+              "file": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00003-of-00004.gguf",
+              "size": 49376141504,
+              "sha256": "56758f40269cad5cd9b0d3d6fbae0f40f6d5be6de49e4ab392dbe83157d9cbd3"
+            },
+            {
+              "file": "UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q4_K_XL/Qwen3.8-Flash-Next-UD-Q4_K_XL-00004-of-00004.gguf",
+              "size": 12087983520,
+              "sha256": "753bda48b98ba4f1636134a90a967de1b2d3908a236c026e464777342e53510a"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "quality": "Better",
+          "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf",
+          "size": 158286406650,
+          "sha256": "610922cdb1afe1094e95d7a3e86b12ee33317ebbf7320ac9344e21b6ae4bb69f",
+          "parts": [
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00001-of-00006.gguf",
+              "size": 10946618,
+              "sha256": "610922cdb1afe1094e95d7a3e86b12ee33317ebbf7320ac9344e21b6ae4bb69f"
+            },
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00002-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00002-of-00006.gguf",
+              "size": 682434912,
+              "sha256": "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e"
+            },
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00003-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00003-of-00006.gguf",
+              "size": 54400261312,
+              "sha256": "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20"
+            },
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00004-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00004-of-00006.gguf",
+              "size": 49990245824,
+              "sha256": "9ee6bbe462e6830864382d629101490625b1c95afa15492b7ad550c7bed2dd13"
+            },
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00005-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00005-of-00006.gguf",
+              "size": 49882416192,
+              "sha256": "0b2437f661f584030cb5aeb8fb1bb70f6422518a6746bfcc0304167c7b6b8beb"
+            },
+            {
+              "file": "UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00006-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/UD-Q5_K_XL/Qwen3.8-Flash-Next-UD-Q5_K_XL-00006-of-00006.gguf",
+              "size": 3320101792,
+              "sha256": "55dd96c5ad0863b06b6393151b9ad0ac727b8d58a62e02a296ca5d5ddbfee4a3"
+            }
+          ]
+        },
+        {
+          "quant": "Q8_0",
+          "quality": "Best",
+          "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+          "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+          "size": 188225033248,
+          "sha256": "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2",
+          "parts": [
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00001-of-00006.gguf",
+              "size": 10946624,
+              "sha256": "2dabcbb53ca537a7947bc7d20414fd464eeaf4d66d43021b5b2556cc87544ad2"
+            },
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00002-of-00006.gguf",
+              "size": 682434912,
+              "sha256": "494ca4ed3dbf97bc28da88af3890b8877b9032f909812d00c0526a9ca5e91d2e"
+            },
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00003-of-00006.gguf",
+              "size": 54400261312,
+              "sha256": "34efd79a80a1ce540a517a5d56171924b66ce1c38b04c904f17ad6d8ef17cf20"
+            },
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00004-of-00006.gguf",
+              "size": 49446841216,
+              "sha256": "bfa634025fabbd2658bf7694bc80b90e571699c768723f844c934c7ef06c691a"
+            },
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00005-of-00006.gguf",
+              "size": 49668930400,
+              "sha256": "232a8f14cc0fa4262e7efe8593774b136fe40909e39c7a020342ddaa27259a97"
+            },
+            {
+              "file": "Q8_0/Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/Q8_0/Qwen3.8-Flash-Next-Q8_0-00006-of-00006.gguf",
+              "size": 34015618784,
+              "sha256": "538a93bca918064983409a41187ad4c68640f9aced6f29564da8f551bf86d7a5"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 95,
+        "coding": 10,
+        "writing": 9,
+        "research": 10,
+        "agents": 10,
+        "languages": 10
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 904004000,
+        "sha256": "1f7b7f0b984cf065c604360c29c8098362ed61b290db0ff12c6f360bb1a8a980"
+      }
+    },
+    {
+      "id": "nemotron-3.5-super-vl-120b-a12b",
+      "name": "Nemotron 3.5 Super VL 120B-A12B",
+      "publisher": "NVIDIA",
+      "source": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF",
+      "description": "NVIDIA's large model that reads pictures and documents well, with up to a million tokens of context. For PCs with 96 to 128 GB of memory.",
+      "license": {
+        "name": "NVIDIA OpenMDW-1.1",
+        "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF",
+        "commercial": true,
+        "note": "Check the license on the model's page before using it for work."
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "long-context"
+      ],
+      "params_b": 120.0,
+      "arch": {
+        "n_layer": 89,
+        "n_kv_heads": 2,
+        "head_dim": 128,
+        "max_ctx": 262144,
+        "active_fraction": 0.139,
+        "kv_whole": 9
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00001-of-00003.gguf",
+          "size": 86907243432,
+          "sha256": "04e0b45e70ab5c86c6b5d3b0133cc35fc10861015bac7dcff867dcf115dc81c5",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00001-of-00003.gguf",
+              "size": 7874568,
+              "sha256": "04e0b45e70ab5c86c6b5d3b0133cc35fc10861015bac7dcff867dcf115dc81c5"
+            },
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00002-of-00003.gguf",
+              "size": 49851272832,
+              "sha256": "868a7fa360ff10bc7e072e4bb4f8771b280ca35a087a55125bc21f7ebb9962b7"
+            },
+            {
+              "file": "UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q4_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q4_K_XL-00003-of-00003.gguf",
+              "size": 37048096032,
+              "sha256": "684abb5b5306b18a046ee69e3375a0e863d14d265e0ffa52c33442d375d08b7d"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "quality": "Better",
+          "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00001-of-00004.gguf",
+          "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00001-of-00004.gguf",
+          "size": 110702468136,
+          "sha256": "6f694a7dc8f147608210e4b95e2b36a8a9d31b677a644332c23cb29c55c9a554",
+          "parts": [
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00001-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00001-of-00004.gguf",
+              "size": 7874568,
+              "sha256": "6f694a7dc8f147608210e4b95e2b36a8a9d31b677a644332c23cb29c55c9a554"
+            },
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00002-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00002-of-00004.gguf",
+              "size": 49292279680,
+              "sha256": "d0063147e1790b5aa857a609e840ef38b3db405132573b9839a8d3d13dc54f5f"
+            },
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00003-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00003-of-00004.gguf",
+              "size": 49336455200,
+              "sha256": "3d7d9b8d8cafcb9fa89d6d76ad3ee91ebdfe4709574bf6c0e920349f0ce5a391"
+            },
+            {
+              "file": "UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00004-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/UD-Q5_K_XL/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-UD-Q5_K_XL-00004-of-00004.gguf",
+              "size": 12065858688,
+              "sha256": "b903809ac924f36212ea582263b99a5b728ca8583d753820663485bc4368bf51"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 91,
+        "coding": 9,
+        "writing": 9,
+        "research": 9,
+        "agents": 9,
+        "languages": 9
+      },
+      "vision": {
+        "file": "mmproj-BF16.gguf",
+        "url": "https://huggingface.co/unsloth/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-GGUF/resolve/main/mmproj-BF16.gguf",
+        "size": 1733695840,
+        "sha256": "9c09381a5744d0ea9a30048c94922f6f25ee0d63842de9c45779eca4fb5924d9"
+      }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "name": "GLM-5.3 Flash",
+      "publisher": "Z.ai",
+      "source": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF",
+      "description": "A top open model (320B, 18B per word): excellent at coding, research and long agent work; sees pictures. For PCs with 160 to 256 GB of memory.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "vision",
+        "coding"
+      ],
+      "params_b": 320.8,
+      "arch": {
+        "n_layer": 46,
+        "n_kv_heads": 1,
+        "head_dim": 576,
+        "max_ctx": 262144,
+        "active_fraction": 0.125,
+        "kv_whole": 12
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf",
+          "size": 147535922080,
+          "sha256": "be89305a221c1449cf9a5a84b5c492520a7fb23a3af1b2178a20ecf0b6ecae76",
+          "parts": [
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00001-of-00004.gguf",
+              "size": 9429984,
+              "sha256": "be89305a221c1449cf9a5a84b5c492520a7fb23a3af1b2178a20ecf0b6ecae76"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00002-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00002-of-00004.gguf",
+              "size": 49609243584,
+              "sha256": "310b5bef056c5cc61d98e1845feac97e35d0a5aa412fca354b6cd597d66b486e"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00003-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00003-of-00004.gguf",
+              "size": 49623486016,
+              "sha256": "eacaab11505a25f00e78b4dce64795cc38bc25839372ec586745af0261673a0c"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00004-of-00004.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-Flash-UD-Q3_K_XL-00004-of-00004.gguf",
+              "size": 48293762496,
+              "sha256": "c650640c9f94f5f1662ac84b803405db3265ee9fc24ffe56670bb0eafd632d00"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+          "size": 199707321472,
+          "sha256": "b59c030090f012b38213bc8c4f78ce10767f2693d730d0dbcd3dc16a5f69e2bc",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00001-of-00006.gguf",
+              "size": 9429984,
+              "sha256": "b59c030090f012b38213bc8c4f78ce10767f2693d730d0dbcd3dc16a5f69e2bc"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00002-of-00006.gguf",
+              "size": 49198039200,
+              "sha256": "d3ecb6ff3957a99878f9a0352676a0913748a431a9a4a1b1ffa5ade9b8947a74"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00003-of-00006.gguf",
+              "size": 49988626304,
+              "sha256": "328073c004e7c5395b208247feed26089db247b94dd8fa4ab0f2569d86c1d770"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00004-of-00006.gguf",
+              "size": 48700701344,
+              "sha256": "6803ab7effa6da4a0b02c9c7865952fdd6c5b2e10e53903348da369e90bd13f9"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00005-of-00006.gguf",
+              "size": 49026026752,
+              "sha256": "852f3df9dacde3d196796f9fe738468e80c8701555ff0a8c30bc010fb8974dd8"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-Flash-UD-Q4_K_XL-00006-of-00006.gguf",
+              "size": 2784497888,
+              "sha256": "c6ba510fafc1e12cc0addbc361a329c0c592ab96980098e7e25e107d8faa983e"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q5_K_XL",
+          "quality": "Better",
+          "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf",
+          "size": 240306087008,
+          "sha256": "cb792ba9c8dbcd7a45aede04ffc16c80b9f3b290423585e06835e0acf7081e17",
+          "parts": [
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00001-of-00006.gguf",
+              "size": 9429984,
+              "sha256": "cb792ba9c8dbcd7a45aede04ffc16c80b9f3b290423585e06835e0acf7081e17"
+            },
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00002-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00002-of-00006.gguf",
+              "size": 48806959328,
+              "sha256": "fd2a37a8d00ad2ab9b8e8691f8d16f4e9991d1eab2aaca14ec4b97568803aa87"
+            },
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00003-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00003-of-00006.gguf",
+              "size": 48557435712,
+              "sha256": "298edf5776b962f63643654bd85ed3ed91777b9a592dc3950b9002b08e320892"
+            },
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00004-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00004-of-00006.gguf",
+              "size": 49317045120,
+              "sha256": "97b097efd8c135246eb620d22438d17c57ad1fff19a0e5340ca9c9232f5f1de9"
+            },
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00005-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00005-of-00006.gguf",
+              "size": 49317045120,
+              "sha256": "17a5ef81a355d1cc4e771bedc7e2d688dab25892cf05bf26c2ddb5ae8230ffab"
+            },
+            {
+              "file": "UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00006-of-00006.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/UD-Q5_K_XL/GLM-5.3-Flash-UD-Q5_K_XL-00006-of-00006.gguf",
+              "size": 44298171744,
+              "sha256": "47435d0287b2f5f023715ceff78b036d0ab63698708f0be54e3a8f30b76bc57d"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 97,
+        "coding": 10,
+        "writing": 10,
+        "research": 10,
+        "agents": 10,
+        "languages": 10
+      },
+      "vision": {
+        "file": "mmproj-F16.gguf",
+        "url": "https://huggingface.co/unsloth/GLM-5.3-Flash-GGUF/resolve/main/mmproj-F16.gguf",
+        "size": 1128047296,
+        "sha256": "922b809664d6a89cc1e40bfeaa63618000edc6651baf4082ce0718a784adf947"
+      }
+    },
+    {
+      "id": "mimo-v2.6-flash",
+      "name": "MiMo V2.6 Flash",
+      "publisher": "Xiaomi",
+      "source": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF",
+      "description": "Xiaomi's 309B model (15B per word): strong reasoning and agent work. For PCs with 128 to 192 GB of memory.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 308.8,
+      "arch": {
+        "n_layer": 48,
+        "n_kv_heads": 8,
+        "head_dim": 192,
+        "max_ctx": 262144,
+        "active_fraction": 0.128,
+        "kv_whole": 9,
+        "kv_sliding": 39,
+        "swa_window": 128
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q2_K",
+          "quality": "Smallest",
+          "file": "MiMo-V2.6-Flash-RL-Q2_K-00001-of-00002.gguf",
+          "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-Q2_K-00001-of-00002.gguf",
+          "size": 126365949248,
+          "sha256": "a34f63df32086bba7a14aa8a2f6c2f111f6e626ad7b10be18957e42d14d84738",
+          "parts": [
+            {
+              "file": "MiMo-V2.6-Flash-RL-Q2_K-00001-of-00002.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-Q2_K-00001-of-00002.gguf",
+              "size": 5948640,
+              "sha256": "a34f63df32086bba7a14aa8a2f6c2f111f6e626ad7b10be18957e42d14d84738"
+            },
+            {
+              "file": "MiMo-V2.6-Flash-RL-Q2_K-00002-of-00002.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-Q2_K-00002-of-00002.gguf",
+              "size": 126360000608,
+              "sha256": "d037fe34f375e55945dbb981ae6bf4bd357cb19ee8c04f56fbd7c4dde4cdbd63"
+            }
+          ]
+        },
+        {
+          "quant": "MXFP4",
+          "quality": "Good",
+          "file": "MiMo-V2.6-Flash-RL-MXFP4-00001-of-00002.gguf",
+          "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-MXFP4-00001-of-00002.gguf",
+          "size": 167369465152,
+          "sha256": "a34f63df32086bba7a14aa8a2f6c2f111f6e626ad7b10be18957e42d14d84738",
+          "parts": [
+            {
+              "file": "MiMo-V2.6-Flash-RL-MXFP4-00001-of-00002.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-MXFP4-00001-of-00002.gguf",
+              "size": 5948640,
+              "sha256": "a34f63df32086bba7a14aa8a2f6c2f111f6e626ad7b10be18957e42d14d84738"
+            },
+            {
+              "file": "MiMo-V2.6-Flash-RL-MXFP4-00002-of-00002.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Flash-RL-GGUF/resolve/main/MiMo-V2.6-Flash-RL-MXFP4-00002-of-00002.gguf",
+              "size": 167363516512,
+              "sha256": "10b74ff85577de18b336718c19905a50bcbccfee9cae7b9edd446667084f623c"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 94,
+        "coding": 10,
+        "writing": 9,
+        "research": 10,
+        "agents": 10,
+        "languages": 9
+      }
+    },
+    {
+      "id": "ling-3.1-flash",
+      "name": "Ling 3.1 Flash",
+      "publisher": "inclusionAI",
+      "source": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF",
+      "description": "A 572B open model for very large PCs: strong at reasoning, writing and long tasks. For 320 GB of memory and more.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 572.1,
+      "arch": {
+        "n_layer": 73,
+        "n_kv_heads": 1,
+        "head_dim": 576,
+        "max_ctx": 262144,
+        "active_fraction": 0.114,
+        "kv_whole": 10
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "IQ4_XS",
+          "quality": "Good",
+          "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00001-of-00009.gguf",
+          "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00001-of-00009.gguf",
+          "size": 317077154752,
+          "sha256": "1aab2fba890291ca4365b8aa275a7598e40d47897c8e6b8e9278c3dd35db633f",
+          "parts": [
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00001-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00001-of-00009.gguf",
+              "size": 38951463136,
+              "sha256": "1aab2fba890291ca4365b8aa275a7598e40d47897c8e6b8e9278c3dd35db633f"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00002-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00002-of-00009.gguf",
+              "size": 39505179136,
+              "sha256": "62342fca72a59072d173b5391cb1e53f493c9ecac338cd0fc020a11ce7e564c2"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00003-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00003-of-00009.gguf",
+              "size": 39094153824,
+              "sha256": "3d243597258b154696778a8aa63fd6c12dbe12fa75c9e676c6d60e2a2797d377"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00004-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00004-of-00009.gguf",
+              "size": 38878749664,
+              "sha256": "fc2217068238e627477f1c76e3d65f4c19902853ec069859e81a31f37d7fab6c"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00005-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00005-of-00009.gguf",
+              "size": 39085748736,
+              "sha256": "1bb3007fadb41699d5bfdf9d2b31e45389e5aa97808b92da18fc6bb6b50c4ee8"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00006-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00006-of-00009.gguf",
+              "size": 39024317376,
+              "sha256": "600481ee5eaf438f4ac7a92c6a412226732618c6a85d080d048a0a9cd154a029"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00007-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00007-of-00009.gguf",
+              "size": 38878749664,
+              "sha256": "bbefc0d98022db96b0a686f344ec4dae68f5ac7de54cddd432a95f99ac689bee"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00008-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00008-of-00009.gguf",
+              "size": 39092768128,
+              "sha256": "5383f304a35817f27710259d82bdf61b610a2433db613d382029a8d0859c2aeb"
+            },
+            {
+              "file": "Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00009-of-00009.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-IQ4_XS/Ling-3.1-flash-IQ4_XS-00009-of-00009.gguf",
+              "size": 4566025088,
+              "sha256": "9c9ed3b2205789b06d3a0ba294891216efb1f949374de64d309216bc627db929"
+            }
+          ]
+        },
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00001-of-00010.gguf",
+          "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00001-of-00010.gguf",
+          "size": 357969521664,
+          "sha256": "12d9e54ff36cb8e44474be9917b6bb977bedce0bc79bdc3f8d3898f6e3cd9f81",
+          "parts": [
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00001-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00001-of-00010.gguf",
+              "size": 39700125312,
+              "sha256": "12d9e54ff36cb8e44474be9917b6bb977bedce0bc79bdc3f8d3898f6e3cd9f81"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00002-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00002-of-00010.gguf",
+              "size": 38994002272,
+              "sha256": "f827ce7d28812059f647ebc1aa352a1cad8a137926bb6e5fc07f8b38a49e242d"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00003-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00003-of-00010.gguf",
+              "size": 38583099840,
+              "sha256": "60a050b71bdd6f5fa8550657b46859b08aa47e084e087d7df5c0bd56fc393fcd"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00004-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00004-of-00010.gguf",
+              "size": 39537959648,
+              "sha256": "4ef54731650e2a786b0e5048711bb5ed14c8c10128b53be582879248cda418e3"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00005-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00005-of-00010.gguf",
+              "size": 39546364736,
+              "sha256": "be92fb9d16bda6cfc7908f7e000f1bb53098d6f9fbb1a4cc155bb2eb8d287a5a"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00006-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00006-of-00010.gguf",
+              "size": 39753363808,
+              "sha256": "7c31b98ecd6f9d26d1148022c9fb010a130e086fb9551e1455148073a9a526a6"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00007-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00007-of-00010.gguf",
+              "size": 39385588288,
+              "sha256": "8402e74f8937f9d7881bd1d86242b6daeada7e1cca79fd709036b2035ed780a3"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00008-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00008-of-00010.gguf",
+              "size": 38996841248,
+              "sha256": "747ba9190a999dd19491607c18be488d9f5985aff9ac3ab86fd02e498b7ab788"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00009-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00009-of-00010.gguf",
+              "size": 38906151424,
+              "sha256": "c6e7c81dd3d0a4394c1d6e6875c8bb4ce98f25ff88b5dcc30040e7806956a8b3"
+            },
+            {
+              "file": "Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00010-of-00010.gguf",
+              "url": "https://huggingface.co/bartowski/Ling-3.1-flash-GGUF/resolve/main/Ling-3.1-flash-Q4_K_M/Ling-3.1-flash-Q4_K_M-00010-of-00010.gguf",
+              "size": 4566025088,
+              "sha256": "618c4b0d26d97ed71f8bfefc83c1aea6dd12c98d3e1d265f91823a2199eb9f07"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 95,
+        "coding": 9,
+        "writing": 10,
+        "research": 10,
+        "agents": 10,
+        "languages": 10
+      }
+    },
+    {
+      "id": "ornith-1.5-397b",
+      "name": "Ornith 1.5 397B",
+      "publisher": "Ornith AI",
+      "source": "https://huggingface.co/ornith-ai/Ornith-1.5-397B-GGUF",
+      "description": "Ornith's largest: top-tier coding and agent work. For 256 GB of memory and more (one 244 GB file).",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "coding",
+        "thinking",
+        "tool-calling"
+      ],
+      "params_b": 402.9,
+      "arch": {
+        "n_layer": 61,
+        "n_kv_heads": 2,
+        "head_dim": 256,
+        "max_ctx": 262144,
+        "active_fraction": 0.118,
+        "kv_whole": 15
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q4_K_M",
+          "quality": "Good",
+          "file": "Ornith-1.5-397B-Q4_K_M.gguf",
+          "url": "https://huggingface.co/ornith-ai/Ornith-1.5-397B-GGUF/resolve/main/Ornith-1.5-397B-Q4_K_M.gguf",
+          "size": 244309803808,
+          "sha256": "c7775e6fae1a47619c199c81b865df9014e5d724509a098377ce1c84744b6552"
+        }
+      ],
+      "ratings": {
+        "overall": 96,
+        "coding": 10,
+        "writing": 9,
+        "research": 10,
+        "agents": 10,
+        "languages": 9
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "publisher": "Z.ai",
+      "source": "https://huggingface.co/unsloth/GLM-5.3-GGUF",
+      "description": "One of the best open models anywhere (754B): for the biggest PCs, with 256 to 512 GB of memory.",
+      "license": {
+        "name": "GLM-5.3 License",
+        "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF",
+        "commercial": false,
+        "note": "Check the license on the model's page before using it for work."
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "coding"
+      ],
+      "params_b": 753.9,
+      "arch": {
+        "n_layer": 79,
+        "n_kv_heads": 1,
+        "head_dim": 576,
+        "max_ctx": 262144,
+        "active_fraction": 0.128
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "UD-Q2_K_XL",
+          "quality": "Smallest",
+          "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00001-of-00007.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00001-of-00007.gguf",
+          "size": 253878406789,
+          "sha256": "4f902dd0ad1458056d156cbfe226d159ef9f68786bcdbfd4fe1d04dca76fca41",
+          "parts": [
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00001-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00001-of-00007.gguf",
+              "size": 9428677,
+              "sha256": "4f902dd0ad1458056d156cbfe226d159ef9f68786bcdbfd4fe1d04dca76fca41"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00002-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00002-of-00007.gguf",
+              "size": 49172427136,
+              "sha256": "979122459ed09d9d895b85e340ddc9c93a7e82f525e20bf5c03e36da19a41b04"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00003-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00003-of-00007.gguf",
+              "size": 49091626976,
+              "sha256": "f7c9df5efffa2c1eb9b35e061f24f4d8b4a7edbd141e97455673e3e093e803db"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00004-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00004-of-00007.gguf",
+              "size": 49091626976,
+              "sha256": "8892cc45af116660fb0d6d568814e49b2e6bf173b10d5107a6ab0495c851dbd0"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00005-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00005-of-00007.gguf",
+              "size": 49091626976,
+              "sha256": "99fff6a71cd659807196e9b624aff72771e79a0cd153f04efd6f8344c82ca489"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00006-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00006-of-00007.gguf",
+              "size": 49994703552,
+              "sha256": "2e7c0cefe90a2cf54e7831331febd9c8c10beb1fa00437297f153f220aa258d3"
+            },
+            {
+              "file": "UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00007-of-00007.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q2_K_XL/GLM-5.3-UD-Q2_K_XL-00007-of-00007.gguf",
+              "size": 7426966496,
+              "sha256": "1c17315acbe0cd8e79faa81426412da58da960f85e5db3246e038a058f62339b"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q3_K_XL",
+          "quality": "Small",
+          "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00001-of-00009.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00001-of-00009.gguf",
+          "size": 342965977029,
+          "sha256": "56d6d59fc554a84c503c2f786e6978d55681e42b8c01370afd923a6286d05e0a",
+          "parts": [
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00001-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00001-of-00009.gguf",
+              "size": 9428677,
+              "sha256": "56d6d59fc554a84c503c2f786e6978d55681e42b8c01370afd923a6286d05e0a"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00002-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00002-of-00009.gguf",
+              "size": 48804973120,
+              "sha256": "4a66db8d7f441a948d435e7559a4080a58cc57a8cb35ce9104103ea4039cf34f"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00003-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00003-of-00009.gguf",
+              "size": 48508432544,
+              "sha256": "03c626e0fe1cb5e9f245afa092df6c25fa1f55b1072ec65f143f804cec04b710"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00004-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00004-of-00009.gguf",
+              "size": 48508432544,
+              "sha256": "d391c041f80c0fdf6cf92777528f642a1e6882562e5f0727cf35e00be7c8f686"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00005-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00005-of-00009.gguf",
+              "size": 48508432544,
+              "sha256": "34f022b34bc4be26bec87e3ffb7b832a4a357f550c748c9a0013afbf0ce01918"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00006-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00006-of-00009.gguf",
+              "size": 48508432544,
+              "sha256": "6961dbf52a18a6806ac3e399617fb3a6faeaca8d7264241f38cf972ef94bb5b7"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00007-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00007-of-00009.gguf",
+              "size": 48508432544,
+              "sha256": "0b70151675f930eed91c83e51aa8c977657c4fe371af1a02951dd1b4e7258a68"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00008-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00008-of-00009.gguf",
+              "size": 48717290336,
+              "sha256": "04eaa6d2cb5a548854c719994816a791a4e3d7783f38979e95b389f8f840badf"
+            },
+            {
+              "file": "UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00009-of-00009.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q3_K_XL/GLM-5.3-UD-Q3_K_XL-00009-of-00009.gguf",
+              "size": 2892122176,
+              "sha256": "6227252600ff83f185b6ad149266fbd0cb1c1f57ae0bfb71c247ee49faa3c31b"
+            }
+          ]
+        },
+        {
+          "quant": "UD-Q4_K_XL",
+          "quality": "Good",
+          "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-00011.gguf",
+          "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-00011.gguf",
+          "size": 467289116837,
+          "sha256": "02a3e367e8b5f5ee3341d556211faa2cc956c3e77ad0e298c6805323bfaeb02d",
+          "parts": [
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00001-of-00011.gguf",
+              "size": 9428677,
+              "sha256": "02a3e367e8b5f5ee3341d556211faa2cc956c3e77ad0e298c6805323bfaeb02d"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00002-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00002-of-00011.gguf",
+              "size": 49433942336,
+              "sha256": "374daff9e093b362a12ca89904fd0511df38b2a9794029e272c8639587a13402"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00003-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00003-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "9a13948a0c7747e374766ab32272e8bf5ee2ac260ed581419cc980c00df1bb9c"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00004-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00004-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "1fee29db6ab247f97e42cc7dd4132ce35f15f41fb42ba9110b73c25471171f9b"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00005-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00005-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "7d38557e09934a3f6cf4eb7aa7ea8c04929bf2d40db8ba8494529d51be04bb4e"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00006-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00006-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "3f6c47e4e32f7b1f9b844124622cc8d506facdb58e3304b9b4429b6c3af4f53d"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00007-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00007-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "03114618ca505e4dbd63e0c8fb478cb54db86ff32ddd3681160589d8a958db8e"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00008-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00008-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "e202e8679571572ae5ab490d021e3f0d0ada4794521464e6735e62516bedff96"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00009-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00009-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "05d81908bc8ffd1e2ff6bb6a4e7a347c455ce87d7d6c473415d37f1749f0a337"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00010-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00010-of-00011.gguf",
+              "size": 48566415136,
+              "sha256": "252eac782187e63ffdbf0650eb79538a53626991f7dfd06106cfbbd5eb1a0bb3"
+            },
+            {
+              "file": "UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00011-of-00011.gguf",
+              "url": "https://huggingface.co/unsloth/GLM-5.3-GGUF/resolve/main/UD-Q4_K_XL/GLM-5.3-UD-Q4_K_XL-00011-of-00011.gguf",
+              "size": 29314424736,
+              "sha256": "d69bc418b2a08103d1b42340e803e1a98582d3766e4593c4a490475ac5bb811b"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 99,
+        "coding": 10,
+        "writing": 10,
+        "research": 10,
+        "agents": 10,
+        "languages": 10
+      }
+    },
+    {
+      "id": "mimo-v2.6-pro",
+      "name": "MiMo V2.6 Pro",
+      "publisher": "Xiaomi",
+      "source": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF",
+      "description": "The strongest open model today (1 trillion parameters, 42B per word). For PCs with 512 GB of memory and more.",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "tags": [
+        "chat",
+        "thinking",
+        "tool-calling",
+        "coding"
+      ],
+      "params_b": 1021.2,
+      "arch": {
+        "n_layer": 70,
+        "n_kv_heads": 8,
+        "head_dim": 192,
+        "max_ctx": 262144,
+        "active_fraction": 0.119,
+        "kv_whole": 10,
+        "kv_sliding": 60,
+        "swa_window": 128
+      },
+      "default_ctx": 8192,
+      "tools": true,
+      "variants": [
+        {
+          "quant": "Q2_K",
+          "quality": "Smallest",
+          "file": "MiMo-V2.6-Pro-RL-Q2_K-00001-of-00007.gguf",
+          "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00001-of-00007.gguf",
+          "size": 418769299904,
+          "sha256": "4d77de566b7bc5c283b1a5b8b0b73bdfd539d939f72d2a82e231e90323fd1589",
+          "parts": [
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00001-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00001-of-00007.gguf",
+              "size": 5948832,
+              "sha256": "4d77de566b7bc5c283b1a5b8b0b73bdfd539d939f72d2a82e231e90323fd1589"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00002-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00002-of-00007.gguf",
+              "size": 73006058336,
+              "sha256": "b81b64562d789fe88c3d42c4072e3cdff8745d7bd07cac2ef5cc4e1bf702cd10"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00003-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00003-of-00007.gguf",
+              "size": 73006058368,
+              "sha256": "c04d259a8e39fb218b44c84a2eda56683e42b57d3526a33a37ad05d8533305c4"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00004-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00004-of-00007.gguf",
+              "size": 72024591232,
+              "sha256": "b87672f0d7b6837cc9aa570509bad1df04297e78fc6f9a3ed952e5995370d757"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00005-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00005-of-00007.gguf",
+              "size": 73006058368,
+              "sha256": "96a80f8a84115676bb8cfcddb269c4c707bbe48f80285cdcaed66b059eab2444"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00006-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00006-of-00007.gguf",
+              "size": 73006058368,
+              "sha256": "96545052070a0608dd349be7c6323675b56a9c8dabcb627de9ddb42bd32f18a7"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-Q2_K-00007-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-Q2_K-00007-of-00007.gguf",
+              "size": 54714526400,
+              "sha256": "8e26e78b61e541f32e4a0e546c228954cb0cb95951368f14ccbf94aac3de5130"
+            }
+          ]
+        },
+        {
+          "quant": "MXFP4",
+          "quality": "Good",
+          "file": "MiMo-V2.6-Pro-RL-MXFP4-00001-of-00007.gguf",
+          "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00001-of-00007.gguf",
+          "size": 554211764672,
+          "sha256": "4d77de566b7bc5c283b1a5b8b0b73bdfd539d939f72d2a82e231e90323fd1589",
+          "parts": [
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00001-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00001-of-00007.gguf",
+              "size": 5948832,
+              "sha256": "4d77de566b7bc5c283b1a5b8b0b73bdfd539d939f72d2a82e231e90323fd1589"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00002-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00002-of-00007.gguf",
+              "size": 97542736736,
+              "sha256": "85973b1eb0b0bb54a6d7acccf412356b644dad472434557f4460fd1c2ae7c798"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00003-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00003-of-00007.gguf",
+              "size": 97542736768,
+              "sha256": "11f22ddfafd936643f208977aa17ed009d48f913aea9e3d47846482b8a4bdf4c"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00004-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00004-of-00007.gguf",
+              "size": 97542736768,
+              "sha256": "c8ea6e7ea7655f43a3454aaca5d3b22d12f20b4afb48fc468d8c624162de0bf2"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00005-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00005-of-00007.gguf",
+              "size": 97542736768,
+              "sha256": "74becd913d58917e19bd3005759d59708845e42ec499a01e82db500ecfe0db56"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00006-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00006-of-00007.gguf",
+              "size": 97542736768,
+              "sha256": "d7183ce566d19264f4e1310155f7f9ffc8702906b2ee0b418a81736e67b2c77e"
+            },
+            {
+              "file": "MiMo-V2.6-Pro-RL-MXFP4-00007-of-00007.gguf",
+              "url": "https://huggingface.co/ggml-org/MiMo-V2.6-Pro-RL-GGUF/resolve/main/MiMo-V2.6-Pro-RL-MXFP4-00007-of-00007.gguf",
+              "size": 66492132032,
+              "sha256": "c1219a9dfed8b754146890eb7b818fe86b325ffd5ef1324b7d1e01cdc9627a0f"
+            }
+          ]
+        }
+      ],
+      "ratings": {
+        "overall": 100,
+        "coding": 10,
+        "writing": 10,
+        "research": 10,
+        "agents": 10,
+        "languages": 10
+      }
     }
   ],
   "speech": {
@@ -1877,7 +3642,7 @@
         "name": "Whisper Large v3 Turbo",
         "publisher": "OpenAI",
         "source": "https://huggingface.co/ggerganov/whisper.cpp",
-        "description": "The most accurate, including accents, noisy calls and other languages. Best for meetings.",
+        "description": "Accurate, including accents, noisy calls and other languages, and quick. Best for meetings.",
         "license": {
           "name": "MIT",
           "url": "https://opensource.org/license/mit",
@@ -1889,6 +3654,24 @@
         "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
         "size": 574041195,
         "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+      },
+      {
+        "id": "whisper-large-v3",
+        "name": "Whisper Large v3",
+        "publisher": "OpenAI",
+        "source": "https://huggingface.co/ggerganov/whisper.cpp",
+        "description": "The most accurate Whisper, especially for languages other than English and hard recordings: about four times slower than Large v3 Turbo. For PCs with a strong graphics card.",
+        "license": {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit",
+          "commercial": true
+        },
+        "languages": 99,
+        "secs_per_30s": 40.0,
+        "file": "ggml-large-v3-q5_0.bin",
+        "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin",
+        "size": 1081140203,
+        "sha256": "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"
       }
     ]
   },
@@ -2339,6 +4122,142 @@
         }
       },
       {
+        "id": "qwen-image-2.1",
+        "name": "Qwen Image 2.1",
+        "publisher": "Qwen (Alibaba)",
+        "source": "https://huggingface.co/leejet/Qwen-Image-2.1-GGUF",
+        "description": "The full Qwen Image 2.1: the best open picture model for detail, lettering and edits. Slower than Turbo, which is distilled from it.",
+        "license": {
+          "name": "Qwen Research License",
+          "url": "https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo/blob/main/LICENSE",
+          "commercial": false,
+          "note": "Research and evaluation use only: not for commercial use."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "edit",
+          "fill",
+          "extend",
+          "restyle"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "qwen_image_2.1-Q8_0.gguf",
+            "url": "https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1-Q8_0.gguf",
+            "size": 7687155744,
+            "sha256": "f8b244b00937f0e444a40dbf7866460871b89b30142594973b6012d1b471dc0a"
+          },
+          {
+            "role": "llm",
+            "file": "Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            "size": 5027784800,
+            "sha256": "67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2"
+          },
+          {
+            "role": "llm_vision",
+            "file": "mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            "url": "https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf",
+            "size": 1159029824,
+            "sha256": "ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38"
+          },
+          {
+            "role": "vae",
+            "file": "qwen_image_2.1_vae_bf16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+            "size": 675509688,
+            "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
+          }
+        ],
+        "min_vram_gb": 12,
+        "cpu": false,
+        "secs": 250,
+        "quality": 10,
+        "strengths": [
+          "Most detailed open pictures",
+          "Best at text and lettering",
+          "Edits pictures too"
+        ],
+        "weaknesses": [
+          "Several times slower than Turbo",
+          "Needs a 12 GB graphics card or more"
+        ],
+        "defaults": {
+          "steps": 30,
+          "cfg": 4.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024,
+          "align": 32
+        }
+      },
+      {
+        "id": "flux2-dev",
+        "name": "FLUX.2 dev",
+        "publisher": "Black Forest Labs",
+        "source": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF",
+        "description": "The full FLUX.2 (32B): rich, photographic pictures and edits from several reference pictures. For big graphics cards.",
+        "license": {
+          "name": "FLUX.2 [dev] Non-Commercial License",
+          "url": "https://huggingface.co/black-forest-labs/FLUX.2-dev/blob/main/LICENSE.md",
+          "commercial": false,
+          "note": "Non-commercial use only. Read the license before using what it makes for work."
+        },
+        "kind": "image",
+        "can": [
+          "generate",
+          "edit",
+          "fill",
+          "extend",
+          "restyle"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "flux2-dev-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q4_K_M.gguf",
+            "size": 19959731168,
+            "sha256": "5f7ac6649e2f5e21a49a6f83931a67530bd887e2d34379c3da1d0f0406501de1"
+          },
+          {
+            "role": "llm",
+            "file": "Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF/resolve/main/Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+            "size": 14333922848,
+            "sha256": "a3cc56310807ed0d145eaf9f018ccda9ae7ad8edb41ec870aa2454b0d4700b3c"
+          },
+          {
+            "role": "vae",
+            "file": "flux2-vae.safetensors",
+            "url": "https://huggingface.co/unsloth/FLUX.2-VAE/resolve/main/split_files/vae/flux2-vae.safetensors",
+            "size": 336213556,
+            "sha256": "d64f3a68e1cc4f9f4e29b6e0da38a0204fe9a49f2d4053f0ec1fa1ca02f9c4b5"
+          }
+        ],
+        "min_vram_gb": 24,
+        "cpu": false,
+        "secs": 120,
+        "quality": 10,
+        "strengths": [
+          "Rich, photographic pictures",
+          "Edits from several reference pictures"
+        ],
+        "weaknesses": [
+          "Very large: a 34 GB download",
+          "Needs a 24 GB graphics card or more",
+          "Not for commercial use"
+        ],
+        "defaults": {
+          "steps": 28,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 1024,
+          "height": 1024
+        }
+      },
+      {
         "id": "qwen-image-2.1-turbo",
         "name": "Qwen Image 2.1 Turbo",
         "publisher": "Qwen (Alibaba)",
@@ -2777,6 +4696,78 @@
           "tags": [
             "diffusers:StableDiffusionPipeline"
           ]
+        }
+      },
+      {
+        "id": "wan2.2-t2v-a14b",
+        "name": "Wan 2.2 A14B",
+        "publisher": "Wan (Alibaba)",
+        "source": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF",
+        "description": "The full Wan 2.2 video model (14B, in two stages): the most lifelike open video, with natural motion and camera work. For big graphics cards.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "video",
+        "can": [
+          "text"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/LowNoise/Wan2.2-T2V-A14B-LowNoise-Q4_K_M.gguf",
+            "size": 9650090496,
+            "sha256": "091a5bae02e14aa016bc9b10a7892efda4c629346b81c5dcebbe30ea2ac8923a"
+          },
+          {
+            "role": "high_noise",
+            "file": "Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/HighNoise/Wan2.2-T2V-A14B-HighNoise-Q4_K_M.gguf",
+            "size": 9650090496,
+            "sha256": "e0c490c6e316fd91ff52034e4ca66b825717e33ff11624585c0ccfcb5d410c59"
+          },
+          {
+            "role": "t5xxl",
+            "file": "umt5-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+            "size": 3655145312,
+            "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40"
+          },
+          {
+            "role": "vae",
+            "file": "Wan2.1_VAE.safetensors",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors",
+            "size": 253815318,
+            "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+          }
+        ],
+        "min_vram_gb": 16,
+        "cpu": false,
+        "secs": 1500,
+        "quality": 10,
+        "strengths": [
+          "Most lifelike open video",
+          "Natural motion and camera work"
+        ],
+        "weaknesses": [
+          "Slow: many minutes a clip",
+          "Needs a 16 GB graphics card or more",
+          "From a description only (not from a picture)"
+        ],
+        "defaults": {
+          "steps": 10,
+          "cfg": 3.5,
+          "sampler": "euler",
+          "width": 832,
+          "height": 480,
+          "fps": 16,
+          "seconds": 3,
+          "flow_shift": 3.0,
+          "negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed",
+          "max_frames": 81,
+          "temporal_tiling": true
         }
       },
       {
@@ -3564,6 +5555,38 @@
           "Simpler songs, less clear words"
         ]
       }
-    ]
+    ],
+    "separator": {
+      "name": "HTDemucs",
+      "source": "https://github.com/facebookresearch/demucs",
+      "license": {
+        "name": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "commercial": true
+      },
+      "file": {
+        "role": "separator",
+        "file": "htdemucs_fp16weights.onnx",
+        "url": "https://huggingface.co/adowu/htdemucs-onnx/resolve/e6b688a9a9f977e2efaba79d0f18b9b0cfc606ea/htdemucs_fp16weights.onnx",
+        "size": 165612636,
+        "sha256": "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a"
+      }
+    },
+    "note_reader": {
+      "name": "Basic Pitch",
+      "source": "https://github.com/spotify/basic-pitch",
+      "license": {
+        "name": "Apache-2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0",
+        "commercial": true
+      },
+      "file": {
+        "role": "notes",
+        "file": "basic-pitch-nmp.onnx",
+        "url": "https://raw.githubusercontent.com/spotify/basic-pitch/fa5997af0a8210982619003269994a1be25eddf3/basic_pitch/saved_models/icassp_2022/nmp.onnx",
+        "size": 230444,
+        "sha256": "2c3c1d144bfa61ad236e92e169c13535c880469a12a047d4e73451f2c059a0ec"
+      }
+    }
   }
 }

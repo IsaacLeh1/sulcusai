@@ -55,6 +55,12 @@ pub struct MediaItem {
     /// Something else to know about it ("the whole scene was redrawn").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// What the listener heard in a song (`listen`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review: Option<super::listen::Review>,
+    /// How a song is built, for the song view (`songmap`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub map: Option<super::songmap::SongMap>,
 }
 
 /// How long making an item took, and what it used.

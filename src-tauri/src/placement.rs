@@ -391,7 +391,7 @@ pub async fn set_main_gpu(app: tauri::AppHandle, state: AppStateRef<'_>, name: O
         crate::db::set(&conn, "main_gpu", &name)?;
         let what = match &name {
             Some(n) => format!("Models run on {n}"),
-            None => String::from("Models run on the graphics card with the most memory"),
+            None => String::from("Models run on the graphics cards together (the biggest one's maker)"),
         };
         crate::db::log_action(&conn, "performance", &what);
         crate::applog::line("app", &what);

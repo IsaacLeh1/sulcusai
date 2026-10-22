@@ -12,6 +12,10 @@ pub mod clarify;
 pub(crate) mod persona;
 pub mod coach;
 mod cutout;
+pub(crate) mod stems;
+pub(crate) mod listen;
+pub(crate) mod notes;
+pub(crate) mod songmap;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
@@ -68,6 +72,22 @@ pub struct MediaCatalog {
     pub engine: EngineSpec,
     pub music_engine: EngineSpec,
     pub models: Vec<MediaModel>,
+    /// HTDemucs, which takes a song's parts apart for the song view (`stems`).
+    #[serde(default)]
+    pub separator: Option<Helper>,
+    /// Basic Pitch, which reads the notes of a song's parts (`notes`).
+    #[serde(default)]
+    pub note_reader: Option<Helper>,
+}
+
+/// A small model an engine's work uses along the way, fetched with the
+/// first model that needs it.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Helper {
+    pub name: String,
+    pub source: String,
+    pub license: crate::catalog::License,
+    pub file: MediaFile,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -189,7 +209,7 @@ fn op_kind(op: &str) -> Option<Kind> {
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
         "video" => Kind::Video,
-        "music" | "sound" | "parts" => Kind::Music,
+        "music" | "sound" | "parts" | "remake" => Kind::Music,
         _ => return None,
     })
 }
@@ -199,13 +219,15 @@ fn op_kind(op: &str) -> Option<Kind> {
 fn model_op(req: &Request) -> &str {
     match req.music.as_ref().and_then(|m| m.task.as_deref()) {
         Some("add" | "extract" | "complete") if req.op == "music" => "parts",
+        // Making unclear parts again is music made again, by a music model.
+        _ if req.op == "remake" => "music",
         _ => &req.op,
     }
 }
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" => Some(Feature::Music),
+        "narrate" | "listen" | "map" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -232,24 +254,25 @@ fn cores(hw: &Hardware) -> f64 {
 
 pub fn fit(m: &MediaModel, hw: &Hardware, b: &Budget, missing: u64, measured: Option<f64>) -> MediaFit {
     let cpu_scale = (REF_CORES / cores(hw)).powf(0.8) * if hw.avx2 { 1.0 } else { 2.5 };
-    let gpu_ok = b.vram > 0 && b.vram as f64 >= m.min_vram_gb * GIB as f64;
+    // Picture, video and music engines run on one card: the biggest.
+    let gpu_ok = b.vram_card > 0 && b.vram_card as f64 >= m.min_vram_gb * GIB as f64;
     // Weights that don't fit on the card are streamed from memory.
-    let mem_ok = m.size() <= b.vram + b.ram;
+    let mem_ok = m.size() <= b.vram_card + b.ram;
     let (runnable, on_gpu, est, reason) = if !mem_ok {
         (false, false, 0.0, Some(format!("needs about {:.0} GB of memory", m.size() as f64 / GIB as f64 + 1.0)))
     } else {
         match m.kind {
             // Music runs on the graphics card when there is one (the Vulkan
             // engine); its seconds are measured on an RTX 5070-class card.
-            Kind::Music if b.vram > 0 => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_gbs.max(50.0), None),
+            Kind::Music if b.vram_card > 0 => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_card.max(50.0), None),
             Kind::Music => (true, false, m.secs * MUSIC_CPU_SLOWDOWN * cpu_scale, None),
             // This engine runs on the processor.
             Kind::Background => (true, false, m.secs * cpu_scale, None),
-            _ if gpu_ok => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_gbs.max(50.0), None),
+            _ if gpu_ok => (true, true, m.secs * REF_GPU_BW / b.gpu_bw_card.max(50.0), None),
             _ if m.cpu => (true, false, m.secs * CPU_SLOWDOWN * cpu_scale, None),
             _ => {
-                let have = b.vram as f64 / GIB as f64;
-                let why = if b.vram == 0 {
+                let have = b.vram_card as f64 / GIB as f64;
+                let why = if b.vram_card == 0 {
                     format!("needs a graphics card with at least {:.0} GB of its own memory, and this PC has none", m.min_vram_gb)
                 } else {
                     format!("needs a graphics card with at least {:.0} GB; this PC's has about {have:.0} GB free for it", m.min_vram_gb)
@@ -429,7 +452,7 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
     // The best one that fits the graphics card, so the job stays on it.
     let fits = |m: &&MediaModel| {
         let b = state.budget();
-        b.vram > 0 && b.vram as f64 >= m.min_vram_gb * GIB as f64
+        b.vram_card > 0 && b.vram_card as f64 >= m.min_vram_gb * GIB as f64
     };
     // Catalog models first among equals: they're the tested ones.
     let rank = |m: &&MediaModel| (m.quality, m.from_hub.is_none());
@@ -1077,6 +1100,8 @@ pub struct Request {
     pub seconds: Option<f32>,
     pub lyrics: Option<String>,
     pub instrumental: Option<bool>,
+    /// A song made from the song view: map the new version too (`map_item`).
+    pub then_map: Option<bool>,
     /// Music: how the song is shaped, and work on a song the person has.
     pub music: Option<MusicSpec>,
     pub voice: Option<String>,
@@ -1340,8 +1365,11 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if req.op != "narrate" {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
+    }
+    if matches!(req.op.as_str(), "listen" | "remake" | "map") && req.source.is_none() {
+        return Err("Pick a song first.".into());
     }
     let needs_source = matches!(req.op.as_str(), "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background");
     if needs_source && req.source.is_none() {
@@ -1389,7 +1417,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if req.op == "narrate" || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     let est = match (&model, &on_cloud) {
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
@@ -1884,11 +1912,11 @@ impl RunCtx<'_> {
     fn limits(&self) -> sd::Limits {
         let l = self.state.limits();
         let b = self.state.budget();
-        let vram = l.vram_bytes.min(b.vram).min(b.vram.saturating_sub(self.reserved));
+        let vram = l.vram_bytes.min(b.vram_card).min(b.vram_card.saturating_sub(self.reserved));
         sd::Limits {
             threads: l.threads,
             // Only cap it when the performance mode or a loaded chat model leaves less than the card has.
-            max_vram_gib: (b.vram > 0 && vram < b.vram).then(|| vram as f64 / GIB as f64),
+            max_vram_gib: (b.vram_card > 0 && vram < b.vram_card).then(|| vram as f64 / GIB as f64),
         }
     }
 
@@ -1897,7 +1925,7 @@ impl RunCtx<'_> {
     }
 
     async fn run_sd(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
-        let vram_gib = self.state.budget().vram as f64 / GIB as f64;
+        let vram_gib = self.state.budget().vram_card as f64 / GIB as f64;
         let on_card = vram_gib > 0.0;
         if !on_card {
             return self.run_sd_once(args, work, None).await;
@@ -2129,7 +2157,7 @@ impl RunCtx<'_> {
 /// processor: minutes instead of seconds). It's paused, keeping its address,
 /// and `give_back` brings it back for the rest of the reply.
 async fn make_room(state: &Arc<AppState>, req: &Request, model: Option<&MediaModel>) -> Option<crate::engine::Paused> {
-    let vram = state.budget().vram;
+    let vram = state.budget().vram_card;
     if vram == 0 {
         return None;
     }
@@ -2168,7 +2196,7 @@ pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paus
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
-    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
+    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound" | "remake") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
     // A saved artist's sound and voice, under the song's own choices.
     let as_artist = with_persona(state, req)?;
     let req = as_artist.as_ref().unwrap_or(req);
@@ -2655,7 +2683,7 @@ async fn learn_from_edit(state: &AppState, m: &MediaModel, req: &Request, tries:
 /// edit when the card holds it, the chat model's share and the picture
 /// model (with a gigabyte to spare).
 async fn reader_fits(state: &Arc<AppState>, r: &crate::vision::Helper, m: &MediaModel) -> bool {
-    let vram = state.budget().vram;
+    let vram = state.budget().vram_card;
     let chat = chat_model_vram(state).await;
     let picture = (m.min_vram_gb * GIB as f64) as u64;
     r.card_bytes > 0 && vram >= chat + r.card_bytes + picture + GIB
@@ -2753,8 +2781,24 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "video" => {
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
-        "music" | "sound" => song(&ctx, model.ok_or("No music model.")?, &work.0).await,
+        "music" | "sound" => {
+            let mut items = song(&ctx, model.ok_or("No music model.")?, &work.0).await?;
+            // Made from the song view: the new version's sections and notes,
+            // read from it, so it opens with everything in place.
+            if req.then_map == Some(true) {
+                if let Some(first) = items.first().cloned() {
+                    match map_item(&ctx, first).await {
+                        Ok(mapped) => items[0] = mapped,
+                        Err(e) => crate::applog::line("media", &format!("The new version wasn't mapped ({e}); See how it's built maps it")),
+                    }
+                }
+            }
+            Ok(items)
+        }
         "narrate" => narrate(&ctx).await,
+        "listen" => listen_job(&ctx).await,
+        "map" => map_job(&ctx).await,
+        "remake" => remake_job(&ctx, model.ok_or("No music model.")?, &work.0).await,
         "tune" => {
             let m = model.ok_or("No picture model.")?;
             let n = std::sync::atomic::AtomicUsize::new(0);
@@ -3433,7 +3477,13 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     let models = model_dir(&ctx.state.paths, m);
     let versions = if task.is_none() && !sound { req.count.unwrap_or(1).clamp(1, 3) } else { 1 };
     let made = music::make(
-        &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
+        &music::Engine {
+            dir: &engine_dir,
+            models: &models,
+            low_priority: ctx.state.limits().low_priority,
+            job: ctx.state.job(),
+            logs: &ctx.state.paths.logs,
+        },
         work,
         &music::SongRequest {
             caption: &caption,
@@ -3494,7 +3544,13 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
                         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
                         let (src, _) = audio_in::for_engine(&song.mp3, "audio/mpeg", &dir)?;
                         let layered = music::make(
-                            &music::Engine { dir: &engine_dir, models: &base_models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
+                            &music::Engine {
+                                dir: &engine_dir,
+                                models: &base_models,
+                                low_priority: ctx.state.limits().low_priority,
+                                job: ctx.state.job(),
+                                logs: &ctx.state.paths.logs,
+                            },
                             &dir,
                             &music::SongRequest {
                                 caption: &format!("{words}, {caption}"),
@@ -3558,10 +3614,204 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     Ok(items)
 }
 
+/// ONNX Runtime and a helper model (`MediaCatalog::separator`,
+/// `note_reader`), downloaded the first time, with `getting` shown meanwhile.
+async fn ensure_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, PathBuf), String> {
+    let dest = state.paths.models.join("media").join("helpers").join(&h.file.file);
+    let dll = crate::natural::ensure_runtime(state, cancel, &|_, _, _| {}).await?;
+    if !dest.metadata().is_ok_and(|m| m.len() == h.file.size) {
+        progress(getting, 0.0);
+        state.log("network", &format!("Downloading {} ({}) from {}", h.file.file, crate::size_label(h.file.size), crate::host_of(&h.file.url)));
+        let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
+        std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+        download::fetch_verified(&client, &h.file.url, &dest, h.file.size, &h.file.sha256, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await?;
+    }
+    Ok((dll, dest))
+}
+
+
+
 /// An installed music model that adds parts to a song (ACE-Step 1.5 Base).
 fn parts_model(state: &AppState) -> Option<MediaModel> {
     let have: Vec<String> = installed(&state.db.lock().unwrap()).into_iter().map(|i| i.model_id).collect();
     models(state).into_iter().find(|m| m.kind == Kind::Music && m.can("parts") && have.contains(&m.id))
+}
+
+/// What the listener hears in a song from the gallery (`listen`): which of
+/// its words come through and where, from speech recognition. Nothing heard
+/// when no speech model is installed (the review then says so).
+async fn hear(state: &Arc<AppState>, item: &MediaItem, cancel: &AtomicBool) -> Result<listen::Review, String> {
+    let c = state.work_cipher()?;
+    let bytes = store::read(&state.paths, &c, &item.id)?;
+    let lyrics = item.lyrics.clone().unwrap_or_default();
+    let samples = tokio::task::spawn_blocking(move || -> Result<Vec<f32>, String> {
+        let dir = std::env::temp_dir().join(format!("sulcusai-listen-{}", store::new_id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("song.mp3");
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        let decoded = audio_in::decode(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let (samples, rate, channels) = decoded?;
+        let ch = channels.max(1) as usize;
+        let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+        Ok(stems::resample(&mono, rate, crate::audio::RATE))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
+    // No speech model installed: the review says so.
+    let installed = !crate::speech::installed(&state.db.lock().unwrap()).is_empty();
+    let heard = if installed { Some(crate::speech::transcribe_song(state, &samples, None).await?) } else { None };
+    Ok(listen::review(&lyrics, heard.as_deref(), item.seconds))
+}
+
+/// Listens to a song (`req.source`) and keeps the review on it.
+async fn listen_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
+    let id = ctx.req.source.as_deref().ok_or("Pick a song to listen to.")?;
+    let c = ctx.state.work_cipher()?;
+    let mut item = store::get(&ctx.state.db.lock().unwrap(), &c, id).ok_or("That song is no longer in the gallery.")?;
+    if item.kind != "audio" || item.lyrics.as_deref().is_none_or(|l| !lyrics::has_singing(l)) {
+        return Err("Only a sung song can be listened to.".into());
+    }
+    (ctx.progress)("Listening", 0.2);
+    item.review = Some(hear(ctx.state, &item, ctx.cancel).await?);
+    store::update(&ctx.state.db.lock().unwrap(), &c, &item)?;
+    crate::applog::line("media", &format!("Listened to a song: score {}", item.review.as_ref().map_or(0, |r| r.score)));
+    Ok(vec![item])
+}
+
+/// How a song (`req.source`) is built, for the song view: its parts taken
+/// apart (HTDemucs), their notes read (Basic Pitch; drums by their hits),
+/// and its sections placed where their words are sung (the listener's
+/// review, listened for first when the song has none). Kept on the song.
+async fn map_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
+    let id = ctx.req.source.as_deref().ok_or("Pick a song first.")?;
+    let item = store::get(&ctx.state.db.lock().unwrap(), &ctx.state.work_cipher()?, id).ok_or("That song is no longer in the gallery.")?;
+    Ok(vec![map_item(ctx, item).await?])
+}
+
+/// `map_job` for one song, which is kept with its map.
+async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, String> {
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    if item.kind != "audio" {
+        return Err("Only a song can be shown this way.".into());
+    }
+    let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
+    let reader = state.catalog.media.note_reader.clone().ok_or("The note reader isn't available.")?;
+    let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
+    let (_, note_reader) = ensure_helper(state, &reader, "Getting the note reader (once)", ctx.cancel, ctx.progress).await?;
+    if item.review.is_none() && item.lyrics.as_deref().is_some_and(lyrics::has_singing) {
+        (ctx.progress)("Listening for where the words are", 0.1);
+        item.review = Some(hear(state, &item, ctx.cancel).await?);
+    }
+    (ctx.progress)("Taking the parts apart", 0.4);
+    let bytes = store::read(&state.paths, &c, &item.id)?;
+    let threads = state.limits().threads;
+    let parts = tokio::task::spawn_blocking(move || -> Result<Vec<songmap::Part>, String> {
+        let dir = std::env::temp_dir().join(format!("sulcusai-map-{}", store::new_id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("song.mp3");
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        let decoded = audio_in::decode(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let (samples, rate, channels) = decoded?;
+        let ch = channels.max(1) as usize;
+        let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
+        let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
+        let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
+        let stems = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3])?;
+        stems::unload();
+        let mut parts = Vec::new();
+        // The voice first, then the other instruments, the bass and the drums.
+        for i in [3usize, 2, 1, 0] {
+            let mono = stems[i].mono();
+            let notes = if i == 0 {
+                notes::drum_hits(&mono, stems::RATE)
+            } else {
+                let mut n = notes::melodic(&dll, &note_reader, &stems::resample(&mono, stems::RATE, notes::RATE), threads)?;
+                // A bass part's notes are low; what's higher is another instrument's spill.
+                if i == 1 {
+                    n.retain(|x| x.pitch < 60);
+                }
+                n
+            };
+            parts.push(songmap::Part { name: stems::PARTS[i].to_string(), notes });
+        }
+        notes::unload();
+        Ok(parts)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    let map = songmap::map(item.review.as_ref(), parts, item.seconds);
+    crate::applog::line(
+        "media",
+        &format!("Mapped a song: {} sections, {} notes", map.sections.len(), map.parts.iter().map(|p| p.notes.len()).sum::<usize>()),
+    );
+    item.map = Some(map);
+    store::update(&state.db.lock().unwrap(), &c, &item)?;
+    Ok(item)
+}
+
+/// Makes again the stretches of a song (`req.source`) whose words weren't
+/// clear, one after another on the same song (the music model's repaint,
+/// asked for a clear voice), then listens to the result. The steps between
+/// are kept out of the gallery; the song it started from stays.
+async fn remake_job(ctx: &RunCtx<'_>, model: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let id = ctx.req.source.clone().ok_or("Pick a song to make again.")?;
+    let c = ctx.state.work_cipher()?;
+    let original = store::get(&ctx.state.db.lock().unwrap(), &c, &id).ok_or("That song is no longer in the gallery.")?;
+    let review = original.review.clone().ok_or("Listen to the song first.")?;
+    if review.unclear.is_empty() {
+        return Err("Every part of this song was already clear.".into());
+    }
+    let mut current = original.clone();
+    let spans: Vec<[f64; 2]> = review.unclear.iter().take(4).copied().collect();
+    for (i, span) in spans.iter().enumerate() {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        let req = Request {
+            op: "music".into(),
+            model_id: Some(model.id.clone()),
+            prompt: format!("{}, clear lead vocals upfront, crisp diction", original.prompt.trim().trim_end_matches('.')),
+            lyrics: original.lyrics.clone(),
+            seed: original.seed.map(|s| s + 1 + i as i64),
+            music: Some(MusicSpec { task: Some("repaint".into()), audio: Some(current.id.clone()), region: Some([span[0] as f32, span[1] as f32]), ..Default::default() }),
+            chat_id: original.chat_id.clone(),
+            ..Default::default()
+        };
+        let label = format!("Making {} to {} again", clock(span[0]), clock(span[1]));
+        let progress = |stage: &str, f: f64| (ctx.progress)(&format!("{label}: {}", stage.to_lowercase()), (i as f64 + f) / (spans.len() as f64 + 1.0));
+        let step = RunCtx { state: ctx.state, req: &req, cancel: ctx.cancel, progress: &progress, reserved: ctx.reserved };
+        let dir = work.join(format!("remake-{i}"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let made = song(&step, model, &dir).await?.into_iter().next().ok_or("The music model didn't make the part again.")?;
+        // A step between: out of the gallery.
+        if current.id != original.id {
+            current.hidden = true;
+            store::update(&ctx.state.db.lock().unwrap(), &c, &current)?;
+        }
+        current = made;
+    }
+    (ctx.progress)("Listening to the new version", spans.len() as f64 / (spans.len() as f64 + 1.0));
+    let after = hear(ctx.state, &current, ctx.cancel).await?;
+    current.parent = Some(original.id.clone());
+    current.prompt = original.prompt.clone();
+    if after.score <= review.score {
+        current.note = Some("This version wasn't clearer than the one it was made from, so both are kept.".into());
+    }
+    current.review = Some(after);
+    store::update(&ctx.state.db.lock().unwrap(), &c, &current)?;
+    crate::applog::line("media", &format!("Made {} unclear part(s) of a song again: score {} -> {}", spans.len(), review.score, current.review.as_ref().map_or(0, |r| r.score)));
+    Ok(vec![current])
+}
+
+fn clock(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    format!("{}:{:02}", s / 60, s % 60)
 }
 
 async fn narrate(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
@@ -3645,12 +3895,14 @@ fn count_hidden(list: &mut Vec<Hidden>, kind: Kind, why: &'static str) {
     }
 }
 
+/// The Studio's models: the ones this PC runs, or with `all`, every one
+/// (those it can't run say why and can't be installed).
 #[tauri::command(async)]
-pub fn media_view(state: AppStateRef) -> MediaView {
-    view(&state)
+pub fn media_view(state: AppStateRef, all: Option<bool>) -> MediaView {
+    view(&state, all.unwrap_or(false))
 }
 
-fn view(state: &AppState) -> MediaView {
+fn view(state: &AppState, all: bool) -> MediaView {
     let hw = state.hardware.read().unwrap().clone();
     let b = Budget::from_hardware(&hw);
     let list = installed(&state.db.lock().unwrap());
@@ -3672,7 +3924,9 @@ fn view(state: &AppState) -> MediaView {
             if m.kind == Kind::Video && video_note.is_none() {
                 video_note = f.reason.clone().map(|r| format!("Video isn't available on this PC: the smallest video model {r}."));
             }
-            continue;
+            if !all {
+                continue;
+            }
         }
         models.push(MediaCard { spec: m.clone(), fit: f, installed: inst.is_some() });
     }
@@ -4218,6 +4472,7 @@ pub fn media_add(
     chat_id: Option<String>,
     hidden: Option<bool>,
     seconds: Option<f64>,
+    lyrics: Option<String>,
 ) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| "That file couldn't be read.".to_string())?;
@@ -4232,10 +4487,43 @@ pub fn media_add(
     };
     let op = if matches!(op.as_str(), "trim" | "paste" | "attach" | "screenshot" | "import") { op } else { "import".into() };
     let mut item = add(&state, &c, bytes, kind, &mime, &op, prompt.as_deref().unwrap_or(""), parent, chat_id, hidden.unwrap_or(false))?;
-    if let Some(s) = seconds {
-        item.seconds = s;
+    if seconds.is_some() || lyrics.is_some() {
+        if let Some(s) = seconds {
+            item.seconds = s;
+        }
+        // A song with a section cut out or added keeps its words.
+        if let Some(l) = lyrics.filter(|l| kind == "audio" && lyrics::has_singing(l)) {
+            item.lyrics = Some(l);
+        }
         store::update(&state.db.lock().unwrap(), &c, &item)?;
     }
+    Ok(item)
+}
+
+/// A song's map (`songmap`) saved as a MIDI file, a track a part: the one
+/// given (notes edited in the song view), else the song's own.
+#[tauri::command]
+pub fn media_song_midi(state: AppStateRef, id: String, path: String, map: Option<songmap::SongMap>) -> Result<(), String> {
+    let c = state.cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That song is no longer in the gallery.")?;
+    let map = map.or(item.map).ok_or("See how the song is built first.")?;
+    std::fs::write(&path, songmap::midi(&map)).map_err(|e| format!("Couldn't save it there: {e}"))?;
+    state.log("media", "Saved a song's notes as a MIDI file");
+    Ok(())
+}
+
+/// Keeps the notes as edited in the song view on the song (its sound
+/// doesn't change: the notes are read from it, not played into it).
+#[tauri::command]
+pub fn media_song_map_save(state: AppStateRef, id: String, map: songmap::SongMap) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut item = store::get(&conn, &c, &id).ok_or("That song is no longer in the gallery.")?;
+    if item.kind != "audio" || map.parts.iter().map(|p| p.notes.len()).sum::<usize>() > 200_000 {
+        return Err("Those notes can't be kept with this song.".into());
+    }
+    item.map = Some(map);
+    store::update(&conn, &c, &item)?;
     Ok(item)
 }
 
@@ -4269,6 +4557,16 @@ pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Making a song's unclear parts again is a music model's job (no music
+    /// model says it can "remake": the job failed for want of one).
+    #[test]
+    fn a_remake_is_made_by_a_music_model() {
+        let remake = Request { op: "remake".into(), ..Default::default() };
+        assert_eq!((model_op(&remake), op_kind(model_op(&remake))), ("music", Some(Kind::Music)));
+        let parts = Request { op: "music".into(), music: Some(MusicSpec { task: Some("extract".into()), ..Default::default() }), ..Default::default() };
+        assert_eq!(model_op(&parts), "parts");
+    }
 
     /// Harmonies, the lead's style and the arrangement become the music
     /// model's words; the lyrics writer is told the sections and the echoes.
@@ -4457,7 +4755,7 @@ mod tests {
         for _ in 0..2 {
             let s = state.clone();
             let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || tx.send(view(&s).gallery).ok());
+            std::thread::spawn(move || tx.send(view(&s, false).gallery).ok());
             assert!(rx.recv_timeout(std::time::Duration::from_secs(30)).is_ok(), "media view never returned");
             state.vault.lock().unwrap().lock();
         }

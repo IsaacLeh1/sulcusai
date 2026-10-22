@@ -22,7 +22,8 @@ import {
 import { clock } from "../format";
 import { t, tf, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
-import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, useMediaJobs } from "../components/MediaBits";
+import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, SongListener, useMediaJobs } from "../components/MediaBits";
+import { SongView } from "../components/SongView";
 import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
@@ -89,6 +90,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       if (d.ok && d.items?.length) {
         setFresh((s) => new Set([...s, ...d.items!.map((i) => i.id)]));
         load();
+        // A song listened to or mapped while open: the viewer shows it.
+        setViewing((v) => (v ? d.items!.find((i) => i.id === v.id) ?? v : v));
       }
     });
     const tuned = on("media:tuned", (r) =>
@@ -283,7 +286,10 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           onClose={() => setViewing(null)}
           onOpen={setViewing}
           onStart={async (req) => {
+            // Listening to a song and seeing how it's built show their result here.
+            const here = req.op === "listen" || req.op === "map";
             if (await start(req)) {
+              if (here) return;
               setViewing(null);
               toast(t("Started. It appears in the gallery when it's done."), "success");
             }
@@ -1821,6 +1827,15 @@ function Viewer({
   const [tool, setTool] = useState<Tool>(null);
   const [text, setText] = useState("");
   const [brush, setBrush] = useState(40);
+  // The song view, open; and a map being made for it.
+  const [songView, setSongView] = useState(false);
+  const [mapping, setMapping] = useState(false);
+  useEffect(() => {
+    if (mapping && item.map) {
+      setMapping(false);
+      setSongView(true);
+    }
+  }, [mapping, item.map]);
   const [painted, setPainted] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const painter = useRef<MaskHandle>(null);
@@ -1897,6 +1912,45 @@ function Viewer({
               <summary>{t("Lyrics")}</summary>
               <pre className="lyrics">{item.lyrics}</pre>
             </details>
+          )}
+          {item.kind === "audio" && features.has("music") && (
+            <button
+              className="btn small"
+              disabled={mapping}
+              onClick={() => {
+                if (item.map) setSongView(true);
+                else {
+                  setMapping(true);
+                  run({ op: "map", prompt: "" });
+                }
+              }}
+            >
+              {mapping ? t("Seeing how it's built…") : t("See how it's built")}
+            </button>
+          )}
+          {songView && item.map && (
+            <SongView
+              item={{ ...item, map: item.map }}
+              onClose={() => setSongView(false)}
+              onStart={(r) => {
+                setSongView(false);
+                onStart({ ...r, source: r.source ?? null });
+              }}
+              onSaved={(i) => {
+                setSongView(false);
+                onSaved();
+                onOpen(i);
+              }}
+              onMapSaved={onChanged}
+              toast={toast}
+            />
+          )}
+          {item.kind === "audio" && item.lyrics && features.has("music") && (
+            <SongListener
+              item={item}
+              onListen={() => run({ op: "listen", prompt: "" })}
+              onRemake={() => run({ op: "remake", prompt: item.prompt, model_id: item.model_id })}
+            />
           )}
           {item.kind === "audio" && features.has("music") && (
             <div className="viewer-tools">

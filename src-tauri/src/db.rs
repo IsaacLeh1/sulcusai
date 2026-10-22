@@ -352,6 +352,10 @@ pub struct Settings {
     /// Remember things across chats.
     #[serde(default = "default_true")]
     pub memory_enabled: bool,
+    /// Auto: a message on the default model is answered by the installed
+    /// model clearly better at its task (`router`).
+    #[serde(default = "default_true")]
+    pub auto_model: bool,
 }
 
 fn default_true() -> bool {
@@ -366,6 +370,7 @@ impl Default for Settings {
             onboarded: false,
             auto_lock_minutes: default_auto_lock(),
             memory_enabled: true,
+            auto_model: true,
         }
     }
 }

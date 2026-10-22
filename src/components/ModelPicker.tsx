@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The model name in the status bar, as a menu: pick the default model from
-// the installed ones, or open Models.
+// the installed ones, turn Auto on or off, or open Models.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ModelCard } from "../api";
 import { t } from "../i18n";
 
-export function ModelPicker({ label, installed, current, onPick, onModels }: {
+export function ModelPicker({ label, installed, current, onPick, onModels, auto, onAuto }: {
   label: ReactNode;
   installed: ModelCard[];
   current: string | null | undefined;
   onPick: (id: string) => void;
   onModels: () => void;
+  /** Auto: a message goes to the installed model clearly better at it. */
+  auto: boolean;
+  onAuto: (on: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -53,6 +56,12 @@ export function ModelPicker({ label, installed, current, onPick, onModels }: {
               {m.params_b > 0 && <span className="muted small">{m.params_b}B</span>}
             </button>
           ))}
+          {installed.length > 1 && (
+            <label className="model-menu-auto small" title={t("A chat on the default model hands a message to another installed model when it's clearly better at it (code, writing, translation) and runs well on this PC. A chat whose model you picked keeps it.")}>
+              <input type="checkbox" checked={auto} onChange={(e) => onAuto(e.target.checked)} />
+              <span>{t("Auto: the best installed model for each message")}</span>
+            </label>
+          )}
           <button
             className="model-menu-foot"
             onClick={() => {

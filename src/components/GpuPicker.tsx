@@ -81,7 +81,7 @@ export function GpuPicker({ engine, onEngineChanged, toast }: { engine: EngineSt
           ? loaded
             ? t("Models now run on {name}. The model is starting again on it.", { name })
             : t("Models now run on {name}.", { name })
-          : t("Models now run on the graphics card with the most memory."),
+          : t("Models now use your graphics cards together (those from the same maker as the biggest)."),
         "success",
       );
     } catch (e) {
@@ -142,7 +142,7 @@ export function GpuPicker({ engine, onEngineChanged, toast }: { engine: EngineSt
           {usable.length > 1 && (
             <button role="menuitemradio" aria-checked={!menu.chosen} className={`gpu-card ${!menu.chosen ? "active" : ""}`} disabled={busy !== null} onClick={() => pick(null)}>
               <strong>{t("Automatic")}</strong>
-              <span className="small muted block">{t("The card with the most memory")}</span>
+              <span className="small muted block">{t("Your cards together: a big model is spread over them")}</span>
             </button>
           )}
           {menu.cards.map((c) =>

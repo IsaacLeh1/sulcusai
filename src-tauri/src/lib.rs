@@ -77,6 +77,7 @@ mod preview;
 mod projects;
 mod quick;
 mod quotes;
+mod router;
 mod sandbox;
 mod schedule;
 mod security;
@@ -390,6 +391,9 @@ struct ModelCard {
     runnable: bool,
     /// The one to suggest on this PC (`catalog::best_for`).
     best: bool,
+    /// An installed model whose file is damaged or unfinished, and how
+    /// (`model_file_problem`): it needs downloading again.
+    damaged: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -438,7 +442,8 @@ fn catalog_view(state: AppStateRef, all: Option<bool>) -> CatalogView {
             let renamed_from = names.get(&spec.id).map(|name| std::mem::replace(&mut spec.name, name.clone()));
             let runnable = fit.visible();
             let best = best.as_deref() == Some(spec.id.as_str());
-            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable, best })
+            let damaged = inst.as_ref().and_then(|i| model_file_problem(&model_file(&state.paths, i), i.size));
+            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable, best, damaged })
         })
         .collect();
 
@@ -464,6 +469,23 @@ struct InstallProgress<'a> {
 fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: String, force: Option<bool>) -> Result<(), String> {
     let spec = state.catalog.model(&model_id).cloned().or_else(|| hub::list(&state.db.lock().unwrap()).into_iter().find(|m| m.id == model_id)).ok_or("Unknown model")?;
     start_install(app, state.inner().clone(), spec, quant, force.unwrap_or(false))
+}
+
+/// A damaged or unfinished model file (`model_file_problem`) downloaded
+/// again: the bad file goes, and the model installs as new.
+#[tauri::command(async)]
+fn repair_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
+    let installed = db::installed_model(&state.db.lock().unwrap(), &model_id).ok_or("That model isn't installed.")?;
+    let spec = state.model_spec(&model_id).ok_or("That model isn't available anymore.")?;
+    if spec.local.is_some() {
+        return Err("That model's file belongs to another app: repair it there, or remove it here.".into());
+    }
+    let path = model_file(&state.paths, &installed);
+    if model_file_problem(&path, installed.size).is_some() {
+        std::fs::remove_file(&path).ok();
+    }
+    state.log("model", &format!("Downloading {} again (its file was damaged)", spec.name));
+    start_install(app, state.inner().clone(), spec, installed.quant, true)
 }
 
 /// Stops a download but keeps what's downloaded, to resume later.
@@ -857,6 +879,24 @@ pub(crate) async fn ensure_vision(state: &Arc<AppState>, spec: &ModelSpec) -> Re
 
 /// The stored path, or the same file in today's models folder if the data
 /// folder has moved since install.
+/// What's wrong with a model file, if anything: gone, cut short (or a
+/// different size than downloaded), or not a model at all (a GGUF file
+/// starts with "GGUF"; a copy that stopped part way, or a file another
+/// program wrote over, doesn't). `size` 0: not known.
+pub(crate) fn model_file_problem(path: &std::path::Path, size: u64) -> Option<String> {
+    use std::io::Read;
+    let Ok(meta) = std::fs::metadata(path) else { return Some("the file is missing".into()) };
+    if size > 0 && meta.len() != size {
+        return Some(format!("it's {} instead of {}", size_label(meta.len()), size_label(size)));
+    }
+    let mut magic = [0u8; 4];
+    match std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)) {
+        Ok(()) if &magic == b"GGUF" => None,
+        Ok(()) => Some("it isn't a model file (its contents are wrong, as when copying it stopped part way)".into()),
+        Err(e) => Some(format!("it can't be read ({e})")),
+    }
+}
+
 pub(crate) fn model_file(paths: &Paths, m: &InstalledModel) -> std::path::PathBuf {
     let stored = std::path::PathBuf::from(&m.path);
     if stored.exists() {
@@ -905,11 +945,19 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     if encoder > 0 {
         catalog::set_aside(&mut budget, &mut limits, encoder + catalog::VISION_OVERHEAD);
     }
-    let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &budget, &limits);
     let e = advanced::get(state).engine;
+    let chosen = chosen_window(state);
+    // Several cards: a model that fits the biggest at its usual window runs
+    // there alone (faster than with a slower card beside it); a bigger one is
+    // spread over them all.
+    let usual = e.ctx.or(chosen).unwrap_or(if spec.tools { TOOL_CTX } else { spec.default_ctx });
+    let spread = budget.cards > 1 && !catalog::fits_biggest_card(spec, quant, &budget, &limits, usual);
+    if budget.cards > 1 && !spread {
+        (budget, limits) = budget.biggest_card(&limits);
+    }
+    let (mut ctx, mut layers) = catalog::launch_within(spec, quant, &budget, &limits);
     // A bigger window, as far as this PC still runs the model (layers move
     // off the graphics card to make room).
-    let chosen = chosen_window(state);
     if let Some(want) = chosen {
         (ctx, layers) = catalog::launch_at(spec, quant, &budget.with_limits(&limits), want, (ctx, layers), limits.gpu_share);
     } else if spec.tools && e.ctx.is_none() && ctx < TOOL_CTX {
@@ -963,7 +1011,7 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     };
     let est = spec.variant(quant).map_or(0.0, |v| catalog::fit_variant(spec, v, ctx, &budget.with_limits(&limits)).est_tps);
     let think_budget = think_budget(state, spec, est);
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget }, budget: budget.with_limits(&limits) }
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget, spread }, budget: budget.with_limits(&limits) }
 }
 
 /// Seconds a reply may think before it's told to answer. Qwen3.6 27B, a
@@ -1525,6 +1573,12 @@ async fn compact_chat(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -
 }
 
 #[tauri::command(async)]
+fn set_auto_model(state: AppStateRef, on: bool) -> Result<Settings, String> {
+    state.cipher()?;
+    db::update_settings(&state.db.lock().unwrap(), |s| s.auto_model = on)
+}
+
+#[tauri::command]
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
@@ -1823,7 +1877,16 @@ async fn run_turn_with(
     let (ep, use_tools, vision) = match &asking {
         Some(a) => (a.ep.clone(), a.tools, a.vision),
         None => {
-            let (ep, spec, _) = llm_endpoint(state, chat.model_id.clone(), pictures, || {
+            // Auto: a message the chat's model isn't the best installed one
+            // for goes to the one that is, for this message only (`router`).
+            // Not with pictures: the other model may not see them.
+            let routed = if pictures { None } else { router::route(state, chat.model_id.as_deref(), &text) };
+            if let Some(p) = &routed {
+                state.log("chat", &format!("Auto: {} answers this message (better at {})", p.name, p.task.word()));
+                app.emit("chat:routed", json!({ "chat_id": chat_id, "model_id": p.model_id, "name": p.name, "task": p.task.word() })).ok();
+            }
+            let model_id = routed.map(|p| p.model_id).or_else(|| chat.model_id.clone());
+            let (ep, spec, _) = llm_endpoint(state, model_id, pictures, || {
                 app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
             })
             .await?;
@@ -2025,6 +2088,11 @@ pub(crate) async fn llm_endpoint(
     };
     *state.engine_used.lock().unwrap() = std::time::Instant::now();
     let model_path = model_file(&state.paths, &installed);
+    // A damaged or unfinished file is said plainly, not as the engine's log.
+    if let Some(why) = model_file_problem(&model_path, installed.size) {
+        state.log("model", &format!("{}'s model file is unusable ({why}): {}", spec.name, model_path.display()));
+        return Err(format!("{}'s model file is damaged: {why}. Open Models and press Download again on it.", spec.name));
+    }
     let encoder = if pictures { ensure_vision(state, &spec).await? } else { vision_file(&state.paths, &spec) };
     let mut on_loading = Some(on_loading);
     let asked = std::time::Instant::now();
@@ -2504,6 +2572,8 @@ pub fn run() {
             media::music_persona_save,
             media::music_persona_delete,
             media::media_add,
+            media::media_song_midi,
+            media::media_song_map_save,
             mail::mail_preset,
             mail::mail_accounts,
             mail::add_mail_account,
@@ -2545,6 +2615,7 @@ pub fn run() {
             refresh_hardware,
             catalog_view,
             install_model,
+            repair_model,
             pause_install,
             resume_install,
             downloads_view,
@@ -2656,6 +2727,7 @@ pub fn run() {
             get_settings,
             set_connectivity,
             set_default_model,
+            set_auto_model,
             context_options,
             set_context_window,
             compact_chat,
@@ -2883,5 +2955,28 @@ mod incognito_tests {
         let sent = crate::outgoing::sent_list(&state.db.lock().unwrap(), &c);
         assert!(sent.iter().all(|s| s.chat_id != secret) && sent.iter().any(|s| s.chat_id == kept));
         let _ = std::fs::remove_dir_all(&state.paths.data);
+    }
+}
+
+#[cfg(test)]
+mod model_file_tests {
+    /// A model file copied part way, overwritten or gone is said plainly;
+    /// a whole GGUF file is fine.
+    #[test]
+    fn a_damaged_model_file_is_found() {
+        let dir = std::env::temp_dir().join(format!("sulcusai-damaged-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let good = dir.join("good.gguf");
+        let mut bytes = b"GGUF".to_vec();
+        bytes.extend_from_slice(&[0u8; 60]);
+        std::fs::write(&good, &bytes).unwrap();
+        assert_eq!(super::model_file_problem(&good, 64), None);
+        assert_eq!(super::model_file_problem(&good, 0), None, "size not known");
+        let zeros = dir.join("zeros.gguf");
+        std::fs::write(&zeros, [0u8; 64]).unwrap();
+        assert!(super::model_file_problem(&zeros, 64).unwrap().contains("isn't a model file"));
+        assert!(super::model_file_problem(&good, 128).unwrap().contains("instead of"), "cut short");
+        assert!(super::model_file_problem(&dir.join("gone.gguf"), 64).unwrap().contains("missing"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -699,6 +699,8 @@ export interface ModelCard {
   runnable: boolean;
   /** The best model for this PC: the most capable one that runs comfortably (on the graphics card, when there is one). */
   best: boolean;
+  /** An installed model whose file is damaged or unfinished, and how. */
+  damaged?: string | null;
   publisher: string;
   source: string;
   description: string;
@@ -741,6 +743,8 @@ export interface Settings {
   onboarded: boolean;
   auto_lock_minutes: number;
   memory_enabled: boolean;
+  /** Auto: a message on the default model goes to the installed model clearly better at it. */
+  auto_model: boolean;
 }
 
 export interface Profile {
@@ -1720,6 +1724,46 @@ export interface MediaItem {
   missing?: string[];
   /** Something else to know about it ("the whole scene was redrawn"). */
   note?: string | null;
+  /** What the listener heard in a song. */
+  review?: SongReview | null;
+  /** How a song is built, for the song view. */
+  map?: SongMap | null;
+}
+
+/** A note: start and end (seconds), MIDI pitch and loudness. */
+export interface SongNote {
+  start: number;
+  end: number;
+  pitch: number;
+  velocity: number;
+}
+
+/** How a song is built: its sections and its parts' notes. */
+export interface SongMap {
+  length: number;
+  sections: { name: string; start: number; end: number; lines: string[] }[];
+  parts: { name: "vocals" | "other" | "bass" | "drums" | string; notes: SongNote[] }[];
+}
+
+/** A sung line, and how well it came through. */
+export interface LineHeard {
+  section: string;
+  text: string;
+  /** The share of its words heard (0 to 1). */
+  heard: number;
+  /** Where it's sung, in seconds. */
+  at: [number, number] | null;
+}
+
+/** What the listener heard in a song. */
+export interface SongReview {
+  heard: number;
+  words: number;
+  lines: LineHeard[];
+  /** Stretches whose words weren't clear (seconds): what a remake makes again. */
+  unclear: [number, number][];
+  notes: string[];
+  score: number;
 }
 
 /** How long making an item took, and what it used. */
@@ -1834,7 +1878,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map";
 
 export interface DevModeView {
   on: boolean;
@@ -1981,6 +2025,8 @@ export interface MediaRequest {
   seconds?: number;
   lyrics?: string | null;
   instrumental?: boolean;
+  /** Made from the song view: the new version's notes and sections are read too. */
+  then_map?: boolean | null;
   /** Music: style, instruments, tempo, key, and work on a song. */
   music?: MusicSpec | null;
   voice?: string | null;
@@ -2211,6 +2257,8 @@ export const api = {
   catalog: (all = false) => invoke<CatalogView>("catalog_view", { all }),
   /** `force`: install even though this PC probably can't run it (the person was warned). */
   install: (modelId: string, quant: string, force = false) => invoke<void>("install_model", { modelId, quant, force }),
+  /** Downloads a damaged model's file again. */
+  repairModel: (modelId: string) => invoke<void>("repair_model", { modelId }),
   pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
   resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
   downloadsView: () => invoke<{ paused: PausedDownload[] }>("downloads_view"),
@@ -2342,6 +2390,7 @@ export const api = {
   deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
   clearMemories: () => invoke<void>("clear_memories"),
   setMemoryEnabled: (enabled: boolean) => invoke<Settings>("set_memory_enabled", { enabled }),
+  setAutoModel: (on: boolean) => invoke<Settings>("set_auto_model", { on }),
   schedules: () => invoke<ScheduleView[]>("list_schedules"),
   saveSchedule: (schedule: Schedule) => invoke<ScheduleView>("save_schedule", { schedule }),
   deleteSchedule: (id: string) => invoke<void>("delete_schedule", { id }),
@@ -2455,7 +2504,8 @@ export const api = {
   quickResize: (height: number) => invoke<void>("quick_resize", { height }),
   quickOpenInApp: (chatId: string | null) => invoke<void>("quick_open_in_app", { chatId }),
   quickScreenshot: () => invoke<MediaItem>("quick_screenshot"),
-  mediaView: () => invoke<MediaView>("media_view"),
+  /** The Studio's models; with all, also the ones this PC can't run (with why). */
+  mediaView: (all = false) => invoke<MediaView>("media_view", { all }),
   installMedia: (modelId: string) => invoke<void>("install_media_model", { modelId }),
   mediaHubSearch: (kind: "image" | "video" | "music", query: string, sort: "downloads" | "trending" | "newest", all = false) =>
     invoke<HubMediaResults>("media_hub_search", { kind, query, sort, all }),
@@ -2497,8 +2547,12 @@ export const api = {
   /** Saves an artist (a new one when id is empty). */
   musicPersonaSave: (persona: Persona) => invoke<Persona>("music_persona_save", { persona }),
   musicPersonaDelete: (id: string) => invoke<void>("music_persona_delete", { id }),
-  mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null }) =>
-    invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null }),
+  mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null }) =>
+    invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null, lyrics: input.lyrics ?? null }),
+  /** A song's notes as a MIDI file, saved at `path`: `map` as edited, else the song's own. */
+  mediaSongMidi: (id: string, path: string, map?: SongMap) => invoke<void>("media_song_midi", { id, path, map: map ?? null }),
+  /** Keeps notes edited in the song view with the song. */
+  mediaSongMapSave: (id: string, map: SongMap) => invoke<MediaItem>("media_song_map_save", { id, map }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
@@ -2655,6 +2709,8 @@ export interface InstallFinished {
 
 export interface ChatEvents {
   "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string };
+  /** Auto handed this message to another installed model, better at its task. */
+  "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" };
   "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };

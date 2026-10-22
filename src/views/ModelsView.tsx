@@ -969,6 +969,27 @@ function InstalledCard({
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>
       {fit?.placement !== "cpu" && <Optimize m={m} tuning={tuning} onRefresh={onRefresh} toast={toast} />}
+      {m.damaged && (
+        <div className="warn-box small">
+          <p>{t("Its model file is damaged ({why}), so it won't load.", { why: m.damaged })}</p>
+          {!m.local && (
+            <button
+              className="btn small primary"
+              onClick={async () => {
+                try {
+                  await api.repairModel(m.id);
+                  toast(t("Downloading {name} again.", { name: m.name }), "success");
+                  await onRefresh();
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
+              }}
+            >
+              {t("Download again")}
+            </button>
+          )}
+        </div>
+      )}
       <div className="install-row">
         {!isDefault && (
           <button

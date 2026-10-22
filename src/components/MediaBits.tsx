@@ -149,6 +149,34 @@ export function MadeStatsLine({ item }: { item: MediaItem }) {
   return line ? <p className="made-stats small muted">{line}</p> : null;
 }
 
+/** The listener on a sung song: what came through, and the unclear parts made again. */
+export function SongListener({ item, onListen, onRemake }: { item: MediaItem; onListen: () => void; onRemake: () => void }) {
+  const r = item.review;
+  return (
+    <div className="song-listener small">
+      <div className="row">
+        <strong>{t("Listener")}</strong>
+        {r && r.words > 0 && <span className="muted">{t("{heard} of {words} words heard", { heard: r.heard, words: r.words })}</span>}
+        <span className="spacer" />
+        <button className="btn small" onClick={onListen}>{r ? t("Listen again") : t("Listen to it")}</button>
+      </div>
+      {!r && <p className="muted">{t("Hears which words come through and where. The unclear parts can then be made again.")}</p>}
+      {r && (
+        <ul className="listener-notes">
+          {r.words === 0 && <li>{t("Install a speech model (Models, Speech) and the listener also hears which words come through.")}</li>}
+          {r.words > 0 && r.unclear.length === 0 && <li>{t("The words come through clearly.")}</li>}
+          {r.unclear.map(([a, b]) => (
+            <li key={a}>{t("The words from {from} to {to} aren't clear.", { from: clock(a), to: clock(b) })}</li>
+          ))}
+        </ul>
+      )}
+      {r && r.unclear.length > 0 && (
+        <button className="btn primary small" onClick={onRemake}>{t("Make the unclear parts again")}</button>
+      )}
+    </div>
+  );
+}
+
 /** Running jobs, kept up to date from the core's events. */
 export function useMediaJobs(): MediaJob[] {
   const [jobs, setJobs] = useState<MediaJob[]>([]);

@@ -623,14 +623,14 @@ mod tests {
         let f = |path: &str, size: u64| RemoteFile { path: path.into(), size, sha256: "x".into() };
         let repo = Repo { info: info.clone(), files: vec![f("m-Q4_K_M.gguf", 5 * GIB), f("m-Q8_0.gguf", 9 * GIB), f("m-F16.gguf", 16 * GIB), f("m-Q4_K_M-00001-of-00002.gguf", 3 * GIB), f("mmproj-F16.gguf", GIB), f("eagle3-m-BF16.gguf", GIB), f("m-tiny.gguf", GIB / 2)] };
         let m = serde_json::json!({ "id": "someone/m-GGUF", "downloads": 10, "likes": 2, "gguf": info["gguf"] });
-        let budget = Budget { vram: 8 * GIB, ram: 4 * GIB, disk: 500 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 60.0 };
+        let budget = Budget { vram: 8 * GIB, vram_card: 8 * GIB, cards: 1, ram: 4 * GIB, disk: 500 * GIB, gpu_bw_gbs: 400.0, gpu_bw_card: 400.0, cpu_bw_gbs: 60.0 };
         let shown = describe(&m, &repo, &budget, false);
         let files: Vec<&str> = shown.files.iter().map(|f| f.file.as_str()).collect();
         assert_eq!(files, ["m-Q4_K_M.gguf", "m-Q8_0.gguf"], "F16 is too big; a split model missing a part, picture readers, helpers and too-small files aren't models");
         assert_eq!(shown.files[0].placement, Some(Placement::Gpu));
         assert!(shown.vision);
         assert_eq!(shown.recommended.as_deref(), Some("m-Q4_K_M.gguf"));
-        let tiny = Budget { vram: 0, ram: 2 * GIB, disk: 500 * GIB, gpu_bw_gbs: 0.0, cpu_bw_gbs: 30.0 };
+        let tiny = Budget { vram: 0, vram_card: 0, cards: 0, ram: 2 * GIB, disk: 500 * GIB, gpu_bw_gbs: 0.0, gpu_bw_card: 0.0, cpu_bw_gbs: 30.0 };
         assert!(describe(&m, &repo, &tiny, false).files.is_empty(), "nothing fits: the model is hidden");
         // Browsing everything: the files it can't run come too, without a placement.
         let every = describe(&m, &repo, &tiny, true);

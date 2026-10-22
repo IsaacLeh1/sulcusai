@@ -185,7 +185,7 @@ impl Helper {
         // fit, and comes back at its address after (a reply may wait on it).
         let size = |p: &std::path::Path| std::fs::metadata(p).map_or(0, |m| m.len());
         let need = size(model) + mmproj.map_or(0, size) + 3 * crate::catalog::GIB / 2;
-        let vram = state.budget().vram;
+        let vram = state.budget().vram_card;
         let reserved = crate::media::chat_model_vram(state).await;
         let paused = if vram > 0 && reserved > 0 && vram.saturating_sub(reserved) < need { state.engine.lock().await.pause().await } else { None };
         let limits = state.limits();

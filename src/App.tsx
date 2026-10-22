@@ -511,7 +511,21 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     </button>
   );
   const picker = (label: ReactNode) => (
-    <ModelPicker label={label} installed={installed} current={settings?.default_model} onPick={pickDefault} onModels={() => setView("models")} />
+    <ModelPicker
+      label={label}
+      installed={installed}
+      current={settings?.default_model}
+      onPick={pickDefault}
+      onModels={() => setView("models")}
+      auto={settings?.auto_model ?? true}
+      onAuto={async (on) => {
+        try {
+          setSettings(await api.setAutoModel(on));
+        } catch (e) {
+          toast(errorText(e), "error");
+        }
+      }}
+    />
   );
 
   return (

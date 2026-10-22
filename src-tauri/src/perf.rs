@@ -79,7 +79,7 @@ pub struct Ceiling {
 }
 
 pub fn ceiling(hw: &Hardware) -> Ceiling {
-    let vram = hw.best_gpu().map_or(0, |g| g.vram_bytes);
+    let vram = hw.model_vram();
     // Keep at least 400 MB of graphics memory for the screen.
     let gpu_percent = if vram > 0 { (((vram.saturating_sub(400 * MIB)) as f64 / vram as f64) * 100.0).floor().min(95.0) as u32 } else { 0 };
     // Windows needs at least 3 GB (or 15%) to stay usable.
@@ -111,15 +111,21 @@ pub struct Limits {
     pub gpu_share: f64,
 }
 
+/// Graphics memory (all the cards models use) from which windows past 32K are offered.
+pub const BIG_CARDS: u64 = 20 * GIB;
+
 /// Always applied, whatever the settings.
 const CRITICAL_GPU: f32 = 92.0;
 const CRITICAL_CPU: f32 = 98.0;
 
 pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
     let c = ceiling(hw);
-    let vram = hw.best_gpu().map_or(0, |g| g.vram_bytes);
+    let vram = hw.model_vram();
     let mode = if s.cool_on_battery && on_battery { Mode::Cool } else { s.mode };
     let balanced_vram = vram.saturating_sub((vram / 10).max(512 * MIB));
+    // Big graphics memory: windows up to 128K (they're still only used
+    // while the whole model stays on the cards: `catalog::launch_settings`).
+    let roomy_ctx = if vram >= BIG_CARDS { 131_072 } else { 32_768 };
     let balanced_ram = hw.ram_total.saturating_sub((hw.ram_total / 4).max(4 * GIB));
     let ceiling_ram = (c.ram_gb * GIB as f64) as u64;
     let (gpu_t, cpu_t) = if s.heat_guard { (87.0, 95.0) } else { (CRITICAL_GPU, CRITICAL_CPU) };
@@ -150,7 +156,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
             low_priority: false,
             // A loaded model holds the card's memory: not for long unused.
             idle_unload_mins: 10,
-            max_ctx: 32_768,
+            max_ctx: roomy_ctx,
             gpu_temp_limit: gpu_t,
             cpu_temp_limit: cpu_t,
             heat_level: 0,
@@ -166,7 +172,7 @@ pub fn limits(s: &PerfSettings, hw: &Hardware, on_battery: bool) -> Limits {
                 ram_bytes: ((t.ram_gb.clamp(1.0, c.ram_gb) * GIB as f64) as u64).min(ceiling_ram),
                 low_priority: false,
                 idle_unload_mins: 0,
-                max_ctx: 32_768,
+                max_ctx: roomy_ctx,
                 gpu_temp_limit: if s.heat_guard { 90.0 } else { CRITICAL_GPU },
                 cpu_temp_limit: if s.heat_guard { 97.0 } else { CRITICAL_CPU },
                 heat_level: 0,
@@ -1155,7 +1161,7 @@ mod tests {
         assert!(scaled(half, &HeatState { gpu_level: 0, cpu_level: 2, temps: Temps::default(), changed: None }).threads <= half.threads, "a hot processor only lowers it");
         let m = crate::catalog::Catalog::bundled().model("qwen3-8b").cloned().unwrap();
         let quant = m.variants[0].quant.clone();
-        let b = crate::catalog::Budget { vram: 8 * GIB, ram: 12 * GIB, disk: 100 * GIB, gpu_bw_gbs: 400.0, cpu_bw_gbs: 50.0 };
+        let b = crate::catalog::Budget { vram: 8 * GIB, vram_card: 8 * GIB, cards: 1, ram: 12 * GIB, disk: 100 * GIB, gpu_bw_gbs: 400.0, gpu_bw_card: 400.0, cpu_bw_gbs: 50.0 };
         let (_, all) = crate::catalog::launch_within(&m, &quant, &b, &full);
         let (_, some) = crate::catalog::launch_within(&m, &quant, &b, &half);
         let (_, none) = crate::catalog::launch_within(&m, &quant, &b, &off);

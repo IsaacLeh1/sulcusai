@@ -21,6 +21,11 @@ pub struct Song {
     pub lyrics: String,
 }
 
+/// The engine's MP3s: 320 kbps (its default 128 smeared breaths, cymbals
+/// and reverb). The songs are kept as the music model made them: a voice
+/// part separated, worked on and mixed back sounded worse (`stems`).
+const MP3_KBPS: u32 = 320;
+
 #[derive(Default)]
 pub struct SongRequest<'a> {
     pub caption: &'a str,
@@ -175,6 +180,7 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
         "seed": r.seed,
         "synth_model": r.dit_file,
         "output_format": "mp3",
+        "mp3_bitrate": MP3_KBPS,
     });
     // A new song is as long as asked; work on a song follows the song.
     if r.source.is_none() {

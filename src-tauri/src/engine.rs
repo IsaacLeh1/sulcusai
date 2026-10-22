@@ -233,10 +233,27 @@ fn main_card() -> Option<String> {
     crate::hardware::dedicated().map(|g| g.name)
 }
 
-/// The device(s) for `exe` (`pick_devices`).
-async fn dedicated_devices(exe: &Path) -> Vec<(String, String)> {
+/// The device(s) for `exe`: with `spread`, every card models are spread
+/// over when there are several (`hardware::model_cards`; llama.cpp splits
+/// the layers by their free memory), else `pick_devices`.
+async fn dedicated_devices(exe: &Path, spread: bool) -> Vec<(String, String)> {
     let devices = list_devices(exe).await;
-    pick_devices(&devices, &crate::hardware::cards(), crate::hardware::dedicated().as_ref())
+    let cards = crate::hardware::cards();
+    let several = crate::hardware::model_cards(&cards, crate::hardware::main_choice().as_deref());
+    if spread && several.len() > 1 {
+        let found = pick_several(&devices, &cards, &several);
+        if found.len() >= several.len() {
+            return found;
+        }
+    }
+    pick_devices(&devices, &cards, crate::hardware::dedicated().as_ref())
+}
+
+/// The engine's devices for several cards: each device named like one of
+/// them (two identical cards are two devices of the same name), never the
+/// built-in graphics.
+fn pick_several(devices: &[(String, String)], cards: &[crate::hardware::Gpu], several: &[&crate::hardware::Gpu]) -> Vec<(String, String)> {
+    devices.iter().filter(|(_, n)| several.iter().any(|c| same_card(n, &c.name)) && !built_in(n, cards)).cloned().collect()
 }
 
 /// Keeps a graphics engine (pictures, speech, training) on the dedicated
@@ -249,17 +266,18 @@ pub fn prefer_dedicated(cmd: &mut Command) {
     }
 }
 
-/// The dedicated cards' Vulkan numbers ("0"), when known for sure: the
-/// engine listed every card, and some are integrated.
+/// The main card's Vulkan number ("0"), when known for sure: the engine
+/// listed every card.
 fn dedicated_indexes() -> Option<String> {
     let (_, devices) = DEVICES.lock().unwrap().clone()?;
     let cards = crate::hardware::cards();
     if devices.len() != cards.len() || std::env::var_os("GGML_VK_VISIBLE_DEVICES").is_some() {
         return None;
     }
-    // A card the person picked; else the dedicated ones beside integrated graphics, as before.
-    let chosen = crate::hardware::main_choice().and(crate::hardware::dedicated());
-    let picked: Vec<String> = pick_devices(&devices, &cards, chosen.as_ref()).iter().filter_map(|(id, _)| id.strip_prefix("Vulkan").map(str::to_string)).collect();
+    // The card picked, else the biggest dedicated one: these engines run on
+    // one card and were fitted to it (with two, the first listed can be the
+    // smaller). Not found by name: the dedicated ones, as before.
+    let picked: Vec<String> = pick_devices(&devices, &cards, crate::hardware::dedicated().as_ref()).iter().filter_map(|(id, _)| id.strip_prefix("Vulkan").map(str::to_string)).collect();
     (!picked.is_empty()).then(|| picked.join(","))
 }
 
@@ -543,6 +561,9 @@ pub struct Tuning {
     /// Most tokens a reply may think before it's told to answer
     /// (`--reasoning-budget`): `think_budget` in lib.rs. None: no limit.
     pub think_budget: Option<u32>,
+    /// Spread over every card models use (`catalog::fits_biggest_card`
+    /// says it doesn't fit the biggest alone); else on the main card.
+    pub spread: bool,
 }
 
 /// Said at the end of thinking that ran out of its budget.
@@ -566,6 +587,7 @@ struct Running {
     cpu_moe: Option<u32>,
     kv_q8: bool,
     think_budget: Option<u32>,
+    spread: bool,
     /// Where it really runs, from the engine's log once it loaded.
     placed: Placed,
     /// The main graphics card when it started (`hardware::dedicated`): picking
@@ -733,6 +755,7 @@ impl Engine {
                     && r.cpu_moe == tuning.cpu_moe
                     && r.kv_q8 == tuning.kv_q8
                     && r.think_budget == tuning.think_budget
+                    && r.spread == tuning.spread
                     && r.card == main_card()
             })
     }
@@ -783,7 +806,7 @@ impl Engine {
         // On a PC with integrated graphics too, the model goes on the
         // dedicated card. The devices are listed (and logged) for a model on
         // the processor too: whether the engine sees the card explains it.
-        let dedicated = dedicated_devices(spec.exe).await;
+        let dedicated = dedicated_devices(spec.exe, tuning.spread).await;
         let devices: Vec<(String, String)> = if spec.gpu_layers > 0 { dedicated } else { Vec::new() };
         let ids: Vec<&str> = devices.iter().map(|(id, _)| id.as_str()).collect();
         let mut cmd = Command::new(spec.exe);
@@ -803,6 +826,13 @@ impl Engine {
             .args(layers)
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
+            // Guessing ahead from text already in the conversation (n-gram
+            // lookup, no extra model): a reply that repeats it (code edited,
+            // text quoted or revised) comes faster, the rest as fast as before.
+            // Measured on a code edit: Qwen3 4B 162 to 203 tokens/s, Qwen3.5 9B
+            // 88 to 105, gpt-oss 20B 29 to 47; open writing unchanged. The
+            // "cache" kind made both slower, "mod" helped less.
+            .args(["--spec-type", "ngram-simple"])
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })
@@ -853,6 +883,7 @@ impl Engine {
             cpu_moe: tuning.cpu_moe,
             kv_q8: tuning.kv_q8,
             think_budget: tuning.think_budget,
+            spread: tuning.spread,
             placed: Placed::default(),
             card: main_card(),
         });
@@ -1162,6 +1193,35 @@ mod platform_tests {
         assert_eq!(pick_devices(&listed, &cards, Some(&card("Radeon RX 7600", false))).len(), 2);
         // Never the integrated graphics, even when asked.
         assert_ne!(pick_devices(&listed, &cards, Some(&cards[0])).first().map(|d| d.1.as_str()), Some("Intel(R) UHD Graphics 770"));
+    }
+
+    /// Several cards of one maker share a model (none picked): two identical
+    /// RTX 5090s are both used, the built-in graphics never; a smaller card
+    /// from another maker stays out; a picked card is used alone.
+    #[test]
+    fn several_cards_share_a_model() {
+        use crate::hardware::{model_cards, Gpu};
+        let gib = 1u64 << 30;
+        let card = |name: &str, vendor: &str, gb: u64, integrated: bool| Gpu { name: name.into(), vendor: vendor.into(), vram_bytes: gb * gib, integrated, ..Default::default() };
+        let cards = [
+            card("AMD Radeon(TM) Graphics", "AMD", 2, true),
+            card("NVIDIA GeForce RTX 5090", "NVIDIA", 32, false),
+            card("NVIDIA GeForce RTX 5090", "NVIDIA", 32, false),
+            card("AMD Radeon RX 6400", "AMD", 4, false),
+        ];
+        let several = model_cards(&cards, None);
+        assert_eq!(several.len(), 2, "both 5090s, not the other maker's card");
+        let listed = parse_devices("  Vulkan0: AMD Radeon(TM) Graphics (2048 MiB, 1900 MiB free)\n  Vulkan1: NVIDIA GeForce RTX 5090 (32607 MiB, 32000 MiB free)\n  Vulkan2: NVIDIA GeForce RTX 5090 (32607 MiB, 32000 MiB free)\n  Vulkan3: AMD Radeon RX 6400 (4096 MiB, 4000 MiB free)\n");
+        let ids: Vec<String> = pick_several(&listed, &cards, &several).into_iter().map(|d| d.0).collect();
+        assert_eq!(ids, ["Vulkan1", "Vulkan2"]);
+        assert_eq!(model_cards(&cards, Some("NVIDIA GeForce RTX 5090")).len(), 1, "picked: that card alone");
+        // The budget adds them up, and a model's window can grow on them.
+        let hw = crate::hardware::Hardware { gpus: cards.to_vec(), ram_total: 128 * gib, disk_free: 4000 * gib, cpu_cores: Some(24), cpu_threads: 48, ..Default::default() };
+        let b = crate::catalog::Budget::from_hardware(&hw);
+        assert_eq!((b.cards, b.vram_card), (2, 32 * gib - 32 * gib / 10));
+        assert_eq!(b.vram, 2 * b.vram_card);
+        assert!(b.gpu_bw_gbs >= 1500.0, "{}", b.gpu_bw_gbs);
+        assert_eq!(b.gpu_bw_card, b.gpu_bw_gbs);
     }
 
     /// llama.cpp b11450 at verbosity 4, as it logs a load: the layers it

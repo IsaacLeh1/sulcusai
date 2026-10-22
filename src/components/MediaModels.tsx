@@ -18,11 +18,11 @@ const KINDS: { kind: MediaKind; title: string; per: string }[] = [
   { kind: "music", title: tx("Music and sound"), per: tx("a 30-second song") },
 ];
 
-export function useMediaView(): [MediaView | null, () => void] {
+export function useMediaView(all = false): [MediaView | null, () => void] {
   const [view, setView] = useState<MediaView | null>(null);
   const load = useCallback(() => {
-    api.mediaView().then(setView).catch(() => {});
-  }, []);
+    api.mediaView(all).then(setView).catch(() => {});
+  }, [all]);
   useEffect(() => {
     load();
     const subs = [on("install:finished", load), on("features:changed", load), on("media:done", load)];
@@ -32,7 +32,9 @@ export function useMediaView(): [MediaView | null, () => void] {
 }
 
 export function MediaModels({ progress, toast, only }: { progress: Record<string, InstallProgress>; toast: PushToast; only?: MediaKind[] }) {
-  const [view, load] = useMediaView();
+  // Every model, also those too big for this PC (they say why).
+  const [showAll, setShowAll] = useState(false);
+  const [view, load] = useMediaView(showAll);
   // Models locked against the automatic cleanup.
   const [kept, setKept] = useState<string[]>([]);
   useEffect(() => {
@@ -55,6 +57,10 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
           placeholder={hubKinds.length === 1 ? t("Paste a Hugging Face link to a model, e.g. {link}", { link: LINK_EXAMPLE[hubKinds[0]] }) : t("Paste a Hugging Face link to a picture, video or music model")}
         />
       </section>
+      <label className="small row">
+        <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+        {t("Show models this PC can't run")}
+      </label>
       {kinds.map(({ kind, title, per }) => {
         const list = view.models.filter((m) => m.kind === kind).sort((a, b) => b.quality - a.quality);
         const left = (view.hidden_by_kind ?? []).filter((h) => h.kind === kind);
@@ -66,7 +72,7 @@ export function MediaModels({ progress, toast, only }: { progress: Record<string
             {list.map((m) => (
               <MediaModelRow key={m.id} m={m} per={per} progress={progress[m.id]} busy={busy} toast={toast} onChanged={load} isDefault={defaultOf(view, m.kind) === m.id} kept={kept.includes(m.id)} onKept={setKept} />
             ))}
-            {left.map((h) => (
+            {!showAll && left.map((h) => (
               <p key={h.why} className="small muted">{hiddenText(h.why, h.count)}</p>
             ))}
           </section>
@@ -438,6 +444,8 @@ function MediaModelRow({
           >
             {t("Delete from this PC")}
           </button>
+        ) : !m.fit.runnable || !m.fit.disk_ok ? (
+          <span className="small warn-text">{m.fit.reason ? t("This PC can't run it: it {why}.", { why: m.fit.reason }) : t("Not enough free disk space for it.")}</span>
         ) : (
           !progress && (
             <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={() => licenseOk(m) && api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>

@@ -367,7 +367,7 @@ async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
     let log = std::env::temp_dir().join(format!("sulcusai-e2e-engine-{}.log", uuid::Uuid::new_v4().simple()));
     let mut eng = engine::Engine::default();
     let launch = engine::LaunchSpec { exe: &exe, model_path: &gguf, model_id: "test-agent", quant: "Q4_K_M", ctx, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
-    let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), kv_q8: false, think_budget: None }, None).await.unwrap();
+    let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), ..Default::default() }, None).await.unwrap();
     if name.to_lowercase().contains("gpt-oss") {
         let effort = crate::advanced::DEFAULT_REASONING;
         ep.extra = serde_json::json!({ "reasoning_effort": effort, "chat_template_kwargs": { "reasoning_effort": effort }, "max_tokens": (ctx / 2).clamp(4096, 16_384) });
@@ -398,7 +398,7 @@ async fn e2e_thinking_stops_at_its_budget() {
     for think in [Some(256), None] {
         let mut eng = engine::Engine::default();
         let launch = engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
-        let ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: None, kv_q8: false, think_budget: think }, None).await.unwrap();
+        let ep = eng.ensure_tuned(launch, engine::Tuning { think_budget: think, ..Default::default() }, None).await.unwrap();
         let t = std::time::Instant::now();
         let v: serde_json::Value = crate::net::local_client().post(ep.url("/v1/chat/completions")).bearer_auth(&ep.key).json(&ask).send().await.unwrap().json().await.unwrap();
         let reasoning = v.pointer("/choices/0/message/reasoning_content").and_then(|r| r.as_str()).unwrap_or_default().to_string();
@@ -3477,6 +3477,191 @@ async fn e2e_music_voice_quality() {
     println!("\n{}\nsongs in {}", rows.join("\n"), out.display());
 }
 
+/// Emotional songs, female and male voices, kept for listening, each with
+/// the words Whisper hears, its clipped samples and the listener's review;
+/// the first also mapped for the song view, its MIDI file kept. (A finish
+/// that worked on the separated voice was tested here against the songs as
+/// made, and lost when listened to: see `stems`.)
+/// SULCUSAI_FINISH_MODEL picks the music model (default: the one this PC is
+/// offered), SULCUSAI_FINISH_CASES the songs.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_emotional_songs() {
+    use crate::media::{self, store, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::env::temp_dir().join("sulcusai-finish-ab");
+    std::fs::create_dir_all(&out).unwrap();
+    let model = std::env::var("SULCUSAI_FINISH_MODEL").ok().unwrap_or_else(|| media::recommended(&state, media::Kind::Music).unwrap().id);
+    media::install_for_test(&state, &model).await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    // (name, description, voice, feeling, genre, instruments, lyrics)
+    let cases: &[(&str, &str, &str, &str, &str, &[&str], &str)] = &[
+        ("female-heartbreak", "a heartbroken piano ballad about someone who left", "female", "Heartbroken", "Ballad", &["Piano", "Strings"],
+         "[Verse]\nI kept your coat by the door\nLike you'd come back for it\nEvery night I tell the walls\nThat I'm fine, that I'm fine\n\n[Chorus]\nBut I'm falling apart\nIn the place where you were\nSay my name one more time\nSo I know it was real"),
+        ("male-heartbreak", "an aching soul ballad, sorry for what he never said", "male", "Heartbroken", "Soul", &["Piano", "Organ", "Bass"],
+         "[Verse]\nRain on the windshield, the radio low\nDriving the long way so I don't go home\nYour words in my head like a song on repeat\nI should have held on, I should have held on\n\n[Chorus]\nOh, I'm sorry, I'm sorry\nFor the things I never said\nOh, come back to me\nBefore the morning comes"),
+        ("female-anthem", "a powerful pop anthem about getting back up", "female", "Triumphant", "Pop", &["Drums", "Synth", "Bass"],
+         "[Verse]\nThey told me I would never fly\nI kept my wings and I kept my fight\nEvery door they closed on me\nTaught me how to break it free\n\n[Chorus]\nI'm still standing, I'm still here\nShout it louder, let them hear\nEvery scar became a song\nI was strong all along"),
+        ("male-rock", "a raspy, defiant rock song", "male", "Angry", "Rock", &["Electric guitar", "Drums", "Bass"],
+         "[Verse]\nYou built your walls out of my name\nYou lit the fire then called it rain\nI swallowed every word you said\nNow they're burning in my head\n\n[Chorus]\nI won't break, I won't bend\nThis is where your story ends\nTear it down, tear it down\nI'm not afraid of the sound"),
+        ("female-tender", "a tender, intimate acoustic love song", "female", "Tender", "Folk", &["Acoustic guitar"],
+         "[Verse]\nHold me close while the candle burns\nMorning comes but the world can turn\nYour hand in mine, the quiet room\nNothing else I need but you\n\n[Chorus]\nStay a little longer\nStay till the stars are gone\nYour heartbeat is the only song\nI'll ever need"),
+        ("male-longing", "a late-night R&B slow jam full of longing", "male", "Longing", "R&B", &["Electric piano", "Bass", "Drums"],
+         "[Verse]\nThree a.m. and I'm wide awake\nCounting all the calls I didn't make\nYour perfume still on the pillow case\nI can't get you out of this place\n\n[Chorus]\nI miss you more than I can say\nEvery night feels the same\nBaby, won't you come my way\nI still call your name"),
+    ];
+    let pick = std::env::var("SULCUSAI_FINISH_CASES").ok();
+    let clipped = |bytes: &[u8]| {
+        let (s, _) = decode_mp3(bytes);
+        (s.iter().filter(|v| v.abs() >= 0.999).count(), s.iter().fold(0f32, |m, v| m.max(v.abs())))
+    };
+    let mut rows = Vec::new();
+    for (i, (name, prompt, voice, feeling, genre, instruments, lyrics)) in cases.iter().enumerate() {
+        if pick.as_deref().is_some_and(|p| !p.split(',').any(|x| x == *name)) {
+            continue;
+        }
+        let music = MusicSpec { genre: Some(genre.to_string()), voice: Some(voice.to_string()), emotion: Some(feeling.to_string()), instruments: instruments.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+        let wanted = sung_words(lyrics);
+        {
+            let how = "song";
+            let req = Request {
+                op: "music".into(),
+                model_id: Some(model.clone()),
+                prompt: prompt.to_string(),
+                lyrics: Some(lyrics.to_string()),
+                seconds: Some(60.0),
+                seed: Some(100 + i as i64),
+                music: Some(music.clone()),
+                language: Some("en".into()),
+                ..Default::default()
+            };
+            let t = std::time::Instant::now();
+            let item = match media::run(&state, store::new_id(), req).await {
+                Ok(mut v) => v.remove(0),
+                Err(e) => {
+                    rows.push(format!("{name} {how}: failed ({e})"));
+                    continue;
+                }
+            };
+            let took = t.elapsed().as_secs_f64();
+            let bytes = store::read(&state.paths, &c, &item.id).unwrap();
+            let file = out.join(format!("{name}-{how}.mp3"));
+            std::fs::write(&file, &bytes).unwrap();
+            let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+            let words = sung_words(&heard);
+            let matched = wanted.iter().filter(|w| words.contains(*w)).count();
+            let (clips, peak) = clipped(&bytes);
+            rows.push(format!("{name} {how}: {took:.0}s, {matched} of {} words heard, {clips} clipped samples (peak {peak:.2}), {} KB", wanted.len(), bytes.len() / 1024));
+            println!("{}", rows.last().unwrap());
+            // The listener, as the Studio's button runs it.
+            {
+                let listened = media::run(&state, store::new_id(), Request { op: "listen".into(), source: Some(item.id.clone()), ..Default::default() }).await;
+                match listened.map(|mut v| v.remove(0).review) {
+                    Ok(Some(r)) => rows.push(format!("  listener: score {}, {} of {} words, unclear {:?}; {}", r.score, r.heard, r.words, r.unclear, r.notes.join(" "))),
+                    other => rows.push(format!("  listener failed: {other:?}")),
+                }
+                println!("{}", rows.last().unwrap());
+                // The song view's map of the first song, and its MIDI file.
+                if i == 0 {
+                    let t = std::time::Instant::now();
+                    match media::run(&state, store::new_id(), Request { op: "map".into(), source: Some(item.id.clone()), ..Default::default() }).await.map(|mut v| v.remove(0).map) {
+                        Ok(Some(m)) => {
+                            let sections: Vec<String> = m.sections.iter().map(|s| format!("{} {:.0}-{:.0}", s.name, s.start, s.end)).collect();
+                            let notes: Vec<String> = m.parts.iter().map(|p| format!("{} {}", p.name, p.notes.len())).collect();
+                            std::fs::write(out.join(format!("{name}.mid")), crate::media::songmap::midi(&m)).unwrap();
+                            rows.push(format!("  map ({:.0}s): sections [{}]; notes [{}]", t.elapsed().as_secs_f64(), sections.join(", "), notes.join(", ")));
+                        }
+                        other => rows.push(format!("  map failed: {other:?}")),
+                    }
+                    println!("{}", rows.last().unwrap());
+                }
+            }
+        }
+    }
+    state.engine.lock().await.stop().await;
+    println!("\n{}\nsongs in {}", rows.join("\n"), out.display());
+}
+
+/// The listener and its remake on a real song: listened to, its unclear
+/// stretches made again, and listened to again. Both kept for listening.
+/// SULCUSAI_FINISH_MODEL picks the music model.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_remake() {
+    use crate::media::{self, store, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::env::temp_dir().join("sulcusai-finish-ab");
+    std::fs::create_dir_all(&out).unwrap();
+    let model = std::env::var("SULCUSAI_FINISH_MODEL").ok().unwrap_or_else(|| media::recommended(&state, media::Kind::Music).unwrap().id);
+    media::install_for_test(&state, &model).await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let lyrics = "[Verse]\nI kept your coat by the door\nLike you'd come back for it\nEvery night I tell the walls\nThat I'm fine, that I'm fine\n\n[Chorus]\nBut I'm falling apart\nIn the place where you were\nSay my name one more time\nSo I know it was real";
+    let req = Request {
+        op: "music".into(),
+        model_id: Some(model.clone()),
+        prompt: "a heartbroken piano ballad about someone who left".into(),
+        lyrics: Some(lyrics.into()),
+        seconds: Some(60.0),
+        seed: Some(100),
+        music: Some(MusicSpec { genre: Some("Ballad".into()), voice: Some("female".into()), emotion: Some("Heartbroken".into()), instruments: vec!["Piano".into(), "Strings".into()], ..Default::default() }),
+        language: Some("en".into()),
+        ..Default::default()
+    };
+    let song = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
+    let listened = media::run(&state, store::new_id(), Request { op: "listen".into(), source: Some(song.id.clone()), ..Default::default() }).await.unwrap().remove(0);
+    let before = listened.review.clone().unwrap();
+    println!("before: score {}, {} of {} words, unclear {:?}", before.score, before.heard, before.words, before.unclear);
+    std::fs::write(out.join("remake-1-before.mp3"), store::read(&state.paths, &c, &song.id).unwrap()).unwrap();
+    if before.unclear.is_empty() {
+        println!("every part was clear: the remake has nothing to do");
+    }
+    // A section changed from the song view: the new version comes back mapped.
+    let t = std::time::Instant::now();
+    let edit = MusicSpec { task: Some("repaint".into()), audio: Some(song.id.clone()), region: Some([20.0, 35.0]), ..Default::default() };
+    let edited = media::run(
+        &state,
+        store::new_id(),
+        Request { op: "music".into(), model_id: Some(model.clone()), prompt: format!("{}, bigger with strings", song.prompt), lyrics: Some(lyrics.into()), music: Some(edit), then_map: Some(true), ..Default::default() },
+    )
+    .await
+    .unwrap()
+    .remove(0);
+    let m = edited.map.as_ref().expect("the edited version is mapped");
+    println!(
+        "section edit ({:.0}s): sections [{}]; notes [{}]",
+        t.elapsed().as_secs_f64(),
+        m.sections.iter().map(|s| format!("{} {:.0}-{:.0}", s.name, s.start, s.end)).collect::<Vec<_>>().join(", "),
+        m.parts.iter().map(|p| format!("{} {}", p.name, p.notes.len())).collect::<Vec<_>>().join(", ")
+    );
+    std::fs::write(out.join("remake-3-section-edit.mp3"), store::read(&state.paths, &c, &edited.id).unwrap()).unwrap();
+    if before.unclear.is_empty() {
+        state.engine.lock().await.stop().await;
+        return;
+    }
+    let t = std::time::Instant::now();
+    let remade = media::run(&state, store::new_id(), Request { op: "remake".into(), source: Some(song.id.clone()), model_id: Some(model.clone()), prompt: song.prompt.clone(), ..Default::default() }).await;
+    state.engine.lock().await.stop().await;
+    let remade = remade.unwrap().remove(0);
+    let after = remade.review.clone().unwrap();
+    std::fs::write(out.join("remake-2-after.mp3"), store::read(&state.paths, &c, &remade.id).unwrap()).unwrap();
+    println!(
+        "after ({:.0}s): score {}, {} of {} words, unclear {:?}; note {:?}; parent kept: {}",
+        t.elapsed().as_secs_f64(),
+        after.score,
+        after.heard,
+        after.words,
+        after.unclear,
+        remade.note,
+        store::get(&state.db.lock().unwrap(), &c, &song.id).is_some()
+    );
+    assert_eq!(remade.parent.as_deref(), Some(song.id.as_str()));
+}
+
 /// Songs made the way the Studio and chats make them, with the real music
 /// engine: lyrics written by the chat model (English and Spanish), the
 /// person's own lyrics, an instrumental, a song with no chat model to write
@@ -4580,4 +4765,37 @@ fn inspect_a_chat_copy() {
             println!("  META {:.400}", meta.to_string());
         }
     }
+}
+
+#[tokio::test]
+async fn zz_future_sizes() {
+    let state = media_state();
+    let req = crate::media::Request { op: "music".into(), ..Default::default() };
+    let f = crate::media::run(&state, "x".into(), req);
+    println!("media::run future: {} KB", std::mem::size_of_val(&f) / 1024);
+    drop(f);
+    let turn = crate::agent::Turn {
+        emit: std::sync::Arc::new(|_: &str, _| {}),
+        state: state.clone(),
+        chat_id: "c".into(),
+        turn_id: "t".into(),
+        cipher: state.cipher().unwrap(),
+        ep: engine::Endpoint { port: 1, key: String::new(), ctx: 8192, extra: serde_json::Value::Null, cloud: None },
+        mode: crate::tools::Mode::Auto,
+        use_tools: true,
+        vision: false,
+        unattended: false,
+        base: String::new(),
+        about: String::new(),
+        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+    };
+    let f = turn.run();
+    println!("agent turn future: {} KB", std::mem::size_of_val(&f) / 1024);
+    drop(f);
+    // Never polled: only its size is read, so the handle is never used.
+    #[allow(invalid_value)]
+    let app: &tauri::AppHandle = unsafe { &*std::ptr::NonNull::<tauri::AppHandle>::dangling().as_ptr() };
+    let f = crate::run_turn(app, &state, "c".into(), "hi".into(), Vec::new(), None);
+    println!("run_turn future: {} KB", std::mem::size_of_val(&f) / 1024);
+    std::mem::forget(f);
 }

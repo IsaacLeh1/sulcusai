@@ -154,6 +154,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
   const [handingOff, setHandingOff] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  // Auto handed the last message to another model (cleared when the next is sent).
+  const [routed, setRouted] = useState<{ name: string; task: string } | null>(null);
   const [context, setContext] = useState<ContextInfo | null>(null);
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -294,6 +296,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         api.context(chat.id).then(setContext).catch(() => {});
       })),
       on("chat:context", mine((p) => setContext(p.context))),
+      on("chat:routed", mine((p) => setRouted({ name: p.name, task: p.task }))),
       on("chat:queue", mine((p) => setQueue(p.queue))),
       on("chat:inbox", mine((p) => setWaiting(p.waiting))),
       on("chat:read", mine((p) => setReadUpTo((r) => Math.max(r, p.up_to)))),
@@ -389,6 +392,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     setNextUp(null);
     toEnd();
     setError(null);
+    setRouted(null);
     setStatus("loading");
     const meta = images.length ? ({ images } as Message["meta"]) : undefined;
     setMessages((m) => [...m, { id: `pending-${Date.now()}`, chat_id: chat.id, role: "user", content: text, thinking: null, created_at: Date.now(), meta }]);
@@ -694,6 +698,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <JobCard job={j} />
           </div>
         ))}
+        {routed && (
+          <p className="muted small pad">
+            {routed.task === "code"
+              ? t("Auto: {name} is answering this, it's better at code.", { name: routed.name })
+              : routed.task === "writing"
+                ? t("Auto: {name} is answering this, it's better at writing.", { name: routed.name })
+                : routed.task === "languages"
+                  ? t("Auto: {name} is answering this, it's better at languages.", { name: routed.name })
+                  : t("Auto: {name} is answering this.", { name: routed.name })}
+          </p>
+        )}
         {handingOff && <p className="muted small pad">{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
         {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
         {status === "loading" && !streaming && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}

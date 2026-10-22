@@ -203,30 +203,48 @@ impl ModelSpec {
 /// What this PC can give a model.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Budget {
-    /// Usable dedicated VRAM on the best GPU (0 = no usable GPU).
+    /// Usable dedicated VRAM on the cards chat models use, together (0 =
+    /// no usable GPU): several cards share a model's layers.
     pub vram: u64,
+    /// The biggest single card's usable VRAM: engines that run on one card
+    /// (pictures, video, music) fit to this.
+    pub vram_card: u64,
+    /// How many cards `vram` is spread over.
+    pub cards: u32,
     /// RAM the model may use without starving Windows and other apps.
     pub ram: u64,
     pub disk: u64,
+    /// Several cards: the slowest one's, which sets the pace.
     pub gpu_bw_gbs: f64,
+    /// The biggest card's own.
+    pub gpu_bw_card: f64,
     pub cpu_bw_gbs: f64,
 }
 
 impl Budget {
     pub fn from_hardware(hw: &Hardware) -> Budget {
-        let gpu = hw.best_gpu();
-        let vram = gpu.map_or(0, |g| {
-            // Leave room for the desktop and other apps.
-            let reserve = (g.vram_bytes / 10).max(512 * MIB);
-            g.vram_bytes.saturating_sub(reserve)
-        });
+        let cards = hw.model_gpus();
+        // Leave room on each card for the desktop and other apps.
+        let usable = |g: &crate::hardware::Gpu| g.vram_bytes.saturating_sub((g.vram_bytes / 10).max(512 * MIB));
+        let vram = cards.iter().map(|g| usable(g)).sum();
         let ram_reserve = (hw.ram_total / 4).max(4 * GIB);
+        let mut ram = hw.ram_total.saturating_sub(ram_reserve);
+        // A Mac's graphics memory is its system memory: not counted twice.
+        // (Windows already takes an AMD chip's share out of system memory.)
+        if cards.iter().any(|g| g.vendor.eq_ignore_ascii_case("apple")) {
+            ram = ram.saturating_sub(vram);
+        }
+        // Several cards work in turn on each token: the slowest sets the pace.
+        let gpu_bw_gbs = cards.iter().map(|g| gpu_bandwidth_guess(g)).reduce(f64::min).unwrap_or(0.0);
         Budget {
             vram,
-            ram: hw.ram_total.saturating_sub(ram_reserve),
+            vram_card: cards.first().map_or(0, |g| usable(g)),
+            cards: cards.len() as u32,
+            ram,
             disk: hw.disk_free.saturating_sub(DISK_RESERVE),
-            gpu_bw_gbs: gpu.map_or(0.0, |g| gpu_bandwidth_guess(g.vram_bytes)),
-            cpu_bw_gbs: 50.0,
+            gpu_bw_gbs,
+            gpu_bw_card: cards.first().map_or(0.0, |g| gpu_bandwidth_guess(g)),
+            cpu_bw_gbs: cpu_bandwidth_guess(hw, &cards),
         }
     }
 }
@@ -234,10 +252,31 @@ impl Budget {
 impl Budget {
     /// The budget within the performance limits (mode, Turbo, heat).
     pub fn with_limits(mut self, l: &crate::perf::Limits) -> Budget {
+        // A share of all the cards is that share of each.
+        if l.vram_bytes < self.vram {
+            self.vram_card = (self.vram_card as u128 * l.vram_bytes as u128 / self.vram as u128) as u64;
+        }
         self.vram = self.vram.min(l.vram_bytes);
         self.ram = self.ram.min(l.ram_bytes);
         self
     }
+
+    /// The biggest card alone, and the limits' share of it.
+    pub fn biggest_card(&self, l: &crate::perf::Limits) -> (Budget, crate::perf::Limits) {
+        let mut l = *l;
+        if self.vram > 0 {
+            l.vram_bytes = (l.vram_bytes as u128 * self.vram_card as u128 / self.vram as u128) as u64;
+        }
+        (Budget { vram: self.vram_card, cards: self.cards.min(1), gpu_bw_gbs: self.gpu_bw_card, ..*self }, l)
+    }
+}
+
+/// Several cards: whether the model runs wholly on the biggest one at
+/// `ctx`. The cards work on each token in turn, so a smaller, older second
+/// card only slows a model that fits the first; a bigger one is spread.
+pub fn fits_biggest_card(model: &ModelSpec, quant: &str, b: &Budget, l: &crate::perf::Limits, ctx: u32) -> bool {
+    let (one, l) = b.biggest_card(l);
+    model.variant(quant).is_some_and(|v| fit_variant(model, v, ctx.min(model.arch.max_ctx), &one.with_limits(&l)).placement == Some(Placement::Gpu))
 }
 
 /// Context size and GPU layers within the performance limits. A RAM limit
@@ -283,6 +322,7 @@ pub fn launch_at(model: &ModelSpec, quant: &str, b: &Budget, want: u32, auto: (u
 pub fn set_aside(b: &mut Budget, l: &mut crate::perf::Limits, bytes: u64) {
     if b.vram > 0 {
         b.vram = b.vram.saturating_sub(bytes);
+        b.vram_card = b.vram_card.saturating_sub(bytes);
         l.vram_bytes = l.vram_bytes.saturating_sub(bytes);
     } else {
         b.ram = b.ram.saturating_sub(bytes);
@@ -310,15 +350,51 @@ pub fn moe_offload(model: &ModelSpec, quant: &str, gpu_layers: u32) -> Option<u3
     (n <= a.n_layer).then_some(n.max(1))
 }
 
-/// Rough memory bandwidth by VRAM tier, replaced by a measured benchmark
-/// after install.
-fn gpu_bandwidth_guess(vram: u64) -> f64 {
-    match vram / GIB {
-        v if v >= 20 => 700.0,
+/// A graphics chip that shares the processor's memory: a Mac's, or AMD's
+/// big laptop and mini-PC chips (Strix Halo: Radeon 8060S), whatever share
+/// of it Windows calls the card's own.
+fn shared_memory(g: &crate::hardware::Gpu) -> bool {
+    let name = g.name.to_lowercase();
+    g.vendor.eq_ignore_ascii_case("apple") || ["8060s", "8050s", "8040s", "890m", "880m"].iter().any(|n| name.contains(n))
+}
+
+/// Rough memory bandwidth of a card by its memory (per-model speeds are
+/// measured after install): a 5090 or a 96 GB workstation card reads about
+/// 1.8 TB/s, a 4090 or 7900 XTX about 1 TB/s; chips sharing system memory
+/// as fast as it is (Strix Halo 256 GB/s, a Mac 400 and more).
+fn gpu_bandwidth_guess(g: &crate::hardware::Gpu) -> f64 {
+    if g.vendor.eq_ignore_ascii_case("apple") {
+        return 400.0;
+    }
+    if shared_memory(g) {
+        return 256.0;
+    }
+    match g.vram_bytes / GIB {
+        v if v >= 80 => 1800.0,
+        v if v >= 30 => 1500.0,
+        v if v >= 20 => 900.0,
         v if v >= 14 => 500.0,
         v if v >= 10 => 380.0,
         v if v >= 6 => 250.0,
         _ => 150.0,
+    }
+}
+
+/// The processor's memory bandwidth: two channels on a desktop or laptop
+/// (about 50 GB/s in practice); a workstation's or server's eight or twelve
+/// far more; a chip sharing its memory with the graphics, that memory's.
+fn cpu_bandwidth_guess(hw: &Hardware, cards: &[&crate::hardware::Gpu]) -> f64 {
+    if let Some(g) = cards.iter().find(|g| shared_memory(g)) {
+        return gpu_bandwidth_guess(g);
+    }
+    let cores = hw.cpu_cores.unwrap_or(hw.cpu_threads / 2).max(1);
+    let ram_gb = hw.ram_total / GIB;
+    if cores >= 64 || ram_gb >= 384 {
+        350.0
+    } else if cores >= 32 || ram_gb >= 192 {
+        200.0
+    } else {
+        50.0
     }
 }
 
@@ -474,8 +550,10 @@ fn fit_with(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget, q8: bool) -> V
         let frac = (gpu_weights / v.size as f64).clamp(0.0, 1.0);
         ((model.arch.n_layer as f64 * frac).floor() as u32, frac)
     };
+    // A model that fits the biggest card runs on it alone, at its speed.
+    let bw = if needed <= b.vram_card { b.gpu_bw_card.max(b.gpu_bw_gbs) } else { b.gpu_bw_gbs };
     let (placement, est_tps, gpu_layers) = if b.vram > 0 && needed <= b.vram {
-        (Some(Placement::Gpu), tps(per_token, b.gpu_bw_gbs), all_layers)
+        (Some(Placement::Gpu), tps(per_token, bw), all_layers)
     } else if b.vram > 0 && needed <= b.vram + b.ram && split_layers().0 > 0 {
         let (layers, frac) = split_layers();
         let secs = per_token * frac / (BANDWIDTH_EFFICIENCY * b.gpu_bw_gbs * 1e9)
@@ -520,7 +598,9 @@ pub fn launch_settings(model: &ModelSpec, quant: &str, b: &Budget) -> (u32, u32)
     if base_fit.gpu_layers == 0 {
         return (base.ctx, 0);
     }
-    for ctx in [32_768u32, 16_384] {
+    // On big cards, windows up to 128K while the model stays wholly on them.
+    let windows: &[u32] = if b.vram >= crate::perf::BIG_CARDS { &[131_072, 65_536, 32_768, 16_384] } else { &[32_768, 16_384] };
+    for &ctx in windows {
         if ctx > model.arch.max_ctx || ctx <= base.ctx {
             continue;
         }
@@ -632,7 +712,8 @@ pub fn hints(catalog: &Catalog, b: &Budget, installed: &dyn Fn(&str) -> bool) ->
 
     let mut ram = Vec::new();
     let mut already = 0;
-    for extra in [8u64, 16, 32] {
+    // Up to the big upgrades that open the largest models (they need 128 GB and more).
+    for extra in [8u64, 16, 32, 64, 128, 256] {
         let bigger = Budget { ram: b.ram + extra * GIB, ..*b };
         let unlocks = cant_run
             .iter()
@@ -659,11 +740,49 @@ mod tests {
     fn budget(vram_gb: u64, ram_gb: u64) -> Budget {
         Budget {
             vram: vram_gb * GIB,
+            vram_card: vram_gb * GIB,
+            cards: (vram_gb > 0) as u32,
             ram: ram_gb * GIB,
             disk: 500 * GIB,
             gpu_bw_gbs: if vram_gb > 0 { 380.0 } else { 0.0 },
+            gpu_bw_card: if vram_gb > 0 { 380.0 } else { 0.0 },
             cpu_bw_gbs: 50.0,
         }
+    }
+
+    #[test]
+    fn a_model_that_fits_the_big_card_stays_on_it() {
+        // A 4070 Ti Super (16 GB) beside a 1080 Ti (11 GB).
+        let usable = |gb: u64| gb * GIB - gb * GIB / 10;
+        let b = Budget { vram: usable(16) + usable(11), vram_card: usable(16), cards: 2, ram: 24 * GIB, disk: 500 * GIB, gpu_bw_gbs: 380.0, gpu_bw_card: 500.0, cpu_bw_gbs: 50.0 };
+        let l = crate::perf::Limits {
+            mode: crate::perf::Mode::Balanced,
+            on_battery: false,
+            threads: 8,
+            vram_bytes: b.vram,
+            ram_bytes: b.ram,
+            low_priority: false,
+            idle_unload_mins: 10,
+            max_ctx: 131_072,
+            gpu_temp_limit: 87.0,
+            cpu_temp_limit: 95.0,
+            heat_level: 0,
+            gpu_share: 1.0,
+        };
+        let c = catalog();
+        let small = c.model("qwen3.5-9b").unwrap();
+        let big = c.model("qwen3.8-27b").unwrap();
+        assert!(fits_biggest_card(small, "Q4_K_M", &b, &l, 16_384), "a 9B model stays on the 16 GB card");
+        assert!(!fits_biggest_card(big, "UD-Q6_K", &b, &l, 16_384), "a 27B at Q6 needs both");
+        let v = big.variant("UD-Q6_K").unwrap();
+        assert_eq!(fit_variant(big, v, 16_384, &b).placement, Some(Placement::Gpu), "and runs on the two together");
+        // On the big card alone, at its speed.
+        let fast = fit_variant(small, small.variant("Q4_K_M").unwrap(), 16_384, &b).est_tps;
+        let slow = fit_variant(big, v, 16_384, &b).est_tps;
+        assert!(fast > slow * 2.0, "{fast} {slow}");
+        // Turbo's share of all the cards is that share of each.
+        let half = b.with_limits(&crate::perf::Limits { vram_bytes: b.vram / 2, ..l });
+        assert!(half.vram_card.abs_diff(b.vram_card / 2) < MIB);
     }
 
     fn catalog() -> Catalog {
@@ -688,10 +807,11 @@ mod tests {
         let c = catalog();
         let best = |vram, ram| best_for(&c.models, &pc(vram, ram)).unwrap();
         // The newest generation where it fits: Qwen3.5 9B beats Qwen3 14B
-        // on the same 12 GB card, and Qwen3.6 27B takes a 24 GB one.
+        // on the same 12 GB card, and Qwen3.8 27B (at 13 to 14 GB) takes a
+        // 16 GB one and up.
         assert_eq!(best(12, 32), "qwen3.5-9b");
-        assert_eq!(best(16, 32), "qwen3.5-9b");
-        assert_eq!(best(24, 64), "qwen3.6-27b");
+        assert_eq!(best(16, 32), "qwen3.8-27b");
+        assert_eq!(best(24, 64), "qwen3.8-27b");
         assert_eq!(best(8, 16), "qwen3.5-9b");
         assert_eq!(best(6, 16), "qwen3.5-4b");
         // No graphics card: something comfortable on the processor, never a big model.

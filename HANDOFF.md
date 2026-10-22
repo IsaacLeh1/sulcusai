@@ -1550,7 +1550,42 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
-## Not released yet: rap, sung intros, every style
+## Not released yet (for 0.9.28): songs that sound less made, a listener, the song view, Auto, big PCs
+
+Asks: breaths sound semi-robotic, a tell of AI music; get music very hard to tell it's generated; a trained listener that reviews a song and feeds back to remake it; a MIDI section showing how the music is built, with right-click "edit with model" on a section; models of every size filtered by what the PC runs, in every area; several small models in harmony with an Auto mode; my brother's 4070 Ti Super plus 1080 Ti; a damaged model file on D: gave the engine's raw error.
+
+**Songs as the model makes them, at 320 kbps** (`music::MP3_KBPS`, the engine's `mp3_bitrate`; it was 128).
+- Tried and taken out: a "finish" that separated the voice (HTDemucs), remade its breaths as plain noise (the breaths' buzz measured 0.18-0.47 against 0.08 for plain noise; 0.07-0.22 remade), brought a buried voice up to 2.5 dB, held peaks with a limiter (ACE-Step's float output goes 10% past full scale on hits; its MP3s clip them) and made its own 320 kbps MP3. Words heard didn't change, but I listened to six songs each way and preferred the songs as made every time: high-pitched hits on many notes, a feedback-like feel, a voice that sounded more buried, background notes slightly off, and brief dips where everything went quiet (each remade breath swapped out the separated voice's band bleed). The code is in `C:\dev\tools\wip-backup\finish-rejected.rs`. Any change to a song's sound needs to win a listen first; a cleaner separator (MelBand-RoFormer, MIT) is untried.
+- Also learnt: louder reads as fuller to me (a fixed -14 LUFS sounded smaller than the engine's -11).
+- Part-by-part songs (lego) don't work in acestep.cpp: with or without guidance, the planning model or a region, the output was the source back. The existing "layer the harmonies afterwards" step probably does nothing either.
+- SONICS (an AI-song detector, MIT) scored ACE-Step songs 0.1-0.3 "AI-made": trained on Suno and Udio, it doesn't carry over. Audiobox Aesthetics (CC-BY) told models apart (SFT Turbo best) but not small changes; neither is in the app.
+
+**The listener** (`media/listen.rs`; op `listen`, the Studio's "Listen to it"):
+- Whisper's own program (`speech::transcribe_song`), not the server: the server's Silero voice detector dropped the singing over the band (0 of 47 words; the program heard 29 of 47).
+- Lyric lines are matched to Whisper's timed lines in order, words used up as they match (so a chorus sung twice is found twice); contractions count as their full words. Lines under half heard become padded `unclear` stretches.
+- "Make the unclear parts again" (op `remake`): each stretch repainted in turn with "clear lead vocals upfront, crisp diction", the steps between hidden, then listened to again; a remake that isn't clearer says so and both stay.
+
+**The song view** (`media/notes.rs`, `media/songmap.rs`, `SongView.tsx`; op `map`, "See how it's built"):
+- HTDemucs (MIT, ONNX, 166 MB, `MediaCatalog::separator`, `media/stems.rs`) gives the four parts, only read; Basic Pitch (Spotify, Apache-2.0, 230 KB ONNX, `note_reader`) reads the voice, the other instruments and the bass (its note creation and "melodia trick" ported); drums are onsets in three bands, a hit counted for the band whose sound leads (kick, snare, hi-hat).
+- Sections come from the review's line times (listened for first if needed): runs of lines under one tag, the band alone over 4 s named Intro/Instrumental/Outro, and a section whose last lines weren't heard runs on.
+- Right-click a section: Edit with model (repaint that span with the words added to the description), Make it again, Delete (cut in the window with 20 ms fades, saved with `media_add`, which now takes lyrics), Add a section after (silence spliced in, then repainted). Save as MIDI (`media_song_midi`, format 1, a track a part, drums on channel 10).
+- A real one-minute song mapped in 36 s (debug build): 145 voice notes, 658 other, 57 bass, 151 drum hits.
+- It's an editor (asked for: "feel like Logic Pro… undo and redo"): select, drag (time and pitch; drums by row), stretch, add (double-click), delete, zoom, a lane opened tall; history of 200 edits (`past`/`future`, Ctrl+Z/Y); a drag carries its own selection and result (state from the mousedown isn't there yet at the first move). Notes play on a small Web Audio instrument (`NotePlayer`: triangle voice, sine instruments, filtered saw bass, synthesized kick/snare/hat), alone, beside the song or not at all, each part on or off. "Keep note changes" stores the map (`media_song_map_save`); MIDI saves the map as edited.
+- Editing notes never changes the song's audio: they're read from it. AI edits from the view (`then_map`) remake the section with the music model and map the new version in the same job. Cutting a section shifts the notes and sections after it in the window, no new reading needed.
+- Asked next: a Logic-style Compose mode (AI writes the parts as MIDI, sampled instruments play them, every note editable, "Make it real" with ACE-Step cover for vocals and a real-recording sound). Not started.
+
+**Auto** (`router.rs`, `Settings::auto_model`, on by default; the model menu in the bottom bar): a message on a chat using the default model is classified (code, writing, languages, else general). Another installed, rated model at least 2 points better at it that writes 10+ tokens/s here answers that message (the loaded one is kept when it's within a point). Not with pictures, not when the chat's model was picked, and a tool-using model only hands over to another.
+
+**Big PCs:**
+- 15 more chat models up to 1T parameters; Qwen-Image 2.1 (Q8, 260 s a picture on the 5070, perfect text), FLUX.2 [dev] (non-commercial), Wan 2.2 A14B (high- and low-noise experts, `--high-noise-*`), Whisper large-v3. Media rows the PC can't run show why under "Show models this PC can't run".
+- Several cards: `Budget` adds up every card of the biggest one's maker (`hardware::model_cards`), with `vram_card`, `gpu_bw_card` and `cards`. `plan_with` keeps a model on the biggest card alone when it fits there at its usual window (`fits_biggest_card`; spreading over a slower card only slows it) and sets `Tuning::spread` otherwise (`--device` with every card). Pictures, video, speech and music always run on the biggest card (`dedicated_indexes` pins it).
+- Windows up to 128K when the cards hold 20 GB or more.
+
+**Faster replies:** every chat model starts with `--spec-type ngram-simple` (n-gram lookup from the conversation, no extra model). Measured on a code edit and open writing (scratchpad `spec_speed.py`, llama-server directly): Qwen3 4B 162 to 203 and 157 to 158 tokens/s, Qwen3.5 9B 88 to 105 and 86.5 to 87, gpt-oss 20B 29 to 47 and 30 to 29. `ngram-mod` helped less, `ngram-cache` made both much slower (14 tokens/s on the edit). It runs with a picture reader loaded too. None of the installed GGUFs carry MTP layers; a separate draft model would be a download, not tried.
+
+**Damaged model files:** `model_file_problem` (missing, a different size, or not starting with "GGUF") is checked before a model loads and shown on its card in Models with "Download again" (`repair_model`).
+
+## 0.9.26 (2026-10-22): rap, sung intros, every style
 
 Ask: rap didn't work at all; make sure music can make a whole variety of songs; intros never had lyrics, just a long instrumental opening.
 - **Why rap failed:** the writer wrote rap as short sung lines (six words, 7.5 s each) under the singing word cap. Whisper heard 0.4 words a second, and the delivery came out half-sung.
