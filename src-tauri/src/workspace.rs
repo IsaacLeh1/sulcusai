@@ -17,10 +17,11 @@ pub fn desktop(state: &AppState) -> Option<PathBuf> {
     state.app.get().and_then(|a| a.path().desktop_dir().ok()).or_else(|| std::env::var_os("USERPROFILE").map(|h| PathBuf::from(h).join("Desktop")))
 }
 
-/// Shares a folder with the assistant (making it first when `create`, inside
-/// a folder that exists): refuses what `sandbox::refuse_reason` refuses and
-/// names that clash. Returns it as shared.
-pub fn share_folder(state: &AppState, path: &Path, allow_system: bool, create: bool) -> Result<String, String> {
+/// Shares a folder with the assistant, in one chat (`chat`) or every chat
+/// (None), making it first when `create` (inside a folder that exists):
+/// refuses what `sandbox::refuse_reason` refuses and names that clash with
+/// a folder the same chats can use. Returns it as shared.
+pub fn share_folder(state: &AppState, path: &Path, allow_system: bool, create: bool, chat: Option<&str>) -> Result<String, String> {
     let made = create && !path.exists();
     if made {
         std::fs::create_dir(path).map_err(|e| format!("Couldn't make that folder ({e})."))?;
@@ -35,19 +36,61 @@ pub fn share_folder(state: &AppState, path: &Path, allow_system: bool, create: b
     let canonical = dunce::canonicalize(path).map_err(|e| e.to_string())?;
     let shown = canonical.display().to_string();
     let conn = state.db.lock().unwrap();
-    if db::folders(&conn).iter().any(|f| f.eq_ignore_ascii_case(&shown)) {
+    // What the same chats can use already: every chat's folders, and this
+    // chat's own (for every chat, any chat's own could clash).
+    let mut seen = db::folders(&conn);
+    match chat {
+        Some(id) => seen.extend(db::chat_shared_folders(&conn, id)),
+        None => seen.extend(all_chat_folders(&conn)),
+    }
+    let everywhere = db::folders(&conn).iter().any(|f| f.eq_ignore_ascii_case(&shown));
+    if everywhere || chat.is_some_and(|id| db::chat_shared_folders(&conn, id).iter().any(|f| f.eq_ignore_ascii_case(&shown))) {
         return Ok(shown);
     }
     let name = canonical.file_name().map(|n| n.to_string_lossy().to_lowercase());
-    let clash = db::folders(&conn).into_iter().any(|f| {
-        Path::new(&f).file_name().map(|n| n.to_string_lossy().to_lowercase()) == name && !f.eq_ignore_ascii_case(&shown)
-    });
+    let clash = seen.into_iter().any(|f| Path::new(&f).file_name().map(|n| n.to_string_lossy().to_lowercase()) == name && !f.eq_ignore_ascii_case(&shown));
     if clash {
         return Err("Another shared folder already has that name. Rename one of them so the assistant can tell them apart.".into());
     }
-    db::add_folder(&conn, &shown)?;
-    db::log_action(&conn, "privacy", "Shared a folder with the assistant");
+    match chat {
+        Some(id) => {
+            db::add_chat_folder(&conn, id, &shown)?;
+            db::log_action(&conn, "privacy", "Shared a folder with the assistant in one chat");
+        }
+        None => {
+            db::add_folder(&conn, &shown)?;
+            db::log_action(&conn, "privacy", "Shared a folder with the assistant in every chat");
+        }
+    }
     Ok(shown)
+}
+
+/// Every folder shared in one chat or another.
+fn all_chat_folders(conn: &rusqlite::Connection) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT DISTINCT path FROM chat_shared_folders") else { return Vec::new() };
+    stmt.query_map([], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
+/// Folders the assistant asked for that the person let every chat use (by
+/// the request's id); the rest are shared in the asking chat only.
+static FOLDER_EVERYWHERE: LazyLock<Mutex<std::collections::HashSet<String>>> = LazyLock::new(Default::default);
+
+/// Whether the folder the assistant asked for goes to every chat.
+pub fn shared_everywhere(call_id: &str) -> bool {
+    FOLDER_EVERYWHERE.lock().unwrap().remove(call_id)
+}
+
+/// The person ticked (or unticked) "every chat" on the assistant's folder request.
+#[tauri::command(async)]
+pub fn folder_for_every_chat(state: AppStateRef, call_id: String, on: bool) -> Result<(), String> {
+    state.cipher()?;
+    let mut set = FOLDER_EVERYWHERE.lock().unwrap();
+    if on {
+        set.insert(call_id);
+    } else {
+        set.remove(&call_id);
+    }
+    Ok(())
 }
 
 /// Folders the assistant asked for (by the request's id), changed if the
@@ -124,7 +167,7 @@ pub fn set_desktop_access(state: AppStateRef, on: bool) -> Result<DesktopAccess,
                 app.emit("features:changed", serde_json::json!({})).ok();
             }
         }
-        share_folder(&state, &d, false, false)?;
+        share_folder(&state, &d, false, false, None)?;
         state.log("privacy", "Let the assistant use anything on the Desktop");
     } else {
         let shown = dunce::canonicalize(&d).map(|p| p.display().to_string()).unwrap_or_default();
@@ -139,22 +182,53 @@ pub struct Folder {
     path: String,
     name: String,
     exists: bool,
+    /// Who can use it: "chat" (this chat only), "project" (the chat's
+    /// project's) or "all" (every chat).
+    scope: &'static str,
 }
 
+/// The folders a chat can use (its own, its project's, then every chat's),
+/// or with no chat, the ones every chat can use.
 #[tauri::command(async)]
-pub fn list_folders(state: AppStateRef) -> Result<Vec<Folder>, String> {
-    state.cipher()?;
-    Ok(db::folders(&state.db.lock().unwrap())
+pub fn list_folders(state: AppStateRef, chat_id: Option<String>) -> Result<Vec<Folder>, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut list: Vec<(String, &'static str)> = Vec::new();
+    if let Some(chat) = chat_id.as_deref().and_then(|id| db::chat(&conn, &c, id)) {
+        list.extend(db::chat_shared_folders(&conn, &chat.id).into_iter().map(|p| (p, "chat")));
+        if let Some(pid) = &chat.project_id {
+            list.extend(crate::projects::folders(&conn, pid).into_iter().map(|p| (p, "project")));
+        }
+    }
+    for p in db::folders(&conn) {
+        list.retain(|(q, _)| !q.eq_ignore_ascii_case(&p));
+        list.push((p, "all"));
+    }
+    Ok(list
         .into_iter()
-        .map(|p| {
+        .map(|(p, scope)| {
             let path = Path::new(&p);
-            Folder {
-                name: path.file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().to_string()),
-                exists: path.is_dir(),
-                path: p,
-            }
+            Folder { name: path.file_name().map_or_else(|| p.clone(), |n| n.to_string_lossy().to_string()), exists: path.is_dir(), path: p, scope }
         })
         .collect())
+}
+
+/// Lets every chat use a folder shared in one chat, or makes one every chat
+/// had this chat's alone.
+#[tauri::command(async)]
+pub fn set_folder_every_chat(state: AppStateRef, path: String, chat_id: String, on: bool) -> Result<(), String> {
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    if on {
+        db::add_folder(&conn, &path)?;
+        db::remove_chat_folder(&conn, &chat_id, &path)?;
+        db::log_action(&conn, "privacy", "Let every chat use a shared folder");
+    } else {
+        db::add_chat_folder(&conn, &chat_id, &path)?;
+        db::remove_folder(&conn, &path)?;
+        db::log_action(&conn, "privacy", "Kept a shared folder to one chat");
+    }
+    Ok(())
 }
 
 /// The warning to confirm before sharing this folder (one inside Windows,
@@ -167,19 +241,25 @@ pub fn folder_warning(state: AppStateRef, path: String) -> Option<String> {
     (!refused && sandbox::inside_system(p)).then(|| sandbox::SYSTEM_WARNING.to_string())
 }
 
-/// Shares a folder; `allow_system` once the person confirmed the warning.
+/// Shares a folder in one chat (`chat_id`) or every chat; `allow_system`
+/// once the person confirmed the warning.
 #[tauri::command(async)]
-pub fn add_folder(state: AppStateRef, path: String, allow_system: Option<bool>) -> Result<(), String> {
+pub fn add_folder(state: AppStateRef, path: String, allow_system: Option<bool>, chat_id: Option<String>) -> Result<(), String> {
     crate::features::require(&state, crate::features::Feature::Files)?;
     state.cipher()?;
-    share_folder(&state, Path::new(&path), allow_system.unwrap_or(false), false).map(|_| ())
+    share_folder(&state, Path::new(&path), allow_system.unwrap_or(false), false, chat_id.as_deref()).map(|_| ())
 }
 
+/// Stops sharing a folder: in this chat when it was shared there, else in every chat.
 #[tauri::command(async)]
-pub fn remove_folder(state: AppStateRef, path: String) -> Result<(), String> {
+pub fn remove_folder(state: AppStateRef, path: String, chat_id: Option<String>) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
-    db::remove_folder(&conn, &path)?;
+    let in_chat = chat_id.as_deref().is_some_and(|id| db::chat_shared_folders(&conn, id).iter().any(|f| f.eq_ignore_ascii_case(&path)));
+    match chat_id.as_deref().filter(|_| in_chat) {
+        Some(id) => db::remove_chat_folder(&conn, id, &path)?,
+        None => db::remove_folder(&conn, &path)?,
+    }
     db::log_action(&conn, "privacy", "Stopped sharing a folder with the assistant");
     Ok(())
 }

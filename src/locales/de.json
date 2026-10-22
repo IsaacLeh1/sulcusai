@@ -415,7 +415,6 @@
  "Fix grammar": "Grammatik korrigieren",
  "Folder": "Ordner",
  "Folder path copied.": "Ordnerpfad kopiert.",
- "Folder shared. The assistant can now work in it.": "Ordner freigegeben. Der Assistent kann jetzt darin arbeiten.",
  "Folders": "Ordner",
  "Folders the assistant can use": "Ordner, die der Assistent nutzen kann",
  "For example: keep answers short, use plain language, give examples.": "Zum Beispiel: Antworten kurz halten, einfache Sprache verwenden, Beispiele geben.",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "Der Assistent antwortet in der Sprache, in der du schreibst, egal was hier eingestellt ist.",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "Der Assistent surft im eigenen Browser von SulcusAI. Für DuckDuckGo oder einen anderen nicht aufgeführten Browser mach ihn zu deinem Windows-Standard und wähle „Windows-Standardbrowser“.",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "Der Assistent kann Word-, PDF-, Excel- (mit funktionierenden Formeln und Diagrammen) und PowerPoint-Dateien erstellen und lesen, in Ordnern, die du freigibst. Kein Office nötig. Braucht „Dateien und Programmieren“ für die Ordner.",
- "The assistant can read and change files only in these folders.": "Der Assistent kann nur in diesen Ordnern Dateien lesen und ändern.",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "Der Assistent kann nur in diesen Ordnern lesen, ändern und Befehle ausführen. Seine Änderungen lassen sich im Chat rückgängig machen; gelöschte Dateien landen im Papierkorb.",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "Der Assistent vergisst alles, was er sich gemerkt hat, in jedem Projekt. Das lässt sich nicht rückgängig machen.",
  "The audio device couldn't be opened.": "Das Audiogerät konnte nicht geöffnet werden.",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "Tippen durch Sprechen: die Mikrofon-Schaltfläche in einem Chat oder Strg+Umschalt+Leertaste.",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "unten legt fest, was online gehen darf. Die Web-Schaltfläche in einem Chat schaltet Web nur für diesen Chat ein.",
  "Nothing. To share a chat, open it and click Share at the top.": "Nichts. Um einen Chat zu teilen, öffne ihn und klicke oben auf Teilen.",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Gibt es den Ordner noch nicht, wird er angelegt. Der Assistent kann darin in jedem Chat Dinge öffnen, ändern und ausführen, bis du die Freigabe beendest (Ordner-Schaltfläche unter dem Nachrichtenfeld). Änderungen lassen sich im Chat rückgängig machen.",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "Noch nichts. Bitte um ein Bild oder hänge eines mit der Büroklammer-Schaltfläche an.",
  "None yet. Share a folder with the folder button and ask it to make something.": "Noch nichts. Teile einen Ordner mit der Ordner-Schaltfläche und bitte es, etwas zu erstellen.",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "Sperre einen Chat per Rechtsklick in der Seitenleiste und ein Modell mit seiner Schloss-Schaltfläche auf der Seite Modelle. Hier entfernte Chats werden auch auf deinen anderen synchronisierten PCs entfernt; Modelle lassen sich erneut herunterladen.",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "Begleitstimmen ohne Text",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "In ihrem Stil geschrieben und arrangiert und von einer Stimme derselben Art gesungen, nicht von ihrer eigenen. Du kannst es auch in die Beschreibung schreiben: „Sing wie Taylor Swift, ein Lied über Bären“.",
  "{n} sections, about {time} long": "{n} Abschnitte, etwa {time} lang",
- "Close harmony": "Enge Harmonie"
+ "Close harmony": "Enge Harmonie",
+ "Every chat": "Alle Chats",
+ "Folder shared in this chat. The assistant can now work in it.": "Ordner in diesem Chat freigegeben. Der Assistent kann jetzt darin arbeiten.",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Gibt es den Ordner noch nicht, wird er für dich angelegt. Der Assistent kann darin Dateien öffnen, ändern und ausführen, in diesem Chat (oder in allen Chats, wenn angehakt), bis du die Freigabe beendest (Ordner-Schaltfläche unter dem Nachrichtenfeld). Änderungen lassen sich im Chat rückgängig machen.",
+ "Let every chat use it, not only this one": "Alle Chats dürfen ihn nutzen, nicht nur dieser",
+ "Let every chat use this folder": "Alle Chats dürfen diesen Ordner nutzen",
+ "Stops sharing it in every chat": "Beendet die Freigabe in allen Chats",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "Der Assistent kann Dateien nur in diesen Ordnern lesen und ändern. Ein hier freigegebener Ordner gehört nur diesem Chat, außer du hakst „Alle Chats“ an.",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Diese sind für alle Chats freigegeben, die nur hineinschauen, wenn du danach fragst. Ein Ordner, der in einem Chat freigegeben wird (Ordner-Schaltfläche unter dem Nachrichtenfeld), bleibt in diesem Chat."
 }

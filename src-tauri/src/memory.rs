@@ -161,6 +161,29 @@ pub fn prompt_section(recalled: &[&Memory]) -> String {
     s
 }
 
+/// What it remembers, as a note on the newest message (models on this PC):
+/// empty when nothing is recalled.
+pub fn recall_note(recalled: &[&Memory]) -> String {
+    if recalled.is_empty() {
+        return String::new();
+    }
+    let list: Vec<String> = recalled.iter().map(|m| format!("- {}", m.content)).collect();
+    format!("\n\n(A note from SulcusAI, not the user: what you remember from earlier chats, in case it helps.\n{})", list.join("\n"))
+}
+
+/// The conversation with the note on the message `turn_id` (the request
+/// being answered). Earlier messages go as they were, so the engine reuses
+/// what it already read.
+pub fn with_recall(history: &[crate::db::Message], turn_id: &str, note: &str) -> Vec<crate::db::Message> {
+    let mut out = history.to_vec();
+    if !note.is_empty() {
+        if let Some(m) = out.iter_mut().find(|m| m.id == turn_id && m.role == "user") {
+            m.content.push_str(note);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,6 +251,23 @@ mod tests {
         assert_eq!(got[0].id, "5");
         // The newest few are always there for context.
         assert!(got.iter().any(|m| m.id == "1"));
+    }
+
+    /// On this PC, what it remembers goes on the newest message only: the
+    /// instructions stay the same from message to message.
+    #[test]
+    fn recalled_memories_ride_on_the_newest_message() {
+        let mem = m("1", "Has a dog named Biscuit.");
+        let note = recall_note(&[&mem]);
+        assert!(note.contains("not the user") && note.contains("- Has a dog named Biscuit."));
+        assert_eq!(recall_note(&[]), "");
+        assert!(!prompt_section(&[]).contains("Biscuit"));
+        let msg = |id: &str, role: &str, text: &str| crate::db::Message { id: id.into(), role: role.into(), content: text.into(), ..Default::default() };
+        let history = vec![msg("a", "user", "hi"), msg("b", "assistant", "hello"), msg("c", "user", "walk ideas?")];
+        let sent = with_recall(&history, "c", &note);
+        assert_eq!(sent[0].content, "hi", "earlier messages as they were");
+        assert!(sent[2].content.starts_with("walk ideas?") && sent[2].content.contains("Biscuit"));
+        assert_eq!(history[2].content, "walk ideas?", "what's saved is unchanged");
     }
 
     #[test]

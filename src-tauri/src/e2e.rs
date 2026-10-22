@@ -367,12 +367,55 @@ async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
     let log = std::env::temp_dir().join(format!("sulcusai-e2e-engine-{}.log", uuid::Uuid::new_v4().simple()));
     let mut eng = engine::Engine::default();
     let launch = engine::LaunchSpec { exe: &exe, model_path: &gguf, model_id: "test-agent", quant: "Q4_K_M", ctx, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
-    let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), kv_q8: false }, None).await.unwrap();
+    let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), kv_q8: false, think_budget: None }, None).await.unwrap();
     if name.to_lowercase().contains("gpt-oss") {
         let effort = crate::advanced::DEFAULT_REASONING;
         ep.extra = serde_json::json!({ "reasoning_effort": effort, "chat_template_kwargs": { "reasoning_effort": effort }, "max_tokens": (ctx / 2).clamp(4096, 16_384) });
     }
     (eng, ep, name)
+}
+
+/// A thinking model (Qwen3.5 9B, installed) asked a puzzle with a 256-token
+/// thinking budget and with none: with the budget it stops thinking, says
+/// so, and still answers. Prints both, with their times.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_thinking_stops_at_its_budget() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let hw = hardware::detect(&real.models);
+    let budget = Budget::from_hardware(&hw);
+    let cat = Catalog::bundled();
+    let spec = cat.model("qwen3.5-9b").unwrap();
+    let model = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let exe = engine::installed_server(&real, &cat.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let log = std::env::temp_dir().join(format!("sulcusai-e2e-engine-{}.log", uuid::Uuid::new_v4().simple()));
+    let ask = serde_json::json!({
+        "messages": [{ "role": "user", "content": "A bat and a ball cost $1.10 together. The bat costs $1.00 more than the ball. Then a second bat costs twice the first ball plus 40 cents. Work out every price carefully, check it twice, then give the total of all three." }],
+        "max_tokens": 6000,
+        "chat_template_kwargs": { "enable_thinking": true },
+    });
+    let mut thought = Vec::new();
+    for think in [Some(256), None] {
+        let mut eng = engine::Engine::default();
+        let launch = engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
+        let ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: None, kv_q8: false, think_budget: think }, None).await.unwrap();
+        let t = std::time::Instant::now();
+        let v: serde_json::Value = crate::net::local_client().post(ep.url("/v1/chat/completions")).bearer_auth(&ep.key).json(&ask).send().await.unwrap().json().await.unwrap();
+        let reasoning = v.pointer("/choices/0/message/reasoning_content").and_then(|r| r.as_str()).unwrap_or_default().to_string();
+        let answer = v.pointer("/choices/0/message/content").and_then(|r| r.as_str()).unwrap_or_default().to_string();
+        let tokens = v.pointer("/usage/completion_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+        println!(
+            "budget {think:?}: {:.1}s, {tokens} tokens, {} words of thinking (ends {:?})\n  answer: {}",
+            t.elapsed().as_secs_f64(),
+            reasoning.split_whitespace().count(),
+            reasoning.chars().rev().take(80).collect::<String>().chars().rev().collect::<String>(),
+            answer.chars().take(300).collect::<String>().replace('\n', " ")
+        );
+        assert!(!answer.trim().is_empty(), "it answered");
+        thought.push(reasoning.split_whitespace().count());
+        eng.stop().await;
+    }
+    assert!(thought[0] < 300 && thought[0] < thought[1], "the budget kept thinking short: {thought:?}");
 }
 
 /// Everything the agent did in a chat, for reading: each message with its
@@ -450,6 +493,45 @@ async fn e2e_agent_finds_runs_and_reports() {
     assert!(tools.iter().any(|t| t == "find_files"), "found it by name: {tools:?}");
     assert!(tools.iter().any(|t| t == "run_command"), "ran it: {tools:?}");
     assert!(reply.contains(&format!("SULCUS-OK-{id}")), "reported what it printed: {reply}");
+}
+
+/// Asked to delete files in the chat's own folder, the model calls the tool
+/// and the card asks (not a question in its reply), and it leaves alone a
+/// folder every chat shares, with another project's handoff in it (a chat
+/// about a gun's slider read the candle chart's). See `test_model`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_agent_deletes_through_the_card_and_skips_other_work() {
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let mine = std::env::temp_dir().join(format!("sulcusai-e2e-logs-{id}"));
+    let other = std::env::temp_dir().join(format!("sulcusai-e2e-candles-{id}"));
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    for f in ["old1.log", "old2.log"] {
+        std::fs::write(mine.join(f), "old\n").unwrap();
+    }
+    std::fs::write(mine.join("keep.txt"), "keep\n").unwrap();
+    std::fs::write(other.join("HANDOFF.md"), "# Candle chart\nNext: add volume bars.\n").unwrap();
+    let (mine, other) = (dunce::canonicalize(&mine).unwrap(), dunce::canonicalize(&other).unwrap());
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    crate::db::add_chat_folder(&state.db.lock().unwrap(), &chat.id, &mine.display().to_string()).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &other.display().to_string()).unwrap();
+    let (watch, asked) = watch_approvals(&state);
+    let started = std::time::Instant::now();
+    let reply = say(&state, &ep, &cipher, &chat.id, "Delete the .log files in my folder, keep everything else.").await;
+    watch.abort();
+    let (text, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: delete through the card ({:.0}s)", started.elapsed().as_secs_f64()));
+    let asked = asked.lock().unwrap().clone();
+    let gone = !mine.join("old1.log").exists() && !mine.join("old2.log").exists();
+    let _ = std::fs::remove_dir_all(&mine);
+    let _ = std::fs::remove_dir_all(&other);
+    let other_name = other.file_name().unwrap().to_string_lossy().to_string();
+    println!("asked: {asked:?}\nreply: {reply}");
+    assert!(gone, "the .log files are gone: {tools:?}");
+    assert!(!asked.is_empty(), "deleting showed the card");
+    assert!(!text.lines().filter(|l| l.contains("->")).any(|l| l.contains(&other_name)), "it left the other project's folder alone");
 }
 
 /// Sending something off the PC asks first, in Auto mode, and a key going
@@ -1401,7 +1483,9 @@ async fn asking_for_a_folder_carries_on_in_the_same_reply() {
         let seen = seen.lock().unwrap().clone();
         assert!(seen[0].0.contains(&"request_folder".to_string()) && !seen[0].0.contains(&"write_file".to_string()), "no folder: only a way to ask");
         assert!(seen[0].1.contains("call request_folder"), "and it's told to ask instead of pasting code");
-        let shared = crate::db::folders(&state.db.lock().unwrap());
+        // Shared in this chat only: no other chat gets it.
+        let shared = crate::db::chat_shared_folders(&state.db.lock().unwrap(), &chat.id);
+        assert!(crate::db::folders(&state.db.lock().unwrap()).is_empty(), "not shared with every chat");
         if allow {
             assert!(shared.iter().any(|f| f.ends_with("chosen")) && !shared.iter().any(|f| f.ends_with("portfolio")), "the folder they picked is shared: {shared:?}");
             assert!(crate::features::is_on(&state.db.lock().unwrap(), crate::features::Feature::Files), "Files turned on with it");
@@ -1409,7 +1493,7 @@ async fn asking_for_a_folder_carries_on_in_the_same_reply() {
             assert!(seen[1].1.contains("chosen/"), "the instructions name the new folder");
             assert_eq!(std::fs::read_to_string(base.join("chosen").join("index.html")).unwrap(), "<h1>Hi</h1>");
             for f in shared {
-                crate::db::remove_folder(&state.db.lock().unwrap(), &f).unwrap();
+                crate::db::remove_chat_folder(&state.db.lock().unwrap(), &chat.id, &f).unwrap();
             }
             crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Files, false).unwrap();
         } else {

@@ -415,7 +415,6 @@
  "Fix grammar": "修正语法",
  "Folder": "文件夹",
  "Folder path copied.": "已复制文件夹路径。",
- "Folder shared. The assistant can now work in it.": "文件夹已共享。助手现在可以在其中工作。",
  "Folders": "文件夹",
  "Folders the assistant can use": "助手可以使用的文件夹",
  "For example: keep answers short, use plain language, give examples.": "例如：回答简短、用通俗的语言、举例说明。",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "无论此处如何设置，助手都会用你书写的语言回答。",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "助手在 SulcusAI 自带的浏览器中浏览。如需使用 DuckDuckGo 或其他未列出的浏览器，请将其设为 Windows 默认浏览器，然后选择“Windows 默认浏览器”。",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "助手可以在你共享的文件夹中创建和读取 Word、PDF、Excel（含可用的公式和图表）以及 PowerPoint 文件。无需 Office。文件夹功能需要“文件和编程”。",
- "The assistant can read and change files only in these folders.": "助手只能在这些文件夹中读取和更改文件。",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "助手只能在这些文件夹内读取、更改文件和运行命令。它所做的更改可以在聊天中撤销；删除的文件会进入回收站。",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "助手将忘记它在所有项目中记住的一切。此操作无法撤销。",
  "The audio device couldn't be opened.": "无法打开音频设备。",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "用说话代替打字：聊天中的麦克风按钮，或按 Ctrl+Shift+Space。",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "开关控制哪些内容可以联网。聊天中的网络按钮只为该聊天开启网络。",
  "Nothing. To share a chat, open it and click Share at the top.": "没有。要共享聊天，请打开它并点击顶部的“共享”。",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "如果文件夹还不存在，会为你创建。在你停止共享之前（消息框下方的文件夹按钮），助手可以在任何对话中打开、修改并运行其中的内容。更改可以在对话中撤销。",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "还没有。请求一张图片，或用回形针按钮附加一张。",
  "None yet. Share a folder with the folder button and ask it to make something.": "还没有。用文件夹按钮共享一个文件夹，然后让它做点东西。",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "在侧边栏右键点击聊天即可锁定它，在“模型”页面用锁按钮锁定模型。在这里移除的聊天也会从你其他同步的电脑上移除；模型可以重新下载。",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "无歌词的伴唱",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "按其风格作词编曲，由同类型的嗓音演唱，而不是本人的声音。也可以直接写在描述里：“像 Taylor Swift 那样唱，一首关于熊的歌”。",
  "{n} sections, about {time} long": "{n} 个段落，约 {time}",
- "Close harmony": "密集和声"
+ "Close harmony": "密集和声",
+ "Every chat": "所有聊天",
+ "Folder shared in this chat. The assistant can now work in it.": "已在此聊天中共享文件夹。助手现在可以在其中工作。",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "如果文件夹还不存在，会为你创建。在你停止共享之前（消息框下方的文件夹按钮），助手可以在此聊天中（勾选后在所有聊天中）打开、修改和运行其中的内容。更改可以在聊天中撤销。",
+ "Let every chat use it, not only this one": "让所有聊天都能使用，而不只是这个",
+ "Let every chat use this folder": "让所有聊天都能使用此文件夹",
+ "Stops sharing it in every chat": "在所有聊天中停止共享",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "助手只能在这些文件夹中读取和修改文件。在这里共享的文件夹只属于此聊天，除非你勾选“所有聊天”。",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "这些文件夹与所有聊天共享，但只有当你问到它们时，聊天才会查看。从聊天中共享的文件夹（消息框下方的文件夹按钮）只留在那个聊天中。"
 }

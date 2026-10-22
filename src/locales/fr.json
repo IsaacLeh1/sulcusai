@@ -415,7 +415,6 @@
  "Fix grammar": "Corriger la grammaire",
  "Folder": "Dossier",
  "Folder path copied.": "Chemin du dossier copié.",
- "Folder shared. The assistant can now work in it.": "Dossier partagé. L'assistant peut maintenant y travailler.",
  "Folders": "Dossiers",
  "Folders the assistant can use": "Dossiers que l'assistant peut utiliser",
  "For example: keep answers short, use plain language, give examples.": "Par exemple : réponses courtes, langage simple, donner des exemples.",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "L'assistant répond dans la langue dans laquelle vous écrivez, quel que soit ce réglage.",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "L'assistant navigue dans le navigateur de SulcusAI. Pour DuckDuckGo ou un autre navigateur absent de la liste, définissez-le comme navigateur par défaut de Windows et choisissez « Navigateur par défaut de Windows ».",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "L'assistant peut créer des fichiers Word, PDF, Excel (avec des formules et des graphiques fonctionnels) et PowerPoint, et les lire, dans les dossiers que vous partagez. Office n'est pas nécessaire. Nécessite Fichiers et code pour les dossiers.",
- "The assistant can read and change files only in these folders.": "L'assistant ne peut lire et modifier des fichiers que dans ces dossiers.",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "L'assistant ne peut lire, modifier et exécuter des commandes qu'à l'intérieur de ces dossiers. Ses modifications peuvent être annulées depuis la discussion ; les fichiers supprimés vont dans la Corbeille.",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "L'assistant oubliera tout ce qu'il a retenu, dans tous les projets. Cette action est irréversible.",
  "The audio device couldn't be opened.": "Impossible d'ouvrir le périphérique audio.",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "Écrivez en parlant : le bouton micro d'une discussion, ou Ctrl+Shift+Space.",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "en bas contrôle ce qui peut passer en ligne. Le bouton Web d'une discussion active le Web pour cette discussion uniquement.",
  "Nothing. To share a chat, open it and click Share at the top.": "Rien. Pour partager une discussion, ouvrez-la et cliquez sur Partager en haut.",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Si le dossier n'existe pas encore, il est créé. L'assistant peut y ouvrir, modifier et exécuter des choses, dans toute discussion, jusqu'à ce que vous arrêtiez de le partager (le bouton dossier sous la zone de message). Les modifications peuvent être annulées depuis la discussion.",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "Rien pour l'instant. Demandez une image, ou joignez-en une avec le bouton trombone.",
  "None yet. Share a folder with the folder button and ask it to make something.": "Rien pour l'instant. Partagez un dossier avec le bouton dossier et demandez-lui de créer quelque chose.",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "Verrouillez un chat par clic droit dans la barre latérale, et un modèle avec son bouton cadenas sur la page Modèles. Les chats retirés ici le sont aussi sur vos autres PC synchronisés ; les modèles peuvent être retéléchargés.",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "Chœurs sans paroles",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "Écrite et arrangée à sa manière, et chantée par une voix du même type, pas par sa propre voix. Vous pouvez aussi l’écrire dans la description : « Chante comme Taylor Swift, une chanson sur les ours ».",
  "{n} sections, about {time} long": "{n} parties, environ {time}",
- "Close harmony": "Harmonie serrée"
+ "Close harmony": "Harmonie serrée",
+ "Every chat": "Toutes les discussions",
+ "Folder shared in this chat. The assistant can now work in it.": "Dossier partagé dans cette discussion. L'assistant peut maintenant y travailler.",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Si le dossier n'existe pas encore, il est créé pour vous. L'assistant peut y ouvrir, modifier et lancer des choses, dans cette discussion (ou dans toutes, si c'est coché), jusqu'à ce que vous arrêtiez de le partager (le bouton dossier sous la zone de message). Les modifications peuvent être annulées depuis la discussion.",
+ "Let every chat use it, not only this one": "Toutes les discussions peuvent l'utiliser, pas seulement celle-ci",
+ "Let every chat use this folder": "Toutes les discussions peuvent utiliser ce dossier",
+ "Stops sharing it in every chat": "Arrête de le partager dans toutes les discussions",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "L'assistant ne peut lire et modifier des fichiers que dans ces dossiers. Un dossier partagé ici appartient à cette discussion seule, sauf si vous cochez Toutes les discussions.",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Ils sont partagés avec toutes les discussions, qui n'y regardent que quand vous posez une question à leur sujet. Un dossier partagé depuis une discussion (le bouton dossier sous la zone de message) reste dans cette discussion."
 }

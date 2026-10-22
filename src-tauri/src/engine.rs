@@ -540,7 +540,13 @@ pub struct Tuning {
     /// K and V kept as q8_0 (`catalog::with_q8_cache`): about half the
     /// memory, so the whole model or a bigger window fits the card.
     pub kv_q8: bool,
+    /// Most tokens a reply may think before it's told to answer
+    /// (`--reasoning-budget`): `think_budget` in lib.rs. None: no limit.
+    pub think_budget: Option<u32>,
 }
+
+/// Said at the end of thinking that ran out of its budget.
+const THINK_BUDGET_MESSAGE: &str = "\n\nI've thought about this enough. Time to answer.\n";
 
 struct Running {
     child: Child,
@@ -559,6 +565,7 @@ struct Running {
     lora: Option<PathBuf>,
     cpu_moe: Option<u32>,
     kv_q8: bool,
+    think_budget: Option<u32>,
     /// Where it really runs, from the engine's log once it loaded.
     placed: Placed,
     /// The main graphics card when it started (`hardware::dedicated`): picking
@@ -725,6 +732,7 @@ impl Engine {
                     && r.lora.as_deref() == spec.lora
                     && r.cpu_moe == tuning.cpu_moe
                     && r.kv_q8 == tuning.kv_q8
+                    && r.think_budget == tuning.think_budget
                     && r.card == main_card()
             })
     }
@@ -798,6 +806,10 @@ impl Engine {
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })
+            .args(match tuning.think_budget {
+                Some(n) => vec!["--reasoning-budget".to_string(), n.to_string(), "--reasoning-budget-message".to_string(), THINK_BUDGET_MESSAGE.to_string()],
+                None => vec![],
+            })
             // With the model on the card, its file isn't also kept in system
             // memory: on Windows llama.cpp keeps a mapped file in memory after
             // copying it to the card, so RAM filled by the model's size for
@@ -840,6 +852,7 @@ impl Engine {
             lora: spec.lora.map(Path::to_path_buf),
             cpu_moe: tuning.cpu_moe,
             kv_q8: tuning.kv_q8,
+            think_budget: tuning.think_budget,
             placed: Placed::default(),
             card: main_card(),
         });
@@ -847,7 +860,7 @@ impl Engine {
         let endpoint = Endpoint { port, key, ctx: spec.ctx, extra: serde_json::Value::Null, cloud: None };
         let started = Instant::now();
         let what = format!(
-            "{} ({}, {} context, {}{}{}{})",
+            "{} ({}, {} context, {}{}{}{}{})",
             spec.model_id,
             spec.quant,
             spec.ctx,
@@ -856,6 +869,7 @@ impl Engine {
                 None => format!("planned {} layers on the graphics card", spec.gpu_layers),
             },
             if tuning.kv_q8 { ", compressed cache" } else { "" },
+            tuning.think_budget.map(|n| format!(", thinking up to {n} tokens")).unwrap_or_default(),
             if devices.is_empty() { String::new() } else { format!(", device {}", devices.iter().map(|(id, name)| format!("{id} {name}")).collect::<Vec<_>>().join(",")) },
             if spec.mmproj.is_some() { ", sees pictures" } else { "" }
         );

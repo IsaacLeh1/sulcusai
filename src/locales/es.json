@@ -415,7 +415,6 @@
  "Fix grammar": "Corregir gramática",
  "Folder": "Carpeta",
  "Folder path copied.": "Ruta de la carpeta copiada.",
- "Folder shared. The assistant can now work in it.": "Carpeta compartida. El asistente ya puede trabajar en ella.",
  "Folders": "Carpetas",
  "Folders the assistant can use": "Carpetas que puede usar el asistente",
  "For example: keep answers short, use plain language, give examples.": "Por ejemplo: respuestas cortas, lenguaje sencillo, da ejemplos.",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "El asistente responde en el idioma en que escribes, sin importar lo que esté configurado aquí.",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "El asistente navega en el navegador propio de SulcusAI. Para DuckDuckGo u otro navegador que no aparezca, hazlo tu navegador predeterminado de Windows y elige “Navegador predeterminado de Windows”.",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "El asistente puede crear archivos de Word, PDF, Excel (con fórmulas y gráficos que funcionan) y PowerPoint, y leerlos, en las carpetas que compartas. No necesitas Office. Necesita Archivos y programación para las carpetas.",
- "The assistant can read and change files only in these folders.": "El asistente puede leer y cambiar archivos solo en estas carpetas.",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "El asistente puede leer, cambiar y ejecutar comandos solo dentro de estas carpetas. Los cambios que haga se pueden deshacer desde el chat; los archivos eliminados van a la Papelera de reciclaje.",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "El asistente olvidará todo lo que recordaba, en todos los proyectos. Esto no se puede deshacer.",
  "The audio device couldn't be opened.": "No se pudo abrir el dispositivo de audio.",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "Escribe hablando: el botón del micrófono de un chat, o Ctrl+Shift+Space.",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "de abajo controla qué puede conectarse a internet. El botón Web de un chat activa la web solo para ese chat.",
  "Nothing. To share a chat, open it and click Share at the top.": "Nada. Para compartir un chat, ábrelo y haz clic en Compartir arriba.",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Si la carpeta aún no existe, se crea. El asistente puede abrir, cambiar y ejecutar cosas en ella, en cualquier chat, hasta que dejes de compartirla (el botón de carpeta bajo el cuadro de mensaje). Los cambios se pueden deshacer desde el chat.",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "Nada todavía. Pide una imagen o adjunta una con el botón del clip.",
  "None yet. Share a folder with the folder button and ask it to make something.": "Nada todavía. Comparte una carpeta con el botón de carpeta y pídele que cree algo.",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "Bloquea un chat haciendo clic derecho en la barra lateral, y un modelo con su botón de candado en la página Modelos. Los chats que se quitan aquí también se quitan de tus otros PC sincronizados; los modelos se pueden volver a descargar.",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "Coros sin letra",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "Escrita y arreglada a su manera y cantada por una voz del mismo tipo, no por su propia voz. También puedes escribirlo en la descripción: «Canta como Taylor Swift, una canción sobre osos».",
  "{n} sections, about {time} long": "{n} secciones, unos {time}",
- "Close harmony": "Armonía cerrada"
+ "Close harmony": "Armonía cerrada",
+ "Every chat": "Todos los chats",
+ "Folder shared in this chat. The assistant can now work in it.": "Carpeta compartida en este chat. El asistente ya puede trabajar en ella.",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Si la carpeta aún no existe, se crea para ti. El asistente puede abrir, cambiar y ejecutar cosas en ella, en este chat (o en todos, si lo marcas), hasta que dejes de compartirla (el botón de carpeta bajo el cuadro de mensaje). Los cambios se pueden deshacer desde el chat.",
+ "Let every chat use it, not only this one": "Que todos los chats la usen, no solo este",
+ "Let every chat use this folder": "Que todos los chats usen esta carpeta",
+ "Stops sharing it in every chat": "Deja de compartirla en todos los chats",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "El asistente solo puede leer y cambiar archivos en estas carpetas. Una carpeta compartida aquí es solo de este chat, salvo que marques Todos los chats.",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Estas se comparten con todos los chats, que solo las miran cuando preguntas por ellas. Una carpeta compartida desde un chat (el botón de carpeta bajo el cuadro de mensaje) se queda en ese chat."
 }

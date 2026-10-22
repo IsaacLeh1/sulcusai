@@ -1018,6 +1018,8 @@ export interface Folder {
   path: string;
   name: string;
   exists: boolean;
+  /** Who can use it: this chat only, the chat's project, or every chat. */
+  scope: "chat" | "project" | "all";
 }
 
 export interface Message {
@@ -2263,11 +2265,18 @@ export const api = {
   /** The activity log, newest first; `since` in ms limits it to a period. */
   actions: (limit?: number, since?: number) => invoke<Action[]>("list_actions", { limit, since: since ?? null }),
   clearActions: () => invoke<void>("clear_actions"),
-  folders: () => invoke<Folder[]>("list_folders"),
-  addFolder: (path: string, allowSystem = false) => invoke<void>("add_folder", { path, allowSystem }),
+  /** The folders a chat can use, or with no chat, the ones every chat can. */
+  folders: (chatId: string | null = null) => invoke<Folder[]>("list_folders", { chatId }),
+  /** Shares a folder in one chat, or with no chat, in every chat. */
+  addFolder: (path: string, allowSystem = false, chatId: string | null = null) => invoke<void>("add_folder", { path, allowSystem, chatId }),
+  /** Lets every chat use a folder shared in this chat, or keeps one to this chat. */
+  setFolderEveryChat: (path: string, chatId: string, on: boolean) => invoke<void>("set_folder_every_chat", { path, chatId, on }),
+  /** The assistant's folder request: share it with every chat, not only the asking one. */
+  folderForEveryChat: (callId: string, on: boolean) => invoke<void>("folder_for_every_chat", { callId, on }),
   /** The warning to confirm before sharing this folder, if it needs one. */
   folderWarning: (path: string) => invoke<string | null>("folder_warning", { path }),
-  removeFolder: (path: string) => invoke<void>("remove_folder", { path }),
+  /** Stops sharing a folder: in this chat when it was shared there, else in every chat. */
+  removeFolder: (path: string, chatId: string | null = null) => invoke<void>("remove_folder", { path, chatId }),
   /** Picks another folder for the assistant's folder request. */
   chooseFolder: (callId: string, path: string) => invoke<void>("choose_folder", { callId, path }),
   saveChart: (path: string, svg: string) => invoke<void>("save_chart", { path, svg }),

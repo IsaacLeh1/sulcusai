@@ -961,7 +961,31 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
         }
         None => limits.threads,
     };
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8 }, budget: budget.with_limits(&limits) }
+    let est = spec.variant(quant).map_or(0.0, |v| catalog::fit_variant(spec, v, ctx, &budget.with_limits(&limits)).est_tps);
+    let think_budget = think_budget(state, spec, est);
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget }, budget: budget.with_limits(&limits) }
+}
+
+/// Seconds a reply may think before it's told to answer. Qwen3.6 27B, a
+/// little too big for a 16 GB card, thought for minutes at a time: up to
+/// 16K tokens a reply, at about 10 tokens a second.
+const THINK_SECS: f64 = 75.0;
+
+/// The most tokens a thinking model may think in a reply: about
+/// `THINK_SECS` at its measured speed (else the estimate), 1K to 8K. None
+/// when it doesn't think, or thinking is set on (no limit) or off.
+fn think_budget(state: &AppState, spec: &ModelSpec, est_tps: f64) -> Option<u32> {
+    let setting = advanced::get(state).processing.thinking;
+    if setting != advanced::Thinking::Auto || !thinks(spec, setting) {
+        return None;
+    }
+    let measured = db::installed_model(&state.db.lock().unwrap(), &spec.id).and_then(|m| m.tps).filter(|t| *t > 0.0);
+    think_tokens(measured.unwrap_or(est_tps))
+}
+
+/// `THINK_SECS` of thinking at this speed, 1K to 8K tokens.
+fn think_tokens(tps: f64) -> Option<u32> {
+    (tps > 0.0).then(|| (tps * THINK_SECS).clamp(1024.0, 8192.0) as u32)
 }
 
 /// The versions of a model this PC can run, the best suited first.
@@ -2660,6 +2684,8 @@ pub fn run() {
             security::list_actions,
             security::clear_actions,
             workspace::list_folders,
+            workspace::set_folder_every_chat,
+            workspace::folder_for_every_chat,
             workspace::add_folder,
             workspace::choose_folder,
             inbox::chat_add,
@@ -2784,6 +2810,19 @@ mod open_tests {
     fn a_long_address_opens_in_the_browser() {
         let url = format!("https://sulcusai.sseditor.com/?test={}", "x".repeat(700));
         super::open_with_system(std::ffi::OsStr::new(&url)).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod think_tests {
+    /// About a minute and a quarter of thinking at the model's speed: his
+    /// brother's Qwen3.6 27B, partly in system memory, thought for minutes.
+    #[test]
+    fn thinking_is_kept_to_about_a_minute() {
+        assert_eq!(super::think_tokens(10.0), Some(1024), "a slow model still gets 1K");
+        assert_eq!(super::think_tokens(30.0), Some(2250));
+        assert_eq!(super::think_tokens(400.0), Some(8192), "a fast one at most 8K");
+        assert_eq!(super::think_tokens(0.0), None, "no speed known: no limit");
     }
 }
 

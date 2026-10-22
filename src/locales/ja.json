@@ -415,7 +415,6 @@
  "Fix grammar": "文法を修正",
  "Folder": "フォルダー",
  "Folder path copied.": "フォルダーのパスをコピーしました。",
- "Folder shared. The assistant can now work in it.": "フォルダーを共有しました。アシスタントがこのフォルダーで作業できます。",
  "Folders": "フォルダー",
  "Folders the assistant can use": "アシスタントが使えるフォルダー",
  "For example: keep answers short, use plain language, give examples.": "例: 回答は短く、わかりやすい言葉で、例を挙げる。",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "ここでの設定にかかわらず、アシスタントはあなたが書いた言語で回答します。",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "アシスタントはSulcusAI独自のブラウザーで閲覧します。DuckDuckGo や一覧にない他のブラウザーを使うには、それをWindowsの既定のブラウザーにして「Windowsの既定のブラウザー」を選んでください。",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "アシスタントは、共有したフォルダー内で Word、PDF、Excel（動作する数式やグラフ付き）、PowerPoint のファイルを作成し、読み取れます。Officeは不要です。フォルダーには「ファイルとコーディング」が必要です。",
- "The assistant can read and change files only in these folders.": "アシスタントがファイルを読んだり変更したりできるのは、これらのフォルダー内だけです。",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "アシスタントがファイルの読み取り、変更、コマンドの実行を行えるのは、これらのフォルダー内だけです。変更はチャットから元に戻せ、削除したファイルはごみ箱に移動します。",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "アシスタントは、すべてのプロジェクトで記憶したことをすべて忘れます。この操作は元に戻せません。",
  "The audio device couldn't be opened.": "オーディオデバイスを開けませんでした。",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "話して入力: チャットのマイクボタン、または Ctrl+Shift+Space。",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "スイッチで、オンラインに出してよいものを制御します。チャットのWebボタンは、そのチャットだけWebをオンにします。",
  "Nothing. To share a chat, open it and click Share at the top.": "ありません。チャットを共有するには、開いて上部の「共有」をクリックします。",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "フォルダーがまだない場合は作成されます。共有をやめるまで（メッセージ欄の下のフォルダーボタン）、アシスタントはどのチャットからでもその中のものを開いたり、変更したり、実行したりできます。変更はチャットから元に戻せます。",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "まだありません。画像を頼むか、クリップボタンで添付してください。",
  "None yet. Share a folder with the folder button and ask it to make something.": "まだありません。フォルダーボタンでフォルダーを共有して、何か作るよう頼んでください。",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "チャットはサイドバーで右クリックしてロック、モデルは「モデル」ページの鍵ボタンでロックできます。ここで削除したチャットは、同期しているほかの PC からも削除されます。モデルは再ダウンロードできます。",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "歌詞のないバックコーラス",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "そのアーティストらしく作詞・編曲し、同じタイプの声で歌います（本人の声ではありません）。説明欄に書くこともできます: 「Taylor Swiftとして歌って、クマの歌」。",
  "{n} sections, about {time} long": "{n}セクション、約{time}",
- "Close harmony": "クローズハーモニー"
+ "Close harmony": "クローズハーモニー",
+ "Every chat": "すべてのチャット",
+ "Folder shared in this chat. The assistant can now work in it.": "このチャットでフォルダーを共有しました。アシスタントはその中で作業できます。",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "フォルダーがまだない場合は作成されます。共有を止めるまで（メッセージ欄の下のフォルダーボタン）、アシスタントはこのチャットで（チェックを入れればすべてのチャットで）その中のものを開き、変更し、実行できます。変更はチャットから元に戻せます。",
+ "Let every chat use it, not only this one": "このチャットだけでなく、すべてのチャットで使えるようにする",
+ "Let every chat use this folder": "すべてのチャットでこのフォルダーを使えるようにする",
+ "Stops sharing it in every chat": "すべてのチャットで共有を止めます",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "アシスタントがファイルを読んだり変更したりできるのは、これらのフォルダーの中だけです。ここで共有したフォルダーは、「すべてのチャット」にチェックを入れない限りこのチャット専用です。",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "これらはすべてのチャットと共有されていますが、チャットが中を見るのはあなたが尋ねたときだけです。チャットから共有したフォルダー（メッセージ欄の下のフォルダーボタン）は、そのチャット専用です。"
 }

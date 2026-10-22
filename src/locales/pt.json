@@ -415,7 +415,6 @@
  "Fix grammar": "Corrigir gramática",
  "Folder": "Pasta",
  "Folder path copied.": "Caminho da pasta copiado.",
- "Folder shared. The assistant can now work in it.": "Pasta compartilhada. O assistente agora pode trabalhar nela.",
  "Folders": "Pastas",
  "Folders the assistant can use": "Pastas que o assistente pode usar",
  "For example: keep answers short, use plain language, give examples.": "Por exemplo: respostas curtas, linguagem simples, dar exemplos.",
@@ -1143,7 +1142,6 @@
  "The assistant answers in the language you write in, whatever this is set to.": "O assistente responde no idioma em que você escreve, independentemente desta configuração.",
  "The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.": "O assistente navega no próprio navegador do SulcusAI. Para o DuckDuckGo ou outro navegador fora da lista, defina-o como padrão do Windows e escolha “Navegador padrão do Windows”.",
  "The assistant can make Word, PDF, Excel (with working formulas and charts) and PowerPoint files, and read them, in folders you share. No Office needed. Needs Files and coding for the folders.": "O assistente pode criar arquivos do Word, PDF, Excel (com fórmulas e gráficos funcionando) e PowerPoint, e lê-los, nas pastas que você compartilha. Não precisa do Office. Requer Arquivos e programação para as pastas.",
- "The assistant can read and change files only in these folders.": "O assistente pode ler e alterar arquivos só nestas pastas.",
  "The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.": "O assistente pode ler, alterar e executar comandos só dentro destas pastas. As alterações que ele faz podem ser desfeitas no chat; arquivos excluídos vão para a Lixeira.",
  "The assistant will forget everything it remembered, in every project. This can't be undone.": "O assistente vai esquecer tudo o que lembrava, em todos os projetos. Isso não pode ser desfeito.",
  "The audio device couldn't be opened.": "Não foi possível abrir o dispositivo de áudio.",
@@ -3185,7 +3183,6 @@
  "Type by talking: the microphone button in a chat, or Ctrl+Shift+Space.": "Digite falando: o botão do microfone em um chat, ou Ctrl+Shift+Space.",
  "switch at the bottom controls what may go online. The Web button in a chat turns on web for that chat only.": "na parte de baixo controla o que pode ir para a internet. O botão Web em um chat ativa a web só para aquele chat.",
  "Nothing. To share a chat, open it and click Share at the top.": "Nada. Para compartilhar um chat, abra-o e clique em Compartilhar no topo.",
- "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Se a pasta ainda não existir, ela é criada. O assistente pode abrir, alterar e executar coisas nela, em qualquer chat, até você parar de compartilhá-la (o botão de pasta abaixo da caixa de mensagem). As alterações podem ser desfeitas pelo chat.",
  "None yet. Ask for a picture, or attach one with the paperclip button.": "Nada ainda. Peça uma imagem ou anexe uma com o botão de clipe.",
  "None yet. Share a folder with the folder button and ask it to make something.": "Nada ainda. Compartilhe uma pasta com o botão de pasta e peça para ele criar algo.",
  "Lock a chat by right-clicking it in the sidebar, and a model with its lock button on the Models page. Chats removed here are removed from your other synced PCs too; models can be downloaded again.": "Bloqueie um chat clicando com o botão direito na barra lateral, e um modelo com o botão de cadeado na página Modelos. Chats removidos aqui também são removidos dos seus outros PCs sincronizados; os modelos podem ser baixados de novo.",
@@ -3749,5 +3746,13 @@
  "Wordless backing voices": "Vozes de apoio sem letra",
  "Written and arranged their way and sung by a voice of the same kind, not their own voice. You can also write it in the description: \"Sing as Taylor Swift, a song about bears\".": "Escrita e arranjada do jeito do artista e cantada por uma voz do mesmo tipo, não pela voz dele. Você também pode escrever na descrição: “Cante como Taylor Swift, uma música sobre ursos”.",
  "{n} sections, about {time} long": "{n} partes, cerca de {time}",
- "Close harmony": "Harmonia fechada"
+ "Close harmony": "Harmonia fechada",
+ "Every chat": "Todos os chats",
+ "Folder shared in this chat. The assistant can now work in it.": "Pasta compartilhada neste chat. O assistente já pode trabalhar nela.",
+ "If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.": "Se a pasta ainda não existir, ela é criada para você. O assistente pode abrir, alterar e executar coisas nela, neste chat (ou em todos, se marcado), até você parar de compartilhá-la (o botão de pasta abaixo da caixa de mensagem). As alterações podem ser desfeitas pelo chat.",
+ "Let every chat use it, not only this one": "Deixar todos os chats usarem, não só este",
+ "Let every chat use this folder": "Deixar todos os chats usarem esta pasta",
+ "Stops sharing it in every chat": "Para de compartilhá-la em todos os chats",
+ "The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.": "O assistente só pode ler e alterar arquivos nestas pastas. Uma pasta compartilhada aqui é só deste chat, a menos que você marque Todos os chats.",
+ "These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.": "Estas são compartilhadas com todos os chats, que só olham nelas quando você pergunta sobre elas. Uma pasta compartilhada a partir de um chat (o botão de pasta abaixo da caixa de mensagem) fica nesse chat."
 }

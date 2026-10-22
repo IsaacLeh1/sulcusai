@@ -59,17 +59,36 @@ fn exists(conn: &Connection, id: &str) -> bool {
     conn.query_row("SELECT 1 FROM projects WHERE id = ?1", [id], |_| Ok(())).optional().ok().flatten().is_some()
 }
 
-/// Folders a chat may use: the shared ones plus its project's.
+/// Folders a chat may use: its own (shared in it), its project's, then the
+/// ones shared with every chat.
 pub fn chat_folders(conn: &Connection, chat: &Chat) -> Vec<String> {
-    let mut all = db::folders(conn);
-    if let Some(pid) = &chat.project_id {
-        for f in folders(conn, pid) {
-            if !all.iter().any(|a| a.eq_ignore_ascii_case(&f)) {
-                all.push(f);
-            }
+    let mut all = own_folders(conn, chat);
+    for f in db::folders(conn) {
+        if !all.iter().any(|a| a.eq_ignore_ascii_case(&f)) {
+            all.push(f);
         }
     }
     all
+}
+
+/// The folders that are this chat's work: shared in it, or its project's.
+pub fn own_folders(conn: &Connection, chat: &Chat) -> Vec<String> {
+    let mut own = db::chat_shared_folders(conn, &chat.id);
+    if let Some(pid) = &chat.project_id {
+        for f in folders(conn, pid) {
+            if !own.iter().any(|a| a.eq_ignore_ascii_case(&f)) {
+                own.push(f);
+            }
+        }
+    }
+    own
+}
+
+/// The folders shared with every chat that aren't also this chat's own:
+/// the model is told they're other work, not to be looked through unasked.
+pub fn general_folders(conn: &Connection, chat: &Chat) -> Vec<String> {
+    let own = own_folders(conn, chat);
+    db::folders(conn).into_iter().filter(|f| !own.iter().any(|o| o.eq_ignore_ascii_case(f))).collect()
 }
 
 /// The project's instructions, for the system prompt.
@@ -276,7 +295,18 @@ mod tests {
         };
         assert_eq!(chat_folders(&conn, &chat), vec!["C:\\shared"]);
         chat.project_id = Some("p".into());
-        assert_eq!(chat_folders(&conn, &chat), vec!["C:\\shared", "C:\\proj"]);
+        assert_eq!(chat_folders(&conn, &chat), vec!["C:\\proj", "C:\\shared"], "the chat's own work first");
+        assert_eq!(general_folders(&conn, &chat), vec!["C:\\shared"]);
+        // Shared in this chat only: first, and no other chat has it.
+        conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES ('c', '', 0, 0), ('d', '', 0, 0)", []).unwrap();
+        db::add_chat_folder(&conn, "c", "C:\\gun").unwrap();
+        assert_eq!(chat_folders(&conn, &chat), vec!["C:\\gun", "C:\\proj", "C:\\shared"]);
+        assert_eq!(own_folders(&conn, &chat), vec!["C:\\gun", "C:\\proj"]);
+        let other = Chat { id: "d".into(), project_id: None, ..chat.clone() };
+        assert_eq!(chat_folders(&conn, &other), vec!["C:\\shared"]);
+        // Gone with its chat.
+        db::delete_chat(&conn, "c").unwrap();
+        assert!(db::chat_shared_folders(&conn, "c").is_empty());
     }
 
     #[test]

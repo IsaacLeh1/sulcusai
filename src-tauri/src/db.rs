@@ -191,6 +191,13 @@ CREATE TABLE IF NOT EXISTS project_folders (
   path       TEXT NOT NULL,
   PRIMARY KEY (project_id, path)
 );
+-- Folders shared in one chat only (`folders` are every chat's).
+CREATE TABLE IF NOT EXISTS chat_shared_folders (
+  chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  path     TEXT NOT NULL,
+  added_at INTEGER NOT NULL,
+  PRIMARY KEY (chat_id, path)
+);
 -- People: chats with someone linked by a code. Each PC keeps its own.
 CREATE TABLE IF NOT EXISTS people_messages (
   contact_id TEXT NOT NULL,
@@ -757,6 +764,22 @@ pub fn add_folder(conn: &Connection, path: &str) -> Result<(), String> {
 
 pub fn remove_folder(conn: &Connection, path: &str) -> Result<(), String> {
     conn.execute("DELETE FROM folders WHERE path = ?1", [path]).map_err(err)?;
+    Ok(())
+}
+
+/// Folders shared in this chat only, oldest first.
+pub fn chat_shared_folders(conn: &Connection, chat_id: &str) -> Vec<String> {
+    let Ok(mut stmt) = conn.prepare("SELECT path FROM chat_shared_folders WHERE chat_id = ?1 ORDER BY added_at") else { return Vec::new() };
+    stmt.query_map([chat_id], |r| r.get(0)).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
+}
+
+pub fn add_chat_folder(conn: &Connection, chat_id: &str, path: &str) -> Result<(), String> {
+    conn.execute("INSERT OR IGNORE INTO chat_shared_folders (chat_id, path, added_at) VALUES (?1, ?2, ?3)", params![chat_id, path, now_ms()]).map_err(err)?;
+    Ok(())
+}
+
+pub fn remove_chat_folder(conn: &Connection, chat_id: &str, path: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM chat_shared_folders WHERE chat_id = ?1 AND path = ?2", params![chat_id, path]).map_err(err)?;
     Ok(())
 }
 

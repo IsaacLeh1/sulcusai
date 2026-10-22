@@ -15,6 +15,8 @@ export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenC
   // The folder each request will share, once the person picked another.
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  // Shared in the asking chat only, unless ticked.
+  const [everyChat, setEveryChat] = useState(false);
   const p = asks[0];
   if (!p) return null;
   const chat = chats.find((c) => c.id === p.chat_id);
@@ -23,7 +25,9 @@ export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenC
     if (d === "allow") {
       const ok = await confirmFolder(folder).catch(() => ({ go: true, system: false }));
       if (!ok.go) return;
+      if (everyChat) await api.folderForEveryChat(p.call_id, true).catch(() => {});
     }
+    setEveryChat(false);
     setError(null);
     setAsks((all) => all.filter((a) => a.call_id !== p.call_id));
     await api.answerApproval(p.call_id, d).catch(() => {});
@@ -54,8 +58,12 @@ export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenC
         </button>
       </div>
       {error && <p className="error-text">{error}</p>}
+      <label className="small row">
+        <input type="checkbox" checked={everyChat} onChange={(e) => setEveryChat(e.target.checked)} />
+        {t("Let every chat use it, not only this one")}
+      </label>
       <p className="muted small">
-        {t("If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in any chat, until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.")}
+        {t("If the folder doesn't exist yet, it's made for you. The assistant can open, change and run things in it, in this chat (or every chat, if ticked), until you stop sharing it (the folder button under the message box). Changes can be undone from the chat.")}
       </p>
       <div className="modal-actions">
         {chat && (

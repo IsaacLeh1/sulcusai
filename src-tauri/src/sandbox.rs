@@ -15,6 +15,10 @@ pub struct Sandbox {
     /// keys and saved logins in the home folder stay closed. A model on this
     /// PC may read them (his rule: reading isn't the risk, sending is).
     online: bool,
+    /// Roots shared with every chat rather than this chat's own work: the
+    /// model is told to leave them be unless asked (a chat about a gun's
+    /// slider read another project's handoff because it was shared).
+    general: Vec<PathBuf>,
 }
 
 /// Keys, saved passwords and logins, and SulcusAI's own data: never sent
@@ -144,7 +148,18 @@ pub fn refuse_reason(path: &Path, app_data: &Path, allow_system: bool) -> Option
 
 impl Sandbox {
     pub fn new(folders: &[String]) -> Sandbox {
-        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect(), readable: Vec::new(), online: false }
+        Sandbox { roots: folders.iter().filter_map(|f| canonical(Path::new(f))).filter(|p| p.is_dir()).collect(), readable: Vec::new(), online: false, general: Vec::new() }
+    }
+
+    /// The same, with these of its folders marked as every chat's.
+    pub fn with_general(mut self, general: &[String]) -> Sandbox {
+        self.general = general.iter().filter_map(|f| canonical(Path::new(f))).collect();
+        self
+    }
+
+    /// A folder shared with every chat, not this chat's own.
+    pub fn is_general(&self, root: &Path) -> bool {
+        self.general.iter().any(|g| key(g) == key(root))
     }
 
     /// The same, with the user's home folder open for searching and reading.

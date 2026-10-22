@@ -773,7 +773,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             aria-label={t("Message")}
           />
           <div className="composer-bar">
-            {canTools && features.has("files") && <FolderMenu toast={toast} />}
+            {canTools && features.has("files") && <FolderMenu toast={toast} chatId={chat.id} />}
             <button className="globe" onClick={attachFile} title={canSee ? t("Attach a picture (or paste one) or a song") : t("Attach a picture or a song. This model can't see pictures; Qwen3 VL and Gemma 3 can.")}>
               <PaperclipIcon />
             </button>

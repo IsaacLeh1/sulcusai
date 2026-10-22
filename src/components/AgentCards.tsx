@@ -203,12 +203,13 @@ function DesktopCheck({ toast, folders, onChange }: { toast: PushToast; folders:
   );
 }
 
-/** Composer button: which folders the assistant may use. */
-export function FolderMenu({ toast }: { toast: PushToast }) {
+/** Composer button: which folders the assistant may use in this chat. One
+ * shared here is this chat's alone unless "Every chat" is ticked. */
+export function FolderMenu({ toast, chatId }: { toast: PushToast; chatId: string }) {
   const [openMenu, setOpenMenu] = useState(false);
   const [folders, setFolders] = useState<Folder[]>([]);
   const ref = useRef<HTMLDivElement>(null);
-  const load = () => api.folders().then(setFolders).catch(() => {});
+  const load = () => api.folders(chatId).then(setFolders).catch(() => {});
 
   useEffect(() => {
     load();
@@ -217,7 +218,7 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
     return () => {
       sub.then((un) => un());
     };
-  }, []);
+  }, [chatId]);
   useEffect(() => {
     if (!openMenu) return;
     const close = (e: MouseEvent) => {
@@ -233,9 +234,17 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
     try {
       const ok = await confirmFolder(picked);
       if (!ok.go) return;
-      await api.addFolder(picked, ok.system);
+      await api.addFolder(picked, ok.system, chatId);
       await load();
-      toast(t("Folder shared. The assistant can now work in it."), "success");
+      toast(t("Folder shared in this chat. The assistant can now work in it."), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const everyChat = async (f: Folder, on: boolean) => {
+    try {
+      await api.setFolderEveryChat(f.path, chatId, on);
+      await load();
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -248,7 +257,7 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
       </button>
       {openMenu && (
         <div className="folder-pop">
-          <p className="small muted">{t("The assistant can read and change files only in these folders.")}</p>
+          <p className="small muted">{t("The assistant can read and change files only in these folders. A folder shared here is this chat's alone unless you tick Every chat.")}</p>
           {folders.length === 0 && <p className="small">{t("None yet.")}</p>}
           <ul>
             {folders.map((f) => (
@@ -256,15 +265,25 @@ export function FolderMenu({ toast }: { toast: PushToast }) {
                 <span className="ellipsis" title={f.path}>
                   {f.name} {!f.exists && <span className="warn small">{t("(missing)")}</span>}
                 </span>
-                <button
-                  className="link"
-                  onClick={async () => {
-                    await api.removeFolder(f.path);
-                    load();
-                  }}
-                >
-                  {t("Remove")}
-                </button>
+                {f.scope === "project" ? (
+                  <span className="small muted">{t("Project")}</span>
+                ) : (
+                  <label className="small folder-scope" title={t("Let every chat use this folder")}>
+                    <input type="checkbox" checked={f.scope === "all"} onChange={(e) => everyChat(f, e.target.checked)} /> {t("Every chat")}
+                  </label>
+                )}
+                {f.scope !== "project" && (
+                  <button
+                    className="link"
+                    title={f.scope === "all" ? t("Stops sharing it in every chat") : undefined}
+                    onClick={async () => {
+                      await api.removeFolder(f.path, chatId);
+                      load();
+                    }}
+                  >
+                    {t("Remove")}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -306,6 +325,9 @@ export function FoldersSection({ toast }: { toast: PushToast }) {
       <h2>{t("Shared folders")}</h2>
       <p className="muted small">
         {t("The assistant can read, change and run commands only inside these folders. Changes it makes can be undone from the chat; deleted files go to the Recycle Bin.")}
+      </p>
+      <p className="muted small">
+        {t("These are shared with every chat, which only looks in them when you ask about them. A folder shared from a chat (the folder button under the message box) stays in that chat.")}
       </p>
       {folders.length === 0 && <p className="small">{t("No folders shared yet.")}</p>}
       {folders.map((f) => (

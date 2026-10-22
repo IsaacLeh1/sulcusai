@@ -1549,6 +1549,29 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## 0.9.25 (2026-10-22): folders per chat, a thinking limit, steadier permissions
+
+Asks:
+- Sharing a folder in one chat gave every chat access, and chats looked through it for unrelated work. Tytan and I were fixing his gun slider, and the chat read my candle chart's handoff.
+- My brother's Qwen3.6 27B (uncensored) on a 16 GB card felt sluggish, and models went back and forth between what he asked and what they thought they were allowed to do.
+
+**Folders per chat:**
+- `chat_shared_folders(chat_id, path)` is deleted with its chat. `projects::chat_folders` gives the chat's own folders, then its project's, then the ones shared with every chat (`folders`).
+- The folder button, and folders the assistant asks for, share in that chat only, unless "Every chat" is ticked (`folder_for_every_chat`, `set_folder_every_chat`). Settings → Shared folders and the Desktop stay every chat's.
+- Folders already shared stay shared with every chat; unticking "Every chat" in a chat's folder menu makes one that chat's alone.
+- The model is told every chat's folders are other work: use them only when the request is about them or names them, and don't list, search or read them or the notes in them otherwise (`Sandbox::with_general`, `tool_instructions`). "The project folder is…" now names only a folder of this chat's own: naming the first shared folder made models treat the candle chart as the current project.
+- Real test (`e2e_agent_deletes_through_the_card_and_skips_other_work`, Qwen3.5 9B): it found and deleted the .log files through the card in 7 s and never touched the every-chat folder holding another project's HANDOFF.md.
+
+**Why big models crawled** (an audit of what the model is told, plus the engine):
+- Thinking had no limit: Auto let Qwen-style models think up to 16K tokens a reply. Now the engine gets `--reasoning-budget`, about 75 s of thinking at the model's measured speed (1K to 8K tokens), and then "I've thought about this enough. Time to answer." Thinking set On in Advanced has no limit.
+  - Real test (`e2e_thinking_stops_at_its_budget`, Qwen3.5 9B): with 256 tokens it thought 138 words and answered; with none it thought 2,713 words and ran out of room.
+- The remembered facts were picked again for each message and sat in the instructions, before the tool list (about 10K tokens in all), so every message made the engine read everything again. On a model partly in system memory that's half a minute and more. For models on this PC they now ride on the newest message (`memory::recall_note`, `with_recall`), and the instructions stay the same from message to message. Online models keep them in the instructions (privacy mode can take them out there).
+- Qwen3.6 27B at Q4_K_M is 16.8 GB, so on a 16 GB card a few GB stay in system memory. For speed: a smaller file from the same repo (IQ4_XS or Q3_K_M) that fits the card, or Qwen3.6 35B-A3B, whose experts wait in memory while the rest runs on the card.
+
+**Permission back-and-forth:**
+- The instructions said "never ask for permission" and also "ask before deleting", while deleting shows a card anyway. A reply that asked "should I proceed?" was thrown away and the model told "you already have permission", which costs a whole new reply, thinking included.
+- Now: steps that need an OK (deleting, sending, sharing a folder) show their card by themselves, so the model calls the tool and doesn't ask first. Writing in this chat's folders is on the list of things already allowed. And a result saying the user declined or that something isn't allowed is settled: no other way around it (refusals come back as errors, and the instructions also said to retry on errors).
+
 ## Not released yet: songs in depth
 
 Ask: pick the key; harmonies sung by men or women, or played by an instrument; much more depth; the sections (intro, bridge, how many choruses) and rhyme patterns; lyrics that fill the song (they stopped at three lines); an emotion; ways of singing on parts (a screamo chorus, heavy vibrato like Lewis Capaldi); and "sing as Taylor Swift, a song about bears" in the description.

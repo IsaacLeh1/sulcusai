@@ -475,6 +475,8 @@ select, .input {
 .folder-pop p { margin: 0; }
 .folder-pop ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .folder-pop li { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.folder-pop li > .ellipsis { flex: 1; min-width: 0; }
+.folder-scope { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--muted); }
 /* Long chats overflow; never squash cards to fit. */
 .messages > * { flex-shrink: 0; }
 
