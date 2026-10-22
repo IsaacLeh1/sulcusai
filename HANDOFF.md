@@ -1572,7 +1572,11 @@ Ask: pick the key; harmonies sung by men or women, or played by an instrument; m
   - The Studio's "Use their style" fills in genre, voice, instruments, mood and tempo to see and change.
   - The voice is one of the same kind, never theirs; the Studio says so.
   - Told the generator "doesn't know anyone's name" and to answer `{"known": false}` for an unknown artist, Qwen3 4B said that even for Taylor Swift. It's now asked to set genre to "unknown" only if it has never heard of them.
-  - Qwen3 4B's descriptions are right but plain: for Lewis Capaldi it gave soul, a male voice and "soft vibrato". A bigger chat model should describe them better.
+  - Qwen3 4B's descriptions are right but plain: for Lewis Capaldi it gave soul, a male voice and "soft vibrato".
+  - Same test on the bigger models on this PC (`SULCUSAI_LYRICS_MODEL`):
+    - Qwen3.5 9B (22 s for the whole test) reads artists best: Lewis Capaldi as a pop ballad with a slight rasp, a Scottish accent, melancholic, 72 bpm; Taylor Swift as pop country, breathy and conversational with strong high notes. Its screamed chorus came out in capitals with a couple of misspelt words.
+    - gpt-oss-20b (42 s) writes the best lyrics and follows the plan exactly (22 of 22 lines for both long songs), but its artists are generic: Lewis Capaldi as smooth folk pop.
+    - All three fill the song: 8 of 8 lines for a minute.
 - create_music in chats takes emotion, vocal_effects and sound_like too.
 - Studio music tab:
   - New: song structure (presets, then sections added, moved or taken out, with the chorus count and length), Rhyme, Vocal effects, Harmonies, Key and time, Arrangement, Sound like an artist, and Emotion.
