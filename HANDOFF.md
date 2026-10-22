@@ -240,6 +240,7 @@ Where the build stands, for whoever picks it up next. Plan: [DESIGN.md](DESIGN.m
 - Sandboxed shells (such as an MSIX-packaged app's) can see `%LOCALAPPDATA%` redirected to `...\Packages\<app>\LocalCache\Local`. A dev build started from such a shell uses that copy, not the real data folder.
 - A capture or playback test opens the real microphone or speakers. Ask the user before running one.
 - Losing `keys.json` loses every encrypted chat. Back it up together with `sulcusai.db` (a future backup feature must include both).
+- Tauri starts every command on the main thread, and Windows gives that thread only 1 MB of stack. In 0.9.26, sending a message overflowed it and the app closed at once, with nothing in its logs (Windows' Application log said `0xc00000fd`; launching with stderr saved to a file showed `thread 'main' has overflowed its stack`). 0.9.27 gives the main thread 8 MB (`build.rs`, `/STACK`) and `send_message` boxes its turn (`Box::pin`). Box the work of any big async command the same way, and send one message in the release build before publishing.
 
 ## Phase 4 (Web and productivity): complete, merged 2026-10-08 (worktree `C:\dev\sulcusai-phase4`)
 
