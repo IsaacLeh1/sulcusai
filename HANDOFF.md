@@ -1683,7 +1683,7 @@ Asks:
 - The instructions said "never ask for permission" and also "ask before deleting", while deleting shows a card anyway. A reply that asked "should I proceed?" was thrown away and the model told "you already have permission", which costs a whole new reply, thinking included.
 - Now: steps that need an OK (deleting, sending, sharing a folder) show their card by themselves, so the model calls the tool and doesn't ask first. Writing in this chat's folders is on the list of things already allowed. And a result saying the user declined or that something isn't allowed is settled: no other way around it (refusals come back as errors, and the instructions also said to retry on errors).
 
-## Not released yet: songs in depth
+## 0.9.24 (2026-10-21): songs in depth
 
 Ask: pick the key; harmonies sung by men or women, or played by an instrument; much more depth; the sections (intro, bridge, how many choruses) and rhyme patterns; lyrics that fill the song (they stopped at three lines); an emotion; ways of singing on parts (a screamo chorus, heavy vibrato like Lewis Capaldi); and "sing as Taylor Swift, a song about bears" in the description.
 - **Why three lines:** `words_for` was 0.6 words a second, so a minute allowed 36 words. The writer's lines run 9 to 12 words, so `fit_lines` cut after three.
