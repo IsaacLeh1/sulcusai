@@ -4767,35 +4767,184 @@ fn inspect_a_chat_copy() {
     }
 }
 
-#[tokio::test]
-async fn zz_future_sizes() {
+/// Compose with the real models. SULCUSAI_COMPOSE=plan (the default): the
+/// chat model (SULCUSAI_COMPOSE_MODEL, default qwen3.5-9b) plans songs in
+/// 4/4, 6/8 and 7/8, the arranger writes their notes, and each is kept in
+/// SULCUSAI_MEDIA_OUT (default temp sulcusai-compose) as JSON and MIDI.
+/// SULCUSAI_COMPOSE=arrange: those plans arranged again. =real: each one's
+/// demo (`<name>.wav` beside it, rendered from its MIDI on the sound set as
+/// the window does) is made real by the music model at SULCUSAI_STRENGTHS
+/// (default 0.4,0.6,0.8). =listen: the sung ones made real, listened to.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_compose() {
+    use crate::media::{self, compose, store};
     let state = media_state();
-    let req = crate::media::Request { op: "music".into(), ..Default::default() };
-    let f = crate::media::run(&state, "x".into(), req);
-    println!("media::run future: {} KB", std::mem::size_of_val(&f) / 1024);
-    drop(f);
-    let turn = crate::agent::Turn {
-        emit: std::sync::Arc::new(|_: &str, _| {}),
-        state: state.clone(),
-        chat_id: "c".into(),
-        turn_id: "t".into(),
-        cipher: state.cipher().unwrap(),
-        ep: engine::Endpoint { port: 1, key: String::new(), ctx: 8192, extra: serde_json::Value::Null, cloud: None },
-        mode: crate::tools::Mode::Auto,
-        use_tools: true,
-        vision: false,
-        unattended: false,
-        base: String::new(),
-        about: String::new(),
-        cancel: std::sync::Arc::new(AtomicBool::new(false)),
+    let c = state.cipher().unwrap();
+    let out = std::path::PathBuf::from(std::env::var("SULCUSAI_MEDIA_OUT").unwrap_or_else(|_| std::env::temp_dir().join("sulcusai-compose").display().to_string()));
+    std::fs::create_dir_all(&out).unwrap();
+    let ask = |description: &str, beats, unit, era: &str, vocals, voice: &str, seed| compose::Ask {
+        description: description.into(),
+        beats,
+        unit,
+        sections: 6,
+        vocals,
+        voice: voice.into(),
+        era: era.into(),
+        seed,
+        ..Default::default()
     };
-    let f = turn.run();
-    println!("agent turn future: {} KB", std::mem::size_of_val(&f) / 1024);
-    drop(f);
-    // Never polled: only its size is read, so the handle is never used.
-    #[allow(invalid_value)]
-    let app: &tauri::AppHandle = unsafe { &*std::ptr::NonNull::<tauri::AppHandle>::dangling().as_ptr() };
-    let f = crate::run_turn(app, &state, "c".into(), "hi".into(), Vec::new(), None);
-    println!("run_turn future: {} KB", std::mem::size_of_val(&f) / 1024);
-    std::mem::forget(f);
+    let asks = [
+        ("pop-80s", ask("an upbeat synth-pop song about driving through the city at night", 4, 4, "1980s", true, "female", 11)),
+        ("folk-6-8", ask("a gentle folk ballad about leaving the town you grew up in", 6, 8, "", true, "male", 12)),
+        ("rock-7-8", ask("a driving instrumental rock piece with a big riff", 7, 8, "1970s", false, "", 13)),
+    ];
+    // A famous riff that's free to use (Grieg's "In the Hall of the Mountain
+    // King", 1875), as 1970s hard rock: the plan by hand, the band by the
+    // arranger, the theme as written (in E minor), an octave up in the chorus.
+    let stage = std::env::var("SULCUSAI_COMPOSE").unwrap_or_else(|_| "plan".into());
+    if stage == "riff" {
+        let section = |name: &str, bars, drums: &str, bass: &str, keys: &str, energy| compose::PlanSection {
+            name: name.into(),
+            bars,
+            chords: ["E5", "B5", "E5", "G5"].map(String::from).to_vec(),
+            drums: drums.into(),
+            bass: bass.into(),
+            keys: keys.into(),
+            melody: false,
+            lines: Vec::new(),
+            energy,
+            take: 0,
+        };
+        let plan = compose::tidy(compose::Plan {
+            title: "Mountain King".into(),
+            bpm: 132,
+            key: "E minor".into(),
+            style: "hard rock".into(),
+            era: "1970s".into(),
+            description: "a driving hard rock instrumental, a big riff on distorted guitars".into(),
+            instruments: compose::Instruments { chords: "distorted guitar".into(), melody: "distorted guitar".into(), bass: "electric bass".into(), drums: "rock kit".into() },
+            sections: vec![
+                section("Intro", 4, "light", "roots", "none", 2),
+                section("Verse", 8, "steady", "pulse", "stabs", 3),
+                section("Chorus", 8, "busy", "pulse", "held", 5),
+                section("Outro", 4, "busy", "roots", "held", 4),
+            ],
+            seed: 5,
+            ..Default::default()
+        });
+        let mut parts = compose::arrange(&plan);
+        // The theme's four bars: (beat, length, pitch), an eighth note a step.
+        let theme: [(f32, f32, u8); 26] = [
+            (0.0, 0.5, 52), (0.5, 0.5, 54), (1.0, 0.5, 55), (1.5, 0.5, 57), (2.0, 0.5, 59), (2.5, 0.5, 55), (3.0, 1.0, 59),
+            (4.0, 0.5, 58), (4.5, 0.5, 54), (5.0, 1.0, 58), (6.0, 0.5, 57), (6.5, 0.5, 53), (7.0, 1.0, 57),
+            (8.0, 0.5, 52), (8.5, 0.5, 54), (9.0, 0.5, 55), (9.5, 0.5, 57), (10.0, 0.5, 59), (10.5, 0.5, 55), (11.0, 0.5, 59), (11.5, 0.5, 64),
+            (12.0, 0.5, 62), (12.5, 0.5, 59), (13.0, 0.5, 55), (13.5, 0.5, 59), (14.0, 2.0, 62),
+        ];
+        let lead = parts.iter_mut().find(|p| p.name == "melody").unwrap();
+        for (bar, up) in [(0, 0), (4, 0), (8, 0), (12, 12), (16, 12), (20, 0)] {
+            lead.notes.extend(theme.iter().map(|(b, l, n)| compose::Note { beat: bar as f32 * 4.0 + b, len: l * 0.9, pitch: n + up, vel: 105 }));
+        }
+        let comp = compose::Composition { plan, parts };
+        println!("mountain-king: {:.0}s, notes {}", comp.plan.seconds(), comp.parts.iter().map(|x| format!("{} {}", x.name, x.notes.len())).collect::<Vec<_>>().join(", "));
+        std::fs::write(out.join("mountain-king.json"), serde_json::to_string_pretty(&comp).unwrap()).unwrap();
+        std::fs::write(out.join("mountain-king.mid"), compose::midi(&comp)).unwrap();
+        return;
+    }
+    // The plans written before, arranged again (after a change to the arranger).
+    if stage == "arrange" {
+        for (name, _) in &asks {
+            let path = out.join(format!("{name}.json"));
+            let old: compose::Composition = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let plan = compose::tidy(old.plan);
+            let comp = compose::Composition { parts: compose::arrange(&plan), plan };
+            println!("{name}: notes {}", comp.parts.iter().map(|x| format!("{} {}", x.name, x.notes.len())).collect::<Vec<_>>().join(", "));
+            std::fs::write(&path, serde_json::to_string_pretty(&comp).unwrap()).unwrap();
+            std::fs::write(out.join(format!("{name}.mid")), compose::midi(&comp)).unwrap();
+        }
+        return;
+    }
+    if stage == "plan" {
+        let chat = std::env::var("SULCUSAI_COMPOSE_MODEL").unwrap_or_else(|_| "qwen3.5-9b".into());
+        let spec = state.catalog.model(&chat).unwrap();
+        let v = spec.variants.iter().find(|v| state.paths.models.join(&spec.id).join(&v.file).exists()).expect("the chat model is installed");
+        {
+            let conn = state.db.lock().unwrap();
+            let path = state.paths.models.join(&spec.id).join(&v.file).display().to_string();
+            crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path, size: v.size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+            crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
+        }
+        for (name, a) in &asks {
+            let t = std::time::Instant::now();
+            let plan = compose::write_plan(&state, a).await.unwrap();
+            let comp = compose::Composition { parts: compose::arrange(&plan), plan };
+            let p = &comp.plan;
+            println!(
+                "{name} ({:.0}s): \"{}\" {} {} bpm {} era {:?}, {:.0}s; instruments {:?}",
+                t.elapsed().as_secs_f64(),
+                p.title,
+                p.time(),
+                p.bpm,
+                p.key,
+                p.era,
+                p.seconds(),
+                p.instruments
+            );
+            for s in &p.sections {
+                println!("  {} {} bars [{}] drums {} bass {} keys {} energy {} lines {}", s.name, s.bars, s.chords.join(" "), s.drums, s.bass, s.keys, s.energy, s.lines.len());
+            }
+            println!("  notes: {}", comp.parts.iter().map(|x| format!("{} {}", x.name, x.notes.len())).collect::<Vec<_>>().join(", "));
+            assert!(p.sections.len() >= 2 && p.seconds() > 20.0, "a whole song");
+            assert_eq!((p.beats, p.unit), (a.beats, a.unit));
+            assert_eq!(p.sections.iter().any(|s| !s.lines.is_empty()), a.vocals, "words only where asked");
+            std::fs::write(out.join(format!("{name}.json")), serde_json::to_string_pretty(&comp).unwrap()).unwrap();
+            std::fs::write(out.join(format!("{name}.mid")), compose::midi(&comp)).unwrap();
+        }
+        state.engine.lock().await.stop().await;
+        return;
+    }
+    // The versions made real, listened to: how many of the words come through.
+    if stage == "listen" {
+        let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+        crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+        for (name, a) in asks.iter().filter(|(_, a)| a.vocals) {
+            let comp: compose::Composition = serde_json::from_slice(&std::fs::read(out.join(format!("{name}.json"))).unwrap()).unwrap();
+            let mut files: Vec<_> = std::fs::read_dir(&out).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.file_name().unwrap().to_string_lossy().starts_with(&format!("{name}-real-"))).collect();
+            files.sort();
+            for f in files {
+                let mut song = media::add(&state, &c, std::fs::read(&f).unwrap(), "audio", "audio/mpeg", "import", &a.description, None, None, false).unwrap();
+                song.seconds = comp.plan.seconds();
+                song.lyrics = Some(comp.plan.lyrics());
+                store::update(&state.db.lock().unwrap(), &c, &song).unwrap();
+                let heard = media::run(&state, store::new_id(), media::Request { op: "listen".into(), source: Some(song.id.clone()), ..Default::default() }).await.unwrap().remove(0);
+                let r = heard.review.unwrap();
+                println!("{}: score {}, {} of {} words heard", f.file_name().unwrap().to_string_lossy(), r.score, r.heard, r.words);
+            }
+        }
+        // The speech server the install started (left running, it outlived
+        // the test and held its output open).
+        crate::speech::stop(&state).await;
+        return;
+    }
+    assert_eq!(stage, "real", "SULCUSAI_COMPOSE is plan, riff, arrange, real or listen");
+    let model = std::env::var("SULCUSAI_FINISH_MODEL").ok().unwrap_or_else(|| media::recommended(&state, media::Kind::Music).unwrap().id);
+    media::install_for_test(&state, &model).await.unwrap();
+    let strengths = std::env::var("SULCUSAI_STRENGTHS").unwrap_or_else(|_| "0.4,0.6,0.8".into());
+    for name in asks.iter().map(|a| a.0).chain(["mountain-king"]) {
+        let Ok(wav) = std::fs::read(out.join(format!("{name}.wav"))) else { continue };
+        let comp: compose::Composition = serde_json::from_slice(&std::fs::read(out.join(format!("{name}.json"))).unwrap()).unwrap();
+        let mut demo = media::add(&state, &c, wav, "audio", "audio/wav", "compose", &comp.plan.description, None, None, false).unwrap();
+        demo.seconds = comp.plan.seconds();
+        demo.composition = Some(comp.clone());
+        store::update(&state.db.lock().unwrap(), &c, &demo).unwrap();
+        for s in strengths.split(',').filter_map(|s| s.trim().parse::<f32>().ok()) {
+            let t = std::time::Instant::now();
+            let mut req = media::real_request(&comp.plan, &demo.id, Some(s), Some(model.clone()), None);
+            req.seed = Some(21);
+            let real = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
+            println!("{name} at {s}: {:.0}s long, made in {:.0}s; caption words: {}", real.seconds, t.elapsed().as_secs_f64(), real.prompt);
+            std::fs::write(out.join(format!("{name}-real-{s}.mp3")), store::read(&state.paths, &c, &real.id).unwrap()).unwrap();
+        }
+    }
 }

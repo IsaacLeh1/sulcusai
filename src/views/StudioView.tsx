@@ -12,6 +12,7 @@ import {
   type MediaItem,
   type MediaKind,
   type CloudMediaChoice,
+  type Composition,
   type MediaModelCard,
   type MediaRequest,
   type MusicSpec,
@@ -24,16 +25,18 @@ import { t, tf, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, SongListener, useMediaJobs } from "../components/MediaBits";
 import { SongView } from "../components/SongView";
+import { ComposeEditor } from "../components/ComposeEditor";
+import { ComposeForm, ERAS } from "../components/ComposeForm";
 import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 
-type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "compose" | "narrate";
 type Shape = NonNullable<MediaRequest["shape"]>;
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", compose: "music", narrate: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
@@ -59,7 +62,9 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "compose", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  // A song written as notes, open in Compose's editor (item: where it's kept).
+  const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
   // A song picked in the viewer to work on in the music tab.
   const [songToWork, setSongToWork] = useState<{ item: MediaItem; task: SongTask } | null>(null);
@@ -181,7 +186,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), compose: t("Compose music"), narrate: t("Narration") }[tb]}
           </button>
         ))}
       </div>
@@ -238,6 +243,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             toast={toast}
             seed={songToWork}
           />
+        ) : tab === "compose" ? (
+          <ComposeForm onWritten={(composition) => setComposing({ item: null, composition })} toast={toast} />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
         )}
@@ -304,6 +311,10 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             setTab("music");
             setViewing(null);
           }}
+          onCompose={(i) => {
+            setViewing(null);
+            if (i.composition) setComposing({ item: i, composition: i.composition });
+          }}
           onChanged={(i) => {
             setItems((all) => all.map((x) => (x.id === i.id ? i : x)));
             setViewing(i);
@@ -315,6 +326,22 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             reloadView();
           }}
           onSaved={() => load()}
+        />
+      )}
+
+      {composing && (
+        <ComposeEditor
+          item={composing.item}
+          composition={composing.composition}
+          canMakeReal={installedOf("music").length > 0}
+          onClose={() => setComposing(null)}
+          onSaved={(i) => {
+            setItems((all) => [i, ...all.filter((x) => x.id !== i.id)]);
+            setFresh((s) => new Set([...s, i.id]));
+            setComposing((c) => (c ? { ...c, item: i } : c));
+          }}
+          onStarted={() => {}}
+          toast={toast}
         />
       )}
 
@@ -849,8 +876,7 @@ const LEAD_INSTRUMENTS = [tx("Electric guitar"), tx("Acoustic guitar"), tx("Pian
 const ENERGIES: [NonNullable<MusicSpec["energy"]>, string][] = [["steady", tx("Steady")], ["builds", tx("Builds up")], ["big-chorus", tx("Big chorus")], ["quiet", tx("Quiet and intimate")]];
 const ENDINGS: [NonNullable<MusicSpec["ending"]>, string][] = [["fade", tx("Fade out")], ["big-finish", tx("Big finish")], ["hard-stop", tx("Hard stop")]];
 const PRODUCTIONS: [string, string][] = [
-  ["studio", tx("Polished studio")], ["live", tx("Live band")], ["lo-fi", tx("Lo-fi")], ["acoustic", tx("Acoustic")],
-  ["1970s", tx("1970s")], ["1980s", tx("1980s")], ["1990s", tx("1990s")], ["modern", tx("Modern")],
+  ["studio", tx("Polished studio")], ["live", tx("Live band")], ["lo-fi", tx("Lo-fi")], ["acoustic", tx("Acoustic")], ["modern", tx("Modern")],
 ];
 /** How lines rhyme: [id, name, what it means]. */
 const RHYMES: [NonNullable<MusicSpec["rhyme"]>, string, string][] = [
@@ -1110,6 +1136,7 @@ function MusicComposer({
   const [energy, setEnergy] = useState<NonNullable<MusicSpec["energy"]> | "">("");
   const [ending, setEnding] = useState<NonNullable<MusicSpec["ending"]> | "">("");
   const [production, setProduction] = useState("");
+  const [era, setEra] = useState("");
   const [emotion, setEmotion] = useState("");
   const [vocalEffects, setVocalEffects] = useState<VocalEffect[]>([]);
   // An artist's style: the name typed, and what the chat model said of them.
@@ -1192,6 +1219,7 @@ function MusicComposer({
     energy: energy || null,
     ending: ending || null,
     production: production || null,
+    era: era || null,
     auto_length: auto,
     persona: mode === "song" && personaId ? personaId : null,
     voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
@@ -1274,7 +1302,10 @@ function MusicComposer({
     setRhyme(s.rhyme ?? "");
     setEnergy(s.energy ?? "");
     setEnding(s.ending ?? "");
-    setProduction(s.production ?? "");
+    // A decade saved as the production (before the era had its own choice) is the era.
+    const decade = /^\d{4}s$/.test(s.production ?? "");
+    setProduction(decade ? "" : s.production ?? "");
+    setEra(s.era ?? (decade ? s.production! : ""));
     setEmotion(s.emotion ?? "");
     setVocalEffects(s.vocal_effects ?? []);
     setSoundLike(s.sound_like ?? "");
@@ -1676,6 +1707,7 @@ function MusicComposer({
           <PickOne label={t("Lead instrument")} options={LEAD_INSTRUMENTS} value={leadInstrument} onChange={setLeadInstrument} other={t("Other instrument")} />
           <Chips label={t("Energy")} options={ENERGIES} value={energy} onChange={setEnergy} />
           <Chips label={t("Ending")} options={ENDINGS} value={ending} onChange={setEnding} />
+          <Chips label={t("Era")} options={ERAS} value={era} onChange={setEra} />
           <Chips label={t("Production")} options={PRODUCTIONS} value={production} onChange={setProduction} />
         </>
       )}
@@ -1806,6 +1838,7 @@ function Viewer({
   onStart,
   onAnimate,
   onWorkOn,
+  onCompose,
   onChanged,
   onDeleted,
   onSaved,
@@ -1819,6 +1852,8 @@ function Viewer({
   onStart: (r: MediaRequest) => void;
   onAnimate: (i: MediaItem) => void;
   onWorkOn: (i: MediaItem, task: SongTask) => void;
+  /** A composition: opened in Compose's editor. */
+  onCompose: (i: MediaItem) => void;
   onChanged: (i: MediaItem) => void;
   onDeleted: (id: string) => void;
   onSaved: () => void;
@@ -1913,7 +1948,10 @@ function Viewer({
               <pre className="lyrics">{item.lyrics}</pre>
             </details>
           )}
-          {item.kind === "audio" && features.has("music") && (
+          {item.composition && features.has("music") && (
+            <button className="btn small primary" onClick={() => onCompose(item)}>{t("Edit its notes")}</button>
+          )}
+          {item.kind === "audio" && !item.composition && features.has("music") && (
             <button
               className="btn small"
               disabled={mapping}
@@ -1945,7 +1983,7 @@ function Viewer({
               toast={toast}
             />
           )}
-          {item.kind === "audio" && item.lyrics && features.has("music") && (
+          {item.kind === "audio" && item.lyrics && !item.composition && features.has("music") && (
             <SongListener
               item={item}
               onListen={() => run({ op: "listen", prompt: "" })}

@@ -1728,7 +1728,71 @@ export interface MediaItem {
   review?: SongReview | null;
   /** How a song is built, for the song view. */
   map?: SongMap | null;
+  /** A song written as notes in Compose; the file is its demo. */
+  composition?: Composition | null;
 }
+
+/** A section of a composition's plan. */
+export interface PlanSection {
+  name: string;
+  bars: number;
+  /** A chord a bar ("Am", "F", "C/E"); fewer repeat. */
+  chords: string[];
+  drums: "none" | "light" | "steady" | "busy" | "half-time";
+  bass: "none" | "roots" | "pulse" | "walking" | "syncopated";
+  keys: "none" | "held" | "arpeggio" | "strummed" | "stabs";
+  melody: boolean;
+  lines: string[];
+  energy: number;
+  take: number;
+}
+
+export interface Plan {
+  title: string;
+  /** Quarter notes a minute, in any time signature. */
+  bpm: number;
+  beats: number;
+  unit: number;
+  key: string;
+  style: string;
+  instruments: { chords: string; melody: string; bass: string; drums: string };
+  sections: PlanSection[];
+  seed: number;
+  description: string;
+  voice: string;
+  era: string;
+}
+
+/** A note of a composition, in beats (the time signature's unit) from the start. */
+export interface ComposeNote {
+  beat: number;
+  len: number;
+  pitch: number;
+  vel: number;
+}
+
+export interface Composition {
+  plan: Plan;
+  parts: { name: "melody" | "chords" | "bass" | "drums" | string; instrument: string; notes: ComposeNote[] }[];
+}
+
+/** What Compose is asked for. */
+export interface ComposeAsk {
+  description: string;
+  beats: number;
+  unit: number;
+  bpm?: number | null;
+  key?: string | null;
+  style?: string | null;
+  sections: number;
+  vocals: boolean;
+  voice: string;
+  era: string;
+  seed?: number;
+}
+
+/** A change to one section of a composition. */
+export type SectionOp = { do: "set"; section: PlanSection } | { do: "again" } | { do: "add"; section: PlanSection } | { do: "duplicate" } | { do: "delete" };
 
 /** A note: start and end (seconds), MIDI pitch and loudness. */
 export interface SongNote {
@@ -1960,6 +2024,8 @@ export interface MusicSpec {
   energy?: "steady" | "builds" | "big-chorus" | "quiet" | null;
   ending?: "fade" | "big-finish" | "hard-stop" | null;
   production?: string | null;
+  /** The decade the song is from: "1950s" to "2020s". */
+  era?: string | null;
   /** The length follows the song: a length named in the description, the lyrics, the sections, or the lyrics written for it. */
   auto_length?: boolean;
   /** A saved artist (id or name): their voice and sound for this song. */
@@ -2553,6 +2619,17 @@ export const api = {
   mediaSongMidi: (id: string, path: string, map?: SongMap) => invoke<void>("media_song_midi", { id, path, map: map ?? null }),
   /** Keeps notes edited in the song view with the song. */
   mediaSongMapSave: (id: string, map: SongMap) => invoke<MediaItem>("media_song_map_save", { id, map }),
+  /** The sampled instruments (a General MIDI sound set), downloaded the first time. */
+  composeSounds: () => invoke<ArrayBuffer>("compose_sounds"),
+  composeWrite: (ask: ComposeAsk) => invoke<Composition>("compose_write", { ask }),
+  composeArrange: (plan: Plan) => invoke<Composition>("compose_arrange", { plan }),
+  /** A section changed (in words, by the chat model, when `change` is given), written again, added, copied or deleted. */
+  composeSection: (composition: Composition, index: number, op: SectionOp, change?: string) =>
+    invoke<Composition>("compose_section", { composition, index, op, change: change ?? null }),
+  composeSave: (id: string | null, composition: Composition, audio: string, seconds: number) => invoke<MediaItem>("compose_save", { id, composition, audio, seconds }),
+  /** Saved at `path`; without one, its bytes (for the player). */
+  composeMidi: (composition: Composition, path: string | null) => invoke<ArrayBuffer>("compose_midi", { composition, path }),
+  composeMakeReal: (id: string, strength?: number, modelId?: string | null) => invoke<string>("compose_make_real", { id, strength: strength ?? null, modelId: modelId ?? null, chatId: null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
@@ -2714,6 +2791,7 @@ export interface ChatEvents {
   "chat:compacted": { chat_id: string; auto: boolean };
   "media:progress": MediaJob;
   "media:done": { job_id: string; ok: boolean; items?: MediaItem[]; cancelled?: boolean; error?: string };
+  "compose:getting": { fraction: number };
   "media:tuned": { family: string; baseline: number; score: number; pictures: number; demos: number; new_instructions: boolean };
   "media:coached": { before: number; after: number; examples: number; kept: boolean };
   "chat:context": { chat_id: string; context: ContextInfo };

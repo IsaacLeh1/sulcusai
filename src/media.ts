@@ -155,6 +155,7 @@ export const OP_LABEL: Record<string, string> = {
   music: tx("Song"),
   sound: tx("Sound"),
   narrate: tx("Narration"),
+  compose: tx("Composed"),
   wallpaper: tx("Wallpaper"),
   import: tx("Imported"),
   screenshot: tx("Screenshot"),

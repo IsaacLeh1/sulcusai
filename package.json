@@ -22,7 +22,9 @@
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "spessasynth_core": "4.3.22",
+    "spessasynth_lib": "4.3.14"
   },
   "devDependencies": {
     "@tauri-apps/cli": "~2.12",

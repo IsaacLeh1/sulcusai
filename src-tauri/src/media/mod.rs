@@ -9,6 +9,7 @@
 
 pub(crate) mod artist;
 pub mod clarify;
+pub(crate) mod compose;
 pub(crate) mod persona;
 pub mod coach;
 mod cutout;
@@ -78,6 +79,10 @@ pub struct MediaCatalog {
     /// Basic Pitch, which reads the notes of a song's parts (`notes`).
     #[serde(default)]
     pub note_reader: Option<Helper>,
+    /// The sampled instruments Compose plays its notes on (a General MIDI
+    /// sound set, played in the window).
+    #[serde(default)]
+    pub instruments: Option<Helper>,
 }
 
 /// A small model an engine's work uses along the way, fetched with the
@@ -697,8 +702,11 @@ pub struct MusicSpec {
     /// the lyrics written for it come to.
     pub auto_length: bool,
     /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
-    /// "1970s", "1980s", "1990s", "modern".
+    /// "modern" (older songs may say a decade, as `era` does now).
     pub production: Option<String>,
+    /// The decade the song is from, in its writing, instruments and sound:
+    /// "1950s" to "2020s".
+    pub era: Option<String>,
     /// The feeling in the words and the voice: "heartbroken", "joyful"…
     pub emotion: Option<String>,
     /// How the voice is used, and where: screamed choruses, heavy vibrato throughout.
@@ -868,6 +876,9 @@ impl MusicSpec {
         if let Some(e) = Self::some(&self.emotion) {
             guide.push_str(&format!(" The words carry this feeling: {e}."));
         }
+        if let Some(e) = Self::some(&self.era) {
+            guide.push_str(&format!(" It's a song from the {e}: write the words the way songs were written then, with nothing in them from after that time."));
+        }
         for fx in &self.vocal_effects {
             let rough = match fx.how.trim().to_lowercase().as_str() {
                 "screamed" | "growled" => "screamed: make them short, raw and forceful",
@@ -981,6 +992,9 @@ impl MusicSpec {
         let some = |o: &Option<String>| o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
         if let Some(g) = some(&self.genre) {
             parts.push(g.to_lowercase());
+        }
+        if let Some(e) = Self::some(&self.era) {
+            parts.push(format!("{e} style, a song from the {e} with the instruments and recording sound of that era"));
         }
         // An artist's sound in plain words (the music model doesn't know names).
         if let Some(a) = some(&self.artist_sound) {
@@ -3617,8 +3631,13 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
 /// ONNX Runtime and a helper model (`MediaCatalog::separator`,
 /// `note_reader`), downloaded the first time, with `getting` shown meanwhile.
 async fn ensure_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, PathBuf), String> {
-    let dest = state.paths.models.join("media").join("helpers").join(&h.file.file);
     let dll = crate::natural::ensure_runtime(state, cancel, &|_, _, _| {}).await?;
+    Ok((dll, fetch_helper(state, h, getting, cancel, progress).await?))
+}
+
+/// A helper's file, downloaded the first time.
+async fn fetch_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<PathBuf, String> {
+    let dest = state.paths.models.join("media").join("helpers").join(&h.file.file);
     if !dest.metadata().is_ok_and(|m| m.len() == h.file.size) {
         progress(getting, 0.0);
         state.log("network", &format!("Downloading {} ({}) from {}", h.file.file, crate::size_label(h.file.size), crate::host_of(&h.file.url)));
@@ -3626,10 +3645,8 @@ async fn ensure_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel:
         std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
         download::fetch_verified(&client, &h.file.url, &dest, h.file.size, &h.file.sha256, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await?;
     }
-    Ok((dll, dest))
+    Ok(dest)
 }
-
-
 
 /// An installed music model that adds parts to a song (ACE-Step 1.5 Base).
 fn parts_model(state: &AppState) -> Option<MediaModel> {
@@ -4527,6 +4544,158 @@ pub fn media_song_map_save(state: AppStateRef, id: String, map: songmap::SongMap
     Ok(item)
 }
 
+// ---------- compose ----------
+
+/// The sampled instruments Compose plays its notes on, downloaded the first
+/// time (`compose:getting` says how far), as bytes for the window's player.
+#[tauri::command]
+pub async fn compose_sounds(state: AppStateRef<'_>) -> Result<tauri::ipc::Response, String> {
+    crate::features::require(&state, Feature::Music)?;
+    let h = state.catalog.media.instruments.clone().ok_or("The instruments aren't available.")?;
+    let st = state.inner().clone();
+    let cancel = AtomicBool::new(false);
+    let path = fetch_helper(&st, &h, "Getting the instruments (once)", &cancel, &|_, f| emit(&st, "compose:getting", json!({ "fraction": f }))).await?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read the instruments: {e}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// A song written as notes: the chat model plans it, the arranger writes
+/// the notes (`compose`).
+#[tauri::command]
+pub async fn compose_write(state: AppStateRef<'_>, mut ask: compose::Ask) -> Result<compose::Composition, String> {
+    crate::features::require(&state, Feature::Music)?;
+    if ask.description.trim().is_empty() {
+        return Err("Describe the song first.".into());
+    }
+    if ask.beats == 0 || ask.unit == 0 {
+        (ask.beats, ask.unit) = (4, 4);
+    }
+    if ask.sections == 0 {
+        ask.sections = 6;
+    }
+    if ask.seed == 0 {
+        ask.seed = random_seed() as u64;
+    }
+    let plan = compose::write_plan(state.inner(), &ask).await?;
+    state.log("media", &format!("Wrote a song as notes: {} sections in {}", plan.sections.len(), plan.time()));
+    Ok(compose::Composition { parts: compose::arrange(&plan), plan })
+}
+
+/// Every note written again from the plan (after a new time signature).
+#[tauri::command(async)]
+pub fn compose_arrange(plan: compose::Plan) -> compose::Composition {
+    let plan = compose::tidy(plan);
+    compose::Composition { parts: compose::arrange(&plan), plan }
+}
+
+/// A section changed (`change`: in the person's words, by the chat model),
+/// written again, added, copied or taken out; the other notes stay.
+#[tauri::command]
+pub async fn compose_section(state: AppStateRef<'_>, composition: compose::Composition, index: usize, op: compose::SectionOp, change: Option<String>) -> Result<compose::Composition, String> {
+    let op = match change.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        Some(words) => compose::SectionOp::Set { section: compose::edit_section(state.inner(), &composition.plan, index, words).await? },
+        None => op,
+    };
+    compose::apply(&composition, index, op)
+}
+
+/// Keeps a composition in the gallery with its demo (WAV, base64, played in
+/// the window): a new item, or the one it was opened from.
+#[tauri::command(async)]
+pub fn compose_save(state: AppStateRef, id: Option<String>, composition: compose::Composition, audio: String, seconds: f64) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(audio.trim()).map_err(|_| "The demo couldn't be read.".to_string())?;
+    if bytes.len() as u64 > MAX_IMPORT || composition.parts.iter().map(|p| p.notes.len()).sum::<usize>() > 200_000 {
+        return Err("That song is too big to keep.".into());
+    }
+    let words = composition.plan.lyrics();
+    let lyrics = Some(words).filter(|l| lyrics::has_singing(l));
+    let prompt = if composition.plan.description.is_empty() { composition.plan.title.clone() } else { composition.plan.description.clone() };
+    let existing = id.and_then(|id| store::get(&state.db.lock().unwrap(), &c, &id)).filter(|i| i.op == "compose");
+    let mut item = match existing {
+        Some(mut item) => {
+            store::write_file(&state.paths, &c, &item.id, &bytes)?;
+            item.size = bytes.len() as u64;
+            item
+        }
+        None => add(&state, &c, bytes, "audio", "audio/wav", "compose", &prompt, None, None, false)?,
+    };
+    item.seconds = seconds;
+    item.prompt = prompt;
+    item.lyrics = lyrics;
+    item.composition = Some(composition);
+    store::update(&state.db.lock().unwrap(), &c, &item)?;
+    Ok(item)
+}
+
+/// A composition as a MIDI file: saved at `path`, else its bytes (what the
+/// window's player plays).
+#[tauri::command(async)]
+pub fn compose_midi(state: AppStateRef, composition: compose::Composition, path: Option<String>) -> Result<tauri::ipc::Response, String> {
+    let bytes = compose::midi(&composition);
+    let Some(path) = path else {
+        return Ok(tauri::ipc::Response::new(bytes));
+    };
+    std::fs::write(&path, bytes).map_err(|e| format!("Couldn't save it there: {e}"))?;
+    state.log("media", "Saved a composition as a MIDI file");
+    Ok(tauri::ipc::Response::new(Vec::new()))
+}
+
+/// "Make it real": the music model records a song that follows the
+/// composition's demo (a cover of it: its tempo, chords and tune) and sings
+/// its words. A new song in the gallery; the composition stays as it is.
+/// `strength`: how closely it follows the demo (0 to 1).
+#[tauri::command(async)]
+pub fn compose_make_real(state: AppStateRef, id: String, strength: Option<f32>, model_id: Option<String>, chat_id: Option<String>) -> Result<String, String> {
+    let c = state.cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("Keep the song first.")?;
+    let plan = item.composition.as_ref().map(|x| x.plan.clone()).ok_or("That isn't a composition.")?;
+    let request = real_request(&plan, &id, strength, model_id, chat_id);
+    media_start(state, request)
+}
+
+/// The music job that makes a composition real (`compose_make_real`).
+pub(crate) fn real_request(plan: &compose::Plan, id: &str, strength: Option<f32>, model_id: Option<String>, chat_id: Option<String>) -> Request {
+    let words = plan.lyrics();
+    let sung = lyrics::has_singing(&words);
+    let ins = &plan.instruments;
+    // The parts as the music model knows them; the tune is sung when there are words.
+    let mut instruments = vec![ins.chords.clone(), ins.bass.clone(), if ins.drums.contains("kit") { "drums".into() } else { ins.drums.clone() }];
+    if !sung {
+        instruments.push(ins.melody.clone());
+    }
+    let prompt = if plan.description.trim().is_empty() { format!("{} song", plan.style) } else { plan.description.clone() };
+    Request {
+        op: "music".into(),
+        model_id,
+        prompt,
+        lyrics: sung.then_some(words),
+        instrumental: Some(!sung),
+        chat_id,
+        music: Some(MusicSpec {
+            task: Some("cover".into()),
+            audio: Some(id.to_string()),
+            genre: Some(plan.style.clone()).filter(|s| !s.trim().is_empty()),
+            era: Some(plan.era.clone()).filter(|e| !e.trim().is_empty()),
+            instruments: instruments.into_iter().filter(|i| !i.trim().is_empty()).collect(),
+            voice: Some(plan.voice.clone()).filter(|v| sung && !v.is_empty()),
+            bpm: Some(plan.bpm),
+            key: Some(plan.key.clone()),
+            time_signature: Some(plan.time()),
+            strength: Some(strength.unwrap_or(if sung { REAL_STRENGTH_SUNG } else { REAL_STRENGTH_PLAYED }).clamp(0.0, 1.0)),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+/// How closely a composition made real follows its demo, unless asked: a
+/// sung song less closely (the demo has no real voice, so the closer it
+/// follows, the less it sings: Whisper heard 47 of 104 words at 0.4 and 1 at
+/// 0.6), an instrumental more (its note transitions were better at 0.6).
+pub(crate) const REAL_STRENGTH_SUNG: f32 = 0.4;
+pub(crate) const REAL_STRENGTH_PLAYED: f32 = 0.6;
+
 /// A screenshot of the screen the mouse is on, kept as a hidden attachment.
 pub fn screenshot(state: &AppState, chat_id: Option<String>) -> Result<MediaItem, String> {
     let c = state.cipher()?;
@@ -4593,6 +4762,10 @@ mod tests {
         );
         assert!(!spec.caption("", true).contains("harmony vocals"), "an instrumental has no sung harmonies");
         assert!(spec.caption("", true).contains("strings playing a harmony line"), "but keeps the instrument's");
+        // A decade: the song's style and sound, and how its words are written.
+        let old = MusicSpec { genre: Some("Rock".into()), era: Some("1970s".into()), ..Default::default() };
+        assert_eq!(old.caption("road trip", true), "road trip, rock, 1970s style, a song from the 1970s with the instruments and recording sound of that era, instrumental, no vocals");
+        assert!(old.lyrics_guide().contains("a song from the 1970s"));
         let mixed = MusicSpec { harmony_voice: Some("mixed".into()), harmony_where: Some("ending".into()), harmony_style: Some("oohs".into()), ..Default::default() };
         assert_eq!(mixed.harmony_vocals().unwrap(), "male and female backing harmony vocals singing soft oohs and aahs on the final chorus");
         let guide = spec.lyrics_guide();

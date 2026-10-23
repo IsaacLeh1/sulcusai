@@ -61,6 +61,9 @@ pub struct MediaItem {
     /// How a song is built, for the song view (`songmap`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map: Option<super::songmap::SongMap>,
+    /// A song written as notes in Compose (`compose`); the file is its demo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub composition: Option<super::compose::Composition>,
 }
 
 /// How long making an item took, and what it used.
@@ -177,6 +180,14 @@ pub fn read(paths: &Paths, cipher: &Cipher, id: &str) -> Result<Vec<u8>, String>
     }
     let blob = std::fs::read(file(paths, id)).map_err(|_| "That file is missing.".to_string())?;
     cipher.open_bytes(&blob)
+}
+
+/// Replaces an item's file (a composition's demo, played again).
+pub fn write_file(paths: &Paths, cipher: &Cipher, id: &str, bytes: &[u8]) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("Bad media id.".into());
+    }
+    write_sealed(&file(paths, id), cipher, bytes)
 }
 
 /// Replaces an item's thumbnail.
