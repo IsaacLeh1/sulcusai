@@ -1550,7 +1550,7 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
-## Not released yet (for 0.9.28): songs that sound less made, a listener, the song view, Compose, eras, Auto, big PCs
+## 0.9.28 (2026-10-23): songs that sound less made, a listener, the song view, Compose, eras, Auto, big PCs
 
 Asks: breaths sound semi-robotic, a tell of AI music; get music very hard to tell it's generated; a trained listener that reviews a song and feeds back to remake it; a MIDI section showing how the music is built, with right-click "edit with model" on a section; models of every size filtered by what the PC runs, in every area; several small models in harmony with an Auto mode; my brother's 4070 Ti Super plus 1080 Ti; a damaged model file on D: gave the engine's raw error.
 
