@@ -220,7 +220,7 @@ async fn file(State(state): State<Arc<AppState>>, uri: axum::http::Uri) -> Respo
 const PHONE_MARK: &[u8] = b"name=\"sulcusai-phone\"";
 
 /// What the phone's page may load: the app's own files and nothing else.
-const PHONE_CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+const PHONE_CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' blob: data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 /// One of the app's files for the phone (`path` as the phone asked for it:
 /// "/", "/assets/index-….js"): status, headers and bytes. "/" is the phone's

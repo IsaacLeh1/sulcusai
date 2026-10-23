@@ -4554,7 +4554,15 @@ pub async fn compose_sounds(state: AppStateRef<'_>) -> Result<tauri::ipc::Respon
     let h = state.catalog.media.instruments.clone().ok_or("The instruments aren't available.")?;
     let st = state.inner().clone();
     let cancel = AtomicBool::new(false);
-    let path = fetch_helper(&st, &h, "Getting the instruments (once)", &cancel, &|_, f| emit(&st, "compose:getting", json!({ "fraction": f }))).await?;
+    // A message a percent: one a download chunk (thousands) left the window minutes behind.
+    let shown = std::sync::atomic::AtomicU32::new(u32::MAX);
+    let path = fetch_helper(&st, &h, "Getting the instruments (once)", &cancel, &|_, f| {
+        let pct = (f * 100.0) as u32;
+        if shown.swap(pct, Ordering::Relaxed) != pct {
+            emit(&st, "compose:getting", json!({ "fraction": f }));
+        }
+    })
+    .await?;
     let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read the instruments: {e}"))?;
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -4620,7 +4628,7 @@ pub fn compose_save(state: AppStateRef, id: Option<String>, composition: compose
         }
         None => add(&state, &c, bytes, "audio", "audio/wav", "compose", &prompt, None, None, false)?,
     };
-    item.seconds = seconds;
+    item.seconds = if seconds > 0.0 { seconds } else { composition.plan.seconds() };
     item.prompt = prompt;
     item.lyrics = lyrics;
     item.composition = Some(composition);
@@ -4689,12 +4697,14 @@ pub(crate) fn real_request(plan: &compose::Plan, id: &str, strength: Option<f32>
     }
 }
 
-/// How closely a composition made real follows its demo, unless asked: a
-/// sung song less closely (the demo has no real voice, so the closer it
-/// follows, the less it sings: Whisper heard 47 of 104 words at 0.4 and 1 at
-/// 0.6), an instrumental more (its note transitions were better at 0.6).
-pub(crate) const REAL_STRENGTH_SUNG: f32 = 0.4;
-pub(crate) const REAL_STRENGTH_PLAYED: f32 = 0.6;
+/// How closely a composition made real follows its demo, unless asked. The
+/// engine follows the demo for `(steps × strength)` of its steps, rounded
+/// down (8 for the turbo models: 0.5 and 0.6 are the same song), so the
+/// window offers eighths. A sung song follows less closely (the demo has no
+/// real voice; with thin lyrics Whisper heard 47 of 104 words at 3 steps and
+/// 1 at 4), an instrumental more (its note transitions were better at 4).
+pub(crate) const REAL_STRENGTH_SUNG: f32 = 0.375;
+pub(crate) const REAL_STRENGTH_PLAYED: f32 = 0.5;
 
 /// A screenshot of the screen the mouse is on, kept as a hidden attachment.
 pub fn screenshot(state: &AppState, chat_id: Option<String>) -> Result<MediaItem, String> {

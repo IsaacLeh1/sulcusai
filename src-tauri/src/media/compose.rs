@@ -225,25 +225,6 @@ pub fn scale(key: &str) -> (i32, Vec<i32>) {
     (tonic, if minor { vec![0, 2, 3, 5, 7, 8, 10] } else { vec![0, 2, 4, 5, 7, 9, 11] })
 }
 
-/// The chords of a progression moved by `steps` semitones (a new key).
-pub fn transpose_chord(name: &str, steps: i32) -> String {
-    let shift = |n: &str| -> String {
-        match root(n) {
-            Some((pc, rest)) => {
-                let p = (pc + steps).rem_euclid(12);
-                let flat = name.contains('b') && !name.starts_with('B');
-                let names = if flat { ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"] } else { ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] };
-                format!("{}{rest}", names[p as usize])
-            }
-            None => n.to_string(),
-        }
-    };
-    match name.split_once('/') {
-        Some((m, b)) => format!("{}/{}", shift(m), shift(b)),
-        None => shift(name),
-    }
-}
-
 // ---------- the arranger ----------
 
 /// A small, steady random source: the same plan arranges the same way.
@@ -1249,8 +1230,6 @@ mod tests {
         assert_eq!(chord("xyz"), None);
         assert_eq!(scale("A minor"), (9, vec![0, 2, 3, 5, 7, 8, 10]));
         assert_eq!(scale("Eb major").0, 3);
-        assert_eq!(transpose_chord("Am7", 2), "Bm7");
-        assert_eq!(transpose_chord("C/E", -1), "B/D#");
         assert_eq!(syllables("Morning light on the window"), 7);
         assert_eq!(syllables("Coffee warm in my hands"), 6);
         assert_eq!(syllables("I love your smile, candle"), 6);

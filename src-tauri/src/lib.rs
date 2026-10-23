@@ -283,6 +283,10 @@ pub(crate) fn host_of(url: &str) -> String {
 }
 
 pub(crate) fn size_label(bytes: u64) -> String {
+    // Small files in MB (a 40 MB sound set read "0.0 GB").
+    if bytes < catalog::GIB / 10 {
+        return format!("{:.0} MB", bytes as f64 / (1u64 << 20) as f64);
+    }
     format!("{:.1} GB", bytes as f64 / catalog::GIB as f64)
 }
 

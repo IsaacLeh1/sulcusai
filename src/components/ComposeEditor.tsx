@@ -147,7 +147,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
   const [busy, setBusy] = useState<string | null>(null);
   const [real, setReal] = useState(false);
   // As `media::REAL_STRENGTH_SUNG` and `_PLAYED`: a sung song follows less closely, so it sings.
-  const [strength, setStrength] = useState(() => (composition.plan.sections.some((s) => s.lines.length > 0) ? 0.4 : 0.6));
+  // In eighths: the music model follows the demo for that share of its 8 steps, rounded down.
+  const [strength, setStrength] = useState(() => (composition.plan.sections.some((s) => s.lines.length > 0) ? 0.375 : 0.5));
   const clip = useRef<{ part: string; notes: ComposeNote[] }[] | null>(null);
   // What's playing (an edit while playing is heard from where it is).
   const lastPlayed = useRef<EComp | null>(null);
@@ -601,8 +602,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
               <>
                 <label className="small row">
                   {t("How closely it follows your notes")}
-                  <input type="range" min={0.2} max={0.95} step={0.05} value={strength} onChange={(e) => setStrength(+e.target.value)} />
-                  <span className="mono">{Math.round(strength * 100)}%</span>
+                  <input type="range" min={0.125} max={0.875} step={0.125} value={strength} onChange={(e) => setStrength(+e.target.value)} />
+                  <span className="mono">{Math.round(strength * 8)}/8</span>
                 </label>
                 <p className="small muted">{t("Higher keeps closer to your tune, chords and timing but sings fewer of the words; lower sings more and plays more freely.")}</p>
                 <div className="row">
