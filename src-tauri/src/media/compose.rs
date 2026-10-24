@@ -883,6 +883,8 @@ pub fn program(name: &str, drums: bool) -> u8 {
         ("synth", 81),
         ("bells", 14),
         ("marimba", 12),
+        // The editor's metronome click.
+        ("woodblock", 115),
     ];
     LIST.iter().find(|(k, _)| n.contains(k)).map_or(0, |(_, p)| *p)
 }
@@ -1465,6 +1467,7 @@ mod tests {
     #[test]
     fn instruments_and_midi() {
         assert_eq!((program("Electric piano", false), program("synth bass", false), program("jazz kit", true)), (4, 38, 32));
+        assert_eq!(program("woodblock", false), 115, "the editor's metronome");
         let p = plan(6, 8);
         let c = Composition { parts: arrange(&p), plan: p };
         let f = midi(&c);

@@ -105,6 +105,11 @@ export class ComposePlayer {
     return this.seq?.currentTime ?? 0;
   }
 
+  /** Jumps to `t` seconds, playing on (a loop going round). */
+  seek(t: number) {
+    if (this.seq) this.seq.currentTime = t;
+  }
+
   /** One note heard now (an added or moved note), on its part's instrument. */
   async preview(c: Composition, part: string, pitch: number) {
     await this.ready();

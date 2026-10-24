@@ -869,6 +869,10 @@ a.md-link { cursor: pointer; }
 .cmp-lane-bass rect:not(.song-lane-bg) { fill: #b07a3c; }
 .cmp-lane-drums rect:not(.song-lane-bg) { fill: var(--muted); }
 .cmp-muted { opacity: 0.35; }
+.cmp-loop { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1; opacity: 0.6; pointer-events: none; }
+.cmp-loop.on { opacity: 1; }
+.cmp-loop-shade { fill: var(--accent); opacity: 0.07; pointer-events: none; }
+.compose-view .song-transport .btn.active { background: var(--accent-soft); border-color: var(--accent); }
 .compose-form textarea { width: 100%; }
 .compose-form .row { display: flex; align-items: center; gap: 10px; }
 .compose-section-form label.small:not(.row) { display: flex; flex-direction: column; gap: 3px; }

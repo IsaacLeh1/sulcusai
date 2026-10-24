@@ -3868,7 +3868,6 @@
  "Change the {name}": "{name} ändern",
  "Chords": "Akkorde",
  "Chords, a bar each (they repeat)": "Akkorde, einer pro Takt (sie wiederholen sich)",
- "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them.": "Klicke auf einen Teil für sein Menü. Klicke Noten zum Auswählen an (Umschalt für mehrere), ziehe sie zum Verschieben, ziehe das Ende einer Note zum Verlängern, Doppelklick fügt eine hinzu. Pfeiltasten verschieben sie, Strg+C und Strg+V kopieren sie an die Abspielposition, Entf löscht sie.",
  "Close without keeping this song? It isn't in the gallery yet.": "Schließen, ohne diesen Song zu behalten? Er ist noch nicht in der Galerie.",
  "Close without keeping your changes?": "Schließen, ohne deine Änderungen zu behalten?",
  "Composed": "Komponiert",
@@ -3979,8 +3978,12 @@
  "More settings: instruments, ways of singing, harmonies, production": "Mehr Einstellungen: Instrumente, Gesangsarten, Harmonien, Produktion",
  "Music model": "Musikmodell",
  "See and change every note in an editor first, then make it real with these settings": "Zuerst jede Note in einem Editor sehen und ändern, dann mit diesen Einstellungen echt machen",
- "The tune is written high, for a woman's voice. For this voice, write the song again with it picked, or move the melody down in the editor.": "Die Melodie liegt hoch, für eine Frauenstimme. Für diese Stimme schreib den Song mit ihr neu oder verschiebe die Melodie im Editor nach unten.",
- "The tune is written low, for a man's voice. For this voice, write the song again with it picked, or move the melody up in the editor.": "Die Melodie liegt tief, für eine Männerstimme. Für diese Stimme schreib den Song mit ihr neu oder verschiebe die Melodie im Editor nach oben.",
  "Write it as notes first": "Zuerst als Noten schreiben",
- "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "Zuerst als Noten schreiben: Das Chatmodell arrangiert den Song in Takten und Akkorden für jede Spur, du kannst jede Note sehen, hören und ändern, dann nimmt „Echt machen“ ihn mit diesen Einstellungen auf."
+ "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "Zuerst als Noten schreiben: Das Chatmodell arrangiert den Song in Takten und Akkorden für jede Spur, du kannst jede Note sehen, hören und ändern, dann nimmt „Echt machen“ ihn mit diesen Einstellungen auf.",
+ "A click on every beat, louder on the first of each bar": "Ein Klick auf jeden Schlag, lauter auf dem ersten jedes Takts",
+ "Metronome": "Metronom",
+ "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "Klicke auf einen Teil für sein Menü. Klicke Noten zum Auswählen an (Umschalt für mehrere), ziehe sie zum Verschieben, ziehe das Ende einer Note zum Verlängern, Doppelklick fügt eine hinzu. Pfeiltasten verschieben sie, Strg+C und Strg+V kopieren sie an die Abspielposition, Entf löscht sie. Ziehe über die Taktnummern, um eine Schleife festzulegen.",
+ "Play a part of the song over and over: drag across the bar numbers to set it": "Einen Teil des Songs immer wieder spielen: Ziehe über die Taktnummern, um ihn festzulegen",
+ "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "Die Melodie rückt {n} Oktave(n) nach unten, passend zu dieser Stimme, und das Demo wird neu aufgenommen.",
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "Die Melodie rückt {n} Oktave(n) nach oben, passend zu dieser Stimme, und das Demo wird neu aufgenommen."
 }

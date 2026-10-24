@@ -3868,7 +3868,6 @@
  "Change the {name}": "Cambiar {name}",
  "Chords": "Acordes",
  "Chords, a bar each (they repeat)": "Acordes, uno por compás (se repiten)",
- "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them.": "Haz clic en una sección para ver su menú. Haz clic en las notas para seleccionarlas (Mayús para más), arrástralas para moverlas, arrastra el final de una nota para alargarla, doble clic para añadir una. Las flechas las mueven, Ctrl+C y Ctrl+V las copian al cursor de reproducción, Supr las quita.",
  "Close without keeping this song? It isn't in the gallery yet.": "¿Cerrar sin guardar esta canción? Aún no está en la galería.",
  "Close without keeping your changes?": "¿Cerrar sin guardar los cambios?",
  "Composed": "Compuesta",
@@ -3979,8 +3978,12 @@
  "More settings: instruments, ways of singing, harmonies, production": "Más ajustes: instrumentos, formas de cantar, armonías, producción",
  "Music model": "Modelo de música",
  "See and change every note in an editor first, then make it real with these settings": "Primero ve y cambia cada nota en un editor, y luego hazla real con estos ajustes",
- "The tune is written high, for a woman's voice. For this voice, write the song again with it picked, or move the melody down in the editor.": "La melodía está escrita aguda, para voz de mujer. Para esta voz, escribe la canción de nuevo con ella elegida o baja la melodía en el editor.",
- "The tune is written low, for a man's voice. For this voice, write the song again with it picked, or move the melody up in the editor.": "La melodía está escrita grave, para voz de hombre. Para esta voz, escribe la canción de nuevo con ella elegida o sube la melodía en el editor.",
  "Write it as notes first": "Escribirla primero en notas",
- "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "Escribirla primero en notas: el modelo de chat arregla la canción en compases y acordes para cada parte, puedes ver, oír y cambiar cualquier nota, y luego Hacerla real la graba con estos ajustes."
+ "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "Escribirla primero en notas: el modelo de chat arregla la canción en compases y acordes para cada parte, puedes ver, oír y cambiar cualquier nota, y luego Hacerla real la graba con estos ajustes.",
+ "A click on every beat, louder on the first of each bar": "Un clic en cada pulso, más fuerte en el primero de cada compás",
+ "Metronome": "Metrónomo",
+ "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "Haz clic en una sección para ver su menú. Haz clic en las notas para seleccionarlas (Mayús para más), arrástralas para moverlas, arrastra el final de una nota para alargarla, doble clic para añadir una. Las flechas las mueven, Ctrl+C y Ctrl+V las copian al cursor de reproducción, Supr las quita. Arrastra sobre los números de compás para marcar un bucle.",
+ "Play a part of the song over and over: drag across the bar numbers to set it": "Reproducir una parte de la canción una y otra vez: arrastra sobre los números de compás para marcarla",
+ "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "La melodía baja {n} octava(s) para ajustarse a esta voz, y la maqueta se graba de nuevo.",
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "La melodía sube {n} octava(s) para ajustarse a esta voz, y la maqueta se graba de nuevo."
 }

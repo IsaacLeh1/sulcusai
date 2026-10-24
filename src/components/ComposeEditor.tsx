@@ -16,7 +16,7 @@ import { clock } from "../format";
 import { t, tx } from "../i18n";
 import { encodeWav } from "../media";
 import { ComposePlayer, INSTRUMENTS, KITS, renderDemo, secondsPerBeat } from "../compose/player";
-import { MakeItReal, type RealOptions } from "./MakeItReal";
+import { MakeItReal, fitShift, type RealOptions } from "./MakeItReal";
 import type { PushToast } from "./Toasts";
 
 type ENote = ComposeNote & { id: number };
@@ -150,6 +150,11 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
   const [real, setReal] = useState(false);
   // As `media::REAL_STRENGTH_SUNG` and `_PLAYED`: a sung song follows less closely, so it sings.
   const clip = useRef<{ part: string; notes: ComposeNote[] }[] | null>(null);
+  // A loop region (in beats, whole bars) that playing goes round, and the metronome.
+  const [loop, setLoop] = useState<{ a: number; b: number } | null>(null);
+  const [looping, setLooping] = useState(false);
+  const [click, setClick] = useState(false);
+  const loopDrag = useRef<{ x: number; left: number; anchor: number; moved: boolean } | null>(null);
   // What's playing (an edit while playing is heard from where it is).
   const lastPlayed = useRef<EComp | null>(null);
   // A drag in progress: the notes it moves, the composition before it and its latest result.
@@ -312,12 +317,21 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
     player.current?.stop();
     setPlaying(false);
   }, []);
+  /** The composition as heard: with a click on every beat when the metronome is on (louder on each bar's first). */
+  const heard = (c: EComp): Composition => {
+    const p = plain(c);
+    if (!click) return p;
+    const notes = Array.from({ length: Math.round(total) }, (_, i) => ({ beat: i, len: 0.1, pitch: i % barBeats === 0 ? 84 : 77, vel: i % barBeats === 0 ? 115 : 80 }));
+    return { ...p, parts: [...p.parts, { name: "click", instrument: "woodblock", notes }] };
+  };
   const play = async (from = pos) => {
     const p = getPlayer();
+    // Looping: from the loop's start when the playhead is outside it.
+    const start = looping && loop && (from < loop.a * spb || from >= loop.b * spb) ? loop.a * spb : from;
     try {
       if (!p.loaded) setLoading((l) => l ?? 0);
       lastPlayed.current = comp;
-      await p.play(plain(comp), from, muted);
+      await p.play(heard(comp), start, muted);
       setPlaying(true);
     } catch (e) {
       toast(errorText(e), "error");
@@ -330,18 +344,29 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
     let raf = 0;
     const tick = () => {
       const now = player.current?.time ?? 0;
+      if (looping && loop && now >= loop.b * spb) {
+        player.current?.seek(loop.a * spb);
+        setPos(loop.a * spb);
+        raf = requestAnimationFrame(tick);
+        return;
+      }
       setPos(now);
       if (now >= total * spb + 0.5) stop();
       else raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, total, spb, stop]);
+  }, [playing, total, spb, stop, looping, loop]);
+  // The metronome turned on or off while playing: heard from where it is.
+  useEffect(() => {
+    if (playing) player.current?.play(heard(comp), player.current.time, muted).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [click]);
   // An edit while playing: heard from where it is.
   useEffect(() => {
     if (!playing || lastPlayed.current === comp || drag.current) return;
     lastPlayed.current = comp;
-    const timer = setTimeout(() => player.current?.play(plain(comp), player.current.time, muted).catch(() => {}), 150);
+    const timer = setTimeout(() => player.current?.play(heard(comp), player.current.time, muted).catch(() => {}), 150);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comp, playing]);
@@ -459,11 +484,47 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
     hear(l.part.name, pitch);
   };
   const seek = (e: React.MouseEvent) => {
-    const { px } = svgPoint(e);
+    const { px, py } = svgPoint(e);
+    // On the bar numbers: dragging sets a loop region (a click still moves the playhead).
+    if (py < RULER) {
+      const left = (e.currentTarget as Element).closest("svg")!.getBoundingClientRect().left;
+      loopDrag.current = { x: e.clientX, left, anchor: px / ppb, moved: false };
+    }
     const to = Math.max(0, Math.min(total, px / ppb)) * spb;
     setPos(to);
     setSelected(new Set());
     if (playing) play(to);
+  };
+  const melodyPitches = useMemo(() => comp.parts.find((p) => p.name === "melody")?.notes.map((n) => n.pitch) ?? [], [comp.parts]);
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = loopDrag.current;
+      if (!d || (!d.moved && Math.abs(e.clientX - d.x) < 4)) return;
+      d.moved = true;
+      const at = Math.max(0, Math.min(total, (e.clientX - d.left) / ppb));
+      const a = Math.floor(Math.min(d.anchor, at) / barBeats) * barBeats;
+      const b = Math.max(a + barBeats, Math.ceil(Math.max(d.anchor, at) / barBeats) * barBeats);
+      setLoop({ a, b: Math.min(b, total) });
+      setLooping(true);
+    };
+    const up = () => {
+      loopDrag.current = null;
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, [ppb, total, barBeats]);
+  /** Loop on or off; with no region yet, the section the playhead is in. */
+  const toggleLoop = () => {
+    if (!loop) {
+      const at = pos / spb;
+      const i = Math.max(0, starts.findIndex((s0, k) => at >= s0 && at < s0 + plan.sections[k].bars * barBeats));
+      setLoop({ a: starts[i] ?? 0, b: (starts[i] ?? 0) + (plan.sections[i]?.bars ?? 4) * barBeats });
+    }
+    setLooping((l) => !l);
   };
   const selectedNotes = comp.parts.flatMap((p) => p.notes.filter((n) => selected.has(n.id)));
   const loudness = selectedNotes.length ? Math.round(selectedNotes.reduce((s, n) => s + n.vel, 0) / selectedNotes.length) : 0;
@@ -524,17 +585,17 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
 
   // ---------- keeping it ----------
   /** The demo rendered and kept with the composition; the gallery item. */
-  const keep = async (): Promise<MediaItem | null> => {
+  const keep = async (now: EComp = comp): Promise<MediaItem | null> => {
     stop();
     setBusy(t("Recording the demo on the instruments"));
     try {
-      const c = plain(comp);
+      const c = plain(now);
       const seconds = total * spb;
       const buf = await renderDemo(c, seconds);
       const wav = encodeWav(buf, 0, Math.min(buf.duration, seconds + 1.5));
       const made = await api.composeSave(kept?.id ?? null, c, toBase64(wav), seconds);
       setKept(made);
-      setSaved(comp);
+      setSaved(now);
       onSaved(made);
       return made;
     } catch (e) {
@@ -556,7 +617,19 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
     }
   };
   const makeReal = async (o: RealOptions) => {
-    const it = dirty || !kept ? await keep() : kept;
+    // Another voice: the tune moves by octaves into its range (made real, the
+    // music model follows the demo's pitch), and the demo is recorded again.
+    const voice = o.song.voice ?? "";
+    const shift = voice ? fitShift(melodyPitches, voice) : 0;
+    let now = comp;
+    if (voice && (shift !== 0 || voice !== plan.voice)) {
+      now = {
+        plan: { ...plan, voice },
+        parts: comp.parts.map((p) => (p.name === "melody" && shift ? { ...p, notes: p.notes.map((n) => ({ ...n, pitch: Math.max(0, Math.min(127, n.pitch + shift)) })) } : p)),
+      };
+      change(now);
+    }
+    const it = now !== comp || dirty || !kept ? await keep(now) : kept;
     if (!it) return;
     try {
       await api.composeMakeReal(it.id, o);
@@ -585,14 +658,16 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
           <span className="spacer" />
           <button className="btn small" onClick={undo} disabled={!past.length || !!busy} title={t("Undo (Ctrl+Z)")}>{t("Undo")}</button>
           <button className="btn small" onClick={redo} disabled={!future.length || !!busy} title={t("Redo (Ctrl+Y)")}>{t("Redo")}</button>
-          <button className="btn small" onClick={keep} disabled={(!dirty && !!kept) || !!busy}>{kept ? t("Keep changes") : t("Keep in the gallery")}</button>
+          <button className="btn small" onClick={() => keep()} disabled={(!dirty && !!kept) || !!busy}>{kept ? t("Keep changes") : t("Keep in the gallery")}</button>
           <button className="btn small" onClick={saveMidi} disabled={!!busy}>{t("Save as MIDI")}</button>
           <button className="btn small primary" onClick={() => setReal(!real)} disabled={!!busy} aria-expanded={real}>{t("Make it real")}</button>
           <button className="icon-btn" aria-label={t("Close")} onClick={close}>✕</button>
         </div>
-        {real && <MakeItReal plan={plan} models={musicModels} defaultModel={defaultMusic} busy={!!busy} onCancel={() => setReal(false)} onRecord={makeReal} />}
+        {real && <MakeItReal plan={plan} melody={melodyPitches} models={musicModels} defaultModel={defaultMusic} busy={!!busy} onCancel={() => setReal(false)} onRecord={makeReal} />}
         <div className="row wrap song-transport">
           <button className="btn small" onClick={() => (playing ? stop() : play())} disabled={!!busy}>{playing ? t("Stop") : t("Play")}</button>
+          <button className={`btn small ${looping ? "active" : ""}`} aria-pressed={looping} onClick={toggleLoop} title={t("Play a part of the song over and over: drag across the bar numbers to set it")}>{t("Loop")}</button>
+          <button className={`btn small ${click ? "active" : ""}`} aria-pressed={click} onClick={() => setClick((c) => !c)} title={t("A click on every beat, louder on the first of each bar")}>{t("Metronome")}</button>
           <span className="small mono" title={t("Bar and beat")}>{where}</span>
           <span className="small mono muted">{clock(pos)} / {clock(total * spb)}</span>
           {loading !== null && <span className="small muted">{loading > 0 && loading < 1 ? t("Getting the instruments (once): {pct}%", { pct: Math.round(loading * 100) }) : t("Loading the instruments")}</span>}
@@ -732,6 +807,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
                   ))}
                 </g>
               ))}
+              {loop && <rect className={`cmp-loop ${looping ? "on" : ""}`} x={x(loop.a)} y={1} width={Math.max(2, x(loop.b - loop.a))} height={RULER - 5} rx={3} />}
+              {loop && looping && <rect className="cmp-loop-shade" x={x(loop.a)} y={TOP} width={Math.max(2, x(loop.b - loop.a))} height={height - TOP} />}
               <line className="song-playhead" x1={x(posBeat)} x2={x(posBeat)} y1={0} y2={height} />
             </svg>
           </div>
@@ -760,7 +837,7 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
             </>
           ) : (
             <span className="muted">
-              {t("Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them.")}
+              {t("Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.")}
             </span>
           )}
         </div>

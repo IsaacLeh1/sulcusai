@@ -3868,7 +3868,6 @@
  "Change the {name}": "Modifier {name}",
  "Chords": "Accords",
  "Chords, a bar each (they repeat)": "Accords, un par mesure (ils se répètent)",
- "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them.": "Cliquez sur une section pour son menu. Cliquez sur les notes pour les sélectionner (Maj pour plusieurs), faites-les glisser pour les déplacer, tirez la fin d'une note pour l'allonger, double-cliquez pour en ajouter une. Les flèches les déplacent, Ctrl+C et Ctrl+V les copient à la tête de lecture, Suppr les retire.",
  "Close without keeping this song? It isn't in the gallery yet.": "Fermer sans garder cette chanson ? Elle n'est pas encore dans la galerie.",
  "Close without keeping your changes?": "Fermer sans garder vos modifications ?",
  "Composed": "Composé",
@@ -3979,8 +3978,12 @@
  "More settings: instruments, ways of singing, harmonies, production": "Plus de réglages : instruments, façons de chanter, harmonies, production",
  "Music model": "Modèle de musique",
  "See and change every note in an editor first, then make it real with these settings": "Voir et modifier chaque note dans un éditeur d'abord, puis la rendre réelle avec ces réglages",
- "The tune is written high, for a woman's voice. For this voice, write the song again with it picked, or move the melody down in the editor.": "La mélodie est écrite haut, pour une voix de femme. Pour cette voix, réécrivez la chanson en la choisissant, ou descendez la mélodie dans l'éditeur.",
- "The tune is written low, for a man's voice. For this voice, write the song again with it picked, or move the melody up in the editor.": "La mélodie est écrite bas, pour une voix d'homme. Pour cette voix, réécrivez la chanson en la choisissant, ou montez la mélodie dans l'éditeur.",
  "Write it as notes first": "L'écrire d'abord en notes",
- "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "L'écrire d'abord en notes : le modèle de discussion arrange la chanson en mesures et accords pour chaque partie, vous pouvez voir, écouter et changer chaque note, puis La rendre réelle l'enregistre avec ces réglages."
+ "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "L'écrire d'abord en notes : le modèle de discussion arrange la chanson en mesures et accords pour chaque partie, vous pouvez voir, écouter et changer chaque note, puis La rendre réelle l'enregistre avec ces réglages.",
+ "A click on every beat, louder on the first of each bar": "Un clic à chaque temps, plus fort sur le premier de chaque mesure",
+ "Metronome": "Métronome",
+ "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "Cliquez sur une section pour son menu. Cliquez sur les notes pour les sélectionner (Maj pour plusieurs), faites-les glisser pour les déplacer, tirez la fin d'une note pour l'allonger, double-cliquez pour en ajouter une. Les flèches les déplacent, Ctrl+C et Ctrl+V les copient à la tête de lecture, Suppr les retire. Faites glisser sur les numéros de mesure pour définir une boucle.",
+ "Play a part of the song over and over: drag across the bar numbers to set it": "Jouer une partie de la chanson en boucle : faites glisser sur les numéros de mesure pour la définir",
+ "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "La mélodie descend de {n} octave(s) pour cette voix, et la démo est réenregistrée.",
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "La mélodie monte de {n} octave(s) pour cette voix, et la démo est réenregistrée."
 }

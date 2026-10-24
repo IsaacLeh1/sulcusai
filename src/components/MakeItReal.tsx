@@ -16,10 +16,28 @@ export function lyricsOf(plan: Plan): string {
   return plan.sections.map((s) => (s.lines.length ? `[${s.name}]\n${s.lines.join("\n")}` : `[${s.name}]`)).join("\n\n");
 }
 
-export type RealOptions = { strength: number; modelId: string | null; song: MusicSpec; lyrics: string | null; language: string | null };
+/** The notes a singer sings (MIDI), as `compose::voice_range`. */
+export function voiceRange(voice: string): [number, number] {
+  const v = voice.trim().toLowerCase();
+  return v === "male" || v === "man" || v === "rap" ? [48, 64] : v === "female" || v === "woman" ? [60, 76] : [55, 72];
+}
 
-export function MakeItReal({ plan, models, defaultModel, busy, onCancel, onRecord }: {
+/** Octaves (in semitones) the tune moves to fit a voice: none when it already fits. */
+export function fitShift(pitches: number[], voice: string): number {
+  if (!pitches.length || !voice) return 0;
+  const [lo, hi] = voiceRange(voice);
+  const sorted = [...pitches].sort((a, b) => a - b);
+  if (sorted[0] >= lo - 2 && sorted[sorted.length - 1] <= hi + 2) return 0;
+  const median = sorted[Math.floor(sorted.length / 2)];
+  return 12 * Math.round(((lo + hi) / 2 - median) / 12);
+}
+
+export type RealOptions ={ strength: number; modelId: string | null; song: MusicSpec; lyrics: string | null; language: string | null };
+
+export function MakeItReal({ plan, melody, models, defaultModel, busy, onCancel, onRecord }: {
   plan: Plan;
+  /** The tune's pitches, to tell whether it moves for another voice. */
+  melody: number[];
   /** Installed music models. */
   models: MediaModelCard[];
   defaultModel: string | null;
@@ -113,11 +131,11 @@ export function MakeItReal({ plan, models, defaultModel, busy, onCancel, onRecor
               </select>
             </div>
           )}
-          {sung && voice && voice !== plan.voice && (plan.voice === "male" || plan.voice === "female") && (
+          {sung && fitShift(melody, voice) !== 0 && (
             <p className="small muted">
-              {plan.voice === "male"
-                ? t("The tune is written low, for a man's voice. For this voice, write the song again with it picked, or move the melody up in the editor.")
-                : t("The tune is written high, for a woman's voice. For this voice, write the song again with it picked, or move the melody down in the editor.")}
+              {fitShift(melody, voice) > 0
+                ? t("The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.", { n: fitShift(melody, voice) / 12 })
+                : t("The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.", { n: -fitShift(melody, voice) / 12 })}
             </p>
           )}
           {sung && <PickMany label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Add another feeling (Enter)")} />}

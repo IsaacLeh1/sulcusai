@@ -3868,7 +3868,6 @@
  "Change the {name}": "{name}を変更",
  "Chords": "コード",
  "Chords, a bar each (they repeat)": "コード（1小節に1つ、繰り返します）",
- "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them.": "セクションをクリックするとメニューが開きます。音符をクリックで選択（Shiftで複数）、ドラッグで移動、音符の端をドラッグで伸ばし、ダブルクリックで追加。矢印キーで移動、Ctrl+CとCtrl+Vで再生位置にコピー、Deleteで削除。",
  "Close without keeping this song? It isn't in the gallery yet.": "この曲を保存せずに閉じますか？まだギャラリーにありません。",
  "Close without keeping your changes?": "変更を保存せずに閉じますか？",
  "Composed": "作曲",
@@ -3979,8 +3978,12 @@
  "More settings: instruments, ways of singing, harmonies, production": "その他の設定：楽器、歌い方、ハーモニー、プロダクション",
  "Music model": "音楽モデル",
  "See and change every note in an editor first, then make it real with these settings": "まずエディタですべての音符を確認・変更し、この設定で本物にします",
- "The tune is written high, for a woman's voice. For this voice, write the song again with it picked, or move the melody down in the editor.": "メロディは女性の声に合わせて高く書かれています。この声にするには、選び直して曲を書き直すか、エディタでメロディを下げてください。",
- "The tune is written low, for a man's voice. For this voice, write the song again with it picked, or move the melody up in the editor.": "メロディは男性の声に合わせて低く書かれています。この声にするには、選び直して曲を書き直すか、エディタでメロディを上げてください。",
  "Write it as notes first": "まず音符で書く",
- "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "まず音符で書く：チャットモデルが各パートを小節とコードで編曲し、どの音符も見て・聴いて・変更でき、そのあと「本物にする」がこの設定で録音します。"
+ "Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.": "まず音符で書く：チャットモデルが各パートを小節とコードで編曲し、どの音符も見て・聴いて・変更でき、そのあと「本物にする」がこの設定で録音します。",
+ "A click on every beat, louder on the first of each bar": "拍ごとにクリック音、各小節の1拍目は強く",
+ "Metronome": "メトロノーム",
+ "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "セクションをクリックするとメニューが開きます。音符をクリックで選択（Shiftで複数）、ドラッグで移動、音符の端をドラッグで伸ばし、ダブルクリックで追加。矢印キーで移動、Ctrl+CとCtrl+Vで再生位置にコピー、Deleteで削除。小節番号の上をドラッグするとループを設定できます。",
+ "Play a part of the song over and over: drag across the bar numbers to set it": "曲の一部を繰り返し再生：小節番号の上をドラッグして範囲を設定",
+ "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "この声に合わせてメロディを{n}オクターブ下げ、デモを録り直します。",
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "この声に合わせてメロディを{n}オクターブ上げ、デモを録り直します。"
 }
