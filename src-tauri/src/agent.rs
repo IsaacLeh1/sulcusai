@@ -362,7 +362,11 @@ impl Turn {
         let (request, recent_asks) = request;
         // Asked to make a site, an app or code (not a document): the document
         // tool stays out, or small models reach for it and fail.
-        let build_ask = chat::is_build_ask(&recent_asks.iter().map(String::as_str).collect::<Vec<_>>()) && !chat::wants_a_document(&request);
+        // Their own words to edit (lyrics, a poem, a text pasted in): answered
+        // in words. Lyrics full of imagery made pictures, "lyrics" made songs,
+        // and "make these better" read as a build that wanted a folder.
+        let edits_text = chat::edits_text(&request);
+        let build_ask = chat::is_build_ask(&recent_asks.iter().map(String::as_str).collect::<Vec<_>>()) && !chat::wants_a_document(&request) && !edits_text;
         // The home folder is open for searching and reading (the person
         // allowed it); changes stay in the shared folders.
         let file_feature = features.contains(&Feature::Files);
@@ -480,6 +484,12 @@ impl Turn {
                 extra.push("request_web");
             }
         }
+        // Words to edit: nothing to make, save or run, so nothing that would.
+        if edits_text {
+            extra.retain(|n| !matches!(*n, "create_image" | "edit_image" | "create_video" | "create_music" | "create_document" | "request_folder" | "open_path" | "run_code"));
+            defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_none_or(|n| tools::group(n) != "files" || tools::find(n).is_none_or(|t| t.risk == tools::Risk::Read)));
+            media_note.clear();
+        }
         // A small memory and a request to build: only the tools for building
         // (and none of the notes about pictures, people or other chats), so the
         // files it writes have room.
@@ -557,6 +567,13 @@ impl Turn {
             );
             about.push_str(&text);
             notes.push((&["create_image", "edit_image", "create_video", "create_music"], text));
+        }
+        if edits_text {
+            about.push_str(
+                "\n\nThe user wants their own words edited (lyrics, a poem or a text): reply in the chat with the revised words, \
+                 keeping their meaning, story and imagery, and say briefly what you changed. Don't make a song, a picture or a file \
+                 from them, and don't ask for folders: everything you need is in their message and this chat.",
+            );
         }
         if let Some(note) = &people_note {
             about.push_str(note);
@@ -823,7 +840,7 @@ impl Turn {
                 let offered: Vec<String> = tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
                 // Asked to make something and pasted it (or steps) instead: one
                 // more try that can only make it on the PC. The pasted reply is dropped.
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(&recent, &finished.content, &offered) {
+                if step == 0 && !edits_text && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(&recent, &finished.content, &offered) {
                     if let Some(f) = tools.as_ref().and_then(chat::forced_build) {
                         let mut ep = self.ep.clone();
                         ep.extra["response_format"] = f.response_format.clone();
@@ -841,7 +858,7 @@ impl Turn {
                 // (also when it says it can't change pictures).
                 let has_pictures = history.iter().rev().find(|m| m.role == "user").and_then(|m| m.meta.as_ref()?.get("images")?.as_array().map(|a| !a.is_empty())).unwrap_or(false);
                 let change = has_pictures && chat::asks_picture_change(asked);
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && (chat::asks_for_picture(asked) || (change && chat::denies_pictures(&finished.content))) {
+                if step == 0 && !edits_text && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && (chat::asks_for_picture(asked) || (change && chat::denies_pictures(&finished.content))) {
                     if let Some(f) = tools.as_ref().and_then(|t| chat::forced_picture(t, change)) {
                         let mut ep = self.ep.clone();
                         ep.extra["response_format"] = f.response_format.clone();
@@ -887,14 +904,14 @@ impl Turn {
                 // told to carry them out, once a turn, unless it already changed
                 // or ran something this turn (then the reply is its summary).
                 let acted = kept.iter().rev().take_while(|m| m.role != "user").any(|m| m.tool_calls.iter().flatten().any(|c| tools::find(&c.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute))));
-                if !told_to_act && !acted && tools.is_some() && self.mode != tools::Mode::Plan && forced.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_to_act(asked) && chat::explains_instead(&finished.content) {
+                if !told_to_act && !acted && !edits_text && tools.is_some() && self.mode != tools::Mode::Plan && forced.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_to_act(asked) && chat::explains_instead(&finished.content) {
                     told_to_act = true;
                     carry_on = Some(chat::CARRY_ON);
                     message_id = uuid::Uuid::new_v4().to_string();
                     self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                     continue;
                 }
-                if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &offered) {
+                if step == 0 && !edits_text && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &offered) {
                     let looks_only = |n: &str| n != "open_page" && n != "preview_site" && tools::find(n).is_some_and(|t| t.risk == Risk::Read);
                     if let Some(f) = tools.as_ref().and_then(|t| chat::forced_lookup(t, asked, looks_only)) {
                         let mut ep = self.ep.clone();

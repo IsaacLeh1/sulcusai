@@ -546,6 +546,16 @@ pub fn syllables(line: &str) -> usize {
         .sum()
 }
 
+/// The notes a singer sings (MIDI): a man C3-E4, a woman C4-E5, and for a
+/// duet, a choir or no one named, between them.
+pub fn voice_range(voice: &str) -> (i32, i32) {
+    match voice.trim().to_lowercase().as_str() {
+        "male" | "man" | "rap" => (48, 64),
+        "female" | "woman" => (60, 76),
+        _ => (55, 72),
+    }
+}
+
 /// A pitch `steps` notes of the scale away (a pitch off the scale starts
 /// from the nearest one on it).
 fn scale_step(tonic: i32, sc: &[i32], pitch: i32, steps: i32) -> i32 {
@@ -577,7 +587,9 @@ fn melody(p: &Plan, s: &PlanSection, start: f32, rng: &mut Rng) -> Vec<Note> {
     let spb = 60.0 / p.bpm.max(20) as f32 * 4.0 / p.unit.max(1) as f32;
     let (tonic, sc) = scale(&p.key);
     let chords = bar_chords(s);
-    let (lo, hi) = (60, 76);
+    // The singer's range: made real, the music model follows the tune's
+    // pitch, and a man's song written up at C4-E5 came back sung by a woman.
+    let (lo, hi) = voice_range(&p.voice);
     let vel = 80 + s.energy.min(5) * 5;
     let nearest = |target: i32, ok: &dyn Fn(i32) -> bool| (0..12).flat_map(|d| [target - d, target + d]).find(|n| ok(*n) && (lo..=hi).contains(n)).unwrap_or(target.clamp(lo, hi));
     let lines: Vec<usize> = s.lines.iter().map(|l| syllables(l).max(1)).collect();
@@ -594,7 +606,15 @@ fn melody(p: &Plan, s: &PlanSection, start: f32, rng: &mut Rng) -> Vec<Note> {
     let held: Vec<bool> = (0..32).map(|_| rng.below(4) == 0).collect();
     // One shape: up toward the middle of the line, down after it.
     let shape: Vec<i32> = (0..32).map(|k| if k < 5 { [1, 1, 2, 0, -1][rng.below(5) as usize] } else { [-1, -1, 0, -2, 1][rng.below(5) as usize] }).collect();
-    let home = 60 + tonic + if tonic > 5 { -12 } else { 0 };
+    // The key's root near the bottom of the range.
+    let home = {
+        let h = lo + (tonic - lo).rem_euclid(12);
+        if h > lo + 6 {
+            h - 12
+        } else {
+            h
+        }
+    };
     let first = scale_step(tonic, &sc, home, [2, 4, 4, 7][rng.below(4) as usize]);
     let mut out = Vec::new();
     for (li, count) in lines.iter().copied().enumerate() {
@@ -1262,7 +1282,14 @@ mod tests {
             // The verse's sung notes: one a syllable (7 + 6), all inside it.
             let sung: Vec<&Note> = parts[0].notes.iter().filter(|n| n.beat < starts[1]).collect();
             assert_eq!(sung.len(), 13, "{beats}/{unit}");
-            assert!(sung.iter().all(|n| (60..=76).contains(&n.pitch)));
+            assert!(sung.iter().all(|n| (55..=72).contains(&n.pitch)), "no singer named: between a man's and a woman's range");
+            // A man sings it low, a woman high.
+            for (voice, range) in [("male", 48..=64), ("female", 60..=76)] {
+                let mut q = p.clone();
+                q.voice = voice.into();
+                let notes = arrange(&q)[0].notes.iter().filter(|n| n.beat < starts[1]).map(|n| n.pitch).collect::<Vec<_>>();
+                assert!(notes.iter().all(|n| range.contains(n)), "{voice} in {beats}/{unit}: {notes:?}");
+            }
             assert!(sung.iter().all(|n| n.len <= beats as f32), "a held syllable lasts a bar at most");
         }
     }

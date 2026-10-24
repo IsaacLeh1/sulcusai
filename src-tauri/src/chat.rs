@@ -927,7 +927,48 @@ pub fn wants_several(text: &str) -> bool {
 
 /// The person asked for a picture to be made.
 pub fn asks_for_picture(text: &str) -> bool {
-    PICTURE_ASK.is_match(text)
+    PICTURE_ASK.is_match(&own_words(text))
+}
+
+/// The part of a message that's the person's own words rather than text they
+/// pasted to be worked on: all of a short message, else its first and last
+/// lines (where "Refine these lyrics:" or "Make them rhyme" go), section tags
+/// left out. Lyrics full of imagery ("paint the sky", "picture of us") read as
+/// a picture request, and "write… the page" as a site to build.
+pub fn own_words(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !(l.starts_with('[') && l.ends_with(']'))).collect();
+    if lines.len() <= 3 {
+        return lines.join("\n");
+    }
+    format!("{}\n{}", lines[0], lines[lines.len() - 1])
+}
+
+static EDIT_WORDS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(refine|rewrite|re-write|revise|edit|improve|polish|tweak|proofread|shorten|tighten|reword|rephrase|clean (it|them|this|these) up|fix (the|my|these|this|its|their|the \w+ of)\s*\w*\s*(rhythm|rhymes?|flow|lines?|lyrics|words|grammar|meter|wording|verse|chorus)|make (it|them|this|these|the \w+)(\s+\w+)?\s+(better|flow|rhyme|catchier|smoother|stronger|tighter|shorter|longer|sadder|happier|deeper|darker)|rhyme better|feedback on|critique|help me (with|improve|finish|fix) (my|these|this|the)\b)").unwrap()
+});
+// Lyrics, a poem, a text: what the edit is about.
+static WORDS_OBJECT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(lyrics?|lines?|verses?|chorus(es)?|bridge|hook|poems?|poetry|words|text|rhymes?|stanzas?|sentences?|paragraphs?|essay|story)\b").unwrap()
+});
+// Asking to hear it, see it, or keep it in a file, beside the edit.
+static MORE_THAN_WORDS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(sing|sung|record|produce|compose|melody|beat|instrumental|audio|mp3|music|listen|hear|picture|image|photo|draw|illustrate|artwork|cover art|album cover|video|file|folder|document|desktop|save)\b|\.[a-z0-9]{2,4}\b|\b(make|turn|create|generate)\b[^.?!\n]{0,30}\b(song|track|tune)\b").unwrap()
+});
+
+/// The person wants their own words edited (lyrics, a poem, a text pasted in
+/// or written earlier in the chat): refine, rewrite, make them rhyme, fix the
+/// rhythm. Answered in words: not a song, a picture or a file (each happened).
+/// Not when the same ask wants it sung, drawn or saved too.
+pub fn edits_text(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    // The lines that ask: in a long message, its first two and last two.
+    let ends: Vec<&str> = if lines.len() <= 4 { lines.clone() } else { [&lines[..2], &lines[lines.len() - 2..]].concat() };
+    let asking: Vec<&str> = ends.into_iter().filter(|l| EDIT_WORDS.is_match(l)).collect();
+    if asking.is_empty() || asking.iter().any(|l| MORE_THAN_WORDS.is_match(l)) {
+        return false;
+    }
+    let pasted = lines.len() >= 3 || text.contains('[') || text.contains('"') || text.contains('\u{201c}');
+    pasted || asking.iter().any(|l| WORDS_OBJECT.is_match(l))
 }
 
 /// The reply says it can't make pictures.
@@ -1147,7 +1188,9 @@ static DOCUMENT_ASK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::ne
 /// `recent_user` is their last few messages, newest first.
 pub fn is_build_ask(recent_user: &[&str]) -> bool {
     let Some((newest, earlier)) = recent_user.split_first() else { return false };
-    BUILD_ASK.is_match(newest) || (DO_IT.is_match(newest) && earlier.iter().any(|m| BUILD_ASK.is_match(m)))
+    // Their own words, not text pasted in ("write… on the same page" in lyrics).
+    let build = |m: &str| BUILD_ASK.is_match(&own_words(m));
+    build(newest) || (DO_IT.is_match(&own_words(newest)) && earlier.iter().any(|m| build(m)))
 }
 
 /// Asking for a document rather than a site, an app or code.
@@ -1866,6 +1909,26 @@ mod tests {
         for a in ["What's in this picture?", "Build me a stock exchange website", "how do I resize an image in Photoshop"] {
             assert!(!asks_for_picture(a), "{a}");
         }
+        // Lyrics pasted in are theirs to edit, not a picture or a site to build,
+        // however much imagery they have.
+        let lyrics = "Can you refine these lyrics? Make them flow better but keep the meaning.\n\n[Verse]\nI want to paint the sky with you tonight\n\
+                      Every picture of us shining bright\nWe write our story on the same page\nCarrying the dreams we never told\n\n[Chorus]\nHold on, don't let go";
+        assert!(!asks_for_picture(lyrics));
+        assert!(!is_build_ask(&[lyrics]));
+        assert!(edits_text(lyrics));
+        let after = "[Verse]\nThe kitchen floor is cold beneath our feet\nGrandma hums a song so soft and sweet\nWe spin around beneath the moon\n\nThese are my lyrics. Make them rhyme better and fix the rhythm of the second line.";
+        assert!(edits_text(after));
+        assert!(edits_text("Rewrite this chorus so it's catchier:\nDraw me a picture of the place we met\nThe sun was setting, I can't forget"));
+        assert!(edits_text("make the second verse sadder"), "a follow-up about lyrics earlier in the chat");
+        assert!(edits_text("Can you proofread this paragraph for me? \"Their going to the store tomorow.\""));
+        // Asked to hear, see or save it too: not only words.
+        assert!(!edits_text("Refine these lyrics and then make a song with them:\nLine one\nLine two\nLine three"));
+        assert!(!edits_text("Rewrite the lyrics in lyrics.txt on my desktop"));
+        assert!(!edits_text("Improve this and draw a picture of it:\nA red fox\nin the snow"));
+        assert!(!edits_text("Make me a song about the sea"));
+        assert!(!edits_text("Draw me a cat in a hat"));
+        assert!(!edits_text("Build me a stock exchange website"));
+        assert_eq!(own_words("Refine these:\n[Verse]\na\nb\nc\nMake them rhyme"), "Refine these:\nMake them rhyme");
         assert!(denies_pictures("I'm sorry, but I can't generate images directly. However, I can help you find templates."));
         assert!(denies_pictures("As a text model I am unable to create pictures."));
         assert!(!denies_pictures("Here's Link in pixel art, standing on a grassy hill."));

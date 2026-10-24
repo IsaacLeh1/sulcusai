@@ -151,7 +151,7 @@ fn is_helper(path: &str) -> bool {
 }
 
 /// "big-Q4_K_M-00002-of-00003.gguf" → ("big-Q4_K_M", 2, 3).
-fn split_parts_of(path: &str) -> Option<(&str, u32, u32)> {
+pub(crate) fn split_parts_of(path: &str) -> Option<(&str, u32, u32)> {
     if !is_split(path) {
         return None;
     }

@@ -636,6 +636,56 @@ async fn e2e_chat_works_on_an_attached_song() {
     assert!((longer.seconds - (song.seconds + 20.0)).abs() < 3.0, "{} s from {} s", longer.seconds, song.seconds);
 }
 
+/// Asked in a chat to refine pasted lyrics, the model answers with the
+/// lyrics in words: no song, no picture, even with music and picture models
+/// installed and lyrics that say "paint the sky" and "picture of us" (that
+/// made a picture: the check for a picture request read the pasted lines).
+/// SULCUSAI_TEST_GGUF is the model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_lyrics_are_refined_as_text() {
+    use crate::media;
+    let (_eng, ep, name) = test_model().await;
+    let state = media_state();
+    let cipher = state.cipher().unwrap();
+    media::install_for_test(&state, "ace-step-1.5").await.unwrap();
+    media::install_for_test(&state, "z-image-turbo").await.unwrap();
+    let asks = [
+        "Can you refine these lyrics? Make them flow better but keep the meaning.\n\n[Verse]\nI want to paint the sky with you tonight\nEvery picture of us shining bright\nWe drive along the empty road\nCarrying the dreams we never told\n\n[Chorus]\nHold on, hold on, don't let go\nWe're the only light I know",
+        "[Verse]\nThe kitchen floor is cold beneath our feet\nGrandma hums a song so soft and sweet\nThe radio plays an old waltz tune\nWe spin around beneath the moon\n\nThese are my lyrics. Make them rhyme better and fix the rhythm of the second line.",
+        "Rewrite this chorus so it's catchier:\nDraw me a picture of the place we met\nThe sun was setting, I can't forget",
+    ];
+    let mut bad = Vec::new();
+    for (i, ask) in asks.iter().enumerate() {
+        let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+        let turn_id = uuid::Uuid::new_v4().to_string();
+        crate::db::add_message(&state.db.lock().unwrap(), &cipher, &Message { id: turn_id.clone(), chat_id: chat.id.clone(), role: "user".into(), content: ask.to_string(), created_at: crate::db::now_ms(), ..Default::default() }).unwrap();
+        let turn = crate::agent::Turn {
+            emit: std::sync::Arc::new(|_: &str, _| {}),
+            state: state.clone(),
+            chat_id: chat.id.clone(),
+            turn_id,
+            cipher: cipher.clone(),
+            ep: ep.clone(),
+            mode: crate::tools::Mode::Auto,
+            use_tools: true,
+            vision: false,
+            unattended: false,
+            base: chat::system_prompt(&Profile::default(), "today").0,
+            about: String::new(),
+            cancel: std::sync::Arc::new(AtomicBool::new(false)),
+        };
+        let started = std::time::Instant::now();
+        turn.run().await.unwrap();
+        let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: lyrics {i} ({:.0}s)", started.elapsed().as_secs_f64()));
+        let reply = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id).into_iter().rev().find(|m| m.role == "assistant").map(|m| m.content).unwrap_or_default();
+        if tools.iter().any(|t| t.starts_with("create_") || t == "edit_image") || reply.lines().filter(|l| !l.trim().is_empty()).count() < 2 {
+            bad.push(format!("{i}: {tools:?}"));
+        }
+    }
+    assert!(bad.is_empty(), "made media instead of refining the words: {bad:?}");
+}
+
 /// The owner's task: a page fetched and applied to a folder, without
 /// asking. The page is GitHub's Node .gitignore; applied, it becomes the
 /// folder's .gitignore. See `test_model` for the model.

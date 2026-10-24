@@ -890,8 +890,19 @@ pub(crate) async fn ensure_vision(state: &Arc<AppState>, spec: &ModelSpec) -> Re
 pub(crate) fn model_file_problem(path: &std::path::Path, size: u64) -> Option<String> {
     use std::io::Read;
     let Ok(meta) = std::fs::metadata(path) else { return Some("the file is missing".into()) };
-    if size > 0 && meta.len() != size {
-        return Some(format!("it's {} instead of {}", size_label(meta.len()), size_label(size)));
+    // A model split across files ("…-00001-of-00003.gguf"): `size` is all its
+    // parts together (counting the first alone called every one damaged).
+    let mut have = meta.len();
+    if let Some((base, 1, total)) = path.to_str().and_then(hub::split_parts_of) {
+        for n in 2..=total {
+            match std::fs::metadata(format!("{base}-{n:05}-of-{total:05}.gguf")) {
+                Ok(m) => have += m.len(),
+                Err(_) => return Some(format!("part {n} of its {total} files is missing")),
+            }
+        }
+    }
+    if size > 0 && have != size {
+        return Some(format!("it's {} instead of {}", size_label(have), size_label(size)));
     }
     let mut magic = [0u8; 4];
     match std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)) {
@@ -2988,6 +2999,16 @@ mod model_file_tests {
         assert!(super::model_file_problem(&zeros, 64).unwrap().contains("isn't a model file"));
         assert!(super::model_file_problem(&good, 128).unwrap().contains("instead of"), "cut short");
         assert!(super::model_file_problem(&dir.join("gone.gguf"), 64).unwrap().contains("missing"));
+        // A model in three files: its size is all three (the first alone
+        // called every big model damaged); a part gone is said.
+        let part = |n: u32| dir.join(format!("big-Q4_K_M-{n:05}-of-00003.gguf"));
+        for n in 1..=3 {
+            std::fs::write(part(n), &bytes).unwrap();
+        }
+        assert_eq!(super::model_file_problem(&part(1), 192), None);
+        assert!(super::model_file_problem(&part(1), 256).unwrap().contains("instead of"));
+        std::fs::remove_file(part(2)).unwrap();
+        assert_eq!(super::model_file_problem(&part(1), 192).unwrap(), "part 2 of its 3 files is missing");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
