@@ -54,6 +54,55 @@ export function GlobeIcon(p: IconProps) {
   );
 }
 
+/** A browser window: the web viewer inside SulcusAI. */
+export function ViewerIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 9h18" />
+      <path d="M6.5 6.5h.01M9 6.5h.01" />
+    </Icon>
+  );
+}
+
+/** An arrow left: back. */
+export function BackIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M19 12H5M11 6l-6 6 6 6" />
+    </Icon>
+  );
+}
+
+/** An arrow right: forward. */
+export function ForwardIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </Icon>
+  );
+}
+
+/** A circling arrow: load again. */
+export function ReloadIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+      <path d="M20 4v7h-7" />
+    </Icon>
+  );
+}
+
+/** A box with an arrow out of it: open outside SulcusAI. */
+export function ExternalIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M14 4h6v6M20 4l-9 9" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </Icon>
+  );
+}
+
 /** Three lines: opens the menu (on a phone). */
 export function MenuIcon(p: IconProps) {
   return (

@@ -231,7 +231,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "write_file", risk: Risk::Write, params: fs::write_file_params,
         description: "Create a file, or replace a file's entire contents. Prefer edit_file for changes to existing files." },
     ToolDef { name: "edit_file", risk: Risk::Write, params: fs::edit_file_params,
-        description: "Replace exact text in a file. old_text must match exactly (including spaces) and be unique unless replace_all is true. Read the file first." },
+        description: "Replace exact text in a file. old_text must match exactly (including spaces) and be unique unless replace_all is true; empty old_text adds new_text at the end. Read the file first." },
     ToolDef { name: "move_path", risk: Risk::Write, params: fs::move_path_params,
         description: "Move or rename a file or folder." },
     ToolDef { name: "make_folder", risk: Risk::Write, params: fs::make_folder_params,

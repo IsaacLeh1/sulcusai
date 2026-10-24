@@ -96,7 +96,7 @@ export function QuickAsk() {
     setPhase("thinking");
     try {
       // A follow-up continues the same chat.
-      const id = chatRef.current ?? (await api.createChatIn(null, false)).id;
+      const id = chatRef.current ?? (await api.quickChat()).id;
       setChatId(id);
       chatRef.current = id;
       setText("");

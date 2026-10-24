@@ -154,7 +154,122 @@ async fn chart(client: &reqwest::Client, symbol: &str, range: Option<&str>) -> R
         return Err(format!("Yahoo Finance answered {} for {symbol}.", res.status()));
     }
     let v: Value = res.json().await.map_err(|_| "Yahoo Finance's answer was unreadable.".to_string())?;
-    parse_chart(&v, symbol)
+    let mut q = parse_chart(&v, symbol)?;
+    // Over a longer range, Yahoo's chartPreviousClose is the close before the
+    // range began (a month's move was told as the last day's: NVDA "-6.45%
+    // since the last close" was -0.6%): the day before's close comes from
+    // the daily closes instead (`daily`).
+    if r != "1d" {
+        q.previous_close = None;
+    }
+    Ok(q)
+}
+
+/// A year of daily closes and volumes (oldest first), for the averages and
+/// momentum in `technicals`, and the close the day before.
+pub async fn daily(client: &reqwest::Client, symbol: &str) -> Result<Vec<(f64, f64)>, String> {
+    let mut url = reqwest::Url::parse("https://query1.finance.yahoo.com/v8/finance/chart/").map_err(|e| e.to_string())?;
+    url.path_segments_mut().map_err(|_| "bad address".to_string())?.pop_if_empty().push(symbol);
+    url.query_pairs_mut().append_pair("interval", "1d").append_pair("range", "1y");
+    let v: Value = client.get(url).send().await.map_err(|e| format!("Couldn't reach Yahoo Finance ({}).", e.without_url()))?.json().await.map_err(|_| "Yahoo Finance's answer was unreadable.".to_string())?;
+    Ok(parse_daily(&v))
+}
+
+pub fn parse_daily(v: &Value) -> Vec<(f64, f64)> {
+    let q = &v["chart"]["result"][0]["indicators"]["quote"][0];
+    let (closes, volumes) = (q["close"].as_array().cloned().unwrap_or_default(), q["volume"].as_array().cloned().unwrap_or_default());
+    closes.iter().enumerate().filter_map(|(i, c)| Some((c.as_f64()?, volumes.get(i).and_then(Value::as_f64).unwrap_or(0.0)))).collect()
+}
+
+fn sma(v: &[f64], n: usize) -> Option<f64> {
+    (n > 0 && v.len() >= n).then(|| v[v.len() - n..].iter().sum::<f64>() / n as f64)
+}
+
+/// The exponential average over `n`, from the n-th value on.
+fn ema(v: &[f64], n: usize) -> Vec<f64> {
+    let Some(seed) = (v.len() >= n).then(|| v[..n].iter().sum::<f64>() / n as f64) else { return Vec::new() };
+    let k = 2.0 / (n as f64 + 1.0);
+    v[n..].iter().fold(vec![seed], |mut out, x| {
+        let last = *out.last().unwrap();
+        out.push(last + k * (x - last));
+        out
+    })
+}
+
+/// Wilder's relative strength index over `n` days.
+fn rsi(v: &[f64], n: usize) -> Option<f64> {
+    if v.len() <= n {
+        return None;
+    }
+    let moves: Vec<f64> = v.windows(2).map(|w| w[1] - w[0]).collect();
+    let (mut up, mut down) = moves[..n].iter().fold((0.0, 0.0), |(u, d), m| if *m > 0.0 { (u + m, d) } else { (u, d - m) });
+    up /= n as f64;
+    down /= n as f64;
+    for m in &moves[n..] {
+        up = (up * (n as f64 - 1.0) + m.max(0.0)) / n as f64;
+        down = (down * (n as f64 - 1.0) + (-m).max(0.0)) / n as f64;
+    }
+    Some(if down == 0.0 { 100.0 } else { 100.0 - 100.0 / (1.0 + up / down) })
+}
+
+/// MACD (12, 26, 9): the line, its signal, and the gap between them now and
+/// the day before.
+fn macd(v: &[f64]) -> Option<(f64, f64, f64, f64)> {
+    let (fast, slow) = (ema(v, 12), ema(v, 26));
+    // Both from the 26th close on.
+    let line: Vec<f64> = slow.iter().enumerate().map(|(i, s)| fast[i + 14] - s).collect();
+    let signal = ema(&line, 9);
+    if signal.len() < 2 {
+        return None;
+    }
+    let gap = |back: usize| line[line.len() - 1 - back] - signal[signal.len() - 1 - back];
+    Some((*line.last()?, *signal.last()?, gap(0), gap(1)))
+}
+
+/// What the daily closes say, worked out here so a model doesn't have to
+/// (one made up a 20-day average and read an RSI of 29 as "buying
+/// strength"): the averages and how far the price is from each, RSI and
+/// MACD with what they mean, the last days' moves, volume, and the 20-day
+/// closing range. None without enough days.
+pub fn technicals(price: f64, days: &[(f64, f64)]) -> Option<String> {
+    let closes: Vec<f64> = days.iter().map(|d| d.0).collect();
+    if closes.len() < 21 {
+        return None;
+    }
+    let from = |avg: f64| {
+        let pct = (price - avg) / avg * 100.0;
+        format!("price {:.1}% {}", pct.abs(), if pct >= 0.0 { "above" } else { "below" })
+    };
+    let mut parts = Vec::new();
+    let averages: Vec<String> = [20, 50, 200].iter().filter_map(|&n| sma(&closes, n).map(|a| format!("{n}-day average {} ({})", money(a), from(a)))).collect();
+    parts.push(averages.join(", "));
+    if let Some(r) = rsi(&closes, 14) {
+        let means = if r >= 70.0 {
+            "overbought (70 or more)"
+        } else if r <= 30.0 {
+            "oversold (30 or less)"
+        } else {
+            "neutral (between 30 and 70)"
+        };
+        parts.push(format!("RSI(14) {r:.1}: {means}"));
+    }
+    if let Some((line, signal, gap, before)) = macd(&closes) {
+        let way = if gap >= 0.0 { "above its signal line: momentum is rising" } else { "below its signal line: momentum is falling" };
+        let crossed = if (gap >= 0.0) != (before >= 0.0) { ", and it crossed on the last day" } else { "" };
+        parts.push(format!("MACD(12,26,9) {line:.2} vs signal {signal:.2}, {way}{crossed}"));
+    }
+    let moves: Vec<String> = closes.windows(2).rev().take(5).collect::<Vec<_>>().into_iter().rev().map(|w| format!("{:+.1}%", (w[1] - w[0]) / w[0] * 100.0)).collect();
+    parts.push(format!("the last {} trading days, oldest first: {}", moves.len(), moves.join(", ")));
+    let volumes: Vec<f64> = days.iter().map(|d| d.1).collect();
+    if let (Some(&last), Some(avg)) = (volumes.last(), sma(&volumes[..volumes.len() - 1], 20)) {
+        if last > 0.0 && avg > 0.0 {
+            parts.push(format!("volume on the last day {:.1}× its 20-day average", last / avg));
+        }
+    }
+    let recent = &closes[closes.len() - 20..];
+    let (lo, hi) = recent.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), c| (lo.min(*c), hi.max(*c)));
+    parts.push(format!("20-day closing range {}–{}", money(lo), money(hi)));
+    Some(format!("Worked out from {} daily closes: {}.", closes.len(), parts.join("; ")))
 }
 
 pub fn parse_chart(v: &Value, symbol: &str) -> Result<Quote, String> {
@@ -270,5 +385,35 @@ mod tests {
         assert!(describe(&q, Some("1mo")).contains("Over 1mo: from 340.00 to 343.46 (+1.0%)"));
         assert!(chart_of(&q, "1mo").is_some());
         assert!(parse_chart(&json!({ "chart": { "result": null } }), "ZZZZ").unwrap_err().contains("isn't a symbol"));
+    }
+
+    #[test]
+    fn the_figures_are_worked_out_and_said_plainly() {
+        let rising: Vec<f64> = (1..=60).map(f64::from).collect();
+        assert_eq!(sma(&rising, 20), Some(50.5));
+        assert_eq!(rsi(&rising, 14), Some(100.0));
+        let (line, _, gap, _) = macd(&rising).unwrap();
+        assert!(line > 0.0 && gap.abs() < 1e-9, "a steady rise: MACD above zero, on its signal");
+        assert_eq!(macd(&rising[..34]), None, "too few days");
+        // RSI by hand: 14 moves of +1 and -1 in turn, then a +1: Wilder's
+        // averages 0.5 and 0.5, then (0.5*13+1)/14 and (0.5*13)/14.
+        let zigzag: Vec<f64> = (0..16).map(|i| if i % 2 == 0 { 10.0 } else { 11.0 }).collect();
+        let r = rsi(&zigzag, 14).unwrap();
+        assert!((r - 53.57).abs() < 0.01, "{r}");
+
+        // Down from 160 for 60 days: oversold, under every average.
+        let days: Vec<(f64, f64)> = (0..60).map(|i| (160.0 - i as f64, if i == 59 { 3e6 } else { 1e6 })).collect();
+        let s = technicals(101.0, &days).unwrap();
+        assert!(s.starts_with("Worked out from 60 daily closes: 20-day average 110.50 (price 8.6% below), 50-day average 125.50 (price 19.5% below);"), "{s}");
+        assert!(!s.contains("200-day"), "not enough days for it: {s}");
+        assert!(s.contains("RSI(14) 0.0: oversold (30 or less)"), "{s}");
+        assert!(s.contains("below its signal line: momentum is falling") || s.contains("above its signal line"), "{s}");
+        assert!(s.contains("the last 5 trading days, oldest first: -0.9%, -1.0%, -1.0%, -1.0%, -1.0%"), "{s}");
+        assert!(s.contains("volume on the last day 3.0× its 20-day average"), "{s}");
+        assert!(s.contains("20-day closing range 101.00–120.00"), "{s}");
+        assert_eq!(technicals(100.0, &days[..20]), None);
+
+        let v = json!({ "chart": { "result": [{ "indicators": { "quote": [{ "close": [1.0, null, 3.0], "volume": [10, 20, null] }] } }] } });
+        assert_eq!(parse_daily(&v), vec![(1.0, 10.0), (3.0, 0.0)]);
     }
 }

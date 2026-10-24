@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::db::{Message, Profile, ToolCall};
@@ -24,7 +24,8 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
         "You are SulcusAI, a helpful assistant. Be clear, accurate and friendly. \
          Use Markdown when it helps; write math formulas in LaTeX, $...$ in a sentence and $$...$$ on their own lines. \
          If you don't know something, say so. What you work out while thinking goes in your answer itself \
-         (names, links, numbers, steps): the answer is what the user reads.\n\n\
+         (names, links, numbers, steps): the answer is what the user reads. Think to work things out, not to draft \
+         the reply: write the answer once.\n\n\
          When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
          notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
          and never guess figures. If they mention a name, title or term you don't recognize or aren't sure about \
@@ -63,7 +64,7 @@ pub fn runs_where(ep: &Endpoint) -> String {
 }
 
 /// Context window usage for the meter.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContextInfo {
     pub ctx: u32,
     pub system_tokens: u32,
@@ -74,6 +75,10 @@ pub struct ContextInfo {
     pub dropped_messages: usize,
     /// Prompt + reply tokens of the last finished step, as the engine counted them.
     pub last_total: Option<u32>,
+    /// Worked out from the saved messages, not counted by the engine (a chat
+    /// not used since this update).
+    #[serde(default)]
+    pub estimated: bool,
 }
 
 impl ContextInfo {
@@ -330,6 +335,7 @@ pub async fn fit_history(
         reply_reserve,
         dropped_messages: history.len().saturating_sub(kept.len()),
         last_total: None,
+        estimated: false,
     };
     Ok((kept, info))
 }
@@ -530,12 +536,20 @@ pub async fn stream(
             .collect();
         return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
     }
-    let first = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
-    // A thinking model that thought but never answered (its allowance ran
-    // out, it got stuck repeating itself, or it just stopped): once more,
-    // without thinking, given what it thought. Started over, it answered
-    // without what the user had watched it find.
-    if first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled {
+    let (mut first, cut_short) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
+    let unanswered = first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled;
+    // It ended its reply inside its thinking (some models write the whole
+    // answer there, then stop): that's the answer. Asked to write it again,
+    // a 30B Nemotron answered twice, the second in another format.
+    if unanswered && !cut_short {
+        first.content = std::mem::take(&mut first.thinking).trim().to_string();
+        return Ok(first);
+    }
+    // A thinking model whose thinking was cut short (its allowance ran out,
+    // or it got stuck repeating itself): once more, without thinking, given
+    // what it thought. Started over, it answered without what the user had
+    // watched it find.
+    if unanswered {
         let mut quick = ep.clone();
         // gpt-oss ignores enable_thinking and reads its effort from the
         // template's settings: "low" there too, or the retry repeated itself.
@@ -551,7 +565,7 @@ pub async fn stream(
             Some(last) => add_text(last, &format!("\n{note}")),
             None => messages.push(json!({ "role": "user", "content": note })),
         }
-        let mut again = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
+        let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
         again.thinking = format!("{}{}", first.thinking, again.thinking);
         if again.content.trim().is_empty() && again.tool_calls.is_empty() && !again.cancelled {
             return Err("The model spent its whole reply thinking and never answered. Try again, or turn its thinking off in Advanced settings.".into());
@@ -585,8 +599,9 @@ pub(crate) fn thought_so_far(thinking: &str, ctx: usize) -> String {
     }
 }
 
-/// One reply from the engine on this PC.
-async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<Finished, String> {
+/// One reply from the engine on this PC, and whether it was cut short (at
+/// its length limit, or stopped while repeating itself in its thinking).
+async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<(Finished, bool), String> {
     // Saved cloud reply blocks are for cloud providers only.
     let messages: Vec<Value> = messages
         .into_iter()
@@ -650,6 +665,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
     let mut buf: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
     let offered = offered_names(tools);
+    let mut cut_short = false;
     'read: while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
             out.cancelled = true;
@@ -667,6 +683,9 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
                 break 'read;
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
+            if v.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
+                cut_short = true;
+            }
             if let Some(delta) = v.pointer("/choices/0/delta") {
                 if let Some(t) = delta.get("reasoning_content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
                     out.thinking.push_str(t);
@@ -675,6 +694,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
                     // wrote "IEX Cloud, IEX," until its allowance ran out):
                     // stop it there; `stream` has it answer from the rest.
                     if loop_at_end(&out.thinking).is_some() {
+                        cut_short = true;
                         break 'read;
                     }
                 }
@@ -722,7 +742,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         }
     }
     out.tool_calls.retain(|c| !c.name.is_empty());
-    Ok(out)
+    Ok((out, cut_short))
 }
 
 /// The last few finished lines are the same line (a small model stuck in a loop).

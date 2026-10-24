@@ -2,8 +2,9 @@
 import { useEffect, useState } from "react";
 import { api, errorText, on, type UpdateAvailable, type UpdateView } from "../api";
 import { bytes } from "../format";
-import { t } from "../i18n";
+import { language, t } from "../i18n";
 import { WarningIcon } from "./Icons";
+import { Markdown } from "./Markdown";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -18,7 +19,11 @@ function InstallModal({ update, onClose, toast }: { update: UpdateAvailable; onC
   }, []);
   return (
     <Modal title={t("Update to SulcusAI {version}", { version: update.version })} onClose={() => !progress && onClose()}>
-      {update.notes && <p className="small update-notes">{update.notes}</p>}
+      {update.notes && (
+        <div className="small update-notes">
+          <Markdown text={update.notes} />
+        </div>
+      )}
       <p className="muted small">{t("The update is checked against SulcusAI's signing key before it installs. SulcusAI closes and opens again when it's done; your chats and settings stay.")}</p>
       {progress && (
         <div className="install-progress">
@@ -122,6 +127,48 @@ export function UpdateSettings({ toast }: { toast: PushToast }) {
         </span>
       </label>
       {installing && <InstallModal update={installing} onClose={() => setInstalling(null)} toast={toast} />}
+    </div>
+  );
+}
+
+type VersionNotes = { version: string; date: string; notes: string }[];
+
+/** Settings → Update notes: what every version changed, newest first, with
+ * this version open. They're kept in the app (`updateNotes.json`, added by
+ * `scripts/add_update_notes.py` before each release), so they show offline;
+ * one ready to install shows on top with the notes that came with it. */
+export function UpdateNotes() {
+  const [all, setAll] = useState<VersionNotes | null>(null);
+  const [v, setV] = useState<UpdateView | null>(null);
+  useEffect(() => {
+    import("../updateNotes.json").then((m) => setAll(m.default));
+    api.updateView().then(setV).catch(() => {});
+    const sub = on("update:available", (u) => setV((x) => (x ? { ...x, available: u } : x)));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
+  if (!all) return null;
+  const next = v?.available && !all.some((n) => n.version === v.available?.version) ? v.available : null;
+  const day = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString(language(), { year: "numeric", month: "long", day: "numeric" });
+  return (
+    <div className="update-history">
+      {next && (
+        <details className="update-entry" open>
+          <summary>
+            <strong>{next.version}</strong> <span className="muted small">{t("Ready to install")}</span>
+          </summary>
+          {next.notes ? <Markdown text={next.notes} /> : <p className="muted small">{t("No notes came with this update.")}</p>}
+        </details>
+      )}
+      {all.map((n) => (
+        <details key={n.version} className="update-entry" open={n.version === v?.current}>
+          <summary>
+            <strong>{n.version}</strong> <span className="muted small">{day(n.date)}{n.version === v?.current ? ` · ${t("This version")}` : ""}</span>
+          </summary>
+          <Markdown text={n.notes} />
+        </details>
+      ))}
     </div>
   );
 }

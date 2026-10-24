@@ -19,13 +19,14 @@ import {
   type KeepLocks,
 } from "./api";
 import { APP_NAME } from "./brand";
-import { t } from "./i18n";
+import { t, tx } from "./i18n";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
 import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
+import { ShareChatDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
@@ -43,7 +44,7 @@ import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 import { IncognitoIcon } from "./components/IncognitoIcon";
-import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon } from "./components/Icons";
+import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon, ViewerIcon } from "./components/Icons";
 import { onPhone } from "./phone/env";
 import { SharePermission } from "./components/SharePermission";
 
@@ -51,6 +52,7 @@ import { SharePermission } from "./components/SharePermission";
 const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
 const SettingsView = lazy(() => import("./views/SettingsView").then((m) => ({ default: m.SettingsView })));
 const ActivityView = lazy(() => import("./views/ActivityView").then((m) => ({ default: m.ActivityView })));
+const WebViewerView = lazy(() => import("./views/WebViewerView").then((m) => ({ default: m.WebViewerView })));
 const MemoryView = lazy(() => import("./views/MemoryView").then((m) => ({ default: m.MemoryView })));
 const ProjectView = lazy(() => import("./views/ProjectView").then((m) => ({ default: m.ProjectView })));
 const ScheduledView = lazy(() => import("./views/ScheduledView").then((m) => ({ default: m.ScheduledView })));
@@ -68,7 +70,7 @@ const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ de
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -145,6 +147,8 @@ interface Nav {
 
 function Workspace({ security, onSecurityChanged, toast, nav }: { security: SecurityStatus; onSecurityChanged: () => void; toast: PushToast; nav: Nav }) {
   const { view, setView, activeChat, setActiveChat, activeProject, setActiveProject } = nav;
+  // Where the web viewer opens: a link sent to it, or as it was (url null).
+  const [viewerStart, setViewerStart] = useState<{ url: string | null; at: number }>({ url: null, at: 0 });
   // On a paired phone: the sidebar slides in as a menu, closed again on the way somewhere.
   const phone = onPhone();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -206,6 +210,24 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     const load = () => api.peopleSharedChats().then(setSharedHere).catch(() => {});
     load();
     const subs = [on("people:shared", load), on("people:changed", load)];
+    return () => subs.forEach((s) => s.then((un) => un()));
+  }, [peopleOn]);
+  // This user's chats shared with people, and with whom: they move to the Shared section.
+  const [sharedByMe, setSharedByMe] = useState<Map<string, string[]>>(new Map());
+  const [sharing, setSharing] = useState<string | null>(null);
+  useEffect(() => {
+    if (!peopleOn) return setSharedByMe(new Map());
+    const load = () =>
+      api
+        .peopleView()
+        .then((v) => {
+          const m = new Map<string, string[]>();
+          for (const c of v.contacts) for (const s of c.sharing) m.set(s.chat_id, [...(m.get(s.chat_id) ?? []), c.name]);
+          setSharedByMe(m);
+        })
+        .catch(() => {});
+    load();
+    const subs = [on("people:changed", load), on("people:shared", load)];
     return () => subs.forEach((s) => s.then((un) => un()));
   }, [peopleOn]);
   useEffect(() => {
@@ -284,6 +306,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       on("chat:web", () => refreshChats()),
       // The assistant showing the user a page (open_page).
       on("app:navigate", (p) => setView(p.page as View)),
+      // A link opened while the main browser is the web viewer.
+      on("viewer:open", (p) => {
+        setViewerStart({ url: p.url, at: Date.now() });
+        setView("web");
+      }),
       on("sync:changed", () => {
         refreshChats();
         refreshProjects();
@@ -486,6 +513,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       {locks.chats.includes(c.id) && <LockIcon className="chat-kept" title={t("Locked: the automatic cleanup never removes it")} />}
       {c.project_id && <BookIcon className="chat-project" title={projects.find((p) => p.id === c.project_id)?.name} />}
       {c.web && <GlobeIcon className="globe-mini" title={t("Web on for this chat")} />}
+      {sharedByMe.has(c.id) && <PeopleIcon className="chat-project" title={t("Shared with {names}", { names: sharedByMe.get(c.id)!.join(", ") })} />}
       {running.includes(c.id) && <span className="dot" title={t("Working")} aria-label={t("Working")} />}
     </button>
   );
@@ -620,21 +648,6 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               {t("Scheduled")}
             </button>
           )}
-          {has("connectors") && (
-            <button className={view === "connectors" ? "active" : ""} onClick={() => setView("connectors")}>
-              {t("Connectors")}
-            </button>
-          )}
-          {has("people") && (
-            <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}>
-              {t("People")}
-              {peopleUnread > 0 && (
-                <span className="badge push-right" aria-label={t("{n} unread", { n: peopleUnread })}>
-                  {peopleUnread}
-                </span>
-              )}
-            </button>
-          )}
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
@@ -662,10 +675,21 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {(folders.length > 0 || visible.length > 0) && (
           <FolderSection folders={folders} chats={visible} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
         )}
+        {/* Shared: chats people share with this user, and this user's shared chats. */}
+        {(sharedVisible.length > 0 || visible.some((c) => sharedByMe.has(c.id) && !foldered.has(c.id))) && (
+          <div className="side-section">
+            <div className="side-head">
+              <span>{t("Shared")}</span>
+            </div>
+            <div className="chat-list" role="list" aria-label={t("Shared")}>
+              {sharedVisible.map((s) => sharedItem(s))}
+              {visible.filter((c) => sharedByMe.has(c.id) && !foldered.has(c.id)).map((c) => chatItem(c, false))}
+            </div>
+          </div>
+        )}
         <div className="chat-list" role="list">
           {listed.length === 0 && sharedHere.length === 0 && <p className="muted small pad">{t("Your chats will appear here.")}</p>}
-          {sharedVisible.map((s) => sharedItem(s))}
-          {visible.filter((c) => !foldered.has(c.id)).map((c) => chatItem(c, false))}
+          {visible.filter((c) => !foldered.has(c.id) && !sharedByMe.has(c.id)).map((c) => chatItem(c, false))}
           {hiddenOwn.length + hiddenShared.length > 0 && (
             <button className="hidden-toggle small muted" onClick={() => setShowHidden((v) => !v)} aria-expanded={showHidden}>
               {showHidden ? "▾" : "▸"} {t("Hidden chats ({n})", { n: hiddenOwn.length + hiddenShared.length })}
@@ -680,7 +704,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           )}
         </div>
         </>)}
-        <SideMenu view={view} installing={Object.keys(progress).length > 0} onOpen={setView} />
+        {/* Connectors and People, when on, sit in the gear menu: the top is about the work. */}
+        <SideMenu
+          view={view}
+          installing={Object.keys(progress).length > 0}
+          extra={[
+            ...(has("connectors") ? [{ id: "connectors" as const, label: tx("Connectors") }] : []),
+            ...(has("people") ? [{ id: "people" as const, label: tx("People"), unread: peopleUnread }] : []),
+          ]}
+          onOpen={setView}
+        />
       </aside>
       {chatMenu && (
         <FloatingMenu x={chatMenu.x} y={chatMenu.y} onClose={() => setChatMenu(null)}>
@@ -710,6 +743,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                   </button>
                 )}
                 <hr />
+                {peopleOn && !chats.find((c) => c.id === id)?.incognito && (
+                  <button role="menuitem" onClick={() => (done(), setSharing(id))}>
+                    {sharedByMe.has(id) ? t("Shared with {names}…", { names: sharedByMe.get(id)!.join(", ") }) : t("Share…")}
+                  </button>
+                )}
                 <button
                   role="menuitem"
                   onClick={() => {
@@ -857,6 +895,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           })()}
         </FloatingMenu>
       )}
+      {sharing && <ShareChatDialog chatId={sharing} onClose={() => setSharing(null)} toast={toast} />}
       {folderFor && (
         <NameModal
           title={t("New folder")}
@@ -910,9 +949,19 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           </div>
         )}
-        {!phone && <TopBar browserOn={has("browser")} toast={toast} />}
+        {!phone && (
+          <TopBar
+            viewerOpen={view === "web"}
+            onViewer={() => {
+              setViewerStart({ url: null, at: Date.now() });
+              setView("web");
+            }}
+            toast={toast}
+          />
+        )}
         <Suspense fallback={<PageLoading />}>
         {view === "pc" && <PcView toast={toast} />}
+        {view === "web" && !phone && <WebViewerView start={viewerStart} toast={toast} />}
         {view === "chat" && (
           <ChatView
             chat={current}
@@ -1118,8 +1167,9 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
 }
 
 
-/** Across the top of the page: the web button, which opens the main browser. */
-function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) {
+/** Across the top of the page: the web viewer's button, and the globe,
+ * which opens the main browser (Chrome unless another was picked). */
+function TopBar({ viewerOpen, onViewer, toast }: { viewerOpen: boolean; onViewer: () => void; toast: PushToast }) {
   const [view, setView] = useState<BrowsersView | null>(null);
   useEffect(() => {
     const load = () => api.browsersView().then(setView).catch(() => {});
@@ -1127,14 +1177,14 @@ function TopBar({ browserOn, toast }: { browserOn: boolean; toast: PushToast }) 
     window.addEventListener("browser-changed", load);
     return () => window.removeEventListener("browser-changed", load);
   }, []);
-  const builtin = view?.current.kind === "builtin";
-  // The built-in browser is a feature; another browser can always be opened.
-  const web = !!view && !(builtin && !browserOn);
-  const name = view?.current.kind === "app" ? view.current.name : view?.current.kind === "system" ? t("your default browser") : t("the SulcusAI browser");
+  const name = view?.current.kind === "app" ? view.current.name : view?.current.kind === "system" ? t("your default browser") : t("the web viewer");
   return (
     <div className="topbar">
       <FeedbackButton toast={toast} />
-      {web && (
+      <button className={`icon-btn web-btn${viewerOpen ? " active" : ""}`} title={t("Open the web viewer")} aria-label={t("Open the web viewer")} onClick={onViewer}>
+        <ViewerIcon />
+      </button>
+      {view && (
         <button className="icon-btn web-btn" title={t("Open {name}", { name })} aria-label={t("Open {name}", { name })} onClick={() => api.openWeb(null).catch((e) => toast(errorText(e), "error"))}>
           <GlobeIcon />
         </button>

@@ -34,6 +34,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "advanced", label: tx("Advanced") },
     { id: "logs", label: tx("Logs") },
     { id: "about", label: tx("About {app}") },
+    { id: "update-notes", label: tx("Update notes") },
   ];
   return all.filter((s) => s.show !== false);
 }

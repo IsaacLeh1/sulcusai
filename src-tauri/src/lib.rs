@@ -93,6 +93,7 @@ mod tts;
 mod typing;
 mod updates;
 mod vad;
+mod viewer;
 mod vision;
 mod voice;
 mod web;
@@ -523,8 +524,8 @@ fn downloads_view(state: AppStateRef) -> DownloadsView {
 
 /// Searches Hugging Face for GGUF chat models; only files this PC can run.
 #[tauri::command]
-async fn hub_search(state: AppStateRef<'_>, query: String, sort: String, all: Option<bool>) -> Result<hub::HubResults, String> {
-    hub::search(state.inner(), &query, &sort, all.unwrap_or(false)).await
+async fn hub_search(state: AppStateRef<'_>, query: String, sort: String, all: Option<bool>, purpose: Option<String>) -> Result<hub::HubResults, String> {
+    hub::search(state.inner(), &query, &sort, all.unwrap_or(false), purpose.as_deref().unwrap_or("")).await
 }
 
 /// A pasted Hugging Face link, as the model it points at.
@@ -997,7 +998,10 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
             }
         }
         if let Some((c, l)) = catalog::with_q8_cache(spec, quant, &budget.with_limits(&limits), ctx, layers, chosen.is_none()) {
-            (ctx, layers, kv_q8) = (c.min(limits.max_ctx.max(if spec.tools { TOOL_CTX } else { 0 })), l, true);
+            // The mode's cap is for the automatic window: a chosen one stays
+            // (it was cut back to 8K in Cool mode, so choosing changed nothing).
+            let c = if chosen.is_some() { c } else { c.min(limits.max_ctx.max(if spec.tools { TOOL_CTX } else { 0 })) };
+            (ctx, layers, kv_q8) = (c, l, true);
         }
         // Measured on this PC for this window and this much of the card.
         let room = budget.with_limits(&limits).vram;
@@ -1497,7 +1501,11 @@ fn rename_model(state: AppStateRef, model_id: String, name: String) -> Result<()
 struct WindowOption {
     ctx: u32,
     placement: Option<catalog::Placement>,
+    /// Tokens a second at the start of a chat, and once the window is full.
     est_tps: f64,
+    full_tps: f64,
+    /// Seconds to read a full window, at this PC's measured reading speed.
+    read_full_secs: Option<f64>,
     needed: u64,
 }
 
@@ -1510,26 +1518,53 @@ struct ContextOptions {
     /// The largest the model supports.
     max: u32,
     options: Vec<WindowOption>,
+    /// The model uses tools: under 16K, a task of a few steps runs out of room.
+    tools: bool,
+    /// A window set in Advanced, which wins over these.
+    advanced: Option<u32>,
+    /// The speeds are this PC's measured ones (else estimates).
+    measured: bool,
 }
 
-/// Window sizes for a model (or the default one) and how each would run.
+/// Every window size up to the model's own most (and that, if it isn't one
+/// of them), how each would run here: where, how fast at the start and when
+/// full, how long a full one takes to read. Speeds are scaled by this PC's
+/// measured speed for the model when there is one.
 #[tauri::command(async)]
 fn context_options(state: AppStateRef, model_id: Option<String>) -> Result<ContextOptions, String> {
     let id = model_id.or_else(|| state.settings().default_model).ok_or("Pick a model first.")?;
     let spec = state.model_spec(&id).ok_or("That model isn't available.")?;
-    let quant = db::installed_model(&state.db.lock().unwrap(), &id).map(|m| m.quant).unwrap_or_else(|| spec.variants[0].quant.clone());
+    let installed = db::installed_model(&state.db.lock().unwrap(), &id);
+    let quant = installed.as_ref().map(|m| m.quant.clone()).unwrap_or_else(|| spec.variants[0].quant.clone());
     let variant = spec.variant(&quant).ok_or("Unknown model version")?;
     let budget = state.budget().with_limits(&state.limits());
     let (auto, _) = catalog::launch_within(&spec, &quant, &state.budget(), &state.limits());
-    let options = [8_192u32, 16_384, 32_768, 65_536, 131_072]
+    // Measured against estimated at the window it runs with now.
+    let now = plan_with(&state, &spec, &quant, 0, true).ctx;
+    let est_now = catalog::fit_variant(&spec, variant, now, &budget).est_tps;
+    let scale = installed.as_ref().and_then(|m| m.tps).filter(|t| *t > 0.0 && est_now > 0.0).map(|t| (t / est_now).clamp(0.25, 4.0));
+    let reading = installed.as_ref().and_then(|m| m.prompt_tps).filter(|t| *t > 0.0);
+    let max = spec.arch.max_ctx;
+    let mut sizes: Vec<u32> = (13..=20).map(|p| 1u32 << p).filter(|c| *c <= max).collect();
+    if max >= 8192 && !sizes.contains(&max) {
+        sizes.push(max);
+    }
+    let options = sizes
         .into_iter()
-        .filter(|c| *c <= spec.arch.max_ctx)
         .map(|ctx| {
             let f = catalog::fit_variant(&spec, variant, ctx, &budget);
-            WindowOption { ctx, placement: f.placement, est_tps: f.est_tps, needed: f.needed_bytes }
+            let start = f.est_tps * scale.unwrap_or(1.0);
+            WindowOption {
+                ctx,
+                placement: f.placement,
+                est_tps: (start * 10.0).round() / 10.0,
+                full_tps: catalog::speed_when_full(&spec, variant, ctx, start),
+                read_full_secs: reading.map(|r| ctx as f64 / r),
+                needed: f.needed_bytes,
+            }
         })
         .collect();
-    Ok(ContextOptions { chosen: chosen_window(&state), auto, max: spec.arch.max_ctx, options })
+    Ok(ContextOptions { chosen: chosen_window(&state), auto, max, options, tools: spec.tools, advanced: advanced::get(&state).engine.ctx, measured: scale.is_some() })
 }
 
 /// Sets the context window for chats (None: automatic). Models reload with
@@ -1731,9 +1766,46 @@ fn get_messages(state: AppStateRef, chat_id: String) -> Result<Vec<Message>, Str
     Ok(messages)
 }
 
+/// How full a chat's context window is: as counted at its last reply (this
+/// run, or kept since), else worked out from its saved messages. Chats not
+/// used since SulcusAI started all showed 0.
 #[tauri::command(async)]
 fn get_context(state: AppStateRef, chat_id: String) -> Option<ContextInfo> {
-    state.contexts.lock().unwrap().get(&chat_id).cloned()
+    if let Some(c) = state.contexts.lock().unwrap().get(&chat_id).cloned() {
+        return Some(c);
+    }
+    if let Some(c) = db::get::<ContextInfo>(&state.db.lock().unwrap(), &format!("context:{chat_id}")) {
+        return Some(c);
+    }
+    estimate_context(&state, &chat_id)
+}
+
+/// A chat's use of its window from the saved messages (about four
+/// characters a token) since its last compaction, with the instructions and
+/// tools as the last counted reply had them, at the window its model runs
+/// with now.
+fn estimate_context(state: &AppState, chat_id: &str) -> Option<ContextInfo> {
+    let cipher = state.cipher().ok()?;
+    let (chat, messages, last, profile) = {
+        let conn = state.db.lock().unwrap();
+        (db::chat(&conn, &cipher, chat_id)?, db::messages(&conn, &cipher, chat_id), db::get::<ContextInfo>(&conn, "context:last"), db::profile(&conn, &cipher))
+    };
+    if messages.is_empty() {
+        return None;
+    }
+    let id = chat.model_id.or_else(|| state.settings().default_model)?;
+    let spec = state.model_spec(&id)?;
+    let quant = db::installed_model(&state.db.lock().unwrap(), &id).map(|m| m.quant).unwrap_or_else(|| spec.variants[0].quant.clone());
+    let ctx = plan_with(state, &spec, &quant, 0, true).ctx;
+    let tokens = |s: &str| (s.chars().count() as u32).div_ceil(4);
+    let from = messages.iter().rposition(|m| m.meta.as_ref().is_some_and(|v| v.get("compacted").is_some())).unwrap_or(0);
+    let history = messages[from..].iter().map(|m| tokens(&m.content) + m.tool_calls.iter().flatten().map(|c| tokens(&c.arguments) + 4).sum::<u32>() + 4).sum();
+    let (base, about) = chat::system_prompt(&profile, "");
+    let (system_tokens, profile_tokens, tools_tokens) = match last {
+        Some(l) => (l.system_tokens, l.profile_tokens, l.tools_tokens),
+        None => (tokens(&base), tokens(&about), 0),
+    };
+    Some(ContextInfo { ctx, system_tokens, profile_tokens, tools_tokens, history_tokens: history, reply_reserve: (ctx / 4).clamp(256, 4096), estimated: true, ..Default::default() })
 }
 
 #[tauri::command(async)]
@@ -2009,6 +2081,13 @@ async fn run_turn_with(
         }
     };
     state.contexts.lock().unwrap().insert(chat_id.clone(), context.clone());
+    // Kept, so the meter has it when the chat is opened after a restart (and
+    // the instructions' share, for chats it works out from their messages).
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::set(&conn, &format!("context:{chat_id}"), &context);
+        let _ = db::set(&conn, "context:last", &context);
+    }
     if let Some((ep, request)) = name_it.filter(|_| !cancelled) {
         let (state, app, chat_id) = (state.clone(), app.clone(), chat_id.clone());
         tauri::async_runtime::spawn(async move {
@@ -2023,12 +2102,55 @@ async fn run_turn_with(
     }
     if let Some((ep, asked)) = sum_up.filter(|_| !cancelled) {
         let (state, app, chat_id) = (state.clone(), app.clone(), chat_id.clone());
-        tauri::async_runtime::spawn(async move { sum_up_thinking(&state, &app, &ep, &chat_id, &asked).await });
+        tauri::async_runtime::spawn(async move {
+            sum_up_thinking(&state, &app, &ep, &chat_id, &asked).await;
+            remember_from_reply(&state, &app, &ep, &chat_id, &asked).await;
+        });
     }
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
     inbox.finish(state, cancelled);
     Ok(last)
+}
+
+/// Lasting facts from the reply to `asked`, saved without being asked when
+/// the model finds any (Memory: "Remember things from chats by itself"):
+/// not when it saved one with remember this turn, in incognito chats, or
+/// with memory off. A project chat's facts about the project stay in it.
+async fn remember_from_reply(state: &AppState, app: &AppHandle, ep: &engine::Endpoint, chat_id: &str, asked: &str) {
+    let Ok(c) = state.cipher() else { return };
+    if !state.settings().memory_enabled {
+        return;
+    }
+    let (chat, messages, known) = {
+        let conn = state.db.lock().unwrap();
+        if !memory::auto_on(&conn) || !features::is_on(&conn, features::Feature::Memory) {
+            return;
+        }
+        let Some(chat) = db::chat(&conn, &c, chat_id) else { return };
+        (chat, db::messages(&conn, &c, chat_id), memory::list(&conn, &c, None))
+    };
+    let turn: Vec<&Message> = messages.iter().skip_while(|m| m.id != asked).collect();
+    let Some(user) = turn.first().filter(|m| m.role == "user") else { return };
+    if chat.incognito || turn.iter().any(|m| m.tool_calls.iter().flatten().any(|t| t.name == "remember")) {
+        return;
+    }
+    let reply = turn.iter().filter(|m| m.role == "assistant").map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n");
+    let Ok(raw) = chat::complete(ep, memory::auto_prompt(&known, &user.content, &reply), json!({ "response_format": memory::auto_format() }), 300).await else { return };
+    let mut saved = Vec::new();
+    {
+        let conn = state.db.lock().unwrap();
+        for (fact, about_user) in memory::auto_facts(&raw) {
+            let project = if about_user { None } else { chat.project_id.as_deref() };
+            if let Ok((m, true)) = memory::add(&conn, &c, &fact, project, Some(chat_id)) {
+                saved.push(m.content);
+            }
+        }
+    }
+    if !saved.is_empty() {
+        state.log("chat", &format!("Remembered {} thing(s) from a chat by itself", saved.len()));
+        app.emit("memory:auto", json!({ "chat_id": chat_id, "saved": saved })).ok();
+    }
 }
 
 /// The thinking of the reply to `asked` (the user's message), every step of
@@ -2529,6 +2651,13 @@ pub fn run() {
             bridge::show_extension_folder,
             browsers::set_main_browser,
             browsers::open_web,
+            browsers::open_outside,
+            viewer::viewer_show,
+            viewer::viewer_area,
+            viewer::viewer_hide,
+            viewer::viewer_go,
+            viewer::viewer_url,
+            viewer::viewer_close,
             docs::open_document,
             docs::show_in_folder,
             quick::quick_clipboard,
@@ -2839,6 +2968,16 @@ pub fn run() {
             projects::list_memories,
             projects::add_memory,
             projects::update_memory,
+            projects::set_memory_scope,
+            projects::memory_auto,
+            projects::set_memory_auto,
+            projects::linked_chats,
+            projects::link_chats,
+            projects::unlink_chats,
+            quick::quick_settings,
+            quick::set_quick_hotkey,
+            quick::set_quick_model,
+            quick::quick_chat,
             projects::delete_memory,
             projects::clear_memories,
             projects::set_memory_enabled,

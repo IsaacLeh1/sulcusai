@@ -6,6 +6,11 @@
 #   powershell -File scripts\release.ps1                  # build and sign only
 #   powershell -File scripts\release.ps1 -Publish -Notes "What's new"
 #
+# The notes go in the app first (Settings > Update notes): before building,
+# py -3.12 -I scripts\add_update_notes.py <notes.md>, then commit. A build
+# without this version's notes stops; publishing uses them unless -Notes or
+# -NotesFile says otherwise.
+#
 # The signing key lives at %USERPROFILE%\.tauri\sulcusai.key (never commit
 # it; without it, installed copies can never update again).
 # The Microsoft and Google sign-in registrations are built in from
@@ -42,6 +47,14 @@ if ($cargoVersion -ne $version -or $packageVersion -ne $version) {
     throw "The version numbers differ: tauri.conf.json $version, Cargo.toml $cargoVersion, package.json $packageVersion."
 }
 
+# The app shows every version's notes under Settings > Update notes, from
+# src/updateNotes.json: this version's must be in it before it's built.
+$notesJson = Join-Path $root "src\updateNotes.json"
+$bundled = ([System.IO.File]::ReadAllText($notesJson, [System.Text.Encoding]::UTF8) | ConvertFrom-Json) | Where-Object { $_.version -eq $version } | Select-Object -First 1
+if (-not $bundled -or -not $bundled.notes.Trim()) {
+    throw "src\updateNotes.json has no notes for $version. Write them, add them with: py -3.12 -I scripts\add_update_notes.py <notes.md>, and commit, so the app shows them under Settings > Update notes."
+}
+
 if (-not $SkipBuild) {
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content $keyFile -Raw
     $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = ""
@@ -72,6 +85,8 @@ if ($SkipBuild -and $Publish) {
 }
 
 if ($NotesFile) { $Notes = [System.IO.File]::ReadAllText((Resolve-Path $NotesFile), [System.Text.Encoding]::UTF8).Trim() }
+# The release says what the app shows for this version, unless told otherwise.
+if (-not $Notes) { $Notes = $bundled.notes.Trim() }
 
 $latest = [ordered]@{
     version   = $version

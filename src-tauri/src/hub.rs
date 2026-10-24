@@ -59,6 +59,12 @@ pub struct HubFile {
     pub size: u64,
     pub placement: Option<Placement>,
     pub est_tps: f64,
+    /// It would take most of the memory this PC has for models (card and
+    /// system together): other programs slow down while it runs.
+    pub heavy: bool,
+    /// Squeezed to 3 bits or fewer a weight: it runs, but answers are
+    /// noticeably worse than a bigger version's.
+    pub squeezed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,6 +79,8 @@ pub struct HubModel {
     pub updated: Option<String>,
     /// It comes with a picture reader (mmproj).
     pub vision: bool,
+    /// The most tokens of context it was made for.
+    pub context: u32,
     pub url: String,
     /// Only the files this PC can run, smallest first.
     pub files: Vec<HubFile>,
@@ -235,6 +243,19 @@ pub fn quant_of(path: &str) -> String {
         .to_string()
 }
 
+/// More than 85% of what this PC has for models (the card's share and
+/// system memory left after Windows' quarter): it runs, but other programs
+/// have little room meanwhile (a 122B model on a 16 GB card and 64 GB).
+pub(crate) fn heavy(needed: u64, b: &Budget) -> bool {
+    let room = b.vram + b.ram;
+    room > 0 && needed as f64 > room as f64 * 0.85
+}
+
+/// 3 bits a weight or fewer (Q3, IQ3 and below).
+pub(crate) fn squeezed(quant: &str) -> bool {
+    ["IQ1", "IQ2", "IQ3", "Q2", "Q3", "TQ1", "TQ2"].iter().any(|p| quant.starts_with(p))
+}
+
 /// The app's quality word, for quantization names the catalog doesn't use.
 fn quality_of(quant: &str) -> String {
     let near = match quant {
@@ -272,7 +293,7 @@ fn estimate_arch(params_b: f64, architecture: &str, repo_id: &str, ctx_len: u32)
         Some(a) if params_b > 0.0 && a < params_b => 0.1 + 0.9 * a / params_b,
         _ => 1.0,
     };
-    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 131_072), active_fraction, kv_whole: 0, kv_sliding: 0, kv_whole_width: 0, swa_window: 0 }
+    Arch { n_layer, n_kv_heads: 8, head_dim: 128, max_ctx: ctx_len.clamp(2048, 1 << 20), active_fraction, kv_whole: 0, kv_sliding: 0, kv_whole_width: 0, swa_window: 0 }
 }
 
 /// A short name from the repository's: "unsloth/gpt-oss-20b-GGUF" → "gpt-oss-20b".
@@ -334,7 +355,18 @@ pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> Hu
         .filter(|(_, v)| all || v.runnable())
         .map(|(f, v)| {
             let quant = quant_of(&f.path);
-            HubFile { file: f.path.clone(), needed: v.needed_bytes, model_id: model_id(&id, &f.path), quality: quality_of(&quant), quant, size: f.size, placement: v.placement, est_tps: v.est_tps }
+            HubFile {
+                file: f.path.clone(),
+                needed: v.needed_bytes,
+                model_id: model_id(&id, &f.path),
+                quality: quality_of(&quant),
+                heavy: heavy(v.needed_bytes, budget),
+                squeezed: squeezed(&quant),
+                quant,
+                size: f.size,
+                placement: v.placement,
+                est_tps: v.est_tps,
+            }
         })
         .collect();
     HubModel {
@@ -345,6 +377,7 @@ pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> Hu
         params_b: m["gguf"]["total"].as_f64().map(|t| (t / 1e8).round() / 10.0),
         updated: m["lastModified"].as_str().map(|d| d.chars().take(10).collect()),
         vision: repo.files.iter().any(|f| is_projector(&f.path)),
+        context: spec.arch.max_ctx,
         url: format!("{SITE}/{id}"),
         recommended: fit.recommended.filter(|r| files.iter().any(|f| &f.file == r)),
         files,
@@ -428,13 +461,30 @@ pub(crate) fn client(state: &AppState) -> Result<reqwest::Client, String> {
 
 /// Searches Hugging Face's GGUF chat models (`sort`: "downloads", "trending"
 /// or "newest"); an empty query lists the most popular.
-pub async fn search(state: &Arc<AppState>, query: &str, sort: &str, all: bool) -> Result<HubResults, String> {
-    let client = client(state)?;
+/// The words in a model's name that say what it's for (Hugging Face has no
+/// field for it). Pictures go by its task instead (`vision`).
+pub(crate) fn purpose_words(purpose: &str) -> &'static [&'static str] {
+    match purpose {
+        "coding" => &["coder", "code", "devstral", "codestral"],
+        "writing" => &["writer", "writing", "creative", "story"],
+        "reasoning" => &["reasoning", "thinking", "math", "r1"],
+        "uncensored" => &["abliterated", "uncensored", "heretic"],
+        "translation" => &["translat", "multilingual"],
+        _ => &[],
+    }
+}
+
+/// One page of GGUF repositories from Hugging Face, most downloaded (or
+/// trending, or newest) first.
+async fn list_repos(client: &reqwest::Client, search: &str, sort: &str, task: Option<&str>, limit: usize) -> Result<Vec<Value>, String> {
     let mut url = reqwest::Url::parse(API).map_err(|e| e.to_string())?;
     {
         let mut q = url.query_pairs_mut();
-        if !query.trim().is_empty() {
-            q.append_pair("search", query.trim());
+        if !search.trim().is_empty() {
+            q.append_pair("search", search.trim());
+        }
+        if let Some(t) = task {
+            q.append_pair("pipeline_tag", t);
         }
         q.append_pair("filter", "gguf");
         q.append_pair("sort", match sort {
@@ -443,13 +493,12 @@ pub async fn search(state: &Arc<AppState>, query: &str, sort: &str, all: bool) -
             _ => "downloads",
         });
         q.append_pair("direction", "-1");
-        q.append_pair("limit", &PAGE.to_string());
-        for e in ["gguf", "downloads", "likes", "lastModified", "pipeline_tag", "gated"] {
+        q.append_pair("limit", &limit.to_string());
+        for e in ["gguf", "downloads", "likes", "lastModified", "trendingScore", "pipeline_tag", "gated"] {
             q.append_pair("expand[]", e);
         }
     }
-    state.log("network", "Searched Hugging Face for models (huggingface.co)");
-    let found: Vec<Value> = client
+    client
         .get(url)
         .send()
         .await
@@ -458,7 +507,41 @@ pub async fn search(state: &Arc<AppState>, query: &str, sort: &str, all: bool) -
         .map_err(|e| format!("Hugging Face answered: {e}"))?
         .json()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())
+}
+
+/// `purpose`: coding, writing, reasoning, uncensored, translation or vision
+/// (empty: any). With words that say it, one search per word, merged and
+/// narrowed to the names with every word of `query`.
+pub async fn search(state: &Arc<AppState>, query: &str, sort: &str, all: bool, purpose: &str) -> Result<HubResults, String> {
+    let client = client(state)?;
+    let words = purpose_words(purpose);
+    let query = query.trim().to_lowercase();
+    let task = (purpose == "vision").then_some("image-text-to-text");
+    state.log("network", "Searched Hugging Face for models (huggingface.co)");
+    let mut found: Vec<Value> = if words.is_empty() {
+        list_repos(&client, &query, sort, task, PAGE).await?
+    } else {
+        // More of each when the person's words will narrow them.
+        let each = if query.is_empty() { PAGE } else { 100 };
+        let lists = futures_util::future::join_all(words.iter().map(|w| list_repos(&client, w, sort, None, each))).await;
+        let mut seen = std::collections::HashSet::new();
+        let mut all_found: Vec<Value> = lists.into_iter().filter_map(Result::ok).flatten().filter(|m| m["id"].as_str().is_some_and(|id| seen.insert(id.to_string()))).collect();
+        if all_found.is_empty() {
+            return Err("Couldn't reach Hugging Face. Check that this PC is online, then search again.".into());
+        }
+        let key = |m: &Value| match sort {
+            "trending" => m["trendingScore"].as_f64().unwrap_or(0.0),
+            "newest" => chrono::DateTime::parse_from_rfc3339(m["lastModified"].as_str().unwrap_or("")).map_or(0.0, |d| d.timestamp() as f64),
+            _ => m["downloads"].as_f64().unwrap_or(0.0),
+        };
+        all_found.sort_by(|a, b| key(b).partial_cmp(&key(a)).unwrap_or(std::cmp::Ordering::Equal));
+        all_found
+    };
+    if !words.is_empty() && !query.is_empty() {
+        found.retain(|m| m["id"].as_str().is_some_and(|id| query.split_whitespace().all(|w| id.to_lowercase().contains(w))));
+    }
+    found.truncate(PAGE);
     // Chat models that download without an account.
     let chat = |m: &Value| matches!(m["pipeline_tag"].as_str(), None | Some("text-generation" | "image-text-to-text"));
     let open = |m: &Value| m["gated"].is_null() || m["gated"] == false;
@@ -674,7 +757,7 @@ mod live {
         let state = crate::e2e::scratch_state();
         println!("budget: {:?}", state.budget());
         for (q, sort) in [("gpt-oss", "downloads"), ("", "trending"), ("qwen3", "downloads")] {
-            let r = search(&state, q, sort, false).await.unwrap();
+            let r = search(&state, q, sort, false, "").await.unwrap();
             println!("\n“{q}” ({sort}): {} shown, {} hidden", r.models.len(), r.hidden);
             for m in r.models.iter().take(4) {
                 let files: Vec<String> = m.files.iter().map(|f| format!("{} {:.1}GB {:?}", f.quant, f.size as f64 / 1e9, f.placement)).collect();

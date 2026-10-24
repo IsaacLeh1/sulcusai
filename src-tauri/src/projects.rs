@@ -230,16 +230,45 @@ pub fn list_memories(state: AppStateRef) -> Result<Vec<Memory>, String> {
     Ok(memory::list(&state.db.lock().unwrap(), &c, None))
 }
 
+/// A memory the user adds: everywhere, in a project, and (added from a
+/// chat) kept with that chat's memories.
 #[tauri::command(async)]
-pub fn add_memory(state: AppStateRef, content: String, project_id: Option<String>) -> Result<Memory, String> {
+pub fn add_memory(state: AppStateRef, content: String, project_id: Option<String>, chat_id: Option<String>) -> Result<Memory, String> {
     let c = state.cipher()?;
-    Ok(memory::add(&state.db.lock().unwrap(), &c, &content, project_id.as_deref(), None)?.0)
+    Ok(memory::add(&state.db.lock().unwrap(), &c, &content, project_id.as_deref(), chat_id.as_deref())?.0)
 }
 
 #[tauri::command(async)]
 pub fn update_memory(state: AppStateRef, id: String, content: String) -> Result<(), String> {
     let c = state.cipher()?;
     memory::update(&state.db.lock().unwrap(), &c, &id, &content)
+}
+
+/// Where a memory applies: everywhere (None) or one project.
+#[tauri::command(async)]
+pub fn set_memory_scope(state: AppStateRef, id: String, project_id: Option<String>) -> Result<(), String> {
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let n = conn.execute("UPDATE memories SET project_id = ?2, updated_at = ?3 WHERE id = ?1", rusqlite::params![id, project_id, crate::db::now_ms()]).map_err(|e| e.to_string())?;
+    if n == 0 {
+        return Err("That memory no longer exists.".into());
+    }
+    Ok(())
+}
+
+/// Whether the assistant saves lasting facts from chats by itself (after a
+/// reply, with the model on this PC).
+#[tauri::command(async)]
+pub fn memory_auto(state: AppStateRef) -> bool {
+    memory::auto_on(&state.db.lock().unwrap())
+}
+
+#[tauri::command(async)]
+pub fn set_memory_auto(state: AppStateRef, on: bool) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    crate::db::set(&conn, memory::AUTO_KEY, &on)?;
+    crate::db::log_action(&conn, "settings", if on { "Memories from chats: saved automatically" } else { "Memories from chats: only when asked" });
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -266,6 +295,65 @@ pub fn set_memory_enabled(state: AppStateRef, enabled: bool) -> Result<db::Setti
     let s = db::update_settings(&conn, |s| s.memory_enabled = enabled)?;
     db::log_action(&conn, "privacy", if enabled { "Turned memory on" } else { "Turned memory off" });
     Ok(s)
+}
+
+// ---------- linked chats ----------
+
+/// Pairs of chats the user linked to work together: each knows the other
+/// and can read it and send it a message, with or without the Chats working
+/// together feature.
+const LINKS: &str = "chat_links";
+
+fn links(conn: &Connection) -> Vec<(String, String)> {
+    db::get(conn, LINKS).unwrap_or_default()
+}
+
+/// The chats linked with `chat_id` that still exist (incognito ones never).
+pub fn linked(conn: &Connection, c: &Cipher, chat_id: &str) -> Vec<Chat> {
+    links(conn)
+        .into_iter()
+        .filter_map(|(a, b)| if a == chat_id { Some(b) } else if b == chat_id { Some(a) } else { None })
+        .filter_map(|id| db::chat(conn, c, &id))
+        .filter(|ch| !ch.incognito)
+        .collect()
+}
+
+#[tauri::command(async)]
+pub fn linked_chats(state: AppStateRef, chat_id: String) -> Result<Vec<Chat>, String> {
+    let c = state.cipher()?;
+    Ok(linked(&state.db.lock().unwrap(), &c, &chat_id))
+}
+
+#[tauri::command(async)]
+pub fn link_chats(state: AppStateRef, a: String, b: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    if a == b {
+        return Err("A chat can't be linked with itself.".into());
+    }
+    let conn = state.db.lock().unwrap();
+    for id in [&a, &b] {
+        match db::chat(&conn, &c, id) {
+            Some(ch) if ch.incognito => return Err("Incognito chats can't be linked: they keep nothing.".into()),
+            Some(_) => {}
+            None => return Err("That chat no longer exists.".into()),
+        }
+    }
+    let mut all = links(&conn);
+    if !all.iter().any(|(x, y)| (x == &a && y == &b) || (x == &b && y == &a)) {
+        all.push((a, b));
+        db::set(&conn, LINKS, &all)?;
+        db::log_action(&conn, "chat", "Linked two chats to work together");
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn unlink_chats(state: AppStateRef, a: String, b: String) -> Result<(), String> {
+    state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut all = links(&conn);
+    all.retain(|(x, y)| !((x == &a && y == &b) || (x == &b && y == &a)));
+    db::set(&conn, LINKS, &all)
 }
 
 #[cfg(test)]

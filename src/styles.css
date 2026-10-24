@@ -661,6 +661,18 @@ select, .input {
 .folder-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { border: 1px solid var(--border); background: none; border-radius: 99px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .chip.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+/* The scheduled task form: days, dates and times. */
+.schedule-part { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px 10px; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.schedule-part legend { font-size: 12.5px; font-weight: 600; padding: 0 4px; }
+.chip-x { border: 0; background: none; cursor: pointer; color: inherit; margin-left: 4px; padding: 0 2px; font-size: 14px; line-height: 1; }
+.time-pick { display: inline-flex; align-items: center; }
+.narrow-num { width: 64px; }
+.how-it-runs { padding: 10px 14px; margin-bottom: 14px; }
+.how-it-runs summary { cursor: pointer; font-weight: 600; font-size: 13.5px; }
+.how-it-runs ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.linked-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.linked-list li { display: flex; justify-content: space-between; gap: 10px; }
+.quick-setup { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .note-editor { min-width: 0; min-height: 0; overflow: hidden; display: flex; }
 .editor { flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 16px 24px; min-height: 0; }
 .title-input { font-size: 17px; font-weight: 600; }
@@ -771,7 +783,18 @@ html.quick-window, html.quick-window body { background: transparent; overflow: h
 .feedback-privacy { display: flex; flex-direction: column; gap: 4px; background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
 .crash-text { white-space: pre-wrap; max-height: 280px; overflow: auto; font: 12px ui-monospace, "Cascadia Mono", Consolas, monospace; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .web-btn { font-size: 18px; border-radius: 8px; padding: 4px 6px; }
-.web-btn:hover { background: var(--accent-soft); }
+.web-btn:hover, .web-btn.active { background: var(--accent-soft); }
+/* The web viewer: the page itself is a webview the core lays over .viewer-area. */
+.web-viewer { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.viewer-bar { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border); flex: none; }
+.viewer-bar .icon-btn { border-radius: 8px; padding: 4px 6px; }
+.viewer-bar .icon-btn:hover { background: var(--accent-soft); }
+.viewer-bar .icon-btn.spinning svg { animation: spin 1s linear infinite; }
+.viewer-address { flex: 1; min-width: 0; }
+.viewer-bar .btn svg { vertical-align: -2px; }
+.viewer-note { margin: 6px 14px 0; flex: none; }
+.viewer-area { flex: 1; min-height: 0; background: var(--panel); }
+.viewer-error { padding: 24px; color: var(--muted); }
 a.md-link { cursor: pointer; }
 
 /* ---------- browser control ---------- */
@@ -974,7 +997,12 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 /* ---------- updates ---------- */
 .update-settings { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .update-pill { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 99px; padding: 2px 10px; cursor: pointer; font-weight: 600; }
-.update-notes { white-space: pre-wrap; max-height: 200px; overflow: auto; }
+.update-notes { max-height: 320px; overflow: auto; }
+.update-notes h2, .update-entry .md h2 { font-size: 14px; margin: 10px 0 4px; }
+.update-history { display: flex; flex-direction: column; }
+.update-entry { border-top: 1px solid var(--border); padding: 8px 0; }
+.update-entry summary { cursor: pointer; }
+.update-entry .md { margin-top: 6px; font-size: 13px; }
 
 /* For screen readers only. */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

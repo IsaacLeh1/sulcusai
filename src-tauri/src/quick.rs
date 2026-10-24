@@ -21,6 +21,38 @@ use crate::{AppState, AppStateRef};
 pub const LABEL: &str = "quick";
 pub const HOTKEY: &str = "ctrl+alt+Space";
 const TRAY: &str = "main";
+/// The settings: the hotkey the person picked, and the model its chats use.
+const HOTKEY_KEY: &str = "quick_hotkey";
+const MODEL_KEY: &str = "quick_model";
+
+/// The hotkey: the one picked, else Ctrl+Alt+Space.
+fn hotkey(app: &AppHandle) -> String {
+    let state = app.state::<Arc<AppState>>();
+    let picked = crate::db::get::<String>(&state.db.lock().unwrap(), HOTKEY_KEY);
+    picked.filter(|h| !h.trim().is_empty()).unwrap_or_else(|| HOTKEY.into())
+}
+
+/// "ctrl+alt+KeyK" as people write it: "Ctrl+Alt+K".
+pub fn shown(hotkey: &str) -> String {
+    hotkey
+        .split('+')
+        .map(|p| {
+            let p = p.trim();
+            let p = p.strip_prefix("Key").or_else(|| p.strip_prefix("Digit")).unwrap_or(p);
+            match p.to_lowercase().as_str() {
+                "ctrl" | "control" => "Ctrl".to_string(),
+                "alt" | "option" => "Alt".to_string(),
+                "shift" => "Shift".to_string(),
+                "super" | "cmd" | "command" | "meta" => "Win".to_string(),
+                _ => {
+                    let mut c = p.chars();
+                    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("+")
+}
 
 pub fn enabled(app: &AppHandle) -> bool {
     let state = app.state::<Arc<AppState>>();
@@ -43,11 +75,12 @@ pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 pub fn apply(app: &AppHandle) {
     let on = enabled(app);
     let gs = app.global_shortcut();
+    let key = hotkey(app);
     if on {
-        if !gs.is_registered(HOTKEY) {
-            if let Err(e) = gs.register(HOTKEY) {
+        if !gs.is_registered(key.as_str()) {
+            if let Err(e) = gs.register(key.as_str()) {
                 eprintln!("quick ask hotkey: {e}");
-                app.emit("quick:hotkey_taken", json!({ "hotkey": "Ctrl+Alt+Space" })).ok();
+                app.emit("quick:hotkey_taken", json!({ "hotkey": shown(&key) })).ok();
             }
         }
         if app.tray_by_id(TRAY).is_none() {
@@ -56,7 +89,7 @@ pub fn apply(app: &AppHandle) {
             }
         }
     } else {
-        let _ = gs.unregister(HOTKEY);
+        let _ = gs.unregister(key.as_str());
         let _ = app.remove_tray_by_id(TRAY);
         if let Some(w) = app.get_webview_window(LABEL) {
             let _ = w.close();
@@ -65,7 +98,7 @@ pub fn apply(app: &AppHandle) {
 }
 
 fn tray(app: &AppHandle) -> tauri::Result<()> {
-    let ask = MenuItem::with_id(app, "quick", "Quick ask   Ctrl+Alt+Space", true, None::<&str>)?;
+    let ask = MenuItem::with_id(app, "quick", format!("Quick ask   {}", shown(&hotkey(app))), true, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Open SulcusAI", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&ask, &open, &PredefinedMenuItem::separator(app)?, &quit])?;
@@ -260,4 +293,70 @@ pub fn quick_open_in_app(app: AppHandle, state: AppStateRef, chat_id: Option<Str
         app.emit_to("main", "quick:open-chat", json!({ "chat_id": id })).ok();
     }
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+pub struct QuickSettings {
+    hotkey: String,
+    /// As people write it ("Ctrl+Alt+Space").
+    shown: String,
+    /// The model its chats use (None: the default model).
+    model: Option<String>,
+}
+
+#[tauri::command(async)]
+pub fn quick_settings(app: AppHandle, state: AppStateRef) -> QuickSettings {
+    let key = hotkey(&app);
+    QuickSettings { shown: shown(&key), hotkey: key, model: crate::db::get(&state.db.lock().unwrap(), MODEL_KEY) }
+}
+
+/// A new hotkey ("ctrl+alt+KeyK", as the settings page records it): it needs
+/// Ctrl, Alt, Shift or Win with a key, and one no other program holds; the
+/// old one stays when it can't be had.
+#[tauri::command(async)]
+pub fn set_quick_hotkey(app: AppHandle, state: AppStateRef, hotkey: String) -> Result<QuickSettings, String> {
+    let wanted: tauri_plugin_global_shortcut::Shortcut = hotkey.parse().map_err(|_| "That isn't a key combination SulcusAI can use. Try one like Ctrl+Alt+Space.".to_string())?;
+    if wanted.mods.is_empty() {
+        return Err("Use Ctrl, Alt, Shift or Win with a key, so typing that key alone doesn't open it.".into());
+    }
+    let old = self::hotkey(&app);
+    if enabled(&app) {
+        let gs = app.global_shortcut();
+        let _ = gs.unregister(old.as_str());
+        if gs.register(wanted).is_err() {
+            let _ = gs.register(old.as_str());
+            return Err(format!("Another program already uses {}. Pick another combination.", shown(&hotkey)));
+        }
+    }
+    crate::db::set(&state.db.lock().unwrap(), HOTKEY_KEY, &hotkey)?;
+    // The tray menu shows it.
+    if app.tray_by_id(TRAY).is_some() {
+        let _ = app.remove_tray_by_id(TRAY);
+        let _ = tray(&app);
+    }
+    state.log("settings", &format!("Quick ask now opens with {}", shown(&hotkey)));
+    Ok(quick_settings(app, state))
+}
+
+/// The model Quick ask's chats use (None: the default model).
+#[tauri::command(async)]
+pub fn set_quick_model(state: AppStateRef, model_id: Option<String>) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    match model_id.filter(|m| !m.is_empty()) {
+        Some(m) => crate::db::set(&conn, MODEL_KEY, &m),
+        None => {
+            conn.execute("DELETE FROM settings WHERE key = ?1", [MODEL_KEY]).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+    }
+}
+
+/// A new chat for the box, on Quick ask's model when one is picked (and
+/// still installed).
+#[tauri::command(async)]
+pub fn quick_chat(state: AppStateRef) -> Result<crate::db::Chat, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let model = crate::db::get::<String>(&conn, MODEL_KEY).filter(|m| crate::db::installed_model(&conn, m).is_some() || m.starts_with("cloud:"));
+    crate::db::create_chat_in(&conn, &c, model, None, false)
 }

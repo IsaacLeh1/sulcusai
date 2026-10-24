@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, on, type Memory, type Project, type Settings } from "../api";
+import { api, errorText, on, type Chat, type Memory, type Project, type Settings } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
@@ -8,16 +8,24 @@ import { t } from "../i18n";
 export function MemoryView({ settings, onSettings, toast }: { settings: Settings; onSettings: (s: Settings) => void; toast: PushToast }) {
   const [memories, setMemories] = useState<Memory[] | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [query, setQuery] = useState("");
+  // "" everything; "everywhere"; "p:<id>" a project; "c:<id>" saved from a chat.
+  const [where, setWhere] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState("");
+  const [addTo, setAddTo] = useState<string>("");
+  const [auto, setAuto] = useState(true);
   const [confirmClear, setConfirmClear] = useState(false);
 
   const load = () => {
     api.memories().then(setMemories).catch((e) => toast(errorText(e), "error"));
     api.projects().then(setProjects).catch(() => {});
+    api.chats().then(setChats).catch(() => {});
+    api.memoryAuto().then(setAuto).catch(() => {});
   };
+  const chatTitle = (id: string | null) => (id ? chats.find((c) => c.id === id)?.title ?? null : null);
   useEffect(() => {
     load();
     const sub = on("sync:changed", () => load());
@@ -29,8 +37,15 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
   const projectName = (id: string | null) => (id ? projects.find((p) => p.id === id)?.name ?? t("A deleted project") : null);
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (memories ?? []).filter((m) => !q || m.content.toLowerCase().includes(q));
-  }, [memories, query]);
+    const fits = (m: Memory) =>
+      where === "" ||
+      (where === "everywhere" && !m.project_id) ||
+      (where.startsWith("p:") && m.project_id === where.slice(2)) ||
+      (where.startsWith("c:") && m.source_chat === where.slice(2));
+    return (memories ?? []).filter((m) => (!q || m.content.toLowerCase().includes(q)) && fits(m));
+  }, [memories, query, where]);
+  // Chats something was remembered from, for the filter.
+  const fromChats = useMemo(() => chats.filter((c) => (memories ?? []).some((m) => m.source_chat === c.id)), [chats, memories]);
 
   const save = async (id: string) => {
     try {
@@ -70,6 +85,32 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
               <span />
             </label>
           </div>
+          <div className="setting-row">
+            <div>
+              <strong>{t("Remember things from chats by itself")}</strong>
+              <span className="small muted block">
+                {t("After a reply, the model on this PC checks whether you shared something lasting (about you, your work or what you prefer) and saves at most two short facts. Never passwords, codes or account numbers. Off: it saves only when you ask, or when it decides to while answering.")}
+              </span>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={auto}
+                disabled={!settings.memory_enabled}
+                onChange={async (e) => {
+                  const on = e.target.checked;
+                  try {
+                    await api.setMemoryAuto(on);
+                    setAuto(on);
+                  } catch (err) {
+                    toast(errorText(err), "error");
+                  }
+                }}
+                aria-label={t("Remember things from chats by itself")}
+              />
+              <span />
+            </label>
+          </div>
         </section>
 
         <form
@@ -78,7 +119,7 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
             e.preventDefault();
             if (!adding.trim()) return;
             try {
-              await api.addMemory(adding, null);
+              await api.addMemory(adding, addTo || null);
               setAdding("");
               load();
             } catch (err) {
@@ -87,11 +128,35 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
           }}
         >
           <input className="input" placeholder={t("Add something to remember, e.g. I prefer metric units")} aria-label={t("Add something to remember, e.g. I prefer metric units")} value={adding} onChange={(e) => setAdding(e.target.value)} maxLength={500} />
+          <select className="input" value={addTo} onChange={(e) => setAddTo(e.target.value)} aria-label={t("Where it applies")}>
+            <option value="">{t("Everywhere")}</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{t("In {project}", { project: p.name })}</option>
+            ))}
+          </select>
           <button className="btn primary" type="submit" disabled={!adding.trim()}>{t("Add")}</button>
         </form>
 
-        <div className="filters">
+        <div className="filters row wrap">
           <input className="input search" placeholder={t("Search memories")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={t("Search memories")} />
+          <select className="input" value={where} onChange={(e) => setWhere(e.target.value)} aria-label={t("Show memories")}>
+            <option value="">{t("All memories")}</option>
+            <option value="everywhere">{t("Everywhere")}</option>
+            {projects.length > 0 && (
+              <optgroup label={t("Projects")}>
+                {projects.map((p) => (
+                  <option key={p.id} value={`p:${p.id}`}>{p.name}</option>
+                ))}
+              </optgroup>
+            )}
+            {fromChats.length > 0 && (
+              <optgroup label={t("Saved from a chat")}>
+                {fromChats.map((c) => (
+                  <option key={c.id} value={`c:${c.id}`}>{c.title}</option>
+                ))}
+              </optgroup>
+            )}
+          </select>
         </div>
 
         <section className="card">
@@ -109,12 +174,33 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
                     }}
                   >
                     <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus maxLength={500} />
+                    <select
+                      className="input"
+                      value={m.project_id ?? ""}
+                      aria-label={t("Where it applies")}
+                      onChange={async (e) => {
+                        try {
+                          await api.setMemoryScope(m.id, e.target.value || null);
+                          load();
+                        } catch (err) {
+                          toast(errorText(err), "error");
+                        }
+                      }}
+                    >
+                      <option value="">{t("Everywhere")}</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>{t("In {project}", { project: p.name })}</option>
+                      ))}
+                    </select>
                     <button className="btn primary small" type="submit">{t("Save")}</button>
                     <button className="btn ghost small" type="button" onClick={() => setEditing(null)}>{t("Cancel")}</button>
                   </form>
                 ) : (
                   <>
-                    <span className="memory-text">{m.content}</span>
+                    <span className="memory-text">
+                      {m.content}
+                      {chatTitle(m.source_chat) && <span className="muted small block">{t("From the chat “{title}”", { title: chatTitle(m.source_chat)! })}</span>}
+                    </span>
                     <span className="tag">{projectName(m.project_id) ?? t("Everywhere")}</span>
                     <button
                       className="link"

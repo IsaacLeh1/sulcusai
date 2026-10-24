@@ -619,6 +619,8 @@ pub fn set_chat_web(conn: &Connection, id: &str, web: bool) -> Result<(), String
 
 pub fn delete_chat(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM chats WHERE id = ?1", [id]).map_err(err)?;
+    // Its context window use, kept for the meter.
+    conn.execute("DELETE FROM settings WHERE key = ?1", [format!("context:{id}")]).map_err(err)?;
     Ok(())
 }
 

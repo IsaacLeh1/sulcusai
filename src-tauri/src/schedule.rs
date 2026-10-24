@@ -29,6 +29,35 @@ pub enum Cadence {
     Weekdays { time: String },
     /// 0 = Monday … 6 = Sunday.
     Weekly { weekday: u32, time: String },
+    /// The chosen days of the week (0 = Monday), at each of the times.
+    Days { weekdays: Vec<u32>, times: Vec<String> },
+    /// The chosen dates ("2026-10-24"), at each of the times.
+    Dates { dates: Vec<String>, times: Vec<String> },
+}
+
+/// The times of a day, earliest first, each checked.
+fn times_of(times: &[String]) -> Result<Vec<NaiveTime>, String> {
+    if times.is_empty() {
+        return Err("Add at least one time.".into());
+    }
+    if times.len() > 24 {
+        return Err("Up to 24 times a day.".into());
+    }
+    let mut out = times.iter().map(|t| parse_time(t)).collect::<Result<Vec<_>, _>>()?;
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// "08:00 and 18:00", "08:00, 12:00 and 18:00".
+fn list_times(times: &[String]) -> String {
+    let mut ts: Vec<&str> = times.iter().map(String::as_str).collect();
+    ts.sort();
+    match ts.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.to_string(),
+        None => String::new(),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +127,31 @@ pub fn next_run(c: &Cadence, after: DateTime<Local>) -> Result<Option<DateTime<L
             }
             None
         }
+        Cadence::Days { weekdays, times } => {
+            if weekdays.is_empty() {
+                return Err("Pick at least one day.".into());
+            }
+            let ts = times_of(times)?;
+            let mut day = after.date_naive();
+            for _ in 0..8 {
+                if weekdays.iter().any(|w| weekday(*w) == day.weekday()) {
+                    if let Some(when) = ts.iter().filter_map(|t| at_local(day, *t)).find(|w| *w > after) {
+                        return Ok(Some(when));
+                    }
+                }
+                day = day.succ_opt().ok_or("bad date")?;
+            }
+            None
+        }
+        Cadence::Dates { dates, times } => {
+            if dates.is_empty() {
+                return Err("Pick at least one date.".into());
+            }
+            let ts = times_of(times)?;
+            let mut days = dates.iter().map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| "Use dates like 2026-10-24.".to_string())).collect::<Result<Vec<_>, _>>()?;
+            days.sort();
+            days.into_iter().flat_map(|d| ts.iter().filter_map(move |t| at_local(d, *t))).find(|w| *w > after)
+        }
     })
 }
 
@@ -113,6 +167,25 @@ pub fn describe(c: &Cadence) -> String {
         Cadence::Daily { time } => format!("Every day at {time}"),
         Cadence::Weekdays { time } => format!("Weekdays at {time}"),
         Cadence::Weekly { weekday, time } => format!("Every {} at {time}", DAYS[(*weekday % 7) as usize]),
+        Cadence::Days { weekdays, times } => {
+            let mut ws: Vec<u32> = weekdays.iter().map(|w| w % 7).collect();
+            ws.sort();
+            ws.dedup();
+            let days = match ws.as_slice() {
+                [0, 1, 2, 3, 4, 5, 6] => "Every day".to_string(),
+                [0, 1, 2, 3, 4] => "Weekdays".to_string(),
+                [5, 6] => "Weekends".to_string(),
+                _ => ws.iter().map(|w| &DAYS[*w as usize][..3]).collect::<Vec<_>>().join(", "),
+            };
+            format!("{days} at {}", list_times(times))
+        }
+        Cadence::Dates { dates, times } => {
+            let mut days: Vec<chrono::NaiveDate> = dates.iter().filter_map(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).collect();
+            days.sort();
+            days.dedup();
+            let ds: Vec<String> = days.iter().map(|d| d.format("%b %-d").to_string()).collect();
+            format!("{} at {}", ds.join(", "), list_times(times))
+        }
     }
 }
 
@@ -352,6 +425,27 @@ mod tests {
         assert_eq!(describe(&Cadence::Weekdays { time: "08:30".into() }), "Weekdays at 08:30");
         assert_eq!(describe(&Cadence::Weekly { weekday: 0, time: "07:00".into() }), "Every Monday at 07:00");
         assert_eq!(describe(&Cadence::Hourly { minute: 5 }), "Every hour at :05");
+        let mwf = Cadence::Days { weekdays: vec![4, 0, 2], times: vec!["18:00".into(), "08:00".into()] };
+        assert_eq!(describe(&mwf), "Mon, Wed, Fri at 08:00 and 18:00");
+        assert_eq!(describe(&Cadence::Days { weekdays: (0..7).collect(), times: vec!["08:00".into()] }), "Every day at 08:00");
+        assert_eq!(describe(&Cadence::Days { weekdays: vec![5, 6], times: vec!["10:00".into(), "14:00".into(), "20:00".into()] }), "Weekends at 10:00, 14:00 and 20:00");
+        assert_eq!(describe(&Cadence::Dates { dates: vec!["2026-10-08".into(), "2026-10-07".into()], times: vec!["09:00".into()] }), "Oct 7, Oct 8 at 09:00");
+    }
+
+    /// Chosen weekdays at several times, and chosen dates (2026-10-06 is a Tuesday).
+    #[test]
+    fn several_days_and_times() {
+        let mwf = Cadence::Days { weekdays: vec![0, 2, 4], times: vec!["18:00".into(), "08:00".into()] };
+        let at = |t: Option<DateTime<Local>>| t.map(|t| t.format("%a %-d %H:%M").to_string());
+        assert_eq!(at(next_run(&mwf, local(2026, 10, 6, 7, 0)).unwrap()).as_deref(), Some("Wed 7 08:00"));
+        assert_eq!(at(next_run(&mwf, local(2026, 10, 7, 8, 0)).unwrap()).as_deref(), Some("Wed 7 18:00"));
+        assert_eq!(at(next_run(&mwf, local(2026, 10, 9, 19, 0)).unwrap()).as_deref(), Some("Mon 12 08:00"));
+        assert!(next_run(&Cadence::Days { weekdays: vec![], times: vec!["08:00".into()] }, local(2026, 10, 6, 7, 0)).is_err());
+        assert!(next_run(&Cadence::Days { weekdays: vec![1], times: vec![] }, local(2026, 10, 6, 7, 0)).is_err());
+        let dates = Cadence::Dates { dates: vec!["2026-10-08".into(), "2026-10-07".into()], times: vec!["09:00".into(), "17:30".into()] };
+        assert_eq!(at(next_run(&dates, local(2026, 10, 6, 7, 0)).unwrap()).as_deref(), Some("Wed 7 09:00"));
+        assert_eq!(at(next_run(&dates, local(2026, 10, 8, 10, 0)).unwrap()).as_deref(), Some("Thu 8 17:30"));
+        assert_eq!(next_run(&dates, local(2026, 10, 8, 18, 0)).unwrap(), None, "all past");
     }
 
     #[test]

@@ -1,22 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Your main browser: where links and the globe button open. The built-in
-//! browser (the one the assistant can use), Windows' default, or any
-//! browser Windows has registered (Chrome, Edge, DuckDuckGo, Firefox…).
+//! Your main browser: where links and the globe button open. Chrome when
+//! nothing was picked (Windows' default without it), Windows' default, any
+//! browser Windows has registered (Chrome, Edge, DuckDuckGo, Firefox…), or
+//! SulcusAI's web viewer, inside its window (viewer.rs; it has its own
+//! button too).
 //!
 //! The choice is stored by name only; the program is looked up in the
 //! registry again each time, so a stored setting can't point at anything
 //! else.
 
 use serde::{Deserialize, Serialize};
+use tauri::Emitter;
 
 use crate::{db, AppStateRef};
 
 const KEY: &str = "main_browser";
+/// Set when the web viewer is picked: "Builtin" stored before it existed
+/// was the old default (a separate window), not a choice of it.
+const PICKED_VIEWER: &str = "main_browser_viewer";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MainBrowser {
-    /// SulcusAI's own browser.
+    /// SulcusAI's web viewer, inside its window.
     Builtin,
     /// Whatever Windows opens links with.
     System,
@@ -24,9 +30,11 @@ pub enum MainBrowser {
     App { name: String },
 }
 
-impl Default for MainBrowser {
-    fn default() -> Self {
-        MainBrowser::Builtin
+/// Nothing picked: Chrome if it's installed, else Windows' default.
+fn unpicked(installed: &[Installed]) -> MainBrowser {
+    match installed.iter().find(|b| b.name.to_lowercase().contains("chrome") && !b.name.to_lowercase().contains("chromium")) {
+        Some(b) => MainBrowser::App { name: b.name.clone() },
+        None => MainBrowser::System,
     }
 }
 
@@ -101,7 +109,11 @@ fn exe_of(cmd: &str) -> String {
 }
 
 pub fn choice(conn: &rusqlite::Connection) -> MainBrowser {
-    db::get(conn, KEY).unwrap_or_default()
+    match db::get::<MainBrowser>(conn, KEY) {
+        Some(MainBrowser::Builtin) if !db::get::<bool>(conn, PICKED_VIEWER).unwrap_or(false) => unpicked(&installed()),
+        Some(c) => c,
+        None => unpicked(&installed()),
+    }
 }
 
 fn web_url(url: &str) -> Result<String, String> {
@@ -134,8 +146,9 @@ pub fn set_main_browser(state: AppStateRef, choice: MainBrowser) -> Result<(), S
     }
     let conn = state.db.lock().unwrap();
     db::set(&conn, KEY, &choice)?;
+    db::set(&conn, PICKED_VIEWER, &(choice == MainBrowser::Builtin))?;
     let label = match &choice {
-        MainBrowser::Builtin => "SulcusAI's browser".to_string(),
+        MainBrowser::Builtin => "SulcusAI's web viewer".to_string(),
         MainBrowser::System => "the Windows default".to_string(),
         MainBrowser::App { name } => name.clone(),
     };
@@ -143,23 +156,31 @@ pub fn set_main_browser(state: AppStateRef, choice: MainBrowser) -> Result<(), S
     Ok(())
 }
 
-/// Opens a web address (or just the browser) in the main browser.
+/// Opens a web address (or just the browser) in the main browser: the web
+/// viewer's page opens in the window (`viewer:open`), others start outside.
 #[tauri::command]
 pub async fn open_web(app: tauri::AppHandle, state: AppStateRef<'_>, url: Option<String>) -> Result<(), String> {
     let url = url.map(|u| web_url(&u)).transpose()?;
     let current = choice(&state.db.lock().unwrap());
     match current {
-        MainBrowser::Builtin => {
-            crate::browser::open_browser(app.clone(), state).await?;
-            if let (Some(u), Some(w)) = (url, crate::browser::window(&app)) {
-                w.navigate(u.parse().map_err(|_| "That isn't a web address.".to_string())?).map_err(|e| e.to_string())?;
-            }
-            Ok(())
-        }
-        MainBrowser::System => {
-            let target = url.unwrap_or_else(|| "https://duckduckgo.com/".into());
-            crate::open_with_system(std::ffi::OsStr::new(&target))
-        }
+        MainBrowser::Builtin => app.emit("viewer:open", serde_json::json!({ "url": url })).map_err(|e| e.to_string()),
+        outside => open_in(outside, url),
+    }
+}
+
+/// Opens a web address in a browser outside SulcusAI (the web viewer's
+/// "Open in Chrome"): the main browser, or Chrome or Windows' default when
+/// the main browser is the viewer itself.
+#[tauri::command(async)]
+pub fn open_outside(state: AppStateRef<'_>, url: String) -> Result<(), String> {
+    let url = web_url(&url)?;
+    let current = choice(&state.db.lock().unwrap());
+    let outside = if current == MainBrowser::Builtin { unpicked(&installed()) } else { current };
+    open_in(outside, Some(url))
+}
+
+fn open_in(browser: MainBrowser, url: Option<String>) -> Result<(), String> {
+    match browser {
         MainBrowser::App { name } => {
             let b = installed().into_iter().find(|b| b.name == name).ok_or_else(|| format!("{name} isn't installed anymore. Pick another main browser in Settings."))?;
             let mut cmd = std::process::Command::new(&b.exe);
@@ -168,6 +189,10 @@ pub async fn open_web(app: tauri::AppHandle, state: AppStateRef<'_>, url: Option
             }
             cmd.spawn().map_err(|e| format!("Couldn't start {name}: {e}"))?;
             Ok(())
+        }
+        _ => {
+            let target = url.unwrap_or_else(|| "https://duckduckgo.com/".into());
+            crate::open_with_system(std::ffi::OsStr::new(&target))
         }
     }
 }
@@ -189,6 +214,24 @@ mod tests {
         assert!(web_url("file:///C:/Windows/system32/calc.exe").is_err());
         assert!(web_url("javascript:alert(1)").is_err());
         assert!(web_url("ms-settings:").is_err());
+    }
+
+    #[test]
+    fn chrome_unless_something_else_was_picked() {
+        let found = |names: &[&str]| names.iter().map(|n| Installed { name: n.to_string(), exe: String::new() }).collect::<Vec<_>>();
+        assert_eq!(unpicked(&found(&["Firefox", "Google Chrome", "Microsoft Edge"])), MainBrowser::App { name: "Google Chrome".into() });
+        assert_eq!(unpicked(&found(&["Chromium", "Microsoft Edge"])), MainBrowser::System);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init_for_test(&conn);
+        let none = choice(&conn);
+        assert_ne!(none, MainBrowser::Builtin, "nothing picked: not the viewer");
+        // "Builtin" stored before the viewer existed was the old default.
+        db::set(&conn, KEY, &MainBrowser::Builtin).unwrap();
+        assert_eq!(choice(&conn), none);
+        db::set(&conn, PICKED_VIEWER, &true).unwrap();
+        assert_eq!(choice(&conn), MainBrowser::Builtin);
+        db::set(&conn, KEY, &MainBrowser::System).unwrap();
+        assert_eq!(choice(&conn), MainBrowser::System);
     }
 
     /// Lists this PC's browsers: `cargo test --lib lists_browsers -- --ignored --nocapture`

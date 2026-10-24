@@ -27,6 +27,7 @@ import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
+import { ChatMemories, LinkedChats } from "../components/ChatPanels";
 import { PreviewPanel, latestPreview, usePreviewWidth, type PreviewTarget } from "../components/PreviewPanel";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
@@ -176,6 +177,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [runningCall, setRunningCall] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
+  const [panel, setPanel] = useState<"memories" | "links" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
   const [voice, setVoice] = useState(false);
@@ -309,6 +311,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       // Someone this chat is shared with wrote in it (or their model did).
       on("chat:changed", mine(() => reload())),
       on("chat:thought", mine(() => reload())),
+      // Saved by itself after a reply: said once, with where to change it.
+      on("memory:auto", mine((p) => toast(t("Remembered: {what}", { what: p.saved.join(" ") }), "success"))),
       on("chat:start", mine((p) => {
         setCooling(null);
         setLookingUp(null);
@@ -624,6 +628,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             {t("Files")}
           </button>
           {features.has("people") && !chat.incognito && <ShareChat chatId={chat.id} toast={toast} />}
+          {!chat.incognito && (
+            <>
+              <button className="btn ghost small" onClick={() => setPanel("memories")} title={t("What the assistant remembered from this chat")}>{t("Memories")}</button>
+              <button className="btn ghost small" onClick={() => setPanel("links")} title={t("Chats linked with this one to work together")}>{t("Linked chats")}</button>
+            </>
+          )}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
           <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>{t("Delete")}</button>
         </div>
@@ -927,6 +937,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           </div>
         </Modal>
       )}
+      {panel === "memories" && <ChatMemories chat={chat} onClose={() => setPanel(null)} toast={toast} />}
+      {panel === "links" && <LinkedChats chat={chat} onOpenChat={onOpenChat} onClose={() => setPanel(null)} toast={toast} />}
       {renaming && (
         <RenameDialog
           title={chat.title}

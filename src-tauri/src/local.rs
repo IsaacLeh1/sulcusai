@@ -459,7 +459,8 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
     };
     let heads = heads.max(1);
     let head_dim = a("attention.key_length").or_else(|| a("embedding_length").map(|e| e / heads)).unwrap_or(128);
-    let max_ctx = a("context_length").unwrap_or(4096).clamp(2048, 131_072) as u32;
+    // Up to 1M tokens: the window sizes past what this PC holds show as too much.
+    let max_ctx = a("context_length").unwrap_or(4096).clamp(2048, 1 << 20) as u32;
     let active_fraction = match (a("expert_count"), a("expert_used_count")) {
         // The experts hold most of the weights; only a few run per token.
         (Some(n), Some(used)) if n > 0 => 0.1 + 0.9 * used as f64 / n as f64,

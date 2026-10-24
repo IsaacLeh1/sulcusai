@@ -6,7 +6,7 @@ import { t, tx } from "../i18n";
 import { GearIcon } from "./Icons";
 import { ThemePicker } from "./ThemePicker";
 
-export type MenuView = "settings" | "models" | "features" | "activity";
+export type MenuView = "settings" | "models" | "features" | "activity" | "connectors" | "people";
 
 const ITEMS: { id: MenuView; label: string }[] = [
   { id: "settings", label: tx("Settings") },
@@ -15,10 +15,14 @@ const ITEMS: { id: MenuView; label: string }[] = [
   { id: "activity", label: tx("Activity") },
 ];
 
-export function SideMenu({ view, installing, onOpen }: { view: string; installing: boolean; onOpen: (v: MenuView) => void }) {
+/** `extra`: feature pages that are on (Connectors, People), after the rest,
+ * with a count of what's unread. */
+export function SideMenu({ view, installing, extra = [], onOpen }: { view: string; installing: boolean; extra?: { id: MenuView; label: string; unread?: number }[]; onOpen: (v: MenuView) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = ITEMS.find((i) => i.id === view);
+  const items: { id: MenuView; label: string; unread?: number }[] = [...ITEMS, ...extra];
+  const current = items.find((i) => i.id === view);
+  const unread = extra.reduce((n, e) => n + (e.unread ?? 0), 0);
 
   useEffect(() => {
     if (!open) return;
@@ -38,7 +42,7 @@ export function SideMenu({ view, installing, onOpen }: { view: string; installin
     <div className="side-foot" ref={ref}>
       {open && (
         <div className="side-menu" role="menu">
-          {ITEMS.map((i) => (
+          {items.map((i) => (
             <button
               key={i.id}
               role="menuitem"
@@ -50,6 +54,11 @@ export function SideMenu({ view, installing, onOpen }: { view: string; installin
             >
               {t(i.label)}
               {i.id === "models" && installing && <span className="dot" aria-label={t("Installing")} />}
+              {!!i.unread && (
+                <span className="badge push-right" aria-label={t("{n} unread", { n: i.unread })}>
+                  {i.unread}
+                </span>
+              )}
             </button>
           ))}
           <div className="side-menu-theme">
@@ -62,6 +71,7 @@ export function SideMenu({ view, installing, onOpen }: { view: string; installin
         <GearIcon />
         <span>{current ? t(current.label) : t("Settings & more")}</span>
         {installing && <span className="dot" aria-label={t("Installing a model")} />}
+        {unread > 0 && <span className="badge push-right" aria-label={t("{n} unread", { n: unread })}>{unread}</span>}
       </button>
     </div>
   );

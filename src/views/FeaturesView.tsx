@@ -6,6 +6,7 @@ import { bytes, percent } from "../format";
 import type { PushToast } from "../components/Toasts";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { CancelInstall } from "../components/CancelInstall";
+import { QuickAskSetup } from "../components/QuickAskSetup";
 import { t, tx } from "../i18n";
 
 interface Info {
@@ -43,7 +44,7 @@ export const FEATURES: Record<FeatureId, Info> = {
   },
   quick_ask: {
     name: tx("Quick ask"),
-    detail: tx("Press Ctrl+Alt+Space anywhere to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working."),
+    detail: tx("Press a shortcut anywhere (Ctrl+Alt+Space, or one you pick) to ask the assistant, or to summarize, explain, fix or translate what you copied. Adds a tray icon; closing the window keeps SulcusAI in the tray so the shortcut keeps working."),
   },
   browser_control: {
     name: tx("Browser control"),
@@ -171,6 +172,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                         />
                       )}
                       {f.enabled && id === "browser_control" && <ExtensionSetup toast={toast} />}
+                      {f.enabled && id === "quick_ask" && <QuickAskSetup toast={toast} />}
                       {f.enabled && id === "meetings" && speakers && !speakers.installed && (
                         <AddOn
                           label={t("Add speaker labels ({size})", { size: bytes(speakers.download) })}

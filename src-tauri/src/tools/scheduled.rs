@@ -14,10 +14,13 @@ pub fn schedule_task_params() -> Value {
     json!({ "type": "object", "required": ["name", "prompt", "repeat"], "properties": {
         "name": { "type": "string", "description": "A short name, e.g. \"Morning news\"." },
         "prompt": { "type": "string", "description": "What to do each time, written as the user's request, e.g. \"Give me today's top 5 news stories, a few lines each.\"" },
-        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly"] },
+        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly", "days", "dates"] },
         "time": { "type": "string", "description": "The time of day, e.g. \"08:00\" or \"6:30 pm\" (for once, daily, weekdays and weekly)." },
+        "times": { "type": "array", "items": { "type": "string" }, "description": "For days and dates: every time of day it runs, e.g. [\"08:00\", \"18:00\"]." },
         "date": { "type": "string", "description": "For once: the day, e.g. \"2026-10-20\" (today if left out)." },
+        "dates": { "type": "array", "items": { "type": "string" }, "description": "For dates: the days it runs, e.g. [\"2026-10-24\", \"2026-10-31\"]." },
         "weekday": { "type": "string", "description": "For weekly: the day, e.g. \"monday\"." },
+        "weekdays": { "type": "array", "items": { "type": "string" }, "description": "For days: the days of the week it runs, e.g. [\"monday\", \"wednesday\", \"friday\"]." },
         "minute": { "type": "integer", "description": "For hourly: the minute past each hour (0-59)." } } })
 }
 
@@ -65,8 +68,37 @@ pub fn cadence_of(args: &Value) -> Result<Cadence, String> {
         "daily" => Cadence::Daily { time: time()? },
         "weekdays" => Cadence::Weekdays { time: time()? },
         "weekly" => Cadence::Weekly { weekday: weekday_of(text("weekday").ok_or("Say which day (weekday), e.g. monday.")?)?, time: time()? },
-        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly.")),
+        "days" => Cadence::Days { weekdays: list(args, "weekdays").iter().map(|d| weekday_of(d)).collect::<Result<_, _>>()?, times: times(args)? },
+        "dates" => {
+            let dates = list(args, "dates");
+            for d in &dates {
+                NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| format!("{d:?} isn't a date; write it like 2026-10-20."))?;
+            }
+            Cadence::Dates { dates, times: times(args)? }
+        }
+        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly, days, dates.")),
     })
+}
+
+/// A list argument, or one item given as text ("monday, friday" too).
+fn list(args: &Value, key: &str) -> Vec<String> {
+    match args.get(key) {
+        Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Some(Value::String(s)) => s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The times of day, as "HH:MM": `times`, else the single `time`.
+fn times(args: &Value) -> Result<Vec<String>, String> {
+    let mut raw = list(args, "times");
+    if raw.is_empty() {
+        raw = list(args, "time");
+    }
+    if raw.is_empty() {
+        return Err("Say what times of day (times), e.g. [\"08:00\", \"18:00\"].".into());
+    }
+    raw.iter().map(|t| time_of(t)).collect()
 }
 
 fn name_and_prompt(args: &Value) -> Result<(String, String), String> {

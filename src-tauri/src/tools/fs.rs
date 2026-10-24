@@ -88,7 +88,7 @@ fn stand_ins_arent_written_as_files() {
 pub fn edit_file_params() -> Value {
     json!({ "type": "object", "required": ["path", "old_text", "new_text"], "properties": {
         "path": { "type": "string" },
-        "old_text": { "type": "string", "description": "Exact text to replace, copied from the file." },
+        "old_text": { "type": "string", "description": "Exact text to replace, copied from the file. Empty: new_text is added at the end of the file." },
         "new_text": { "type": "string" },
         "replace_all": { "type": "boolean", "description": "Replace every occurrence instead of exactly one." } } })
 }
@@ -227,14 +227,78 @@ fn loose_edit(text: &str, old: &str, new: &str) -> Option<String> {
     Some(format!("{}{}{}", &text[..start], replaced.join(eol), &text[end..]))
 }
 
+/// read_file's line numbers taken off the lines that carry them, when some
+/// do and some don't (a model copied a few lines with their numbers). None
+/// when no line has one.
+fn strip_some_line_numbers(s: &str) -> Option<String> {
+    let numbered = |l: &str| {
+        let t = l.trim_start_matches(' ');
+        let digits = t.chars().take_while(|c| c.is_ascii_digit()).count();
+        (digits > 0 && l.len() - t.len() <= 6 && t[digits..].starts_with('\t')).then(|| t[digits + 1..].to_string())
+    };
+    let lines: Vec<&str> = s.split('\n').collect();
+    if !lines.iter().any(|l| numbered(l).is_some()) {
+        return None;
+    }
+    Some(lines.iter().map(|l| numbered(l).unwrap_or_else(|| l.to_string())).collect::<Vec<_>>().join("\n"))
+}
+
+/// Where the file comes closest to `old`: the most of its lines (spacing
+/// not counting) that match in a row, where, and the first that doesn't.
+/// For an error that shows the model what to copy instead of re-reading.
+fn closest(text: &str, old: &str) -> Option<String> {
+    let want: Vec<String> = old.lines().map(squash).filter(|l| !l.is_empty()).collect();
+    let lines: Vec<&str> = text.lines().collect();
+    let mut best: Option<(usize, usize, usize)> = None; // (matched, file line, first old line)
+    for (o, first) in want.iter().enumerate() {
+        for (i, l) in lines.iter().enumerate() {
+            if squash(l) != *first {
+                continue;
+            }
+            let mut k = 0;
+            let mut j = i;
+            while o + k < want.len() && j < lines.len() {
+                if squash(lines[j]).is_empty() {
+                    j += 1;
+                    continue;
+                }
+                if squash(lines[j]) != want[o + k] {
+                    break;
+                }
+                k += 1;
+                j += 1;
+            }
+            if best.is_none_or(|b| k > b.0) {
+                best = Some((k, i, o));
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    let (matched, at, from) = best?;
+    let next = want.get(from + matched);
+    let shown = lines[at..lines.len().min(at + matched + 3)].join("\n");
+    Some(match next {
+        Some(n) => format!(
+            "The closest place is line {}: {matched} line(s) match, then your old_text has `{n}`, which isn't there. The file has:\n{shown}\n",
+            at + 1
+        ),
+        None => format!("The closest place is line {}:\n{shown}\n", at + 1),
+    })
+}
+
 pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result<(String, usize), String> {
+    // Nothing to replace: added at the end (a model appending a test).
     if old.is_empty() {
-        return Err("old_text is empty. To create or replace a whole file, use write_file.".into());
+        let gap = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+        return Ok((format!("{text}{gap}{new}"), 1));
     }
     if !text.contains(old) {
-        // Retry without copied line numbers before giving up.
-        if let Some(stripped_old) = strip_line_numbers(old).filter(|o| text.contains(o.as_str()) || text.contains(&o.replace('\n', "\r\n"))) {
-            let stripped_new = strip_line_numbers(new).unwrap_or_else(|| new.to_string());
+        // Retry without copied line numbers (on every line, or on some) before giving up.
+        let found = |o: &String| text.contains(o.as_str()) || text.contains(&o.replace('\n', "\r\n"));
+        if let Some(stripped_old) = strip_line_numbers(old).filter(found).or_else(|| strip_some_line_numbers(old).filter(found)) {
+            let stripped_new = strip_line_numbers(new).or_else(|| strip_some_line_numbers(new)).unwrap_or_else(|| new.to_string());
             return apply_edit(text, &stripped_old, &stripped_new, replace_all);
         }
     }
@@ -252,7 +316,12 @@ pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result
             if let Some(t) = loose_edit(text, old, new) {
                 return Ok((t, 1));
             }
-            Err("old_text wasn't found. Read the file again and copy the text exactly, including spaces and indentation, or send the whole fixed file with write_file.".into())
+            let stripped = strip_some_line_numbers(old);
+            if let Some(t) = stripped.as_deref().and_then(|o| loose_edit(text, o, &strip_some_line_numbers(new).unwrap_or_else(|| new.to_string()))) {
+                return Ok((t, 1));
+            }
+            let near = closest(text, stripped.as_deref().unwrap_or(old)).unwrap_or_default();
+            Err(format!("old_text wasn't found. {near}Copy the text exactly from the file (or send the whole fixed file with write_file)."))
         }
         1 => Ok((text.replacen(old, new, 1), 1)),
         n if replace_all => Ok((text.replace(old, new), n)),
@@ -617,7 +686,23 @@ mod tests {
         assert!(apply_edit("a b a", "a", "c", false).unwrap_err().contains("2 times"));
         assert_eq!(apply_edit("a b a", "a", "c", true).unwrap(), ("c b c".into(), 2));
         assert!(apply_edit("abc", "zzz", "y", false).is_err());
-        assert!(apply_edit("abc", "", "y", false).is_err());
+        // Nothing to replace: added at the end.
+        assert_eq!(apply_edit("abc", "", "y", false).unwrap(), ("abc\ny".into(), 1));
+        assert_eq!(apply_edit("abc\n", "", "y\n", false).unwrap(), ("abc\ny\n".into(), 1));
+    }
+
+    /// What a gpt-oss-20b wrote, adding a feature to a small app: line
+    /// numbers on some lines only, and an extra closing brace.
+    #[test]
+    fn edits_from_a_small_model_apply_or_say_where_they_went_wrong() {
+        let file = "test(\"a\", () => {\n  assert.strictEqual(p[0].realized, 200);\n});\n";
+        let (new, _) = apply_edit(file, "  assert.strictEqual(p[0].realized, 200);\n   32\t});\n", "  assert.strictEqual(p[0].realized, 200);\n   32\t});\n\ntest(\"b\", () => {});\n", false).unwrap();
+        assert_eq!(new, "test(\"a\", () => {\n  assert.strictEqual(p[0].realized, 200);\n});\n\ntest(\"b\", () => {});\n");
+
+        let file = "function report(p) {\n  const rows = p.map((x) => x);\n  return rows;\n}\n\nmodule.exports = { report };\n";
+        let err = apply_edit(file, "function report(p) {\n    const rows = p.map((x) => x);\n    return rows;\n    }\n\n    module.exports = { report };\n    }", "x", false).unwrap_err();
+        assert!(err.contains("The closest place is line 1: 5 line(s) match, then your old_text has `}`, which isn't there."), "{err}");
+        assert!(err.contains("module.exports = { report };"), "shows the file's lines: {err}");
     }
 
     #[test]

@@ -475,6 +475,21 @@ impl Turn {
                 extra.push("message_chat");
             }
         }
+        // Chats the user linked with this one: read and messaged by name,
+        // with or without the feature.
+        let linked = if self.use_tools && !incognito {
+            crate::projects::linked(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id)
+        } else {
+            Vec::new()
+        };
+        if !linked.is_empty() {
+            for name in ["read_chat", "message_chat"] {
+                let may = name == "read_chat" || (self.mode != tools::Mode::Plan && !tools::chats::is_asked(&self.chat_id));
+                if may && !extra.contains(&name) {
+                    extra.push(name);
+                }
+            }
+        }
         // Web tools when this chat may go online; otherwise a way to ask.
         if self.use_tools {
             if crate::web::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
@@ -597,6 +612,17 @@ impl Turn {
                  chat left off.",
             );
         }
+        if !linked.is_empty() {
+            let names: Vec<String> = linked.iter().map(|c| format!("“{}” (id {})", c.title, c.id)).collect();
+            let text = format!(
+                "\n\nThe user linked this chat with {}: you work together. Read what one has done with read_chat, and ask or tell it \
+                 something with message_chat (its reply comes back to you) when its work matters to yours or the user asks. Say what you \
+                 learned from it.",
+                names.join(", ")
+            );
+            about.push_str(&text);
+            notes.push((&["read_chat", "message_chat"], text));
+        }
         if self.use_tools {
             accounts_part = tools::app_note(&self.state, &self.cipher);
             about.push_str(&accounts_part);
@@ -637,6 +663,13 @@ impl Turn {
 
         let mut result = TurnResult { last: None, context: ContextInfo::default(), tps: None, cancelled: false };
         let max_steps = adv.max_steps();
+        // While it's getting somewhere (a file written or a command run in
+        // the last few steps), 10 more steps at a time, up to four times as
+        // many: a 20B model adding a feature stopped at 30, one run from
+        // done. Not past a limit set in Advanced.
+        let most_steps = if adv.guardrails.max_steps.is_some() { max_steps } else { max_steps * 4 };
+        let mut limit = max_steps;
+        let mut progressed_at: Option<usize> = None;
         // Calls already made this turn, to catch a model asking for the same thing again.
         let mut done_calls: Vec<String> = Vec::new();
         let mut repeats = 0;
@@ -659,7 +692,10 @@ impl Turn {
         let mut failed_repeats = 0;
         // Told once this turn to carry out steps it only explained.
         let mut told_to_act = false;
-        for step in 0..max_steps {
+        for step in 0..most_steps {
+            if step >= limit {
+                break;
+            }
             // What the person added while it worked: part of the conversation from here.
             let added = crate::inbox::take(&self.chat_id);
             if !added.is_empty() {
@@ -990,7 +1026,7 @@ impl Turn {
                 // It stopped, but a page it wrote uses files it didn't write
                 // (small models write index.html and leave out styles.css):
                 // one more step writes each, up to a few.
-                if follow_ups < 12 && !follow_ups_failed && self.ep.cloud.is_none() && step < max_steps - 1 {
+                if follow_ups < 12 && !follow_ups_failed && self.ep.cloud.is_none() && step < limit - 1 {
                     let offers = |name: &str| tools.as_ref().and_then(Value::as_array).is_some_and(|t| t.iter().any(|d| d.pointer("/function/name").and_then(Value::as_str) == Some(name)));
                     let can_write = offers("write_file");
                     let next = chat::missing_pieces(&written)
@@ -1040,7 +1076,7 @@ impl Turn {
                     }
                 }
                 // Something was added while it wrote this: it answers that too.
-                if crate::inbox::waiting(&self.chat_id) && step < max_steps - 1 {
+                if crate::inbox::waiting(&self.chat_id) && step < limit - 1 {
                     self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                     continue;
                 }
@@ -1137,6 +1173,9 @@ impl Turn {
                         // yet) may work now.
                         failed_calls.clear();
                         failed_repeats = 0;
+                        if tools::find(&call.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute)) {
+                            progressed_at = Some(step);
+                        }
                         // Reading a file or previewing the site again shows the change.
                         done_calls.retain(|k| !tools::find(k.split('{').next().unwrap_or_default()).is_some_and(|t| t.risk == Risk::Read));
                     }
@@ -1270,12 +1309,15 @@ impl Turn {
                 result.cancelled = true;
                 break;
             }
-            if step == max_steps - 1 {
+            if step == limit - 1 && limit < most_steps && progressed_at.is_some_and(|at| at + 5 >= step) {
+                limit = (limit + 10).min(most_steps);
+                crate::applog::line("agent", &format!("Still making progress after {} steps: going on, up to {limit}", step + 1));
+            } else if step == limit - 1 {
                 let note = Message {
                     id: uuid::Uuid::new_v4().to_string(),
                     chat_id: self.chat_id.clone(),
                     role: "assistant".into(),
-                    content: format!("I've taken {max_steps} steps on this, so I'm pausing here. Say \"continue\" if you'd like me to keep going."),
+                    content: format!("I've taken {limit} steps on this, so I'm pausing here. Say \"continue\" if you'd like me to keep going."),
                     created_at: now(),
                     ..Default::default()
                 };

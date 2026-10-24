@@ -307,6 +307,13 @@ fn shared(layers: u32, gpu_share: f64) -> u32 {
 pub fn launch_at(model: &ModelSpec, quant: &str, b: &Budget, want: u32, auto: (u32, u32), gpu_share: f64) -> (u32, u32) {
     let Some(v) = model.variant(quant) else { return auto };
     let mut ctx = want.min(model.arch.max_ctx);
+    // Smaller than the automatic window: that one, as asked (8K chosen
+    // still ran at 16K), with as much of the model on the card as it leaves
+    // room for.
+    if ctx <= auto.0 {
+        let f = fit_variant(model, v, ctx, b);
+        return (ctx, if f.placement.is_some() { shared(f.gpu_layers, gpu_share).max(auto.1) } else { auto.1 });
+    }
     while ctx > auto.0 {
         let f = fit_variant(model, v, ctx, b);
         if f.placement.is_some() {
@@ -534,6 +541,18 @@ pub fn on_small_card(model: &ModelSpec, quant: &str, b: &Budget, ctx: u32, shrin
 
 pub fn fit_variant(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget) -> VariantFit {
     fit_with(model, v, ctx, b, false)
+}
+
+/// Tokens a second once a `ctx` window is full, from the speed at the start
+/// (`fit_variant`'s, or measured): each new token also reads the whole
+/// cache, so a long window slows as it fills (every window showed one speed).
+pub fn speed_when_full(model: &ModelSpec, v: &Variant, ctx: u32, at_start: f64) -> f64 {
+    let weights = v.size as f64 * model.arch.active_fraction;
+    if weights <= 0.0 {
+        return at_start;
+    }
+    let cache = kv_cache_bytes(&model.arch, ctx) as f64;
+    (at_start * weights / (weights + cache) * 10.0).round() / 10.0
 }
 
 fn fit_with(model: &ModelSpec, v: &Variant, ctx: u32, b: &Budget, q8: bool) -> VariantFit {
@@ -849,6 +868,11 @@ mod tests {
         let (ctx_small, _) = launch_at(m, q, &small, 131_072, auto_small, 1.0);
         assert!(ctx_small >= auto_small.0);
         assert!(ctx_small == auto_small.0 || fit_variant(m, m.variant(q).unwrap(), ctx_small, &small).placement.is_some());
+        // A smaller window than automatic is the one used (8K chosen ran at 16K).
+        assert!(auto.0 > 8192, "{auto:?}");
+        let (eight, l8) = launch_at(m, q, &b, 8192, auto, 1.0);
+        assert_eq!(eight, 8192);
+        assert!(l8 >= auto.1, "no fewer layers on the card for a smaller window");
     }
 
     /// The suggested version leaves room for a 16K window when one does: on

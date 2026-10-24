@@ -565,7 +565,14 @@ export interface HubFile {
   size: number;
   placement: Placement | null;
   est_tps: number;
+  /** It would take most of the memory this PC has for models. */
+  heavy: boolean;
+  /** 3 bits a weight or fewer: runs, but answers are noticeably worse. */
+  squeezed: boolean;
 }
+
+/** What a model is for, to narrow a Hugging Face search ("" for any). */
+export type HubPurpose = "" | "coding" | "writing" | "reasoning" | "vision" | "uncensored" | "translation";
 
 export interface HubModel {
   /** "owner/name" on Hugging Face. */
@@ -577,6 +584,8 @@ export interface HubModel {
   params_b: number | null;
   updated: string | null;
   vision: boolean;
+  /** The most tokens of context it was made for. */
+  context: number;
   url: string;
   /** Only the files this PC can run, smallest first. */
   files: HubFile[];
@@ -659,7 +668,11 @@ export interface PausedDownload {
 export interface WindowOption {
   ctx: number;
   placement: Placement | null;
+  /** Tokens a second at the start of a chat, and once the window is full. */
   est_tps: number;
+  full_tps: number;
+  /** Seconds to read a full window, at this PC's measured reading speed. */
+  read_full_secs: number | null;
   needed: number;
 }
 
@@ -671,6 +684,12 @@ export interface ContextOptions {
   /** The largest the model supports. */
   max: number;
   options: WindowOption[];
+  /** The model uses tools: under 16K a task of a few steps runs out of room. */
+  tools: boolean;
+  /** A window set in Advanced, which wins over these. */
+  advanced: number | null;
+  /** The speeds are this PC's measured ones (else estimates). */
+  measured: boolean;
 }
 
 export interface FolderImport {
@@ -788,7 +807,11 @@ export type Cadence =
   | { kind: "hourly"; minute: number }
   | { kind: "daily"; time: string }
   | { kind: "weekdays"; time: string }
-  | { kind: "weekly"; weekday: number; time: string };
+  | { kind: "weekly"; weekday: number; time: string }
+  /** The chosen days of the week (0 = Monday), at each of the times ("08:00"). */
+  | { kind: "days"; weekdays: number[]; times: string[] }
+  /** The chosen dates ("2026-10-24"), at each of the times. */
+  | { kind: "dates"; dates: string[]; times: string[] };
 
 export interface Schedule {
   id: string;
@@ -850,8 +873,18 @@ export interface Memory {
   id: string;
   content: string;
   project_id: string | null;
+  /** The chat it was saved from (null: added on the Memory page). */
+  source_chat: string | null;
   created_at: number;
   updated_at: number;
+}
+
+export interface QuickSettings {
+  hotkey: string;
+  /** As people write it ("Ctrl+Alt+Space"). */
+  shown: string;
+  /** The model its chats use (null: the default model). */
+  model: string | null;
 }
 
 export interface ToolCall {
@@ -1049,6 +1082,8 @@ export interface ContextInfo {
   reply_reserve: number;
   dropped_messages: number;
   last_total: number | null;
+  /** Worked out from the saved messages, not counted by the engine. */
+  estimated?: boolean;
 }
 
 export interface EngineStatus {
@@ -1346,6 +1381,14 @@ export interface BridgeStatus {
 }
 
 export type MainBrowser = { kind: "builtin" } | { kind: "system" } | { kind: "app"; name: string };
+
+/** Where the web viewer goes, in the window's (CSS) pixels. */
+export interface ViewerArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface BrowsersView {
   current: MainBrowser;
@@ -2316,7 +2359,7 @@ export const api = {
   contextOptions: (modelId: string | null) => invoke<ContextOptions>("context_options", { modelId }),
   /** null: automatic. */
   setContextWindow: (size: number | null) => invoke<void>("set_context_window", { size }),
-  hubSearch: (query: string, sort: "downloads" | "trending" | "newest", all = false) => invoke<HubResults>("hub_search", { query, sort, all }),
+  hubSearch: (query: string, sort: "downloads" | "trending" | "newest", all = false, purpose: HubPurpose = "") => invoke<HubResults>("hub_search", { query, sort, all, purpose }),
   /** Starts installing one file; returns the model id its progress is reported under. */
   hubInstall: (repo: string, file: string, force = false) => invoke<string>("hub_install", { repo, file, force }),
   hubLink: (link: string) => invoke<HubLinkResult>("hub_link", { link }),
@@ -2461,8 +2504,22 @@ export const api = {
   leaveIncognito: (keep: string | null) => invoke<void>("leave_incognito", { keep }),
   setChatProject: (chatId: string, projectId: string | null) => invoke<void>("set_chat_project", { chatId, projectId }),
   memories: () => invoke<Memory[]>("list_memories"),
-  addMemory: (content: string, projectId: string | null) => invoke<Memory>("add_memory", { content, projectId }),
+  /** `chatId`: added from a chat, so it shows with that chat's memories. */
+  addMemory: (content: string, projectId: string | null, chatId: string | null = null) => invoke<Memory>("add_memory", { content, projectId, chatId }),
   updateMemory: (id: string, content: string) => invoke<void>("update_memory", { id, content }),
+  /** Where a memory applies: everywhere (null) or one project. */
+  setMemoryScope: (id: string, projectId: string | null) => invoke<void>("set_memory_scope", { id, projectId }),
+  memoryAuto: () => invoke<boolean>("memory_auto"),
+  setMemoryAuto: (on: boolean) => invoke<void>("set_memory_auto", { on }),
+  /** Chats linked with this one to work together. */
+  linkedChats: (chatId: string) => invoke<Chat[]>("linked_chats", { chatId }),
+  linkChats: (a: string, b: string) => invoke<void>("link_chats", { a, b }),
+  unlinkChats: (a: string, b: string) => invoke<void>("unlink_chats", { a, b }),
+  quickSettings: () => invoke<QuickSettings>("quick_settings"),
+  setQuickHotkey: (hotkey: string) => invoke<QuickSettings>("set_quick_hotkey", { hotkey }),
+  setQuickModel: (modelId: string | null) => invoke<void>("set_quick_model", { modelId }),
+  /** A new chat for the Quick ask box, on its model. */
+  quickChat: () => invoke<Chat>("quick_chat"),
   deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
   clearMemories: () => invoke<void>("clear_memories"),
   setMemoryEnabled: (enabled: boolean) => invoke<Settings>("set_memory_enabled", { enabled }),
@@ -2548,6 +2605,16 @@ export const api = {
   setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
+  /** Opens a web address in a browser outside SulcusAI (Chrome unless another was picked). */
+  openOutside: (url: string) => invoke<void>("open_outside", { url }),
+  /** The web viewer over `area` (window pixels), at `url` when given. */
+  viewerShow: (url: string | null, area: ViewerArea) => invoke<void>("viewer_show", { url, area }),
+  viewerArea: (area: ViewerArea) => invoke<void>("viewer_area", { area }),
+  viewerHide: () => invoke<void>("viewer_hide"),
+  /** "back", "forward", "reload", or what was typed in the address bar. */
+  viewerGo: (to: string) => invoke<void>("viewer_go", { to }),
+  viewerUrl: () => invoke<string | null>("viewer_url"),
+  viewerClose: () => invoke<void>("viewer_close"),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
   /** Handoff notes chats left, and which chats may read them. */
   handoffsView: () => invoke<HandoffsView>("handoffs_view"),
@@ -2819,6 +2886,12 @@ export interface ChatEvents {
   "chat:titled": { chat_id: string; title: string };
   /** A reply's thinking was summed up (its last message has `thought_summary`). */
   "chat:thought": { chat_id: string };
+  /** Lasting facts the assistant saved from a chat by itself. */
+  "memory:auto": { chat_id: string; saved: string[] };
+  /** A link to open in the web viewer (the main browser is the viewer). */
+  "viewer:open": { url: string | null };
+  "viewer:page": { url: string; loading: boolean };
+  "viewer:title": { title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
   "chat:inbox": { chat_id: string; waiting: QueueItem[] };
   /** The model has read this chat's messages up to then (it started answering). */

@@ -291,15 +291,35 @@ async fn market_quote(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
         let (client, s) = (w.client.clone(), s.clone());
         async move { (s.clone(), crate::quotes::quote(&client, &s, range).await) }
     });
-    let results = futures_util::future::join_all(runs).await;
+    let mut results = futures_util::future::join_all(runs).await;
+    // A year of daily closes for each found (up to 4): the close the day
+    // before, and the averages and momentum worked out here.
+    let dailies = futures_util::future::join_all(results.iter().take(4).map(|(_, r)| {
+        let (client, symbol) = (w.client.clone(), r.as_ref().ok().map(|q| q.symbol.clone()));
+        async move {
+            match symbol {
+                Some(s) => crate::quotes::daily(&client, &s).await.ok(),
+                None => None,
+            }
+        }
+    }))
+    .await;
     let mut lines = Vec::new();
     let mut charts = Vec::new();
     let mut found = Vec::new();
     let mut sources = Vec::new();
-    for (asked, r) in &results {
+    for (i, (asked, r)) in results.iter_mut().enumerate() {
         match r {
             Ok(q) => {
-                lines.push(crate::quotes::describe(q, range));
+                let days = dailies.get(i).and_then(Option::as_ref);
+                if let Some(d) = days.filter(|d| q.previous_close.is_none() && d.len() >= 2) {
+                    q.previous_close = Some(d[d.len() - 2].0);
+                }
+                let figures = days.and_then(|d| crate::quotes::technicals(q.price, d));
+                lines.push(match figures {
+                    Some(f) => format!("{} {f}", crate::quotes::describe(q, range)),
+                    None => crate::quotes::describe(q, range),
+                });
                 if let Some(c) = range.and_then(|r| crate::quotes::chart_of(q, r)).filter(|_| charts.len() < 4) {
                     charts.push(c);
                 }
@@ -313,7 +333,12 @@ async fn market_quote(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
         return Outcome::error("Couldn't find those prices", format!("{}\nUse the ticker (e.g. AAPL) or the full name.", lines.join("\n")));
     }
     let chart_note = if charts.is_empty() { "" } else { " The price chart is shown in the chat." };
-    let text = format!("{}\n\nPrices from Yahoo Finance (may be delayed). Answer with these exact figures and the time they're from; this isn't financial advice.{chart_note}", lines.join("\n"));
+    let text = format!(
+        "{}\n\nPrices from Yahoo Finance (may be delayed); the averages, RSI and MACD were worked out from its daily closes. Answer with these exact figures and the time they're from, \
+         and don't add figures that aren't here. Asked for an opinion: give the case for and the case against from them (and the news, if you looked it up), \
+         the levels to watch (the averages, the 20-day low and high) and the main risk; this isn't financial advice.{chart_note}",
+        lines.join("\n")
+    );
     let mut o = Outcome::ok(text, format!("Checked {}", found.join(", ")), "text", Some(lines.join("\n")));
     o.meta["sources"] = json!(sources);
     if !charts.is_empty() {

@@ -25,7 +25,7 @@ import { LogSettings } from "../components/LogSettings";
 import { DevModeSetting } from "../components/DevMode";
 import { PrivacySettings } from "../components/PrivacySettings";
 import { PrivacyModeSettings, SentLog } from "../components/SharePermission";
-import { UpdateSettings } from "../components/Updates";
+import { UpdateNotes, UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
 import { SettingsSearch } from "../components/SettingsSearch";
@@ -166,14 +166,14 @@ function BrowserChoice({ toast }: { toast: PushToast }) {
       <label>
         {t("Links and the globe button open in")}
         <select value={value} onChange={(e) => pick(e.target.value)}>
-          <option value="builtin">{t("SulcusAI's browser (the assistant can use it)")}</option>
+          <option value="builtin">{t("SulcusAI's web viewer (inside this window)")}</option>
           <option value="system">{t("Windows' default browser")}</option>
           {v.installed.map((b) => (
             <option key={b.name} value={`app:${b.name}`}>{b.name}</option>
           ))}
         </select>
       </label>
-      <p className="muted small">{t("The assistant browses in SulcusAI's own browser. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.")}</p>
+      <p className="muted small">{t("Unless you pick one, it's Chrome (or Windows' default browser without Chrome). The web viewer has its own button next to the globe either way, and the assistant browses in a browser of its own. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.")}</p>
     </div>
   );
 }
@@ -459,6 +459,13 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
           ))}
         </ul>
         <p className="muted small">{t("AI models have their own licenses, shown on each model card. Full notices: THIRD_PARTY_NOTICES.md.")}</p>
+      </section>
+
+      <span id="settings-update-notes" className="settings-anchor" />
+      <section className="card">
+        <h2>{t("Update notes")}</h2>
+        <p className="muted small">{t("What each version of {app} changed, newest first. Click a version to open or close it.", { app: APP_NAME })}</p>
+        <UpdateNotes />
       </section>
 
       {confirmCloud && (

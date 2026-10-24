@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Chat, type Memory, type Project } from "../api";
+import { MemoryList } from "../components/MemoryList";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
@@ -127,15 +128,13 @@ export function ProjectView({ projectId, listed, chats, onOpenChat, onNewChat, o
 
         <section className="card">
           <h2>{t("Memories in this project")}</h2>
-          {memories.length === 0 ? (
-            <p className="muted small">{t("None yet. The assistant saves them as you work, and you can manage them on the Memory page.")}</p>
-          ) : (
-            <ul className="memory-list compact">
-              {memories.map((m) => (
-                <li key={m.id}><span className="memory-text">{m.content}</span></li>
-              ))}
-            </ul>
-          )}
+          <MemoryList
+            memories={memories}
+            add={{ projectId, chatId: null }}
+            empty={t("None yet. The assistant saves them as you work, and you can add your own here.")}
+            toast={toast}
+            onChanged={load}
+          />
         </section>
 
         <section className="card">

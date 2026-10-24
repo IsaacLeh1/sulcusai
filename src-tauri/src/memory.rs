@@ -11,6 +11,12 @@ use crate::crypto::Cipher;
 use crate::db::now_ms;
 
 pub const MAX_LEN: usize = 500;
+/// The setting: lasting facts from chats saved without being asked (on unless turned off).
+pub const AUTO_KEY: &str = "memory_auto";
+
+pub fn auto_on(conn: &Connection) -> bool {
+    crate::db::get::<bool>(conn, AUTO_KEY).unwrap_or(true)
+}
 /// Memories recalled into one chat turn.
 const RECALL: usize = 8;
 /// The newest memories are always included, matched or not.
@@ -21,6 +27,8 @@ pub struct Memory {
     pub id: String,
     pub content: String,
     pub project_id: Option<String>,
+    /// The chat it was saved from (None: added by the user on the Memory page).
+    pub source_chat: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -31,7 +39,7 @@ fn err(e: impl std::fmt::Display) -> String {
 
 /// All memories, or those visible in one project (its own plus global ones).
 pub fn list(conn: &Connection, c: &Cipher, project: Option<&str>) -> Vec<Memory> {
-    let Ok(mut stmt) = conn.prepare("SELECT id, content, project_id, created_at, updated_at FROM memories ORDER BY updated_at DESC") else {
+    let Ok(mut stmt) = conn.prepare("SELECT id, content, project_id, created_at, updated_at, source_chat FROM memories ORDER BY updated_at DESC") else {
         return Vec::new();
     };
     stmt.query_map([], |r| {
@@ -39,6 +47,7 @@ pub fn list(conn: &Connection, c: &Cipher, project: Option<&str>) -> Vec<Memory>
             id: r.get(0)?,
             content: c.decrypt_or(&r.get::<_, String>(1)?, ""),
             project_id: r.get(2)?,
+            source_chat: r.get(5)?,
             created_at: r.get(3)?,
             updated_at: r.get(4)?,
         })
@@ -77,7 +86,14 @@ pub fn add(conn: &Connection, c: &Cipher, content: &str, project_id: Option<&str
             return Ok((Memory { content: keep, updated_at: now, ..m }, false));
         }
     }
-    let m = Memory { id: uuid::Uuid::new_v4().to_string(), content: content.to_string(), project_id: project_id.map(str::to_string), created_at: now, updated_at: now };
+    let m = Memory {
+        id: uuid::Uuid::new_v4().to_string(),
+        content: content.to_string(),
+        project_id: project_id.map(str::to_string),
+        source_chat: source_chat.map(str::to_string),
+        created_at: now,
+        updated_at: now,
+    };
     conn.execute(
         "INSERT INTO memories (id, content, project_id, source_chat, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
         params![m.id, c.encrypt(&m.content), m.project_id, source_chat, now],
@@ -96,6 +112,73 @@ pub fn update(conn: &Connection, c: &Cipher, id: &str, content: &str) -> Result<
         return Err("That memory no longer exists.".into());
     }
     Ok(())
+}
+
+/// The memory `old` most likely means (the same words, or most of them), for
+/// a fact that changed: None when nothing is close enough.
+pub fn closest<'a>(memories: &'a [Memory], old: &str) -> Option<&'a Memory> {
+    let key = normalize(old);
+    if let Some(m) = memories.iter().find(|m| normalize(&m.content) == key) {
+        return Some(m);
+    }
+    let want = words(old);
+    if want.is_empty() {
+        return None;
+    }
+    memories
+        .iter()
+        .map(|m| (words(&m.content).intersection(&want).count() as f64 / want.len() as f64, m))
+        .filter(|(share, _)| *share >= 0.6)
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, m)| m)
+}
+
+/// The question for the model after a reply: what (if anything) from this
+/// exchange is worth keeping, given what's already kept. Its answer is JSON
+/// (`AUTO_FORMAT`), read by `auto_facts`.
+pub fn auto_prompt(known: &[Memory], user: &str, reply: &str) -> Vec<serde_json::Value> {
+    let cut = |s: &str, n: usize| s.chars().take(n).collect::<String>();
+    let list = if known.is_empty() { "(nothing yet)".to_string() } else { known.iter().take(40).map(|m| format!("- {}", m.content)).collect::<Vec<_>>().join("\n") };
+    vec![
+        serde_json::json!({ "role": "system", "content": "You keep an assistant's long-term memory about the person it helps. Read the exchange and list what's worth \
+            remembering in future chats: lasting facts about the person, their work, their projects, their preferences or their decisions. Leave out passwords, \
+            codes, keys and account numbers; one-off details of this task; general knowledge; anything the memory already says. Most exchanges have nothing \
+            worth keeping: then the list is empty. Each fact is one short sentence in the third person (\"The user ...\"), at most 2. `about` is \"project\" \
+            for a fact about the project the chat belongs to, else \"user\"." }),
+        serde_json::json!({ "role": "user", "content": format!("Already remembered:\n{list}\n\nThe user wrote:\n{}\n\nThe assistant answered:\n{}", cut(user, 2000), cut(reply, 2000)) }),
+    ]
+}
+
+/// The answer's shape: `{"remember": [{"fact": "...", "about": "user"}]}`.
+pub fn auto_format() -> serde_json::Value {
+    let item = serde_json::json!({ "type": "object", "properties": { "fact": { "type": "string" }, "about": { "type": "string", "enum": ["user", "project"] } }, "required": ["fact", "about"] });
+    let schema = serde_json::json!({ "type": "object", "properties": { "remember": { "type": "array", "maxItems": 2, "items": item } }, "required": ["remember"] });
+    serde_json::json!({ "type": "json_schema", "json_schema": { "name": "memories", "schema": schema } })
+}
+
+/// The facts in the model's answer, and whether each is about the user (else
+/// the project): none that look secret, too long or empty, at most 2.
+pub fn auto_facts(raw: &str) -> Vec<(String, bool)> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim()) else { return Vec::new() };
+    v["remember"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| {
+            let fact = f["fact"].as_str()?.trim().to_string();
+            (!fact.is_empty() && fact.chars().count() <= 300 && !looks_secret(&fact)).then(|| (fact, f["about"].as_str() != Some("project")))
+        })
+        .take(2)
+        .collect()
+}
+
+/// Something that shouldn't be kept: a password, key or code, or a long
+/// number (an account or card).
+pub fn looks_secret(text: &str) -> bool {
+    let low = text.to_lowercase();
+    let words = ["password", "passcode", "api key", "secret", "token", "pin code", "social security", "card number", "account number"];
+    let digits = text.chars().fold((0usize, 0usize), |(run, most), c| if c.is_ascii_digit() { (run + 1, most.max(run + 1)) } else { (0, most) }).1;
+    words.iter().any(|w| low.contains(w)) || digits >= 8
 }
 
 pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
@@ -148,9 +231,11 @@ pub fn relevant<'a>(memories: &'a [Memory], query: &str) -> Vec<&'a Memory> {
 /// Instructions plus recalled memories, for the system prompt.
 pub fn prompt_section(recalled: &[&Memory]) -> String {
     let mut s = String::from(
-        "\n\n## Memory\nYou remember things across chats. When the user shares a lasting fact about themselves, their work or their \
-         preferences, or asks you to remember something, save it with the remember tool, in one short sentence. Don't save \
-         passwords, codes or other secrets, or details that only matter for this chat.",
+        "\n\n## Memory\nYou remember things across chats. When the user shares a lasting fact about themselves, their work, their \
+         projects or their preferences, or asks you to remember something, save it with the remember tool: one short sentence in \
+         the third person (\"The user swing trades tech stocks.\"), one fact at a time. When a fact you remember has changed, save \
+         the new one with replaces set to the old one. Don't save passwords, codes, keys or account numbers, details that only \
+         matter for this chat, or what you already remember.",
     );
     if !recalled.is_empty() {
         s.push_str("\nWhat you remember from earlier chats:");
@@ -208,7 +293,7 @@ mod tests {
     }
 
     fn m(id: &str, content: &str) -> Memory {
-        Memory { id: id.into(), content: content.into(), project_id: None, created_at: 0, updated_at: 0 }
+        Memory { id: id.into(), content: content.into(), project_id: None, source_chat: None, created_at: 0, updated_at: 0 }
     }
 
     #[test]

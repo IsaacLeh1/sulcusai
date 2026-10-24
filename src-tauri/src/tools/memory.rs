@@ -9,6 +9,7 @@ use crate::memory;
 pub fn remember_params() -> Value {
     json!({ "type": "object", "required": ["fact"], "properties": {
         "fact": { "type": "string", "description": "One short sentence, for example: The user prefers metric units." },
+        "replaces": { "type": "string", "description": "When a fact changed: the memory it replaces, as you remember it (e.g. \"The user lives in Provo.\")." },
         "scope": { "type": "string", "enum": ["project", "everywhere"], "description": "In a project chat, 'project' keeps it to this project (default); 'everywhere' is for facts about the user." } } })
 }
 
@@ -23,9 +24,26 @@ pub fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
                 Ok(f) => f,
                 Err(e) => return Outcome::error("Couldn't save a memory", e),
             };
+            if memory::looks_secret(fact) {
+                return Outcome::error("Didn't save it", "That looks like a password, key, code or account number: those aren't kept in memory.");
+            }
             let everywhere = args.get("scope").and_then(Value::as_str) == Some("everywhere");
             let project = if everywhere { None } else { ctx.project_id };
             let conn = ctx.db.lock().unwrap();
+            // A fact that changed: the old memory takes the new wording.
+            if let Some(old) = args.get("replaces").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
+                let all = memory::list(&conn, ctx.cipher, ctx.project_id);
+                if let Some(m) = memory::closest(&all, old) {
+                    return match memory::update(&conn, ctx.cipher, &m.id, fact) {
+                        Ok(()) => {
+                            let mut o = Outcome::ok(format!("Updated memory: {fact} (was: {})", m.content), format!("Updated memory: {fact}"), "text", None);
+                            o.meta["memory_id"] = json!(m.id);
+                            o
+                        }
+                        Err(e) => Outcome::error("Couldn't update a memory", e),
+                    };
+                }
+            }
             match memory::add(&conn, ctx.cipher, fact, project, Some(ctx.chat_id)) {
                 Ok((m, new)) => {
                     let verb = if new { "Remembered" } else { "Updated memory" };

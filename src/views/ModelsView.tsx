@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
+import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubPurpose, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
 import { bytes, percent, placementLabel, speedLabel, words } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -367,8 +367,52 @@ const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
 /** Hugging Face's GGUF chat models, showing only the versions this PC can
  * run; installing one works like a model from the list. Nothing is asked of
  * huggingface.co until the person searches. */
+const PURPOSES: { id: HubPurpose; label: string }[] = [
+  { id: "", label: tx("Any purpose") },
+  { id: "coding", label: tx("Coding") },
+  { id: "writing", label: tx("Writing") },
+  { id: "reasoning", label: tx("Reasoning and maths") },
+  { id: "vision", label: tx("Understands pictures") },
+  { id: "translation", label: tx("Translation") },
+  { id: "uncensored", label: tx("Uncensored") },
+];
+
+/** "128K" for 131,072 tokens, "1M" for 1,048,576. */
+const ctxSize = (n: number) => (n >= 1 << 20 ? `${+(n / (1 << 20)).toFixed(1)}M` : `${Math.round(n / 1024)}K`);
+
+/** How a version would run on this PC, in a few words. */
+function pace(f: HubFile): string {
+  const n = words(f.est_tps);
+  if (f.est_tps >= 15) return t("runs well, about {n} words a second", { n });
+  if (f.est_tps >= 8) return t("runs a little slowly, about {n} words a second", { n });
+  return t("runs slowly, about {n} words a second", { n });
+}
+
+/** A catalog version's caveats, as the core works out a Hugging Face file's:
+ * most of the memory this PC has for models, or 3 bits a weight or fewer. */
+function strainOf(fit: VariantFit, budget: Budget): Pick<HubFile, "heavy" | "squeezed" | "placement" | "est_tps"> {
+  return {
+    heavy: budget.vram + budget.ram > 0 && fit.needed_bytes > (budget.vram + budget.ram) * 0.85,
+    squeezed: /^(IQ1|IQ2|IQ3|Q2|Q3|TQ1|TQ2)/i.test(fit.quant),
+    placement: fit.placement,
+    est_tps: fit.est_tps,
+  };
+}
+
+/** What to know before downloading a version that runs, in sentences ("" for nothing). */
+function caveats(f: Pick<HubFile, "heavy" | "squeezed" | "placement" | "est_tps">): string {
+  return [
+    f.heavy ? t("It takes most of this PC's memory: close games and other big programs while it runs, or the PC slows down.") : "",
+    f.squeezed ? t("It's squeezed hard (3 bits or fewer a weight), so its answers are noticeably worse than a bigger version's.") : "",
+    f.placement && f.est_tps < 8 ? t("It writes slowly here.") : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { models: ModelCard[]; budget: Budget; showAll: boolean; progress: Record<string, InstallProgress>; onRefresh: () => Promise<void>; toast: PushToast }) {
   const [query, setQuery] = useState("");
+  const [purpose, setPurpose] = useState<HubPurpose>("");
   const [sort, setSort] = useState<"downloads" | "trending" | "newest">("downloads");
   const [results, setResults] = useState<HubResults | null>(null);
   const [searching, setSearching] = useState(false);
@@ -376,11 +420,11 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
   const [allOf, setAllOf] = useState<string | null>(null);
   const busy = Object.keys(progress).length > 0;
 
-  const search = async (by = sort, all = showAll) => {
+  const search = async (by = sort, all = showAll, forWhat = purpose) => {
     setSearching(true);
     setProblem(null);
     try {
-      setResults(await api.hubSearch(query, by, all));
+      setResults(await api.hubSearch(query, by, all, forWhat));
     } catch (e) {
       setProblem(errorText(e));
     } finally {
@@ -397,6 +441,15 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
       if (!runs) {
         const fit = { quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk };
         if (!(await confirmAnyway(`${m.name} ${f.quant}`, cantRun(fit, budget)))) return;
+      } else if (caveats(f)) {
+        // Runs, but would strain this PC or disappoint: said first, then it's theirs to decide.
+        const go = await ask(t("{caveats} Download {name} anyway?", { caveats: caveats(f), name: `${m.name} ${f.quant}` }), {
+          title: t("Before you download it"),
+          kind: "warning",
+          okLabel: t("Download anyway"),
+          cancelLabel: t("Cancel"),
+        });
+        if (!go) return;
       }
       await api.hubInstall(m.id, f.file, !runs);
       await onRefresh();
@@ -415,7 +468,8 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
           {f.file === m.recommended && <span className="badge" title={t("The best fit for this PC")}>★ {t("Best fit")}</span>}
           {f.placement ? (
             <span className="muted small">
-              {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {t("about {n} words a second", { n: words(f.est_tps) })}
+              {t(f.quality)} · {bytes(f.size)} · {placementLabel(f.placement)} · {pace(f)}
+              {caveats(f) && <span className="warn-text block">{caveats(f)}</span>}
             </span>
           ) : (
             <span className="warn-text small" title={cantRun({ quant: f.quant, placement: null, needed_bytes: f.needed, est_tps: f.est_tps, gpu_layers: 0, disk_ok: f.size <= budget.disk }, budget)}>
@@ -441,7 +495,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
       <div className="look-row">
         <div>
           <strong>{t("Hugging Face")}</strong>
-          <p className="muted small">{t("Thousands of models people share. Only the versions this PC can run are shown. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}</p>
+          <p className="muted small">{t("Thousands of models people share. Only the versions this PC can run are shown, with how well each runs and anything to know before downloading it. Searching asks huggingface.co, which sees this PC's address like any website; downloads come straight from there.")}</p>
         </div>
       </div>
       <HubLinkBox progress={progress} isInstalled={(id) => models.some((c) => c.id === id && c.installed)} toast={toast} onInstalled={() => onRefresh()} />
@@ -453,6 +507,20 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
         }}
       >
         <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Search, e.g. qwen3, gemma, coder")} aria-label={t("Search Hugging Face")} />
+        <select
+          className="input"
+          value={purpose}
+          aria-label={t("What it's for")}
+          onChange={(e) => {
+            const forWhat = e.target.value as HubPurpose;
+            setPurpose(forWhat);
+            search(sort, showAll, forWhat);
+          }}
+        >
+          {PURPOSES.map((p) => (
+            <option key={p.id} value={p.id}>{t(p.label)}</option>
+          ))}
+        </select>
         <select
           className="input"
           value={sort}
@@ -492,6 +560,7 @@ function HubBrowser({ models, budget, showAll, progress, onRefresh, toast }: { m
                     </div>
                     <span className="muted small">
                       {m.params_b !== null && `${t("{n}B parameters", { n: m.params_b })} · `}
+                      {m.context > 0 && `${t("up to {size} tokens of context", { size: ctxSize(m.context) })} · `}
                       {t("{n} downloads", { n: compact.format(m.downloads) })} · {t("{n} likes", { n: compact.format(m.likes) })}
                       {m.vision && ` · ${t("sees pictures")}`}
                     </span>
@@ -601,10 +670,19 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
   const variant = m.variants.find((v) => v.quant === quant);
 
   const runs = !!fit?.placement && fit.disk_ok;
+  const warn = fit && runs ? caveats(strainOf(fit, budget)) : "";
   const install = async () => {
     try {
       if (!runs) {
         if (!(await confirmAnyway(m.name, cantRun(fit, budget)))) return;
+      } else if (warn && quant !== onDisk) {
+        const go = await ask(t("{caveats} Download {name} anyway?", { caveats: warn, name: m.name }), {
+          title: t("Before you download it"),
+          kind: "warning",
+          okLabel: t("Download anyway"),
+          cancelLabel: t("Cancel"),
+        });
+        if (!go) return;
       }
       await api.install(m.id, quant, !runs);
     } catch (e) {
@@ -639,7 +717,10 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
           <select value={quant} onChange={(e) => setQuant(e.target.value)} aria-label={t("Quality for {name}", { name: m.name })} title={t("Quality and download size. ★ is the best fit for this PC.")}>
 
             {options.map((v) => {
-              const spec = m.variants.find((x) => x.quant === v.quant)!;
+              // A fit for a version the model doesn't list (stale data): left
+              // out, rather than the whole page failing.
+              const spec = m.variants.find((x) => x.quant === v.quant);
+              if (!spec) return null;
               return (
                 <option key={v.quant} value={v.quant}>
                   {spec.quality} · {bytes(spec.size)}{v.quant === m.fit.recommended ? " ★" : ""}
@@ -655,6 +736,7 @@ function AvailableCard({ m, rank, budget, progress, otherBusy, toast }: { m: Mod
       {fit && variant && !progress && (runs ? (
         <p className="muted small fit-line">
           {placementLabel(fit.placement)} · {speedLabel(fit.est_tps)} {t("(about {n} words a second, estimated)", { n: words(fit.est_tps) })}
+          {warn && <span className="warn-text block">{warn}</span>}
         </p>
       ) : (
         <p className="warn-text small fit-line" role="note">{t("This PC probably can't run this version.")} {cantRun(fit, budget)}</p>
