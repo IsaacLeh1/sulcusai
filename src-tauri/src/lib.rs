@@ -1973,6 +1973,9 @@ async fn run_turn_with(
 
     // After the first reply, the model names the chat from the request.
     let name_it = (first_message && !chat.incognito && asking.is_none()).then(|| (ep.clone(), text.clone()));
+    // Its thinking, in short, once it has answered: on this PC only (online
+    // it would be another paid request).
+    let sum_up = ep.cloud.is_none().then(|| (ep.clone(), turn_id.clone()));
     let emitter = app.clone();
     let watched = state.clone();
     let turn = agent::Turn {
@@ -2018,10 +2021,31 @@ async fn run_turn_with(
             }
         });
     }
+    if let Some((ep, asked)) = sum_up.filter(|_| !cancelled) {
+        let (state, app, chat_id) = (state.clone(), app.clone(), chat_id.clone());
+        tauri::async_runtime::spawn(async move { sum_up_thinking(&state, &app, &ep, &chat_id, &asked).await });
+    }
     app.emit("chat:done", json!({ "chat_id": chat_id, "message": last, "tps": tps, "context": context, "cancelled": cancelled }))
         .ok();
     inbox.finish(state, cancelled);
     Ok(last)
+}
+
+/// The thinking of the reply to `asked` (the user's message), every step of
+/// it, in a few short points: kept with the answer (the reply's last
+/// message), shown between the whole thought process and the answer.
+async fn sum_up_thinking(state: &AppState, app: &AppHandle, ep: &engine::Endpoint, chat_id: &str, asked: &str) {
+    let Ok(c) = state.cipher() else { return };
+    let reply: Vec<Message> = db::messages(&state.db.lock().unwrap(), &c, chat_id).into_iter().skip_while(|m| m.id != asked).skip(1).filter(|m| m.role == "assistant").collect();
+    let thinking = reply.iter().filter_map(|m| m.thinking.as_deref()).fold(String::new(), |all, t| chat::joined(&all, t));
+    // A short think is its own summary.
+    let Some(last) = reply.last().filter(|_| thinking.trim().chars().count() >= 400) else { return };
+    let Some(summary) = chat::thought_summary(ep, &thinking).await else { return };
+    let mut meta = last.meta.clone().filter(|v| v.is_object()).unwrap_or_else(|| json!({}));
+    meta["thought_summary"] = json!(summary);
+    if db::set_message_meta(&state.db.lock().unwrap(), &c, &last.id, &meta).is_ok() {
+        app.emit("chat:thought", json!({ "chat_id": chat_id })).ok();
+    }
 }
 
 /// How long a request for another model waits for the replies using the

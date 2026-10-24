@@ -308,12 +308,18 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       })),
       // Someone this chat is shared with wrote in it (or their model did).
       on("chat:changed", mine(() => reload())),
+      on("chat:thought", mine(() => reload())),
       on("chat:start", mine((p) => {
         setCooling(null);
         setLookingUp(null);
         setReadingPictures(false);
         setStatus("thinking");
-        setStreaming({ id: p.message_id, content: "", thinking: "" });
+        // The same message tried again: what it wrote stays (and what was
+        // still waiting to be drawn).
+        const b = buffered.current?.id === p.message_id ? buffered.current : null;
+        setStreaming((s) =>
+          s && s.id === p.message_id ? { ...s, content: s.content + (b?.content ?? ""), thinking: s.thinking + (b?.thinking ?? "") } : { id: p.message_id, content: "", thinking: "" },
+        );
       })),
       on("chat:delta", mine((p) => {
         if (p.content) setStatus("writing");
@@ -1066,8 +1072,14 @@ function CompactedNote({ m }: { m: Message }) {
   );
 }
 
+// Thought processes the person folded. The rest stay open: the live reply
+// is drawn again as the saved one, and folding by itself (or cutting the
+// text to a scrolling box) looked like the model deleting what it wrote.
+const thoughtFolded = new Set<string>();
+
 function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void; receipt?: "sent" | "read"; waiting?: boolean }) {
   const thinkingNow = live === "thinking" && !m.content;
+  const summary = m.role === "assistant" ? m.meta?.thought_summary : undefined;
   return (
     <div className={`msg ${m.role}${waiting ? " waiting" : ""}`}>
       {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
@@ -1078,11 +1090,18 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
         </div>
       )}
       {m.thinking && (
-        <details className="thinking" open={thinkingNow}>
+        <details className="thinking" open={!thoughtFolded.has(m.id)} onToggle={(e) => (e.currentTarget.open ? thoughtFolded.delete(m.id) : thoughtFolded.add(m.id))}>
           <summary>{thinkingNow ? t("Thinking…") : t("Thought process")}</summary>
           <div className="thinking-text">{m.thinking}</div>
         </details>
       )}
+      {summary && (
+        <div className="thought-summary">
+          <div className="thought-summary-head">{t("In short")}</div>
+          <Markdown text={summary} />
+        </div>
+      )}
+      {m.role === "assistant" && m.content && (m.thinking || summary) && <div className="answer-head">{t("Answer")}</div>}
       {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
       {waiting && (
         <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>

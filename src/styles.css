@@ -282,7 +282,10 @@ select, .input {
 .bubble { background: var(--bubble); padding: 9px 14px; border-radius: 14px 14px 4px 14px; max-width: 85%; white-space: pre-wrap; overflow-wrap: anywhere; }
 .thinking { border-left: 3px solid var(--border); padding-left: 10px; color: var(--muted); font-size: 13px; }
 .thinking summary { cursor: pointer; font-weight: 550; }
-.thinking-text { white-space: pre-wrap; margin-top: 6px; max-height: 280px; overflow-y: auto; }
+.thinking-text { white-space: pre-wrap; margin-top: 6px; overflow-wrap: anywhere; }
+.thought-summary { border-left: 3px solid var(--accent); padding-left: 10px; font-size: 13px; }
+.thought-summary-head, .answer-head { font-weight: 600; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.answer-head { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; margin-bottom: 0; }
 .typing { width: 28px; height: 10px; background: radial-gradient(circle, var(--muted) 3px, transparent 4px) 0 50% / 10px 10px repeat-x; animation: pulse 1s infinite; }
 .error-box { background: var(--danger-soft); color: var(--danger); border-radius: var(--radius); padding: 10px 14px; white-space: pre-wrap; font-size: 13px; }
 

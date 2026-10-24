@@ -56,7 +56,9 @@ export function QuickAsk() {
       on("chat:done", mine((p) => {
         setPhase("done");
         if (p.error) setError(errorText(p.error));
-        if (p.message?.content) setAnswer(p.message.content);
+        // What it wrote on the way stays; the finished answer joins it if it isn't there yet.
+        const last = p.message?.content?.trim();
+        if (last) setAnswer((a) => (!a.trim() ? last : a.includes(last) ? a : `${a.trimEnd()}\n\n${last}`));
       })),
     ];
     // Esc closes the box, unless it just hid a typing suggestion.

@@ -708,7 +708,9 @@ impl Turn {
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
 
-            let mut message_id = uuid::Uuid::new_v4().to_string();
+            // One message for the step, whatever is tried again in it: what it
+            // wrote stays on screen (a new id cleared it, answer and thinking).
+            let message_id = uuid::Uuid::new_v4().to_string();
             // Set when the model stalled: one more try that can only be a lookup.
             let mut forced: Option<(Endpoint, chat::ForcedLookup)> = None;
             let mut first = None;
@@ -722,6 +724,8 @@ impl Turn {
             }
             // Set when its reply only explained what to do: the same step again, told to do it.
             let mut carry_on: Option<&str> = None;
+            // That reply's words and thinking: they stay, ahead of what it writes next.
+            let mut aside = (String::new(), String::new());
             let finished = loop {
                 self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
                 let mut messages = chat::api_messages(&system, &memory::with_recall(&kept, &self.turn_id, &recall_note));
@@ -786,6 +790,8 @@ impl Turn {
                         self.emit("chat:read", json!({ "chat_id": self.chat_id, "up_to": up_to }));
                     }
                 };
+                // What the user has seen of this reply, kept if it fails part-way.
+                let mut shown = (String::new(), String::new());
                 let result = chat::stream(ep, messages, offer, &self.cancel, |d| {
                     tell_read();
                     if quiet {
@@ -795,6 +801,8 @@ impl Turn {
                         Delta::Content(t) => (Some(t), None),
                         Delta::Thinking(t) => (None, Some(t)),
                     };
+                    shown.0.push_str(content.as_deref().unwrap_or_default());
+                    shown.1.push_str(thinking.as_deref().unwrap_or_default());
                     self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": content, "thinking": thinking }));
                 })
                 .await;
@@ -812,7 +820,9 @@ impl Turn {
                             Some(mut call) => {
                                 call.id = format!("call_{}", uuid::Uuid::new_v4().simple());
                                 r.tool_calls = vec![call];
-                                r.content.clear();
+                                // The reply set aside (the user watched it written) stays, with the call.
+                                r.content = first.content;
+                                r.thinking = chat::joined(&first.thinking, &r.thinking);
                                 r
                             }
                             None if follow_up_try => {
@@ -831,15 +841,34 @@ impl Turn {
                         }
                     };
                 }
-                let finished = result?;
+                let finished = match result {
+                    Ok(f) => f,
+                    // What it wrote before the error stays in the chat.
+                    Err(e) => {
+                        let (content, thinking) = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
+                        if !content.trim().is_empty() || !thinking.trim().is_empty() {
+                            self.save(&Message {
+                                id: message_id.clone(),
+                                chat_id: self.chat_id.clone(),
+                                role: "assistant".into(),
+                                content,
+                                thinking: (!thinking.trim().is_empty()).then_some(thinking),
+                                created_at: now(),
+                                ..Default::default()
+                            })?;
+                        }
+                        return Err(e);
+                    }
+                };
                 // A model that asks the user for details about their own mail
                 // or calendar, or says it can't access them, instead of looking
-                // gets one more try that can only be a lookup. The reply is dropped.
+                // gets one more try that can only be a lookup. In these tries the
+                // reply stays (on screen, and in the message with the call).
                 let asked = history.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or("");
                 let recent: Vec<&str> = history.iter().rev().filter(|m| m.role == "user").take(3).map(|m| m.content.as_str()).collect();
                 let offered: Vec<String> = tools.as_ref().and_then(Value::as_array).into_iter().flatten().filter_map(|t| t.pointer("/function/name").and_then(Value::as_str).map(str::to_string)).collect();
                 // Asked to make something and pasted it (or steps) instead: one
-                // more try that can only make it on the PC. The pasted reply is dropped.
+                // more try that can only make it on the PC.
                 if step == 0 && !edits_text && tools.is_some() && self.ep.cloud.is_none() && self.mode != tools::Mode::Plan && finished.tool_calls.is_empty() && !finished.cancelled && chat::builds_in_chat(&recent, &finished.content, &offered) {
                     if let Some(f) = tools.as_ref().and_then(chat::forced_build) {
                         let mut ep = self.ep.clone();
@@ -847,8 +876,6 @@ impl Turn {
                         ep.extra["max_tokens"] = json!((self.ep.ctx / 2).clamp(1024, 8192));
                         forced = Some((ep, f));
                         first = Some(finished);
-                        message_id = uuid::Uuid::new_v4().to_string();
-                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
                 }
@@ -865,13 +892,11 @@ impl Turn {
                         ep.extra["max_tokens"] = json!(600);
                         forced = Some((ep, f));
                         first = Some(finished);
-                        message_id = uuid::Uuid::new_v4().to_string();
-                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
                 }
                 // A sum answered from its head: one more try that works it out
-                // with calculate. The guess is dropped.
+                // with calculate.
                 if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_math(asked) {
                     if let Some(f) = tools.as_ref().and_then(chat::forced_calc) {
                         let mut ep = self.ep.clone();
@@ -879,13 +904,11 @@ impl Turn {
                         ep.extra["max_tokens"] = json!(300);
                         forced = Some((ep, f));
                         first = Some(finished);
-                        message_id = uuid::Uuid::new_v4().to_string();
-                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
                 }
                 // Doesn't know what (or who) the user means: it looks it up on
-                // the web, or asks to when the web is off. The guess is dropped.
+                // the web, or asks to when the web is off.
                 if step == 0 && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::doesnt_know(&finished.content) {
                     if let Some(f) = tools.as_ref().and_then(chat::forced_web) {
                         let mut ep = self.ep.clone();
@@ -893,22 +916,21 @@ impl Turn {
                         ep.extra["max_tokens"] = json!(400);
                         forced = Some((ep, f));
                         first = Some(finished);
-                        message_id = uuid::Uuid::new_v4().to_string();
-                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
                 }
                 // Asked to do something, and at any step it explained the steps
                 // or asked "should I?" instead of doing them (often right after
-                // fetching a page of instructions): the reply is dropped and it's
+                // fetching a page of instructions): the reply stays and it's
                 // told to carry them out, once a turn, unless it already changed
                 // or ran something this turn (then the reply is its summary).
                 let acted = kept.iter().rev().take_while(|m| m.role != "user").any(|m| m.tool_calls.iter().flatten().any(|c| tools::find(&c.name).is_some_and(|t| matches!(t.risk, Risk::Write | Risk::Execute))));
                 if !told_to_act && !acted && !edits_text && tools.is_some() && self.mode != tools::Mode::Plan && forced.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::asks_to_act(asked) && chat::explains_instead(&finished.content) {
                     told_to_act = true;
                     carry_on = Some(chat::CARRY_ON);
-                    message_id = uuid::Uuid::new_v4().to_string();
-                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                    let gap = |t: &str| (!t.trim().is_empty()).then_some("\n\n");
+                    self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": gap(&finished.content), "thinking": gap(&finished.thinking) }));
+                    aside = (chat::joined(&aside.0, &finished.content), chat::joined(&aside.1, &finished.thinking));
                     continue;
                 }
                 if step == 0 && !edits_text && tools.is_some() && self.ep.cloud.is_none() && finished.tool_calls.is_empty() && !finished.cancelled && chat::stalls(asked, &finished.content, &offered) {
@@ -919,18 +941,20 @@ impl Turn {
                         ep.extra["max_tokens"] = json!(400);
                         forced = Some((ep, f));
                         first = Some(finished);
-                        message_id = uuid::Uuid::new_v4().to_string();
-                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
                 }
                 break finished;
             };
+            let mut finished = finished;
+            finished.content = chat::joined(&aside.0, &finished.content);
+            finished.thinking = chat::joined(&aside.1, &finished.thinking);
 
             let calls = finished.tool_calls.clone();
-            // "I can't generate images" just after making one: say what's true instead.
+            // "I can't generate images" just after making one: what's true
+            // follows it (what it wrote stays).
             let content = if calls.is_empty() && made_media && chat::denies_pictures(&finished.content) {
-                "It's ready: it's shown above, with a button to save it.".to_string()
+                chat::joined(&finished.content, "It's ready: it's shown above, with a button to save it.")
             } else {
                 finished.content
             };
@@ -1075,8 +1099,22 @@ impl Turn {
                     )
                 } else if repeat {
                     repeats += 1;
+                    // It worked the answer out while thinking, asked again for
+                    // what it already had, and then answered with none of it:
+                    // its thinking comes back with the reminder, to answer from.
+                    let thought = result.last.as_ref().and_then(|m| m.thinking.as_deref()).filter(|t| t.trim().len() > 200);
+                    let from_thought = thought.map(|t| {
+                        format!(
+                            " Your thinking just before this call is below: answer from it, and put what you found in your answer (names, links, numbers, steps).\n\n{}",
+                            chat::thought_so_far(t, self.ep.ctx as usize)
+                        )
+                    });
                     Outcome::ok(
-                        format!("You already ran {} with these arguments; its result is above. Answer the user with it now, or try different arguments.", call.name),
+                        format!(
+                            "You already ran {} with these arguments; its result is above. Answer the user with it now, or try different arguments.{}",
+                            call.name,
+                            from_thought.unwrap_or_default()
+                        ),
                         format!("Skipped a repeat of {}", call.name),
                         "text",
                         None,

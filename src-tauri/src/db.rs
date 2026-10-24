@@ -706,6 +706,13 @@ pub fn add_message(conn: &Connection, c: &Cipher, m: &Message) -> Result<(), Str
     Ok(())
 }
 
+/// Replaces what's kept with a message besides its text (such as the short
+/// version of its thinking, added after the reply).
+pub fn set_message_meta(conn: &Connection, c: &Cipher, id: &str, meta: &serde_json::Value) -> Result<(), String> {
+    conn.execute("UPDATE messages SET meta = ?2 WHERE id = ?1", params![id, c.encrypt(&meta.to_string())]).map_err(err)?;
+    Ok(())
+}
+
 /// Encrypts anything saved before encryption existed. Returns how many
 /// values changed; the caller vacuums afterwards so no plaintext remains.
 pub fn encrypt_legacy(conn: &mut Connection, c: &Cipher) -> Result<usize, String> {

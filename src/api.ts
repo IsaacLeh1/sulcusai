@@ -892,6 +892,8 @@ export interface ToolMeta {
   handoff_from?: string;
   /** A summary left by compacting; the model works from it instead of the messages before it. */
   compacted?: boolean;
+  /** On a reply's last message: all its thinking in a few short points (added after it answered). */
+  thought_summary?: string;
   /** A user message added while the reply was being written. */
   added?: boolean;
   /** In a chat this user shares: written by that person (or their model). */
@@ -2815,6 +2817,8 @@ export interface ChatEvents {
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
+  /** A reply's thinking was summed up (its last message has `thought_summary`). */
+  "chat:thought": { chat_id: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
   "chat:inbox": { chat_id: string; waiting: QueueItem[] };
   /** The model has read this chat's messages up to then (it started answering). */

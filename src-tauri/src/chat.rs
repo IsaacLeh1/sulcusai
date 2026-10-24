@@ -23,7 +23,8 @@ pub fn system_prompt(profile: &Profile, today: &str) -> (String, String) {
     let base = format!(
         "You are SulcusAI, a helpful assistant. Be clear, accurate and friendly. \
          Use Markdown when it helps; write math formulas in LaTeX, $...$ in a sentence and $$...$$ on their own lines. \
-         If you don't know something, say so.\n\n\
+         If you don't know something, say so. What you work out while thinking goes in your answer itself \
+         (names, links, numbers, steps): the answer is what the user reads.\n\n\
          When a question needs facts you don't have, get them yourself with your tools (weather, web search, \
          notes, tasks, calendar, email, files) instead of asking the user. Ask only for what you can't look up, \
          and never guess figures. If they mention a name, title or term you don't recognize or aren't sure about \
@@ -529,16 +530,28 @@ pub async fn stream(
             .collect();
         return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
     }
-    let (first, cut_off) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
-    // A thinking model that spent its whole allowance thinking and never
-    // answered: once more, without thinking.
-    if cut_off && first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled {
+    let first = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
+    // A thinking model that thought but never answered (its allowance ran
+    // out, it got stuck repeating itself, or it just stopped): once more,
+    // without thinking, given what it thought. Started over, it answered
+    // without what the user had watched it find.
+    if first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled {
         let mut quick = ep.clone();
         // gpt-oss ignores enable_thinking and reads its effort from the
         // template's settings: "low" there too, or the retry repeated itself.
         quick.extra["chat_template_kwargs"] = json!({ "enable_thinking": false, "reasoning_effort": "low" });
         quick.extra["reasoning_effort"] = json!("low");
-        let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
+        let mut messages = messages;
+        let note = format!(
+            "[Your thinking so far, which stopped before you answered:]\n{}\n[Now write your answer to the user from it, without thinking again. \
+             Put what you found in it (names, links, numbers, steps): the user reads your answer, not your thinking.]",
+            thought_so_far(&first.thinking, ep.ctx as usize)
+        );
+        match messages.last_mut().filter(|m| m["role"] == "user") {
+            Some(last) => add_text(last, &format!("\n{note}")),
+            None => messages.push(json!({ "role": "user", "content": note })),
+        }
+        let mut again = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
         again.thinking = format!("{}{}", first.thinking, again.thinking);
         if again.content.trim().is_empty() && again.tool_calls.is_empty() && !again.cancelled {
             return Err("The model spent its whole reply thinking and never answered. Try again, or turn its thinking off in Advanced settings.".into());
@@ -548,9 +561,32 @@ pub async fn stream(
     Ok(first)
 }
 
-/// One reply from the engine on this PC, and whether it stopped at its
-/// length limit.
-async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<(Finished, bool), String> {
+/// Two parts of one reply, a blank line between (either may be empty).
+pub fn joined(a: &str, b: &str) -> String {
+    match (a.trim().is_empty(), b.trim().is_empty()) {
+        (true, _) => b.to_string(),
+        (_, true) => a.to_string(),
+        _ => format!("{}\n\n{}", a.trim_end(), b.trim_start()),
+    }
+}
+
+/// What it thought, for its answer: a loop at the end said once, and the
+/// middle of a long think left out (about `ctx / 8` tokens kept).
+pub(crate) fn thought_so_far(thinking: &str, ctx: usize) -> String {
+    let text = match loop_at_end(thinking) {
+        Some((start, unit)) => thinking.get(..start + unit).unwrap_or(thinking),
+        None => thinking,
+    };
+    let keep = (ctx / 2).clamp(1500, 12_000);
+    if text.chars().count() > keep {
+        cut_middle(text.trim(), keep)
+    } else {
+        text.trim().to_string()
+    }
+}
+
+/// One reply from the engine on this PC.
+async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<Finished, String> {
     // Saved cloud reply blocks are for cloud providers only.
     let messages: Vec<Value> = messages
         .into_iter()
@@ -614,7 +650,6 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
     let mut buf: Vec<u8> = Vec::new();
     let mut stream = resp.bytes_stream();
     let offered = offered_names(tools);
-    let mut cut_off = false;
     'read: while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
             out.cancelled = true;
@@ -632,13 +667,16 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
                 break 'read;
             }
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
-            if v.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
-                cut_off = true;
-            }
             if let Some(delta) = v.pointer("/choices/0/delta") {
                 if let Some(t) = delta.get("reasoning_content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
                     out.thinking.push_str(t);
                     on_delta(Delta::Thinking(t.to_string()));
+                    // Thinking the same words again and again (a small model
+                    // wrote "IEX Cloud, IEX," until its allowance ran out):
+                    // stop it there; `stream` has it answer from the rest.
+                    if loop_at_end(&out.thinking).is_some() {
+                        break 'read;
+                    }
                 }
                 if let Some(t) = delta.get("content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
                     out.content.push_str(t);
@@ -650,8 +688,8 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
                     if t.contains('}') && out.tool_calls.is_empty() && !offered.is_empty() && !salvage(&out.content, &offered).0.is_empty() {
                         break 'read;
                     }
-                    // Stuck saying the same line over and over: stop it there.
-                    if t.contains('\n') && repeats_itself(&out.content) {
+                    // Stuck saying the same line (or words) over and over: stop it there.
+                    if (t.contains('\n') && repeats_itself(&out.content)) || loop_at_end(&out.content).is_some() {
                         break 'read;
                     }
                 }
@@ -684,7 +722,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         }
     }
     out.tool_calls.retain(|c| !c.name.is_empty());
-    Ok((out, cut_off))
+    Ok(out)
 }
 
 /// The last few finished lines are the same line (a small model stuck in a loop).
@@ -695,6 +733,37 @@ fn repeats_itself(text: &str) -> bool {
     };
     let lines: Vec<&str> = done.lines().map(str::trim).filter(|l| !l.is_empty()).rev().take(4).collect();
     lines.len() == 4 && lines[0].len() > 8 && lines.iter().all(|l| *l == lines[0])
+}
+
+/// The same words said again and again at the end of `text`, on one line
+/// or many (a small model stuck in a loop): where the run starts and how
+/// long one of them is. Words only: a row of numbers or dashes is fine.
+fn loop_at_end(text: &str) -> Option<(usize, usize)> {
+    let b = text.as_bytes();
+    let n = b.len();
+    for unit in 4..=300 {
+        // At least 4 times, and 300 bytes in all ("IEX Cloud, IEX, " 19 times).
+        let span = (unit * 4).max(300);
+        if span > n {
+            break;
+        }
+        if !(n - span..n - unit).all(|i| b[i] == b[i + unit]) {
+            continue;
+        }
+        let Some(said) = text.get(n - unit..) else { continue };
+        if said.chars().filter(|c| c.is_alphabetic()).count() < 3 {
+            continue;
+        }
+        let mut start = n - span;
+        while start > 0 && b[start - 1] == b[start - 1 + unit] {
+            start -= 1;
+        }
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
+        return Some((start, unit));
+    }
+    None
 }
 
 fn offered_names(tools: Option<&Value>) -> Vec<String> {
@@ -1627,6 +1696,19 @@ pub async fn summary_title(ep: &Endpoint, request: &str) -> Option<String> {
     clean_title(&raw)
 }
 
+/// A reply's thinking (all its steps) in a few short points, shown with the
+/// whole of it. None if it gives nothing usable.
+pub async fn thought_summary(ep: &Endpoint, thinking: &str) -> Option<String> {
+    let messages = vec![
+        json!({ "role": "system", "content": "You sum up an assistant's thinking for the person it was helping. Reply with 2 to 5 short bullet points (\"- \"): \
+                                              what it worked out, what it found and what it decided. Plain words; no heading, no preamble." }),
+        json!({ "role": "user", "content": thought_so_far(thinking, ep.ctx as usize) }),
+    ];
+    let raw = complete(ep, messages, json!({}), 300).await.ok()?;
+    let points: Vec<&str> = raw.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    (!points.is_empty()).then(|| points.join("\n"))
+}
+
 fn clean_title(raw: &str) -> Option<String> {
     let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
     let line = line.trim_start_matches(|c: char| c == '#' || c == '*' || c.is_whitespace());
@@ -2031,6 +2113,35 @@ Found it.
         assert!(!repeats_itself(&format!("Hello.\n{}", line.repeat(3))));
         assert!(!repeats_itself("1. a\n2. b\n3. c\n4. d\n5. e\n"));
         assert!(!repeats_itself("---\n---\n---\n---\n"), "short lines like rules are fine");
+    }
+
+    #[test]
+    fn a_loop_on_one_line_is_noticed_and_said_once_for_the_answer() {
+        // His brother's chat: the thinking ran "IEX Cloud, IEX," to the end of its allowance.
+        let start = "The user wants open-source real-time stock charts. Libraries: yfinance, alpha_vantage, ";
+        let stuck = format!("{start}{}IEX Cl", "IEX Cloud, IEX, ".repeat(40));
+        let (at, unit) = loop_at_end(&stuck).expect("the loop is noticed");
+        assert_eq!(unit, "IEX Cloud, IEX, ".len());
+        assert!(at <= start.len() + unit, "found where it began: {at}");
+        let notes = thought_so_far(&stuck, 8192);
+        assert_eq!(notes.matches("IEX Cloud").count(), 1, "said once: {notes}");
+        assert!(notes.starts_with("The user wants"));
+        // Not loops: a short repeat, numbers, dashes, ordinary writing.
+        assert!(loop_at_end(&format!("{start}{}", "IEX Cloud, IEX, ".repeat(5))).is_none());
+        assert!(loop_at_end(&format!("data = [{}]", "0, ".repeat(200))).is_none());
+        assert!(loop_at_end(&"-".repeat(400)).is_none());
+        let prose = "Stock charts can come from many places. TradingView's Lightweight Charts is open source; \
+                     so are Plotly and Chart.js, which draw what yfinance or Alpha Vantage return. Each has its own page.";
+        assert!(loop_at_end(prose).is_none());
+        // A whole sentence again and again, with no line breaks.
+        assert!(loop_at_end(&format!("Okay. {}", "Let me check the search results again. ".repeat(10))).is_some());
+    }
+
+    #[test]
+    fn parts_of_a_reply_join_with_a_gap() {
+        assert_eq!(joined("", "Answer."), "Answer.");
+        assert_eq!(joined("First.", "  "), "First.");
+        assert_eq!(joined("First.\n", "Then."), "First.\n\nThen.");
     }
 
     #[test]
