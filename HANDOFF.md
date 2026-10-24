@@ -1550,7 +1550,7 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
-## Not released yet (for 0.9.30): the song view on NVIDIA cards, the tune follows the voice, a loop and a metronome
+## 0.9.30 (2026-10-24): the song view on NVIDIA cards, the tune follows the voice, a loop and a metronome
 
 Asks: "See how it's built" on the graphics card; the tune moved automatically when the voice changes in Make it real; a loop region and a metronome. I said to download what's needed for the card.
 - **"See how it's built" on NVIDIA cards (CUDA)** (`natural.rs` "on NVIDIA cards", `stems::separate`, `notes::grids`, `media::map_card`):
@@ -1565,6 +1565,8 @@ Asks: "See how it's built" on the graphics card; the tune moved automatically wh
   - The full-precision export (`htdemucs.onnx`, 316 MB) failed the same way on DirectML: out of memory fused, filling the card unfused.
   - `timcsy/demucs-web-onnx` (`htdemucs_embedded.onnx`, 180 MB, made for WebGPU) takes the spectrogram as a second input (`x` [1,4,2048,336], complex as channels) and returns the frequency branch ([1,4,4,2048,336]) and the time branch; with the STFT and inverse done outside as Demucs does (`_spec`/`_ispec`: n_fft 4096, hop 1024, normalized, padded 1536, the last bin and two frames each side dropped) it matched the app's model exactly on the processor (difference 0.0000) and was a bit faster (1.14 s a 7.8 s piece against 1.40). On DirectML it failed at start-up ("the parameter is incorrect") with optimizations on, ran with them off at 1.08 s a piece (no faster than the processor), then failed at start-up again the next time. Scripts: scratchpad `sep_dml.py`, `dml_try.py`; code in `C:\dev\tools\wip-backup\directml-attempt-2.patch`.
   - Still open for AMD and Intel cards and PCs without a card: the web export with the STFT in Rust would make the processor about a fifth faster.
+- Checked in the installed 0.9.30 (it found the card's libraries the test had downloaded): "See how it's built" on a 2:15 sung song took 86 s, against 204 s on the processor in 0.9.29; the parts and notes took 18 s on the card, and listening for the words (whisper.cpp, processor) about 65 s of it, now the slowest step (whisper.cpp's CUDA 12 build would add 640 MB). A loop went round its section and jumped back; the metronome turned on and off while playing; a male song switched to a female voice moved up one octave (median note 54 to 66) and was made in 61 s on the card; a chat message got its answer. During the listening step the job card already says "graphics card".
+- Published 2026-10-24 (main = phase7 = 82fafb7).
 
 ## 0.9.29 (2026-10-23): lyrics stay words, Music and Compose in one, a man's voice, split models
 
