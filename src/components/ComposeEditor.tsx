@@ -11,11 +11,12 @@
 // and sings their words; the composition stays as it is.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, toBase64, type Composition, type ComposeNote, type MediaItem, type Plan, type PlanSection, type SectionOp } from "../api";
+import { api, errorText, on, toBase64, type Composition, type ComposeNote, type MediaItem, type MediaModelCard, type Plan, type PlanSection, type SectionOp } from "../api";
 import { clock } from "../format";
 import { t, tx } from "../i18n";
 import { encodeWav } from "../media";
 import { ComposePlayer, INSTRUMENTS, KITS, renderDemo, secondsPerBeat } from "../compose/player";
+import { MakeItReal, type RealOptions } from "./MakeItReal";
 import type { PushToast } from "./Toasts";
 
 type ENote = ComposeNote & { id: number };
@@ -112,7 +113,7 @@ function keyOf(key: string): number {
   return m ? ({ C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[m[1] as "C"] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12 : 0;
 }
 
-export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, canMakeReal, toast }: {
+export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, musicModels, defaultMusic, toast }: {
   /** The gallery item it was opened from (null: not kept yet). */
   item: MediaItem | null;
   composition: Composition;
@@ -121,7 +122,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
   /** "Make it real" started. */
   onStarted: () => void;
   /** A music model is installed. */
-  canMakeReal: boolean;
+  musicModels: MediaModelCard[];
+  defaultMusic: string | null;
   toast: PushToast;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -147,8 +149,6 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
   const [busy, setBusy] = useState<string | null>(null);
   const [real, setReal] = useState(false);
   // As `media::REAL_STRENGTH_SUNG` and `_PLAYED`: a sung song follows less closely, so it sings.
-  // In eighths: the music model follows the demo for that share of its 8 steps, rounded down.
-  const [strength, setStrength] = useState(() => (composition.plan.sections.some((s) => s.lines.length > 0) ? 0.375 : 0.5));
   const clip = useRef<{ part: string; notes: ComposeNote[] }[] | null>(null);
   // What's playing (an edit while playing is heard from where it is).
   const lastPlayed = useRef<EComp | null>(null);
@@ -555,11 +555,11 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
       toast(errorText(e), "error");
     }
   };
-  const makeReal = async () => {
+  const makeReal = async (o: RealOptions) => {
     const it = dirty || !kept ? await keep() : kept;
     if (!it) return;
     try {
-      await api.composeMakeReal(it.id, strength);
+      await api.composeMakeReal(it.id, o);
       setReal(false);
       toast(t("Started. The real version appears in the gallery when it's done; your composition stays as it is."), "success");
       onStarted();
@@ -590,30 +590,7 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
           <button className="btn small primary" onClick={() => setReal(!real)} disabled={!!busy} aria-expanded={real}>{t("Make it real")}</button>
           <button className="icon-btn" aria-label={t("Close")} onClick={close}>✕</button>
         </div>
-        {real && (
-          <div className="song-view-ask form">
-            <strong className="small">{t("Make it real")}</strong>
-            <p className="small muted">
-              {t("The music model records the song with real-sounding instruments, following your notes, and sings its words. It's a new song in the gallery; this composition stays as it is.")}
-            </p>
-            {!canMakeReal ? (
-              <p className="small warn-box">{t("This needs a music model: install one in the Studio's Models.")}</p>
-            ) : (
-              <>
-                <label className="small row">
-                  {t("How closely it follows your notes")}
-                  <input type="range" min={0.125} max={0.875} step={0.125} value={strength} onChange={(e) => setStrength(+e.target.value)} />
-                  <span className="mono">{Math.round(strength * 8)}/8</span>
-                </label>
-                <p className="small muted">{t("Higher keeps closer to your tune, chords and timing but sings fewer of the words; lower sings more and plays more freely.")}</p>
-                <div className="row">
-                  <button className="btn small" onClick={() => setReal(false)}>{t("Cancel")}</button>
-                  <button className="btn primary small" disabled={!!busy} onClick={makeReal}>{t("Record it")}</button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        {real && <MakeItReal plan={plan} models={musicModels} defaultModel={defaultMusic} busy={!!busy} onCancel={() => setReal(false)} onRecord={makeReal} />}
         <div className="row wrap song-transport">
           <button className="btn small" onClick={() => (playing ? stop() : play())} disabled={!!busy}>{playing ? t("Stop") : t("Play")}</button>
           <span className="small mono" title={t("Bar and beat")}>{where}</span>

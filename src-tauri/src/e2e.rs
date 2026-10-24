@@ -4849,6 +4849,28 @@ async fn e2e_compose() {
         ("pop-80s", ask("an upbeat synth-pop song about driving through the city at night", 4, 4, "1980s", true, "female", 11)),
         ("folk-6-8", ask("a gentle folk ballad about leaving the town you grew up in", 6, 8, "", true, "male", 12)),
         ("rock-7-8", ask("a driving instrumental rock piece with a big riff", 7, 8, "1970s", false, "", 13)),
+        // From the Music tab: their own lyrics and song options.
+        (
+            "own-words",
+            compose::Ask {
+                song: Some(media::MusicSpec {
+                    genre: Some("Country, Folk".into()),
+                    emotion: Some("Heartbroken, Hopeful".into()),
+                    vocal_style: Some("raspy".into()),
+                    harmony_voice: Some("female".into()),
+                    harmony_style: Some("thirds".into()),
+                    harmony_where: Some("chorus".into()),
+                    ..Default::default()
+                }),
+                lyrics: Some(
+                    "[Verse]\nThe porch light's on but nobody's home\nI pack the truck and drive alone\nThe fields go gold behind the rain\nI won't come back this way again\n\n\
+                     [Chorus]\nSo long to the town that raised me\nSo long to the river and the trees\nI'll carry you in every song\nSo long, so long\n\n[Instrumental]\n\n\
+                     [Chorus]\nSo long to the town that raised me\nSo long to the river and the trees\nI'll carry you in every song\nSo long, so long"
+                        .into(),
+                ),
+                ..ask("a heartbroken but hopeful country song about leaving home", 4, 4, "", true, "male", 14)
+            },
+        ),
     ];
     // A famous riff that's free to use (Grieg's "In the Hall of the Mountain
     // King", 1875), as 1970s hard rock: the plan by hand, the band by the
@@ -4948,6 +4970,12 @@ async fn e2e_compose() {
             assert!(p.sections.len() >= 2 && p.seconds() > 20.0, "a whole song");
             assert_eq!((p.beats, p.unit), (a.beats, a.unit));
             assert_eq!(p.sections.iter().any(|s| !s.lines.is_empty()), a.vocals, "words only where asked");
+            // Their own lyrics: their sections, in order, with their lines.
+            if let Some(l) = &a.lyrics {
+                let blocks = compose::lyric_blocks(l);
+                assert_eq!(p.sections.iter().map(|s| (s.name.clone(), s.lines.clone())).collect::<Vec<_>>(), blocks);
+                assert_eq!(p.song, a.song, "the options kept for Make it real");
+            }
             std::fs::write(out.join(format!("{name}.json")), serde_json::to_string_pretty(&comp).unwrap()).unwrap();
             std::fs::write(out.join(format!("{name}.mid")), compose::midi(&comp)).unwrap();
         }
@@ -4990,7 +5018,7 @@ async fn e2e_compose() {
         store::update(&state.db.lock().unwrap(), &c, &demo).unwrap();
         for s in strengths.split(',').filter_map(|s| s.trim().parse::<f32>().ok()) {
             let t = std::time::Instant::now();
-            let mut req = media::real_request(&comp.plan, &demo.id, Some(s), Some(model.clone()), None);
+            let mut req = media::real_request(&comp.plan, &demo.id, Some(s), Some(model.clone()), None, None, None, None);
             req.seed = Some(21);
             let real = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
             println!("{name} at {s}: {:.0}s long, made in {:.0}s; caption words: {}", real.seconds, t.elapsed().as_secs_f64(), real.prompt);

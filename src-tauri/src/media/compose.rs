@@ -84,6 +84,13 @@ pub struct Plan {
     pub voice: String,
     /// The decade it's from ("1980s"; "" any): how it's arranged and made real.
     pub era: String,
+    /// Every song option picked in the Music tab (emotion, ways of singing,
+    /// harmonies, production…): what "Make it real" asks the music model for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song: Option<super::MusicSpec>,
+    /// The language it's sung in (a two-letter code; none: the words').
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 impl Default for Plan {
@@ -101,6 +108,8 @@ impl Default for Plan {
             description: String::new(),
             voice: String::new(),
             era: String::new(),
+            song: None,
+            language: None,
         }
     }
 }
@@ -1022,16 +1031,55 @@ pub async fn write_plan(state: &std::sync::Arc<crate::AppState>, ask: &Ask) -> R
         let e = ask.era.trim();
         wants.push_str(&format!(" A song from the {e}: arrange it the way songs were then, with that era's chords, tempo, instruments and drum kit, and words written the way they were then."));
     }
-    wants.push_str(&format!(" About {} sections.", ask.sections.clamp(2, 12)));
+    // The sound picked in the Music tab, as the music model will be asked for it.
+    if let Some(sound) = ask.song.as_ref().map(|s| s.caption("", !ask.vocals)).filter(|s| !s.trim().is_empty()) {
+        wants.push_str(&format!(" The sound: {}.", sound.trim_end_matches('.')));
+    }
+    // Their own lyrics, or a structure they picked: those sections, in that order.
+    let own: Vec<(String, Vec<String>)> = ask.lyrics.as_deref().filter(|_| ask.vocals).map(lyric_blocks).unwrap_or_default();
+    let given: Vec<(String, Vec<String>)> = if !own.is_empty() {
+        own.clone()
+    } else {
+        ask.song.as_ref().map(|s| s.sections.iter().take(14).map(|n| (n.clone(), Vec::new())).collect()).unwrap_or_default()
+    };
+    let mut schema = plan_schema();
+    if given.is_empty() {
+        wants.push_str(&format!(" About {} sections.", ask.sections.clamp(2, 12)));
+    } else {
+        let list: Vec<String> = given
+            .iter()
+            .map(|(n, l)| if !own.is_empty() && l.is_empty() { format!("{n} (played, no words)") } else if l.is_empty() { n.clone() } else { format!("{n} ({} lines of their words)", l.len()) })
+            .collect();
+        wants.push_str(&format!(" Use exactly these sections, in this order: {}.", list.join(", ")));
+        if !own.is_empty() {
+            wants.push_str(" The words are the user's own and are put in afterwards: give each section enough bars to sing its lines (about two bars a line).");
+        }
+        schema["properties"]["sections"]["minItems"] = json!(given.len());
+        schema["properties"]["sections"]["maxItems"] = json!(given.len());
+    }
     if !ask.vocals {
         wants.push_str(" Instrumental: no lines anywhere; a lead instrument (not a voice) plays the tune, melody true in most sections.");
     }
     let msgs = vec![json!({ "role": "system", "content": GUIDE }), json!({ "role": "user", "content": wants })];
     let mut last = String::new();
     for temperature in [0.7, 0.4] {
-        let raw = crate::chat::complete(&ep, msgs.clone(), json!({ "temperature": temperature, "response_format": { "type": "json_schema", "json_schema": { "name": "plan", "schema": plan_schema() } } }), 3000).await?;
+        let raw = crate::chat::complete(&ep, msgs.clone(), json!({ "temperature": temperature, "response_format": { "type": "json_schema", "json_schema": { "name": "plan", "schema": schema } } }), 3000).await?;
         match serde_json::from_str::<Plan>(json_of(&raw)) {
             Ok(mut p) if !p.sections.is_empty() => {
+                p.song = ask.song.clone();
+                p.language = ask.language.clone().filter(|l| !l.is_empty() && l != "auto");
+                // Their sections, named as they are, with their words.
+                if !given.is_empty() {
+                    let filler = p.sections.last().cloned().unwrap_or_default();
+                    p.sections.resize(given.len(), filler);
+                    for (s, (name, lines)) in p.sections.iter_mut().zip(&given) {
+                        s.name = name.clone();
+                        if !own.is_empty() {
+                            s.lines = lines.clone();
+                            s.melody = s.melody || !lines.is_empty();
+                        }
+                    }
+                }
                 p.beats = ask.beats;
                 p.unit = ask.unit;
                 if let Some(b) = ask.bpm {
@@ -1055,7 +1103,8 @@ pub async fn write_plan(state: &std::sync::Arc<crate::AppState>, ask: &Ask) -> R
                 let want = wanted_lines(&p);
                 let have: usize = want.iter().map(|(i, _)| p.sections[*i].lines.len()).sum();
                 let need: usize = want.iter().map(|(_, n)| n).sum();
-                if (have as f32) < need as f32 * 0.75 {
+                // Their own lyrics are sung as they wrote them.
+                if own.is_empty() && (have as f32) < need as f32 * 0.75 {
                     match fill_lines(&ep, &p, &want).await {
                         Ok(lines) => {
                             for ((i, _), l) in want.iter().zip(lines) {
@@ -1182,6 +1231,31 @@ pub struct Ask {
     /// The decade it's from ("1980s"; "" any).
     pub era: String,
     pub seed: u64,
+    /// Every option picked in the Music tab, kept for "Make it real" and
+    /// told to the planner (the sound it should be arranged for).
+    pub song: Option<super::MusicSpec>,
+    /// Their own lyrics: the plan is built around their sections and lines.
+    pub lyrics: Option<String>,
+    pub language: Option<String>,
+}
+
+/// Lyrics as sections: each `[Tag]` and the lines under it ("[Chorus -
+/// screamed]" is a Chorus); lines before any tag are a Verse.
+pub fn lyric_blocks(lyrics: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for line in lyrics.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        if line.starts_with('[') && line.ends_with(']') {
+            let name = line[1..line.len() - 1].split(" - ").next().unwrap_or("").trim();
+            out.push((if name.is_empty() { "Verse".into() } else { name.to_string() }, Vec::new()));
+        } else {
+            if out.is_empty() {
+                out.push(("Verse".into(), Vec::new()));
+            }
+            out.last_mut().map(|b| b.1.push(line.to_string()));
+        }
+    }
+    out.truncate(14);
+    out
 }
 
 /// A plan within bounds: known styles, at least a bar a section, a chord
@@ -1339,6 +1413,21 @@ mod tests {
         assert_eq!(at(&gone, 91), Some(1.0));
         assert_eq!(at(&gone, 90), None);
         assert!(apply(&gone, 0, SectionOp::Delete).is_err(), "the last section stays");
+    }
+
+    /// Their own lyrics become the sections, in order, with their lines.
+    #[test]
+    fn lyrics_become_sections() {
+        let b = lyric_blocks("Walking in\n\n[Chorus - screamed]\nHold on\nHold on tight\n[Instrumental]\n[Verse 2]\nBack again");
+        assert_eq!(
+            b,
+            vec![
+                ("Verse".to_string(), vec!["Walking in".to_string()]),
+                ("Chorus".to_string(), vec!["Hold on".to_string(), "Hold on tight".to_string()]),
+                ("Instrumental".to_string(), vec![]),
+                ("Verse 2".to_string(), vec!["Back again".to_string()]),
+            ]
+        );
     }
 
     /// Sung sections get a line about every 7.5 seconds, in pairs; played

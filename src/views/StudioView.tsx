@@ -25,34 +25,26 @@ import { t, tf, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, SongListener, useMediaJobs } from "../components/MediaBits";
 import { SongView } from "../components/SongView";
-import { ComposeEditor } from "../components/ComposeEditor";
-import { ComposeForm, ERAS } from "../components/ComposeForm";
+import { ComposeEditor, TIMES } from "../components/ComposeEditor";
+import {
+  BEATS, Chips, EMOTIONS, LANGUAGES, ENDINGS, ENERGIES, ERAS, GENRES, HARMONY_INSTRUMENTS, HARMONY_STYLES, HARMONY_VOICES, HARMONY_WHERE, INSTRUMENTS, LEAD_INSTRUMENTS, MOODS, NOTES,
+  PACES, PARTS, PickMany, PickOne, PRODUCTIONS, RHYMES, SECS_PER_LINE, SOFT_VOCALS, SongSections, structureSeconds, TASKS, VOCAL_STYLES, VocalEffects, fitFor, mmss, sungLines,
+  joined, listed, type SongTask,
+} from "../components/MusicFields";
 import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 
-type Tab = "pictures" | "video" | "wallpaper" | "music" | "compose" | "narrate";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate";
 type Shape = NonNullable<MediaRequest["shape"]>;
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", compose: "music", narrate: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
 const STYLES = [tx("Watercolor"), tx("Oil painting"), tx("Pencil sketch"), tx("Anime"), tx("3D render"), tx("Pixel art"), tx("Vintage photo"), tx("Comic book")];
-const LANGUAGES: [string, string][] = [
-  ["auto", tx("Any language")],
-  ["en", tx("English")],
-  ["es", tx("Spanish")],
-  ["fr", tx("French")],
-  ["de", tx("German")],
-  ["it", tx("Italian")],
-  ["pt", tx("Portuguese")],
-  ["ja", tx("Japanese")],
-  ["ko", tx("Korean")],
-  ["zh", tx("Chinese")],
-];
 
 interface Props {
   features: Set<FeatureId>;
@@ -62,7 +54,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "compose", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   // A song written as notes, open in Compose's editor (item: where it's kept).
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
@@ -186,7 +178,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), compose: t("Compose music"), narrate: t("Narration") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration") }[tb]}
           </button>
         ))}
       </div>
@@ -242,9 +234,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             gallery={items}
             toast={toast}
             seed={songToWork}
+            onCompose={(composition) => setComposing({ item: null, composition })}
           />
-        ) : tab === "compose" ? (
-          <ComposeForm onWritten={(composition) => setComposing({ item: null, composition })} toast={toast} />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
         )}
@@ -333,7 +324,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         <ComposeEditor
           item={composing.item}
           composition={composing.composition}
-          canMakeReal={installedOf("music").length > 0}
+          musicModels={installedOf("music")}
+          defaultMusic={view?.defaults?.music ?? null}
           onClose={() => setComposing(null)}
           onSaved={(i) => {
             setItems((all) => [i, ...all.filter((x) => x.id !== i.id)]);
@@ -771,279 +763,6 @@ function VideoComposer({
   );
 }
 
-/** Styles, moods, instruments and beats to pick from (any can be typed too). */
-const GENRES = [
-  tx("Pop"), tx("Rock"), tx("Hip hop"), tx("R&B"), tx("Country"), tx("Folk"), tx("Jazz"), tx("Blues"), tx("Classical"), tx("Electronic"),
-  tx("House"), tx("Techno"), tx("Lo-fi"), tx("Metal"), tx("Punk"), tx("Indie"), tx("Reggae"), tx("Latin"), tx("K-pop"), tx("Soul"),
-  tx("Funk"), tx("Gospel"), tx("Ambient"), tx("Soundtrack"), tx("Synthwave"), tx("Drum and bass"),
-];
-const MOODS = [tx("Happy"), tx("Sad"), tx("Energetic"), tx("Calm"), tx("Dark"), tx("Romantic"), tx("Epic"), tx("Dreamy"), tx("Angry"), tx("Hopeful"), tx("Nostalgic"), tx("Playful")];
-const INSTRUMENTS = [
-  tx("Piano"), tx("Acoustic guitar"), tx("Electric guitar"), tx("Bass"), tx("Drums"), tx("Strings"), tx("Violin"), tx("Cello"), tx("Synth"), tx("Brass"),
-  tx("Saxophone"), tx("Trumpet"), tx("Flute"), tx("Organ"), tx("Harmonica"), tx("Ukulele"), tx("Banjo"), tx("808 bass"), tx("Choir"), tx("Percussion"),
-];
-const BEATS = [tx("Steady"), tx("Four on the floor"), tx("Swing"), tx("Shuffle"), tx("Half-time"), tx("Trap"), tx("Boom bap"), tx("Breakbeat"), tx("Reggaeton"), tx("Waltz")];
-/** Pace presets, in beats a minute. */
-const PACES: [string, number][] = [[tx("Slow"), 70], [tx("Relaxed"), 90], [tx("Medium"), 105], [tx("Upbeat"), 120], [tx("Fast"), 140], [tx("Very fast"), 170]];
-const NOTES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
-/** The parts the music engine knows: [what it's called there, what people call it]. */
-const PARTS: [string, string][] = [
-  ["vocals", tx("Vocals")], ["backing_vocals", tx("Backing vocals")], ["drums", tx("Drums")], ["bass", tx("Bass")], ["guitar", tx("Guitar")], ["keyboard", tx("Keys")],
-  ["percussion", tx("Percussion")], ["strings", tx("Strings")], ["synth", tx("Synth")], ["brass", tx("Brass")], ["woodwinds", tx("Woodwinds")], ["fx", tx("Effects")],
-];
-type SongTask = "cover" | "repaint" | "extend" | "add" | "extract" | "complete";
-const TASKS: [SongTask, string, string][] = [
-  ["cover", tx("Restyle it"), tx("The same song in another style: describe how it should sound.")],
-  ["repaint", tx("Make part of it again"), tx("Pick the part; the rest stays as it is.")],
-  ["extend", tx("Make it longer"), tx("More music after its end, in the same style.")],
-  ["add", tx("Add a part"), tx("Vocals, drums, guitar… added on top of the song.")],
-  ["extract", tx("Keep only one part"), tx("Takes one part out of the mix, such as the vocals or the drums.")],
-  ["complete", tx("Build a full song around it"), tx("For a lone part (a vocal, a guitar riff): the rest of the band added.")],
-];
-
-/** Styles whose vocals the music model blurs or buries (synthwave's words weren't heard however it was asked). */
-const SOFT_VOCALS = ["Synthwave", "Ambient", "Techno", "House", "Lo-fi", "Drum and bass"];
-
-/** How the lead sings. */
-const VOCAL_STYLES: [string, string][] = [
-  ["smooth", tx("Smooth")], ["powerful", tx("Powerful")], ["breathy", tx("Breathy")], ["raspy", tx("Raspy")],
-  ["soulful", tx("Soulful")], ["falsetto", tx("Falsetto")], ["whispered", tx("Whispered")], ["belting", tx("Belting")],
-];
-/** The feeling in the words and the voice. */
-const EMOTIONS = [
-  tx("Joyful"), tx("Heartbroken"), tx("Longing"), tx("Hopeful"), tx("Lonely"), tx("In love"), tx("Angry"),
-  tx("Defiant"), tx("Bittersweet"), tx("Nostalgic"), tx("Grateful"), tx("Empowered"), tx("Anxious"), tx("At peace"),
-];
-/** Ways of singing on parts of a song: [id, name]. */
-const VOCAL_EFFECTS: [string, string][] = [
-  ["vibrato", tx("Heavy vibrato")], ["belting", tx("Belting")], ["falsetto", tx("Falsetto")], ["screamed", tx("Screamed (screamo)")],
-  ["growled", tx("Growled")], ["raspy", tx("Raspy and gritty")], ["breathy", tx("Breathy")], ["whispered", tx("Whispered")],
-  ["spoken", tx("Spoken word")], ["rapped", tx("Rapped")], ["autotune", tx("Auto-tune")], ["runs", tx("Runs and riffs")], ["operatic", tx("Operatic")],
-];
-/** Where in the song: [id, name]. */
-const EFFECT_PLACES: [string, string][] = [
-  ["all", tx("Whole song")], ["verse", tx("Verses")], ["pre-chorus", tx("Pre-choruses")], ["chorus", tx("Choruses")], ["bridge", tx("Bridge")], ["final-chorus", tx("Last chorus")],
-];
-
-/** Ways of singing, each on a part of the song: a screamed chorus, heavy vibrato throughout. */
-function VocalEffects({ value, onChange }: { value: VocalEffect[]; onChange: (v: VocalEffect[]) => void }) {
-  const [how, setHow] = useState("vibrato");
-  const [place, setPlace] = useState("all");
-  const name = (list: [string, string][], id: string) => t(list.find(([v]) => v === id)?.[1] ?? id);
-  const added = value.some((f) => f.how === how && f.on === place);
-  return (
-    <div className="music-field">
-      <span className="music-label">{t("Vocal effects")}</span>
-      {value.length > 0 && (
-        <div className="filters tight wrap">
-          {value.map((f, i) => (
-            <button key={`${f.how}-${f.on}`} className="chip active" onClick={() => onChange(value.filter((_, j) => j !== i))} title={t("Remove")}>
-              {name(VOCAL_EFFECTS, f.how)} · {name(EFFECT_PLACES, f.on)} ×
-            </button>
-          ))}
-        </div>
-      )}
-      <div className="row wrap">
-        <select value={how} onChange={(e) => setHow(e.target.value)} aria-label={t("Vocal effect")}>
-          {VOCAL_EFFECTS.map(([v, n]) => (
-            <option key={v} value={v}>{t(n)}</option>
-          ))}
-        </select>
-        <select value={place} onChange={(e) => setPlace(e.target.value)} aria-label={t("Where in the song")}>
-          {EFFECT_PLACES.map(([v, n]) => (
-            <option key={v} value={v}>{t(n)}</option>
-          ))}
-        </select>
-        <button className="btn ghost small" disabled={added || value.length >= 6} onClick={() => onChange([...value, { how, on: place }])}>{t("Add")}</button>
-      </div>
-    </div>
-  );
-}
-
-/** Who sings the harmonies. */
-const HARMONY_VOICES: [MusicSpec["harmony_voice"] | "", string][] = [["", tx("None")], ["female", tx("Female")], ["male", tx("Male")], ["mixed", tx("Male and female")], ["choir", tx("Choir")]];
-/** How they're sung: [id, name, what it means]. */
-const HARMONY_STYLES: [NonNullable<MusicSpec["harmony_style"]>, string, string][] = [
-  ["thirds", tx("Close harmony"), tx("A third above the lead: the classic pop harmony")],
-  ["octave", tx("Octaves"), tx("The melody doubled an octave apart")],
-  ["stacked", tx("Stacked"), tx("Rich gospel-style stacks of voices")],
-  ["call", tx("Call and response"), tx("The harmony singers answer the lead")],
-  ["oohs", tx("Oohs and aahs"), tx("Wordless backing voices")],
-];
-const HARMONY_WHERE: [NonNullable<MusicSpec["harmony_where"]>, string][] = [["chorus", tx("Choruses")], ["throughout", tx("Throughout")], ["ending", tx("Last chorus")]];
-const HARMONY_INSTRUMENTS = [tx("Strings"), tx("Piano"), tx("Synth pad"), tx("Brass"), tx("Organ"), tx("Electric guitar"), tx("Flute"), tx("Choir pad")];
-const LEAD_INSTRUMENTS = [tx("Electric guitar"), tx("Acoustic guitar"), tx("Piano"), tx("Saxophone"), tx("Synth"), tx("Violin"), tx("Trumpet"), tx("Flute"), tx("Harmonica")];
-const ENERGIES: [NonNullable<MusicSpec["energy"]>, string][] = [["steady", tx("Steady")], ["builds", tx("Builds up")], ["big-chorus", tx("Big chorus")], ["quiet", tx("Quiet and intimate")]];
-const ENDINGS: [NonNullable<MusicSpec["ending"]>, string][] = [["fade", tx("Fade out")], ["big-finish", tx("Big finish")], ["hard-stop", tx("Hard stop")]];
-const PRODUCTIONS: [string, string][] = [
-  ["studio", tx("Polished studio")], ["live", tx("Live band")], ["lo-fi", tx("Lo-fi")], ["acoustic", tx("Acoustic")], ["modern", tx("Modern")],
-];
-/** How lines rhyme: [id, name, what it means]. */
-const RHYMES: [NonNullable<MusicSpec["rhyme"]>, string, string][] = [
-  ["aabb", "AABB", tx("Lines rhyme in pairs")],
-  ["abab", "ABAB", tx("Every other line rhymes")],
-  ["abcb", "ABCB", tx("The second and fourth lines rhyme")],
-  ["aaaa", "AAAA", tx("All the lines of a section rhyme")],
-  ["free", tx("No rhyme"), tx("Free verse")],
-];
-/** Sections a song can have: [the music model's tag, what people call it, seconds it takes]. */
-const SECTIONS: [string, string, number][] = [
-  ["Intro", tx("Intro"), 15], ["Instrumental Intro", tx("Instrumental intro"), 10], ["Verse", tx("Verse"), 30], ["Pre-Chorus", tx("Pre-chorus"), 15], ["Chorus", tx("Chorus"), 30],
-  ["Bridge", tx("Bridge"), 15], ["Solo", tx("Solo"), 15], ["Instrumental", tx("Instrumental break"), 10], ["Outro", tx("Outro"), 15],
-];
-/** Song shapes to start from. */
-const SHAPES: [string, string, string[]][] = [
-  ["verse-chorus", tx("Verse and chorus"), ["Verse", "Chorus", "Verse", "Chorus"]],
-  ["verse-chorus-bridge", tx("With a bridge"), ["Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus"]],
-  ["intro-outro", tx("Intro to outro"), ["Intro", "Verse", "Chorus", "Verse", "Chorus", "Outro"]],
-  ["build-drop", tx("Build-up and drop"), ["Intro", "Verse", "Pre-Chorus", "Chorus", "Verse", "Pre-Chorus", "Chorus"]],
-  ["aaba", tx("AABA (classic)"), ["Verse", "Verse", "Bridge", "Verse"]],
-  ["story", tx("Story (no chorus)"), ["Verse", "Verse", "Verse"]],
-];
-
-/** The length a structure needs: sung sections 7.5 s a line, played ones less. */
-function structureSeconds(sections: string[]): number {
-  const s = sections.reduce((n, x) => n + (SECTIONS.find(([id]) => id === x)?.[2] ?? 20), 0);
-  return Math.min(600, Math.max(10, Math.ceil(s / 10) * 10));
-}
-
-/** The song's sections in order: a shape to start from, then added, moved or taken out one by one. */
-function SongSections({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-  const name = (id: string) => t(SECTIONS.find(([s]) => s === id)?.[1] ?? id);
-  const move = (i: number, d: number) => {
-    const j = i + d;
-    if (j < 0 || j >= value.length) return;
-    const next = [...value];
-    [next[i], next[j]] = [next[j], next[i]];
-    onChange(next);
-  };
-  const choruses = value.filter((s) => s === "Chorus").length;
-  return (
-    <div className="music-field">
-      <span className="music-label">{t("Song structure")}</span>
-      <div className="filters tight wrap">
-        <button className={`chip ${value.length === 0 ? "active" : ""}`} onClick={() => onChange([])}>{t("Any")}</button>
-        {SHAPES.map(([id, label, list]) => (
-          <button key={id} className={`chip ${value.join("|") === list.join("|") ? "active" : ""}`} onClick={() => onChange([...list])}>{t(label)}</button>
-        ))}
-      </div>
-      {value.length > 0 && (
-        <ol className="song-sections">
-          {value.map((s, i) => (
-            <li key={`${i}-${s}`} className="song-section">
-              <button className="icon-btn small" disabled={i === 0} onClick={() => move(i, -1)} aria-label={t("Move {name} earlier", { name: name(s) })} title={t("Earlier")}>‹</button>
-              <span>{name(s)}</span>
-              <button className="icon-btn small" disabled={i === value.length - 1} onClick={() => move(i, 1)} aria-label={t("Move {name} later", { name: name(s) })} title={t("Later")}>›</button>
-              <button className="icon-btn small" onClick={() => onChange(value.filter((_, j) => j !== i))} aria-label={t("Take out {name}", { name: name(s) })} title={t("Take out")}>×</button>
-            </li>
-          ))}
-        </ol>
-      )}
-      <div className="row wrap">
-        {SECTIONS.map(([id, label]) => (
-          <button key={id} className="btn ghost small" onClick={() => onChange([...value, id])} disabled={value.length >= 24}>+ {t(label)}</button>
-        ))}
-      </div>
-      {value.length > 0 && (
-        <p className="small muted">
-          {choruses > 1 ? `${t("The chorus {n} times", { n: choruses })} · ` : choruses === 1 ? `${t("The chorus once")} · ` : ""}
-          {t("{n} sections, about {time} long", { n: value.length, time: mmss(structureSeconds(value)) })}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Chips to pick one or none: [value, name, what it means?]. */
-function Chips<T extends string>({ label, options, value, onChange, any = true }: { label: string; options: [T, string, string?][]; value: T | ""; onChange: (v: T | "") => void; any?: boolean }) {
-  return (
-    <div className="music-field">
-      <span className="music-label">{label}</span>
-      <div className="filters tight wrap">
-        {any && <button className={`chip ${value === "" ? "active" : ""}`} onClick={() => onChange("")}>{t("Any")}</button>}
-        {options.map(([v, name, why]) => (
-          <button key={v} className={`chip ${value === v ? "active" : ""}`} onClick={() => onChange(value === v && any ? "" : v)} title={why ? t(why) : undefined}>{t(name)}</button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Seconds of song a sung line needs to be heard (media/lyrics.rs `SECS_PER_LINE`). */
-const SECS_PER_LINE = 7.5;
-
-/** Sung lines in lyrics: not the [Verse] tags or blank lines. */
-function sungLines(lyrics: string): number {
-  return lyrics.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("[")).length;
-}
-
-/** A length that fits the lyrics, in steps of 10 seconds, at most 10 minutes. */
-function fitFor(lyrics: string): number {
-  return Math.min(600, Math.ceil((sungLines(lyrics) * SECS_PER_LINE) / 10) * 10);
-}
-
-/** Seconds as "1:05". */
-function mmss(s: number): string {
-  const m = Math.floor(s / 60);
-  const r = Math.round(s % 60);
-  return `${m}:${String(r).padStart(2, "0")}`;
-}
-
-/** A row of chips to pick one (or none) from, plus a box for anything else. */
-function PickOne({ label, options, value, onChange, other }: { label: string; options: string[]; value: string; onChange: (v: string) => void; other?: string }) {
-  const custom = value !== "" && !options.some((o) => t(o) === value || o === value);
-  return (
-    <div className="music-field">
-      <span className="music-label">{label}</span>
-      <div className="filters tight wrap">
-        {options.map((o) => (
-          <button key={o} className={`chip ${value === o || value === t(o) ? "active" : ""}`} onClick={() => onChange(value === o || value === t(o) ? "" : o)}>
-            {t(o)}
-          </button>
-        ))}
-        {other && <input className="input chip-input" value={custom ? value : ""} placeholder={other} aria-label={other} onChange={(e) => onChange(e.target.value)} />}
-      </div>
-    </div>
-  );
-}
-
-/** Chips to pick several from, plus a box to add others. */
-function PickMany({ label, options, value, onChange, other }: { label: string; options: string[]; value: string[]; onChange: (v: string[]) => void; other: string }) {
-  const [typed, setTyped] = useState("");
-  const toggle = (o: string) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
-  const extra = value.filter((v) => !options.includes(v));
-  return (
-    <div className="music-field">
-      <span className="music-label">{label}</span>
-      <div className="filters tight wrap">
-        {options.map((o) => (
-          <button key={o} className={`chip ${value.includes(o) ? "active" : ""}`} onClick={() => toggle(o)}>
-            {t(o)}
-          </button>
-        ))}
-        {extra.map((o) => (
-          <button key={o} className="chip active" onClick={() => toggle(o)} title={t("Remove")}>
-            {o} ×
-          </button>
-        ))}
-        <input
-          className="input chip-input"
-          value={typed}
-          placeholder={other}
-          aria-label={other}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && typed.trim()) {
-              onChange([...value, typed.trim()]);
-              setTyped("");
-            }
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
 /** The song being worked on: picked from a file or the gallery, and heard. */
 function SongSource({ song, gallery, onPick, toast }: { song: MediaItem | null; gallery: MediaItem[]; onPick: (i: MediaItem | null) => void; toast: PushToast }) {
   const src = useMediaUrl(song);
@@ -1098,6 +817,7 @@ function MusicComposer({
   gallery,
   toast,
   seed,
+  onCompose,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -1108,11 +828,14 @@ function MusicComposer({
   toast: PushToast;
   /** A song picked in the viewer to work on. */
   seed?: { item: MediaItem; task: SongTask } | null;
+  /** Written as notes first: opens in Compose's editor. */
+  onCompose: (c: Composition) => void;
 }) {
   const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
   const [prompt, setPrompt] = useState("");
-  const [genre, setGenre] = useState("");
-  const [mood, setMood] = useState("");
+  // Several styles, moods and feelings can be picked together.
+  const [genre, setGenre] = useState<string[]>([]);
+  const [mood, setMood] = useState<string[]>([]);
   const [instruments, setInstruments] = useState<string[]>([]);
   const [vocals, setVocals] = useState<"write" | "none" | "mine">("write");
   const [voice, setVoice] = useState("");
@@ -1137,7 +860,7 @@ function MusicComposer({
   const [ending, setEnding] = useState<NonNullable<MusicSpec["ending"]> | "">("");
   const [production, setProduction] = useState("");
   const [era, setEra] = useState("");
-  const [emotion, setEmotion] = useState("");
+  const [emotion, setEmotion] = useState<string[]>([]);
   const [vocalEffects, setVocalEffects] = useState<VocalEffect[]>([]);
   // An artist's style: the name typed, and what the chat model said of them.
   const [soundLike, setSoundLike] = useState("");
@@ -1198,8 +921,8 @@ function MusicComposer({
   // Harmonies layered on afterwards need the model that adds parts.
   const canLayer = models.some((x) => (x.can ?? []).includes("parts"));
   const spec = (): MusicSpec => ({
-    genre: genre || null,
-    mood: mood || null,
+    genre: joined(genre),
+    mood: joined(mood),
     instruments,
     voice: voice || null,
     beat: beat && beat !== "Steady" ? beat : null,
@@ -1223,7 +946,7 @@ function MusicComposer({
     auto_length: auto,
     persona: mode === "song" && personaId ? personaId : null,
     voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
-    emotion: emotion || null,
+    emotion: joined(emotion),
     vocal_effects: singing ? vocalEffects : [],
     sound_like: soundLike.trim() || null,
     // Looked up for this name (else it's looked up when the song is made).
@@ -1240,6 +963,37 @@ function MusicComposer({
         }
       : {}),
   });
+  // Written as notes first (Compose): the plan follows every option picked
+  // here, and Make it real starts from them.
+  const [arranging, setArranging] = useState(false);
+  const writeAsNotes = async () => {
+    setArranging(true);
+    try {
+      const [beats, unit] = (meter || "4/4").split("/").map(Number);
+      const s = spec();
+      onCompose(
+        await api.composeWrite({
+          description: prompt.trim() || [joined(genre), joined(mood)].filter(Boolean).join(", ") || "a song",
+          beats,
+          unit,
+          bpm,
+          key: key || null,
+          style: joined(genre),
+          sections: s.sections?.length || (auto ? 6 : Math.max(2, Math.min(12, Math.round(secs / 25)))),
+          vocals: vocals !== "none",
+          voice,
+          era,
+          song: s,
+          lyrics: vocals === "mine" && lyrics.trim() ? lyrics : null,
+          language: language === "auto" ? null : language,
+        }),
+      );
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setArranging(false);
+    }
+  };
   const writeLyrics = async () => {
     setWriting(true);
     try {
@@ -1261,10 +1015,10 @@ function MusicComposer({
       const s = await api.musicArtistStyle(name);
       // "piano" lights the Piano chip rather than adding another.
       const known = (list: string[], v: string) => list.find((o) => o.toLowerCase() === v.toLowerCase()) ?? v;
-      if (s.genre) setGenre(known(GENRES, s.genre));
+      if (s.genre) setGenre(listed(s.genre).map((g) => known(GENRES, g)));
       if (s.voice) setVoice(s.voice);
       if (s.instruments.length) setInstruments(s.instruments.map((i) => known(INSTRUMENTS, i)));
-      if (s.mood) setMood(known(MOODS, s.mood));
+      if (s.mood) setMood(listed(s.mood).map((x) => known(MOODS, x)));
       if (s.bpm) setBpm(s.bpm);
       setArtist({ name, sound: [s.vocal, s.production].filter(Boolean).join(", "), writing: s.writing });
     } catch (e) {
@@ -1283,8 +1037,8 @@ function MusicComposer({
     if (!p) return;
     const s = p.sound;
     const [note, scale] = (s.key ?? "").split(" ");
-    setGenre(s.genre ?? "");
-    setMood(s.mood ?? "");
+    setGenre(listed(s.genre));
+    setMood(listed(s.mood));
     setInstruments(s.instruments ?? []);
     setVoice(s.voice ?? "");
     setBeat(s.beat ?? "");
@@ -1306,7 +1060,7 @@ function MusicComposer({
     const decade = /^\d{4}s$/.test(s.production ?? "");
     setProduction(decade ? "" : s.production ?? "");
     setEra(s.era ?? (decade ? s.production! : ""));
-    setEmotion(s.emotion ?? "");
+    setEmotion(listed(s.emotion));
     setVocalEffects(s.vocal_effects ?? []);
     setSoundLike(s.sound_like ?? "");
     setArtist(s.sound_like && s.artist_sound ? { name: s.sound_like, sound: s.artist_sound, writing: s.artist_writing ?? "" } : null);
@@ -1358,8 +1112,8 @@ function MusicComposer({
     mode === "sound"
       ? !!prompt.trim()
       : mode === "song"
-        ? (!!prompt.trim() || !!genre || instruments.length > 0) && !(vocals === "mine" && !lyrics.trim())
-        : !!song && (task !== "cover" || !!prompt.trim() || !!genre || instruments.length > 0);
+        ? (!!prompt.trim() || genre.length > 0 || instruments.length > 0) && !(vocals === "mine" && !lyrics.trim())
+        : !!song && (task !== "cover" || !!prompt.trim() || genre.length > 0 || instruments.length > 0);
   const go = async () => {
     const ok = await onStart({
       op: mode === "sound" ? "sound" : "music",
@@ -1519,9 +1273,9 @@ function MusicComposer({
 
       {styled && (
         <>
-          <PickOne label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Other style")} />
-          <PickOne label={t("Mood of the music")} options={MOODS} value={mood} onChange={setMood} other={t("Other mood")} />
-          {(mode !== "song" || vocals !== "none") && <PickOne label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Other emotion")} />}
+          <PickMany label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Add another style (Enter)")} />
+          <PickMany label={t("Mood of the music")} options={MOODS} value={mood} onChange={setMood} other={t("Add another mood (Enter)")} />
+          {(mode !== "song" || vocals !== "none") && <PickMany label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Add another feeling (Enter)")} />}
           <PickMany label={t("Instruments")} options={INSTRUMENTS} value={instruments} onChange={setInstruments} other={t("Add another (Enter)")} />
         </>
       )}
@@ -1532,7 +1286,7 @@ function MusicComposer({
           <button className="link" onClick={onModels}>{t("Get them")}</button>
         </p>
       )}
-      {mode === "song" && vocals !== "none" && SOFT_VOCALS.includes(genre) && (
+      {mode === "song" && vocals !== "none" && genre.some((g) => SOFT_VOCALS.includes(g)) && (
         <p className="small muted">{t("Vocals in this style usually come out soft or blurred. For words you can make out, Pop, Rock, Folk or Country work best.")}</p>
       )}
       {mode === "song" && (
@@ -1693,7 +1447,7 @@ function MusicComposer({
             )}
             <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
               <option value="">{t("Any time signature")}</option>
-              {["4/4", "3/4", "6/8", "2/4"].map((x) => (
+              {TIMES.map(([b, u]) => `${b}/${u}`).map((x) => (
                 <option key={x} value={x}>{x}</option>
               ))}
             </select>
@@ -1766,10 +1520,20 @@ function MusicComposer({
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
         <span className="spacer" />
         {m && <span className="small muted">{waitLabel(est)}</span>}
+        {mode === "song" && (
+          <button className="btn" disabled={!ready || arranging} onClick={writeAsNotes} title={t("See and change every note in an editor first, then make it real with these settings")}>
+            {arranging ? t("Writing the arrangement…") : t("Write it as notes first")}
+          </button>
+        )}
         <button className="btn primary" disabled={!ready || !m} onClick={go}>
           {mode === "sound" ? t("Make the sound") : mode === "edit" ? t("Make it") : t("Make the song")}
         </button>
       </div>
+      {mode === "song" && (
+        <p className="small muted">
+          {t("Write it as notes first: the chat model arranges the song in bars and chords for every part, you can see, hear and change any note, then Make it real records it with these settings.")}
+        </p>
+      )}
       {mode === "sound" && <p className="small muted">{t("Sound effects come from the music model, so they're rough sketches rather than library-quality recordings.")}</p>}
       {mode === "song" && secs > 240 && <p className="small muted">{t("Long songs take a while: about {time} here.", { time: waitLabel(est) })}</p>}
     </div>

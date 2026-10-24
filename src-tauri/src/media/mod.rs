@@ -628,7 +628,7 @@ pub fn recommended(state: &AppState, kind: Kind) -> Option<MediaModel> {
 /// style, instruments, voice and beat (folded into the music model's
 /// description), its tempo, key and time signature (the music model's own
 /// settings), and work on a song they have.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct MusicSpec {
     /// "Pop", "Jazz", "Lo-fi hip hop"…
@@ -4654,24 +4654,70 @@ pub fn compose_midi(state: AppStateRef, composition: compose::Composition, path:
 /// its words. A new song in the gallery; the composition stays as it is.
 /// `strength`: how closely it follows the demo (0 to 1).
 #[tauri::command(async)]
-pub fn compose_make_real(state: AppStateRef, id: String, strength: Option<f32>, model_id: Option<String>, chat_id: Option<String>) -> Result<String, String> {
+#[allow(clippy::too_many_arguments)]
+pub fn compose_make_real(
+    state: AppStateRef,
+    id: String,
+    strength: Option<f32>,
+    model_id: Option<String>,
+    chat_id: Option<String>,
+    song: Option<MusicSpec>,
+    lyrics: Option<String>,
+    language: Option<String>,
+) -> Result<String, String> {
     let c = state.cipher()?;
     let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("Keep the song first.")?;
     let plan = item.composition.as_ref().map(|x| x.plan.clone()).ok_or("That isn't a composition.")?;
-    let request = real_request(&plan, &id, strength, model_id, chat_id);
+    let request = real_request(&plan, &id, strength, model_id, chat_id, song, lyrics, language);
     media_start(state, request)
 }
 
-/// The music job that makes a composition real (`compose_make_real`).
-pub(crate) fn real_request(plan: &compose::Plan, id: &str, strength: Option<f32>, model_id: Option<String>, chat_id: Option<String>) -> Request {
-    let words = plan.lyrics();
+/// The music job that makes a composition real (`compose_make_real`): every
+/// song option picked (in `song`, else the ones it was written with) and
+/// the words given (else its own), with the composition's tempo, key and
+/// time signature, as a cover of its demo.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn real_request(
+    plan: &compose::Plan,
+    id: &str,
+    strength: Option<f32>,
+    model_id: Option<String>,
+    chat_id: Option<String>,
+    song: Option<MusicSpec>,
+    lyrics: Option<String>,
+    language: Option<String>,
+) -> Request {
+    let words = lyrics.map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).unwrap_or_else(|| plan.lyrics());
     let sung = lyrics::has_singing(&words);
     let ins = &plan.instruments;
-    // The parts as the music model knows them; the tune is sung when there are words.
-    let mut instruments = vec![ins.chords.clone(), ins.bass.clone(), if ins.drums.contains("kit") { "drums".into() } else { ins.drums.clone() }];
-    if !sung {
-        instruments.push(ins.melody.clone());
+    let filled = |o: Option<String>| o.filter(|s| !s.trim().is_empty());
+    let mut spec = song.or_else(|| plan.song.clone()).unwrap_or_default();
+    // The parts as the music model knows them, unless instruments were
+    // picked; the tune is sung when there are words.
+    if spec.instruments.is_empty() {
+        let mut list = vec![ins.chords.clone(), ins.bass.clone(), if ins.drums.contains("kit") { "drums".into() } else { ins.drums.clone() }];
+        if !sung {
+            list.push(ins.melody.clone());
+        }
+        spec.instruments = list.into_iter().filter(|i| !i.trim().is_empty()).collect();
     }
+    spec.genre = filled(spec.genre).or_else(|| filled(Some(plan.style.clone())));
+    spec.era = filled(spec.era).or_else(|| filled(Some(plan.era.clone())));
+    spec.voice = if sung { filled(spec.voice).or_else(|| filled(Some(plan.voice.clone()))) } else { None };
+    // The composition's own tempo, key, time signature and shape.
+    spec.task = Some("cover".into());
+    spec.audio = Some(id.to_string());
+    spec.bpm = Some(plan.bpm);
+    spec.key = Some(plan.key.clone());
+    spec.time_signature = Some(plan.time());
+    spec.strength = Some(strength.unwrap_or(if sung { REAL_STRENGTH_SUNG } else { REAL_STRENGTH_PLAYED }).clamp(0.0, 1.0));
+    spec.sections.clear();
+    spec.structure = None;
+    spec.auto_length = false;
+    spec.harmony_layer = false;
+    spec.region = None;
+    spec.extend_by = None;
+    spec.track = None;
     let prompt = if plan.description.trim().is_empty() { format!("{} song", plan.style) } else { plan.description.clone() };
     Request {
         op: "music".into(),
@@ -4679,20 +4725,9 @@ pub(crate) fn real_request(plan: &compose::Plan, id: &str, strength: Option<f32>
         prompt,
         lyrics: sung.then_some(words),
         instrumental: Some(!sung),
+        language: filled(language).filter(|l| l != "auto").or_else(|| plan.language.clone()),
         chat_id,
-        music: Some(MusicSpec {
-            task: Some("cover".into()),
-            audio: Some(id.to_string()),
-            genre: Some(plan.style.clone()).filter(|s| !s.trim().is_empty()),
-            era: Some(plan.era.clone()).filter(|e| !e.trim().is_empty()),
-            instruments: instruments.into_iter().filter(|i| !i.trim().is_empty()).collect(),
-            voice: Some(plan.voice.clone()).filter(|v| sung && !v.is_empty()),
-            bpm: Some(plan.bpm),
-            key: Some(plan.key.clone()),
-            time_signature: Some(plan.time()),
-            strength: Some(strength.unwrap_or(if sung { REAL_STRENGTH_SUNG } else { REAL_STRENGTH_PLAYED }).clamp(0.0, 1.0)),
-            ..Default::default()
-        }),
+        music: Some(spec),
         ..Default::default()
     }
 }
@@ -4736,6 +4771,37 @@ pub fn image_data_url(state: &AppState, c: &crate::crypto::Cipher, id: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Made real, a composition keeps every song option picked (emotion,
+    /// ways of singing, harmonies…) and the words given, with its own tempo,
+    /// key and time signature; without options, the ones it was written with.
+    #[test]
+    fn a_composition_is_made_real_as_asked() {
+        let plan = compose::Plan {
+            bpm: 92,
+            beats: 6,
+            unit: 8,
+            key: "D major".into(),
+            style: "folk".into(),
+            voice: "male".into(),
+            sections: vec![compose::PlanSection { name: "Verse".into(), lines: vec!["Old words".into()], ..Default::default() }],
+            song: Some(MusicSpec { emotion: Some("Hopeful".into()), bpm: Some(140), ..Default::default() }),
+            ..Default::default()
+        };
+        let asked = MusicSpec { emotion: Some("Heartbroken, Longing".into()), vocal_style: Some("raspy".into()), harmony_voice: Some("female".into()), sections: vec!["Intro".into()], ..Default::default() };
+        let r = real_request(&plan, "demo", None, None, None, Some(asked), Some("[Verse]\nNew words".into()), Some("en".into()));
+        let m = r.music.unwrap();
+        assert_eq!((m.emotion.as_deref(), m.vocal_style.as_deref(), m.harmony_voice.as_deref()), (Some("Heartbroken, Longing"), Some("raspy"), Some("female")));
+        assert_eq!((m.bpm, m.key.as_deref(), m.time_signature.as_deref(), m.task.as_deref(), m.audio.as_deref()), (Some(92), Some("D major"), Some("6/8"), Some("cover"), Some("demo")));
+        assert_eq!((m.genre.as_deref(), m.voice.as_deref(), m.strength), (Some("folk"), Some("male"), Some(REAL_STRENGTH_SUNG)));
+        assert!(m.sections.is_empty(), "the composition's own shape");
+        assert_eq!((r.lyrics.as_deref(), r.language.as_deref()), (Some("[Verse]\nNew words"), Some("en")));
+        // Nothing asked: what it was written with, and its own words.
+        let r = real_request(&plan, "demo", None, None, None, None, None, None);
+        let m = r.music.as_ref().unwrap();
+        assert_eq!((m.emotion.as_deref(), m.bpm), (Some("Hopeful"), Some(92)));
+        assert_eq!(r.lyrics.as_deref(), Some("[Verse]\nOld words"));
+    }
 
     /// Making a song's unclear parts again is a music model's job (no music
     /// model says it can "remake": the job failed for want of one).

@@ -1761,6 +1761,9 @@ export interface Plan {
   description: string;
   voice: string;
   era: string;
+  /** Every option picked in the Music tab: what Make it real asks for. */
+  song?: MusicSpec | null;
+  language?: string | null;
 }
 
 /** A note of a composition, in beats (the time signature's unit) from the start. */
@@ -1789,6 +1792,11 @@ export interface ComposeAsk {
   voice: string;
   era: string;
   seed?: number;
+  /** Every option picked in the Music tab. */
+  song?: MusicSpec | null;
+  /** Their own lyrics: the sections and lines the plan is built around. */
+  lyrics?: string | null;
+  language?: string | null;
 }
 
 /** A change to one section of a composition. */
@@ -2629,7 +2637,9 @@ export const api = {
   composeSave: (id: string | null, composition: Composition, audio: string, seconds: number) => invoke<MediaItem>("compose_save", { id, composition, audio, seconds }),
   /** Saved at `path`; without one, its bytes (for the player). */
   composeMidi: (composition: Composition, path: string | null) => invoke<ArrayBuffer>("compose_midi", { composition, path }),
-  composeMakeReal: (id: string, strength?: number, modelId?: string | null) => invoke<string>("compose_make_real", { id, strength: strength ?? null, modelId: modelId ?? null, chatId: null }),
+  /** Made real with the song options and words given (else the ones it was written with). */
+  composeMakeReal: (id: string, o: { strength?: number; modelId?: string | null; song?: MusicSpec | null; lyrics?: string | null; language?: string | null }) =>
+    invoke<string>("compose_make_real", { id, strength: o.strength ?? null, modelId: o.modelId ?? null, chatId: null, song: o.song ?? null, lyrics: o.lyrics ?? null, language: o.language ?? null }),
   mailPreset: (email: string) => invoke<{ config: MailConfig; note: string | null }>("mail_preset", { email }),
   mailAccounts: () => invoke<MailAccount[]>("mail_accounts"),
   addMailAccount: (config: MailConfig) => invoke<string>("add_mail_account", { config }),
