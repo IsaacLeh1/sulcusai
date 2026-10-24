@@ -102,6 +102,10 @@ pub struct Provider {
     /// People (linked in People) its chats are shared with, live.
     #[serde(default)]
     pub share_people: Vec<String>,
+    /// A proxy only its requests go through (encrypted; empty: none), such
+    /// as a VPN's local SOCKS proxy for a server inside a company network.
+    #[serde(default)]
+    pub proxy: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,7 +137,30 @@ pub struct Spend {
 }
 
 pub fn settings(conn: &Connection) -> CloudSettings {
-    db::get(conn, KEY).unwrap_or_default()
+    let mut s: CloudSettings = db::get(conn, KEY).unwrap_or_default();
+    // An address pasted with its endpoint on the end ("…/v1/models").
+    for p in &mut s.providers {
+        p.base_url = clean_base(&p.base_url);
+    }
+    s
+}
+
+/// A server's API address as typed: without a trailing slash, or an
+/// endpoint pasted on the end ("https://x/v1/models" → "https://x/v1").
+pub fn clean_base(url: &str) -> String {
+    let u = url.trim().trim_end_matches('/');
+    // Also with the "/v1" the LiteLLM choice adds after it ("…/v1/models/v1").
+    let (core, v1) = match u.strip_suffix("/v1") {
+        Some(c) if ["/chat/completions", "/completions", "/models", "/messages"].iter().any(|e| c.ends_with(e)) => (c, true),
+        _ => (u, false),
+    };
+    for end in ["/chat/completions", "/completions", "/models", "/messages"] {
+        if let Some(cut) = core.strip_suffix(end) {
+            let cut = cut.trim_end_matches('/');
+            return if v1 && !cut.ends_with("/v1") { format!("{cut}/v1") } else { cut.to_string() };
+        }
+    }
+    u.to_string()
 }
 
 fn save(conn: &Connection, s: &CloudSettings) -> Result<(), String> {
@@ -155,7 +182,7 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
@@ -240,6 +267,8 @@ pub struct Target {
     state: Arc<AppState>,
     /// The chat its replies are for, so what they cost is counted there.
     chat: std::sync::Mutex<Option<String>>,
+    /// Its provider's own proxy (empty: none).
+    proxy: String,
 }
 
 impl Target {
@@ -301,6 +330,7 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         redact: s.redact,
         state: state.clone(),
         chat: Default::default(),
+        proxy: proxy_of(p, cipher),
     };
     let ep = Endpoint { port: 0, key: String::new(), ctx, extra: crate::advanced::get(state).request_extra(), cloud: Some(Arc::new(target)) };
     let spec = ModelSpec {
@@ -468,12 +498,18 @@ fn redact_messages(messages: &mut [Value], r: &mut Redactor) {
 
 // ---------- requests ----------
 
-fn client(state: &AppState) -> Result<reqwest::Client, String> {
-    net::external_client(state.settings().connectivity, Purpose::Cloud, false)
+/// A client for one provider: through its own proxy when it has one.
+fn via(state: &AppState, proxy: &str) -> Result<reqwest::Client, String> {
+    net::external_client_via(state.settings().connectivity, Purpose::Cloud, false, Some(proxy).filter(|p| !p.is_empty()))
 }
 
-pub fn media_client(state: &AppState) -> Result<reqwest::Client, String> {
-    client(state)
+/// A provider's proxy, opened (empty: none).
+fn proxy_of(p: &Provider, c: &Cipher) -> String {
+    if p.proxy.is_empty() { String::new() } else { c.decrypt(&p.proxy).unwrap_or_default() }
+}
+
+pub fn media_client(state: &AppState, t: &MediaTarget) -> Result<reqwest::Client, String> {
+    via(state, &t.proxy)
 }
 
 /// Where a picture, video or voice job goes.
@@ -483,6 +519,7 @@ pub struct MediaTarget {
     key: String,
     pub model: CloudMedia,
     pub redact: bool,
+    proxy: String,
 }
 
 impl MediaTarget {
@@ -519,7 +556,7 @@ pub fn media_target(state: &AppState, id: &str, cipher: &Cipher) -> Result<Media
     if key.is_empty() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
-    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact })
+    Ok(MediaTarget { provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, proxy: proxy_of(p, cipher) })
 }
 
 /// Cloud media models usable right now (Cloud level, provider on, key set).
@@ -630,7 +667,7 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
     if t.redact {
         redact_messages(&mut messages, &mut redactor);
     }
-    let client = client(&t.state)?;
+    let client = via(&t.state, &t.proxy)?;
     let started = std::time::Instant::now();
     let mut restore = |d: Delta| {
         on_delta(match d {
@@ -1028,6 +1065,8 @@ pub struct ProviderView {
     media_suggestions: Vec<CloudMedia>,
     share_pcs: bool,
     share_people: Vec<String>,
+    /// Its requests go through a proxy of their own.
+    has_proxy: bool,
 }
 
 #[derive(Serialize)]
@@ -1052,6 +1091,7 @@ fn pview(p: &Provider) -> ProviderView {
         media_suggestions: media_suggestions(&p.id),
         share_pcs: p.share_pcs,
         share_people: p.share_people.clone(),
+        has_proxy: !p.proxy.is_empty(),
     }
 }
 
@@ -1070,7 +1110,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
     let p = match preset {
         Some(id) => presets().into_iter().find(|p| p.id == id).ok_or("Unknown provider")?,
         None => {
-            let url = base_url.unwrap_or_default().trim().trim_end_matches('/').to_string();
+            let url = clean_base(&base_url.unwrap_or_default());
             if !net::private_ok(&url) {
                 return Err("Use an https:// address (or a local one).".into());
             }
@@ -1078,7 +1118,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
             // The same server gets the same id on every PC, so a chat synced
             // from another PC finds its model here. The id stays in this
             // app (and its synced chats); it's never sent to the server.
-            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new() }
+            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new(), proxy: String::new() }
         }
     };
     let mut p = p;
@@ -1144,7 +1184,7 @@ pub async fn cloud_models_available(state: AppStateRef<'_>, id: String) -> Resul
     }
     let key = c.decrypt(&p.key)?;
     let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
-    let client = client(&state)?;
+    let client = via(&state, &proxy_of(&p, &c))?;
     state.log("network", &format!("Asked {} which models it offers", p.name));
     list_models(&p, &key, &cookies, &client).await
 }
@@ -1185,13 +1225,14 @@ pub fn cloud_sign_in(app: tauri::AppHandle, state: AppStateRef, id: String) -> R
 /// Waits for the sign-in in the viewer, trying the session each time the
 /// site's cookies change, until its model list answers.
 async fn watch_sign_in(app: tauri::AppHandle, state: Arc<AppState>, id: String, site: String) {
-    use tauri::{Emitter, Manager};
+    use tauri::Emitter;
     let Ok(url) = tauri::Url::parse(&site) else { return };
     let until = std::time::Instant::now() + Duration::from_secs(600);
     let mut tried = String::new();
     while std::time::Instant::now() < until {
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let Some(w) = app.get_webview("viewer") else { continue };
+        // Any web viewer: they share one profile, so one sign-in.
+        let Some(w) = crate::viewer::all(&app).into_iter().next() else { continue };
         let u = url.clone();
         // Never on the main thread: reading cookies there waits forever (WebView2).
         let Ok(Ok(cookies)) = tokio::task::spawn_blocking(move || w.cookies_for_url(u)).await else { continue };
@@ -1208,7 +1249,7 @@ async fn watch_sign_in(app: tauri::AppHandle, state: Arc<AppState>, id: String, 
             None if !p.key.is_empty() => c.decrypt(&p.key).unwrap_or_default(),
             None => continue,
         };
-        let Ok(http) = client(&state) else { return };
+        let Ok(http) = via(&state, &proxy_of(&p, &c)) else { return };
         if list_models(&p, &key, &header, &http).await.is_err() {
             continue;
         }
@@ -1371,6 +1412,43 @@ pub fn people_for(conn: &Connection, model_id: Option<&str>) -> Vec<String> {
     provider_of(&settings(conn), m).map(|p| p.share_people.clone()).unwrap_or_default()
 }
 
+/// What a proxy address must look like: socks5://, socks5h:// (names looked
+/// up through the proxy, needed for names only the VPN knows), http:// or
+/// https://, with a host and a port.
+pub fn proxy_problem(proxy: &str) -> Option<&'static str> {
+    let Ok(u) = reqwest::Url::parse(proxy.trim()) else { return Some("Write the proxy like socks5h://127.0.0.1:1080.") };
+    if !matches!(u.scheme(), "socks5" | "socks5h" | "http" | "https") {
+        return Some("The proxy must start with socks5h://, socks5://, http:// or https://.");
+    }
+    if u.host_str().is_none_or(str::is_empty) || u.port().is_none() {
+        return Some("Give the proxy's address and port, like socks5h://127.0.0.1:1080.");
+    }
+    None
+}
+
+/// Sends one provider's requests through a proxy (empty: directly).
+#[tauri::command(async)]
+pub fn set_cloud_proxy(state: AppStateRef, id: String, proxy: String) -> Result<CloudView, String> {
+    let c = state.cipher()?;
+    let proxy = proxy.trim().to_string();
+    if !proxy.is_empty() {
+        if let Some(why) = proxy_problem(&proxy) {
+            return Err(why.into());
+        }
+    }
+    let name = {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
+        p.proxy = if proxy.is_empty() { String::new() } else { c.encrypt(&proxy) };
+        let name = p.name.clone();
+        save(&conn, &s)?;
+        name
+    };
+    state.log("settings", &format!("{name}: requests {}", if proxy.is_empty() { "go directly" } else { "go through its own proxy" }));
+    Ok(cloud_view(state))
+}
+
 /// Where a provider's chats go: this user's other PCs with the same key,
 /// and people linked in People.
 #[tauri::command(async)]
@@ -1423,6 +1501,51 @@ pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
             p.models.iter().map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision, price_in: m.price_in, price_out: m.price_out })
         })
         .collect()
+}
+
+/// For a test against a real provider set up in the app: the models it
+/// offers, and a one-word reply from each model picked. Nothing secret
+/// (key, cookies, proxy, address) goes in the report.
+#[cfg(test)]
+pub(crate) async fn check_provider(p: &Provider, c: &Cipher) -> String {
+    let mut report = format!("{} ({}, {}): ", p.name, if p.base_url.starts_with("https://") { "https" } else { "plain http" }, if p.proxy.is_empty() { "direct" } else { "through its proxy" });
+    let key = match c.decrypt(&p.key) {
+        Ok(k) => k,
+        Err(_) => return report + "its key couldn't be opened",
+    };
+    let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
+    let proxy = proxy_of(p, c);
+    let client = match net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(proxy.as_str()).filter(|x| !x.is_empty())) {
+        Ok(c) => c,
+        Err(e) => return report + &e,
+    };
+    let started = std::time::Instant::now();
+    match list_models(p, &key, &cookies, &client).await {
+        Ok(models) => report += &format!("offers {} models in {} ms; ", models.len(), started.elapsed().as_millis()),
+        Err(e) => return report + &format!("listing its models failed after {} ms: {e}", started.elapsed().as_millis()),
+    }
+    if p.kind != Kind::Openai {
+        return report;
+    }
+    let base = p.base_url.trim_end_matches('/');
+    for m in &p.models {
+        let t = std::time::Instant::now();
+        let body = json!({ "model": m.id, "messages": [{ "role": "user", "content": "Reply with only the word OK." }], "max_tokens": 200, "stream": false });
+        let mut req = client.post(format!("{base}/chat/completions")).bearer_auth(&key).json(&body).timeout(Duration::from_secs(120));
+        if !cookies.is_empty() {
+            req = req.header("cookie", &cookies);
+        }
+        let answer = match req.send().await {
+            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
+                Ok(v) => format!("\u{201c}{}\u{201d}", v.pointer("/choices/0/message/content").and_then(Value::as_str).unwrap_or("(empty)").trim().chars().take(60).collect::<String>()),
+                Err(e) => format!("unreadable reply ({e})"),
+            },
+            Ok(r) => format!("error {}", r.status()),
+            Err(e) => format!("failed ({e})"),
+        };
+        report += &format!("\n  {}: {answer} in {} ms", m.name, t.elapsed().as_millis());
+    }
+    report
 }
 
 #[cfg(test)]
@@ -1504,6 +1627,58 @@ mod tests {
     }
 
     #[test]
+    fn proxy_addresses_are_checked_and_carry_the_providers_requests() {
+        // A provider whose address only the proxy can reach (as a server
+        // inside a company network is reached only through the VPN).
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        rt.block_on(async {
+            use axum::{routing::get, Json, Router};
+            let seen: Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+            let s = seen.clone();
+            let app = Router::new().route(
+                "/v1/models",
+                get(move |uri: axum::http::Uri| {
+                    let s = s.clone();
+                    async move {
+                        s.lock().unwrap().push(uri.to_string());
+                        Json(serde_json::json!({ "data": [{ "id": "gpt-4o" }] }))
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+            let p = Provider { id: "custom-vpn".into(), name: "LiteLLM".into(), kind: Kind::Openai, base_url: "http://llm.corp.invalid:4000/v1".into(), enabled: true, key: String::new(), models: vec![], media: vec![], cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() };
+            let direct = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, None).unwrap();
+            assert!(list_models(&p, "k", "", &direct).await.is_err(), "not reachable directly");
+            let proxied = net::external_client_via(Connectivity::Cloud, Purpose::Cloud, false, Some(&format!("http://127.0.0.1:{port}"))).unwrap();
+            let models = list_models(&p, "k", "", &proxied).await.unwrap();
+            assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["gpt-4o"]);
+            assert!(seen.lock().unwrap()[0].contains("llm.corp.invalid"), "the proxy was asked for the provider's address");
+        });
+    }
+
+    #[test]
+    fn pasted_endpoints_come_off_a_servers_address() {
+        assert_eq!(clean_base("https://litellm.example.edu/v1/models"), "https://litellm.example.edu/v1");
+        assert_eq!(clean_base("https://x.example/v1/chat/completions/"), "https://x.example/v1");
+        assert_eq!(clean_base(" https://x.example/api/ "), "https://x.example/api");
+        assert_eq!(clean_base("https://api.anthropic.com"), "https://api.anthropic.com");
+        assert_eq!(clean_base("https://litellm.example.edu/v1/models/v1"), "https://litellm.example.edu/v1");
+        assert_eq!(clean_base("https://litellm.example.edu/models/v1"), "https://litellm.example.edu/v1");
+        assert_eq!(clean_base("https://litellm.example.edu/v1"), "https://litellm.example.edu/v1");
+    }
+
+    #[test]
+    fn proxy_addresses_are_checked() {
+        assert!(proxy_problem("socks5h://127.0.0.1:11080").is_none());
+        assert!(proxy_problem("http://proxy.corp.example:3128").is_none());
+        assert!(proxy_problem("127.0.0.1:1080").is_some(), "the kind is needed");
+        assert!(proxy_problem("socks5h://127.0.0.1").is_some(), "and the port");
+        assert!(proxy_problem("ftp://x:21").is_some());
+    }
+
+    #[test]
     fn model_refs_round_trip() {
         let id = model_ref("openrouter", "meta-llama/llama-4:free");
         assert_eq!(parse_ref(&id), Some(("openrouter", "meta-llama/llama-4:free")));
@@ -1531,6 +1706,7 @@ mod tests {
             cookies: String::new(),
             share_pcs: false,
             share_people: vec![],
+            proxy: String::new(),
         };
         save(&conn, &CloudSettings { providers: vec![here.clone()], ..Default::default() }).unwrap();
         let mine = model_ref(&here.id, "gpt-4o");

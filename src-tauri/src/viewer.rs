@@ -64,7 +64,8 @@ pub fn webview(app: &AppHandle, key: &str) -> Option<Webview> {
     app.get_webview(&label(key))
 }
 
-fn all(app: &AppHandle) -> Vec<Webview> {
+/// Every viewer open now (they share one profile, so one sign-in).
+pub fn all(app: &AppHandle) -> Vec<Webview> {
     app.webviews().into_iter().filter(|(l, _)| l.starts_with(PREFIX)).map(|(_, w)| w).collect()
 }
 

@@ -4282,5 +4282,16 @@
  "{name} sees what you write, and their PC answers it in their chat, within the limits they set{limits}.": "{name} 能看到你写的内容，并由对方的电脑在其聊天中、在对方设定的限制内回答{limits}。",
  "{n} minutes an answer": "每次回答 {n} 分钟",
  "{n} s": "{n} 秒",
- "{n} tokens a day": "每天 {n} 个 token"
+ "{n} tokens a day": "每天 {n} 个 token",
+ "Connection": "连接",
+ "Give the proxy's address and port, like socks5h://127.0.0.1:1080.": "请填写代理的地址和端口，例如 socks5h://127.0.0.1:1080。",
+ "Go direct": "直接连接",
+ "Only this provider's requests go through the proxy; the rest of the PC and the app go the usual way. For a server inside a company network, point it at a VPN's local SOCKS proxy (use socks5h:// so the VPN looks up the server's name).": "只有这个提供方的请求会经过代理；电脑和应用的其他流量照常。对于公司内网中的服务器，请填写 VPN 的本地 SOCKS 代理（使用 socks5h://，让 VPN 解析服务器名称）。",
+ "Proxy saved (encrypted). Type a new one to replace it.": "代理已保存（已加密）。输入新的代理即可替换。",
+ "Save proxy": "保存代理",
+ "The proxy must start with socks5h://, socks5://, http:// or https://.": "代理必须以 socks5h://、socks5://、http:// 或 https:// 开头。",
+ "Write the proxy like socks5h://127.0.0.1:1080.": "代理请写成这样：socks5h://127.0.0.1:1080。",
+ "direct": "直接",
+ "through its own proxy": "经由自己的代理",
+ "{name} proxy": "{name} 的代理"
 }

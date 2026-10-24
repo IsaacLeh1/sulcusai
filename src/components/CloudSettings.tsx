@@ -164,6 +164,33 @@ function ChatSharing({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
   );
 }
 
+/** A proxy for this provider's requests only: a server reached through a
+ * VPN (its local SOCKS proxy), while everything else goes the usual way. */
+function ProviderProxy({ p, run }: { p: CloudProvider; run: (f: () => Promise<CloudView>) => Promise<void> }) {
+  const [proxy, setProxy] = useState("");
+  return (
+    <details className="cloud-media small">
+      <summary>
+        {t("Connection")} ({p.has_proxy ? t("through its own proxy") : t("direct")})
+      </summary>
+      <p className="muted">
+        {t("Only this provider's requests go through the proxy; the rest of the PC and the app go the usual way. For a server inside a company network, point it at a VPN's local SOCKS proxy (use socks5h:// so the VPN looks up the server's name).")}
+      </p>
+      <div className="row wrap">
+        <input className="input" value={proxy} onChange={(e) => setProxy(e.target.value)} placeholder={p.has_proxy ? t("Proxy saved (encrypted). Type a new one to replace it.") : "socks5h://127.0.0.1:11080"} aria-label={t("{name} proxy", { name: p.name })} spellCheck={false} />
+        <button className="btn small" disabled={!proxy.trim()} onClick={() => run(() => api.setCloudProxy(p.id, proxy)).then(() => setProxy(""))}>
+          {t("Save proxy")}
+        </button>
+        {p.has_proxy && (
+          <button className="btn ghost small" onClick={() => run(() => api.setCloudProxy(p.id, ""))}>
+            {t("Go direct")}
+          </button>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v: CloudView) => void; toast: PushToast }) {
   const [key, setKey] = useState("");
   const [picking, setPicking] = useState(false);
@@ -265,6 +292,7 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
       )}
       {(p.media_suggestions.length > 0 || p.media.length > 0) && <MediaPicker p={p} run={run} />}
       <ChatSharing p={p} run={run} />
+      <ProviderProxy p={p} run={run} />
       {picking && <ModelPicker provider={p} onClose={() => setPicking(false)} onSaved={onChanged} toast={toast} />}
     </div>
   );
@@ -280,7 +308,8 @@ const SERVERS: Record<ServerKind, { name: string; placeholder: string; hint: str
 
 /** Where a server's OpenAI-compatible API is: Open WebUI's under /api, LiteLLM's under /v1. */
 function serverApiUrl(kind: ServerKind, url: string): string {
-  let u = url.trim().replace(/\/+$/, "");
+  // An endpoint pasted on the end ("…/v1/models") comes off first.
+  let u = url.trim().replace(/\/+$/, "").replace(/\/(chat\/completions|completions|models|messages)$/i, "");
   if (u && !/^[a-z]+:\/\//i.test(u)) u = "https://" + u;
   if (kind === "openwebui" && !/\/api$/i.test(u)) u += "/api";
   if (kind === "litellm" && !/\/v1$/i.test(u)) u += "/v1";

@@ -4282,5 +4282,16 @@
  "{name} sees what you write, and their PC answers it in their chat, within the limits they set{limits}.": "{name} vê o que você escreve, e o PC da pessoa responde no chat dela, dentro dos limites que ela definiu{limits}.",
  "{n} minutes an answer": "{n} minutos por resposta",
  "{n} s": "{n} s",
- "{n} tokens a day": "{n} tokens por dia"
+ "{n} tokens a day": "{n} tokens por dia",
+ "Connection": "Conexão",
+ "Give the proxy's address and port, like socks5h://127.0.0.1:1080.": "Informe o endereço e a porta do proxy, como socks5h://127.0.0.1:1080.",
+ "Go direct": "Conectar direto",
+ "Only this provider's requests go through the proxy; the rest of the PC and the app go the usual way. For a server inside a company network, point it at a VPN's local SOCKS proxy (use socks5h:// so the VPN looks up the server's name).": "Só as solicitações deste provedor passam pelo proxy; o resto do PC e do app segue o caminho de sempre. Para um servidor dentro de uma rede corporativa, use o proxy SOCKS local de uma VPN (com socks5h:// para que a VPN resolva o nome do servidor).",
+ "Proxy saved (encrypted). Type a new one to replace it.": "Proxy salvo (criptografado). Digite um novo para substituí-lo.",
+ "Save proxy": "Salvar proxy",
+ "The proxy must start with socks5h://, socks5://, http:// or https://.": "O proxy precisa começar com socks5h://, socks5://, http:// ou https://.",
+ "Write the proxy like socks5h://127.0.0.1:1080.": "Escreva o proxy assim: socks5h://127.0.0.1:1080.",
+ "direct": "direta",
+ "through its own proxy": "pelo próprio proxy",
+ "{name} proxy": "Proxy de {name}"
 }

@@ -96,6 +96,12 @@ pub fn private_ok(url: &str) -> bool {
 
 /// Client for requests that leave the PC; refuses when the level forbids it.
 pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) -> Result<reqwest::Client, String> {
+    external_client_via(level, purpose, chat_web, None)
+}
+
+/// The same, through `proxy` when given (a cloud provider reached only
+/// through a VPN's local proxy): only these requests take it.
+pub fn external_client_via(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>) -> Result<reqwest::Client, String> {
     match purpose {
         Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
         Purpose::Search | Purpose::Web => crate::offline::check(crate::offline::Keep::Web)?,
@@ -107,7 +113,7 @@ pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) ->
     }
     let mut b = reqwest::Client::builder()
         .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(if route(purpose).and_then(crate::privacy::proxy_for).is_some() { 90 } else { 20 }));
+        .connect_timeout(Duration::from_secs(if proxy.is_some() || route(purpose).and_then(crate::privacy::proxy_for).is_some() { 90 } else { 20 }));
     // Cloud providers and relays get keys: never follow them to another
     // host, or down to plain http (a key header would go along).
     if purpose == Purpose::Cloud {
@@ -120,9 +126,10 @@ pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) ->
             }
         }));
     }
-    let b = match route(purpose) {
-        Some(r) => routed(b, r)?,
-        None => b,
+    let b = match (proxy, route(purpose)) {
+        (Some(p), _) => b.proxy(reqwest::Proxy::all(p).map_err(|e| format!("That proxy address isn't usable ({e})."))?),
+        (None, Some(r)) => routed(b, r)?,
+        (None, None) => b,
     };
     b.build().map_err(|e| e.to_string())
 }

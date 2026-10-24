@@ -112,7 +112,7 @@ fn charge(ctx: &RunCtx<'_>, t: &MediaTarget, units: f64, what: &str, redacted: u
 
 /// Runs a job on a cloud model. `id` is its "cloud:provider:model" id.
 pub async fn run(ctx: &RunCtx<'_>, id: &str, t: &MediaTarget) -> Result<Vec<MediaItem>, String> {
-    let client = cloud::media_client(ctx.state)?;
+    let client = cloud::media_client(ctx.state, t)?;
     // Listed under "What left this PC" (a chat's job is listed by the chat).
     if ctx.req.chat_id.is_none() {
         if let Ok(c) = ctx.state.cipher() {

@@ -603,6 +603,8 @@ export interface CloudProvider {
   share_pcs: boolean;
   /** People (linked in People) its chats are shared with. */
   share_people: string[];
+  /** Its requests go through a proxy of their own (a VPN's local proxy). */
+  has_proxy: boolean;
 }
 
 /** Cloud spending: a month's, or a chat's (all its months). */
@@ -2483,6 +2485,8 @@ export const api = {
   setCloudOptions: (budget: number | null, redact: boolean) => invoke<CloudView>("set_cloud_options", { budget, redact }),
   /** Where a provider's chats go: this user's other PCs with the same key, and people. */
   setCloudSharing: (id: string, sharePcs: boolean, sharePeople: string[]) => invoke<CloudView>("set_cloud_sharing", { id, sharePcs, sharePeople }),
+  /** Sends one provider's requests through a proxy ("" for directly). */
+  setCloudProxy: (id: string, proxy: string) => invoke<CloudView>("set_cloud_proxy", { id, proxy }),
   cloudChoices: () => invoke<CloudChoice[]>("cloud_choices"),
   sidebarLayout: () => invoke<SidebarLayout>("sidebar_layout"),
   /** A chat's notes: its memory and plan (Markdown, "- [ ] step" lines). */

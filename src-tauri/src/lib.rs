@@ -2932,6 +2932,7 @@ pub fn run() {
             cloud::set_cloud_options,
             cloud::cloud_choices,
             cloud::set_cloud_sharing,
+            cloud::set_cloud_proxy,
             cloud::cloud_sign_in,
             cloud::chat_cloud_spend,
             backup::make_backup,

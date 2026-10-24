@@ -4282,5 +4282,16 @@
  "{name} sees what you write, and their PC answers it in their chat, within the limits they set{limits}.": "{name} さんはあなたが書いた内容を見ることができ、相手の PC が相手のチャットで、相手が決めた上限の範囲内で答えます{limits}。",
  "{n} minutes an answer": "1 回答 {n} 分まで",
  "{n} s": "{n} 秒",
- "{n} tokens a day": "1 日 {n} トークン"
+ "{n} tokens a day": "1 日 {n} トークン",
+ "Connection": "接続",
+ "Give the proxy's address and port, like socks5h://127.0.0.1:1080.": "プロキシのアドレスとポートを socks5h://127.0.0.1:1080 のように入力してください。",
+ "Go direct": "直接接続する",
+ "Only this provider's requests go through the proxy; the rest of the PC and the app go the usual way. For a server inside a company network, point it at a VPN's local SOCKS proxy (use socks5h:// so the VPN looks up the server's name).": "このプロバイダーへのリクエストだけがプロキシを通ります。PC やアプリのほかの通信はいつもどおりです。社内ネットワークにあるサーバーには、VPN のローカル SOCKS プロキシを指定してください（VPN がサーバー名を解決できるよう socks5h:// を使います）。",
+ "Proxy saved (encrypted). Type a new one to replace it.": "プロキシを保存しました（暗号化済み）。置き換えるには新しいものを入力してください。",
+ "Save proxy": "プロキシを保存",
+ "The proxy must start with socks5h://, socks5://, http:// or https://.": "プロキシは socks5h://、socks5://、http://、https:// のいずれかで始めてください。",
+ "Write the proxy like socks5h://127.0.0.1:1080.": "プロキシは socks5h://127.0.0.1:1080 のように書いてください。",
+ "direct": "直接",
+ "through its own proxy": "専用のプロキシ経由",
+ "{name} proxy": "{name} のプロキシ"
 }
