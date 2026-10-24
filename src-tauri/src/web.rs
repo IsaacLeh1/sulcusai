@@ -38,6 +38,9 @@ pub enum Provider {
 pub struct WebSettings {
     pub provider: Provider,
     pub searxng_url: String,
+    /// DuckDuckGo only, even when it turns searches away (otherwise its full
+    /// page in a hidden browser window, then Brave's and Bing's pages).
+    pub no_fallback: bool,
 }
 
 pub fn settings(conn: &Connection) -> WebSettings {
@@ -190,19 +193,25 @@ fn strip_tags(s: &str) -> String {
     decode_entities(&re.replace_all(s, "")).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// Results from DuckDuckGo's plain HTML page.
-pub fn parse_duckduckgo(html: &str) -> Vec<Hit> {
-    let link = regex::Regex::new(r#"(?s)<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap();
-    let snippet = regex::Regex::new(r#"(?s)<a[^>]*class="result__snippet"[^>]*>(.*?)</a>"#).unwrap();
+/// The real address behind a DuckDuckGo result link
+/// (//duckduckgo.com/l/?uddg=<real url>&rut=…), or the link itself.
+fn real_link(href: &str) -> String {
+    let href = decode_entities(href);
+    reqwest::Url::parse(&if href.starts_with("//") { format!("https:{href}") } else { href.clone() })
+        .ok()
+        .and_then(|u| u.query_pairs().find(|(k, _)| k == "uddg").map(|(_, v)| v.to_string()))
+        .unwrap_or(href)
+}
+
+/// Results from DuckDuckGo's lightest page (lite.duckduckgo.com), used when
+/// the usual one turns a search away.
+pub fn parse_duckduckgo_lite(html: &str) -> Vec<Hit> {
+    let link = regex::Regex::new(r#"(?s)<a[^>]*href="([^"]+)"[^>]*class=['"]result-link['"][^>]*>(.*?)</a>"#).unwrap();
+    let snippet = regex::Regex::new(r#"(?s)<td[^>]*class=['"]result-snippet['"][^>]*>(.*?)</td>"#).unwrap();
     let snippets: Vec<String> = snippet.captures_iter(html).map(|c| strip_tags(&c[1])).collect();
     let mut out = Vec::new();
     for (i, c) in link.captures_iter(html).enumerate() {
-        let href = decode_entities(&c[1]);
-        // Links go through a redirect: //duckduckgo.com/l/?uddg=<real url>&rut=…
-        let real = reqwest::Url::parse(&if href.starts_with("//") { format!("https:{href}") } else { href.clone() })
-            .ok()
-            .and_then(|u| u.query_pairs().find(|(k, _)| k == "uddg").map(|(_, v)| v.to_string()))
-            .unwrap_or(href);
+        let real = real_link(&c[1]);
         if real.contains("duckduckgo.com/y.js") || !real.starts_with("http") {
             continue; // ads
         }
@@ -211,24 +220,193 @@ pub fn parse_duckduckgo(html: &str) -> Vec<Hit> {
     out
 }
 
-pub async fn search(conn_settings: &WebSettings, key: Option<String>, client: &reqwest::Client, query: &str, count: usize) -> Result<Vec<Hit>, String> {
+/// Search engines turn searches away when they come too close together, as a
+/// research step's do: each waits its turn, a moment apart, and an engine
+/// that turned one away rests for a minute.
+struct Pace {
+    next: Option<std::time::Instant>,
+    limited_until: Option<std::time::Instant>,
+}
+
+struct Engine(tokio::sync::Mutex<Pace>);
+
+impl Engine {
+    const fn new() -> Self {
+        Engine(tokio::sync::Mutex::const_new(Pace { next: None, limited_until: None }))
+    }
+
+    async fn turn(&self) {
+        let mut p = self.0.lock().await;
+        let now = std::time::Instant::now();
+        if let Some(at) = p.next.filter(|at| *at > now) {
+            tokio::time::sleep(at - now).await;
+        }
+        let limited = p.limited_until.is_some_and(|t| t > std::time::Instant::now());
+        p.next = Some(std::time::Instant::now() + Duration::from_millis(if limited { 4000 } else { 1200 }));
+    }
+
+    async fn turned_away(&self) {
+        self.0.lock().await.limited_until = Some(std::time::Instant::now() + Duration::from_secs(60));
+    }
+
+    async fn resting(&self) -> bool {
+        self.0.lock().await.limited_until.is_some_and(|t| t > std::time::Instant::now())
+    }
+}
+
+static DUCKDUCKGO: Engine = Engine::new();
+static BRAVE_PAGE: Engine = Engine::new();
+static BING: Engine = Engine::new();
+
+pub const DDG_BUSY: &str = "DuckDuckGo is limiting searches from this PC right now (too many in a short time). Read pages you already know the address of with fetch_page instead, or try searching again in a minute. Brave or SearXNG in Settings avoid this.";
+pub const ALL_BUSY: &str = "DuckDuckGo, Brave and Bing all turned this search away right now (too many in a short time). Read pages you already know the address of with fetch_page instead, or try searching again in a minute.";
+
+/// A search on DuckDuckGo: its usual page, then (turned away) its lightest
+/// page, then, when nothing else will be tried, the usual one again after a
+/// pause.
+async fn duckduckgo(client: &reqwest::Client, query: &str, patient: bool) -> Result<Vec<Hit>, String> {
     let fail = |e: reqwest::Error| format!("The search didn't work: {e}");
+    for attempt in 0..if patient { 3 } else { 2 } {
+        DUCKDUCKGO.turn().await;
+        // Turned away while this one waited in line: on to the others.
+        if !patient && attempt == 0 && DUCKDUCKGO.resting().await {
+            return Err(DDG_BUSY.into());
+        }
+        let lite = attempt == 1;
+        let url = if lite { "https://lite.duckduckgo.com/lite/" } else { "https://html.duckduckgo.com/html/" };
+        let html = client.post(url).form(&[("q", query), ("kl", "us-en")]).send().await.map_err(fail)?.text().await.map_err(fail)?;
+        let hits = if lite { parse_duckduckgo_lite(&html) } else { parse_duckduckgo(&html) };
+        if !(hits.is_empty() && html.contains("anomaly")) {
+            return Ok(hits);
+        }
+        DUCKDUCKGO.turned_away().await;
+        if attempt == 1 {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+    Err(DDG_BUSY.into())
+}
+
+/// One search on another engine's results page: None when it turned the
+/// search away, couldn't be reached or showed nothing.
+async fn try_page(engine: &Engine, req: reqwest::RequestBuilder, parse: fn(&str) -> Vec<Hit>) -> Option<Vec<Hit>> {
+    if engine.resting().await {
+        return None;
+    }
+    engine.turn().await;
+    let html = async { req.send().await?.error_for_status()?.text().await }.await;
+    let hits = html.as_deref().map(parse).unwrap_or_default();
+    if hits.is_empty() {
+        if html.as_deref().map_or(true, |h| ["captcha", "anomaly", "unusual traffic"].iter().any(|w| h.to_lowercase().contains(w))) {
+            engine.turned_away().await;
+        }
+        return None;
+    }
+    Some(hits)
+}
+
+/// When DuckDuckGo's plain pages turn a search away: its full page in a
+/// hidden browser window (it lets a real browser through), then Brave's and
+/// Bing's results pages. The browser shows this PC's own address, so it's
+/// left out while the private connection is on.
+async fn elsewhere(client: &reqwest::Client, query: &str, app: Option<&tauri::AppHandle>) -> Option<(Vec<Hit>, &'static str)> {
+    if let Some(app) = app.filter(|_| crate::privacy::proxy_for(net::Route::Web).is_none()) {
+        match crate::browser::search(app, query).await {
+            Ok(hits) if !hits.is_empty() => return Some((hits, "DuckDuckGo")),
+            Ok(_) => {}
+            Err(e) => eprintln!("search window: {e}"),
+        }
+    }
+    let brave = client.get("https://search.brave.com/search").query(&[("q", query), ("source", "web")]);
+    if let Some(hits) = try_page(&BRAVE_PAGE, brave, parse_brave).await {
+        return Some((hits, "Brave Search"));
+    }
+    let bing = client.get("https://www.bing.com/search").query(&[("q", query), ("setlang", "en")]);
+    try_page(&BING, bing, parse_bing).await.map(|hits| (hits, "Bing"))
+}
+
+/// Results from Brave Search's own results page (no key).
+pub fn parse_brave(html: &str) -> Vec<Hit> {
+    let link = regex::Regex::new(r#"<a href="(https?://[^"]+)""#).unwrap();
+    let title = regex::Regex::new(r#"(?s)class="title search-snippet-title[^"]*"[^>]*>(.*?)</div>"#).unwrap();
+    let snippet = regex::Regex::new(r#"(?s)class="content [^"]*"[^>]*>(.*?)</div>"#).unwrap();
+    html.split(r#"data-type="web""#)
+        .skip(1)
+        .filter_map(|block| {
+            let url = decode_entities(&link.captures(block)?[1]);
+            let title = strip_tags(&title.captures(block)?[1]);
+            let snippet = snippet.captures(block).map(|c| strip_tags(&c[1])).unwrap_or_default();
+            (!url.contains("brave.com/") && !title.is_empty()).then_some(Hit { title, url, snippet })
+        })
+        .collect()
+}
+
+/// The real address behind a Bing result link (bing.com/ck/a?…&u=a1<the
+/// address in base64>), or the link itself.
+fn bing_link(href: &str) -> String {
+    use base64::Engine as _;
+    let href = decode_entities(href);
+    reqwest::Url::parse(&href)
+        .ok()
+        .filter(|u| u.host_str().is_some_and(|h| h.ends_with("bing.com")))
+        .and_then(|u| u.query_pairs().find(|(k, _)| k == "u").map(|(_, v)| v.to_string()))
+        .and_then(|v| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(v.strip_prefix("a1")?.trim_end_matches('=')).ok())
+        .and_then(|b| String::from_utf8(b).ok())
+        .filter(|u| u.starts_with("http"))
+        .unwrap_or(href)
+}
+
+/// Results from Bing's results page.
+pub fn parse_bing(html: &str) -> Vec<Hit> {
+    let link = regex::Regex::new(r#"(?s)<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap();
+    let snippet = regex::Regex::new(r#"(?s)class="b_caption[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>"#).unwrap();
+    html.split(r#"<li class="b_algo""#)
+        .skip(1)
+        .filter_map(|block| {
+            let c = link.captures(block)?;
+            let url = bing_link(&c[1]);
+            let snippet = snippet.captures(block).map(|s| strip_tags(&s[1])).unwrap_or_default();
+            url.starts_with("http").then(|| Hit { title: strip_tags(&c[2]), url, snippet })
+        })
+        .collect()
+}
+
+/// Results from DuckDuckGo's plain HTML page.
+pub fn parse_duckduckgo(html: &str) -> Vec<Hit> {
+    let link = regex::Regex::new(r#"(?s)<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap();
+    let snippet = regex::Regex::new(r#"(?s)<a[^>]*class="result__snippet"[^>]*>(.*?)</a>"#).unwrap();
+    let snippets: Vec<String> = snippet.captures_iter(html).map(|c| strip_tags(&c[1])).collect();
+    let mut out = Vec::new();
+    for (i, c) in link.captures_iter(html).enumerate() {
+        let real = real_link(&c[1]);
+        if real.contains("duckduckgo.com/y.js") || !real.starts_with("http") {
+            continue; // ads
+        }
+        out.push(Hit { title: strip_tags(&c[2]), url: real, snippet: snippets.get(i).cloned().unwrap_or_default() });
+    }
+    out
+}
+
+/// The results and the engine that found them (with DuckDuckGo turning
+/// searches away, it can be another; `app` lets it try in a hidden window).
+pub async fn search(conn_settings: &WebSettings, key: Option<String>, client: &reqwest::Client, query: &str, count: usize, app: Option<&tauri::AppHandle>) -> Result<(Vec<Hit>, &'static str), String> {
+    let fail = |e: reqwest::Error| format!("The search didn't work: {e}");
+    let mut by = provider_name(conn_settings.provider);
     let hits = match conn_settings.provider {
+        Provider::Duckduckgo if conn_settings.no_fallback => duckduckgo(client, query, true).await?,
         Provider::Duckduckgo => {
-            let html = client
-                .post("https://html.duckduckgo.com/html/")
-                .form(&[("q", query), ("kl", "us-en")])
-                .send()
-                .await
-                .map_err(fail)?
-                .text()
-                .await
-                .map_err(fail)?;
-            let hits = parse_duckduckgo(&html);
-            if hits.is_empty() && html.contains("anomaly") {
-                return Err("DuckDuckGo is limiting searches from this PC right now. Try again in a minute, or use Brave or SearXNG in Settings.".into());
+            // Resting after a refusal, the plain pages aren't asked again.
+            let first = if DUCKDUCKGO.resting().await { Err(DDG_BUSY.to_string()) } else { duckduckgo(client, query, false).await };
+            match first {
+                Ok(hits) => hits,
+                Err(e) => match elsewhere(client, query, app).await {
+                    Some((hits, engine)) => {
+                        by = engine;
+                        hits
+                    }
+                    None => return Err(if e == DDG_BUSY { ALL_BUSY.into() } else { e }),
+                },
             }
-            hits
         }
         Provider::Brave => {
             let key = key.ok_or("Add your Brave Search API key in Settings › Connectivity.")?;
@@ -288,7 +466,7 @@ pub async fn search(conn_settings: &WebSettings, key: Option<String>, client: &r
                 .unwrap_or_default()
         }
     };
-    Ok(hits.into_iter().filter(|h| !h.url.is_empty()).take(count).collect())
+    Ok((hits.into_iter().filter(|h| !h.url.is_empty()).take(count).collect(), by))
 }
 
 pub fn provider_name(p: Provider) -> &'static str {
@@ -676,6 +854,75 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0], Hit { title: "Rust Programming Language".into(), url: "https://www.rust-lang.org/".into(), snippet: "A language empowering everyone & more.".into() });
         assert_eq!(hits[1].url, "https://doc.rust-lang.org/book/");
+    }
+
+    /// Six searches at once (a research step's burst), spaced out, from
+    /// DuckDuckGo or (when it turns them away) Brave's and Bing's pages; the
+    /// hidden window needs the app. Needs the internet:
+    ///     cargo test a_burst_of_searches -- --ignored --nocapture
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore]
+    async fn a_burst_of_searches_gets_through() {
+        let client = reqwest::Client::builder().user_agent(concat!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SulcusAI/", env!("CARGO_PKG_VERSION"))).build().unwrap();
+        let qs = ["lightweight charts library", "yfinance real time", "finnhub websocket free", "alpha vantage api", "open source stock dashboard", "chart.js financial plugin"];
+        let started = std::time::Instant::now();
+        let runs = qs.iter().map(|q| {
+            let client = client.clone();
+            async move { (q.to_string(), search(&WebSettings::default(), None, &client, q, 6, None).await) }
+        });
+        let mut found = 0;
+        for (q, r) in futures_util::future::join_all(runs).await {
+            match r {
+                Ok((h, by)) => {
+                    println!("{q}: {} results from {by}: {:?}", h.len(), h.first().map(|h| &h.url));
+                    found += 1;
+                }
+                Err(e) => println!("{q}: turned away ({e})"),
+            }
+        }
+        println!("all in {} s", started.elapsed().as_secs());
+        assert!(found >= 4, "only {found} of 6 searches found anything");
+    }
+
+    /// Brave's and Bing's pages, read for real. Needs the internet:
+    ///     cargo test brave_and_bing_pages -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn brave_and_bing_pages_answer() {
+        let client = reqwest::Client::builder().user_agent(concat!("Mozilla/5.0 (Windows NT 10.0; Win64; x64) SulcusAI/", env!("CARGO_PKG_VERSION"))).build().unwrap();
+        let q = "chart.js financial plugin";
+        let brave = try_page(&BRAVE_PAGE, client.get("https://search.brave.com/search").query(&[("q", q), ("source", "web")]), parse_brave).await.unwrap_or_default();
+        let bing = try_page(&BING, client.get("https://www.bing.com/search").query(&[("q", q), ("setlang", "en")]), parse_bing).await.unwrap_or_default();
+        println!("Brave: {:#?}\nBing: {:#?}", brave.iter().take(3).collect::<Vec<_>>(), bing.iter().take(3).collect::<Vec<_>>());
+        assert!(!brave.is_empty() && !bing.is_empty());
+        assert!(bing.iter().all(|h| !h.url.contains("bing.com/ck/")));
+    }
+
+    #[test]
+    fn brave_and_bing_results_are_read() {
+        let brave = r#"<div class="snippet svelte-jmfu5f" data-pos="0" data-type="web" data-keynav="true"><div class="result-content"><a href="https://www.chartjs.org/chartjs-chart-financial/" target="_self" class="svelte-14r20fy l1"><img src="https://imgs.search.brave.com/x" alt=""/><cite class="snippet-url">chartjs.org</cite> <div class="title search-snippet-title line-clamp-1 svelte-14r20fy" title="Chart.js - Financial chart">Chart.js - Financial chart</div></a><!----> <div class="generic-snippet svelte-1cwdgg3"><div class="content desktop-default-regular t-primary line-clamp-dynamic svelte-1cwdgg3"><!--[-1--><!--]--> <!---->See the source for this <strong>example</strong>.<!----></div></div></div></div>
+            <div class="snippet svelte-jmfu5f" data-pos="1" data-type="web"><a href="https://github.com/chartjs/chartjs-chart-financial" class="l1"><div class="title search-snippet-title svelte-14r20fy">GitHub - chartjs/chartjs-chart-financial</div></a></div>"#;
+        let hits = parse_brave(brave);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0], Hit { title: "Chart.js - Financial chart".into(), url: "https://www.chartjs.org/chartjs-chart-financial/".into(), snippet: "See the source for this example.".into() });
+        assert_eq!((hits[1].url.as_str(), hits[1].snippet.as_str()), ("https://github.com/chartjs/chartjs-chart-financial", ""));
+
+        let bing = r#"<li class="b_ad"><h2><a href="https://ads.example/">Ad</a></h2></li><li class="b_algo" data-id iid=SERP.5322><div class="b_tpcn"><a class="tilk" href="https://www.bing.com/ck/a?!&amp;&amp;p=8cf&amp;ptn=3&amp;u=a1aHR0cHM6Ly9jaGFydGdwdC5pby8&amp;ntb=1"><div class="tptt">chartgpt.io</div></a></div><h2><a target="_blank" href="https://www.bing.com/ck/a?!&amp;&amp;p=8cf&amp;ptn=3&amp;u=a1aHR0cHM6Ly9jaGFydGdwdC5pby8&amp;ntb=1" h="ID=SERP,5114.2">Chart<strong>GPT</strong></a></h2><div class="b_caption"><p class="b_lineclamp2">A plain-English table &amp; chart.</p></div></li>"#;
+        let hits = parse_bing(bing);
+        assert_eq!(hits, vec![Hit { title: "ChartGPT".into(), url: "https://chartgpt.io/".into(), snippet: "A plain-English table & chart.".into() }]);
+    }
+
+    #[test]
+    fn duckduckgo_lite_results_are_read() {
+        let html = r#"<table><tr><td>1.&nbsp;</td><td><a rel="nofollow" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2Ftradingview%2Flightweight-charts&amp;rut=x" class='result-link'>TradingView <b>Lightweight</b> Charts</a></td></tr>
+        <tr><td></td><td class='result-snippet'>Performant financial <b>charts</b> built with HTML5 canvas.</td></tr>
+        <tr><td>2.&nbsp;</td><td><a rel="nofollow" href="https://duckduckgo.com/y.js?ad_provider=x" class='result-link'>Ad</a></td></tr>
+        <tr><td></td><td class='result-snippet'>ad</td></tr></table>"#;
+        let hits = parse_duckduckgo_lite(html);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].url, "https://github.com/tradingview/lightweight-charts");
+        assert_eq!(hits[0].title, "TradingView Lightweight Charts");
+        assert_eq!(hits[0].snippet, "Performant financial charts built with HTML5 canvas.");
     }
 
     #[test]

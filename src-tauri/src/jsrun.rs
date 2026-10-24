@@ -503,6 +503,16 @@ fn regex_lite(p: &str) -> regex::Regex {
 mod tests {
     use super::*;
 
+    /// tools::compute points the model at fetch_page when code reaches for
+    /// the internet: it matches these words.
+    #[test]
+    fn there_is_no_internet_in_here() {
+        for code in ["fetch('https://api.github.com/x')", "new XMLHttpRequest()", "new WebSocket('wss://x')"] {
+            let e = run(code, |_| Err("no files".into())).error.unwrap_or_default();
+            assert!(["fetch is not defined", "XMLHttpRequest is not defined", "WebSocket is not defined"].iter().any(|w| e.contains(w)), "{code}: {e}");
+        }
+    }
+
     fn value(code: &str) -> String {
         let r = run(code, |p| if p == "data.csv" { Ok("item,price,qty\n\"Pens, blue\",2.5,4\nPaper,10,3\n".into()) } else { Err(format!("{p} isn't in a shared folder.")) });
         assert_eq!(r.error, None, "{code}");

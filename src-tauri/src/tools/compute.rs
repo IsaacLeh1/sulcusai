@@ -81,6 +81,15 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         parts.push(format!("{} chart{} shown in the chat; don't describe how to draw it.", ran.charts.len(), if ran.charts.len() == 1 { " is" } else { "s are" }));
     }
     let mut o = match &ran.error {
+        // It tried to reach the internet: run_code has none, so the way on is
+        // another tool, not the same code again.
+        Some(e) if ["fetch is not defined", "XMLHttpRequest is not defined", "WebSocket is not defined"].iter().any(|w| e.contains(w)) => {
+            parts.push(format!("Error: {e}"));
+            Outcome::error(
+                "The code tried to use the internet",
+                format!("{}\nrun_code has no internet. To read a web address (a page or an API's JSON), call fetch_page with it; to find pages, web_search. Then run_code can work on what they returned.", parts.join("\n\n")),
+            )
+        }
         Some(e) => {
             parts.push(format!("Error: {e}"));
             Outcome::error("The code stopped with an error", format!("{}\nFix the code and run it again.", parts.join("\n\n")))

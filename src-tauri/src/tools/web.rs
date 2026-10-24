@@ -35,7 +35,7 @@ fn host(url: &str) -> String {
     reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default()
 }
 
-pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
+pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>, app: Option<&tauri::AppHandle>) -> Outcome {
     if name == "request_web" {
         let reason = args.get("reason").and_then(Value::as_str).unwrap_or("this").to_string();
         let mut o = Outcome::ok(
@@ -63,9 +63,10 @@ pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>) -> Outcome {
                 return Outcome::error("Couldn't search the web", "Give a query.");
             }
             let count = args.get("count").and_then(Value::as_u64).unwrap_or(6).clamp(1, 10) as usize;
-            let provider = web::provider_name(settings.provider);
+            let searched = web::search(&settings, key, &client, &query, count, app).await;
+            let provider = searched.as_ref().map_or(web::provider_name(settings.provider), |(_, by)| *by);
             crate::db::log_action(&ctx.db.lock().unwrap(), "network", &format!("Searched the web with {provider}"));
-            match web::search(&settings, key, &client, &query, count).await {
+            match searched.map(|(hits, _)| hits) {
                 Ok(hits) if hits.is_empty() => Outcome::ok("No results.", format!("Searched the web for “{query}”"), "text", None),
                 Ok(hits) => {
                     // Read the top pages too, and keep the lines that answer:

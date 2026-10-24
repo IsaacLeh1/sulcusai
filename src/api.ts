@@ -1800,6 +1800,8 @@ export type SearchProvider = "duckduckgo" | "brave" | "searxng";
 export interface WebSettings {
   provider: SearchProvider;
   searxng_url: string;
+  /** DuckDuckGo only, even when it turns searches away. */
+  no_fallback?: boolean;
   has_brave_key?: boolean;
 }
 

@@ -43,6 +43,8 @@ pub struct Web {
     pub client: reqwest::Client,
     pub settings: WebSettings,
     pub key: Option<String>,
+    /// For searching in the hidden window when DuckDuckGo turns plain ones away.
+    pub app: Option<tauri::AppHandle>,
 }
 
 fn list(args: &Value, key: &str, max: usize) -> Vec<String> {
@@ -224,13 +226,20 @@ async fn research(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
     if searches.is_empty() {
         searches.push(question.clone());
     }
-    let provider = web::provider_name(w.settings.provider);
-    // The searches, side by side.
+    // The searches, side by side (each engine still takes them in turn).
     let runs = searches.iter().map(|q| {
-        let (settings, key, client, q) = (w.settings.clone(), w.key.clone(), w.client.clone(), q.clone());
-        async move { web::search(&settings, key, &client, &q, 6).await.unwrap_or_default() }
+        let (settings, key, client, app, q) = (w.settings.clone(), w.key.clone(), w.client.clone(), w.app.clone(), q.clone());
+        async move { web::search(&settings, key, &client, &q, 6, app.as_ref()).await.ok() }
     });
-    let results = futures_util::future::join_all(runs).await;
+    let found = futures_util::future::join_all(runs).await;
+    let mut engines: Vec<&str> = Vec::new();
+    for (_, by) in found.iter().flatten() {
+        if !engines.contains(by) {
+            engines.push(by);
+        }
+    }
+    let provider = if engines.is_empty() { web::provider_name(w.settings.provider).to_string() } else { engines.join(", ") };
+    let results: Vec<Vec<web::Hit>> = found.into_iter().map(|r| r.map(|(hits, _)| hits).unwrap_or_default()).collect();
     // Every search's best results in turn, each address once, up to 8.
     let mut hits: Vec<web::Hit> = Vec::new();
     for i in 0..6 {

@@ -612,14 +612,14 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "create_note" | "search_notes" | "read_note" | "update_note" | "create_task" | "list_tasks" | "complete_task" => {
             notes::run(name, args, &ctx.memory)
         }
-        "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory).await,
+        "web_search" | "fetch_page" | "request_web" | "weather" => web::run(name, args, &ctx.memory, ctx.app).await,
         "wikipedia" | "research" | "market_quote" | "find_places" => {
             let prepared = {
                 let conn = ctx.memory.db.lock().unwrap();
                 crate::web::prepare(&conn, ctx.memory.cipher, ctx.memory.chat_id)
             };
             match prepared {
-                Ok((client, settings, key)) => lookup::run(name, args, lookup::Web { client, settings, key }, &ctx.memory).await,
+                Ok((client, settings, key)) => lookup::run(name, args, lookup::Web { client, settings, key, app: ctx.app.cloned() }, &ctx.memory).await,
                 Err(e) => Outcome::error("Web access is off", e),
             }
         }

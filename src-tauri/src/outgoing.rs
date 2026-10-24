@@ -216,6 +216,8 @@ pub struct Review {
 pub struct Context {
     pub me: Me,
     pub search: crate::web::Provider,
+    /// Brave or Bing may get a search DuckDuckGo turns away.
+    pub search_others: bool,
     /// Web traffic goes through Tor or a proxy.
     pub proxied: bool,
     /// The profile has coordinates, or this PC's location would be used.
@@ -230,9 +232,11 @@ pub fn context(state: &crate::AppState, cipher: &crate::crypto::Cipher) -> Conte
     let conn = state.db.lock().unwrap();
     let profile = crate::db::profile(&conn, cipher);
     let emails = crate::mail::accounts(&conn, cipher).into_iter().map(|(_, a, _)| a.email).filter(|e| !e.is_empty()).collect();
+    let web = crate::web::settings(&conn);
     Context {
         me: Me::new(&profile.name, emails, &profile.location),
-        search: crate::web::settings(&conn).provider,
+        search: web.provider,
+        search_others: web.provider == crate::web::Provider::Duckduckgo && !web.no_fallback,
         proxied: crate::privacy::proxy_for(crate::privacy::Route::Web).is_some(),
         // "Here" uses the profile's coordinates, else its town, else this PC's location.
         coords: profile.lat.is_some() || profile.location.trim().is_empty(),
@@ -280,6 +284,7 @@ pub fn review(tool: &str, args: &Value, cx: &Context) -> Option<Review> {
     let s = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
     let me = &cx.me;
     let search_engine = match cx.search {
+        crate::web::Provider::Duckduckgo if cx.search_others => "DuckDuckGo (search engine; Brave or Bing when it turns searches away)",
         crate::web::Provider::Duckduckgo => "DuckDuckGo (search engine)",
         crate::web::Provider::Brave => "Brave Search (search engine)",
         crate::web::Provider::Searxng => "Your SearXNG server (search engine)",
@@ -725,6 +730,8 @@ mod tests {
     fn a_search_shows_its_words_who_gets_them_and_the_level() {
         let r = review("web_search", &serde_json::json!({ "query": "hiking boots for Isaac Lehman" }), &cx()).unwrap();
         assert_eq!(r.to, "DuckDuckGo (search engine)");
+        let others = review("web_search", &serde_json::json!({ "query": "rust" }), &Context { search_others: true, ..cx() }).unwrap();
+        assert!(others.to.contains("Brave or Bing"), "{}", others.to);
         assert_eq!(r.items[0].key.as_deref(), Some("query"));
         assert_eq!(r.level, 4, "full name");
         assert_eq!(r.found[0].what, "your full name");

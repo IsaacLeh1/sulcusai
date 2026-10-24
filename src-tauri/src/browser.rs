@@ -142,12 +142,97 @@ pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
         .map_err(|e| format!("Couldn't open the browser: {e}"))
 }
 
-/// Closes the browser window and every web viewer (going offline).
+/// Closes the browser window, the search window and every web viewer (going
+/// offline).
 pub fn close(app: &AppHandle) {
-    if let Some(w) = window(app) {
-        let _ = w.close();
+    for label in [LABEL, SEARCH_LABEL] {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.close();
+        }
     }
     crate::viewer::close_all(app);
+}
+
+// ---------- the search window ----------
+
+const SEARCH_LABEL: &str = "search";
+/// One search at a time in it.
+static SEARCHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SEARCH_USED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+/// DuckDuckGo's results as its own page shows them, once they're there (or
+/// none after 10 seconds).
+const RESULTS_JS: &str = r#"new Promise((done) => {
+  const read = () => [...document.querySelectorAll('article[data-testid="result"]')].map((r) => {
+    const a = r.querySelector('a[data-testid="result-title-a"]');
+    const s = r.querySelector('[data-result="snippet"]');
+    return a ? { title: a.innerText.trim(), url: a.href, snippet: s ? s.innerText.trim() : '' } : null;
+  }).filter(Boolean);
+  const started = Date.now();
+  const look = () => {
+    const found = read();
+    if (found.length || Date.now() - started > 10000 || (document.body && document.body.innerText.includes('No results found'))) done(found);
+    else setTimeout(look, 400);
+  };
+  look();
+})"#;
+
+/// A hidden window for searches DuckDuckGo's plain page turns away: the same
+/// search on its full page, in a real browser, as a person would make it. Its
+/// profile is its own (no sign-ins, nothing from the user's browsing).
+fn search_window(app: &AppHandle) -> Result<Webview, String> {
+    if let Some(w) = app.get_webview_window(SEARCH_LABEL) {
+        return Ok(w.as_ref().clone());
+    }
+    let profile = app.state::<std::sync::Arc<crate::AppState>>().paths.data.join("search-browser");
+    std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
+    let w = WebviewWindowBuilder::new(app, SEARCH_LABEL, WebviewUrl::External("about:blank".parse().unwrap()))
+        .title("SulcusAI search")
+        .inner_size(1180.0, 900.0)
+        .visible(false)
+        .focused(false)
+        .skip_taskbar(true)
+        .data_directory(profile)
+        .on_navigation(navigable)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .on_download(|_, _| false)
+        .build()
+        .map_err(|e| format!("Couldn't open the search window: {e}"))?;
+    Ok(w.as_ref().clone())
+}
+
+/// A web search on DuckDuckGo's full page in the hidden search window. The
+/// window closes after two idle minutes.
+pub async fn search(app: &AppHandle, query: &str) -> Result<Vec<crate::web::Hit>, String> {
+    crate::offline::check(crate::offline::Keep::Web)?;
+    let _turn = SEARCHING.lock().await;
+    *SEARCH_USED.lock().unwrap() = Some(std::time::Instant::now());
+    let w = search_window(app)?;
+    let mut url = tauri::Url::parse("https://duckduckgo.com/").unwrap();
+    url.query_pairs_mut().append_pair("q", query).append_pair("kl", "us-en");
+    let found = match navigate(&w, url.as_str()).await {
+        Ok(()) => eval(&w, RESULTS_JS).await,
+        Err(e) => Err(e),
+    };
+    *SEARCH_USED.lock().unwrap() = Some(std::time::Instant::now());
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        let _turn = SEARCHING.lock().await;
+        if SEARCH_USED.lock().unwrap().is_some_and(|t| t.elapsed() >= Duration::from_secs(115)) {
+            if let Some(w) = app.get_webview_window(SEARCH_LABEL) {
+                let _ = w.close();
+            }
+        }
+    });
+    let s = |r: &Value, k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    Ok(found?
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|r| crate::web::Hit { title: s(r, "title"), url: s(r, "url"), snippet: s(r, "snippet") })
+        .filter(|h| h.url.starts_with("http") && !h.url.contains("duckduckgo.com/y.js"))
+        .collect())
 }
 
 /// Calls a DevTools Protocol method on the browser's page, in process.

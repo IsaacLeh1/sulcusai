@@ -45,6 +45,78 @@ async fn real_cloud_providers_answer() {
     }
 }
 
+/// The latest privacy warnings in the installed app ("What left this PC"),
+/// read without changing anything; anything that looks like a key is
+/// masked.
+///     cargo test real_privacy_warnings -- --ignored --nocapture
+#[test]
+#[ignore]
+fn real_privacy_warnings() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let keys = real.data.join("keys.json");
+    assert!(keys.exists(), "no installed app data at {}", real.data.display());
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&keys, crate::crypto::platform_protector(&real.data)).unwrap();
+    let c = vault.work_cipher().expect("the app's data key is locked with a password");
+    let mask = regex::Regex::new(r"[A-Za-z0-9_\-]{20,}").unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let all = crate::outgoing::sent_list(&conn, &c);
+    println!("{} in the list; level 4-5 or not sent:", all.len());
+    for s in all.iter().filter(|s| s.level >= 4 || !s.sent).take(8) {
+        let what = mask.replace_all(&s.what, "[long string hidden]");
+        println!("{} min ago | {} | to: {} | level {} | {} | {}", (now - s.at) / 60_000, s.tool, s.to, s.level, if s.sent { "sent" } else { "not sent" }, what);
+    }
+}
+
+/// The most recently changed chat in the installed app, step by step: what
+/// was asked, each tool call and how it went, and the replies, shortened,
+/// with anything that looks like a key masked. Read without changing anything.
+///     cargo test real_latest_chat -- --ignored --nocapture
+#[test]
+#[ignore]
+fn real_latest_chat() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let keys = real.data.join("keys.json");
+    assert!(keys.exists(), "no installed app data at {}", real.data.display());
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&keys, crate::crypto::platform_protector(&real.data)).unwrap();
+    let c = vault.work_cipher().expect("the app's data key is locked with a password");
+    let mask = regex::Regex::new(r"[A-Za-z0-9_\-]{28,}").unwrap();
+    let short = |t: &str, n: usize| -> String {
+        let t = mask.replace_all(t, "[long string hidden]").replace('\n', " ⏎ ");
+        if t.chars().count() > n { format!("{}…", t.chars().take(n).collect::<String>()) } else { t }
+    };
+    let mut chats = crate::db::list_chats(&conn, &c);
+    chats.sort_by_key(|ch| std::cmp::Reverse(ch.updated_at));
+    let pick = std::env::var("SULCUSAI_CHAT_INDEX").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    let Some(chat) = chats.get(pick) else { return };
+    println!("chat: {} | model: {} | updated {} min ago", chat.title, chat.model_id.clone().unwrap_or_default(), (crate::db::now_ms() - chat.updated_at) / 60_000);
+    let msgs = crate::db::messages(&conn, &c, &chat.id);
+    // SULCUSAI_CHAT_ALL: every turn, not just the last.
+    let from = if std::env::var("SULCUSAI_CHAT_ALL").is_ok() { 0 } else { msgs.iter().rposition(|m| m.role == "user").unwrap_or(0) };
+    println!("{} messages; privacy mode: {:?}", msgs.len(), crate::outgoing::mode(&conn));
+    for m in &msgs[from..] {
+        match m.role.as_str() {
+            "user" => println!("\nUSER: {}", short(&m.content, 2500)),
+            "assistant" => {
+                if !m.content.trim().is_empty() {
+                    println!("ASSISTANT: {}", short(&m.content, 600));
+                }
+                for call in m.tool_calls.iter().flatten() {
+                    println!("  CALL {}: {}", call.name, short(&call.arguments, 300));
+                }
+            }
+            "tool" => {
+                let meta = m.meta.clone().unwrap_or_default();
+                let title = meta["title"].as_str().unwrap_or_default();
+                let status = meta["status"].as_str().unwrap_or_default();
+                println!("  RESULT [{status}] {title}: {}", short(&m.content, 300));
+            }
+            other => println!("{other}: {}", short(&m.content, 300)),
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore]
 async fn e2e_install_load_and_chat() {
@@ -1752,7 +1824,7 @@ async fn e2e_web_search_and_read() {
 
     crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
     let (client, settings, key) = crate::web::prepare(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
-    let hits = crate::web::search(&settings, key, &client, "curl project maintainer", 5).await.unwrap();
+    let (hits, _) = crate::web::search(&settings, key, &client, "curl project maintainer", 5, None).await.unwrap();
     println!("hits: {:#?}", hits.iter().map(|h| (&h.title, &h.url)).collect::<Vec<_>>());
     assert!(!hits.is_empty());
     let page = crate::web::fetch(&client, "https://curl.se/").await.unwrap();

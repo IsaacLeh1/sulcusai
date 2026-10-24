@@ -63,7 +63,7 @@ function WebSearchSettings({ toast }: { toast: PushToast }) {
   const save = async (next: WebSettings, braveKey: string | null = null) => {
     setS(next);
     try {
-      await api.setWebSettings({ provider: next.provider, searxng_url: next.searxng_url }, braveKey);
+      await api.setWebSettings({ provider: next.provider, searxng_url: next.searxng_url, no_fallback: next.no_fallback }, braveKey);
       if (braveKey !== null) {
         setKey("");
         setS({ ...next, has_brave_key: braveKey !== "" });
@@ -84,7 +84,15 @@ function WebSearchSettings({ toast }: { toast: PushToast }) {
           <option value="searxng">{t("SearXNG (your own server)")}</option>
         </select>
       </label>
-      {s.provider === "duckduckgo" && <p className="muted small">{t("Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.")}</p>}
+      {s.provider === "duckduckgo" && (
+        <>
+          <p className="muted small">{t("Reads DuckDuckGo's plain results page. If searches get limited, switch to Brave or SearXNG.")}</p>
+          <label className="check">
+            <input type="checkbox" checked={!s.no_fallback} onChange={(e) => save({ ...s, no_fallback: !e.target.checked })} />{" "}
+            {t("When DuckDuckGo turns searches away, try its full page in a hidden window, then Brave or Bing")}
+          </label>
+        </>
+      )}
       {s.provider === "brave" && (
         <label>
           {t("Brave Search API key")} {s.has_brave_key && <span className="muted small">{t("(saved, encrypted)")}</span>}
