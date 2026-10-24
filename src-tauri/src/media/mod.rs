@@ -1497,7 +1497,9 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
     let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach")
-        || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")));
+        || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
+        // A song's parts taken apart and read on an NVIDIA card (CUDA).
+        || (req.op == "map" && crate::natural::nvidia_here(state));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
@@ -3709,6 +3711,37 @@ async fn map_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     Ok(vec![map_item(ctx, item).await?])
 }
 
+/// The NVIDIA card a song is taken apart on, its ONNX Runtime downloaded the
+/// first time; None, with why in the log, when there's none to use now.
+async fn map_card(ctx: &RunCtx<'_>) -> Result<Option<crate::natural::Card>, String> {
+    let state = ctx.state;
+    if !crate::natural::nvidia_here(state) {
+        return Ok(None);
+    }
+    let why = match crate::natural::cuda_card(state).await {
+        Ok(card) => {
+            let voices = &state.catalog.voices;
+            let fetched = if crate::natural::gpu_runtime_dll(&state.paths, voices).is_some() {
+                Ok(())
+            } else {
+                let getting = format!("Getting the graphics card's libraries (once, {})", crate::size_label(crate::natural::gpu_runtime_size(voices)));
+                (ctx.progress)(&getting, 0.0);
+                crate::natural::ensure_gpu_runtime(state, ctx.cancel, &|r, t| (ctx.progress)(&getting, r as f64 / t.max(1) as f64)).await.map(|_| ())
+            };
+            match fetched {
+                Ok(()) if crate::natural::loaded_for_processor() => "the processor's ONNX Runtime is loaded; the card's is used from SulcusAI's next start".to_string(),
+                Ok(()) => return Ok(Some(card)),
+                Err(e) if e == download::CANCELLED => return Err(e),
+                Err(e) => format!("couldn't get the card's ONNX Runtime: {e}"),
+            }
+        }
+        Err(why) => why,
+    };
+    crate::applog::line("media", &format!("Taking a song apart on the processor: {why}"));
+    (ctx.progress)(PROCESSOR_STAGE, 0.0);
+    Ok(None)
+}
+
 /// `map_job` for one song, which is kept with its map.
 async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, String> {
     let state = ctx.state;
@@ -3718,6 +3751,7 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
     }
     let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
     let reader = state.catalog.media.note_reader.clone().ok_or("The note reader isn't available.")?;
+    let card = map_card(ctx).await?;
     let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
     let (_, note_reader) = ensure_helper(state, &reader, "Getting the note reader (once)", ctx.cancel, ctx.progress).await?;
     if item.review.is_none() && item.lyrics.as_deref().is_some_and(lyrics::has_singing) {
@@ -3727,7 +3761,7 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
     (ctx.progress)("Taking the parts apart", 0.4);
     let bytes = store::read(&state.paths, &c, &item.id)?;
     let threads = state.limits().threads;
-    let parts = tokio::task::spawn_blocking(move || -> Result<Vec<songmap::Part>, String> {
+    let (parts, on_card, times) = tokio::task::spawn_blocking(move || -> Result<(Vec<songmap::Part>, bool, [f64; 2]), String> {
         let dir = std::env::temp_dir().join(format!("sulcusai-map-{}", store::new_id()));
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join("song.mp3");
@@ -3739,8 +3773,11 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
         let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
         let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
         let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
-        let stems = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3])?;
+        let started = Instant::now();
+        let (stems, on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card)?;
         stems::unload();
+        let apart = started.elapsed().as_secs_f64();
+        let card = card.filter(|_| on_card);
         let mut parts = Vec::new();
         // The voice first, then the other instruments, the bass and the drums.
         for i in [3usize, 2, 1, 0] {
@@ -3748,7 +3785,7 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
             let notes = if i == 0 {
                 notes::drum_hits(&mono, stems::RATE)
             } else {
-                let mut n = notes::melodic(&dll, &note_reader, &stems::resample(&mono, stems::RATE, notes::RATE), threads)?;
+                let mut n = notes::melodic(&dll, &note_reader, &stems::resample(&mono, stems::RATE, notes::RATE), threads, card)?;
                 // A bass part's notes are low; what's higher is another instrument's spill.
                 if i == 1 {
                     n.retain(|x| x.pitch < 60);
@@ -3758,10 +3795,17 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
             parts.push(songmap::Part { name: stems::PARTS[i].to_string(), notes });
         }
         notes::unload();
-        Ok(parts)
+        Ok((parts, on_card, [apart, started.elapsed().as_secs_f64() - apart]))
     })
     .await
     .map_err(|e| e.to_string())??;
+    crate::applog::line(
+        "media",
+        &format!("Took a song's parts apart in {:.1}s and read their notes in {:.1}s on the {}", times[0], times[1], if on_card { "graphics card" } else { "processor" }),
+    );
+    if card.is_some() && !on_card {
+        (ctx.progress)(PROCESSOR_STAGE, 0.9);
+    }
     let map = songmap::map(item.review.as_ref(), parts, item.seconds);
     crate::applog::line(
         "media",

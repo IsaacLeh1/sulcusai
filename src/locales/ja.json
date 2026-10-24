@@ -3985,5 +3985,6 @@
  "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "セクションをクリックするとメニューが開きます。音符をクリックで選択（Shiftで複数）、ドラッグで移動、音符の端をドラッグで伸ばし、ダブルクリックで追加。矢印キーで移動、Ctrl+CとCtrl+Vで再生位置にコピー、Deleteで削除。小節番号の上をドラッグするとループを設定できます。",
  "Play a part of the song over and over: drag across the bar numbers to set it": "曲の一部を繰り返し再生：小節番号の上をドラッグして範囲を設定",
  "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "この声に合わせてメロディを{n}オクターブ下げ、デモを録り直します。",
- "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "この声に合わせてメロディを{n}オクターブ上げ、デモを録り直します。"
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "この声に合わせてメロディを{n}オクターブ上げ、デモを録り直します。",
+ "There's no ONNX Runtime for graphics cards on this system.": "このシステム向けのグラフィックカード用 ONNX Runtime はありません。"
 }

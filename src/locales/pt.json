@@ -3985,5 +3985,6 @@
  "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "Clique numa seção para ver o menu. Clique nas notas para selecioná-las (Shift para mais), arraste para movê-las, arraste o fim de uma nota para alongá-la, clique duplo para adicionar uma. As setas as movem, Ctrl+C e Ctrl+V as copiam para a posição de reprodução, Delete as remove. Arraste sobre os números dos compassos para definir um loop.",
  "Play a part of the song over and over: drag across the bar numbers to set it": "Tocar uma parte da música sem parar: arraste sobre os números dos compassos para defini-la",
  "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "A melodia desce {n} oitava(s) para caber nesta voz, e a demo é gravada de novo.",
- "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "A melodia sobe {n} oitava(s) para caber nesta voz, e a demo é gravada de novo."
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "A melodia sobe {n} oitava(s) para caber nesta voz, e a demo é gravada de novo.",
+ "There's no ONNX Runtime for graphics cards on this system.": "Não há ONNX Runtime para placas de vídeo neste sistema."
 }

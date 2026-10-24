@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::catalog::{EngineSpec, License};
+use crate::catalog::{Asset, EngineSpec, License};
 use crate::paths::Paths;
 use crate::tts::Speech;
 use crate::{db, download, engine, net, AppState, AppStateRef};
@@ -33,7 +33,28 @@ const IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
 pub struct VoiceCatalog {
     pub runtime: EngineSpec,
     pub runtime_dll: String,
+    /// ONNX Runtime's build for NVIDIA cards, for what runs much faster
+    /// there (a song's parts, `media::stems`).
+    #[serde(default)]
+    pub gpu_runtime: Option<GpuRuntime>,
     pub models: Vec<VoicePack>,
+}
+
+/// ONNX Runtime with CUDA: its archive and NVIDIA's libraries (Python
+/// wheels, which are zips), whose DLLs are kept together in one folder.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GpuRuntime {
+    pub name: String,
+    pub license: String,
+    pub build: String,
+    /// The oldest NVIDIA driver its CUDA runs on, and the oldest card
+    /// (compute capability).
+    pub min_driver: f64,
+    pub min_compute: f64,
+    /// Free memory the card needs (MiB): `CARD_ARENA` for the work and the
+    /// rest for CUDA itself.
+    pub min_free_mib: u64,
+    pub assets: HashMap<String, Vec<Asset>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -102,14 +123,19 @@ fn runtime_file(c: &VoiceCatalog) -> String {
     }
 }
 
-/// The downloaded ONNX Runtime library, if present.
+/// The downloaded ONNX Runtime library, if present: the one for NVIDIA
+/// cards when that's here (it runs everything else on the processor just
+/// the same, and a process loads only one).
 pub fn runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
-    engine::find_exe(&paths.engines.join(runtime_dir(c)), &runtime_file(c))
+    gpu_runtime_dll(paths, c).or_else(|| engine::find_exe(&paths.engines.join(runtime_dir(c)), &runtime_file(c)))
 }
 
 /// Downloads and unpacks ONNX Runtime if it isn't there yet.
 pub async fn ensure_runtime(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<PathBuf, String> {
     let c = &state.catalog.voices;
+    if let Some(dll) = gpu_runtime_dll(&state.paths, c) {
+        return Ok(dll);
+    }
     let asset = c.runtime.assets.get(engine::cpu_key()).ok_or("Natural voices aren't available on this system yet (no ONNX Runtime build for it).")?;
     let rdir = runtime_dir(c);
     if runtime_dll(&state.paths, c).is_none() {
@@ -228,14 +254,183 @@ fn engine_slot() -> &'static Mutex<Option<Engine>> {
     S.get_or_init(Default::default)
 }
 
+/// The ONNX Runtime library this process loaded (only one can be).
+static LOADED: OnceLock<PathBuf> = OnceLock::new();
+
 pub fn runtime_ready(dll: &Path) -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
+        // The build for NVIDIA cards finds CUDA and cuDNN beside it, and
+        // cuDNN loads its parts by name: its folder goes first on the path.
+        // Cards are numbered as nvidia-smi does (`cuda_card`).
+        if cfg!(windows) && dll.with_file_name(CUDA_PROVIDER).is_file() {
+            if let Some(dir) = dll.parent() {
+                let path = std::env::var_os("PATH").unwrap_or_default();
+                let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&path));
+                if let Ok(joined) = std::env::join_paths(dirs) {
+                    std::env::set_var("PATH", joined);
+                }
+                std::env::set_var("CUDA_DEVICE_ORDER", "PCI_BUS_ID");
+            }
+        }
         let builder = ort::init_from(dll).map_err(|e| format!("Couldn't start the natural voices' speech engine (ONNX Runtime): {e}"))?;
         builder.commit();
+        let _ = LOADED.set(dll.to_path_buf());
         Ok(())
     })
     .clone()
+}
+
+// ---------- on NVIDIA cards ----------
+
+/// ONNX Runtime's CUDA part, which only its build for NVIDIA cards has.
+const CUDA_PROVIDER: &str = "onnxruntime_providers_cuda.dll";
+/// Written when every part of the build for NVIDIA cards is in.
+const GPU_DONE: &str = ".complete";
+/// The most a model's work may take on the card: unbounded, HTDemucs took
+/// 7.4 GB; in 3 it ran as fast, leaving room for a chat model (in 2 it
+/// failed).
+const CARD_ARENA: usize = 3 << 30;
+
+fn gpu_runtime_dir(g: &GpuRuntime) -> String {
+    format!("onnxruntime-{}", g.build)
+}
+
+/// The downloaded ONNX Runtime for NVIDIA cards, once every part is in.
+pub fn gpu_runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
+    let dir = paths.engines.join(gpu_runtime_dir(c.gpu_runtime.as_ref()?));
+    dir.join(GPU_DONE).is_file().then(|| dir.join(&c.runtime_dll)).filter(|d| d.is_file())
+}
+
+/// The build for NVIDIA cards, for this system, if there is one.
+fn gpu_runtime_parts(c: &VoiceCatalog) -> Option<(&GpuRuntime, &Vec<Asset>)> {
+    let g = c.gpu_runtime.as_ref().filter(|_| cfg!(all(windows, target_arch = "x86_64")))?;
+    Some((g, g.assets.get(engine::cpu_key())?))
+}
+
+/// What the build for NVIDIA cards downloads, in bytes.
+pub fn gpu_runtime_size(c: &VoiceCatalog) -> u64 {
+    gpu_runtime_parts(c).map_or(0, |(_, parts)| parts.iter().map(|a| a.size).sum())
+}
+
+/// Downloads ONNX Runtime for NVIDIA cards and NVIDIA's libraries, keeping
+/// their DLLs in one folder. Each part is kept as it's done, so a stopped
+/// download goes on from the next.
+pub async fn ensure_gpu_runtime(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<PathBuf, String> {
+    let c = &state.catalog.voices;
+    if let Some(dll) = gpu_runtime_dll(&state.paths, c) {
+        return Ok(dll);
+    }
+    let (g, parts) = gpu_runtime_parts(c).ok_or("There's no ONNX Runtime for graphics cards on this system.")?;
+    let name = gpu_runtime_dir(g);
+    let dir = state.paths.engines.join(&name);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Engine downloads are user-started installs, allowed at every level.
+    let client = net::external_client(net::Connectivity::Offline, net::Purpose::ModelDownload, false)?;
+    let total: u64 = parts.iter().map(|a| a.size).sum();
+    let mut done = 0;
+    for (i, a) in parts.iter().enumerate() {
+        let mark = dir.join(format!(".part-{}", &a.sha256[..16]));
+        if !mark.is_file() {
+            state.log("network", &format!("Downloading {} ({}) from {}", a.url.rsplit('/').next().unwrap_or(""), crate::size_label(a.size), crate::host_of(&a.url)));
+            let archive = state.paths.engines.join(format!("{name}-{i}.zip"));
+            download::fetch_verified(&client, &a.url, &archive, a.size, &a.sha256, cancel, |r, _| progress(done + r, total)).await?;
+            let (from, into) = (archive.clone(), dir.clone());
+            tokio::task::spawn_blocking(move || engine::unzip_libraries(&from, &into)).await.map_err(|e| e.to_string())??;
+            std::fs::remove_file(&archive).ok();
+            std::fs::write(&mark, b"").map_err(|e| e.to_string())?;
+        }
+        done += a.size;
+        progress(done, total);
+    }
+    if !dir.join(CUDA_PROVIDER).is_file() {
+        return Err(format!("The graphics card's ONNX Runtime download didn't contain {CUDA_PROVIDER}."));
+    }
+    std::fs::write(dir.join(GPU_DONE), g.build.as_bytes()).map_err(|e| e.to_string())?;
+    gpu_runtime_dll(&state.paths, c).ok_or_else(|| format!("The graphics card's ONNX Runtime download didn't contain {}.", c.runtime_dll))
+}
+
+/// Whether this process's ONNX Runtime can use NVIDIA cards (it can't
+/// change until SulcusAI starts again).
+pub fn loaded_for_cards() -> bool {
+    LOADED.get().is_some_and(|d| d.with_file_name(CUDA_PROVIDER).is_file())
+}
+
+/// This process loaded the processor's ONNX Runtime (before the card's was
+/// downloaded): the card's is used from SulcusAI's next start.
+pub fn loaded_for_processor() -> bool {
+    LOADED.get().is_some() && !loaded_for_cards()
+}
+
+/// The PC's card may run ONNX Runtime's work: it's NVIDIA's and there's a
+/// build for this system (`cuda_card` checks the rest when it's time).
+pub fn nvidia_here(state: &AppState) -> bool {
+    gpu_runtime_parts(&state.catalog.voices).is_some() && state.hardware.read().unwrap().best_gpu().is_some_and(|g| g.vendor == "NVIDIA")
+}
+
+/// An NVIDIA card ONNX Runtime can use: its number as nvidia-smi counts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Card {
+    pub device: i32,
+}
+
+/// The NVIDIA card to run on now, or why not: the build for it is in the
+/// catalog for this system, the card (the one picked, else the first) is
+/// new enough, its driver runs that CUDA, and it has room right now.
+/// SULCUSAI_ONNX_CPU=1 keeps work on the processor (to compare).
+pub async fn cuda_card(state: &AppState) -> Result<Card, String> {
+    if std::env::var_os("SULCUSAI_ONNX_CPU").is_some() {
+        return Err("SULCUSAI_ONNX_CPU is set".into());
+    }
+    let (g, _) = gpu_runtime_parts(&state.catalog.voices).ok_or("no ONNX Runtime for graphics cards on this system")?;
+    let best = state.hardware.read().unwrap().best_gpu().cloned().ok_or("no graphics card")?;
+    if best.vendor != "NVIDIA" {
+        return Err(format!("{} isn't an NVIDIA card", best.name));
+    }
+    let mut cmd = tokio::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=index,name,driver_version,compute_cap,memory.used,memory.total", "--format=csv,noheader,nounits"]).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let out = match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
+        Ok(Ok(o)) if o.status.success() => o,
+        _ => return Err("nvidia-smi didn't answer".into()),
+    };
+    let cards: Vec<Vec<String>> = String::from_utf8_lossy(&out.stdout).lines().map(|l| l.split(',').map(|f| f.trim().to_string()).collect()).filter(|f: &Vec<String>| f.len() == 6).collect();
+    let card = cards.iter().find(|f| crate::hardware::same_name(&f[1], &best.name)).or(cards.first()).ok_or("nvidia-smi listed no card")?;
+    let num = |i: usize| card[i].parse::<f64>().unwrap_or(0.0);
+    if num(2) < g.min_driver {
+        return Err(format!("the NVIDIA driver ({}) is older than {} (update it to use the card)", card[2], g.min_driver));
+    }
+    if num(3) < g.min_compute {
+        return Err(format!("{} is older than CUDA {} supports", card[1], g.build.rsplit('-').next().unwrap_or("")));
+    }
+    let free = num(5) - num(4);
+    if free < g.min_free_mib as f64 {
+        return Err(format!("{} has {:.1} GB free and this needs {:.1}", card[1], free / 1024.0, g.min_free_mib as f64 / 1024.0));
+    }
+    Ok(Card { device: card[0].parse().unwrap_or(0) })
+}
+
+/// A model opened on the NVIDIA card (CUDA, with `CARD_ARENA`) when one is
+/// given and this process's ONNX Runtime can use it, else on the processor;
+/// and whether it's on the card.
+pub fn session_on(model: &Path, threads: usize, card: Option<Card>) -> Result<(Session, bool), String> {
+    let fail = |err: ort::Error| format!("Couldn't open {}: {err}", model.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()));
+    if let Some(c) = card.filter(|_| loaded_for_cards()) {
+        let cuda = ort::ep::CUDA::default()
+            .with_device_id(c.device)
+            .with_conv_algorithm_search(ort::ep::cuda::ConvAlgorithmSearch::Heuristic)
+            .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested)
+            .with_memory_limit(CARD_ARENA)
+            .build()
+            .error_on_failure();
+        match Session::builder().and_then(|b| b.with_execution_providers([cuda]).map_err(Into::into)).and_then(|mut b| b.commit_from_file(model)) {
+            Ok(s) => return Ok((s, true)),
+            Err(err) => crate::applog::line("media", &format!("The graphics card couldn't open {} ({err}); using the processor", model.display())),
+        }
+    }
+    let s = Session::builder().map_err(fail)?.with_intra_threads(threads.max(1)).map_err(|err| fail(err.into()))?.commit_from_file(model).map_err(fail)?;
+    Ok((s, false))
 }
 
 fn e(err: impl std::fmt::Display) -> String {

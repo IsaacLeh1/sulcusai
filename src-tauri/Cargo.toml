@@ -57,9 +57,10 @@ tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"
 # Signed updates from the project's GitHub Releases.
 tauri-plugin-updater = "2"
-# Neural voices and speaker labels: ONNX Runtime, loaded at run time from a
-# downloaded, hash-checked copy (nothing is bundled or fetched at build time).
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17"] }
+# Neural voices, speaker labels and a song's parts: ONNX Runtime, loaded at
+# run time from a downloaded, hash-checked copy (nothing is bundled or fetched
+# at build time); "cuda" lets a song's parts be taken apart on NVIDIA cards.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "api-17", "cuda"] }
 # A song's finish (media/finish.rs): breaths found and remade on the separated voice.
 realfft = "3.5"
 unicode-normalization = "0.1"

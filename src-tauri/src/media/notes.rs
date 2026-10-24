@@ -39,8 +39,9 @@ const FRAME_THRESH: f32 = 0.3;
 const MIN_NOTE: usize = 11;
 const ENERGY_TOL: usize = 11;
 
-fn session() -> &'static Mutex<Option<(PathBuf, Session)>> {
-    static S: OnceLock<Mutex<Option<(PathBuf, Session)>>> = OnceLock::new();
+/// The open note reader: its file, and whether it's on the graphics card.
+fn session() -> &'static Mutex<Option<(PathBuf, bool, Session)>> {
+    static S: OnceLock<Mutex<Option<(PathBuf, bool, Session)>>> = OnceLock::new();
     S.get_or_init(Default::default)
 }
 
@@ -68,15 +69,15 @@ impl Grid {
 }
 
 /// Basic Pitch's note and onset grids for 22.05 kHz mono audio, the windows'
-/// overlaps trimmed and the frames cut to the audio's length.
-fn grids(dll: &Path, model: &Path, audio: &[f32], threads: usize) -> Result<(Grid, Grid), String> {
+/// overlaps trimmed and the frames cut to the audio's length. On the NVIDIA
+/// card (`card`) when there is one; should it fail, on the processor.
+fn grids(dll: &Path, model: &Path, audio: &[f32], threads: usize, card: Option<crate::natural::Card>) -> Result<(Grid, Grid), String> {
     crate::natural::runtime_ready(dll)?;
     let mut guard = session().lock().unwrap();
-    if guard.as_ref().map(|(p, _)| p.as_path()) != Some(model) {
-        let s = Session::builder().map_err(e)?.with_intra_threads(threads.max(1)).map_err(e)?.commit_from_file(model).map_err(e)?;
-        *guard = Some((model.to_path_buf(), s));
+    if guard.as_ref().map(|(p, on, _)| (p.as_path(), *on)) != Some((model, card.is_some())) {
+        let (s, on) = crate::natural::session_on(model, threads, card)?;
+        *guard = Some((model.to_path_buf(), on, s));
     }
-    let sess = &mut guard.as_mut().unwrap().1;
     let overlap = OVERLAP_FRAMES * HOP;
     let hop = WINDOW - overlap;
     let mut padded = vec![0f32; overlap / 2];
@@ -87,10 +88,23 @@ fn grids(dll: &Path, model: &Path, audio: &[f32], threads: usize) -> Result<(Gri
     while start < padded.len() {
         let mut window = padded[start..(start + WINDOW).min(padded.len())].to_vec();
         window.resize(WINDOW, 0.0);
-        let out = sess.run(ort::inputs! { "serving_default_input_2:0" => Tensor::from_array(([1usize, WINDOW, 1], window)).map_err(e)? }).map_err(e)?;
         // Its outputs: 0 the pitch contour, 1 the notes, 2 the onsets.
-        for (name, into) in [("StatefulPartitionedCall:1", &mut notes), ("StatefulPartitionedCall:2", &mut onsets)] {
-            let (_, v) = out[name].try_extract_tensor::<f32>().map_err(e)?;
+        let got = loop {
+            let (_, on, sess) = guard.as_mut().unwrap();
+            let ran = sess.run(ort::inputs! { "serving_default_input_2:0" => Tensor::from_array(([1usize, WINDOW, 1], window.clone())).map_err(e)? }).and_then(|out| {
+                Ok([out["StatefulPartitionedCall:1"].try_extract_tensor::<f32>()?.1.to_vec(), out["StatefulPartitionedCall:2"].try_extract_tensor::<f32>()?.1.to_vec()])
+            });
+            match ran {
+                Ok(v) => break v,
+                Err(err) if *on => {
+                    crate::applog::line("media", &format!("The graphics card couldn't read the notes ({err}); going on on the processor"));
+                    let (s, _) = crate::natural::session_on(model, threads, None)?;
+                    *guard = Some((model.to_path_buf(), false, s));
+                }
+                Err(err) => return Err(e(err)),
+            }
+        };
+        for (v, into) in got.iter().zip([&mut notes, &mut onsets]) {
             if v.len() != FRAMES_PER_WINDOW * KEYS {
                 return Err(e("unexpected output size"));
             }
@@ -208,8 +222,8 @@ fn frame_time(f: usize) -> f32 {
 }
 
 /// The notes of a melodic part, from 22.05 kHz mono audio, in time order.
-pub fn melodic(dll: &Path, model: &Path, audio: &[f32], threads: usize) -> Result<Vec<Note>, String> {
-    let (frames, onsets) = grids(dll, model, audio, threads)?;
+pub fn melodic(dll: &Path, model: &Path, audio: &[f32], threads: usize, card: Option<crate::natural::Card>) -> Result<Vec<Note>, String> {
+    let (frames, onsets) = grids(dll, model, audio, threads, card)?;
     let mut notes: Vec<Note> = grid_notes(&frames, &onsets)
         .into_iter()
         .map(|(a, b, pitch, amp)| Note { start: frame_time(a), end: frame_time(b), pitch, velocity: (amp * 127.0).round().clamp(1.0, 127.0) as u8 })

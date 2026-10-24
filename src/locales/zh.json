@@ -3985,5 +3985,6 @@
  "Click a section for its menu. Click notes to select them (Shift for more), drag to move them, drag a note's end to lengthen it, double-click to add one. Arrows move them, Ctrl+C and Ctrl+V copy them to the playhead, Delete removes them. Drag across the bar numbers to set a loop.": "点击某一段打开菜单。点击音符选中（按住 Shift 可多选），拖动来移动，拖动音符末端来拉长，双击添加。方向键移动音符，Ctrl+C 和 Ctrl+V 复制到播放位置，Delete 删除。在小节编号上拖动可设置循环区。",
  "Play a part of the song over and over: drag across the bar numbers to set it": "反复播放歌曲的一部分：在小节编号上拖动来设置范围",
  "The tune moves down {n} octave(s) to fit this voice, and the demo is recorded again.": "旋律会降低 {n} 个八度以适合这个声音，小样会重新录制。",
- "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "旋律会升高 {n} 个八度以适合这个声音，小样会重新录制。"
+ "The tune moves up {n} octave(s) to fit this voice, and the demo is recorded again.": "旋律会升高 {n} 个八度以适合这个声音，小样会重新录制。",
+ "There's no ONNX Runtime for graphics cards on this system.": "此系统没有适用于显卡的 ONNX Runtime。"
 }

@@ -3050,6 +3050,46 @@ async fn e2e_picture_set() {
     }
 }
 
+/// "See how it's built" on an NVIDIA card: a song's parts taken apart and
+/// their notes read through CUDA (its libraries downloaded the first time),
+/// timed. SULCUSAI_SONG is the MP3 and SULCUSAI_SONG_SECONDS its length;
+/// SULCUSAI_ONNX_CPU=1 keeps it on the processor, to compare (run that
+/// alone: a process loads one ONNX Runtime).
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_song_parts_on_the_card() {
+    use crate::media::{self, store, MediaItem};
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    let c = state.work_cipher().unwrap();
+    let song = std::fs::read(std::env::var("SULCUSAI_SONG").expect("SULCUSAI_SONG")).unwrap();
+    let seconds = std::env::var("SULCUSAI_SONG_SECONDS").ok().and_then(|s| s.parse().ok()).unwrap_or(60.0);
+    let item = MediaItem { kind: "audio".into(), mime: "audio/mpeg".into(), op: "import".into(), prompt: "a song".into(), seconds, ..Default::default() };
+    let item = store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &song, None).unwrap();
+    let on_processor = std::env::var_os("SULCUSAI_ONNX_CPU").is_some();
+    for round in 1..=2 {
+        let t = std::time::Instant::now();
+        let mapped = media::run(&state, store::new_id(), media::Request { op: "map".into(), source: Some(item.id.clone()), ..Default::default() }).await.unwrap().remove(0);
+        let map = mapped.map.unwrap();
+        println!(
+            "round {round}: mapped in {:.1}s ({}); {}",
+            t.elapsed().as_secs_f64(),
+            if crate::natural::loaded_for_cards() { "the card's runtime" } else { "the processor's runtime" },
+            map.parts.iter().map(|p| format!("{} {}", p.name, p.notes.len())).collect::<Vec<_>>().join(", ")
+        );
+        assert!(map.parts.iter().map(|p| p.notes.len()).sum::<usize>() > 100);
+    }
+    let log = std::fs::read_to_string(state.paths.logs.join("app.log")).unwrap_or_default();
+    let lines: Vec<&str> = log.lines().filter(|l| l.contains("song's parts") || l.contains("song apart") || l.contains("graphics card")).collect();
+    for line in &lines {
+        println!("{line}");
+    }
+    let want = if on_processor { "on the processor" } else { "on the graphics card" };
+    let ran: Vec<&&str> = lines.iter().filter(|l| l.contains("Took a song's parts apart")).collect();
+    assert!(ran.len() == 2 && ran.iter().all(|l| l.ends_with(want)), "{want}");
+}
+
 /// App state with the real engines and models but a throwaway database and
 /// gallery (so test pictures never land in the real app's gallery).
 fn media_state() -> std::sync::Arc<crate::AppState> {

@@ -110,8 +110,9 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Vec<f32> {
     out
 }
 
-fn session() -> &'static Mutex<Option<(PathBuf, Session)>> {
-    static S: OnceLock<Mutex<Option<(PathBuf, Session)>>> = OnceLock::new();
+/// The open separator: its file, and whether it's on the graphics card.
+fn session() -> &'static Mutex<Option<(PathBuf, bool, Session)>> {
+    static S: OnceLock<Mutex<Option<(PathBuf, bool, Session)>>> = OnceLock::new();
     S.get_or_init(Default::default)
 }
 
@@ -124,15 +125,20 @@ pub const PARTS: [&str; 4] = ["drums", "bass", "other", "vocals"];
 
 /// Parts of a 44.1 kHz song (`wanted`, indexes into `PARTS`), by HTDemucs
 /// in 7.8 s pieces overlapping by a quarter and cross-faded (its own
-/// reference program's way).
-pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: &[usize]) -> Result<Vec<Stereo>, String> {
+/// reference program's way); and whether the graphics card did it.
+///
+/// On an NVIDIA card (`card`) a piece took 0.37 s (RTX 5070), on the
+/// processor 1.8 s (i5-14600K); the card's first piece takes 1 s (8.5 the
+/// first time ever, while CUDA builds its kernels). A 2:41 song came apart
+/// in 17 s on the card and 41-84 s on the processor. Should the card fail,
+/// it goes on on the processor.
+pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: &[usize], card: Option<crate::natural::Card>) -> Result<(Vec<Stereo>, bool), String> {
     crate::natural::runtime_ready(dll)?;
     let mut guard = session().lock().unwrap();
-    if guard.as_ref().map(|(p, _)| p.as_path()) != Some(model) {
-        let s = Session::builder().map_err(e)?.with_intra_threads(threads.max(1)).map_err(e)?.commit_from_file(model).map_err(e)?;
-        *guard = Some((model.to_path_buf(), s));
+    if guard.as_ref().map(|(p, on, _)| (p.as_path(), *on)) != Some((model, card.is_some())) {
+        let (s, on) = crate::natural::session_on(model, threads, card)?;
+        *guard = Some((model.to_path_buf(), on, s));
     }
-    let sess = &mut guard.as_mut().unwrap().1;
     let total = mix.len();
     let overlap = SEP_LEN / 4;
     let stride = SEP_LEN - overlap;
@@ -155,8 +161,21 @@ pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: 
         for c in 0..2 {
             input[c * SEP_LEN..c * SEP_LEN + (b - a)].copy_from_slice(&mix.ch[c][a..b]);
         }
-        let res = sess.run(ort::inputs! { "mix" => Tensor::from_array(([1usize, 2, SEP_LEN], input.clone())).map_err(e)? }).map_err(e)?;
-        let (_, stems) = res["stems"].try_extract_tensor::<f32>().map_err(e)?;
+        let stems = loop {
+            let (_, on, sess) = guard.as_mut().unwrap();
+            let ran = sess
+                .run(ort::inputs! { "mix" => Tensor::from_array(([1usize, 2, SEP_LEN], input.clone())).map_err(e)? })
+                .and_then(|res| Ok(res["stems"].try_extract_tensor::<f32>()?.1.to_vec()));
+            match ran {
+                Ok(v) => break v,
+                Err(err) if *on => {
+                    crate::applog::line("media", &format!("The graphics card couldn't take the song apart ({err}); going on on the processor"));
+                    let (s, _) = crate::natural::session_on(model, threads, None)?;
+                    *guard = Some((model.to_path_buf(), false, s));
+                }
+                Err(err) => return Err(e(err)),
+            }
+        };
         if stems.len() != 4 * 2 * SEP_LEN {
             return Err(e("unexpected output size"));
         }
@@ -179,7 +198,8 @@ pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: 
             }
         }
     }
-    Ok(out.into_iter().map(|ch| Stereo { rate: mix.rate, ch }).collect())
+    let on_card = guard.as_ref().is_some_and(|(_, on, _)| *on);
+    Ok((out.into_iter().map(|ch| Stereo { rate: mix.rate, ch }).collect(), on_card))
 }
 
 pub fn unload() {

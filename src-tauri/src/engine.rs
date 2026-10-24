@@ -526,6 +526,24 @@ fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// The DLLs in a zip (or a Python wheel, which is one), wherever they are
+/// in it, put side by side in `into`; the rest (headers, import libraries,
+/// Python files) is left out.
+pub fn unzip_libraries(zip_path: &Path, into: &Path) -> Result<(), String> {
+    let file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("Couldn't unpack {}: {e}", zip_path.display()))?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        let Some(name) = entry.enclosed_name().and_then(|p| p.file_name().map(|n| n.to_owned())) else { continue };
+        if entry.is_dir() || !name.to_string_lossy().to_lowercase().ends_with(".dll") {
+            continue;
+        }
+        let mut dest = std::fs::File::create(into.join(&name)).map_err(|e| e.to_string())?;
+        std::io::copy(&mut entry, &mut dest).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub struct LaunchSpec<'a> {
     pub exe: &'a Path,
