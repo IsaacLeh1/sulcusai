@@ -41,8 +41,25 @@
 // {t: "api", rid, phone, data, more?}. From the PC: {rid, status?, headers?,
 // data?, more?}. data is base64, in parts of under 1 MB (more: true until the
 // last); an answer streams to the phone as its parts arrive.
+//
+// Pipe (People across the internet without a VPN), one Durable Object per
+// room: two apps meet in a room and the relay passes the bytes between them,
+// sealed by the apps with keys the relay never sees. A room is named from
+// what only the two apps share (their link key, or the code being typed), so
+// nobody else finds it. Nothing is stored.
+//   GET    /v1/pipe/<room>/<side>       a WebSocket, "Authorization: Bearer <token>" (64 hex);
+//                                       side a or b (two linked apps), host or guest (linking
+//                                       by code). A second socket for a side replaces the first.
+// room = the first 32 hex characters of the token's SHA-256, so only an app
+// that has the token (made from the shared secret) gets in: a room's name
+// seen anywhere isn't enough. Binary messages (under 1 MB) go to the other
+// side; the relay sends {t: "peer", on: true|false} as text when the other
+// side arrives or leaves. A room passes a limited amount a minute and an
+// hour, so the relay can't be used as anyone's free pipe.
 
 const MAX_BYTES = 2_000_000;
+// What one mailbox may hold at once (messages are deleted once read).
+const BOX_MAX_BYTES = 256_000_000;
 const KEEP_MS = 30 * 24 * 3600 * 1000;
 const PAGE = 20;
 
@@ -72,6 +89,13 @@ export default {
     if (link) {
       if (!env.LINK) return json({ error: "not found" }, 404);
       return env.LINK.get(env.LINK.idFromName(link[2])).fetch(request);
+    }
+    // People's pipe: open like the phone link (what passes is sealed, and a
+    // room's name is a secret only the two apps know).
+    const pipe = url.pathname.match(PIPE_PATH);
+    if (pipe) {
+      if (!env.PIPE) return json({ error: "not found" }, 404);
+      return env.PIPE.get(env.PIPE.idFromName(pipe[1])).fetch(request);
     }
     // With RELAY_SECRET set (wrangler secret put RELAY_SECRET), only
     // addresses that start with /k/<secret> are served, so strangers can't
@@ -126,6 +150,8 @@ export class Box {
       if (!(await this.authorized(request, true))) return json({ error: "unauthorized" }, 401);
       const body = new Uint8Array(await request.arrayBuffer());
       if (body.length === 0 || body.length > MAX_BYTES) return json({ error: "size" }, 413);
+      const held = this.sql.exec("SELECT COALESCE(SUM(LENGTH(data)), 0) AS n FROM msgs").toArray()[0];
+      if (held && Number(held.n) + body.length > BOX_MAX_BYTES) return json({ error: "full" }, 507);
       this.sql.exec("INSERT OR REPLACE INTO msgs (seq, data) VALUES (?, ?)", Number(seqText), body);
       return json({ ok: true });
     }
@@ -196,8 +222,9 @@ export class Inbox {
       this.sql.exec("INSERT INTO feedback (at, kind, text, version, contact) VALUES (?, ?, ?, ?, ?)", Date.now(), kind, text, version || null, contact || null);
       return json({ ok: true });
     }
-    // The developer's side: the key, or nothing at all.
-    if (!key || url.searchParams.get("key") !== key) return json({ error: "not found" }, 404);
+    // The developer's side: the key, or nothing at all (compared by hash, so
+    // how long the comparison takes says nothing about the key).
+    if (!key || (await sha256(url.searchParams.get("key") || "")) !== (await sha256(key))) return json({ error: "not found" }, 404);
     if (request.method === "POST" && url.pathname === "/feedback/delete") {
       const form = await request.formData().catch(() => null);
       const id = form && form.get("id");
@@ -223,7 +250,18 @@ export class Inbox {
           ? `<form method="post" action="/feedback/delete?key=${k}" onsubmit="return confirm('Delete everything?')"><input type="hidden" name="id" value="all"><button>Delete all</button></form>`
           : "<p>Nothing yet.</p>") +
         items;
-      return new Response(page, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex" } });
+      return new Response(page, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store",
+          "x-robots-tag": "noindex",
+          // Nothing from elsewhere, never in a frame, and the key never in a Referer.
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+          "x-frame-options": "DENY",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff",
+        },
+      });
     }
     return json({ error: "not found" }, 404);
   }
@@ -404,5 +442,87 @@ export class Link {
   async alarm() {
     if (this.host()) await this.ctx.storage.setAlarm(Date.now() + LINK_KEEP_MS);
     else await this.ctx.storage.deleteAll();
+  }
+}
+
+const PIPE_PATH = /^\/v1\/pipe\/([0-9a-f]{32})\/(a|b|host|guest)$/;
+const PIPE_OTHER = { a: "b", b: "a", host: "guest", guest: "host" };
+const PIPE_MAX = 1 << 20;
+// What one room passes: messages a minute, bytes an hour (People's messages,
+// files up to 16 MB and live shared chats fit easily).
+const PIPE_PER_MINUTE = 6000;
+const PIPE_BYTES_PER_HOUR = 512 * 1024 * 1024;
+
+// One room: at most one socket per side, and what one sends goes to the other.
+export class Pipe {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.minute = 0;
+    this.count = 0;
+    this.hour = 0;
+    this.bytes = 0;
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+  }
+
+  side(ws) {
+    return this.ctx.getTags(ws)[0];
+  }
+
+  others(side) {
+    return this.ctx.getWebSockets(PIPE_OTHER[side]);
+  }
+
+  async fetch(request) {
+    const m = new URL(request.url).pathname.match(PIPE_PATH);
+    if (!m || request.headers.get("upgrade") !== "websocket") return json({ error: "not found" }, 404);
+    // Only an app holding the room's token: the room's name is where its hash starts.
+    const auth = request.headers.get("authorization") || "";
+    const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (!/^[0-9a-f]{64}$/.test(token) || (await sha256(token)).slice(0, 32) !== m[1]) return json({ error: "not found" }, 404);
+    const side = m[2];
+    for (const old of this.ctx.getWebSockets(side)) old.close(1000, "replaced");
+    const pair = new WebSocketPair();
+    this.ctx.acceptWebSocket(pair[1], [side]);
+    const others = this.others(side);
+    if (others.length) {
+      const on = JSON.stringify({ t: "peer", on: true });
+      pair[1].send(on);
+      for (const o of others) o.send(on);
+    }
+    return new Response(null, { status: 101, webSocket: pair[0] });
+  }
+
+  webSocketMessage(ws, message) {
+    // Text is only the relay's own notes; the apps send bytes.
+    if (typeof message === "string") return;
+    if (message.byteLength > PIPE_MAX) return ws.close(1009, "too big");
+    const now = Date.now();
+    const minute = Math.floor(now / 60_000);
+    const hour = Math.floor(now / 3_600_000);
+    if (minute !== this.minute) {
+      this.minute = minute;
+      this.count = 0;
+    }
+    if (hour !== this.hour) {
+      this.hour = hour;
+      this.bytes = 0;
+    }
+    this.count += 1;
+    this.bytes += message.byteLength;
+    if (this.count > PIPE_PER_MINUTE || this.bytes > PIPE_BYTES_PER_HOUR) return ws.close(1008, "too much");
+    for (const o of this.others(this.side(ws))) o.send(message);
+  }
+
+  webSocketClose(ws) {
+    const off = JSON.stringify({ t: "peer", on: false });
+    for (const o of this.others(this.side(ws))) {
+      try {
+        o.send(off);
+      } catch {}
+    }
+  }
+
+  webSocketError(ws) {
+    this.webSocketClose(ws);
   }
 }

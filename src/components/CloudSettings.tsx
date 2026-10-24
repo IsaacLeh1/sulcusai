@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, type CloudModel, type CloudProvider, type CloudView, type CloudMedia, type CloudMediaKind } from "../api";
+import { api, errorText, on, openInViewer, type CloudModel, type CloudProvider, type CloudView, type CloudMedia, type CloudMediaKind } from "../api";
 import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
 const money = (n: number) => (n < 0.01 && n > 0 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
+
+/** Where each provider makes API keys: opened in the built-in browser to sign in there. */
+const KEY_PAGES: Record<string, string> = {
+  openai: "https://platform.openai.com/api-keys",
+  anthropic: "https://console.anthropic.com/settings/keys",
+  gemini: "https://aistudio.google.com/apikey",
+  openrouter: "https://openrouter.ai/keys",
+};
 
 function ModelPicker({ provider, onClose, onSaved, toast }: { provider: CloudProvider; onClose: () => void; onSaved: (v: CloudView) => void; toast: PushToast }) {
   const [all, setAll] = useState<CloudModel[] | null>(null);
@@ -116,6 +124,28 @@ function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
 function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v: CloudView) => void; toast: PushToast }) {
   const [key, setKey] = useState("");
   const [picking, setPicking] = useState(false);
+  // A server you sign in to (Open WebUI, or one behind a sign-in page), not a provider's API.
+  const server = p.kind === "openai" && !KEY_PAGES[p.id];
+  // Signed in through the built-in browser: choose its models next.
+  useEffect(() => {
+    const sub = on("cloud:signed_in", (e) => {
+      if (e.id !== p.id) return;
+      toast(t("Signed in to {name}. Choose the models you want.", { name: e.name }), "success");
+      api.cloudView().then(onChanged).catch(() => {});
+      setPicking(true);
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [p.id, onChanged, toast]);
+  const signIn = async () => {
+    try {
+      await api.cloudSignIn(p.id);
+      toast(t("Sign in to {name} in the browser page that opened. SulcusAI picks up the sign-in by itself (it waits ten minutes).", { name: p.name }), "info");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const run = async (f: () => Promise<CloudView>) => {
     try {
       onChanged(await f());
@@ -141,15 +171,32 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
           className="btn small"
           disabled={!key.trim()}
           onClick={async () => {
-            await run(() => api.setCloudProvider(p.id, true, key));
-            setKey("");
+            try {
+              onChanged(await api.setCloudProvider(p.id, true, key));
+              setKey("");
+              // Next: which of its models to show.
+              setPicking(true);
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
           }}
         >
           {t("Save key")}
         </button>
+        {KEY_PAGES[p.id] && (
+          <button className="btn ghost small" onClick={() => openInViewer(KEY_PAGES[p.id])} title={t("Opens {name}'s key page in the built-in browser: sign in there, make a key and paste it here.", { name: p.name })}>
+            {t("Get a key…")}
+          </button>
+        )}
+        {server && (
+          <button className="btn small" onClick={signIn} title={t("Sign in to {name} in the built-in browser instead of pasting a key.", { name: p.name })}>
+            {t("Sign in…")}
+          </button>
+        )}
         {p.has_key && <button className="btn ghost small" onClick={() => run(() => api.setCloudProvider(p.id, false, ""))}>{t("Remove key")}</button>}
         <button className="btn small" disabled={!p.has_key} onClick={() => setPicking(true)}>{t("Choose models…")}</button>
       </div>
+      {p.has_key && p.models.length === 0 && <p className="small callout">{t("Press Choose models… and tick the ones you want: only those show in your model lists.")}</p>}
       {p.models.length > 0 && (
         <table className="cloud-models small">
           <thead>
@@ -182,7 +229,7 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
 type ServerKind = "openwebui" | "litellm" | "other";
 
 const SERVERS: Record<ServerKind, { name: string; placeholder: string; hint: string }> = {
-  openwebui: { name: "Open WebUI", placeholder: "https://chat.example.com", hint: tx("Your Open WebUI address. The key is under Settings → Account → API keys there.") },
+  openwebui: { name: "Open WebUI", placeholder: "https://chat.example.com", hint: tx("Your Open WebUI address. Then press Sign in… to sign in there in the built-in browser, or paste a key from Settings → Account → API keys (its admin must allow API keys).") },
   litellm: { name: "LiteLLM", placeholder: "https://litellm.example.com", hint: tx("Your LiteLLM proxy address. Use a virtual key from its admin.") },
   other: { name: "", placeholder: "https://…/v1", hint: tx("Any OpenAI-compatible API: the address its /chat/completions and /models are under.") },
 };
@@ -279,7 +326,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
               onClick={async () => {
                 await run(() => api.addCloudProvider(null, custom.name || SERVERS[custom.kind].name || null, serverApiUrl(custom.kind, custom.url)));
                 setCustom(null);
-                toast(t("Added. Paste its API key above, then choose its models."), "success");
+                toast(custom.kind === "openwebui" ? t("Added. Press Sign in… on it (or paste an API key), then choose its models.") : t("Added. Paste its API key above, then choose its models."), "success");
               }}
             >
               {t("Add")}

@@ -409,13 +409,16 @@ function Help() {
     <details className="small muted">
       <summary>{t("Not on the same network?")}</summary>
       <p>
-        {t("Join the same virtual network first, like Radmin VPN, Tailscale or ZeroTier (each of you installs it and joins the same network). Then use the address listed under that network's name. Your apps talk directly, encrypted; nothing goes through SulcusAI's servers, because there aren't any.")}
+        {t("Nothing to install: type the code anyway. With no one nearby showing it, SulcusAI finds the PC whose code it is through its relay, anywhere, as long as SulcusAI is open there with the code showing. Once you're linked, your apps reach each other the same way whenever both are open, and People shows when they're online.")}
+      </p>
+      <p>
+        {t("Everything between your apps is encrypted end to end with a key only your two apps have: the relay passes it on without being able to read it, and keeps nothing. A direct connection on the same network (or a virtual network like Tailscale) is used instead whenever there is one.")}
       </p>
       <p>
         {t("Windows counts virtual networks as Public, and often keeps SulcusAI out of them. The person whose code is used must be reachable: if the check above shows a block, allow it, or swap who makes the code. Once linked, it's enough that one of you can be reached. SulcusAI needs to be open (and unlocked) on both PCs.")}
       </p>
       <p>
-        {t("No virtual network? Once you're linked, either of you can let the other use your own relay (Settings → Your devices, at the Cloud level): messages and the assistants' questions then go through it, sealed so the relay can't read them. Watching shared chats live still needs a direct connection.")}
+        {t("When one of you has SulcusAI closed, messages wait and go once both are open. To have them wait on a relay instead, either of you can let the other use your own relay (Settings → Your devices, at the Cloud level); they're sealed there too.")}
       </p>
     </details>
   );

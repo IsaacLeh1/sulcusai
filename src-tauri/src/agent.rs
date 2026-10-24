@@ -692,6 +692,9 @@ impl Turn {
         let mut failed_repeats = 0;
         // Told once this turn to carry out steps it only explained.
         let mut told_to_act = false;
+        // It stopped saying what it does next: told to go on (up to three times a turn).
+        let mut go_on: Option<&str> = None;
+        let mut midway = 0;
         for step in 0..most_steps {
             if step >= limit {
                 break;
@@ -759,7 +762,7 @@ impl Turn {
                 first = Some(chat::Finished { content: String::new(), thinking: String::new(), tool_calls: Vec::new(), prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None });
             }
             // Set when its reply only explained what to do: the same step again, told to do it.
-            let mut carry_on: Option<&str> = None;
+            let mut carry_on: Option<&str> = go_on.take();
             // That reply's words and thinking: they stay, ahead of what it writes next.
             let mut aside = (String::new(), String::new());
             let finished = loop {
@@ -1074,6 +1077,15 @@ impl Turn {
                         self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                         continue;
                     }
+                }
+                // It stopped partway: its last words say what it does next
+                // ("Let's update the uses.") and it didn't do it.
+                let said = result.last.as_ref().map(|m| m.content.as_str()).unwrap_or_default();
+                if midway < 3 && tools.is_some() && self.mode != tools::Mode::Plan && step < limit - 1 && chat::stops_midway(said) {
+                    midway += 1;
+                    go_on = Some(chat::GO_ON);
+                    self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                    continue;
                 }
                 // Something was added while it wrote this: it answers that too.
                 if crate::inbox::waiting(&self.chat_id) && step < limit - 1 {
@@ -1447,6 +1459,10 @@ impl Turn {
         if permission == Permission::Run && adv.must_ask(risk) {
             permission = Permission::Ask;
         }
+        // Deleting a chat always asks, in every mode (Bypass too).
+        if call.name == "delete_chat" && permission == Permission::Run {
+            permission = Permission::Ask;
+        }
         // A secret in what goes out (a key in a search or a web address, a
         // password in an email or a message, a key file a command sends)
         // always asks, whatever the mode and with privacy mode on or off.
@@ -1464,6 +1480,8 @@ impl Turn {
                     Ok(p)
                 } else if call.name == "update_note" {
                     tools::notes_preview(&call.name, &args, &self.state.db, &self.cipher)
+                } else if call.name == "delete_chat" {
+                    tools::chats::delete_preview(&args, &self.state.db, &self.cipher, &self.chat_id)
                 } else {
                     tools::preview(&call.name, &args, sandbox)
                 } {

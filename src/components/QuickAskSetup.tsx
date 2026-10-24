@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { api, errorText, type ModelCard, type QuickSettings } from "../api";
+import { api, errorText, type QuickSettings } from "../api";
 import { t } from "../i18n";
+import { ModelSelect } from "./ModelChoices";
 import type { PushToast } from "./Toasts";
 
 /** "ctrl+alt+KeyK" from a key press, or null for a modifier on its own. */
@@ -14,11 +15,9 @@ function combo(e: KeyboardEvent): string | null {
 /** Quick ask's hotkey (pressed, not typed) and the model its chats use. */
 export function QuickAskSetup({ toast }: { toast: PushToast }) {
   const [s, setS] = useState<QuickSettings | null>(null);
-  const [models, setModels] = useState<ModelCard[]>([]);
   const [recording, setRecording] = useState(false);
   useEffect(() => {
     api.quickSettings().then(setS).catch(() => {});
-    api.catalog().then((c) => setModels(c.models.filter((m) => m.installed))).catch(() => {});
   }, []);
   if (!s) return null;
   return (
@@ -50,11 +49,10 @@ export function QuickAskSetup({ toast }: { toast: PushToast }) {
       </div>
       <label className="row wrap">
         <span>{t("Answers with")}</span>
-        <select
-          className="input"
-          value={s.model ?? ""}
-          onChange={async (e) => {
-            const model = e.target.value || null;
+        <ModelSelect
+          value={s.model}
+          label={t("Answers with")}
+          onChange={async (model) => {
             try {
               await api.setQuickModel(model);
               setS({ ...s, model });
@@ -62,12 +60,7 @@ export function QuickAskSetup({ toast }: { toast: PushToast }) {
               toast(errorText(err), "error");
             }
           }}
-        >
-          <option value="">{t("Your default model")}</option>
-          {models.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
-          ))}
-        </select>
+        />
       </label>
       <p className="muted">{t("A small, fast model suits quick questions; it loads when you ask, as in a chat.")}</p>
     </div>

@@ -1303,6 +1303,31 @@ fn only_asks(reply: &str) -> bool {
 pub const CARRY_ON: &str = "Don't explain the steps or ask whether to go ahead: you already have permission. Carry them out now with \
      your tools, one after another, then say briefly what you did and what happened.";
 
+pub const GO_ON: &str = "You stopped partway: you said what you'd do next but didn't do it. Do it now with your tools and keep going \
+     until the work is done (run the tests or the check again if there are any), then say briefly what you did.";
+
+/// A reply that ends by saying what it does next ("Need to adjust the
+/// names. Let's update the uses.") instead of finishing: a 20B model adding
+/// a feature stopped like that with a test still failing.
+pub fn stops_midway(reply: &str) -> bool {
+    static NEXT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(let's|let me|i'll|i will|i'm going to|i am going to|we'll|we will|we need to|i need to|need to|next,? (i|we)|now (i|we)|then (i|we))\b").unwrap()
+    });
+    static NOT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(let me know|if you('d| would)? (like|want)|feel free|happy to|you('ll| will)? need to|you need to|would you like)\b").unwrap()
+    });
+    let prose = without_code(reply);
+    let t = prose.trim();
+    // A finished answer is longer, or ends by asking the user something.
+    if t.is_empty() || t.chars().count() > 600 || t.ends_with('?') {
+        return false;
+    }
+    // Its last two sentences.
+    let sentences: Vec<&str> = t.split_inclusive(['.', '!', '\n']).map(str::trim).filter(|s| !s.is_empty()).collect();
+    let tail = sentences[sentences.len().saturating_sub(2)..].join(" ");
+    NEXT.is_match(&tail) && !NOT.is_match(&tail)
+}
+
 /// The person asked for something to be done (not explained): apply, run,
 /// install, follow, set up, fix, make…
 pub fn asks_to_act(user: &str) -> bool {
@@ -2133,6 +2158,20 @@ Found it.
         assert!(!repeats_itself(&format!("Hello.\n{}", line.repeat(3))));
         assert!(!repeats_itself("1. a\n2. b\n3. c\n4. d\n5. e\n"));
         assert!(!repeats_itself("---\n---\n---\n---\n"), "short lines like rules are fine");
+    }
+
+    #[test]
+    fn a_reply_that_says_what_it_does_next_is_not_the_end() {
+        // The 20B model's last words in the real-work test, a test still failing.
+        assert!(stops_midway("Need to adjust variable names. Let's update uses."));
+        assert!(stops_midway("The import is wrong. Now I'll fix the path and run the tests again."));
+        assert!(stops_midway("Next, we need to export pnl from src/pnl.js."));
+        // Finished, or asking the user: the end.
+        assert!(!stops_midway("All four tests pass now. The pnl command prints each position's profit in percent, best first."));
+        assert!(!stops_midway("Done. Let me know if you'd like the report sorted differently."));
+        assert!(!stops_midway("Should I also add a total at the bottom?"));
+        assert!(!stops_midway("To try it, you'll need to run npm test."));
+        assert!(!stops_midway(&"It works. ".repeat(80)), "a long answer is a summary");
     }
 
     #[test]

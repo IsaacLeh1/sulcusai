@@ -8,7 +8,7 @@ import type { PushToast } from "./Toasts";
 /** What each log holds, by file name (engines' logs share a start). */
 const ABOUT: [RegExp, string][] = [
   [/^app\.(old\.)?log$/, tx("What SulcusAI did: starting up, models loaded, pictures made (and on which card, and how long), downloads, updates, settings changed, and errors.")],
-  [/^crashes\.(old\.)?log$/, tx("Every crash or freeze, with where it happened. Kept here whether or not crash reports are sent.")],
+  [/^crashes\.(old\.)?log$/, tx("Every crash, freeze and model that didn't load, with where it happened and what the engine's lines mean. Kept here whether or not crash reports are sent.")],
   [/^dev-sent\.log$/, tx("Every report developer mode sent to the developer, exactly as sent.")],
   [/^engine\.log$/, tx("The chat engine (llama.cpp) while it runs a model.")],
   [/^media\.log$/, tx("The picture and video engine (stable-diffusion.cpp).")],
@@ -26,6 +26,7 @@ export function LogSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<LogsView | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [text, setText] = useState<string>("");
+  const [meanings, setMeanings] = useState<{ line: string; meaning: string }[]>([]);
   const load = () => api.logsView().then(setV).catch(() => {});
   useEffect(() => {
     load();
@@ -34,8 +35,10 @@ export function LogSettings({ toast }: { toast: PushToast }) {
     setOpen(name);
     try {
       setText(await api.readLog(name, 400));
+      setMeanings(await api.logMeanings(name, 400));
     } catch (e) {
       setText(errorText(e));
+      setMeanings([]);
     }
   };
   const act = (f: () => Promise<unknown>) => f().catch((e) => toast(errorText(e), "error"));
@@ -77,6 +80,19 @@ export function LogSettings({ toast }: { toast: PushToast }) {
               <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(text).then(() => toast(t("Copied."), "success")).catch(() => toast(t("Couldn't copy it."), "error"))}>{t("Copy")}</button>
             </span>
           </div>
+          {meanings.length > 0 && (
+            <div className="log-meanings">
+              <strong className="small">{t("What these lines mean")}</strong>
+              <ul className="small">
+                {meanings.map((m) => (
+                  <li key={m.meaning}>
+                    <code className="block ellipsis" title={m.line}>{m.line}</code>
+                    <span>{t(m.meaning)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <pre className="log-text">{text || t("(empty)")}</pre>
         </div>
       )}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
@@ -23,6 +23,8 @@ import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
+import { CloudCost } from "../components/CloudCost";
+import { priceText } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
@@ -531,6 +533,18 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const files = [...e.clipboardData.items].filter((i) => i.kind === "file" && i.type.startsWith("image/")).map((i) => i.getAsFile()).filter((f): f is File => !!f);
     if (files.length === 0) return;
     e.preventDefault();
+    await attachPictures(files);
+  };
+  // Pictures dropped on the message box go with the message, as pasted ones do.
+  const onDrop = async (e: DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    const all = [...e.dataTransfer.files];
+    const pictures = all.filter((f) => f.type.startsWith("image/"));
+    if (pictures.length < all.length) toast(t("Only pictures can be dropped here. For other files, give the chat a folder (the folder button) and ask about them."), "info");
+    await attachPictures(pictures);
+  };
+  const attachPictures = async (files: File[]) => {
     for (const f of files) {
       try {
         const data = toBase64(new Uint8Array(await f.arrayBuffer()));
@@ -631,7 +645,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           {!chat.incognito && (
             <>
               <button className="btn ghost small" onClick={() => setPanel("memories")} title={t("What the assistant remembered from this chat")}>{t("Memories")}</button>
-              <button className="btn ghost small" onClick={() => setPanel("links")} title={t("Chats linked with this one to work together")}>{t("Linked chats")}</button>
+              <button className="btn ghost small" onClick={() => setPanel("links")} title={t("Chats connected with this one to work together")}>{t("Connected chats")}</button>
             </>
           )}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
@@ -757,7 +771,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
 
       <div className="composer-wrap">
         {voice && features.has("voice_chat") && <VoicePanel chatId={chat.id} onHeard={heard} onEnd={() => setVoice(false)} toast={toast} />}
-        <div className="composer">
+        <div className="composer" onDragOver={(e) => e.dataTransfer.types.includes("Files") && e.preventDefault()} onDrop={onDrop}>
           {queue.length > 0 && (
             <div className="queue-chips" role="group" aria-label={t("Queued messages")}>
               <span className="muted small">{replying ? t("Sends when the reply is done:") : t("Waiting to send:")}</span>
@@ -853,6 +867,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   {cloudChoices.map((c) => (
                     <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
                       {c.name} · {c.provider}
+                      {priceText(c.price_in, c.price_out) && ` · ${priceText(c.price_in, c.price_out)}`}
                     </option>
                   ))}
                   {cloudId && !cloud && <option value={cloudId} disabled>{t("(removed model)")}</option>}
@@ -860,6 +875,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               )}
             </select>
             {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
+            <CloudCost chatId={chat.id} cloud={cloud} />
             <span className="spacer" />
             {tps !== null && !busy && <span className="muted small">{t("about {n} words a second", { n: words(tps) })}</span>}
             {features.has("dictation") && <MicButton onText={dictate} toast={toast} disabled={voice} />}

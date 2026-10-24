@@ -47,10 +47,10 @@ export function LinkedChats({ chat, onOpenChat, onClose, toast }: { chat: Chat; 
       .catch((e) => toast(errorText(e), "error"));
   const choices = all.filter((c) => c.id !== chat.id && !c.incognito && !linked.some((l) => l.id === c.id));
   return (
-    <Modal title={t("Linked chats")} onClose={onClose}>
-      <p className="muted small">{t("Linked chats work together: each one's assistant knows the others, can read what they've done, and can send them a question or a piece of work. The answer comes back to the chat that asked.")}</p>
+    <Modal title={t("Connected chats")} onClose={onClose}>
+      <p className="muted small">{t("Connected chats work together: each one's assistant knows the others, can read what they've done, and can send them a question or a piece of work. The answer comes back to the chat that asked.")}</p>
       {linked.length === 0 ? (
-        <p className="muted small">{t("No chats linked yet.")}</p>
+        <p className="muted small">{t("No chats connected yet.")}</p>
       ) : (
         <ul className="linked-list">
           {linked.map((c) => (
@@ -64,14 +64,14 @@ export function LinkedChats({ chat, onOpenChat, onClose, toast }: { chat: Chat; 
               >
                 {c.title}
               </button>
-              <button className="link danger" onClick={() => run(() => api.unlinkChats(chat.id, c.id))}>{t("Unlink")}</button>
+              <button className="link danger" onClick={() => run(() => api.unlinkChats(chat.id, c.id))}>{t("Disconnect")}</button>
             </li>
           ))}
         </ul>
       )}
       <div className="row wrap">
-        <select className="input" value={pick} onChange={(e) => setPick(e.target.value)} aria-label={t("Chat to link")}>
-          <option value="">{t("Pick a chat to link…")}</option>
+        <select className="input" value={pick} onChange={(e) => setPick(e.target.value)} aria-label={t("Chat to connect")}>
+          <option value="">{t("Pick a chat to connect…")}</option>
           {choices.map((c) => (
             <option key={c.id} value={c.id}>{c.title}</option>
           ))}
@@ -86,7 +86,7 @@ export function LinkedChats({ chat, onOpenChat, onClose, toast }: { chat: Chat; 
             })
           }
         >
-          {t("Link")}
+          {t("Connect")}
         </button>
       </div>
       <div className="modal-actions">

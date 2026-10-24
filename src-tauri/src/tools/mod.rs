@@ -94,7 +94,7 @@ pub fn permission(mode: Mode, risk: Risk, allowed_for_chat: bool) -> Permission 
 /// replacing a note's whole text (notes have no Undo).
 pub fn destructive_call(name: &str, args: &Value) -> bool {
     match name {
-        "delete_path" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" => true,
+        "delete_path" | "delete_chat" | "connect_account" | "schedule_task" | "calendar_create_event" | "update_note" => true,
         "run_command" => args.get("command").and_then(Value::as_str).is_none_or(guard::destructive),
         _ => false,
     }
@@ -157,7 +157,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
     let g = |p: &str| regex::Regex::new(&format!("(?i){p}")).unwrap();
     vec![
         (&["delegate"][..], g(r"\bhelpers?\b|delegate")),
-        (&["search_chats", "read_chat", "message_chat"], g(r"\bchats?\b|conversation")),
+        (&["search_chats", "read_chat", "message_chat", "delete_chat"], g(r"\bchats?\b|conversation")),
         (&["ask_person", "work_with_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+")),
         (&["search_meetings", "read_meeting"], g(r"meeting|transcript")),
         (&["browser_"], g(r"browser|log ?in|sign ?in|click|fill (in|out)|web ?page|go to|book |order |buy ")),
@@ -202,7 +202,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" => "people",
-        "search_chats" | "read_chat" | "message_chat" => "chats",
+        "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
         _ => "files",
     }
 }
@@ -340,6 +340,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Read the latest messages of another of the user's chats." },
     ToolDef { name: "message_chat", risk: Risk::Read, params: chats::message_chat_params,
         description: "Ask or tell the assistant in another of the user's chats (or a new chat) something: it works on it there, with its own conversation and tools, and its reply comes back to you. Use it to split work or to use what that chat knows. One at a time; give it everything it needs." },
+    ToolDef { name: "delete_chat", risk: Risk::Write, params: chats::delete_chat_params,
+        description: "Delete one of the user's other chats, only when they ask you to. They always see which chat and approve it first; it can't be undone." },
     ToolDef { name: "delegate", risk: Risk::Read, params: delegate_params,
         description: "Hand a self-contained research task to a helper agent, such as finding where something is defined or summarizing a set of files. The helper has its own fresh context and read-only tools, and returns a short report. Use it for digging that would otherwise fill this conversation." },
 ];
@@ -570,6 +572,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "open_path" => open_path(args, ctx),
         "preview_site" => site::run(args, ctx).await,
         "search_chats" => chats::search(args, ctx),
+        "delete_chat" => chats::delete(args, ctx),
         "read_chat" => chats::read(args, ctx),
         // Run by the agent itself (it needs the model that's loaded).
         "message_chat" => Outcome::error("Ask another chat", "Other chats are asked from the chat itself."),
@@ -726,8 +729,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app and People tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 49);
+        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 50);
     }
 
     #[test]

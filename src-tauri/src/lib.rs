@@ -1628,18 +1628,23 @@ fn set_auto_model(state: AppStateRef, on: bool) -> Result<Settings, String> {
     db::update_settings(&state.db.lock().unwrap(), |s| s.auto_model = on)
 }
 
+/// A model that can be picked: a cloud model turned on in Settings → Cloud
+/// models, a model taught here, or one on this PC.
+pub(crate) fn model_known(conn: &rusqlite::Connection, model_id: &str) -> bool {
+    if cloud::is_cloud(model_id) {
+        cloud::choices(conn).iter().any(|c| c.id == model_id)
+    } else if let Some(aid) = finetune::parse_ref(model_id) {
+        db::get::<Vec<finetune::Adapter>>(conn, "adapters").unwrap_or_default().iter().any(|a| a.id == aid)
+    } else {
+        db::installed_model(conn, model_id).is_some()
+    }
+}
+
 #[tauri::command]
 fn set_default_model(state: AppStateRef, model_id: String) -> Result<Settings, String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
-    let known = if cloud::is_cloud(&model_id) {
-        cloud::choices(&conn).iter().any(|c| c.id == model_id)
-    } else if let Some(aid) = finetune::parse_ref(&model_id) {
-        db::get::<Vec<finetune::Adapter>>(&conn, "adapters").unwrap_or_default().iter().any(|a| a.id == aid)
-    } else {
-        db::installed_model(&conn, &model_id).is_some()
-    };
-    if !known {
+    if !model_known(&conn, &model_id) {
         return Err("That model isn't available.".into());
     }
     db::update_settings(&conn, |s| s.default_model = Some(model_id))
@@ -1750,8 +1755,12 @@ fn set_chat_web(state: AppStateRef, chat_id: String, web: bool) -> Result<(), St
 fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Result<(), String> {
     state.cipher()?;
     let conn = state.db.lock().unwrap();
-    if db::installed_model(&conn, &model_id).is_none() {
-        return Err("That model isn't installed.".into());
+    if !model_known(&conn, &model_id) {
+        return Err(if cloud::is_cloud(&model_id) {
+            "That cloud model isn't turned on. Check its provider and key in Settings → Cloud models.".into()
+        } else {
+            "That model isn't installed.".into()
+        });
     }
     state.contexts.lock().unwrap().remove(&chat_id);
     db::set_chat_model(&conn, &chat_id, &model_id)
@@ -2016,6 +2025,10 @@ async fn run_turn_with(
         }
     }
 
+    // What a cloud model's replies cost counts toward this chat.
+    if let Some(t) = &ep.cloud {
+        t.for_chat(&chat_id);
+    }
     let first_message;
     {
         let conn = state.db.lock().unwrap();
@@ -2168,6 +2181,61 @@ async fn sum_up_thinking(state: &AppState, app: &AppHandle, ep: &engine::Endpoin
     if db::set_message_meta(&state.db.lock().unwrap(), &c, &last.id, &meta).is_ok() {
         app.emit("chat:thought", json!({ "chat_id": chat_id })).ok();
     }
+}
+
+/// A model that didn't load: why, said plainly (what the engine's log
+/// shows, else what the model's size says), and the whole story in
+/// crashes.log with what each line of the engine's log means.
+fn load_failed(state: &AppState, spec: &ModelSpec, quant: &str, ctx: u32, layers: u32, want: memcheck::Need, e: String) -> String {
+    if !e.starts_with(engine::STOPPED_LOADING) {
+        crate::applog::line("error", &format!("{} didn't load: {e}", spec.name));
+        return e;
+    }
+    let log = crate::applog::tail(&state.paths.engine_log(), 64 * 1024);
+    let last: Vec<&str> = log.lines().rev().take(60).collect::<Vec<_>>().into_iter().rev().collect();
+    let last = last.join("\n");
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / 1e9);
+    let budget = state.budget();
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let (ram_total, ram_free) = (sys.total_memory(), sys.available_memory());
+    let size = spec.variant(quant).map_or(0, |v| v.size);
+    let reason = match crate::applog::diagnose(&last) {
+        Some(m) => m.to_string(),
+        // Nothing in the log says: what the size says.
+        None if size > ram_total + budget.vram => format!(
+            "It's too large for this PC: the model alone is {}, and this PC has {} of memory and {} on the graphics card. Pick a smaller model or a smaller version of it (a lower quant).",
+            gb(size), gb(ram_total), gb(budget.vram)
+        ),
+        None if want.ram > ram_free => format!(
+            "This PC didn't have enough free memory: loading it this way needs about {} and {} was free. Close other apps, choose a smaller context window, or a smaller version of the model.",
+            gb(want.ram), gb(ram_free)
+        ),
+        None if budget.vram > 0 && want.vram > budget.vram => format!(
+            "It's too large for the graphics card as set up: it needed about {} there and the card has {}. Lower the GPU limit or the context window at the top of the chat, or pick a smaller version.",
+            gb(want.vram), gb(budget.vram)
+        ),
+        None => "The engine closed without saying why. The usual causes are memory running out as it loaded (close other apps, or pick a smaller version), a graphics driver problem (update the driver), or an antivirus stopping the engine. Settings, Logs, crashes.log has the details.".to_string(),
+    };
+    crate::applog::crash(
+        &format!("{} didn't load: the engine stopped while loading it", spec.name),
+        &format!(
+            "Why: {reason}\n\nThe model: {} ({quant}), {} file, {ctx}-token context window, {layers} layers planned on the graphics card.\n\
+             This PC: {} memory ({} free), {} usable on the graphics card ({} card{}).\nPlanned use: about {} of memory and {} on the card.\n\n\
+             The engine's last lines (engine.log), with what the known ones mean:\n{}",
+            spec.name,
+            gb(size),
+            gb(ram_total),
+            gb(ram_free),
+            gb(budget.vram),
+            budget.cards,
+            if budget.cards == 1 { "" } else { "s" },
+            gb(want.ram),
+            gb(want.vram),
+            crate::applog::annotated(&last)
+        ),
+    );
+    format!("{} couldn't load: the engine stopped while loading it. {reason}", spec.name)
 }
 
 /// How long a request for another model waits for the replies using the
@@ -2325,7 +2393,10 @@ pub(crate) async fn llm_endpoint(
         if let Some(f) = on_loading.take() {
             f();
         }
-        let ep = engine.ensure_tuned(launch, plan.tuning, state.job()).await?;
+        let ep = match engine.ensure_tuned(launch, plan.tuning, state.job()).await {
+            Ok(ep) => ep,
+            Err(e) => return Err(load_failed(state, &spec, &installed.quant, plan.ctx, plan.gpu_layers, want, e)),
+        };
         engine.asked_as(&id);
         break ep;
     };
@@ -2705,6 +2776,7 @@ pub fn run() {
             applog::logs_view,
             applog::read_log,
             applog::open_app_folder,
+            applog::log_meanings,
             applog::clear_logs,
             devmode::dev_mode_view,
             devmode::set_dev_mode,
@@ -2719,6 +2791,8 @@ pub fn run() {
             save_chart,
             hidden::hidden_chats,
             hidden::set_chat_hidden,
+            hidden::sidebar_layout,
+            hidden::set_sidebar_layout,
             sitekeys::site_key_ask,
             sitekeys::site_key_give,
             sitekeys::site_keys,
@@ -2823,6 +2897,8 @@ pub fn run() {
             cloud::set_cloud_media,
             cloud::set_cloud_options,
             cloud::cloud_choices,
+            cloud::cloud_sign_in,
+            cloud::chat_cloud_spend,
             backup::make_backup,
             phone::phone_view,
             phone::set_phone,
@@ -2858,6 +2934,8 @@ pub fn run() {
             sync::people::people_set_address,
             sync::people::people_messages,
             sync::people::people_send,
+            sync::people::people_edit,
+            sync::people::people_delete,
             sync::people::people_save_file,
             sync::people::share::people_chat_sharing,
             sync::people::share::people_share_chat,
@@ -2870,6 +2948,7 @@ pub fn run() {
             sync::people::ask::people_reply,
             sync::people::ask::people_stop,
             sync::people::ask::people_set_allow,
+            sync::people::ask::people_ask,
             sync::people::ask::people_asks,
             sync::people::mailbox::people_set_relay_offer,
             sync::people::people_set_read_receipts,

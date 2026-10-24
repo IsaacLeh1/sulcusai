@@ -115,7 +115,7 @@ fn attempt(state: &AppState, invite: &str, name: &str, result: &str) {
 // ---------- linking ----------
 
 /// The app whose code it is: answers one attempt to link.
-pub(in crate::sync) async fn pair_answer(state: &Arc<AppState>, mut stream: TcpStream, open: &Open, theirs: &str) -> Result<(), String> {
+pub(in crate::sync) async fn pair_answer<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(state: &Arc<AppState>, mut stream: S, open: &Open, theirs: &str) -> Result<(), String> {
     let c = state.work_cipher()?;
     let refuse = |msg: &str| PairReply { error: Some(msg.into()), ..Default::default() };
     // Which code they typed: the first characters (an older app doesn't
@@ -153,7 +153,9 @@ pub(in crate::sync) async fn pair_answer(state: &Arc<AppState>, mut stream: TcpS
     let theirs = B64.decode(theirs).map_err(err)?;
     let me = device_id(&state.paths.data);
     let (spake, mine) = wire::pair_start(&code);
-    send_plain(&mut stream, &PairReply { id: me.clone(), name: my_name(state), spake: B64.encode(&mine), error: None }).await?;
+    // Names sealed after the check when their app does that; else in the clear, as before.
+    let sealed = open.sealed;
+    send_plain(&mut stream, &PairReply { id: me.clone(), name: if sealed { String::new() } else { my_name(state) }, spake: B64.encode(&mine), error: None, sealed }).await?;
     let shared = wire::pair_finish(spake, &theirs)?;
     let t = transcript(&open.id, &me, &theirs, &mine);
     let proof = timeout(Duration::from_secs(30), wire::read_frame(&mut stream)).await.map_err(|_| "no proof".to_string())?.map_err(lost)?;
@@ -170,8 +172,10 @@ pub(in crate::sync) async fn pair_answer(state: &Arc<AppState>, mut stream: TcpS
         return Err("wrong code".into());
     }
     wire::write_frame(&mut stream, &wire::confirm(&shared, "server", &t)).await.map_err(lost)?;
+    let key = wire::pair_key(&shared, &t);
+    let theirs = if sealed { sealed_names(&mut stream, &*key, false, &my_name(state)).await? } else { open.name.clone() };
     // Their call right after says which port they take calls on.
-    let name = keep(state, &c, &open.id, &open.name, &*wire::pair_key(&shared, &t), None)?;
+    let name = keep(state, &c, &open.id, &theirs, &*key, None)?;
     let label = update(state, |b| {
         b.invites.iter_mut().find(|i| i.id == invite).map(|i| {
             i.used.retain(|u| u.id != open.id);
@@ -193,13 +197,20 @@ pub(in crate::sync) async fn pair_answer(state: &Arc<AppState>, mut stream: TcpS
 /// The app where the code is typed: links with the app showing it,
 /// reporting each step.
 pub(super) async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAddr, step: &(dyn Fn(&str) + Send + Sync)) -> Result<String, String> {
+    step("reach");
+    let stream = connect(addr).await?;
+    pair_on(state, code, stream, Some(addr), step).await
+}
+
+/// Linking on a stream already open: a network connection, or the pipe
+/// through the relay (`addr` None).
+pub(super) async fn pair_on<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(state: &Arc<AppState>, code: &str, mut stream: S, addr: Option<SocketAddr>, step: &(dyn Fn(&str) + Send + Sync)) -> Result<String, String> {
     let c = state.work_cipher()?;
     let me = device_id(&state.paths.data);
-    step("reach");
-    let mut stream = connect(addr).await?;
     step("check");
     let (spake, mine) = wire::pair_start(code);
-    let hello = Open { v: 1, id: me.clone(), name: my_name(state), nonce: None, pair: Some(B64.encode(&mine)), want: Some(LINK.into()), tag: Some(code[..TAG].to_string()) };
+    // The name goes sealed once the code checks out, never in the clear.
+    let hello = Open { v: 1, id: me.clone(), name: String::new(), nonce: None, pair: Some(B64.encode(&mine)), want: Some(LINK.into()), tag: Some(code[..TAG].to_string()), sealed: true };
     send_plain(&mut stream, &hello).await?;
     let silent = "Their SulcusAI took the connection but didn't reply. Make sure you both have the latest version, then try again.";
     let reply: PairReply = recv_plain(&mut stream).await.map_err(|_| silent.to_string())?;
@@ -219,7 +230,20 @@ pub(super) async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAdd
         return Err(wrong.into());
     }
     step("save");
-    keep(state, &c, &reply.id, &reply.name, &*wire::pair_key(&shared, &t), Some(addr))
+    let key = wire::pair_key(&shared, &t);
+    // An app from before 0.9.32 sent its name in the clear.
+    let theirs = if reply.sealed { sealed_names(&mut stream, &*key, true, &my_name(state)).await? } else { reply.name.clone() };
+    keep(state, &c, &reply.id, &theirs, &*key, addr)
+}
+
+/// The two names, swapped once the code has checked out, sealed with the
+/// new link's key: they never cross the network or the relay in the clear.
+async fn sealed_names<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(stream: &mut S, key: &[u8], calling: bool, mine: &str) -> Result<String, String> {
+    let (calls, answers) = wire::session_keys(key, b"names", b"names");
+    let (mut out, mut inn) = if calling { (wire::Sealer::new(&calls), wire::Sealer::new(&answers)) } else { (wire::Sealer::new(&answers), wire::Sealer::new(&calls)) };
+    wire::write_frame(stream, &out.seal(mine.as_bytes())).await.map_err(lost)?;
+    let sealed = timeout(HANDSHAKE, wire::read_frame(stream)).await.map_err(|_| "They went quiet.".to_string())?.map_err(lost)?;
+    Ok(String::from_utf8_lossy(&inn.open(&sealed)?).into_owned())
 }
 
 /// Links with whoever has `code`: at the address typed (or a nearby app's
@@ -236,18 +260,25 @@ pub async fn people_connect(state: AppStateRef<'_>, code: String, target: Option
     step("find");
     let target = target.map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
     let addr = match target {
-        Some(t) => resolve(&t).await?,
+        Some(t) => Some(resolve(&t).await?),
         None => {
             let near = NEARBY.lock().unwrap();
             let showing: Vec<SocketAddr> = near.values().filter(|s| s.person && s.at.elapsed() < AWAY).map(|s| s.addr).collect();
             match showing.as_slice() {
-                [one] => *one,
-                [] => return Err("No one on this network has a code showing. Type the address they see in People → Connect (on Radmin VPN it starts with 26.).".into()),
+                [one] => Some(*one),
+                // No one nearby: wherever they are, through SulcusAI's relay.
+                [] => None,
                 _ => return Err("More than one person here has a code showing. Pick which one.".into()),
             }
         }
     };
-    let name = timeout(LINK_LIMIT, pair_call(&state, &code, addr, &step))
+    let linking = async {
+        match addr {
+            Some(a) => pair_call(&state, &code, a, &step).await,
+            None => super::pipe::link_by_code(&state, &code, &step).await,
+        }
+    };
+    let name = timeout(LINK_LIMIT, linking)
         .await
         .map_err(|_| "Linking took more than a minute, so it stopped. Try again; if it keeps happening, try the other way round (you show a code, they type it).".to_string())??;
     changed(&state);

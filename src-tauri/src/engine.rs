@@ -1069,7 +1069,7 @@ pub type JobRef = crate::winjob::Job;
 #[cfg(not(windows))]
 pub type JobRef = ();
 
-const STOPPED_LOADING: &str = "The engine stopped while loading the model.";
+pub const STOPPED_LOADING: &str = "The engine stopped while loading the model.";
 
 pub fn free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;

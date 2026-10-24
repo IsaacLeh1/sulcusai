@@ -212,6 +212,23 @@ async fn messages_cross_on_a_live_link() {
     let read_at_b = messages(&b.db.lock().unwrap(), &cb, &id_a).unwrap().into_iter().filter(|m| m.from_me).any(|m| m.read);
     assert!(!read_at_b, "Ana sends no read receipts");
 
+    // Ana changes a message she sent, then deletes another: Ben's copies
+    // follow. Only the writer can change a message.
+    let id_of = |s: &AppState, c: &Cipher, with: &str, text: &str| messages(&s.db.lock().unwrap(), c, with).unwrap().into_iter().find(|m| m.text == text).unwrap().id;
+    let lunch = id_of(&a, &ca, &id_b, "Lunch?");
+    edit_message(&a, &id_b, &lunch, "Lunch at noon?").unwrap();
+    until("the change at Ben's", || texts(&b, &id_a).contains(&"Lunch at noon?".to_string())).await;
+    assert!(messages(&b.db.lock().unwrap(), &cb, &id_a).unwrap().iter().any(|m| m.id == lunch && m.edited), "shown as edited");
+    let hey = id_of(&a, &ca, &id_b, "Hey Ben");
+    delete_message(&a, &id_b, &hey).unwrap();
+    until("deleted at Ben's", || messages(&b.db.lock().unwrap(), &cb, &id_a).unwrap().iter().any(|m| m.id == hey && m.deleted && m.text.is_empty())).await;
+    assert!(edit_message(&b, &id_a, &lunch, "changed by Ben").is_err(), "Ben can't change Ana's message");
+    until("Ana's changes confirmed", || {
+        let n: i64 = a.db.lock().unwrap().query_row("SELECT COUNT(*) FROM people_messages WHERE contact_id = ?1 AND change_sent = 0", [&id_b], |r| r.get(0)).unwrap();
+        n == 0
+    })
+    .await;
+
     // One side hangs up: both see it.
     link::hang_up(&id_b);
     until("both ends apart", || !link::connected(&id_a) && !link::connected(&id_b)).await;
@@ -696,4 +713,51 @@ fn the_people_page_and_the_listener_never_deadlock() {
     }
     page.join().unwrap();
     listener.join().unwrap();
+}
+
+/// Waits (up to a minute) for something that crosses the internet.
+async fn until_long(what: &str, f: impl Fn() -> bool) {
+    for _ in 0..600 {
+        if f() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for: {what}");
+}
+
+/// Ana and Ben with no network in common: Ben types Ana's code with no one
+/// nearby showing it, and they link through SulcusAI's relay (their names
+/// sealed); then their apps meet there and a message crosses. Needs the
+/// internet and the deployed relay (relay/worker.js).
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn people_link_and_talk_through_sulcusais_relay() {
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    for s in [&a, &b] {
+        features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
+    }
+    update(&a, |x| x.name = "Ana".into()).unwrap();
+    update(&b, |x| x.name = "Ben".into()).unwrap();
+    let (id_a, id_b) = (device_id(&a.paths.data), device_id(&b.paths.data));
+    // Ana's code waits in its room on the relay.
+    let (_, code) = codes::code_for_test(&a, 1);
+    pipe::tick(&a);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let name = pipe::link_by_code(&b, &code, &|_| {}).await.expect("linked through the relay");
+    assert_eq!(name, "Ana", "Ben's app has Ana's name (sent sealed)");
+    until_long("Ana has Ben", || contact(&a, &id_b).is_some_and(|p| p.name == "Ben")).await;
+    // Each keeps a pipe to the other: connected through the relay.
+    pipe::tick(&a);
+    pipe::tick(&b);
+    until_long("connected through the relay", || link::connected(&id_a) && link::connected(&id_b)).await;
+    assert!(pipe::through(&id_b) && pipe::through(&id_a), "the link runs through the relay, not a network");
+    queue(&b, &b.cipher().unwrap(), &id_a, "Hi Ana, through the relay", None).unwrap();
+    until_long("Ben's message at Ana's", || texts(&a, &id_b).contains(&"Hi Ana, through the relay".to_string())).await;
+    queue(&a, &a.cipher().unwrap(), &id_b, "Got it", None).unwrap();
+    until_long("Ana's reply at Ben's", || texts(&b, &id_a).contains(&"Got it".to_string())).await;
+    link::hang_up(&id_a);
+    link::hang_up(&id_b);
 }

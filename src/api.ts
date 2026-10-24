@@ -2,7 +2,7 @@
 // Typed wrappers around the Rust commands in src-tauri/src/lib.rs.
 import { t } from "./i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Connectivity = "offline" | "web" | "cloud";
 export type Placement = "gpu" | "split" | "cpu";
@@ -325,6 +325,10 @@ export interface PersonMessage {
   delivered: boolean;
   /** For messages from here: they've read it (they send read receipts). */
   read: boolean;
+  /** Its writer changed it after sending. */
+  edited: boolean;
+  /** Its writer deleted it. */
+  deleted: boolean;
 }
 
 /** A chat someone shares with this user (seen live while connected). */
@@ -378,9 +382,16 @@ export interface PersonAllow {
   /** "ask": approve each request; "auto": answer on its own; "off": turn them away. */
   mode: "ask" | "auto" | "off";
   notes: boolean;
+  /** It may check whether this user is free. */
   calendar: boolean;
+  /** "yes_no": only whether they're free when asked; "times": their free times too. */
+  free: "yes_no" | "times";
+  /** It may add events to this user's calendar when asked. */
+  calendar_add: boolean;
   mail: boolean;
   folders: string[];
+  /** The model that answers (null: the default model). */
+  model: string | null;
 }
 
 /** A question between assistants, or a task they work out together. */
@@ -438,6 +449,8 @@ export interface PersonContact {
   /** Not connected directly but reachable through a relay: whose. */
   relay: "mine" | "theirs" | null;
   /** The last exchange through the relay worked. */
+  /** Connected through SulcusAI's relay (the built-in pipe), not directly. */
+  via_pipe: boolean;
   via_relay: boolean;
   /** This user lets them use their relay. */
   offer_relay: boolean;
@@ -520,20 +533,45 @@ export interface CloudProvider {
   media_suggestions: CloudMedia[];
 }
 
+/** Cloud spending: a month's, or a chat's (all its months). */
+export interface CloudSpend {
+  month: string;
+  usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  requests: number;
+}
+
 export interface CloudView {
   providers: CloudProvider[];
   presets: CloudProvider[];
   budget: number | null;
   redact: boolean;
-  spend: { month: string; usd: number; input_tokens: number; output_tokens: number; requests: number };
+  spend: CloudSpend;
 }
 
 /** A cloud model people can pick for a chat. */
+/** The order the user dragged the sidebar's pages and chats into (empty: the usual order). */
+export interface SidebarLayout {
+  nav: string[];
+  chats: string[];
+}
+
 export interface CloudChoice {
   id: string;
   name: string;
   provider: string;
   vision: boolean;
+  /** US dollars per million tokens in and out, if known. */
+  price_in: number | null;
+  price_out: number | null;
+}
+
+/** What a chat has cost on cloud models, this month's total, and the budget. */
+export interface ChatCloudSpend {
+  chat: CloudSpend;
+  month: CloudSpend;
+  budget: number | null;
 }
 
 export interface ApiServerView {
@@ -2319,6 +2357,10 @@ export const api = {
   /** A conversation; marks what they sent as read. */
   peopleMessages: (id: string) => invoke<PersonMessage[]>("people_messages", { id }),
   peopleSend: (id: string, text: string, file: string | null) => invoke<PersonMessage>("people_send", { id, text, file }),
+  peopleEdit: (id: string, message: string, text: string) => invoke<void>("people_edit", { id, message, text }),
+  peopleDelete: (id: string, message: string) => invoke<void>("people_delete", { id, message }),
+  /** Asks their assistant directly ("Also ask {name}'s assistant"). */
+  peopleAsk: (id: string, question: string) => invoke<PersonAsk>("people_ask", { id, question }),
   peopleSaveFile: (id: string, message: string, to: string) => invoke<void>("people_save_file", { id, message, to }),
   peopleChatSharing: (chatId: string) => invoke<SharingChoice[]>("people_chat_sharing", { chatId }),
   /** Who may watch a chat (an empty list stops sharing it). */
@@ -2349,6 +2391,11 @@ export const api = {
   setCloudModels: (id: string, models: CloudModel[]) => invoke<CloudView>("set_cloud_models", { id, models }),
   setCloudOptions: (budget: number | null, redact: boolean) => invoke<CloudView>("set_cloud_options", { budget, redact }),
   cloudChoices: () => invoke<CloudChoice[]>("cloud_choices"),
+  sidebarLayout: () => invoke<SidebarLayout>("sidebar_layout"),
+  setSidebarLayout: (layout: SidebarLayout) => invoke<SidebarLayout>("set_sidebar_layout", { layout }),
+  /** Opens a server in the built-in browser to sign in; its session is used once signed in (`cloud:signed_in`). */
+  cloudSignIn: (id: string) => invoke<string>("cloud_sign_in", { id }),
+  chatCloudSpend: (chatId: string) => invoke<ChatCloudSpend>("chat_cloud_spend", { chatId }),
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
@@ -2627,6 +2674,8 @@ export const api = {
   /** Settings → Logs. */
   logsView: () => invoke<LogsView>("logs_view"),
   readLog: (name: string, lines?: number) => invoke<string>("read_log", { name, lines: lines ?? null }),
+  /** The known problems in a log's last lines, and what each means. */
+  logMeanings: (name: string, lines?: number) => invoke<{ line: string; meaning: string }[]>("log_meanings", { name, lines }),
   /** Opens the logs folder, or with `data` the app's data folder, in File Explorer. */
   openAppFolder: (data: boolean) => invoke<void>("open_app_folder", { data }),
   clearLogs: () => invoke<LogsView>("clear_logs"),
@@ -2884,12 +2933,18 @@ export interface ChatEvents {
   "agent:helper": { chat_id: string; call_id: string; step: string };
   "chat:handoff": { from: string; to: string };
   "chat:titled": { chat_id: string; title: string };
+  /** The assistant deleted a chat (the user approved it). */
+  "chat:deleted": { chat_id: string };
   /** A reply's thinking was summed up (its last message has `thought_summary`). */
   "chat:thought": { chat_id: string };
   /** Lasting facts the assistant saved from a chat by itself. */
   "memory:auto": { chat_id: string; saved: string[] };
   /** A link to open in the web viewer (the main browser is the viewer). */
   "viewer:open": { url: string | null };
+  /** A cloud model's reply was counted toward a chat's (and the month's) spend. */
+  "cloud:spent": { chat_id: string | null };
+  /** Signed in to a server in the built-in browser; its session is saved. */
+  "cloud:signed_in": { id: string; name: string };
   "viewer:page": { url: string; loading: boolean };
   "viewer:title": { title: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
@@ -2960,6 +3015,11 @@ export interface ChatEvents {
 
 export function on<K extends keyof ChatEvents>(name: K, handler: (payload: ChatEvents[K]) => void): Promise<UnlistenFn> {
   return listen<ChatEvents[K]>(name, (e) => handler(e.payload));
+}
+
+/** Opens a page in the web viewer, inside the window (whatever the main browser is). */
+export function openInViewer(url: string): Promise<void> {
+  return emit("viewer:open", { url });
 }
 
 /** An error for people to read, in the window's language when the message

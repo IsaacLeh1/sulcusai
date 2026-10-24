@@ -91,6 +91,10 @@ pub struct Provider {
     pub models: Vec<CloudModel>,
     #[serde(default)]
     pub media: Vec<CloudMedia>,
+    /// Sign-in cookies from the built-in browser (encrypted; empty when
+    /// none), sent with its API calls: a server behind a sign-in page.
+    #[serde(default)]
+    pub cookies: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +148,7 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
@@ -222,9 +226,19 @@ pub struct Target {
     pub provider: String,
     pub base_url: String,
     key: String,
+    /// Sign-in cookies for a server behind a sign-in page (empty: none).
+    cookies: String,
     pub model: CloudModel,
     pub redact: bool,
     state: Arc<AppState>,
+    /// The chat its replies are for, so what they cost is counted there.
+    chat: std::sync::Mutex<Option<String>>,
+}
+
+impl Target {
+    pub fn for_chat(&self, chat_id: &str) {
+        *self.chat.lock().unwrap() = Some(chat_id.to_string());
+    }
 }
 
 impl std::fmt::Debug for Target {
@@ -257,8 +271,19 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
     if key.is_empty() {
         return Err(format!("Add your {} API key in Settings → Cloud models.", p.name));
     }
+    let cookies = if p.cookies.is_empty() { String::new() } else { cipher.decrypt(&p.cookies).unwrap_or_default() };
     let ctx = m.ctx.max(4096);
-    let target = Target { kind: p.kind, provider: p.name.clone(), base_url: p.base_url.trim_end_matches('/').to_string(), key, model: m.clone(), redact: s.redact, state: state.clone() };
+    let target = Target {
+        kind: p.kind,
+        provider: p.name.clone(),
+        base_url: p.base_url.trim_end_matches('/').to_string(),
+        key,
+        cookies,
+        model: m.clone(),
+        redact: s.redact,
+        state: state.clone(),
+        chat: Default::default(),
+    };
     let ep = Endpoint { port: 0, key: String::new(), ctx, extra: crate::advanced::get(state).request_extra(), cloud: Some(Arc::new(target)) };
     let spec = ModelSpec {
         id: id.to_string(),
@@ -622,6 +647,11 @@ pub async fn complete(t: &Target, messages: Vec<Value>) -> Result<String, String
     Ok(done.content)
 }
 
+/// What one chat has cost (all its months), kept with the settings.
+pub fn chat_spend_key(chat_id: &str) -> String {
+    format!("cloud_chat:{chat_id}")
+}
+
 fn record(t: &Target, input: u32, output: u32, redacted: usize) {
     let cost = input as f64 * t.model.price_in.unwrap_or(0.0) / 1e6 + output as f64 * t.model.price_out.unwrap_or(0.0) / 1e6;
     {
@@ -632,6 +662,20 @@ fn record(t: &Target, input: u32, output: u32, redacted: usize) {
         s.output_tokens += output as u64;
         s.requests += 1;
         let _ = db::set(&conn, SPEND_KEY, &s);
+        // And the chat it was for.
+        if let Some(chat) = t.chat.lock().unwrap().clone() {
+            let key = chat_spend_key(&chat);
+            let mut c: Spend = db::get(&conn, &key).unwrap_or_default();
+            c.usd += cost;
+            c.input_tokens += input as u64;
+            c.output_tokens += output as u64;
+            c.requests += 1;
+            let _ = db::set(&conn, &key, &c);
+        }
+    }
+    if let Some(app) = t.state.app.get() {
+        use tauri::Emitter;
+        app.emit("cloud:spent", json!({ "chat_id": t.chat.lock().unwrap().clone() })).ok();
     }
     let priced = if t.model.price_in.is_some() { format!(", about ${cost:.4}") } else { String::new() };
     let hidden = if redacted > 0 { format!("; {redacted} personal detail(s) replaced with placeholders") } else { String::new() };
@@ -643,7 +687,7 @@ async fn error_text(resp: reqwest::Response, who: &str) -> String {
     let text = resp.text().await.unwrap_or_default();
     let detail = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)).unwrap_or(text);
     match status.as_u16() {
-        401 | 403 => format!("{who} didn't accept the API key ({status}). Check it in Settings → Cloud models."),
+        401 | 403 => format!("{who} didn't accept the API key ({status}). Check it in Settings → Cloud models; for a server you sign in to (like Open WebUI), press Sign in… there instead."),
         429 => format!("{who} says you've hit a rate or spending limit: {detail}"),
         _ => format!("{who} returned {status}: {detail}"),
     }
@@ -836,9 +880,11 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             body[k] = v.clone();
         }
     }
-    let resp = client
-        .post(format!("{}/chat/completions", t.base_url))
-        .bearer_auth(&t.key)
+    let mut req = client.post(format!("{}/chat/completions", t.base_url)).bearer_auth(&t.key);
+    if !t.cookies.is_empty() {
+        req = req.header("cookie", &t.cookies);
+    }
+    let resp = req
         .header("HTTP-Referer", "https://github.com/IsaacLeh1/sulcusai")
         .header("X-Title", "SulcusAI")
         .json(&body)
@@ -878,7 +924,7 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
 
 // ---------- listing a provider's models ----------
 
-async fn list_models(p: &Provider, key: &str, client: &reqwest::Client) -> Result<Vec<CloudModel>, String> {
+async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::Client) -> Result<Vec<CloudModel>, String> {
     let base = p.base_url.trim_end_matches('/');
     let mut out = Vec::new();
     match p.kind {
@@ -903,7 +949,11 @@ async fn list_models(p: &Provider, key: &str, client: &reqwest::Client) -> Resul
             }
         }
         Kind::Openai => {
-            let resp = client.get(format!("{base}/models")).bearer_auth(key).send().await.map_err(|e| e.to_string())?;
+            let mut req = client.get(format!("{base}/models")).bearer_auth(key);
+            if !cookies.is_empty() {
+                req = req.header("cookie", cookies);
+            }
+            let resp = req.send().await.map_err(|e| e.to_string())?;
             let to_login = resp.status().is_redirection() || resp.url().host_str().is_some_and(|h| h.contains("login.") || h.contains("microsoftonline"));
             if to_login {
                 return Err(not_an_api(&p.name, true));
@@ -938,7 +988,7 @@ async fn list_models(p: &Provider, key: &str, client: &reqwest::Client) -> Resul
 /// a sign-in page (an app proxy in front of it) or the wrong address.
 fn not_an_api(name: &str, web_page: bool) -> String {
     if web_page {
-        format!("{name} answered with a web page (likely a sign-in page) instead of its API. SulcusAI can't sign in through a browser page for a server: use an address that takes an API key directly, such as the server's LiteLLM address ending in /v1, or ask its admin for API access.")
+        format!("{name} answered with a web page (likely a sign-in page) instead of its API. Press Sign in… to sign in to it in the built-in browser, then choose its models again.")
     } else {
         format!("{name} didn't answer like an OpenAI-compatible API. Check the address: Open WebUI's ends in /api, LiteLLM's in /v1.")
     }
@@ -993,7 +1043,7 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
                 return Err("Use an https:// address (or a local one).".into());
             }
             let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Custom provider".into());
-            Provider { id: format!("custom-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new() }
+            Provider { id: format!("custom-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new() }
         }
     };
     {
@@ -1049,9 +1099,109 @@ pub async fn cloud_models_available(state: AppStateRef<'_>, id: String) -> Resul
         return Err(format!("Add your {} API key first.", p.name));
     }
     let key = c.decrypt(&p.key)?;
+    let cookies = if p.cookies.is_empty() { String::new() } else { c.decrypt(&p.cookies).unwrap_or_default() };
     let client = client(&state)?;
     state.log("network", &format!("Asked {} which models it offers", p.name));
-    list_models(&p, &key, &client).await
+    list_models(&p, &key, &cookies, &client).await
+}
+
+/// Where a server's pages are, from its API address: Open WebUI's API is
+/// under /api, LiteLLM's under /v1.
+fn site_of(base_url: &str) -> Result<String, String> {
+    let b = base_url.trim().trim_end_matches('/');
+    let b = b.strip_suffix("/api").or_else(|| b.strip_suffix("/v1")).unwrap_or(b);
+    let u = reqwest::Url::parse(&format!("{b}/")).map_err(|_| "That server's address isn't a web address.".to_string())?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return Err("That server's address isn't a web address.".into());
+    }
+    Ok(u.to_string())
+}
+
+/// Signs in to a server in the built-in browser (Open WebUI, or one
+/// behind a sign-in page): its pages open there, and once the user has
+/// signed in, its session is used: Open WebUI's sign-in becomes the key,
+/// and the site's cookies go with its API calls. Watches for ten minutes.
+#[tauri::command(async)]
+pub fn cloud_sign_in(app: tauri::AppHandle, state: AppStateRef, id: String) -> Result<String, String> {
+    use tauri::Emitter;
+    state.cipher()?;
+    let p = settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id).ok_or("Unknown provider")?;
+    if p.kind != Kind::Openai || presets().iter().any(|x| x.id == p.id) {
+        return Err(format!("{} uses an API key: press Get a key… to sign in to your account and make one.", p.name));
+    }
+    let site = site_of(&p.base_url)?;
+    app.emit("viewer:open", json!({ "url": site })).map_err(|e| e.to_string())?;
+    state.log("settings", &format!("Opened {} in the built-in browser to sign in", p.name));
+    let state = state.inner().clone();
+    let at = site.clone();
+    tauri::async_runtime::spawn(async move { watch_sign_in(app, state, id, at).await });
+    Ok(site)
+}
+
+/// Waits for the sign-in in the viewer, trying the session each time the
+/// site's cookies change, until its model list answers.
+async fn watch_sign_in(app: tauri::AppHandle, state: Arc<AppState>, id: String, site: String) {
+    use tauri::{Emitter, Manager};
+    let Ok(url) = tauri::Url::parse(&site) else { return };
+    let until = std::time::Instant::now() + Duration::from_secs(600);
+    let mut tried = String::new();
+    while std::time::Instant::now() < until {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let Some(w) = app.get_webview("viewer") else { continue };
+        let u = url.clone();
+        // Never on the main thread: reading cookies there waits forever (WebView2).
+        let Ok(Ok(cookies)) = tokio::task::spawn_blocking(move || w.cookies_for_url(u)).await else { continue };
+        let header = cookies.iter().map(|c| format!("{}={}", c.name(), c.value())).collect::<Vec<_>>().join("; ");
+        if header.is_empty() || header == tried {
+            continue;
+        }
+        tried = header.clone();
+        let (Ok(c), Some(p)) = (state.cipher(), settings(&state.db.lock().unwrap()).providers.into_iter().find(|p| p.id == id)) else { return };
+        // Open WebUI keeps its sign-in in "token"; otherwise the key saved before.
+        let token = cookies.iter().find(|c| c.name() == "token").map(|c| c.value().to_string());
+        let key = match token.clone() {
+            Some(t) => t,
+            None if !p.key.is_empty() => c.decrypt(&p.key).unwrap_or_default(),
+            None => continue,
+        };
+        let Ok(http) = client(&state) else { return };
+        if list_models(&p, &key, &header, &http).await.is_err() {
+            continue;
+        }
+        let saved = {
+            let conn = state.db.lock().unwrap();
+            let mut s = settings(&conn);
+            match s.providers.iter_mut().find(|x| x.id == id) {
+                Some(x) => {
+                    x.key = c.encrypt(&key);
+                    // Its token alone is enough for Open WebUI.
+                    x.cookies = if token.is_some() { String::new() } else { c.encrypt(&header) };
+                    x.enabled = true;
+                    save(&conn, &s).is_ok()
+                }
+                None => false,
+            }
+        };
+        if saved {
+            state.log("settings", &format!("Signed in to {} in the built-in browser; its session is kept encrypted", p.name));
+            app.emit("cloud:signed_in", json!({ "id": id, "name": p.name })).ok();
+        }
+        return;
+    }
+}
+
+/// What a chat has cost on cloud models, with this month's total and the budget.
+#[derive(Serialize)]
+pub struct ChatSpend {
+    chat: Spend,
+    month: Spend,
+    budget: Option<f64>,
+}
+
+#[tauri::command(async)]
+pub fn chat_cloud_spend(state: AppStateRef, chat_id: String) -> ChatSpend {
+    let conn = state.db.lock().unwrap();
+    ChatSpend { chat: db::get(&conn, &chat_spend_key(&chat_id)).unwrap_or_default(), month: spend(&conn), budget: settings(&conn).budget }
 }
 
 /// Which of the provider's models appear in the model lists.
@@ -1097,9 +1247,12 @@ pub fn set_cloud_options(state: AppStateRef, budget: Option<f64>, redact: bool) 
 #[derive(Serialize)]
 pub struct CloudChoice {
     pub id: String,
-    name: String,
-    provider: String,
-    vision: bool,
+    pub name: String,
+    pub provider: String,
+    pub vision: bool,
+    /// US dollars per million tokens in and out, if known.
+    pub price_in: Option<f64>,
+    pub price_out: Option<f64>,
 }
 
 #[tauri::command(async)]
@@ -1112,7 +1265,9 @@ pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
         .providers
         .iter()
         .filter(|p| p.enabled && !p.key.is_empty())
-        .flat_map(|p| p.models.iter().map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision }))
+        .flat_map(|p| {
+            p.models.iter().map(move |m| CloudChoice { id: model_ref(&p.id, &m.id), name: m.name.clone(), provider: p.name.clone(), vision: m.vision, price_in: m.price_in, price_out: m.price_out })
+        })
         .collect()
 }
 

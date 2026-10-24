@@ -65,6 +65,8 @@ pub(super) fn relayable(f: &Frame) -> bool {
         Frame::Hello { .. }
             | Frame::Msgs { .. }
             | Frame::Got { .. }
+            | Frame::Change { .. }
+            | Frame::Changed { .. }
             | Frame::Ask { .. }
             | Frame::Status { .. }
             | Frame::Answer { .. }
@@ -251,6 +253,13 @@ pub(super) async fn exchange(state: &Arc<AppState>, p: &Contact, base: &str) -> 
         SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(items.iter().map(|i| i.id.clone()));
         frames.push(Frame::Msgs { items });
     }
+    // Changes to messages they have, not confirmed yet (kept apart from messages by their mark).
+    let edits: HashSet<String> = skip.iter().filter_map(|s| s.strip_prefix("edit:").map(str::to_string)).collect();
+    let changed = changes(state, &c, &p.id, &edits);
+    if !changed.is_empty() {
+        SENT.lock().unwrap().entry(p.id.clone()).or_default().extend(changed.iter().map(|ch| format!("edit:{}", ch.id)));
+        frames.push(Frame::Change { items: changed });
+    }
     let mut moved = frames.len();
     let outbox = box_id(&key, &me);
     let out_token = token(&key, &outbox);
@@ -267,8 +276,8 @@ pub(super) async fn exchange(state: &Arc<AppState>, p: &Contact, base: &str) -> 
                 Ok(r) if r.status().is_success() => next = seq,
                 other => {
                     // Not sent: back in line for the next try.
-                    let mut back: Vec<Frame> = letter.into_iter().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. })).collect();
-                    back.extend(pending.flatten().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. })));
+                    let mut back: Vec<Frame> = letter.into_iter().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. } | Frame::Change { .. })).collect();
+                    back.extend(pending.flatten().filter(|f| !matches!(f, Frame::Hello { .. } | Frame::Msgs { .. } | Frame::Change { .. })));
                     OUTBOX.lock().unwrap().entry(p.id.clone()).or_default().splice(0..0, back);
                     SENT.lock().unwrap().remove(&p.id);
                     let _ = save_positions(state, &p.id, next, None);

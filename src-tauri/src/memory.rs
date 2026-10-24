@@ -297,6 +297,29 @@ mod tests {
     }
 
     #[test]
+    fn a_model_remembers_a_little_and_never_secrets() {
+        // What the model said is worth keeping: two at most, secrets left out.
+        let raw = r#"{"remember": [
+            {"fact": "Isaac's brother swing trades tech stocks.", "about": "user"},
+            {"fact": "The project's API key is sk-abc123.", "about": "project"},
+            {"fact": "The trade journal uses Node 24.", "about": "project"},
+            {"fact": "Likes short answers.", "about": "user"}]}"#;
+        assert_eq!(
+            auto_facts(raw),
+            vec![("Isaac's brother swing trades tech stocks.".to_string(), true), ("The trade journal uses Node 24.".to_string(), false)]
+        );
+        assert!(auto_facts("not json").is_empty());
+        assert!(auto_facts(r#"{"remember": []}"#).is_empty());
+        assert!(looks_secret("My password is hunter2") && looks_secret("card 4111111111111111") && looks_secret("my API key"));
+        assert!(!looks_secret("Meets with Sam on 10/24 at 3pm"));
+        // A changed fact finds the memory it replaces, by its words.
+        let all = vec![m("1", "The user's favorite color is blue."), m("2", "The user lives in Provo.")];
+        assert_eq!(closest(&all, "the user's favorite color is blue").map(|x| x.id.as_str()), Some("1"));
+        assert_eq!(closest(&all, "User lives in Provo").map(|x| x.id.as_str()), Some("2"));
+        assert!(closest(&all, "Owns a dog named Rex").is_none());
+    }
+
+    #[test]
     fn memories_are_encrypted_and_near_duplicates_merge() {
         let (conn, c) = setup();
         let (first, new) = add(&conn, &c, "The user teaches high school biology.", None, None).unwrap();

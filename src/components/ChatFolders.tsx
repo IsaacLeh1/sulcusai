@@ -43,7 +43,29 @@ export function FolderSection({
       {folders.map((f) => {
         const inside = chats.filter((c) => f.chats.includes(c.id));
         return (
-          <div key={f.id} className={`folder ${over === f.id ? "drop" : ""}`}>
+          // The whole folder takes a chat dropped on it (its name, or its chats).
+          <div
+            key={f.id}
+            className={`folder ${over === f.id ? "drop" : ""}`}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("application/x-sulcus-chat")) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setOver(f.id);
+              }
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(null);
+            }}
+            onDrop={(e) => {
+              setOver(null);
+              const id = e.dataTransfer.getData("application/x-sulcus-chat");
+              if (id && !f.chats.includes(id)) {
+                e.preventDefault();
+                act(api.moveToFolder(id, f.id));
+              }
+            }}
+          >
             <button
               className="chat-item folder-head"
               aria-expanded={!f.collapsed}
@@ -51,18 +73,6 @@ export function FolderSection({
               onContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({ folder: f, x: e.clientX, y: e.clientY });
-              }}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes("application/x-sulcus-chat")) {
-                  e.preventDefault();
-                  setOver(f.id);
-                }
-              }}
-              onDragLeave={() => setOver(null)}
-              onDrop={(e) => {
-                setOver(null);
-                const id = e.dataTransfer.getData("application/x-sulcus-chat");
-                if (id) act(api.moveToFolder(id, f.id));
               }}
               title={t("Right-click for more")}
             >

@@ -36,6 +36,42 @@ pub fn set_chat_hidden(state: AppStateRef, key: String, hidden: bool) -> Result<
     Ok(all)
 }
 
+const LAYOUT: &str = "sidebar_layout";
+
+/// The sidebar as the user arranged it by dragging: the order of its pages,
+/// and of the chats (empty: the usual order, newest chats first).
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Layout {
+    pub nav: Vec<String>,
+    pub chats: Vec<String>,
+}
+
+#[tauri::command(async)]
+pub fn sidebar_layout(state: AppStateRef) -> Result<Layout, String> {
+    state.cipher()?;
+    Ok(db::get(&state.db.lock().unwrap(), LAYOUT).unwrap_or_default())
+}
+
+/// Keeps the order the user dragged things into (`Layout::default()` puts it back).
+#[tauri::command(async)]
+pub fn set_sidebar_layout(state: AppStateRef, layout: Layout) -> Result<Layout, String> {
+    state.cipher()?;
+    let clean = |ids: Vec<String>, most: usize| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for id in ids.into_iter().map(|i| i.trim().to_string()).filter(|i| !i.is_empty() && i.len() <= 100) {
+            if !out.contains(&id) {
+                out.push(id);
+            }
+        }
+        out.truncate(most);
+        out
+    };
+    let layout = Layout { nav: clean(layout.nav, 50), chats: clean(layout.chats, 5000) };
+    db::set(&state.db.lock().unwrap(), LAYOUT, &layout)?;
+    Ok(layout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

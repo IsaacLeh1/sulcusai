@@ -243,6 +243,11 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("installed_models", "prompt_tps", "REAL"),
     // This user's messages the other person has read (their read receipt).
     ("people_messages", "seen", "INTEGER NOT NULL DEFAULT 0"),
+    // People: when its writer last changed it, deleted by its writer, and
+    // (for this user's) whether the other side has the change.
+    ("people_messages", "edited", "INTEGER"),
+    ("people_messages", "deleted", "INTEGER NOT NULL DEFAULT 0"),
+    ("people_messages", "change_sent", "INTEGER NOT NULL DEFAULT 1"),
     // When the user marked a message read with the button (Marked read).
     ("mail_messages", "marked_at", "INTEGER"),
     // When the user last opened a message (Subscriptions: lists never opened).
@@ -621,6 +626,8 @@ pub fn delete_chat(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM chats WHERE id = ?1", [id]).map_err(err)?;
     // Its context window use, kept for the meter.
     conn.execute("DELETE FROM settings WHERE key = ?1", [format!("context:{id}")]).map_err(err)?;
+    // What it cost on cloud models (the month's total keeps it).
+    conn.execute("DELETE FROM settings WHERE key = ?1", [crate::cloud::chat_spend_key(id)]).map_err(err)?;
     Ok(())
 }
 

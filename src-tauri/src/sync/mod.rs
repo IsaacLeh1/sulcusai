@@ -234,6 +234,9 @@ struct Open {
     /// other app's codes is meant.
     #[serde(default)]
     tag: Option<String>,
+    /// People: names go sealed once the code checks out, not in this frame.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    sealed: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,6 +252,9 @@ struct PairReply {
     name: String,
     spake: String,
     error: Option<String>,
+    /// Names go sealed after the code checks out (both apps take it).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    sealed: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -500,11 +506,12 @@ fn pair_key(c: &Cipher, p: &Peer) -> Result<zeroize::Zeroizing<Vec<u8>>, String>
     hex::decode(hex.as_str()).map(zeroize::Zeroizing::new).map_err(|_| "This PC's pairing is damaged. Pair them again.".to_string())
 }
 
-async fn send_plain<T: Serialize>(stream: &mut TcpStream, msg: &T) -> Result<(), String> {
+/// On any stream: a network connection, or People's pipe through the relay.
+async fn send_plain<T: Serialize>(stream: &mut (impl tokio::io::AsyncWrite + Unpin), msg: &T) -> Result<(), String> {
     wire::write_frame(stream, &serde_json::to_vec(msg).map_err(|e| e.to_string())?).await.map_err(lost)
 }
 
-async fn recv_plain<T: for<'de> Deserialize<'de>>(stream: &mut TcpStream) -> Result<T, String> {
+async fn recv_plain<T: for<'de> Deserialize<'de>>(stream: &mut (impl tokio::io::AsyncRead + Unpin)) -> Result<T, String> {
     let bytes = timeout(HANDSHAKE, wire::read_frame(stream)).await.map_err(|_| "The other PC didn't answer.".to_string())?.map_err(lost)?;
     serde_json::from_slice(&bytes).map_err(|_| "The other PC sent something unexpected.".to_string())
 }
@@ -525,7 +532,7 @@ async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> Result<usize
         .map_err(|_| format!("{} didn't answer. Is SulcusAI open there, with sync on?", p.name))?
         .map_err(|_| format!("Couldn't reach {}. Is SulcusAI open there, with sync on?", p.name))?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: None, tag: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: None, tag: None, sealed: false }).await?;
     let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC. If it was unpaired or reset there, pair them again.", p.name))?;
     if accept.id != p.id {
         return Err("A different PC answered at that address.".into());
@@ -552,7 +559,7 @@ async fn request(
         .map_err(|_| format!("{} didn't answer.", p.name))?
         .map_err(|_| format!("Couldn't reach {}.", p.name))?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(want.into()), tag: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me, name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(want.into()), tag: None, sealed: false }).await?;
     let accept: Accept = recv_plain(&mut stream).await.map_err(|_| format!("{} didn't accept this PC.", p.name))?;
     if accept.id != p.id {
         return Err("A different PC answered at that address.".into());
@@ -581,7 +588,8 @@ async fn answer(state: &Arc<AppState>, mut stream: TcpStream) -> Result<(), Stri
     }
     // Someone linked in People: messages only, never a sync or a model.
     if open.want.as_deref() == Some(people::CHAT) {
-        return people::answer(state, stream, &open).await;
+        let from = stream.peer_addr().ok();
+        return people::answer(state, stream, &open, from).await;
     }
     // Unknown PCs, and anything while this PC is locked, get no answer.
     let c = state.work_cipher()?;
@@ -741,7 +749,7 @@ async fn pair_answer(state: &Arc<AppState>, mut stream: TcpStream, open: &Open, 
     let me = device_id(&state.paths.data);
     let name = config(&state.db.lock().unwrap()).name;
     let (spake, mine) = wire::pair_start(&code);
-    send_plain(&mut stream, &PairReply { id: me.clone(), name, spake: B64.encode(&mine), error: None }).await?;
+    send_plain(&mut stream, &PairReply { id: me.clone(), name, spake: B64.encode(&mine), error: None, sealed: false }).await?;
     let shared = wire::pair_finish(spake, &theirs)?;
     let t = transcript(&open.id, &me, &theirs, &mine);
     let proof = timeout(Duration::from_secs(30), wire::read_frame(&mut stream)).await.map_err(|_| "no proof".to_string())?.map_err(lost)?;
@@ -767,7 +775,7 @@ async fn pair_call(state: &Arc<AppState>, code: &str, addr: SocketAddr) -> Resul
         .map_err(|_| "That PC didn't answer. Is SulcusAI open there?".to_string())?
         .map_err(|_| "Couldn't reach that PC. Is SulcusAI open there, and is it on this network?".to_string())?;
     let (spake, mine) = wire::pair_start(code);
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)), want: None, tag: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name, nonce: None, pair: Some(B64.encode(&mine)), want: None, tag: None, sealed: false }).await?;
     let reply: PairReply = recv_plain(&mut stream).await?;
     if let Some(e) = reply.error {
         return Err(e);

@@ -259,6 +259,9 @@ select, .input {
 .ports-servers code { font-size: 12px; }
 .log-viewer { margin: 8px 0; border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
 .log-text { max-height: 360px; overflow: auto; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 6px 0 0; background: var(--code-bg); padding: 8px; border-radius: 6px; }
+.log-meanings { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; margin: 6px 0; }
+.log-meanings ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.log-meanings code { font-size: 12px; opacity: 0.8; }
 .logs-list .btn.active { background: var(--accent-soft); color: var(--accent); }
 .dev-mode { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 6px; }
 .dev-mode .badge { margin-left: 6px; }
@@ -992,6 +995,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .cloud-spend { display: flex; flex-direction: column; gap: 4px; }
 .progress.warn span { background: var(--danger, #e5534b); }
 .cloud-badge { white-space: nowrap; }
+.cloud-cost { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; cursor: help; }
 .cloud-settings > .row input[type="number"] { max-width: 160px; }
 
 /* ---------- updates ---------- */
@@ -1542,6 +1546,17 @@ button.ctx:hover { background: var(--hover); }
 .ptext { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pfile { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pmeta { padding: 0 4px; }
+/* Edit and Delete on this user's messages: shown on hover or focus. */
+.pactions { visibility: hidden; }
+.pmsg:hover .pactions, .pmsg:focus-within .pactions { visibility: visible; }
+.pactions .link { padding: 0; }
+.pbubble.gone { font-style: italic; background: transparent; border: 1px dashed var(--border); }
+.pmsg.mine .pbubble.gone { background: transparent; border-color: var(--border); }
+.pbubble.pedit { width: min(520px, 75%); }
+.pbubble.pedit textarea { width: 100%; resize: vertical; }
+.allow-more { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.allow-more:disabled { opacity: 0.55; }
+.allow-sub { display: flex; flex-direction: column; gap: 4px; padding-left: 26px; }
 .people-note { text-align: center; padding: 0 20px; }
 .people-empty { margin: auto; max-width: 440px; text-align: center; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .people-addresses { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1695,6 +1710,11 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 
 /* Chat folders in the sidebar. */
 .folders .folder.drop > .folder-head { outline: 2px dashed var(--accent); outline-offset: -2px; }
+.folders .folder.drop { background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 8px; }
+/* Where a dragged menu item or chat lands: a line above or below. */
+.nav button.drop-before, .chat-item.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.nav button.drop-after, .chat-item.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.nav button[draggable="true"] { cursor: pointer; }
 .folder-head .folder-caret { width: 12px; display: inline-block; color: var(--muted); }
 .folder-head .folder-count { margin-left: auto; }
 .folder-chats .chat-item.in-folder { padding-left: 28px; }

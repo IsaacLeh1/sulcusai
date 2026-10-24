@@ -12,8 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
 use tauri::AppHandle;
-use tokio::io::AsyncWriteExt;
-use tokio::net::tcp::OwnedReadHalf;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, watch, Notify};
 
 use super::*;
@@ -37,6 +36,10 @@ pub(super) enum Frame {
     Got { ids: Vec<String> },
     /// Messages the other person has read (they send read receipts).
     Read { ids: Vec<String> },
+    /// Their messages they changed or deleted after sending, and the
+    /// changes now stored on the other side.
+    Change { items: Vec<Change> },
+    Changed { ids: Vec<String> },
     /// The chats the other side shares with this one.
     Shared { chats: Vec<share::SharedChat> },
     Watch { chat_id: String },
@@ -192,7 +195,7 @@ fn unregister(id: &str, serial: u64) -> bool {
     false
 }
 
-async fn read(r: &mut OwnedReadHalf, inn: &mut wire::Sealer, wait: Duration) -> Result<Frame, String> {
+async fn read(r: &mut (impl AsyncRead + Unpin), inn: &mut wire::Sealer, wait: Duration) -> Result<Frame, String> {
     let sealed = timeout(wait, wire::read_frame(r)).await.map_err(|_| "They went quiet.".to_string())?.map_err(lost)?;
     let plain = inn.open(&sealed)?;
     // A kind this version doesn't know (or can't read) is skipped.
@@ -217,11 +220,22 @@ fn heard_from(state: &AppState, p: &Contact, addr: Option<SocketAddr>, name: &st
 }
 
 /// One connection, from either side, once the keys are agreed: runs until
-/// it breaks, goes quiet, or another one takes its place.
+/// it breaks, goes quiet, or another one takes its place. `stream`: a
+/// network connection (`from`: the address it came from), or the pipe
+/// through the relay (`pipe`).
 #[allow(clippy::too_many_arguments)]
-async fn run(state: Arc<AppState>, p: Contact, stream: TcpStream, mut out: wire::Sealer, mut inn: wire::Sealer, caller: String, called: Option<SocketAddr>, busy: Option<Busy>) {
-    let from = stream.peer_addr().ok();
-    let (mut r, mut w) = stream.into_split();
+async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
+    state: Arc<AppState>,
+    p: Contact,
+    stream: S,
+    mut out: wire::Sealer,
+    mut inn: wire::Sealer,
+    caller: String,
+    called: Option<SocketAddr>,
+    from: Option<SocketAddr>,
+    busy: Option<Busy>,
+) {
+    let (mut r, mut w) = tokio::io::split(stream);
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
     let _ = tx.send(Frame::Hello { name: my_name(&state), port: listening_port() });
     let writer = tokio::spawn(async move {
@@ -249,6 +263,7 @@ async fn run(state: Arc<AppState>, p: Contact, stream: TcpStream, mut out: wire:
     mailbox::direct(&p.id);
     let _ = tx.send(Frame::Relay { url: mailbox::offer(&state, &p) });
     flush(&state, &p.id);
+    super::send_change(&state, &p.id);
     share::connected(&state, &p.id);
     ask::connected(&state, &p.id);
     changed(&state);
@@ -328,6 +343,25 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
             mailbox::confirmed(&p.id, &ids);
             changed(state);
             flush(state, &p.id);
+            // Changed while on its way: the change goes now it's there.
+            if let Ok(c) = state.work_cipher() {
+                let late: Vec<Change> = super::changes(state, &c, &p.id, &HashSet::new()).into_iter().filter(|ch| ids.contains(&ch.id)).collect();
+                if !late.is_empty() {
+                    send(&p.id, Frame::Change { items: late });
+                }
+            }
+        }
+        Frame::Change { items } => {
+            let Ok(c) = state.work_cipher() else { return };
+            let done = super::take_changes(state, &c, p, items);
+            if !done.is_empty() {
+                send(&p.id, Frame::Changed { ids: done });
+            }
+        }
+        Frame::Changed { ids } => {
+            super::changes_confirmed(state, &p.id, &ids);
+            mailbox::confirmed(&p.id, &ids.iter().map(|i| format!("edit:{i}")).collect::<Vec<_>>());
+            changed(state);
         }
         Frame::Read { ids } => {
             super::they_read(state, &p.id, &ids);
@@ -364,13 +398,26 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
 /// Calls someone and keeps the connection open until it ends.
 pub(super) async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> Result<(), String> {
     let Some(busy) = Busy::take(&format!("person:{id}")) else { return Err(BUSY.into()) };
+    let stream = connect(addr).await?;
+    let from = stream.peer_addr().ok();
+    call_on(state, id, stream, Some(addr), from, busy).await
+}
+
+/// The call on a stream already open: a network connection, or the pipe.
+pub(super) async fn call_on<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
+    state: &Arc<AppState>,
+    id: &str,
+    mut stream: S,
+    addr: Option<SocketAddr>,
+    from: Option<SocketAddr>,
+    busy: Busy,
+) -> Result<(), String> {
     let c = state.work_cipher()?;
     let p = contact(state, id).ok_or("They aren't linked anymore.")?;
     let key = link_key(&c, &p)?;
     let me = device_id(&state.paths.data);
-    let mut stream = connect(addr).await?;
     let nonce = wire::random::<32>();
-    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(CHAT.into()), tag: None }).await?;
+    send_plain(&mut stream, &Open { v: 1, id: me.clone(), name: String::new(), nonce: Some(hex::encode(nonce)), pair: None, want: Some(CHAT.into()), tag: None, sealed: false }).await?;
     let accept: Accept = recv_plain(&mut stream)
         .await
         .map_err(|_| format!("{} didn't take the call. If they removed you, link again.", p.name))?;
@@ -378,15 +425,15 @@ pub(super) async fn call(state: &Arc<AppState>, id: &str, addr: SocketAddr) -> R
         return Err("Someone else answered at that address.".into());
     }
     let theirs = hex::decode(&accept.nonce).map_err(|_| UNEXPECTED.to_string())?;
-    let (to, from) = wire::session_keys(&key, &nonce, &theirs);
-    run(state.clone(), p, stream, wire::Sealer::new(&to), wire::Sealer::new(&from), me, Some(addr), Some(busy)).await;
+    let (to_them, from_them) = wire::session_keys(&key, &nonce, &theirs);
+    run(state.clone(), p, stream, wire::Sealer::new(&to_them), wire::Sealer::new(&from_them), me, addr, from, Some(busy)).await;
     Ok(())
 }
 
-const BUSY: &str = "busy";
+pub(super) const BUSY: &str = "busy";
 
 /// Answers a call from someone linked: the connection runs on its own task.
-pub(in crate::sync) async fn answer(state: &Arc<AppState>, mut stream: TcpStream, open: &Open) -> Result<(), String> {
+pub(in crate::sync) async fn answer<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(state: &Arc<AppState>, mut stream: S, open: &Open, from: Option<SocketAddr>) -> Result<(), String> {
     if !features::is_on(&state.db.lock().unwrap(), Feature::People) {
         return Err("People is off".into());
     }
@@ -402,7 +449,7 @@ pub(in crate::sync) async fn answer(state: &Arc<AppState>, mut stream: TcpStream
     let (from_them, to_them) = wire::session_keys(&key, &theirs, &nonce);
     let (state, caller) = (state.clone(), open.id.clone());
     spawn(async move {
-        run(state, p, stream, wire::Sealer::new(&to_them), wire::Sealer::new(&from_them), caller, None, None).await;
+        run(state, p, stream, wire::Sealer::new(&to_them), wire::Sealer::new(&from_them), caller, None, from, None).await;
     });
     Ok(())
 }
@@ -414,6 +461,8 @@ fn tick(state: &Arc<AppState>) {
     }
     if features::is_on(&state.db.lock().unwrap(), Feature::People) {
         mailbox::tick(state);
+        // Through SulcusAI's relay, for anyone not reachable directly.
+        super::pipe::tick(state);
     }
     let (on, contacts) = {
         let conn = state.db.lock().unwrap();

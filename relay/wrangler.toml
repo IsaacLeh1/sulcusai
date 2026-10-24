@@ -33,3 +33,12 @@ class_name = "Link"
 [[migrations]]
 tag = "v3"
 new_sqlite_classes = ["Link"]
+
+# People's pipe (two apps meeting to talk without a VPN): one object per room, nothing stored.
+[[durable_objects.bindings]]
+name = "PIPE"
+class_name = "Pipe"
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["Pipe"]

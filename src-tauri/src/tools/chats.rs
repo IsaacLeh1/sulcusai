@@ -159,6 +159,53 @@ pub fn read(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     o
 }
 
+pub fn delete_chat_params() -> Value {
+    json!({ "type": "object", "required": ["chat"], "properties": {
+        "chat": { "type": "string", "description": "The chat's id or title, from search_chats. Only a chat the user asked you to delete." } } })
+}
+
+/// The card the user sees before a chat is deleted: which one, and how much is in it.
+pub fn delete_preview(args: &Value, db: &std::sync::Mutex<rusqlite::Connection>, c: &Cipher, this: &str) -> Result<super::Preview, String> {
+    let conn = db.lock().unwrap();
+    let chat = find(&conn, c, this, arg_str(args, "chat")?)?;
+    let n = db::message_count(&conn, &chat.id);
+    let when = chrono::DateTime::from_timestamp_millis(chat.updated_at).map(|d| d.with_timezone(&chrono::Local).format("%b %-d, %Y").to_string()).unwrap_or_default();
+    Ok(super::Preview {
+        title: format!("Delete the chat “{}”", chat.title),
+        kind: "text",
+        detail: Some(format!("{n} messages, last used {when}.")),
+        note: Some("Deleted for good, with its messages and pasted pictures. This can't be undone.".into()),
+    })
+}
+
+/// Deletes another chat (the user approved it on the card): never this one,
+/// an incognito one, or one that's working right now.
+pub fn delete(args: &Value, ctx: &Ctx<'_>) -> Outcome {
+    let (db, c, this) = (ctx.memory.db, ctx.memory.cipher, ctx.memory.chat_id);
+    let title = "Delete a chat";
+    if is_asked(this) {
+        return Outcome::error(title, "A chat answering for another can't delete chats.");
+    }
+    let chat = {
+        let conn = db.lock().unwrap();
+        match arg_str(args, "chat").and_then(|w| find(&conn, c, this, w)) {
+            Ok(ch) => ch,
+            Err(e) => return Outcome::error(title, e),
+        }
+    };
+    if ctx.state.generations.lock().unwrap().contains_key(&chat.id) {
+        return Outcome::error(title, format!("“{}” is working right now. Stop it first, then try again.", chat.title));
+    }
+    if let Err(e) = crate::delete_chat_now(ctx.state, &chat.id) {
+        return Outcome::error(title, e);
+    }
+    if let Some(app) = ctx.app {
+        use tauri::Emitter;
+        app.emit("chat:deleted", json!({ "chat_id": chat.id })).ok();
+    }
+    Outcome::ok(format!("Deleted the chat “{}”.", chat.title), format!("Deleted the chat “{}”", chat.title), "text", None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

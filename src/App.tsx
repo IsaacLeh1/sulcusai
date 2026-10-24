@@ -13,6 +13,7 @@ import {
   type Project,
   type SecurityStatus,
   type SharedHere,
+  type SidebarLayout,
   type Settings,
   type BrowsersView,
   type FolderView,
@@ -25,6 +26,7 @@ import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
 import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
+import { LinkedChats } from "./components/ChatPanels";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ShareChatDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
@@ -88,6 +90,31 @@ const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
 };
 
 /** Shows the lock screen until unlocked; the workspace mounts only after. */
+/** Items in the order the user dragged them into; ones not placed yet
+ * (new chats, a page just turned on) come first, in their usual order. */
+function arrange<T extends { id: string }>(items: T[], order: string[]): T[] {
+  if (order.length === 0) return items;
+  const at = new Map(order.map((id, i) => [id, i]));
+  const fresh = items.filter((x) => !at.has(x.id));
+  const kept = items.filter((x) => at.has(x.id)).sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+  return [...fresh, ...kept];
+}
+
+/** The ids with `moved` put just before or after `target`. */
+function placed(ids: string[], moved: string, target: string, at: "before" | "after"): string[] {
+  const rest = ids.filter((id) => id !== moved);
+  const i = rest.indexOf(target);
+  if (i < 0) return ids;
+  rest.splice(at === "before" ? i : i + 1, 0, moved);
+  return rest;
+}
+
+/** Whether a drag is over the top or bottom half of an item. */
+function half(e: { clientY: number; currentTarget: Element }): "before" | "after" {
+  const r = e.currentTarget.getBoundingClientRect();
+  return e.clientY < r.top + r.height / 2 ? "before" : "after";
+}
+
 export default function App() {
   const [security, setSecurity] = useState<SecurityStatus | null>(null);
   // Kept out here so unlocking returns to the same page and chat.
@@ -101,6 +128,19 @@ export default function App() {
     window.addEventListener("sulcus:error", show);
     return () => window.removeEventListener("sulcus:error", show);
   }, [toasts.push]);
+  // A file dropped where nothing takes it would open in the window in the
+  // app's place: dropping files is only for the places that take them.
+  useEffect(() => {
+    const keep = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", keep);
+    window.addEventListener("drop", keep);
+    return () => {
+      window.removeEventListener("dragover", keep);
+      window.removeEventListener("drop", keep);
+    };
+  }, []);
 
   const refreshSecurity = useCallback(async () => setSecurity(await api.security()), []);
   useEffect(() => {
@@ -302,6 +342,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // A new chat joins the sidebar as soon as its first message is sent.
       on("chat:status", (p) => setStarted((s) => (s.has(p.chat_id) ? s : new Set(s).add(p.chat_id)))),
       on("chat:titled", () => refreshChats()),
+      // The assistant deleted a chat (the user approved it).
+      on("chat:deleted", (p) => {
+        refreshChats();
+        if (activeChatRef.current === p.chat_id) setActiveChat(null);
+      }),
       // The assistant asked for the web and got a yes: the Web button shows it.
       on("chat:web", () => refreshChats()),
       // The assistant showing the user a page (open_page).
@@ -364,6 +409,21 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [renamingProject, setRenamingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
+  // The order the user dragged the menu and the chats into (empty: the usual order).
+  const [layout, setLayout] = useState<SidebarLayout>({ nav: [], chats: [] });
+  useEffect(() => {
+    api.sidebarLayout().then((l) => l && setLayout(l)).catch(() => {});
+  }, []);
+  const saveLayout = (next: SidebarLayout) => {
+    setLayout(next);
+    api.setSidebarLayout(next).then(setLayout).catch((e) => toast(errorText(e), "error"));
+  };
+  // Where a dragged menu item or chat would land: before or after this one.
+  const [navOver, setNavOver] = useState<{ id: string; at: "before" | "after" } | null>(null);
+  const [chatOver, setChatOver] = useState<{ id: string; at: "before" | "after" } | null>(null);
+  const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null);
+  // Connecting this chat with another, so they can ask and tell each other things.
+  const [connecting, setConnecting] = useState<string | null>(null);
   // Chats hidden from the list (own ones by id, shared ones as "contact:chat"), shown under "Hidden chats".
   const [hidden, setHidden] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
@@ -373,7 +433,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   // New chats stay out of the list until something is sent in them.
   const listed = chats.filter((c) => !c.empty || started.has(c.id) || running.includes(c.id));
   const sharedKey = (s: SharedHere) => `${s.contact_id}:${s.chat.id}`;
-  const visible = listed.filter((c) => !hidden.includes(c.id));
+  const visible = arrange(listed.filter((c) => !hidden.includes(c.id)), layout.chats);
   const hiddenOwn = listed.filter((c) => hidden.includes(c.id));
   const sharedVisible = sharedHere.filter((s) => !hidden.includes(sharedKey(s)));
   const hiddenShared = sharedHere.filter((s) => hidden.includes(sharedKey(s)));
@@ -495,7 +555,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     <button
       key={c.id}
       role="listitem"
-      className={`chat-item ${inFolder ? "in-folder" : ""} ${view === "chat" && c.id === activeChat ? "active" : ""}`}
+      className={`chat-item ${inFolder ? "in-folder" : ""} ${view === "chat" && c.id === activeChat ? "active" : ""} ${chatOver?.id === c.id ? `drop-${chatOver.at}` : ""}`}
       onClick={() => openChat(c.id)}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -505,6 +565,25 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       onDragStart={(e) => {
         e.dataTransfer.setData("application/x-sulcus-chat", c.id);
         e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes("application/x-sulcus-chat")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setChatOver({ id: c.id, at: half(e) });
+      }}
+      onDragLeave={() => setChatOver(null)}
+      onDrop={(e) => {
+        const moved = e.dataTransfer.getData("application/x-sulcus-chat");
+        setChatOver(null);
+        if (!moved || moved === c.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        saveLayout({ ...layout, chats: placed(visible.map((x) => x.id), moved, c.id, half(e)) });
+        // Dropped among a folder's chats: into that folder; among the others: out of its folder.
+        const into = folders.find((f) => f.chats.includes(c.id)) ?? null;
+        const from = folders.find((f) => f.chats.includes(moved)) ?? null;
+        if (into?.id !== from?.id) api.moveToFolder(moved, into?.id ?? null).then(setFolders).catch((err) => toast(errorText(err), "error"));
       }}
       title={c.title}
     >
@@ -597,57 +676,57 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         </div>
         <nav className="nav" aria-label={t("Main")}>
-          {phone && (
-            <button className={view === "pc" ? "active" : ""} onClick={() => setView("pc")}>
-              <PcIcon /> {t("PC")}
+          {arrange(
+            [
+              { id: "pc", show: phone, label: <><PcIcon /> {t("PC")}</> },
+              { id: "studio", show: creates, label: t("Studio") },
+              { id: "meetings", show: has("meetings") || liveMeeting, label: <>{t("Meetings")}{liveMeeting && <span className="dot rec" aria-label={t("Recording")} />}</> },
+              { id: "notes", show: has("notes"), label: t("Notes") },
+              { id: "tasks", show: has("tasks"), label: t("Tasks") },
+              { id: "mail", show: has("email"), label: t("Mail") },
+              { id: "calendar", show: has("calendar"), label: t("Calendar") },
+              { id: "translate", show: has("translate"), label: t("Translate") },
+              { id: "memory", show: has("memory"), label: t("Memory") },
+              { id: "scheduled", show: has("scheduled"), label: t("Scheduled") },
+            ].filter((n) => n.show),
+            layout.nav,
+          ).map((n, i, shown) => (
+            <button
+              key={n.id}
+              className={`${view === n.id ? "active" : ""} ${navOver?.id === n.id ? `drop-${navOver.at}` : ""}`}
+              onClick={() => setView(n.id as View)}
+              draggable
+              title={t("Drag to put the menu in the order you like (or Alt+Up / Alt+Down)")}
+              onDragStart={(e) => {
+                e.dataTransfer.setData("application/x-sulcus-nav", n.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes("application/x-sulcus-nav")) return;
+                e.preventDefault();
+                setNavOver({ id: n.id, at: half(e) });
+              }}
+              onDragLeave={() => setNavOver(null)}
+              onDrop={(e) => {
+                const moved = e.dataTransfer.getData("application/x-sulcus-nav");
+                setNavOver(null);
+                if (moved) saveLayout({ ...layout, nav: placed(shown.map((x) => x.id), moved, n.id, half(e)) });
+              }}
+              onKeyDown={(e) => {
+                if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                e.preventDefault();
+                const to = shown[i + (e.key === "ArrowUp" ? -1 : 1)];
+                if (to) saveLayout({ ...layout, nav: placed(shown.map((x) => x.id), n.id, to.id, e.key === "ArrowUp" ? "before" : "after") });
+              }}
+              onContextMenu={(e) => {
+                if (layout.nav.length === 0) return;
+                e.preventDefault();
+                setNavMenu({ x: e.clientX, y: e.clientY });
+              }}
+            >
+              {n.label}
             </button>
-          )}
-          {creates && (
-            <button className={view === "studio" ? "active" : ""} onClick={() => setView("studio")}>
-              {t("Studio")}
-            </button>
-          )}
-          {(has("meetings") || liveMeeting) && (
-            <button className={view === "meetings" ? "active" : ""} onClick={() => setView("meetings")}>
-              {t("Meetings")}
-              {liveMeeting && <span className="dot rec" aria-label={t("Recording")} />}
-            </button>
-          )}
-          {has("notes") && (
-            <button className={view === "notes" ? "active" : ""} onClick={() => setView("notes")}>
-              {t("Notes")}
-            </button>
-          )}
-          {has("tasks") && (
-            <button className={view === "tasks" ? "active" : ""} onClick={() => setView("tasks")}>
-              {t("Tasks")}
-            </button>
-          )}
-          {has("email") && (
-            <button className={view === "mail" ? "active" : ""} onClick={() => setView("mail")}>
-              {t("Mail")}
-            </button>
-          )}
-          {has("calendar") && (
-            <button className={view === "calendar" ? "active" : ""} onClick={() => setView("calendar")}>
-              {t("Calendar")}
-            </button>
-          )}
-          {has("translate") && (
-            <button className={view === "translate" ? "active" : ""} onClick={() => setView("translate")}>
-              {t("Translate")}
-            </button>
-          )}
-          {has("memory") && (
-            <button className={view === "memory" ? "active" : ""} onClick={() => setView("memory")}>
-              {t("Memory")}
-            </button>
-          )}
-          {has("scheduled") && (
-            <button className={view === "scheduled" ? "active" : ""} onClick={() => setView("scheduled")}>
-              {t("Scheduled")}
-            </button>
-          )}
+          ))}
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
@@ -748,6 +827,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                     {sharedByMe.has(id) ? t("Shared with {names}…", { names: sharedByMe.get(id)!.join(", ") }) : t("Share…")}
                   </button>
                 )}
+                {!chats.find((c) => c.id === id)?.incognito && (
+                  <button role="menuitem" onClick={() => (done(), setConnecting(id))}>
+                    {t("Connect session…")}
+                  </button>
+                )}
+                {layout.chats.length > 0 && (
+                  <button role="menuitem" onClick={() => (done(), saveLayout({ ...layout, chats: [] }))}>
+                    {t("Sort chats by newest again")}
+                  </button>
+                )}
                 <button
                   role="menuitem"
                   onClick={() => {
@@ -780,6 +869,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             );
           })()}
         </FloatingMenu>
+      )}
+      {navMenu && (
+        <FloatingMenu x={navMenu.x} y={navMenu.y} onClose={() => setNavMenu(null)}>
+          <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, nav: [] }))}>
+            {t("Put the menu back in its usual order")}
+          </button>
+        </FloatingMenu>
+      )}
+      {connecting && chats.some((c) => c.id === connecting) && (
+        <LinkedChats chat={chats.find((c) => c.id === connecting)!} onOpenChat={openChat} onClose={() => setConnecting(null)} toast={toast} />
       )}
       {projectMenu && (
         <FloatingMenu x={projectMenu.x} y={projectMenu.y} onClose={() => setProjectMenu(null)}>

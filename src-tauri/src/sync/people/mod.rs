@@ -20,6 +20,7 @@ pub mod ask;
 pub mod codes;
 mod link;
 pub mod mailbox;
+mod pipe;
 pub mod share;
 pub mod together;
 #[cfg(test)]
@@ -245,6 +246,20 @@ pub struct MessageView {
     delivered: bool,
     /// For messages from here: they've read it (they send read receipts).
     read: bool,
+    /// Its writer changed it after sending.
+    edited: bool,
+    /// Its writer deleted it (it shows as deleted, with nothing in it).
+    deleted: bool,
+}
+
+/// A change to a message already sent, as it travels: the new text, or
+/// None when it was deleted.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Change {
+    id: String,
+    text: Option<String>,
+    at: i64,
 }
 
 /// A message as it travels (inside the link's encryption).
@@ -276,11 +291,13 @@ fn row_view(c: &Cipher, r: &rusqlite::Row) -> rusqlite::Result<MessageView> {
         file: file_name.map(|n| FileView { name: c.decrypt_or(&n, "file"), size: file_size.unwrap_or(0).max(0) as u64 }),
         delivered: r.get::<_, i64>(6)? != 0,
         read: r.get::<_, i64>(7)? != 0,
+        edited: r.get::<_, Option<i64>>(8)?.is_some(),
+        deleted: r.get::<_, i64>(9)? != 0,
     })
 }
 
 /// `seen`: this user's message, read by them (their read receipt).
-const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent, seen";
+const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent, seen, edited, deleted";
 
 fn messages(conn: &Connection, c: &Cipher, contact: &str) -> Result<Vec<MessageView>, String> {
     let mut stmt = conn
@@ -302,7 +319,7 @@ fn last_message(conn: &Connection, c: &Cipher, contact: &str) -> Option<MessageV
 }
 
 fn unread(conn: &Connection) -> HashMap<String, i64> {
-    let Ok(mut stmt) = conn.prepare("SELECT contact_id, COUNT(*) FROM people_messages WHERE from_me = 0 AND read = 0 GROUP BY contact_id") else {
+    let Ok(mut stmt) = conn.prepare("SELECT contact_id, COUNT(*) FROM people_messages WHERE from_me = 0 AND read = 0 AND deleted = 0 GROUP BY contact_id") else {
         return HashMap::new();
     };
     stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|rows| rows.filter_map(Result::ok).collect()).unwrap_or_default()
@@ -314,7 +331,7 @@ fn outgoing(state: &AppState, c: &Cipher, contact: &str, skip: &HashSet<String>)
     let rows: Vec<(String, i64, String, Option<String>)> = {
         let conn = state.db.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, at, body, file_name FROM people_messages WHERE contact_id = ?1 AND from_me = 1 AND sent = 0 ORDER BY at, rowid")
+            .prepare("SELECT id, at, body, file_name FROM people_messages WHERE contact_id = ?1 AND from_me = 1 AND sent = 0 AND deleted = 0 ORDER BY at, rowid")
             .map_err(err)?;
         let rows = stmt.query_map([contact], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(err)?;
         rows.filter_map(Result::ok).filter(|r: &(String, i64, String, Option<String>)| !skip.contains(&r.0)).collect()
@@ -417,6 +434,156 @@ fn arrived(state: &AppState, p: &Contact, fresh: &[Item]) {
         _ => last.text.chars().take(140).collect(),
     };
     tell(state, &p.name, &text);
+}
+
+// ---------- edits and deletes ----------
+
+/// Changes to this user's messages that the other side has but hasn't
+/// confirmed (`skip`: already on their way).
+fn changes(state: &AppState, c: &Cipher, contact: &str, skip: &HashSet<String>) -> Vec<Change> {
+    let conn = state.db.lock().unwrap();
+    let Ok(mut stmt) = conn.prepare("SELECT id, body, deleted, edited FROM people_messages WHERE contact_id = ?1 AND from_me = 1 AND sent = 1 AND change_sent = 0 ORDER BY at LIMIT 100") else {
+        return vec![];
+    };
+    let rows = stmt.query_map([contact], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)? != 0, r.get::<_, Option<i64>>(3)?.unwrap_or(0))));
+    rows.map(|rows| {
+        rows.filter_map(Result::ok)
+            .filter(|(id, ..)| !skip.contains(id))
+            .map(|(id, body, deleted, at)| Change { id, text: (!deleted).then(|| c.decrypt_or(&body, "")), at })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Their changes to messages they sent: only theirs, never this user's.
+/// Returns the ids handled (to confirm).
+fn take_changes(state: &AppState, c: &Cipher, p: &Contact, items: Vec<Change>) -> Vec<String> {
+    let now = db::now_ms();
+    let mut done = Vec::new();
+    let mut any = false;
+    for ch in items {
+        if !safe_id(&ch.id) {
+            continue;
+        }
+        let at = ch.at.clamp(0, now);
+        let conn = state.db.lock().unwrap();
+        let n = match &ch.text {
+            Some(t) => conn.execute(
+                "UPDATE people_messages SET body = ?3, edited = ?4 WHERE contact_id = ?1 AND id = ?2 AND from_me = 0 AND deleted = 0",
+                params![p.id, ch.id, c.encrypt(&t.chars().take(MAX_TEXT).collect::<String>()), at],
+            ),
+            None => conn.execute(
+                "UPDATE people_messages SET body = ?3, file_name = NULL, file_size = NULL, deleted = 1, edited = ?4 WHERE contact_id = ?1 AND id = ?2 AND from_me = 0",
+                params![p.id, ch.id, c.encrypt(""), at],
+            ),
+        };
+        drop(conn);
+        if ch.text.is_none() {
+            let _ = std::fs::remove_file(files_dir(state, &p.id).join(&ch.id));
+        }
+        any |= n.unwrap_or(0) > 0;
+        done.push(ch.id);
+    }
+    if any {
+        emit(state, "people:message", serde_json::json!({ "contact_id": p.id }));
+    }
+    done
+}
+
+/// They have these changes.
+fn changes_confirmed(state: &AppState, contact: &str, ids: &[String]) {
+    let conn = state.db.lock().unwrap();
+    for id in ids {
+        let _ = conn.execute("UPDATE people_messages SET change_sent = 1 WHERE contact_id = ?1 AND id = ?2 AND from_me = 1", params![contact, id]);
+    }
+}
+
+/// This user's own message, if it's here and not deleted.
+fn own_message(state: &AppState, contact: &str, id: &str) -> Result<(), String> {
+    let found = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row("SELECT 1 FROM people_messages WHERE contact_id = ?1 AND id = ?2 AND from_me = 1 AND deleted = 0", params![contact, id], |_| Ok(()))
+        .optional()
+        .map_err(err)?;
+    found.ok_or_else(|| "Only your own messages can be changed, and that one isn't here anymore.".to_string())
+}
+
+/// Sends changes now if they're connected, else they wait (they also go on
+/// connecting, and by mail, until they confirm them).
+pub(super) fn send_change(state: &AppState, contact: &str) {
+    let Ok(c) = state.work_cipher() else { return };
+    // By mail, the next exchange takes what's waiting.
+    if !link::connected(contact) {
+        mailbox::nudge(contact);
+        return;
+    }
+    let items = changes(state, &c, contact, &HashSet::new());
+    if !items.is_empty() {
+        link::send(contact, link::Frame::Change { items });
+    }
+}
+
+/// Changes a message this user sent (theirs too, once they have it).
+#[tauri::command(async)]
+pub fn people_edit(state: AppStateRef, id: String, message: String, text: String) -> Result<(), String> {
+    features::require(&state, Feature::People)?;
+    edit_message(&state, &id, &message, &text)
+}
+
+pub(super) fn edit_message(state: &AppState, id: &str, message: &str, text: &str) -> Result<(), String> {
+    let c = state.cipher()?;
+    own_message(state, id, message)?;
+    let text: String = text.trim().chars().take(MAX_TEXT).collect();
+    let has_file = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row("SELECT file_name IS NOT NULL FROM people_messages WHERE contact_id = ?1 AND id = ?2", params![id, message], |r| r.get::<_, bool>(0))
+        .unwrap_or(false);
+    if text.is_empty() && !has_file {
+        return Err("A message can't be empty. To take it back, delete it.".into());
+    }
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE people_messages SET body = ?3, edited = ?4, change_sent = 0 WHERE contact_id = ?1 AND id = ?2 AND from_me = 1",
+            params![id, message, c.encrypt(&text), db::now_ms()],
+        )
+        .map_err(err)?;
+    send_change(state, id);
+    emit(state, "people:message", serde_json::json!({ "contact_id": id }));
+    Ok(())
+}
+
+/// Deletes a message this user sent: here, and on their side once they're
+/// reached (one not sent yet never goes).
+#[tauri::command(async)]
+pub fn people_delete(state: AppStateRef, id: String, message: String) -> Result<(), String> {
+    features::require(&state, Feature::People)?;
+    delete_message(&state, &id, &message)
+}
+
+pub(super) fn delete_message(state: &AppState, id: &str, message: &str) -> Result<(), String> {
+    let c = state.cipher()?;
+    own_message(state, id, message)?;
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE people_messages SET body = ?3, file_name = NULL, file_size = NULL, deleted = 1, edited = ?4, change_sent = 0 WHERE contact_id = ?1 AND id = ?2 AND from_me = 1",
+            params![id, message, c.encrypt(""), db::now_ms()],
+        )
+        .map_err(err)?;
+    let _ = std::fs::remove_file(files_dir(state, id).join(message));
+    send_change(state, id);
+    state.log("people", "Deleted a message you sent");
+    emit(state, "people:message", serde_json::json!({ "contact_id": id }));
+    Ok(())
 }
 
 /// A Windows notification, unless the app is in front.
@@ -615,6 +782,8 @@ pub struct ContactView {
     relay: Option<&'static str>,
     /// The last mail exchange worked.
     via_relay: bool,
+    /// Connected through SulcusAI's relay (no direct connection or VPN).
+    via_pipe: bool,
     /// This user lets them use their relay.
     offer_relay: bool,
     /// This user tells them when they've read their messages.
@@ -682,6 +851,7 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                 allow: p.allow.clone(),
                 relay,
                 via_relay: !online && mailbox::via(&p.id),
+                via_pipe: pipe::through(&p.id),
                 offer_relay: p.offer_relay,
                 read_receipts: p.read_receipts,
             }
@@ -908,6 +1078,8 @@ fn queue(state: &AppState, c: &Cipher, contact: &str, text: &str, file: Option<(
         file: file.map(|(name, data)| FileView { name, size: data.len() as u64 }),
         delivered: false,
         read: false,
+        edited: false,
+        deleted: false,
     })
 }
 

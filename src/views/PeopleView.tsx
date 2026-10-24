@@ -12,6 +12,7 @@ import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import { PaperclipIcon } from "../components/Icons";
+import { ModelSelect } from "../components/ModelChoices";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -21,6 +22,9 @@ function seen(ms: number | null): string {
   if (s < 86400) return t("seen {n} h ago", { n: Math.round(s / 3600) });
   return t("seen {date}", { date: new Date(ms).toLocaleDateString() });
 }
+
+/** The longest question for someone's assistant (as their app takes it). */
+const ASK_MOST = 1000;
 
 const time = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const day = (ms: number) => new Date(ms).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
@@ -183,6 +187,7 @@ export function PeopleView({ toast }: { toast: PushToast }) {
 }
 
 function preview(m: PersonMessage): string {
+  if (m.deleted) return t("Message deleted");
   if (m.text.trim()) return m.text.replace(/\s+/g, " ").slice(0, 80);
   return m.file ? m.file.name : "";
 }
@@ -199,6 +204,10 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
   const [tab, setTab] = useState<"messages" | "shared">("messages");
   const [asks, setAsks] = useState<PersonAsk[]>([]);
   const [allowing, setAllowing] = useState(false);
+  // "Also ask {name}'s assistant" for the message being written (one message at a time).
+  const [alsoAsk, setAlsoAsk] = useState(false);
+  // A message of this user's being changed.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [watching, setWatching] = useState<SharedChat | null>(null);
   // A chat they stopped sharing (or that went with the connection) closes.
   useEffect(() => {
@@ -231,20 +240,51 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
     if (atBottom.current) end.current?.scrollIntoView({ block: "end" });
   }, [count]);
 
+  const question = text.trim();
+  const tooLong = alsoAsk && question.length > ASK_MOST;
   const send = async () => {
     if (sending || (!text.trim() && !file)) return;
+    if (tooLong) return toast(t("Questions for {name}'s assistant can be up to {n} characters: it answers questions about {name}, it doesn't do work.", { name: c.name, n: ASK_MOST.toLocaleString() }), "error");
     setSending(true);
     try {
       const m = await api.peopleSend(c.id, text, file);
       // A refresh may already have brought it.
       setMessages((all) => (all?.some((x) => x.id === m.id) ? all : [...(all ?? []), m]));
+      if (alsoAsk && question) {
+        try {
+          const a = await api.peopleAsk(c.id, question);
+          setAsks((all) => (all.some((x) => x.id === a.id) ? all : [...all, a]));
+        } catch (e) {
+          toast(errorText(e), "error");
+        }
+      }
       setText("");
       setFile(null);
+      setAlsoAsk(false);
       atBottom.current = true;
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
       setSending(false);
+    }
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    try {
+      await api.peopleEdit(c.id, editing.id, editing.text);
+      setEditing(null);
+      load();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const deleteMessage = async (m: PersonMessage) => {
+    if (!window.confirm(t("Delete this message? It's deleted for {name} too, as soon as your app reaches theirs.", { name: c.name }))) return;
+    try {
+      await api.peopleDelete(c.id, m.id);
+      load();
+    } catch (e) {
+      toast(errorText(e), "error");
     }
   };
   const pick = async () => {
@@ -294,7 +334,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
         <div className="person-text">
           <strong>{c.name}</strong>
           <span className="small muted">
-            {c.online ? t("Online") : c.via_relay ? t("Through the relay") : seen(c.last_seen)}
+            {c.online ? (c.via_pipe ? t("Online, through SulcusAI's relay (encrypted)") : t("Online")) : c.via_relay ? t("Through the relay") : seen(c.last_seen)}
             {!c.online && !c.via_relay && c.error && <span className="warn-text"> · {t("Can't reach them right now.")}</span>}
           </span>
         </div>
@@ -320,7 +360,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                   setAllowing(true);
                 }}
               >
-                {t("What {name}'s assistant can use", { name: c.name })}
+                {t("Your assistant for {name}…", { name: c.name })}
               </button>
               <button
                 role="menuitem"
@@ -396,14 +436,59 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
           const prev = all[i - 1];
           const newDay = !prev || day(prev.at) !== day(item.at);
           if (item.kind === "ask") {
+            // Asked along with a message ("Also ask"): the message above says it.
+            const along = prev?.kind === "message" && prev.m.from_me === item.a.from_me && prev.m.text.trim() === item.a.question.trim() && item.at - prev.at < 60_000;
             return (
               <div key={item.a.id}>
                 {newDay && <div className="people-day small muted">{day(item.at)}</div>}
-                <AskCard a={item.a} contact={c} toast={toast} />
+                <AskCard a={item.a} contact={c} toast={toast} along={along} />
               </div>
             );
           }
           const m = item.m;
+          if (m.deleted) {
+            return (
+              <div key={m.id}>
+                {newDay && <div className="people-day small muted">{day(m.at)}</div>}
+                <div className={`pmsg ${m.from_me ? "mine" : ""}`}>
+                  <div className="pbubble gone small muted">{m.from_me ? t("You deleted this message") : t("{name} deleted this message", { name: c.name })}</div>
+                </div>
+              </div>
+            );
+          }
+          if (editing?.id === m.id) {
+            return (
+              <div key={m.id}>
+                {newDay && <div className="people-day small muted">{day(m.at)}</div>}
+                <div className="pmsg mine">
+                  <div className="pbubble pedit">
+                    <textarea
+                      className="input"
+                      rows={Math.min(8, Math.max(2, editing.text.split("\n").length))}
+                      value={editing.text}
+                      autoFocus
+                      aria-label={t("Change your message")}
+                      onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          saveEdit();
+                        } else if (e.key === "Escape") setEditing(null);
+                      }}
+                    />
+                    <div className="row">
+                      <button className="btn primary small" onClick={saveEdit} disabled={!editing.text.trim() && !m.file}>
+                        {t("Save")}
+                      </button>
+                      <button className="btn ghost small" onClick={() => setEditing(null)}>
+                        {t("Cancel")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
           return (
             <div key={m.id}>
               {newDay && <div className="people-day small muted">{day(m.at)}</div>}
@@ -423,7 +508,20 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                 </div>
                 <span className="small muted pmeta">
                   {time(m.at)}
+                  {m.edited && " · " + t("edited")}
                   {m.from_me && (m.read ? " · ✓✓ " + t("Read") : m.delivered ? " · ✓ " + t("Delivered") : " · " + t("Waiting to send"))}
+                  {m.from_me && (
+                    <span className="pactions">
+                      {" · "}
+                      <button className="link small" onClick={() => setEditing({ id: m.id, text: m.text })}>
+                        {t("Edit")}
+                      </button>
+                      {" · "}
+                      <button className="link small" onClick={() => deleteMessage(m)}>
+                        {t("Delete")}
+                      </button>
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
@@ -468,8 +566,18 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
             <button className="icon-btn" onClick={pick} title={t("Send a file (up to 16 MB)")} aria-label={t("Send a file")}>
               <PaperclipIcon />
             </button>
-            <span className="small muted">{t("To {name} only. Never sent to a model.", { name: c.name })}</span>
-            <button className="btn primary small push-right" disabled={sending || (!text.trim() && !file)} onClick={send}>
+            <label className="check small" title={t("Their assistant answers on their PC, about them only (like whether they're free), if they allow it. Their model loads only for this.")}>
+              <input type="checkbox" checked={alsoAsk} onChange={(e) => setAlsoAsk(e.target.checked)} />
+              {t("Also ask {name}'s assistant", { name: c.name })}
+            </label>
+            <span className={`small ${tooLong ? "warn-text" : "muted"}`}>
+              {alsoAsk
+                ? tooLong
+                  ? t("{n} characters at most for their assistant", { n: ASK_MOST.toLocaleString() })
+                  : t("Their assistant answers here, if {name} allows it.", { name: c.name })
+                : t("To {name} only. Never sent to a model.", { name: c.name })}
+            </span>
+            <button className="btn primary small push-right" disabled={sending || (!text.trim() && !file) || tooLong} onClick={send}>
               {t("Send")}
             </button>
           </div>
@@ -757,7 +865,7 @@ function timeline(messages: PersonMessage[], asks: PersonAsk[]): Item[] {
 }
 
 /** A question between the two assistants, or a task they work out together. */
-function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContact; toast: PushToast }) {
+function AskCard({ a, contact: c, toast, along }: { a: PersonAsk; contact: PersonContact; toast: PushToast; along?: boolean }) {
   const act = async (f: () => Promise<void>) => {
     try {
       await f();
@@ -766,13 +874,17 @@ function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContac
     }
   };
   const task = a.kind === "task";
-  const head = a.from_me
-    ? task
-      ? t("Your assistant is working something out with {name}'s", { name: c.name })
-      : t("Your assistant asked {name}'s", { name: c.name })
-    : task
-      ? t("{name}'s assistant wants to work something out with yours", { name: c.name })
-      : t("{name}'s assistant asked yours", { name: c.name });
+  const head = along
+    ? a.from_me
+      ? t("You also asked {name}'s assistant", { name: c.name })
+      : t("{name} also asked your assistant", { name: c.name })
+    : a.from_me
+      ? task
+        ? t("Your assistant is working something out with {name}'s", { name: c.name })
+        : t("Your assistant asked {name}'s", { name: c.name })
+      : task
+        ? t("{name}'s assistant wants to work something out with yours", { name: c.name })
+        : t("{name}'s assistant asked yours", { name: c.name });
   const status: Record<string, string> = {
     sent: t("Sent"),
     approval: a.from_me ? t("Waiting for {name} to allow it", { name: c.name }) : t("Waiting for you to allow it"),
@@ -786,7 +898,7 @@ function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContac
       <div className="small muted">
         {head} · {time(a.at)}
       </div>
-      <div className="ask-q">{a.question}</div>
+      {!along && <div className="ask-q">{a.question}</div>}
       {task && a.thread.length > 0 && (
         <ol className="ask-thread">
           {a.thread.map((turn, i) => (
@@ -841,7 +953,8 @@ function AskCard({ a, contact: c, toast }: { a: PersonAsk; contact: PersonContac
 
 /** What someone's assistant may do here. */
 function AllowModal({ contact: c, onClose, toast }: { contact: PersonContact; onClose: () => void; toast: PushToast }) {
-  const [a, setA] = useState<PersonAllow>(c.allow);
+  // Settings saved by an older version have no free-time choice or model yet.
+  const [a, setA] = useState<PersonAllow>({ ...c.allow, free: c.allow.free ?? "yes_no", calendar_add: c.allow.calendar_add ?? false, model: c.allow.model ?? null });
   const save = async () => {
     try {
       await api.peopleSetAllow(c.id, a);
@@ -856,16 +969,17 @@ function AllowModal({ contact: c, onClose, toast }: { contact: PersonContact; on
     if (typeof dir === "string" && !a.folders.includes(dir)) setA({ ...a, folders: [...a.folders, dir] });
   };
   const modes: { id: PersonAllow["mode"]; label: string }[] = [
+    { id: "off", label: t("Off: don't answer {name}'s questions", { name: c.name }) },
     { id: "ask", label: t("Ask me each time") },
-    { id: "auto", label: t("Let my assistant answer on its own") },
-    { id: "off", label: t("Don't take questions from {name}'s assistant", { name: c.name }) },
+    { id: "auto", label: t("Answer on its own") },
   ];
+  const off = a.mode === "off";
   return (
-    <Modal title={t("What {name}'s assistant can use", { name: c.name })} onClose={onClose}>
+    <Modal title={t("Your assistant for {name}", { name: c.name })} onClose={onClose}>
       <p className="muted small">
-        {t("When {name}'s assistant asks yours something, or wants to work something out with it, your assistant answers on this PC with your model. It can only look, never change anything, and every request shows in Activity.", { name: c.name })}
+        {t("When {name} ticks “Also ask your assistant” on a message (or their assistant asks yours), your assistant answers on this PC. It only answers questions about you, like whether you're free or whether you did your part in a chat you share. It doesn't do work for them, and its model loads only for a question and goes again after. Every question shows in Activity.", { name: c.name })}
       </p>
-      <div className="share-list" role="radiogroup">
+      <div className="share-list" role="radiogroup" aria-label={t("Your assistant for {name}", { name: c.name })}>
         {modes.map((m) => (
           <label key={m.id} className="check">
             <input type="radio" name="allow-mode" checked={a.mode === m.id} onChange={() => setA({ ...a, mode: m.id })} />
@@ -873,43 +987,68 @@ function AllowModal({ contact: c, onClose, toast }: { contact: PersonContact; on
           </label>
         ))}
       </div>
-      <strong className="small">{t("Your assistant may use")}</strong>
-      <div className="share-list">
-        <label className="check">
-          <input type="checkbox" checked disabled />
-          {t("Chats you share with {name}", { name: c.name })}
+      <fieldset className="allow-more" disabled={off}>
+        <label className="adv-field">
+          <span className="small">{t("Model it answers with")}</span>
+          <ModelSelect value={a.model} onChange={(model) => setA({ ...a, model })} label={t("Model it answers with")} />
         </label>
-        <label className="check">
-          <input type="checkbox" checked={a.notes} onChange={(e) => setA({ ...a, notes: e.target.checked })} />
-          {t("Your notes")}
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={a.calendar} onChange={(e) => setA({ ...a, calendar: e.target.checked })} />
-          {t("Your calendar")}
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={a.mail} onChange={(e) => setA({ ...a, mail: e.target.checked })} />
-          {t("Your email")}
-        </label>
-        <div>
-          <span className="small">{t("These folders (read-only):")}</span>
-          {a.folders.length === 0 && <span className="small muted"> {t("none")}</span>}
-          <ul className="people-addresses small">
-            {a.folders.map((f) => (
-              <li key={f} className="row">
-                <code className="ellipsis">{f}</code>
-                <button className="link small" onClick={() => setA({ ...a, folders: a.folders.filter((x) => x !== f) })}>
-                  {t("Remove")}
-                </button>
-              </li>
-            ))}
-          </ul>
-          <button className="btn ghost small" onClick={addFolder}>
-            {t("Add a folder…")}
-          </button>
+        <strong className="small">{t("It may use")}</strong>
+        <div className="share-list">
+          <label className="check">
+            <input type="checkbox" checked disabled />
+            {t("Chats you share with {name}, and your messages together", { name: c.name })}
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={a.notes} onChange={(e) => setA({ ...a, notes: e.target.checked })} />
+            {t("Your notes")}
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={a.calendar} onChange={(e) => setA({ ...a, calendar: e.target.checked })} />
+            {t("Whether you're free (from your calendar)")}
+          </label>
+          {a.calendar && (
+            <div className="allow-sub" role="radiogroup" aria-label={t("What it says about your time")}>
+              <label className="check small">
+                <input type="radio" name="allow-free" checked={a.free !== "times"} onChange={() => setA({ ...a, free: "yes_no" })} />
+                {t("Only yes or no, for the time they ask about")}
+              </label>
+              <label className="check small">
+                <input type="radio" name="allow-free" checked={a.free === "times"} onChange={() => setA({ ...a, free: "times" })} />
+                {t("Your free times that day")}
+              </label>
+              <span className="muted small">{t("Never what you're doing or with whom.")}</span>
+            </div>
+          )}
+          <label className="check">
+            <input type="checkbox" checked={a.calendar_add} onChange={(e) => setA({ ...a, calendar_add: e.target.checked })} />
+            {t("Add events to your calendar when {name} asks (no invitations; you're told each time)", { name: c.name })}
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={a.mail} onChange={(e) => setA({ ...a, mail: e.target.checked })} />
+            {t("Your email")}
+          </label>
+          <div>
+            <span className="small">{t("These folders (read-only):")}</span>
+            {a.folders.length === 0 && <span className="small muted"> {t("none")}</span>}
+            <ul className="people-addresses small">
+              {a.folders.map((f) => (
+                <li key={f} className="row">
+                  <code className="ellipsis">{f}</code>
+                  <button className="link small" onClick={() => setA({ ...a, folders: a.folders.filter((x) => x !== f) })}>
+                    {t("Remove")}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <button className="btn ghost small" onClick={addFolder}>
+              {t("Add a folder…")}
+            </button>
+          </div>
         </div>
-      </div>
-      <p className="muted small">{t("Calendar, email and folders also need their feature turned on in Features.")}</p>
+      </fieldset>
+      <p className="muted small">
+        {t("Calendar, email and folders also need their feature turned on in Features. Limits: up to 6 questions an hour and 20 a day from {name}, one at a time, each a short question with a short answer.", { name: c.name })}
+      </p>
       <div className="adv-actions">
         <button className="btn primary" onClick={save}>
           {t("Save")}
