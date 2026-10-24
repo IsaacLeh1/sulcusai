@@ -288,6 +288,136 @@ fn closest(text: &str, old: &str) -> Option<String> {
     })
 }
 
+/// Where the `{` already open at the start of `s` closes (`}`'s byte
+/// index), skipping strings and line comments; None if it doesn't.
+fn closing_brace(s: &str) -> Option<usize> {
+    let mut depth = 1i32;
+    let mut quote: Option<char> = None;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, ch)) = chars.next() {
+        match quote {
+            Some(q) => {
+                if ch == '\\' {
+                    chars.next();
+                } else if ch == q {
+                    quote = None;
+                }
+            }
+            None => match ch {
+                '"' | '\'' | '`' => quote = Some(ch),
+                '/' if chars.peek().is_some_and(|(_, c)| *c == '/') => {
+                    while chars.peek().is_some_and(|(_, c)| *c != '\n') {
+                        chars.next();
+                    }
+                }
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    None
+}
+
+/// The one place `old` is, replaced with `new`. A small model often sends
+/// a block's first line as old_text and the whole block, changed, as
+/// new_text (gpt-oss 20B adding a command, which left `money` twice and the
+/// file broken): when new_text starts with old_text, what the file already
+/// has after it is replaced, not kept twice. With old_text opening a block
+/// (`{`) that new_text closes, the file's block goes; otherwise the lines
+/// after it that new_text repeats do.
+fn replace_once(text: &str, old: &str, new: &str) -> String {
+    let Some(at) = text.find(old) else { return text.to_string() };
+    let (before, after) = (&text[..at], &text[at + old.len()..]);
+    if let Some(rest) = new.strip_prefix(old) {
+        if old.trim_end().ends_with('{') && closing_brace(rest).is_some() {
+            if let Some(end) = closing_brace(after) {
+                return format!("{before}{new}{}", &after[end + 1..]);
+            }
+        }
+        // Lines after old_text in the file that new_text starts by repeating.
+        let file_lines: Vec<&str> = after.split_inclusive('\n').collect();
+        let new_lines: Vec<&str> = rest.split_inclusive('\n').collect();
+        let same = file_lines.iter().zip(&new_lines).take_while(|(f, n)| f.trim_end() == n.trim_end()).count();
+        // Whole lines only (new_text's last one may run on), and at least one with something on it.
+        let same = if same == new_lines.len() && !rest.ends_with('\n') { same.saturating_sub(1) } else { same };
+        if file_lines[..same].iter().any(|l| !l.trim().is_empty()) {
+            let covered: usize = file_lines[..same].iter().map(|l| l.len()).sum();
+            let gap = if new.ends_with('\n') { "" } else { "\n" };
+            return format!("{before}{new}{gap}{}", &after[covered..]);
+        }
+    }
+    format!("{before}{new}{after}")
+}
+
+/// Why a code file no longer parses after a change, if it doesn't: JSON
+/// here, JavaScript with Node (when it's installed). Said with the edit, so
+/// a broken file is fixed at once rather than found steps later.
+pub fn syntax_problem(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "json" => {
+            let text = std::fs::read_to_string(path).ok()?;
+            serde_json::from_str::<Value>(&text).err().map(|e| e.to_string())
+        }
+        "js" | "cjs" | "mjs" => {
+            let mut cmd = std::process::Command::new("node");
+            cmd.arg("--check").arg(path).stdin(std::process::Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000);
+            }
+            let out = cmd.output().ok()?;
+            if out.status.success() {
+                return None;
+            }
+            let err = String::from_utf8_lossy(&out.stderr);
+            // "file.js:10" then the line, the caret and "SyntaxError: …".
+            let line = err.lines().find(|l| l.contains(".js:") || l.contains(".mjs:") || l.contains(".cjs:")).and_then(|l| l.rsplit(':').next()).unwrap_or("").trim().to_string();
+            let what = err.lines().find(|l| l.contains("Error")).unwrap_or("it doesn't parse").trim().to_string();
+            Some(if line.is_empty() { what } else { format!("{what} (line {line})") })
+        }
+        _ => None,
+    }
+}
+
+/// Unfinished parts a change added ("TODO", "not implemented"): lines in
+/// `new` that `old` didn't have, with their line numbers. gpt-oss 20B's
+/// budget app had an Edit button whose code was `// TODO: allow editing`.
+pub fn added_stubs(old: &str, new: &str) -> Vec<(usize, String)> {
+    static STUB: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\b(todo|fixme|not (yet )?implemented|implement (this|later|me)|coming soon)\b").unwrap());
+    let before: std::collections::HashSet<&str> = old.lines().map(str::trim).collect();
+    new.lines()
+        .enumerate()
+        .filter(|(_, l)| STUB.is_match(l) && !before.contains(l.trim()))
+        .map(|(i, l)| (i + 1, l.trim().chars().take(120).collect()))
+        .take(5)
+        .collect()
+}
+
+/// The change's words, with a warning when the file it left doesn't parse,
+/// and a note of unfinished parts it added.
+fn with_checks(mut o: Outcome, path: &std::path::Path, label: &str, old: &str, new: &str) -> Outcome {
+    if let Some(problem) = syntax_problem(path) {
+        o.text.push_str(&format!("\n\nWarning: {label} doesn't parse now: {problem}. Read it and fix that before anything else."));
+        o.meta["broken"] = serde_json::json!(true);
+    }
+    let stubs = added_stubs(old, new);
+    if !stubs.is_empty() {
+        let list: Vec<String> = stubs.iter().map(|(n, l)| format!("line {n}: {l}")).collect();
+        o.text.push_str(&format!("\n\nNote: {label} has unfinished parts: {}. Finish them if they're part of what was asked.", list.join("; ")));
+        o.meta["unfinished"] = serde_json::json!({ "path": path.display().to_string(), "lines": stubs.iter().map(|(_, l)| l.clone()).collect::<Vec<_>>() });
+    }
+    o
+}
+
 pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result<(String, usize), String> {
     // Nothing to replace: added at the end (a model appending a test).
     if old.is_empty() {
@@ -323,7 +453,7 @@ pub fn apply_edit(text: &str, old: &str, new: &str, replace_all: bool) -> Result
             let near = closest(text, stripped.as_deref().unwrap_or(old)).unwrap_or_default();
             Err(format!("old_text wasn't found. {near}Copy the text exactly from the file (or send the whole fixed file with write_file)."))
         }
-        1 => Ok((text.replacen(old, new, 1), 1)),
+        1 => Ok((replace_once(text, old, new), 1)),
         n if replace_all => Ok((text.replace(old, new), n)),
         n => Err(format!("old_text appears {n} times. Include more surrounding lines so it matches exactly one place, or set replace_all.")),
     }
@@ -435,7 +565,7 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 );
                 // Listed in the chat's Files, with Open and Show in folder.
                 o.meta["file"] = serde_json::json!(path.display().to_string());
-                Ok(o)
+                Ok(with_checks(o, &path, &label, &old, content))
             }
             "edit_file" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
@@ -443,14 +573,19 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 let old = read_text(&path)?;
                 let replace_all = args.get("replace_all").and_then(Value::as_bool).unwrap_or(false);
                 let (new, n) = apply_edit(&old, arg_str(args, "old_text")?, arg_str(args, "new_text")?, replace_all)?;
+                // gpt-oss 20B sent the same edit, old and new alike, 30 times over.
+                if new == old {
+                    return Err("old_text and new_text are the same, so this changes nothing. If something should be different, put the changed text in new_text; if it's right as it is, move on to the next step.".into());
+                }
                 ctx.recorder.before_write(&path)?;
                 crate::storage::write_safely(&path, &new).map_err(|e| format!("Couldn't write {label}: {e}"))?;
-                Ok(Outcome::ok(
+                let o = Outcome::ok(
                     format!("Edited {label} ({n} replacement{}).", if n == 1 { "" } else { "s" }),
                     format!("Edited {label}"),
                     "diff",
                     Some(diff(&label, &old, &new)),
-                ))
+                );
+                Ok(with_checks(o, &path, &label, &old, &new))
             }
             "move_path" => {
                 let (from, to) = (sb.resolve(arg_str(args, "from")?)?, sb.resolve(arg_str(args, "to")?)?);
@@ -679,6 +814,53 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_block_sent_whole_from_its_first_line_replaces_the_block() {
+        // gpt-oss 20B adding pnl: old_text a function's first line, new_text
+        // the function again and the new one after it.
+        let file = "function money(n) {\n  return \"$\" + n;\n}\n\nfunction report() {}\n";
+        let new = "function money(n) {\n  return \"$\" + n;\n}\n\nfunction pnl() {}";
+        assert_eq!(apply_edit(file, "function money(n) {", new, false).unwrap().0, "function money(n) {\n  return \"$\" + n;\n}\n\nfunction pnl() {}\n\nfunction report() {}\n");
+        // The block changed on the way: the old body goes (a `}` in a string doesn't count).
+        let changed = "function money(n) {\n  return \"}\" + n.toFixed(2);\n}";
+        assert_eq!(apply_edit(file, "function money(n) {", changed, false).unwrap().0, "function money(n) {\n  return \"}\" + n.toFixed(2);\n}\n\nfunction report() {}\n");
+        // A line put at the top of the body (the block isn't closed): only added.
+        assert_eq!(apply_edit(file, "function money(n) {", "function money(n) {\n  log(n);", false).unwrap().0, "function money(n) {\n  log(n);\n  return \"$\" + n;\n}\n\nfunction report() {}\n");
+        // No braces (Python): the lines it repeats aren't kept twice.
+        let py = "def a():\n    return 1\n\ndef b():\n    pass\n";
+        assert_eq!(apply_edit(py, "def a():", "def a():\n    return 1\n\ndef c():\n    pass", false).unwrap().0, "def a():\n    return 1\n\ndef c():\n    pass\ndef b():\n    pass\n");
+        // An ordinary edit is left alone.
+        assert_eq!(apply_edit(py, "return 1", "return 2", false).unwrap().0, "def a():\n    return 2\n\ndef b():\n    pass\n");
+    }
+
+    #[test]
+    fn unfinished_parts_a_change_adds_are_noted() {
+        let old = "function edit(id) {\n  // TODO from the user: keep\n}\n";
+        let new = "function edit(id) {\n  // TODO from the user: keep\n  // TODO: load into form, allow editing\n  console.log('edit', id);\n}\nfunction undo() { throw new Error('Not implemented'); }\n";
+        let got = added_stubs(old, new);
+        assert_eq!(got, vec![(3, "// TODO: load into form, allow editing".to_string()), (6, "function undo() { throw new Error('Not implemented'); }".to_string())]);
+        // An input's placeholder text isn't one.
+        assert!(added_stubs("", "<input placeholder=\"Amount\">").is_empty());
+    }
+
+    #[test]
+    fn a_broken_code_file_is_said_at_once() {
+        let dir = std::env::temp_dir().join(format!("sulcus-syntax-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (good, bad, json) = (dir.join("ok.js"), dir.join("bad.js"), dir.join("p.json"));
+        std::fs::write(&good, "function a() { return 1; }\n").unwrap();
+        std::fs::write(&bad, "function a() {\n  return 1;\n}\n}\n").unwrap();
+        std::fs::write(&json, "{\"a\": 1,}").unwrap();
+        assert_eq!(syntax_problem(&good), None);
+        assert!(syntax_problem(&json).is_some());
+        // Node may not be installed where the tests run.
+        if std::process::Command::new("node").arg("--version").output().is_ok() {
+            let p = syntax_problem(&bad).expect("a stray brace is found");
+            assert!(p.contains("SyntaxError") && p.contains("line 4"), "{p}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn edits_must_match_exactly_once_unless_replace_all() {

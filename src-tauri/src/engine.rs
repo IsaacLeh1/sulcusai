@@ -1025,6 +1025,47 @@ pub fn held(key: &str) -> usize {
     HOLDS.lock().unwrap().iter().filter(|(_, k)| k == key).count()
 }
 
+/// Requests for another model than the one running, waiting their turn:
+/// one model runs at a time, and they load it in the order they asked.
+static LINE: std::sync::Mutex<Vec<u64>> = std::sync::Mutex::new(Vec::new());
+
+/// A place in that line, kept while this lives.
+#[must_use = "the place in line is kept only while this lives"]
+pub struct Ticket(u64);
+
+impl Ticket {
+    pub fn new() -> Ticket {
+        let id = NEXT_HOLD.fetch_add(1, Ordering::Relaxed);
+        LINE.lock().unwrap().push(id);
+        Ticket(id)
+    }
+
+    /// Its place: 1 is next.
+    pub fn place(&self) -> usize {
+        LINE.lock().unwrap().iter().position(|i| *i == self.0).map_or(1, |i| i + 1)
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        LINE.lock().unwrap().retain(|i| *i != self.0);
+    }
+}
+
+/// How many are waiting in line now.
+pub fn waiting() -> usize {
+    LINE.lock().unwrap().len()
+}
+
+/// What a request for a model is doing before it's ready.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Wait {
+    /// Loading it into memory.
+    Loading,
+    /// In line: its place (1 is next), and the model the replies ahead of it use.
+    Line(usize, String),
+}
+
 impl Users {
     fn has(&self, flag: &Arc<AtomicBool>) -> bool {
         self.0.iter().any(|u| Arc::ptr_eq(&u.flag, flag))
@@ -1424,5 +1465,15 @@ I load_tensors:   CPU_Mapped model buffer size =  2500.00 MiB
         assert_eq!(backend_named("linux", "x86_64", false).unwrap(), "linux-cpu-x64");
         assert_eq!(backend_named("macos", "aarch64", true).unwrap(), "macos-arm64");
         assert!(backend_named("freebsd", "x86_64", true).is_err());
+    }
+
+    #[test]
+    fn requests_for_another_model_wait_in_the_order_they_asked() {
+        let first = Ticket::new();
+        let second = Ticket::new();
+        assert_eq!(second.place(), first.place() + 1);
+        let was = second.place();
+        drop(first);
+        assert_eq!(second.place(), was - 1, "the one ahead left, so it moves up");
     }
 }

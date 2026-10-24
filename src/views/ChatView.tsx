@@ -24,13 +24,14 @@ import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
 import { CloudCost } from "../components/CloudCost";
-import { priceText } from "../components/ModelChoices";
+import { findCloud, priceText } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
-import { ChatMemories, LinkedChats } from "../components/ChatPanels";
+import { ChatMemories, ChatNotes, LinkedChats } from "../components/ChatPanels";
 import { PreviewPanel, latestPreview, usePreviewWidth, type PreviewTarget } from "../components/PreviewPanel";
+import { BrowserPanel } from "./WebViewerView";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { Modal } from "../components/Modal";
@@ -56,6 +57,9 @@ interface Props {
   onToggleWeb: () => void;
   features: Set<FeatureId>;
   onGoFeatures: () => void;
+  /** This chat's own browser, open beside it (and where it starts), or null. */
+  browser?: { url: string | null; at: number } | null;
+  onBrowser?: (open: boolean) => void;
   toast: PushToast;
 }
 
@@ -105,7 +109,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreamingNow] = useState<Streaming | null>(null);
   // Tokens arrive dozens a second and the live reply is drawn as Markdown
@@ -150,6 +154,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   }, [status]);
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
+  // Waiting in line for another model: one runs at a time.
+  const [queued, setQueued] = useState<{ place: number; model: string } | null>(null);
   // Before a picture of something named: checking (or looking up) its look.
   const [lookingUp, setLookingUp] = useState<string | null>(null);
   // The picture reader is describing attached pictures for a model that can't see them.
@@ -170,6 +176,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // A site the assistant built, shown beside the chat.
   const [preview, setPreview] = useState<PreviewTarget | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  // This chat has its own browser (open, or minimized with its page kept).
+  const [hasBrowser, setHasBrowser] = useState(false);
+  useEffect(() => {
+    api.viewerExists(chat.id).then(setHasBrowser).catch(() => {});
+    const sub = on("viewer:dock", (p) => p.key === chat.id && setHasBrowser(true));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [chat.id]);
   const [previewStamp, setPreviewStamp] = useState(0);
   const [previewWidth, setPreviewWidth] = usePreviewWidth();
   // Sent while it worked, not read by the model yet: shown in the chat meanwhile.
@@ -179,7 +194,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [runningCall, setRunningCall] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
-  const [panel, setPanel] = useState<"memories" | "links" | null>(null);
+  const [panel, setPanel] = useState<"memories" | "links" | "notes" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
   const [voice, setVoice] = useState(false);
@@ -201,7 +216,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   useEffect(() => {
     api.cloudChoices().then(setCloudChoices).catch(() => {});
   }, [connectivity]);
-  const cloud = cloudChoices.find((c) => c.id === modelId) ?? null;
+  // Matched by model too: a chat synced from another PC names that PC's provider.
+  const cloud = findCloud(cloudChoices, modelId);
   // Models taught on this PC (a model plus an adapter).
   const [taught, setTaught] = useState<TaughtAdapter[]>([]);
   useEffect(() => {
@@ -276,6 +292,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
     const subs = [
       on("chat:status", mine((p) => {
+        setQueued(p.status === "queued" ? { place: p.place ?? 1, model: p.detail ?? "" } : null);
         if (p.status === "handoff") setHandingOff(true);
         else if (p.status === "compacting") setCompacting(true);
         else if (p.status === "idle") {
@@ -317,6 +334,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("memory:auto", mine((p) => toast(t("Remembered: {what}", { what: p.saved.join(" ") }), "success"))),
       on("chat:start", mine((p) => {
         setCooling(null);
+        setQueued(null);
         setLookingUp(null);
         setReadingPictures(false);
         setStatus("thinking");
@@ -341,6 +359,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("agent:approval", mine((p) => setPending((all) => [...all.filter((a) => a.call_id !== p.call_id), p]))),
       on("agent:approval_done", mine((p) => setPending((all) => all.filter((a) => a.call_id !== p.call_id)))),
       on("chat:done", mine((p) => {
+        setQueued(null);
         if (p.context) setContext(p.context);
         if (p.tps !== undefined) setTps(p.tps ?? null);
         if (p.error) setError(errorText(p.error));
@@ -607,11 +626,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
 
+  // One panel beside the chat at a time: its browser, else the site preview.
+  const previewShown = showPreview && !!previewTarget && !browser;
+  const beside = previewShown || !!browser;
   return (
-    <div
-      className={`conversation ${showPreview && previewTarget ? "with-preview" : ""}`}
-      style={showPreview && previewTarget ? ({ "--preview-w": `${previewWidth}%` } as CSSProperties) : undefined}
-    >
+    <div className={`conversation ${beside ? "with-preview" : ""}`} style={beside ? ({ "--preview-w": `${previewWidth}%` } as CSSProperties) : undefined}>
       <header className="chat-header">
         <h1 className="ellipsis" title={chat.title}>{chat.title}</h1>
         <div className="mode-switch" role="radiogroup" aria-label={t("Run mode")}>
@@ -634,8 +653,21 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
           {previewTarget && (
-            <button className={`btn ghost small ${showPreview ? "active" : ""}`} aria-pressed={showPreview} onClick={() => setShowPreview((v) => !v)} title={t("The site built in this chat, running beside it")}>
+            <button
+              className={`btn ghost small ${previewShown ? "active" : ""}`}
+              aria-pressed={previewShown}
+              onClick={() => {
+                if (browser) onBrowser?.(false);
+                setShowPreview(!previewShown);
+              }}
+              title={t("The site built in this chat, running beside it")}
+            >
               {t("Preview")}
+            </button>
+          )}
+          {(hasBrowser || !!browser) && onBrowser && (
+            <button className={`btn ghost small ${browser ? "active" : ""}`} aria-pressed={!!browser} onClick={() => onBrowser(!browser)} title={t("This chat's own browser, beside it: what the assistant browses shows here")}>
+              {t("Browser")}
             </button>
           )}
           <button className={`btn ghost small ${showFiles ? "active" : ""}`} aria-pressed={showFiles} onClick={() => setShowFiles((v) => !v)} title={t("Pictures and files made in this chat")}>
@@ -646,6 +678,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             <>
               <button className="btn ghost small" onClick={() => setPanel("memories")} title={t("What the assistant remembered from this chat")}>{t("Memories")}</button>
               <button className="btn ghost small" onClick={() => setPanel("links")} title={t("Chats connected with this one to work together")}>{t("Connected chats")}</button>
+              <button className="btn ghost small" onClick={() => setPanel("notes")} title={t("This chat's memory and plan")}>{t("Notes")}</button>
             </>
           )}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
@@ -741,7 +774,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         )}
         {handingOff && <p className="muted small pad">{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
         {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
-        {status === "loading" && !streaming && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
+        {status === "loading" && !streaming && queued && (
+          <p className="muted small pad queued">
+            {t("Your message is number {place} in line. {model} is answering in another chat, and one model runs at a time, so this starts when it's done.", { place: queued.place, model: queued.model || t("Another model") })}
+          </p>
+        )}
+        {status === "loading" && !streaming && !queued && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
           <p className="muted small pad">
             {cooling
@@ -837,7 +875,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             >
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
-            <select value={modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
+            <select value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               {cloudChoices.length > 0 || cloudId || taught.length > 0 ? (
                 <optgroup label={t("On this PC")}>
                   {installed.map((m) => (
@@ -926,8 +964,25 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {!webOn && searchOn && <p className="muted small center">{t("Web search is on for every chat (Features): it can search and read pages. Your messages and the AI stay on this PC.")}</p>}
       </div>
 
-      {showPreview && previewTarget && (
+      {previewShown && previewTarget && (
         <PreviewPanel chatId={chat.id} target={previewTarget} stamp={previewStamp} onWidth={setPreviewWidth} onClose={() => setShowPreview(false)} toast={toast} />
+      )}
+      {browser && onBrowser && (
+        <BrowserPanel
+          chatId={chat.id}
+          start={browser}
+          onWidth={setPreviewWidth}
+          onMinimize={() => {
+            setHasBrowser(true);
+            onBrowser(false);
+          }}
+          onClose={() => {
+            api.viewerClose(chat.id).catch(() => {});
+            setHasBrowser(false);
+            onBrowser(false);
+          }}
+          toast={toast}
+        />
       )}
       {showFiles && <ChatFilesPanel chatId={chat.id} messages={messages} onOpenPicture={setLightbox} onClose={() => setShowFiles(false)} toast={toast} />}
       {lightbox && <Lightbox item={lightbox} toast={toast} onClose={() => setLightbox(null)} />}
@@ -955,6 +1010,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       )}
       {panel === "memories" && <ChatMemories chat={chat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "links" && <LinkedChats chat={chat} onOpenChat={onOpenChat} onClose={() => setPanel(null)} toast={toast} />}
+      {panel === "notes" && <ChatNotes chat={chat} onClose={() => setPanel(null)} toast={toast} />}
       {renaming && (
         <RenameDialog
           title={chat.title}

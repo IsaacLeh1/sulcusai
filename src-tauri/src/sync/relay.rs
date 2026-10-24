@@ -130,7 +130,9 @@ pub async fn exchange(state: &Arc<AppState>, base: &str, p: &Peer) -> Result<usi
         loop {
             let (items, end) = {
                 let conn = state.db.lock().unwrap();
-                track::changes(&conn, &c, &me, &p.id, &after, up_to, BATCH)?
+                // Cloud chats only for keys it had at the last direct sync.
+                let withheld = crate::cloud::withheld_chats(&conn, &c, &p.keys);
+                track::changes(&conn, &c, &me, &p.id, &after, up_to, BATCH, &withheld)?
             };
             let last = end.is_none() || items.len() < BATCH;
             // Letters stay well under the relay's 2 MB per message.

@@ -223,9 +223,10 @@ fits   = needed <= VRAM                          (full GPU)
 
 - Link with someone else's SulcusAI with a code (the same pairing as sync, but the other side becomes a contact, not a paired PC: it can never sync or reach models).
 - The apps connect directly, like Radmin: on the same network, or across the internet over a virtual network (Radmin VPN, Tailscale, ZeroTier) by the address the other side shows. Nothing is hosted by SulcusAI.
-- A chat between the people (text and files up to 16 MB), stored encrypted on each PC, never sent to a model. The apps stay connected while both run, so messages arrive at once; otherwise they wait.
+- A chat between the people (text, files and folders; over 16 MB they go in sealed parts while both apps are connected, up to 50 GB), stored encrypted on each PC, never sent to a model. The apps stay connected while both run, so messages arrive at once; otherwise they wait.
 - Share a chat with someone: they watch it live and read-only (replies as they're written, the steps taken but not what tools found). Nothing is kept on their PC.
 - Assistants can ask each other things, and work something out together (taking turns until they agree, such as a meeting time). Each side answers with its own model and only what its user allows (shared chats; notes; calendar, email and chosen folders if turned on), read-only, after the user approves (or automatically, if they choose). Answers are treated as information, never instructions.
+- A user can let someone use their PC's models in the chats they share with them, within limits they set (which models, answers and tokens a day, dollars a month on cloud models, days and hours, minutes per answer), and sees every use with its tokens, cost and run time. The model gets only the shared chat.
 - Without a virtual network, either person can let the other use their own relay (Cloud level): messages and the assistants' questions go through it, sealed so the relay can't read them. Watching chats live needs a direct connection.
 
 ---

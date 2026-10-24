@@ -29,6 +29,9 @@ pub struct Share {
     pub chat_id: String,
     /// The contacts it's shared with.
     pub with: Vec<String>,
+    /// Of those, the ones it's shared with because its cloud model's
+    /// provider shares its chats with them (Settings, Cloud models).
+    pub auto: Vec<String>,
 }
 
 /// A chat this user shares, as listed in People.
@@ -107,6 +110,8 @@ pub struct SharedView {
 pub struct LiveView {
     pub status: String,
     pub content: String,
+    /// "queued": its place in line on their PC (1 is next).
+    pub place: u32,
 }
 
 type Key = (String, String);
@@ -124,6 +129,10 @@ static OPENING: LazyLock<Mutex<HashMap<Key, Opened>>> = LazyLock::new(Default::d
 
 fn shared_with(b: &Book, chat_id: &str, contact: &str) -> bool {
     b.shares.iter().any(|s| s.chat_id == chat_id && s.with.iter().any(|w| w == contact))
+}
+
+pub(super) fn is_shared_with(state: &AppState, chat_id: &str, contact: &str) -> bool {
+    shared_with(&book(&state.db.lock().unwrap()), chat_id, contact)
 }
 
 fn model_label(state: &AppState, id: Option<&str>) -> String {
@@ -163,7 +172,7 @@ fn list_for(state: &AppState, c: &Cipher, contact: &str, turn: Option<(&str, boo
 }
 
 /// What someone watching sees of a chat.
-fn messages_of(state: &AppState, c: &Cipher, chat_id: &str) -> Vec<SharedMsg> {
+pub(super) fn messages_of(state: &AppState, c: &Cipher, chat_id: &str) -> Vec<SharedMsg> {
     let all = db::messages(&state.db.lock().unwrap(), c, chat_id);
     let skip = all.len().saturating_sub(MOST);
     all.into_iter()
@@ -247,6 +256,37 @@ pub(super) fn unwatch(contact: &str, chat_id: &str) {
 
 fn watchers(chat_id: &str) -> Vec<String> {
     WATCHERS.lock().unwrap().get(chat_id).map(|s| s.iter().cloned().collect()).unwrap_or_default()
+}
+
+/// News of an answer being written here, to everyone watching the chat.
+pub(super) fn tell_watchers(chat_id: &str, live: Live) {
+    for w in watchers(chat_id) {
+        link::send(&w, Frame::Live { chat_id: chat_id.into(), live: live.clone() });
+    }
+}
+
+/// A shared chat as a transcript for a model (the latest part that fits
+/// `budget` characters). `owner`: whose chat it is.
+pub(super) fn transcript(messages: &[SharedMsg], owner: &str, budget: usize) -> String {
+    let lines: Vec<String> = messages
+        .iter()
+        .filter_map(|m| match m.role.as_str() {
+            "user" if m.by.is_empty() => Some(format!("{owner}: {}", m.text)),
+            "user" => Some(format!("{}: {}", m.by, m.text)),
+            "assistant" if m.by.is_empty() => Some(format!("{owner}'s assistant: {}", m.text)),
+            "assistant" => Some(format!("{}'s assistant: {}", m.by, m.text)),
+            "note" => Some("(The earlier part of the chat was summarized.)".into()),
+            _ => None,
+        })
+        .collect();
+    let mut transcript = String::new();
+    for line in lines.iter().rev() {
+        if transcript.len() + line.len() > budget {
+            break;
+        }
+        transcript.insert_str(0, &format!("{line}\n\n"));
+    }
+    transcript
 }
 
 /// Every event of a turn in this app: anyone watching that chat sees the
@@ -365,14 +405,23 @@ pub(super) fn live(state: &AppState, contact: &str, chat_id: &str, live: Live) {
             "done" => v.live = None,
             "resume" => {
                 let (status, text) = live.text.split_once('\n').unwrap_or(("working", ""));
-                v.live = Some(LiveView { status: status.into(), content: text.into() });
+                v.live = Some(LiveView { status: status.into(), content: text.into(), place: 0 });
             }
             kind => {
                 let l = v.live.get_or_insert_with(LiveView::default);
                 match kind {
-                    "loading" => l.status = "loading".into(),
+                    "loading" => {
+                        l.status = "loading".into();
+                        l.place = 0;
+                    }
+                    // Waiting in line on their PC.
+                    "queued" => {
+                        l.status = "queued".into();
+                        l.place = live.text.parse().unwrap_or(1);
+                    }
                     "start" => {
                         l.status = "thinking".into();
+                        l.place = 0;
                         l.content.clear();
                     }
                     "delta" => {
@@ -475,7 +524,7 @@ pub(super) fn posted(state: &AppState, contact: &str, chat_id: &str, id: &str, t
 /// Answers what this user wrote in a chat someone shares: this user's own
 /// model, here, from what the chat holds so far. Sends the answer back to
 /// go into their chat.
-async fn answer_here(state: &Arc<AppState>, contact: &str, view: &SharedView, text: &str) -> Result<(), String> {
+async fn answer_here(state: &Arc<AppState>, contact: &str, view: &SharedView, text: &str, model: Option<String>) -> Result<(), String> {
     let chat_id = view.chat.id.clone();
     let key = format!("shared:{contact}:{chat_id}");
     let Some((cancel, _guard)) = crate::claim(&state.generations, &key) else {
@@ -495,32 +544,13 @@ async fn answer_here(state: &Arc<AppState>, contact: &str, view: &SharedView, te
         let test: Option<(crate::engine::Endpoint, String)> = None;
         match test {
             Some(t) => t,
-            None => crate::llm_endpoint(state, None, false, || {}).await.map(|(ep, spec, _)| (ep, spec.name))?,
+            None => crate::llm_endpoint(state, model, false, |_| {}).await.map(|(ep, spec, _)| (ep, spec.name))?,
         }
     };
     let me = my_name(state);
     let owner = contact_name(state, contact);
     // The chat so far, as a transcript (the latest part that fits).
-    let lines: Vec<String> = view
-        .messages
-        .iter()
-        .filter_map(|m| match m.role.as_str() {
-            "user" if m.by.is_empty() => Some(format!("{owner}: {}", m.text)),
-            "user" => Some(format!("{}: {}", m.by, m.text)),
-            "assistant" if m.by.is_empty() => Some(format!("{owner}'s assistant: {}", m.text)),
-            "assistant" => Some(format!("{}'s assistant: {}", m.by, m.text)),
-            "note" => Some("(The earlier part of the chat was summarized.)".into()),
-            _ => None,
-        })
-        .collect();
-    let budget = (ep.ctx as usize).saturating_mul(2);
-    let mut transcript = String::new();
-    for line in lines.iter().rev() {
-        if transcript.len() + line.len() > budget {
-            break;
-        }
-        transcript.insert_str(0, &format!("{line}\n\n"));
-    }
+    let transcript = transcript(&view.messages, &owner, (ep.ctx as usize).saturating_mul(2));
     let profile = db::profile(&state.db.lock().unwrap(), &state.work_cipher()?);
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, _) = crate::chat::system_prompt(&profile, &today);
@@ -554,7 +584,38 @@ fn contact_name(state: &AppState, id: &str) -> String {
     contact(state, id).map(|p| p.name).unwrap_or_else(|| "They".into())
 }
 
-/// Sets who a chat is shared with (an empty list stops sharing it).
+/// A chat made with a cloud model is shared with the people its provider
+/// shares its chats with (and no longer with those taken off that list).
+/// Sharing chosen for the chat itself stays as it is.
+pub fn follow_provider(state: &AppState, c: &Cipher, chat_id: &str) {
+    let Some(chat) = db::chat(&state.db.lock().unwrap(), c, chat_id) else { return };
+    let want: Vec<String> = if chat.incognito { Vec::new() } else { crate::cloud::people_for(&state.db.lock().unwrap(), chat.model_id.as_deref()) };
+    let (before, after) = {
+        let conn = state.db.lock().unwrap();
+        let b = book(&conn);
+        let known: HashSet<&str> = b.contacts.iter().map(|p| p.id.as_str()).collect();
+        let share = b.shares.iter().find(|s| s.chat_id == chat_id).cloned().unwrap_or_default();
+        let want: Vec<String> = want.into_iter().filter(|w| known.contains(w.as_str())).collect();
+        // Added by hand stays; added for the provider goes when it's off the list.
+        let manual: Vec<String> = share.with.iter().filter(|w| !share.auto.contains(w)).cloned().collect();
+        let mut with = manual.clone();
+        with.extend(want.iter().filter(|w| !manual.contains(w)).cloned());
+        let auto: Vec<String> = want.into_iter().filter(|w| !manual.contains(w)).collect();
+        (share, Share { chat_id: chat_id.into(), with, auto })
+    };
+    if before.with == after.with && before.auto == after.auto {
+        return;
+    }
+    let auto = after.auto.clone();
+    if set_sharing(state, c, chat_id, after.with).is_ok() {
+        let _ = update(state, |b| {
+            if let Some(s) = b.shares.iter_mut().find(|s| s.chat_id == chat_id) {
+                s.auto = auto;
+            }
+        });
+    }
+}
+
 /// Who a chat is shared with (contact ids).
 pub fn sharing_of(conn: &rusqlite::Connection, chat_id: &str) -> Vec<String> {
     super::book(conn).shares.into_iter().find(|s| s.chat_id == chat_id).map(|s| s.with).unwrap_or_default()
@@ -574,9 +635,11 @@ fn set_sharing(state: &AppState, c: &Cipher, chat_id: &str, with: Vec<String>) -
         let before = b.shares.iter().find(|s| s.chat_id == chat_id).map(|s| s.with.clone()).unwrap_or_default();
         let known: HashSet<&str> = b.contacts.iter().map(|p| p.id.as_str()).collect();
         let with: Vec<String> = with.iter().filter(|w| known.contains(w.as_str())).cloned().collect();
+        // Someone kept from the provider's list stays marked as such.
+        let auto: Vec<String> = b.shares.iter().find(|s| s.chat_id == chat_id).map(|s| s.auto.iter().filter(|a| with.contains(a)).cloned().collect()).unwrap_or_default();
         b.shares.retain(|s| s.chat_id != chat_id);
         if !with.is_empty() {
-            b.shares.push(Share { chat_id: chat_id.into(), with: with.clone() });
+            b.shares.push(Share { chat_id: chat_id.into(), with: with.clone(), auto });
         }
         let names: Vec<String> = b.contacts.iter().filter(|p| with.contains(&p.id)).map(|p| p.name.clone()).collect();
         (before, names)
@@ -665,13 +728,39 @@ pub fn people_shared_chats(state: AppStateRef) -> Vec<SharedHere> {
 /// this user's model answers it there (it streams here as
 /// `people:post_live`).
 #[tauri::command]
-pub async fn people_shared_post(state: AppStateRef<'_>, contact_id: String, chat_id: String, text: String) -> Result<(), String> {
+pub async fn people_shared_post(state: AppStateRef<'_>, contact_id: String, chat_id: String, text: String, model: Option<String>) -> Result<(), String> {
     features::require(&state, Feature::People)?;
     state.cipher()?;
-    post_here(state.inner(), &contact_id, &chat_id, &text).await
+    post_here(state.inner(), &contact_id, &chat_id, &text, model).await
 }
 
-pub(super) async fn post_here(state: &Arc<AppState>, contact_id: &str, chat_id: &str, text: &str) -> Result<(), String> {
+/// The model this user picked to answer in someone's shared chat (None: the default).
+fn model_key(contact: &str, chat: &str) -> String {
+    format!("shared_model:{contact}:{chat}")
+}
+
+#[tauri::command(async)]
+pub fn people_shared_model(state: AppStateRef, contact_id: String, chat_id: String) -> Option<String> {
+    db::get::<String>(&state.db.lock().unwrap(), &model_key(&contact_id, &chat_id))
+}
+
+/// Picks the model that answers what this user writes in someone's shared chat.
+#[tauri::command(async)]
+pub fn people_set_shared_model(state: AppStateRef, contact_id: String, chat_id: String, model: Option<String>) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    match model.filter(|m| !m.trim().is_empty()) {
+        Some(m) => {
+            // One they lend is checked on their PC when it's used.
+            if !m.starts_with("lent:") && !crate::model_known(&conn, &m) {
+                return Err("That model isn't available. Pick another one.".into());
+            }
+            db::set(&conn, &model_key(&contact_id, &chat_id), &m)
+        }
+        None => conn.execute("DELETE FROM settings WHERE key = ?1", [model_key(&contact_id, &chat_id)]).map(|_| ()).map_err(|e| e.to_string()),
+    }
+}
+
+pub(super) async fn post_here(state: &Arc<AppState>, contact_id: &str, chat_id: &str, text: &str, model: Option<String>) -> Result<(), String> {
     let (contact_id, chat_id) = (contact_id.to_string(), chat_id.to_string());
     let text = text.trim().to_string();
     if text.is_empty() {
@@ -679,10 +768,19 @@ pub(super) async fn post_here(state: &Arc<AppState>, contact_id: &str, chat_id: 
     }
     let view = VIEWS.lock().unwrap().get(&(contact_id.clone(), chat_id.clone())).cloned().ok_or("Open the chat first.")?;
     let id = uuid::Uuid::new_v4().simple().to_string();
+    // The model picked for this chat, else the default.
+    let model = model.or_else(|| db::get::<String>(&state.db.lock().unwrap(), &model_key(&contact_id, &chat_id)));
+    // One of the models they lend: their PC answers it.
+    if let Some(lent) = model.as_deref().and_then(|m| m.strip_prefix("lent:")) {
+        if !link::send(&contact_id, Frame::Borrow { chat_id: chat_id.clone(), id, text: text.clone(), model: lent.to_string() }) {
+            return Err(format!("{} isn't connected right now, so this can't go into their chat.", contact_name(state, &contact_id)));
+        }
+        return Ok(());
+    }
     if !link::send(&contact_id, Frame::Post { chat_id: chat_id.clone(), id, text: text.clone() }) {
         return Err(format!("{} isn't connected right now, so this can't go into their chat.", contact_name(state, &contact_id)));
     }
-    answer_here(state, &contact_id, &view, &text).await
+    answer_here(state, &contact_id, &view, &text, model).await
 }
 
 /// Stops this user's model answering in a shared chat.

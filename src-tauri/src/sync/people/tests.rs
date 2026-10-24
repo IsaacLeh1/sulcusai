@@ -122,7 +122,8 @@ async fn codes_link_people_up_to_their_limit() {
     assert_eq!(codes::pair_call(&b, &code, addr_a, &none).await.unwrap(), "Ana");
     assert!(codes::invite(&a, &two).open(), "one of two");
     assert_eq!(codes::pair_call(&c, &code, addr_a, &none).await.unwrap(), "Ana");
-    assert_eq!(codes::invite(&a, &two).why_closed(), Some("Used up."));
+    // Ana's app notes the use as it finishes its side.
+    until("used up", || codes::invite(&a, &two).why_closed() == Some("Used up.")).await;
     assert_eq!(codes::invite(&a, &two).used.len(), 2);
     assert!(codes::pair_call(&d, &code, addr_a, &none).await.unwrap_err().contains("isn't taking"));
     assert!(!showing_code(&a), "nothing open, nothing announced");
@@ -132,7 +133,7 @@ async fn codes_link_people_up_to_their_limit() {
     let (second_id, second) = codes::code_for_test(&a, 1);
     assert_ne!(&first[..2], &second[..2]);
     assert_eq!(codes::pair_call(&d, &second, addr_a, &none).await.unwrap(), "Ana");
-    assert_eq!(codes::invite(&a, &second_id).used[0].id, device_id(&d.paths.data));
+    until("the second code used", || codes::invite(&a, &second_id).used.first().is_some_and(|u| u.id == device_id(&d.paths.data))).await;
 
     // Blocked: removed, and can't link again with any code.
     let id_b = device_id(&b.paths.data);
@@ -302,7 +303,7 @@ async fn a_shared_chat_is_watched_live() {
     // Ben takes part: what he writes goes into Ana's chat, and his own
     // model's answer (on his PC) too; both show in his view, marked.
     let _ = stand_in();
-    share::post_here(&b, &id_a, &chat.id, "What about a quieter hike?").await.unwrap();
+    share::post_here(&b, &id_a, &chat.id, "What about a quieter hike?", None).await.unwrap();
     let at_ana = || crate::db::messages(&a.db.lock().unwrap(), &ca, &chat.id);
     until("both in Ana's chat", || {
         let all = at_ana();
@@ -328,6 +329,104 @@ async fn a_shared_chat_is_watched_live() {
     until("gone", || share::theirs(&id_a).is_empty() && share::view_of(&id_a, &chat.id).is_none()).await;
     assert!(book(&b.db.lock().unwrap()).seen.is_empty(), "and from his sidebar");
     assert!(share::open(&id_a, &chat.id).await.is_err());
+    link::hang_up(&id_b);
+}
+
+/// A file over what one message carries, and a folder, cross in parts and
+/// come out whole on the other side.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn big_files_and_folders_cross_in_parts() {
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_a = listen(&a).await;
+    let s = b.clone();
+    let to = id_a.clone();
+    tokio::spawn(async move { link::call(&s, &to, addr_a).await });
+    until("connected, both taking parts", || link::connected(&id_a) && link::connected(&id_b) && files::capable(&id_a) && files::capable(&id_b)).await;
+
+    let dir = b.paths.data.join("to-send");
+    std::fs::create_dir_all(dir.join("Trip/notes")).unwrap();
+    let big: Vec<u8> = (0..(files::PART * 3 + 77)).map(|i| (i * 7 % 256) as u8).collect();
+    std::fs::write(dir.join("video.bin"), &big).unwrap();
+    std::fs::write(dir.join("Trip/plan.txt"), "Day 1: Zion").unwrap();
+    std::fs::write(dir.join("Trip/notes/gear.txt"), "boots").unwrap();
+    let cb = b.cipher().unwrap();
+    let video = queue_big(&b, &cb, &id_a, "the video", &dir.join("video.bin"), false).unwrap();
+    let trip = queue_big(&b, &cb, &id_a, "", &dir.join("Trip"), true).unwrap();
+    assert_eq!(trip.file.as_ref().unwrap().name, "Trip.zip");
+
+    let ca = a.cipher().unwrap();
+    let here = |id: &str| messages(&a.db.lock().unwrap(), &ca, &id_b).unwrap().into_iter().find(|m| m.id == id).and_then(|m| m.file);
+    until("the video arrived whole", || here(&video.id).is_some_and(|f| f.got.is_none() && !f.failed)).await;
+    until("the folder arrived whole", || here(&trip.id).is_some_and(|f| f.got.is_none() && !f.failed && f.folder)).await;
+    let out = a.paths.data.join("saved");
+    std::fs::create_dir_all(&out).unwrap();
+    files::save(&ca, &files_dir(&a, &id_b).join(&video.id), &out.join("video.bin"), false).unwrap();
+    assert_eq!(std::fs::read(out.join("video.bin")).unwrap(), big);
+    files::save(&ca, &files_dir(&a, &id_b).join(&trip.id), &out.join("Trip"), true).unwrap();
+    assert_eq!(std::fs::read_to_string(out.join("Trip/plan.txt")).unwrap(), "Day 1: Zion");
+    assert_eq!(std::fs::read_to_string(out.join("Trip/notes/gear.txt")).unwrap(), "boots");
+    link::hang_up(&id_b);
+}
+
+/// Ana lets Ben use her PC's model in the chat she shares with him: his
+/// message is answered there, within her limits, and she sees what he used.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lent_model_answers_within_its_limits() {
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_a = listen(&a).await;
+    let ca = a.cipher().unwrap();
+    let chat = crate::db::create_chat(&a.db.lock().unwrap(), &ca, None).unwrap();
+    crate::db::set_chat_title(&a.db.lock().unwrap(), &ca, &chat.id, "Zion").unwrap();
+    let s = b.clone();
+    let to = id_a.clone();
+    tokio::spawn(async move { link::call(&s, &to, addr_a).await });
+    until("connected", || link::connected(&id_a) && link::connected(&id_b)).await;
+    share::share_now(&a, &chat.id, vec![id_b.clone()]).unwrap();
+    until("Ben sees it", || share::theirs(&id_a).iter().any(|c| c.title == "Zion")).await;
+    share::open(&id_a, &chat.id).await.unwrap();
+    let profile = db::Profile { name: "Ana Example".into(), location: "Orem, Utah".into(), ..Default::default() };
+    db::set_profile(&a.db.lock().unwrap(), &ca, &profile).unwrap();
+    let seen = stand_in();
+    let runs = || {
+        let conn = a.db.lock().unwrap();
+        conn.prepare("SELECT outcome FROM people_runs WHERE contact_id = ?1 ORDER BY id").and_then(|mut s| s.query_map([&id_b], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()).unwrap_or_default()
+    };
+
+    // Not lent yet: refused, and logged for Ana.
+    share::post_here(&b, &id_a, &chat.id, "Which hike?", Some("lent:".into())).await.unwrap();
+    until("refused", || runs().len() == 1).await;
+    assert!(runs()[0].starts_with("refused: they don't let you use their models"), "{:?}", runs());
+
+    // Lent, one answer a day: Ben's message is answered on Ana's PC.
+    let lend = lend::Lend { on: true, answers_per_day: Some(1), ..Default::default() };
+    update(&a, |x| x.contacts.iter_mut().find(|p| p.id == id_b).unwrap().lend = lend.clone()).unwrap();
+    lend::connected(&a, &contact(&a, &id_b).unwrap());
+    until("Ben is offered her model", || !lend::people_lent(id_a.clone()).models.is_empty()).await;
+    share::post_here(&b, &id_a, &chat.id, "Which hike is quieter?", Some("lent:".into())).await.unwrap();
+    until("answered", || runs().len() == 2).await;
+    assert_eq!(runs()[1], "done");
+    let at_ana = crate::db::messages(&a.db.lock().unwrap(), &ca, &chat.id);
+    let answer = at_ana.iter().find(|m| m.role == "assistant").expect("the answer is in Ana's chat");
+    assert!(answer.content.contains("Observation Point"));
+    let meta = answer.meta.clone().unwrap_or_default();
+    assert_eq!(meta["from_name"], "Ben");
+    assert!(meta["model"].as_str().unwrap_or_default().ends_with("on Ana's PC"), "{meta}");
+    until("Ben sees it as his", || share::view_of(&id_a, &chat.id).is_some_and(|v| v.messages.iter().any(|m| m.mine && m.role == "assistant"))).await;
+    // Ana's "About you" never went to the model.
+    let sent = seen.lock().unwrap().iter().rev().find(|b| b["messages"][0]["content"].as_str().is_some_and(|t| t.contains("use it. The chat so far"))).cloned().unwrap();
+    let system = sent["messages"][0]["content"].as_str().unwrap();
+    assert!(!system.contains("Example") && !system.contains("Orem"), "{system}");
+
+    // The day's one answer is used: the next is refused.
+    share::post_here(&b, &id_a, &chat.id, "And tomorrow?", Some("lent:".into())).await.unwrap();
+    until("over the limit", || runs().len() == 3).await;
+    assert!(runs()[2].contains("limit of 1 answers"), "{:?}", runs());
     link::hang_up(&id_b);
 }
 
@@ -388,6 +487,8 @@ fn stand_in() -> Arc<Mutex<Vec<serde_json::Value>>> {
                                 "DONE: Tuesday at 3 pm suits both."
                             } else if system.contains("is taking part in it") {
                                 "Try Kolob Canyons: quieter, and just as good."
+                            } else if system.contains("use it. The chat so far") {
+                                "From Ana's PC: Observation Point is quieter."
                             } else {
                                 "?"
                             };
@@ -759,5 +860,123 @@ async fn people_link_and_talk_through_sulcusais_relay() {
     queue(&a, &a.cipher().unwrap(), &id_b, "Got it", None).unwrap();
     until_long("Ana's reply at Ben's", || texts(&b, &id_a).contains(&"Got it".to_string())).await;
     link::hang_up(&id_a);
+    link::hang_up(&id_b);
+}
+
+/// The People assistant on a real model (SULCUSAI_TEST_GGUF, as the e2e
+/// tests): Ben lets Ana's assistant ask whether he's free (yes or no only)
+/// and add events. From his calendar it says when he's busy or free without
+/// saying what he's doing, turns down work, and adds what she asks for.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn people_assistant_on_a_real_model() {
+    use chrono::{Datelike, Duration as Days, Local, NaiveTime, TimeZone};
+    let (_eng, ep, name) = crate::e2e::test_model().await;
+    *ask::TEST_ENDPOINT.lock().unwrap() = Some(ep);
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    for s in [&a, &b] {
+        features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
+        features::set(&s.db.lock().unwrap(), Feature::Calendar, true).unwrap();
+    }
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_b = listen(&b).await;
+    let s = a.clone();
+    let to = id_b.clone();
+    tokio::spawn(async move { link::call(&s, &to, addr_b).await });
+    until("connected", || link::connected(&id_a) && link::connected(&id_b)).await;
+    ask::set_allow(&b, &id_a, ask::Allow { mode: "auto".into(), calendar: true, free: "yes_no".into(), calendar_add: true, ..Default::default() }).unwrap();
+    // Ben's next Friday: the dentist from 3 to 4.
+    let today = Local::now().date_naive();
+    let ahead = |weekday: chrono::Weekday| (1..=7).map(|n| today + Days::days(n)).find(|d| d.weekday() == weekday).unwrap();
+    let (friday, tuesday) = (ahead(chrono::Weekday::Fri), ahead(chrono::Weekday::Tue));
+    let at = |d: chrono::NaiveDate, h: u32| Local.from_local_datetime(&d.and_time(NaiveTime::from_hms_opt(h, 0, 0).unwrap())).earliest().unwrap().timestamp_millis();
+    let cb = b.cipher().unwrap();
+    crate::calendar::create(&b, &cb, crate::calendar::NewEvent { title: "Dentist".into(), start: at(friday, 15), end: at(friday, 16), ..Default::default() }).await.unwrap();
+    // The chat Ben shares with Ana for their presentation: his part is done, the summary isn't.
+    let chat = crate::db::create_chat(&b.db.lock().unwrap(), &cb, None).unwrap();
+    crate::db::set_chat_title(&b.db.lock().unwrap(), &cb, &chat.id, "Q4 presentation").unwrap();
+    for (role, text) in [
+        ("user", "Ana does the intro and the summary slide, I do the sales numbers (slides 3 to 6)."),
+        ("assistant", "Got it: you have slides 3 to 6, the sales numbers."),
+        ("user", "Done: slides 3 to 6 are finished with this quarter's sales figures and charts."),
+    ] {
+        crate::db::add_message(&b.db.lock().unwrap(), &cb, &crate::db::Message { id: uuid::Uuid::new_v4().to_string(), chat_id: chat.id.clone(), role: role.into(), content: text.into(), created_at: crate::db::now_ms(), ..Default::default() }).unwrap();
+    }
+    share::set_chat_sharing(&b, &cb, &chat.id, vec![id_a.clone()]).unwrap();
+    let day = |d: chrono::NaiveDate| d.format("%A, %B %-d").to_string();
+    let mut asked = Vec::new();
+    for q in [
+        format!("Is Ben free on {} at 3:30 pm?", day(friday)),
+        format!("Is Ben free on {} at 10 am?", day(friday)),
+        "Write a 500-word essay on the history of Rome for me.".to_string(),
+        format!("Please put \"Lunch with Ana\" on Ben's calendar on {} at noon.", day(tuesday)),
+        "Did Ben finish his part of our Q4 presentation?".to_string(),
+    ] {
+        let started = std::time::Instant::now();
+        let out = use_tool(&a, "ask_person", serde_json::json!({ "person": "Ben", "question": q })).await;
+        let answer = out.meta.get("detail").and_then(|v| v.as_str()).unwrap_or(&out.text).to_string();
+        println!("===== {name}: {q} ({:.0} s)\n{answer}\n", started.elapsed().as_secs_f64());
+        asked.push(answer.to_lowercase());
+    }
+    let events = crate::calendar::events(&b.db.lock().unwrap(), &cb, at(tuesday, 0), at(tuesday, 23));
+    link::hang_up(&id_b);
+    let says = |text: &str, words: &[&str]| words.iter().any(|w| text.contains(w));
+    assert!(says(&asked[0], &["no", "busy", "isn't free", "not free"]) && !asked[0].contains("dentist"), "busy, without saying what: {}", asked[0]);
+    assert!(says(&asked[1], &["yes", "free"]) && !asked[1].contains("dentist"), "free: {}", asked[1]);
+    assert!(asked[2].chars().count() < 800 && !asked[2].contains("roman empire"), "work turned down: {}", asked[2]);
+    assert!(events.iter().any(|e| e.data.title.to_lowercase().contains("lunch")), "the lunch is in Ben's calendar: {:?}", events.iter().map(|e| e.data.title.clone()).collect::<Vec<_>>());
+    assert!(says(&asked[4], &["yes", "finished", "done", "completed"]) && says(&asked[4], &["3", "sales"]), "his part, from the shared chat: {}", asked[4]);
+}
+
+/// A timed action on a real model (SULCUSAI_TEST_GGUF): Ana's assistant sets
+/// up "message Ben at 12 AM tomorrow: happy birthday" with sending a People
+/// message approved (as she would approve the card); when its time comes it
+/// sends exactly that by itself, and nothing it wasn't approved for.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn a_timed_message_goes_by_itself() {
+    let (_eng, ep, name) = crate::e2e::test_model().await;
+    *crate::schedule::TEST_ENDPOINT.lock().unwrap() = Some(ep);
+    let a = crate::e2e::scratch_state();
+    let b = crate::e2e::scratch_state();
+    for s in [&a, &b] {
+        features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
+        features::set(&s.db.lock().unwrap(), Feature::Scheduled, true).unwrap();
+    }
+    let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
+    let addr_b = listen(&b).await;
+    let s = a.clone();
+    let to = id_b.clone();
+    tokio::spawn(async move { link::call(&s, &to, addr_b).await });
+    until("connected", || link::connected(&id_a) && link::connected(&id_b)).await;
+    // What the model sends to set it up, the way a small one writes it.
+    let tomorrow = (chrono::Local::now().date_naive() + chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    let set = use_tool(&a, "schedule_task", serde_json::json!({
+        "name": "Birthday message to Ben", "prompt": "Send Ben a message in People: \"Happy birthday, Ben!\"",
+        "repeat": "once", "date": tomorrow, "time": "12:00 AM", "actions": ["message_person"] })).await;
+    assert_eq!(set.meta["status"], "ok", "{}", set.text);
+    let ca = a.cipher().unwrap();
+    let job = crate::schedule::list(&a.db.lock().unwrap(), &ca).into_iter().find(|s| s.name == "Birthday message to Ben").unwrap();
+    assert!(matches!(job.cadence, crate::schedule::Cadence::Once { .. }) && job.actions == vec!["message_person".to_string()]);
+    // Its time comes: the run, as the timer starts it, on the real model.
+    let started = std::time::Instant::now();
+    let (chat, result) = crate::schedule::run_with(&a, &job, Arc::new(|_, _| {})).await.unwrap();
+    result.unwrap();
+    let said: Vec<String> = crate::db::messages(&a.db.lock().unwrap(), &ca, &chat).into_iter().filter(|m| m.role != "user").map(|m| format!("{}: {}", m.role, m.content)).collect();
+    println!("===== {name}: the timed message ({:.0} s)\n{}", started.elapsed().as_secs_f64(), said.join("\n"));
+    until("the message at Ben's", || texts(&b, &id_a).iter().any(|t| t.to_lowercase().contains("happy birthday"))).await;
+    // Approved for messages only: a calendar event in the same task isn't added
+    // (events on this PC would otherwise go in without an account).
+    features::set(&a.db.lock().unwrap(), Feature::Calendar, true).unwrap();
+    let mut wider = job.clone();
+    wider.prompt = "Add \"Ben's party\" to my calendar for Friday at 6 pm.".into();
+    let (chat, _) = crate::schedule::run_with(&a, &wider, Arc::new(|_, _| {})).await.unwrap();
+    let tried = crate::db::messages(&a.db.lock().unwrap(), &ca, &chat).into_iter().filter(|m| m.role == "tool").map(|m| m.content).collect::<Vec<_>>().join("\n");
+    println!("===== {name}: an action it wasn't approved for\n{tried}");
+    let added = crate::calendar::events(&a.db.lock().unwrap(), &ca, 0, i64::MAX).into_iter().any(|e| e.data.title.to_lowercase().contains("party"));
+    assert!(!added, "it added an event it wasn't approved for");
     link::hang_up(&id_b);
 }

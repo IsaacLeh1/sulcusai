@@ -403,7 +403,7 @@ pub async fn set_main_gpu(app: tauri::AppHandle, state: AppStateRef<'_>, name: O
     if let Some(id) = reload {
         let (s, app) = (state.clone(), app.clone());
         tauri::async_runtime::spawn(async move {
-            let done = crate::llm_endpoint(&s, Some(id), false, || {}).await;
+            let done = crate::llm_endpoint(&s, Some(id), false, |_| {}).await;
             if let Err(e) = &done {
                 crate::applog::line("engine", &format!("Couldn't start the model again on the picked card: {e}"));
             }

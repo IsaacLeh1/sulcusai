@@ -39,12 +39,17 @@ pub fn set_chat_hidden(state: AppStateRef, key: String, hidden: bool) -> Result<
 const LAYOUT: &str = "sidebar_layout";
 
 /// The sidebar as the user arranged it by dragging: the order of its pages,
-/// and of the chats (empty: the usual order, newest chats first).
+/// and of the chats (empty: the usual order, newest chats first); the pages
+/// put in the folding "Collapse" group, whether it's open, and whether the
+/// whole sidebar is folded away.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Layout {
     pub nav: Vec<String>,
     pub chats: Vec<String>,
+    pub collapsed: Vec<String>,
+    pub collapse_open: bool,
+    pub hidden: bool,
 }
 
 #[tauri::command(async)]
@@ -67,7 +72,13 @@ pub fn set_sidebar_layout(state: AppStateRef, layout: Layout) -> Result<Layout, 
         out.truncate(most);
         out
     };
-    let layout = Layout { nav: clean(layout.nav, 50), chats: clean(layout.chats, 5000) };
+    let layout = Layout {
+        nav: clean(layout.nav, 50),
+        chats: clean(layout.chats, 5000),
+        collapsed: clean(layout.collapsed, 50),
+        collapse_open: layout.collapse_open,
+        hidden: layout.hidden,
+    };
     db::set(&state.db.lock().unwrap(), LAYOUT, &layout)?;
     Ok(layout)
 }

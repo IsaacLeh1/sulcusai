@@ -332,7 +332,18 @@ pub fn describe(q: &Quote, range: Option<&str>) -> String {
         let lo = q.history.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
         let hi = q.history.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
         let pct = (last.1 - first.1) / first.1 * 100.0;
-        s.push_str(&format!(" Over {r}: from {} to {} ({}{pct:.1}%), low {}, high {}.", money(first.1), money(last.1), if pct >= 0.0 { "+" } else { "" }, money(lo), money(hi)));
+        // The dates too: a 20B model called the month's first close today's.
+        let on = |t: i64| chrono::DateTime::from_timestamp(t, 0).map(|d| d.with_timezone(&chrono::Local).format("%b %-d").to_string()).unwrap_or_default();
+        s.push_str(&format!(
+            " Over {r}: from {} on {} to {} on {} ({}{pct:.1}%), low {}, high {}.",
+            money(first.1),
+            on(first.0),
+            money(last.1),
+            on(last.0),
+            if pct >= 0.0 { "+" } else { "" },
+            money(lo),
+            money(hi)
+        ));
     }
     s
 }
@@ -382,7 +393,8 @@ mod tests {
         let s = describe(&q, None);
         assert!(s.starts_with("Apple Inc. (AAPL): 343.46 USD, +1.46 (+0.43%) since the last close of 342.00"), "{s}");
         assert!(s.contains("52-week range 243.42–348.15") && s.contains("NasdaqGS"));
-        assert!(describe(&q, Some("1mo")).contains("Over 1mo: from 340.00 to 343.46 (+1.0%)"));
+        let month = describe(&q, Some("1mo"));
+        assert!(month.contains("Over 1mo: from 340.00 on ") && month.contains(" to 343.46 on ") && month.contains("(+1.0%)"), "{month}");
         assert!(chart_of(&q, "1mo").is_some());
         assert!(parse_chart(&json!({ "chart": { "result": null } }), "ZZZZ").unwrap_err().contains("isn't a symbol"));
     }

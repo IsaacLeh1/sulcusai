@@ -151,6 +151,19 @@ pub struct Change {
 /// Where a batch ended, so the next one starts after it.
 pub type Mark = (i64, String, String);
 
+/// Sends these chats and their messages again at the next session: chats
+/// held back from a PC that may take them now.
+pub fn resend_chats(conn: &Connection, ids: &[String]) -> rusqlite::Result<()> {
+    let next = max_seq(conn) + 1;
+    for id in ids {
+        conn.execute(
+            "UPDATE sync_state SET seq = ?2 WHERE (tbl = 'chats' AND id = ?1) OR (tbl = 'messages' AND id IN (SELECT id FROM messages WHERE chat_id = ?1))",
+            params![id, next],
+        )?;
+    }
+    Ok(())
+}
+
 pub fn max_seq(conn: &Connection) -> i64 {
     conn.query_row("SELECT IFNULL(MAX(seq), 0) FROM sync_state", [], |r| r.get(0)).unwrap_or(0)
 }
@@ -193,8 +206,18 @@ fn read_row(conn: &Connection, c: &Cipher, t: &Table, id: &str) -> Result<Option
 }
 
 /// Up to `limit` changes after `after` (and no later than `up_to`) that
-/// didn't come from `peer`, with where the batch ended.
-pub fn changes(conn: &Connection, c: &Cipher, me: &str, peer: &str, after: &Mark, up_to: i64, limit: usize) -> Result<(Vec<Change>, Option<Mark>), String> {
+/// didn't come from `peer`, with where the batch ended. Chats in `withheld`
+/// (and their messages) aren't sent.
+pub fn changes(
+    conn: &Connection,
+    c: &Cipher,
+    me: &str,
+    peer: &str,
+    after: &Mark,
+    up_to: i64,
+    limit: usize,
+    withheld: &std::collections::HashSet<String>,
+) -> Result<(Vec<Change>, Option<Mark>), String> {
     let mut stmt = conn
         .prepare_cached(
             "SELECT tbl, id, seq, changed_at, deleted, origin, via FROM sync_state
@@ -224,6 +247,9 @@ pub fn changes(conn: &Connection, c: &Cipher, me: &str, peer: &str, after: &Mark
             continue;
         }
         let Some(t) = table(&tbl) else { continue };
+        if tbl == "chats" && withheld.contains(&id) {
+            continue;
+        }
         let row = if deleted {
             None
         } else {
@@ -233,6 +259,9 @@ pub fn changes(conn: &Connection, c: &Cipher, me: &str, peer: &str, after: &Mark
                 _ => continue,
             }
         };
+        if tbl == "messages" && row.as_ref().and_then(|r| r.get("chat_id")).is_some_and(|v| matches!(v, Val::T(chat) if withheld.contains(chat))) {
+            continue;
+        }
         out.push(Change { t: tbl, id, at, by: origin.unwrap_or_else(|| me.to_string()), del: deleted, row });
     }
     Ok((out, end))
@@ -341,13 +370,18 @@ mod tests {
 
     /// Everything `from` has that `to` hasn't seen, as one session would send it.
     fn send(from: (&Connection, &Cipher, &str), to: (&Connection, &Cipher, &str), since: i64) -> (usize, i64) {
+        send_holding(from, to, since, &Default::default())
+    }
+
+    /// The same, holding back the chats in `held`.
+    fn send_holding(from: (&Connection, &Cipher, &str), to: (&Connection, &Cipher, &str), since: i64, held: &std::collections::HashSet<String>) -> (usize, i64) {
         let up_to = max_seq(from.0);
         let mut after: Mark = (since, "\u{10FFFF}".into(), String::new());
         let mut cols = Columns::default();
         let mut taken = 0;
         let mut later = Vec::new();
         loop {
-            let (items, end) = changes(from.0, from.1, from.2, to.2, &after, up_to, 2).unwrap();
+            let (items, end) = changes(from.0, from.1, from.2, to.2, &after, up_to, 2, held).unwrap();
             let (n, l) = apply(to.0, to.1, to.2, from.2, &items, &mut cols).unwrap();
             taken += n;
             later.extend(l);
@@ -407,6 +441,24 @@ mod tests {
         assert!(title(&b, &cb, "c1").is_none());
         let left: i64 = b.query_row("SELECT COUNT(*) FROM messages WHERE chat_id = 'c1'", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn a_held_back_chat_goes_when_it_may() {
+        let (a, ca) = pc();
+        let (b, cb) = pc();
+        a.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES ('cloudy', ?1, 1, 1)", [ca.encrypt("LiteLLM chat")]).unwrap();
+        a.execute("INSERT INTO messages (id, chat_id, role, content, created_at) VALUES ('m1', 'cloudy', 'user', ?1, 2)", [ca.encrypt("hi")]).unwrap();
+        let held: std::collections::HashSet<String> = ["cloudy".to_string()].into();
+        let (_, pos) = send_holding((&a, &ca, "A"), (&b, &cb, "B"), 0, &held);
+        assert!(title(&b, &cb, "cloudy").is_none(), "its provider's chats stay on A");
+        let n = |conn: &Connection| conn.query_row("SELECT COUNT(*) FROM messages WHERE chat_id = 'cloudy'", [], |r| r.get::<_, i64>(0)).unwrap();
+        assert_eq!(n(&b), 0, "and so do its messages");
+        // Shared now (the box ticked, or B has the key): it goes, messages too.
+        resend_chats(&a, &["cloudy".into()]).unwrap();
+        send((&a, &ca, "A"), (&b, &cb, "B"), pos);
+        assert_eq!(title(&b, &cb, "cloudy").as_deref(), Some("LiteLLM chat"));
+        assert_eq!(n(&b), 1);
     }
 
     #[test]

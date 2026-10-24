@@ -95,6 +95,13 @@ pub struct Provider {
     /// none), sent with its API calls: a server behind a sign-in page.
     #[serde(default)]
     pub cookies: String,
+    /// Its chats go to this user's other PCs that use the same key (sync).
+    /// Off: they stay on the PC they were made on.
+    #[serde(default)]
+    pub share_pcs: bool,
+    /// People (linked in People) its chats are shared with, live.
+    #[serde(default)]
+    pub share_people: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +155,7 @@ pub fn spend(conn: &Connection) -> Spend {
 
 /// The providers people pick from.
 pub fn presets() -> Vec<Provider> {
-    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new() };
+    let p = |id: &str, name: &str, kind, url: &str| Provider { id: id.into(), name: name.into(), kind, base_url: url.into(), enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new() };
     vec![
         p("anthropic", "Anthropic (Claude)", Kind::Anthropic, "https://api.anthropic.com"),
         p("openai", "OpenAI", Kind::Openai, "https://api.openai.com/v1"),
@@ -257,7 +264,18 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
     if level != Connectivity::Cloud {
         return Err("This chat uses a cloud model, which needs the Cloud level. Switch to it in the status bar, or pick a model on this PC.".into());
     }
-    let p = s.providers.iter().find(|p| p.id == pid).ok_or("That cloud provider was removed. Pick another model.")?;
+    // This PC's provider, or (a chat synced from another PC, where the same
+    // server was added under another id) one here offering the same model.
+    let found = s
+        .providers
+        .iter()
+        .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
+        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)));
+    let p = match found {
+        Some(p) => p,
+        None if s.providers.iter().any(|p| p.id == pid) => return Err("That cloud model was removed. Pick another model.".into()),
+        None => return Err("That cloud provider was removed. Pick another model.".into()),
+    };
     if !p.enabled {
         return Err(format!("{} is turned off in Settings → Cloud models.", p.name));
     }
@@ -1008,6 +1026,8 @@ pub struct ProviderView {
     media: Vec<CloudMedia>,
     /// Picture, video and voice models this provider offers.
     media_suggestions: Vec<CloudMedia>,
+    share_pcs: bool,
+    share_people: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -1020,7 +1040,19 @@ pub struct CloudView {
 }
 
 fn pview(p: &Provider) -> ProviderView {
-    ProviderView { id: p.id.clone(), name: p.name.clone(), kind: p.kind, base_url: p.base_url.clone(), enabled: p.enabled, has_key: !p.key.is_empty(), models: p.models.clone(), media: p.media.clone(), media_suggestions: media_suggestions(&p.id) }
+    ProviderView {
+        id: p.id.clone(),
+        name: p.name.clone(),
+        kind: p.kind,
+        base_url: p.base_url.clone(),
+        enabled: p.enabled,
+        has_key: !p.key.is_empty(),
+        models: p.models.clone(),
+        media: p.media.clone(),
+        media_suggestions: media_suggestions(&p.id),
+        share_pcs: p.share_pcs,
+        share_people: p.share_people.clone(),
+    }
 }
 
 #[tauri::command(async)]
@@ -1043,12 +1075,24 @@ pub fn add_cloud_provider(state: AppStateRef, preset: Option<String>, name: Opti
                 return Err("Use an https:// address (or a local one).".into());
             }
             let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| "Custom provider".into());
-            Provider { id: format!("custom-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new() }
+            // The same server gets the same id on every PC, so a chat synced
+            // from another PC finds its model here. The id stays in this
+            // app (and its synced chats); it's never sent to the server.
+            Provider { id: custom_id(&url), name, kind: Kind::Openai, base_url: url, enabled: false, key: String::new(), models: Vec::new(), media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: Vec::new() }
         }
     };
+    let mut p = p;
     {
         let conn = state.db.lock().unwrap();
         let mut s = settings(&conn);
+        // The same server again (another key): an id of its own.
+        if p.id.starts_with("custom-") {
+            let mut n = 2;
+            while s.providers.iter().any(|q| q.id == p.id) {
+                p.id = custom_id(&format!("{}#{n}", p.base_url));
+                n += 1;
+            }
+        }
         if !s.providers.iter().any(|q| q.id == p.id) {
             s.providers.push(p.clone());
         }
@@ -1260,6 +1304,116 @@ pub fn cloud_choices(state: AppStateRef) -> Vec<CloudChoice> {
     choices(&state.db.lock().unwrap())
 }
 
+/// A server's provider id, from its address (the same on every PC).
+pub fn custom_id(base_url: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let url = base_url.trim().trim_end_matches('/').to_lowercase();
+    format!("custom-{}", &hex::encode(Sha256::digest(url.as_bytes()))[..8])
+}
+
+/// Which provider here a cloud model id is from: the same id, or (a chat
+/// synced from another PC) one offering the same model.
+pub fn provider_of<'a>(s: &'a CloudSettings, id: &str) -> Option<&'a Provider> {
+    let (pid, mid) = parse_ref(id)?;
+    s.providers
+        .iter()
+        .find(|p| p.id == pid && p.models.iter().any(|m| m.id == mid))
+        .or_else(|| s.providers.iter().find(|p| p.enabled && !p.key.is_empty() && p.models.iter().any(|m| m.id == mid)))
+}
+
+/// A fingerprint of a provider's address and key: two PCs with the same one
+/// use the same account. It can't be turned back into the key, and it's
+/// only told to this user's own paired PCs, inside their encrypted link.
+pub fn key_print(c: &Cipher, p: &Provider) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let key = c.decrypt(&p.key).ok().filter(|k| !k.trim().is_empty())?;
+    let url = p.base_url.trim().trim_end_matches('/').to_lowercase();
+    let mut h = Sha256::new();
+    h.update(b"sulcusai-key-print\0");
+    h.update(url.as_bytes());
+    h.update(b"\0");
+    h.update(key.trim().as_bytes());
+    Some(hex::encode(h.finalize())[..20].to_string())
+}
+
+/// The fingerprints of the providers whose chats go to this user's other PCs.
+pub fn shared_prints(conn: &Connection, c: &Cipher) -> Vec<String> {
+    settings(conn).providers.iter().filter(|p| p.share_pcs && p.enabled).filter_map(|p| key_print(c, p)).collect()
+}
+
+/// Chats made with a cloud model that another PC (with these fingerprints)
+/// doesn't get: its provider's chats stay on this PC, or that PC doesn't
+/// use the same key.
+pub fn withheld_chats(conn: &Connection, c: &Cipher, theirs: &[String]) -> std::collections::HashSet<String> {
+    let s = settings(conn);
+    let Ok(mut stmt) = conn.prepare("SELECT id, model_id FROM chats WHERE model_id LIKE 'cloud:%'") else { return Default::default() };
+    let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default();
+    rows.into_iter()
+        .filter(|(_, model)| match provider_of(&s, model) {
+            Some(p) => !(p.share_pcs && key_print(c, p).is_some_and(|k| theirs.contains(&k))),
+            None => true,
+        })
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// The chats made with a provider's models.
+pub fn chats_of(conn: &Connection, provider: &Provider) -> Vec<String> {
+    let s = CloudSettings { providers: vec![provider.clone()], ..Default::default() };
+    let Ok(mut stmt) = conn.prepare("SELECT id, model_id FROM chats WHERE model_id LIKE 'cloud:%'") else { return Vec::new() };
+    let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).map(|it| it.filter_map(Result::ok).collect()).unwrap_or_default();
+    rows.into_iter().filter(|(_, m)| provider_of(&s, m).is_some_and(|p| p.id == provider.id)).map(|(id, _)| id).collect()
+}
+
+/// The people a chat goes to because of its cloud model's provider.
+pub fn people_for(conn: &Connection, model_id: Option<&str>) -> Vec<String> {
+    let Some(m) = model_id.filter(|m| is_cloud(m)) else { return Vec::new() };
+    provider_of(&settings(conn), m).map(|p| p.share_people.clone()).unwrap_or_default()
+}
+
+/// Where a provider's chats go: this user's other PCs with the same key,
+/// and people linked in People.
+#[tauri::command(async)]
+pub fn set_cloud_sharing(state: AppStateRef, id: String, share_pcs: bool, share_people: Vec<String>) -> Result<CloudView, String> {
+    let c = state.cipher()?;
+    let (p, chats, was) = {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        let p = s.providers.iter_mut().find(|p| p.id == id).ok_or("Unknown provider")?;
+        let was = p.share_pcs;
+        p.share_pcs = share_pcs;
+        p.share_people = share_people;
+        let p = p.clone();
+        save(&conn, &s)?;
+        let chats = chats_of(&conn, &p);
+        (p, chats, was)
+    };
+    // Turned on: chats held back from the other PCs go at the next sync.
+    if share_pcs && !was {
+        let _ = crate::sync::track::resend_chats(&state.db.lock().unwrap(), &chats);
+        crate::sync::wake();
+    }
+    for chat in &chats {
+        crate::sync::people::share::follow_provider(&state, &c, chat);
+    }
+    state.log(
+        "settings",
+        &format!("{}: chats {} the other PCs with its key{}", p.name, if share_pcs { "go to" } else { "stay off" }, if p.share_people.is_empty() { String::new() } else { format!(", and are shared with {} people", p.share_people.len()) }),
+    );
+    Ok(cloud_view(state))
+}
+
+/// The model a cloud id names, here: the same one, or the same model from a
+/// provider this PC has under another id (a chat synced from another PC).
+pub fn resolve(conn: &Connection, id: &str) -> Option<String> {
+    let all = choices(conn);
+    if all.iter().any(|c| c.id == id) {
+        return Some(id.to_string());
+    }
+    let (_, model) = parse_ref(id)?;
+    all.into_iter().find(|c| parse_ref(&c.id).is_some_and(|(_, m)| m == model)).map(|c| c.id)
+}
+
 pub fn choices(conn: &Connection) -> Vec<CloudChoice> {
     settings(conn)
         .providers
@@ -1354,5 +1508,36 @@ mod tests {
         let id = model_ref("openrouter", "meta-llama/llama-4:free");
         assert_eq!(parse_ref(&id), Some(("openrouter", "meta-llama/llama-4:free")));
         assert!(is_cloud(&id) && !is_cloud("qwen3-1.7b"));
+    }
+
+    /// A chat synced from the laptop names the laptop's provider id: the same
+    /// server here is found by its model, and its id is the same anyway now.
+    #[test]
+    fn a_synced_chats_model_is_found_on_this_pc() {
+        assert_eq!(custom_id("https://llm.example.com/v1/"), custom_id("https://LLM.example.com/v1"));
+        assert_ne!(custom_id("https://llm.example.com/v1"), custom_id("https://other.example.com/v1"));
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::init_for_test(&conn);
+        let model = CloudModel { id: "gpt-4o".into(), name: "GPT-4o".into(), ..Default::default() };
+        let here = Provider {
+            id: custom_id("https://llm.example.com/v1"),
+            name: "LiteLLM".into(),
+            kind: Kind::Openai,
+            base_url: "https://llm.example.com/v1".into(),
+            enabled: true,
+            key: "sealed".into(),
+            models: vec![model],
+            media: vec![],
+            cookies: String::new(),
+            share_pcs: false,
+            share_people: vec![],
+        };
+        save(&conn, &CloudSettings { providers: vec![here.clone()], ..Default::default() }).unwrap();
+        let mine = model_ref(&here.id, "gpt-4o");
+        assert_eq!(resolve(&conn, &mine).as_deref(), Some(mine.as_str()));
+        // The laptop's old random id: the same model here.
+        assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:gpt-4o").as_deref(), Some(mine.as_str()));
+        assert_eq!(resolve(&conn, "cloud:custom-1a2b3c4d:claude-opus"), None, "a model this PC doesn't have");
+        assert_eq!(provider_of(&settings(&conn), "cloud:custom-1a2b3c4d:gpt-4o").map(|p| p.id.as_str()), Some(here.id.as_str()));
     }
 }

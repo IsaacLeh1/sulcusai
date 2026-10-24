@@ -266,7 +266,7 @@ pub(super) async fn exchange(state: &Arc<AppState>, p: &Contact, base: &str) -> 
     let mut next = p.box_next;
     if !frames.is_empty() {
         // Who's writing, so a new name shows.
-        frames.insert(0, Frame::Hello { name: my_name(state), port: 0 });
+        frames.insert(0, Frame::Hello { name: my_name(state), port: 0, parts: true });
         let mut pending = letters(frames).into_iter();
         while let Some(letter) = pending.next() {
             let seq = next + 1;

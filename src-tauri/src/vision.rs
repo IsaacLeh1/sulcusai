@@ -123,7 +123,7 @@ pub async fn read(state: &Arc<AppState>, pictures: &[image::DynamicImage], ask: 
     ];
     if let Some(m) = chat_model.filter(|m| chat_sees(state, Some(m))) {
         let _turn = turn().lock().await;
-        let (ep, _, _) = crate::llm_endpoint(state, Some(m.to_string()), true, || {}).await?;
+        let (ep, _, _) = crate::llm_endpoint(state, Some(m.to_string()), true, |_| {}).await?;
         return crate::chat::complete(&ep, messages, json!({ "temperature": 0.2 }), max_tokens).await.map(|s| s.trim().to_string());
     }
     let reader = readers(state).into_iter().next().ok_or(NO_READER)?;
@@ -229,7 +229,7 @@ impl Helper {
     pub async fn chat_model(state: &Arc<AppState>, pictures: bool) -> Result<Helper, String> {
         let turn = turn().lock().await;
         let (ep, spec, hold) = if pictures {
-            let (ep, spec, _) = crate::llm_endpoint(state, None, true, || {}).await?;
+            let (ep, spec, _) = crate::llm_endpoint(state, None, true, |_| {}).await?;
             let hold = engine::Hold::new(&ep.key);
             (ep, spec, hold)
         } else {

@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 pub const LABEL: &str = "browser";
 const TITLE: &str = "SulcusAI browser";
@@ -142,15 +142,17 @@ pub fn open(app: &AppHandle, visible: bool) -> Result<WebviewWindow, String> {
         .map_err(|e| format!("Couldn't open the browser: {e}"))
 }
 
+/// Closes the browser window and every web viewer (going offline).
 pub fn close(app: &AppHandle) {
     if let Some(w) = window(app) {
         let _ = w.close();
     }
+    crate::viewer::close_all(app);
 }
 
 /// Calls a DevTools Protocol method on the browser's page, in process.
 #[cfg(windows)]
-pub async fn cdp(w: &WebviewWindow, method: &str, params: Value) -> Result<Value, String> {
+pub async fn cdp(w: &Webview, method: &str, params: Value) -> Result<Value, String> {
     use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<String, String>>();
     let tx = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -192,12 +194,12 @@ pub async fn cdp(w: &WebviewWindow, method: &str, params: Value) -> Result<Value
 }
 
 #[cfg(not(windows))]
-pub async fn cdp(_w: &WebviewWindow, _method: &str, _params: Value) -> Result<Value, String> {
+pub async fn cdp(_w: &Webview, _method: &str, _params: Value) -> Result<Value, String> {
     Err("The built-in browser needs Windows for now.".into())
 }
 
 /// Runs a script in the page and returns its value.
-pub async fn eval(w: &WebviewWindow, js: &str) -> Result<Value, String> {
+pub async fn eval(w: &Webview, js: &str) -> Result<Value, String> {
     let r = cdp(w, "Runtime.evaluate", json!({ "expression": js, "returnByValue": true, "awaitPromise": true })).await?;
     if let Some(ex) = r.get("exceptionDetails") {
         let msg = ex.pointer("/exception/description").or_else(|| ex.get("text")).and_then(Value::as_str).unwrap_or("script error");
@@ -207,7 +209,7 @@ pub async fn eval(w: &WebviewWindow, js: &str) -> Result<Value, String> {
 }
 
 /// Waits until the page has loaded (or 15 seconds have passed).
-async fn settle(w: &WebviewWindow) {
+async fn settle(w: &Webview) {
     tokio::time::sleep(Duration::from_millis(500)).await;
     for _ in 0..30 {
         if let Ok(Value::String(s)) = eval(w, "document.readyState").await {
@@ -301,7 +303,7 @@ pub struct Target {
     pub host: String,
 }
 
-pub async fn target(w: &WebviewWindow, r: u32) -> Result<Target, String> {
+pub async fn target(w: &Webview, r: u32) -> Result<Target, String> {
     match eval(w, &target_js(r)).await? {
         Value::Null => Err(format!("There's no element [{r}] on the page now. Read the page again to get fresh numbers.")),
         v => serde_json::from_value(v).map_err(|e| e.to_string()),
@@ -346,7 +348,7 @@ pub struct Page {
     pub more: bool,
 }
 
-pub async fn read(w: &WebviewWindow) -> Result<Page, String> {
+pub async fn read(w: &Webview) -> Result<Page, String> {
     let _ = eval(w, BANNER_JS).await;
     serde_json::from_value(eval(w, READ_JS).await?).map_err(|e| e.to_string())
 }
@@ -384,7 +386,7 @@ impl Page {
     }
 }
 
-pub async fn navigate(w: &WebviewWindow, url: &str) -> Result<(), String> {
+pub async fn navigate(w: &Webview, url: &str) -> Result<(), String> {
     let r = cdp(w, "Page.navigate", json!({ "url": url })).await?;
     if let Some(e) = r.get("errorText").and_then(Value::as_str) {
         return Err(format!("Couldn't open the page ({e})."));
@@ -393,7 +395,7 @@ pub async fn navigate(w: &WebviewWindow, url: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn click(w: &WebviewWindow, t: &Target) -> Result<(), String> {
+pub async fn click(w: &Webview, t: &Target) -> Result<(), String> {
     for (kind, extra) in [("mouseMoved", json!({})), ("mousePressed", json!({ "button": "left", "clickCount": 1 })), ("mouseReleased", json!({ "button": "left", "clickCount": 1 }))] {
         let mut p = json!({ "type": kind, "x": t.x, "y": t.y });
         p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
@@ -403,7 +405,7 @@ pub async fn click(w: &WebviewWindow, t: &Target) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn type_into(w: &WebviewWindow, r: u32, t: &Target, text: &str, submit: bool) -> Result<(), String> {
+pub async fn type_into(w: &Webview, r: u32, t: &Target, text: &str, submit: bool) -> Result<(), String> {
     if t.tag == "select" {
         let js = format!(
             r#"(() => {{ const el = document.querySelector('[data-sulcus-ref="{r}"]'); const want = {}; const o = [...el.options].find((x) => x.text.trim().toLowerCase() === want.toLowerCase() || x.value === want); if (!o) return false; el.value = o.value; el.dispatchEvent(new Event('input', {{ bubbles: true }})); el.dispatchEvent(new Event('change', {{ bubbles: true }})); return true; }})()"#,
@@ -432,8 +434,48 @@ pub async fn type_into(w: &WebviewWindow, r: u32, t: &Target, text: &str, submit
     Ok(())
 }
 
-pub async fn back(w: &WebviewWindow) -> Result<(), String> {
+pub async fn back(w: &Webview) -> Result<(), String> {
     eval(w, "history.back()").await?;
+    settle(w).await;
+    Ok(())
+}
+
+/// Scrolls the page (or the part of it under the middle) by screens: down
+/// or up. A wheel turn, so pages that scroll inside a box scroll too.
+pub async fn scroll(w: &Webview, down: bool, screens: f64) -> Result<(), String> {
+    let size = eval(w, "[innerWidth, innerHeight]").await?;
+    let (x, y) = (size[0].as_f64().unwrap_or(800.0) / 2.0, size[1].as_f64().unwrap_or(600.0) / 2.0);
+    let dy = size[1].as_f64().unwrap_or(600.0) * 0.85 * screens.clamp(0.25, 10.0) * if down { 1.0 } else { -1.0 };
+    cdp(w, "Input.dispatchMouseEvent", json!({ "type": "mouseWheel", "x": x, "y": y, "deltaX": 0, "deltaY": dy })).await?;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    Ok(())
+}
+
+/// The keys the assistant may press (Enter goes with typing, so a form is
+/// checked before it's sent): name, code and Windows key code.
+pub const KEYS: [(&str, &str, u32); 13] = [
+    ("Escape", "Escape", 27),
+    ("Tab", "Tab", 9),
+    ("ArrowDown", "ArrowDown", 40),
+    ("ArrowUp", "ArrowUp", 38),
+    ("ArrowLeft", "ArrowLeft", 37),
+    ("ArrowRight", "ArrowRight", 39),
+    ("PageDown", "PageDown", 34),
+    ("PageUp", "PageUp", 33),
+    ("Home", "Home", 36),
+    ("End", "End", 35),
+    ("Space", "Space", 32),
+    ("Backspace", "Backspace", 8),
+    ("Delete", "Delete", 46),
+];
+
+/// Presses a key in the page, as the keyboard would.
+pub async fn key(w: &Webview, name: &str) -> Result<(), String> {
+    let (key, code, vk) = KEYS.iter().find(|k| k.0.eq_ignore_ascii_case(name)).copied().ok_or_else(|| format!("{name} isn't a key I can press here."))?;
+    let key = if key == "Space" { " " } else { key };
+    for kind in ["rawKeyDown", "keyUp"] {
+        cdp(w, "Input.dispatchKeyEvent", json!({ "type": kind, "key": key, "code": code, "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk })).await?;
+    }
     settle(w).await;
     Ok(())
 }

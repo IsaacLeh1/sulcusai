@@ -158,7 +158,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
     vec![
         (&["delegate"][..], g(r"\bhelpers?\b|delegate")),
         (&["search_chats", "read_chat", "message_chat", "delete_chat"], g(r"\bchats?\b|conversation")),
-        (&["ask_person", "work_with_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+")),
+        (&["ask_person", "work_with_person", "message_person"], g(r"\bassistant\b|\btogether\b|\bwith (my|our) \w+|\bmessage\b|\btext\b|\btell\b")),
         (&["search_meetings", "read_meeting"], g(r"meeting|transcript")),
         (&["browser_"], g(r"browser|log ?in|sign ?in|click|fill (in|out)|web ?page|go to|book |order |buy ")),
         (&["email_"], g(r"e-?mails?|inbox|\bmail\b|messages? from|reply to|send (it|this|a message)")),
@@ -189,6 +189,7 @@ pub fn in_group(name: &str, group: &[&str]) -> bool {
 pub(crate) fn group(name: &str) -> &'static str {
     match name {
         "remember" | "search_memory" => "memory",
+        "read_chat_notes" | "update_chat_notes" | "check_plan_step" => "chatnotes",
         "load_skill" => "skills",
         "search_meetings" | "read_meeting" => "meetings",
         "create_note" | "search_notes" | "read_note" | "update_note" => "notes",
@@ -201,7 +202,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
-        "ask_person" | "work_with_person" => "people",
+        "ask_person" | "work_with_person" | "message_person" => "people",
         "search_chats" | "read_chat" | "message_chat" | "delete_chat" => "chats",
         _ => "files",
     }
@@ -213,7 +214,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "connect_account", risk: Risk::Write, params: app::connect_account_params,
         description: "Connect the user's Gmail/Google Calendar or Outlook/Microsoft 365 by opening that sign-in page in their browser. The user is asked first and signs in themselves; wait for the result." },
     ToolDef { name: "schedule_task", risk: Risk::Write, params: scheduled::schedule_task_params,
-        description: "Set up something to happen by itself at set times, when the user asks for that (\"every morning at 8 give me the news\", \"remind me Friday at 5 to…\"): a prompt that runs on a schedule, each run saved as a chat. The user approves it first." },
+        description: "Set up something to happen by itself at a set time, once or again and again, when the user asks for that (\"every morning at 8 give me the news\", \"message Josh at 12 AM tomorrow: happy birthday\", \"make me a song Friday at 6\"). For one time, use repeat once with date and time; write prompt as exactly what to do then, and list in actions what it will send or make (message_person, email_send, calendar_create_event, create_music, …). If anything isn't clear (who, the exact time, what to say, or what it may do by itself), ask the user first instead of guessing. The user approves it before it's saved." },
     ToolDef { name: "calculate", risk: Risk::Read, params: compute::calculate_params,
         description: "Work out math exactly: arithmetic, percentages, powers, roots, money and dates. Use it for every calculation instead of doing it in your head." },
     ToolDef { name: "run_code", risk: Risk::Read, params: compute::run_code_params,
@@ -304,6 +305,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Type into a field in the browser by its number (replacing what's there), or pick a dropdown choice. Never for passwords or payment details: ask the user to type those in the browser window." },
     ToolDef { name: "browser_back", risk: Risk::Read, params: browser::browser_back_params,
         description: "Go back to the previous page in the browser." },
+    ToolDef { name: "browser_scroll", risk: Risk::Read, params: browser::browser_scroll_params,
+        description: "Scroll the browser's page down or up (by screens), or to an element by its number, to see more of it. Returns the page again." },
+    ToolDef { name: "browser_key", risk: Risk::Read, params: browser::browser_key_params,
+        description: "Press a key in the browser's page: Escape to close a pop-up, Tab to move to the next field, arrows in a list or menu, PageDown to read on. Returns the page again." },
     ToolDef { name: "create_document", risk: Risk::Write, params: documents::create_document_params,
         description: "Make a Word (.docx), PDF, Markdown, Excel (.xlsx, with working formulas and charts) or PowerPoint (.pptx) file in a shared folder. Give markdown for documents, sheets for spreadsheets, slides for decks." },
     ToolDef { name: "read_document", risk: Risk::Read, params: documents::read_document_params,
@@ -334,6 +339,14 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Ask the assistant of someone the user is linked with in People. It answers on their PC, with their model and only what they allow, and they may need to approve first. Use it for what only they would know, like details from chats they share or their plans. The question goes to them, so include only what's needed. Waits up to 3 minutes." },
     ToolDef { name: "work_with_person", risk: Risk::Submit, params: crate::sync::people::together::work_params,
         description: "Work something out together with the assistant of someone the user is linked with in People, such as a time to meet: the two assistants take turns, each with its own user's information, until they agree (up to 8 turns). Give the goal and what you already know. Both people can watch it in People." },
+    ToolDef { name: "message_person", risk: Risk::Submit, params: crate::sync::people::message_params,
+        description: "Send someone the user is linked with in People a message from the user, when the user asks for that. The user sees it before it goes (a timed action sends what they approved when they set it up)." },
+    ToolDef { name: "read_chat_notes", risk: Risk::Read, params: app::app_status_params,
+        description: "Read this chat's notes: what the user asked for and what's left, what's known about the project, and the plan." },
+    ToolDef { name: "update_chat_notes", risk: Risk::Memory, params: crate::chatnotes::update_params,
+        description: "Write in this chat's notes (its own memory, shown to the user): what they asked for and what's still to do, what you learn about the project, or a plan of steps (\"- [ ] step\", with what each involves). A section is replaced, or added to with add." },
+    ToolDef { name: "check_plan_step", risk: Risk::Memory, params: crate::chatnotes::check_params,
+        description: "Check off a step of the plan in this chat's notes once it's done (by its number or words from it)." },
     ToolDef { name: "search_chats", risk: Risk::Read, params: chats::search_chats_params,
         description: "Look through the user's other chats on this PC: titles and what was said. Leave the query out to list the latest ones." },
     ToolDef { name: "read_chat", risk: Risk::Read, params: chats::read_chat_params,
@@ -447,7 +460,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -541,7 +554,7 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "schedule_task" => scheduled::preview(args),
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
-        "ask_person" | "work_with_person" => Ok(people_preview(name, args)),
+        "ask_person" | "work_with_person" | "message_person" => Ok(people_preview(name, args)),
         "open_path" => Ok(Preview {
             title: format!("Open {}", args.get("target").and_then(Value::as_str).unwrap_or("something")),
             kind: "text",
@@ -555,6 +568,14 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
 /// What the approval card shows before something goes to another person's assistant.
 fn people_preview(name: &str, args: &Value) -> Preview {
     let person = args.get("person").and_then(Value::as_str).unwrap_or("them");
+    if name == "message_person" {
+        return Preview {
+            title: format!("Send {person} a message in People"),
+            kind: "text",
+            detail: args.get("text").and_then(Value::as_str).map(str::to_string),
+            note: Some(format!("It goes to {person}'s SulcusAI now, or as soon as their app is reached.")),
+        };
+    }
     let (title, field) = if name == "ask_person" { (format!("Ask {person}'s assistant"), "question") } else { (format!("Work this out with {person}'s assistant"), "goal") };
     Preview {
         title,
@@ -567,11 +588,15 @@ fn people_preview(name: &str, args: &Value) -> Preview {
 pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
     match name {
         "ask_person" => crate::sync::people::ask::tool(args, ctx).await,
+        "message_person" => crate::sync::people::message_tool(args, ctx),
         "command_output" => shell::output(args),
         "stop_command" => shell::stop(args),
         "open_path" => open_path(args, ctx),
         "preview_site" => site::run(args, ctx).await,
         "search_chats" => chats::search(args, ctx),
+        "read_chat_notes" => crate::chatnotes::read(ctx),
+        "update_chat_notes" => crate::chatnotes::update(args, ctx),
+        "check_plan_step" => crate::chatnotes::check_step(args, ctx),
         "delete_chat" => chats::delete(args, ctx),
         "read_chat" => chats::read(args, ctx),
         // Run by the agent itself (it needs the model that's loaded).
@@ -610,7 +635,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         "create_image" | "edit_image" | "create_video" | "create_music" => media::run(name, args, ctx).await,
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
-            browser::run(name, args, ctx.app, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
+            browser::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
         }
         _ => {
             // File work is quick but blocking; keep it off the async threads.
@@ -730,7 +755,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 50);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 56);
     }
 
     #[test]

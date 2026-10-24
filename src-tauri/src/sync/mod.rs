@@ -86,6 +86,8 @@ pub struct Peer {
     recv_since: i64,
     /// Where syncing through the relay stands.
     pub relay: relay::RelayState,
+    /// The fingerprints of the cloud keys it shares chats for, as it last said.
+    pub keys: Vec<String>,
 }
 
 fn config(conn: &rusqlite::Connection) -> Config {
@@ -260,7 +262,17 @@ struct PairReply {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "k", rename_all = "snake_case")]
 enum Msg {
-    Hello { epoch: String, name: String, want_epoch: String, want_since: i64 },
+    Hello {
+        epoch: String,
+        name: String,
+        want_epoch: String,
+        want_since: i64,
+        /// Fingerprints of the cloud keys whose chats this PC shares with
+        /// the user's other PCs (`cloud::key_print`): a PC gets a provider's
+        /// chats only when it uses the same key.
+        #[serde(default)]
+        keys: Vec<String>,
+    },
     Batch { items: Vec<track::Change> },
     End { up_to: i64 },
 }
@@ -631,15 +643,28 @@ async fn recv_msg(r: &mut (impl tokio::io::AsyncRead + Unpin), inn: &mut wire::S
 /// Both sides send what the other hasn't seen, at the same time.
 async fn session(state: &Arc<AppState>, stream: TcpStream, c: &Cipher, p: &Peer, mut out: wire::Sealer, mut inn: wire::Sealer, addr: Option<SocketAddr>) -> Result<usize, String> {
     let me = device_id(&state.paths.data);
-    let (epoch, name, up_to) = {
+    let (epoch, name, keys) = {
         let conn = state.db.lock().unwrap();
         let cfg = config(&conn);
-        (cfg.epoch, cfg.name, track::max_seq(&conn))
+        (cfg.epoch, cfg.name, crate::cloud::shared_prints(&conn, c))
     };
     let (mut r, mut w) = stream.into_split();
-    send_msg(&mut w, &mut out, &Msg::Hello { epoch: epoch.clone(), name, want_epoch: p.recv_epoch.clone(), want_since: p.recv_since }).await?;
-    let Msg::Hello { epoch: their_epoch, name: their_name, want_epoch, want_since } = recv_msg(&mut r, &mut inn).await? else {
+    send_msg(&mut w, &mut out, &Msg::Hello { epoch: epoch.clone(), name, want_epoch: p.recv_epoch.clone(), want_since: p.recv_since, keys }).await?;
+    let Msg::Hello { epoch: their_epoch, name: their_name, want_epoch, want_since, keys: their_keys } = recv_msg(&mut r, &mut inn).await? else {
         return Err("The other PC sent something unexpected.".into());
+    };
+    // Cloud chats go only to a PC with the same key; one that has it now
+    // and didn't before gets the ones held back.
+    let (up_to, withheld) = {
+        let conn = state.db.lock().unwrap();
+        let fresh: Vec<String> = their_keys.iter().filter(|k| !p.keys.contains(k)).cloned().collect();
+        if !fresh.is_empty() {
+            let s = crate::cloud::settings(&conn);
+            for prov in s.providers.iter().filter(|x| x.share_pcs && crate::cloud::key_print(c, x).is_some_and(|k| fresh.contains(&k))) {
+                let _ = track::resend_chats(&conn, &crate::cloud::chats_of(&conn, prov));
+            }
+        }
+        (track::max_seq(&conn), crate::cloud::withheld_chats(&conn, c, &their_keys))
     };
     // Positions from before a restore (or from another database) don't count.
     let since = if want_epoch == epoch && want_since <= up_to { want_since } else { 0 };
@@ -648,7 +673,7 @@ async fn session(state: &Arc<AppState>, stream: TcpStream, c: &Cipher, p: &Peer,
         loop {
             let (items, end) = {
                 let conn = state.db.lock().unwrap();
-                track::changes(&conn, c, &me, &p.id, &after, up_to, BATCH)?
+                track::changes(&conn, c, &me, &p.id, &after, up_to, BATCH, &withheld)?
             };
             if !items.is_empty() {
                 send_msg(&mut w, &mut out, &Msg::Batch { items }).await?;
@@ -693,6 +718,7 @@ async fn session(state: &Arc<AppState>, stream: TcpStream, c: &Cipher, p: &Peer,
             x.recv_since = their_up_to;
             x.last_sync = Some(db::now_ms());
             x.name = their_name.chars().take(60).collect();
+            x.keys = their_keys.iter().take(50).cloned().collect();
             if let Some(a) = addr {
                 x.addr = Some(a.to_string());
             }

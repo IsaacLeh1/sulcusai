@@ -104,6 +104,16 @@ export function ExternalIcon(p: IconProps) {
 }
 
 /** Three lines: opens the menu (on a phone). */
+/** A window with a side panel: show or hide the sidebar. */
+export function SidebarIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </Icon>
+  );
+}
+
 export function MenuIcon(p: IconProps) {
   return (
     <Icon {...p}>

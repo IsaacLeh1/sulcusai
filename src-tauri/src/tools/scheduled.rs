@@ -21,7 +21,51 @@ pub fn schedule_task_params() -> Value {
         "dates": { "type": "array", "items": { "type": "string" }, "description": "For dates: the days it runs, e.g. [\"2026-10-24\", \"2026-10-31\"]." },
         "weekday": { "type": "string", "description": "For weekly: the day, e.g. \"monday\"." },
         "weekdays": { "type": "array", "items": { "type": "string" }, "description": "For days: the days of the week it runs, e.g. [\"monday\", \"wednesday\", \"friday\"]." },
-        "minute": { "type": "integer", "description": "For hourly: the minute past each hour (0-59)." } } })
+        "minute": { "type": "integer", "description": "For hourly: the minute past each hour (0-59)." },
+        "actions": { "type": "array", "items": { "type": "string", "enum": ACTIONS.iter().map(|(n, _)| *n).collect::<Vec<_>>() },
+            "description": "What it may do by itself when it runs, beyond looking things up, e.g. [\"message_person\"] to send a People message, [\"email_send\"], [\"calendar_create_event\"], [\"create_music\"]. The user approves these now and isn't asked again. Leave it out for tasks that only look." } } })
+}
+
+/// What a task may be approved to do by itself, and how the approval card says it.
+pub const ACTIONS: [(&str, &str); 14] = [
+    ("message_person", "send a People message"),
+    ("ask_person", "ask someone's assistant"),
+    ("email_send", "send an email"),
+    ("calendar_create_event", "add a calendar event"),
+    ("create_task", "add a task"),
+    ("complete_task", "mark a task done"),
+    ("create_note", "write a note"),
+    ("create_music", "make a song"),
+    ("create_image", "make a picture"),
+    ("create_video", "make a video"),
+    ("message_chat", "ask another chat"),
+    ("write_file", "write files in its folders"),
+    ("edit_file", "change files in its folders"),
+    ("run_command", "run commands"),
+];
+
+/// The actions asked for, each checked.
+fn actions_of(args: &Value) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = Vec::new();
+    for a in list(args, "actions") {
+        if !ACTIONS.iter().any(|(n, _)| *n == a) {
+            return Err(format!("{a:?} isn't an action a task can take; it can be one of {}.", ACTIONS.iter().map(|(n, _)| *n).collect::<Vec<_>>().join(", ")));
+        }
+        if !out.contains(&a) {
+            out.push(a);
+        }
+    }
+    Ok(out)
+}
+
+/// "send a People message and add a calendar event".
+fn said(actions: &[String]) -> String {
+    let words: Vec<&str> = actions.iter().filter_map(|a| ACTIONS.iter().find(|(n, _)| n == a).map(|(_, w)| *w)).collect();
+    match words.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.to_string(),
+        None => String::new(),
+    }
 }
 
 /// "8", "8am", "8:30 pm", "20:15" as "HH:MM".
@@ -111,12 +155,18 @@ fn name_and_prompt(args: &Value) -> Result<(String, String), String> {
 pub fn preview(args: &Value) -> Result<Preview, String> {
     let (name, prompt) = name_and_prompt(args)?;
     let cadence = cadence_of(args)?;
-    Ok(Preview {
-        title: format!("Schedule “{name}”: {}", schedule::describe(&cadence)),
-        kind: "text",
-        detail: Some(prompt),
-        note: Some("Runs by itself while SulcusAI is open, with tools that only look (it changes nothing). Each run is saved as a chat. Change or stop it under Scheduled.".into()),
-    })
+    let actions = actions_of(args)?;
+    let once = matches!(cadence, Cadence::Once { .. });
+    let note = if actions.is_empty() {
+        "Runs by itself while SulcusAI is open, with tools that only look (it changes nothing). Each run is saved as a chat. Change or stop it under Scheduled.".to_string()
+    } else {
+        format!(
+            "When it runs, it may {} without asking you again, and nothing else that changes or sends. It needs SulcusAI open then. {} Each run is saved as a chat.",
+            said(&actions),
+            if once { "It's in Tasks until it's done; cancel it there." } else { "Change or stop it under Scheduled." }
+        )
+    };
+    Ok(Preview { title: format!("Schedule “{name}”: {}", schedule::describe(&cadence)), kind: "text", detail: Some(prompt), note: Some(note) })
 }
 
 pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
@@ -126,6 +176,10 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     };
     let cadence = match cadence_of(args) {
         Ok(c) => c,
+        Err(e) => return Outcome::error(format!("Schedule “{name}”"), e),
+    };
+    let actions = match actions_of(args) {
+        Ok(a) => a,
         Err(e) => return Outcome::error(format!("Schedule “{name}”"), e),
     };
     let next = match schedule::next_run(&cadence, Local::now()) {
@@ -143,6 +197,7 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         model_id: chat.as_ref().and_then(|c| c.model_id.clone()),
         project_id: chat.as_ref().and_then(|c| c.project_id.clone()),
         allow_changes: false,
+        actions: actions.clone(),
         enabled: true,
         last_run: None,
         next_run: Some(next.timestamp_millis()),
@@ -154,8 +209,10 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
     crate::db::log_action(&conn, "agent", "Saved a scheduled task (the assistant asked)");
     let when = schedule::describe(&cadence);
     let first = next.format("%A, %B %-d at %-I:%M %p");
+    let place = if matches!(cadence, Cadence::Once { .. }) { "Tasks (it's done once it runs)" } else { "Scheduled" };
+    let may = if actions.is_empty() { String::new() } else { format!(" When it runs it will {} by itself, as approved.", said(&actions)) };
     Outcome::ok(
-        format!("Scheduled “{name}”: {when}, first on {first}. It runs by itself while SulcusAI is open, and each run is saved as a chat; the user can change or stop it under Scheduled. Tell them that in a sentence."),
+        format!("Scheduled “{name}”: {when}, first on {first}.{may} It runs while SulcusAI is open, and each run is saved as a chat; the user can see, change or cancel it under {place}. Tell them that in a sentence."),
         format!("Scheduled “{name}”: {when}"),
         "text",
         None,

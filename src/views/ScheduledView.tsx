@@ -42,6 +42,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
     model_id: null,
     project_id: null,
     allow_changes: false,
+    actions: [],
     enabled: true,
     last_run: null,
     next_run: null,

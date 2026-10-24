@@ -26,7 +26,7 @@ import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
 import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
-import { LinkedChats } from "./components/ChatPanels";
+import { ChatNotes, LinkedChats } from "./components/ChatPanels";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ShareChatDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
@@ -46,7 +46,7 @@ import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
 import { DownloadsPill } from "./components/Downloads";
 import { IncognitoIcon } from "./components/IncognitoIcon";
-import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon, ViewerIcon } from "./components/Icons";
+import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon, SidebarIcon, ViewerIcon } from "./components/Icons";
 import { onPhone } from "./phone/env";
 import { SharePermission } from "./components/SharePermission";
 
@@ -189,6 +189,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const { view, setView, activeChat, setActiveChat, activeProject, setActiveProject } = nav;
   // Where the web viewer opens: a link sent to it, or as it was (url null).
   const [viewerStart, setViewerStart] = useState<{ url: string | null; at: number }>({ url: null, at: 0 });
+  // Chats whose own browser is open beside them, and where each starts.
+  const [browserChats, setBrowserChats] = useState<Record<string, { url: string | null; at: number }>>({});
+  const openChatBrowser = (chatId: string, url: string | null) => setBrowserChats((all) => ({ ...all, [chatId]: { url, at: Date.now() } }));
+  const shutChatBrowser = (chatId: string) =>
+    setBrowserChats((all) => {
+      const { [chatId]: _, ...rest } = all;
+      return rest;
+    });
+  const viewRef = useRef<string>("chat");
   // On a paired phone: the sidebar slides in as a menu, closed again on the way somewhere.
   const phone = onPhone();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -296,6 +305,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   }, []);
   const activeChatRef = useRef(activeChat);
   activeChatRef.current = activeChat;
+  viewRef.current = view;
 
   const refreshChats = useCallback(async () => setChats(await api.chats()), []);
   // Chat folders and the chats and models locked against the automatic cleanup.
@@ -352,9 +362,17 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       // The assistant showing the user a page (open_page).
       on("app:navigate", (p) => setView(p.page as View)),
       // A link opened while the main browser is the web viewer.
+      // In a chat: its own browser, beside it; elsewhere the Web page.
       on("viewer:open", (p) => {
+        const chat = activeChatRef.current;
+        if (viewRef.current === "chat" && chat) return openChatBrowser(chat, p.url);
         setViewerStart({ url: p.url, at: Date.now() });
         setView("web");
+      }),
+      // A chat's assistant opened a page: its browser shows beside the chat.
+      on("viewer:dock", (p) => {
+        if (p.key === "main") return;
+        setBrowserChats((all) => (all[p.key] ? all : { ...all, [p.key]: { url: null, at: Date.now() } }));
       }),
       on("sync:changed", () => {
         refreshChats();
@@ -421,9 +439,29 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   // Where a dragged menu item or chat would land: before or after this one.
   const [navOver, setNavOver] = useState<{ id: string; at: "before" | "after" } | null>(null);
   const [chatOver, setChatOver] = useState<{ id: string; at: "before" | "after" } | null>(null);
-  const [navMenu, setNavMenu] = useState<{ x: number; y: number } | null>(null);
+  const [navMenu, setNavMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const tucked = layout.collapsed ?? [];
+  const sideHidden = !!layout.hidden;
+  // Ctrl+B folds the sidebar away or brings it back (not while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      e.preventDefault();
+      setLayout((l) => {
+        const next = { ...l, hidden: !l.hidden };
+        api.setSidebarLayout(next).catch(() => {});
+        return next;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // Connecting this chat with another, so they can ask and tell each other things.
   const [connecting, setConnecting] = useState<string | null>(null);
+  // A chat's notes, opened from its menu.
+  const [notesFor, setNotesFor] = useState<string | null>(null);
   // Chats hidden from the list (own ones by id, shared ones as "contact:chat"), shown under "Hidden chats".
   const [hidden, setHidden] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
@@ -636,7 +674,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   );
 
   return (
-    <div className={phone ? `app phone${menuOpen ? " menu-open" : ""}` : "app"}>
+    <div className={phone ? `app phone${menuOpen ? " menu-open" : ""}` : `app${sideHidden ? " side-hidden" : ""}`}>
       {phone && menuOpen && <div className="phone-scrim" onClick={() => setMenuOpen(false)} aria-hidden="true" />}
       <aside className="sidebar">
         <div className="brand">
@@ -645,6 +683,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           {security.lock_enabled && (
             <button className="icon-btn lock-btn" title={t("Lock now")} aria-label={t("Lock now")} onClick={() => api.lockNow()}>
               <LockIcon />
+            </button>
+          )}
+          {!phone && (
+            <button className="icon-btn side-fold" title={t("Hide the menu (Ctrl+B)")} aria-label={t("Hide the menu")} onClick={() => saveLayout({ ...layout, hidden: true })}>
+              <SidebarIcon />
             </button>
           )}
         </div>
@@ -676,7 +719,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           </button>
         </div>
         <nav className="nav" aria-label={t("Main")}>
-          {arrange(
+          {(() => {
+          const all = arrange(
             [
               { id: "pc", show: phone, label: <><PcIcon /> {t("PC")}</> },
               { id: "studio", show: creates, label: t("Studio") },
@@ -690,7 +734,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               { id: "scheduled", show: has("scheduled"), label: t("Scheduled") },
             ].filter((n) => n.show),
             layout.nav,
-          ).map((n, i, shown) => (
+          );
+          const navButton = (n: (typeof all)[number], i: number, shown: typeof all) => (
             <button
               key={n.id}
               className={`${view === n.id ? "active" : ""} ${navOver?.id === n.id ? `drop-${navOver.at}` : ""}`}
@@ -719,14 +764,31 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 if (to) saveLayout({ ...layout, nav: placed(shown.map((x) => x.id), n.id, to.id, e.key === "ArrowUp" ? "before" : "after") });
               }}
               onContextMenu={(e) => {
-                if (layout.nav.length === 0) return;
                 e.preventDefault();
-                setNavMenu({ x: e.clientX, y: e.clientY });
+                setNavMenu({ id: n.id, x: e.clientX, y: e.clientY });
               }}
             >
               {n.label}
             </button>
-          ))}
+          );
+          const main = all.filter((n) => !tucked.includes(n.id));
+          const folded = all.filter((n) => tucked.includes(n.id));
+          // The page open now shows even when its group is folded.
+          const open = !!layout.collapse_open || folded.some((n) => n.id === view);
+          return (
+            <>
+              {main.map((n, i) => navButton(n, i, main))}
+              {folded.length > 0 && (
+                <>
+                  <button className="nav-fold small muted" aria-expanded={open} onClick={() => saveLayout({ ...layout, collapse_open: !layout.collapse_open })}>
+                    {open ? "▾" : "▸"} {t("Collapse ({n})", { n: folded.length })}
+                  </button>
+                  {open && <div className="nav-folded">{folded.map((n, i) => navButton(n, i, folded))}</div>}
+                </>
+              )}
+            </>
+          );
+          })()}
         </nav>
         {has("projects") && <div className="side-section">
           <div className="side-head">
@@ -828,9 +890,14 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                   </button>
                 )}
                 {!chats.find((c) => c.id === id)?.incognito && (
-                  <button role="menuitem" onClick={() => (done(), setConnecting(id))}>
-                    {t("Connect session…")}
-                  </button>
+                  <>
+                    <button role="menuitem" onClick={() => (done(), setNotesFor(id))}>
+                      {t("Notes…")}
+                    </button>
+                    <button role="menuitem" onClick={() => (done(), setConnecting(id))}>
+                      {t("Connect session…")}
+                    </button>
+                  </>
                 )}
                 {layout.chats.length > 0 && (
                   <button role="menuitem" onClick={() => (done(), saveLayout({ ...layout, chats: [] }))}>
@@ -872,10 +939,24 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       )}
       {navMenu && (
         <FloatingMenu x={navMenu.x} y={navMenu.y} onClose={() => setNavMenu(null)}>
-          <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, nav: [] }))}>
-            {t("Put the menu back in its usual order")}
-          </button>
+          {tucked.includes(navMenu.id) ? (
+            <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, collapsed: tucked.filter((x) => x !== navMenu.id) }))}>
+              {t("Take out of Collapse")}
+            </button>
+          ) : (
+            <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, collapsed: [...tucked, navMenu.id] }))}>
+              {t("Add to Collapse")}
+            </button>
+          )}
+          {layout.nav.length > 0 && (
+            <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, nav: [] }))}>
+              {t("Put the menu back in its usual order")}
+            </button>
+          )}
         </FloatingMenu>
+      )}
+      {notesFor && chats.some((c) => c.id === notesFor) && (
+        <ChatNotes chat={chats.find((c) => c.id === notesFor)!} onClose={() => setNotesFor(null)} toast={toast} />
       )}
       {connecting && chats.some((c) => c.id === connecting) && (
         <LinkedChats chat={chats.find((c) => c.id === connecting)!} onOpenChat={openChat} onClose={() => setConnecting(null)} toast={toast} />
@@ -1050,8 +1131,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         )}
         {!phone && (
           <TopBar
-            viewerOpen={view === "web"}
+            sideHidden={sideHidden}
+            onShowSide={() => saveLayout({ ...layout, hidden: false })}
+            viewerOpen={view === "web" || (view === "chat" && !!activeChat && !!browserChats[activeChat])}
             onViewer={() => {
+              // In a chat: its own browser beside it (shown or hidden).
+              if (view === "chat" && activeChat) {
+                if (browserChats[activeChat]) shutChatBrowser(activeChat);
+                else openChatBrowser(activeChat, null);
+                return;
+              }
               setViewerStart({ url: null, at: Date.now() });
               setView("web");
             }}
@@ -1060,7 +1149,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         )}
         <Suspense fallback={<PageLoading />}>
         {view === "pc" && <PcView toast={toast} />}
-        {view === "web" && !phone && <WebViewerView start={viewerStart} toast={toast} />}
+        {view === "web" && !phone && <WebViewerView start={viewerStart} toast={toast} onClose={() => setView("chat")} />}
         {view === "chat" && (
           <ChatView
             chat={current}
@@ -1081,13 +1170,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             onToggleWeb={toggleChatWeb}
             features={features ?? new Set()}
             onGoFeatures={() => setView("features")}
+            browser={!phone && current ? browserChats[current.id] ?? null : null}
+            onBrowser={(open) => current && (open ? openChatBrowser(current.id, null) : shutChatBrowser(current.id))}
             toast={toast}
           />
         )}
         {view === "features" && <FeaturesView progress={progress} toast={toast} />}
         {view === "studio" && <StudioView features={features ?? new Set()} progress={progress} toast={toast} onGoFeatures={() => setView("features")} />}
         {view === "notes" && <NotesView toast={toast} />}
-        {view === "tasks" && <TasksView toast={toast} />}
+        {view === "tasks" && <TasksView onOpenChat={openChat} toast={toast} />}
         {view === "mail" && <MailView toast={toast} />}
         {view === "calendar" && <CalendarView toast={toast} />}
         {view === "models" && (
@@ -1268,7 +1359,7 @@ function NewProjectDialog({ onClose, onCreate }: { onClose: () => void; onCreate
 
 /** Across the top of the page: the web viewer's button, and the globe,
  * which opens the main browser (Chrome unless another was picked). */
-function TopBar({ viewerOpen, onViewer, toast }: { viewerOpen: boolean; onViewer: () => void; toast: PushToast }) {
+function TopBar({ sideHidden, onShowSide, viewerOpen, onViewer, toast }: { sideHidden: boolean; onShowSide: () => void; viewerOpen: boolean; onViewer: () => void; toast: PushToast }) {
   const [view, setView] = useState<BrowsersView | null>(null);
   useEffect(() => {
     const load = () => api.browsersView().then(setView).catch(() => {});
@@ -1279,6 +1370,11 @@ function TopBar({ viewerOpen, onViewer, toast }: { viewerOpen: boolean; onViewer
   const name = view?.current.kind === "app" ? view.current.name : view?.current.kind === "system" ? t("your default browser") : t("the web viewer");
   return (
     <div className="topbar">
+      {sideHidden && (
+        <button className="icon-btn side-show" title={t("Show the menu (Ctrl+B)")} aria-label={t("Show the menu")} onClick={onShowSide}>
+          <SidebarIcon />
+        </button>
+      )}
       <FeedbackButton toast={toast} />
       <button className={`icon-btn web-btn${viewerOpen ? " active" : ""}`} title={t("Open the web viewer")} aria-label={t("Open the web viewer")} onClick={onViewer}>
         <ViewerIcon />

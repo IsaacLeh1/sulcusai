@@ -18,6 +18,8 @@
 
 pub mod ask;
 pub mod codes;
+mod files;
+pub mod lend;
 mod link;
 pub mod mailbox;
 mod pipe;
@@ -108,6 +110,12 @@ struct Contact {
     /// Tell them when this user has read their messages (off unless chosen,
     /// for each person).
     read_receipts: bool,
+    /// What they may use of this PC's models in chats shared with them.
+    lend: lend::Lend,
+    /// This user named them (`name`) themselves: their own name doesn't
+    /// replace it. `their_name` is what they call themselves.
+    renamed: bool,
+    their_name: String,
 }
 
 /// Chats this user shares with anyone.
@@ -233,6 +241,12 @@ fn listen_again() {
 pub struct FileView {
     name: String,
     size: u64,
+    /// A folder (saved by unpacking it).
+    folder: bool,
+    /// Still arriving (or going): the bytes so far.
+    got: Option<u64>,
+    /// It couldn't arrive.
+    failed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -276,8 +290,14 @@ struct Item {
 #[serde(default)]
 struct FileItem {
     name: String,
-    /// Base64.
+    /// Base64 (empty when it comes in parts).
     data: String,
+    /// It comes in parts (files.rs), this big, with this SHA-256.
+    parts: bool,
+    size: u64,
+    sha: String,
+    /// A folder, zipped.
+    folder: bool,
 }
 
 fn row_view(c: &Cipher, r: &rusqlite::Row) -> rusqlite::Result<MessageView> {
@@ -288,7 +308,16 @@ fn row_view(c: &Cipher, r: &rusqlite::Row) -> rusqlite::Result<MessageView> {
         from_me: r.get::<_, i64>(1)? != 0,
         at: r.get(2)?,
         text: c.decrypt_or(&r.get::<_, String>(3)?, ""),
-        file: file_name.map(|n| FileView { name: c.decrypt_or(&n, "file"), size: file_size.unwrap_or(0).max(0) as u64 }),
+        file: file_name.map(|n| {
+            let got: Option<i64> = r.get(11).unwrap_or(None);
+            FileView {
+                name: c.decrypt_or(&n, "file"),
+                size: file_size.unwrap_or(0).max(0) as u64,
+                folder: r.get::<_, Option<String>>(10).ok().flatten().as_deref() == Some("folder"),
+                got: got.filter(|g| *g >= 0).map(|g| g as u64),
+                failed: got.is_some_and(|g| g < 0),
+            }
+        }),
         delivered: r.get::<_, i64>(6)? != 0,
         read: r.get::<_, i64>(7)? != 0,
         edited: r.get::<_, Option<i64>>(8)?.is_some(),
@@ -297,14 +326,21 @@ fn row_view(c: &Cipher, r: &rusqlite::Row) -> rusqlite::Result<MessageView> {
 }
 
 /// `seen`: this user's message, read by them (their read receipt).
-const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent, seen, edited, deleted";
+const COLUMNS: &str = "id, from_me, at, body, file_name, file_size, sent, seen, edited, deleted, file_kind, file_got";
 
 fn messages(conn: &Connection, c: &Cipher, contact: &str) -> Result<Vec<MessageView>, String> {
     let mut stmt = conn
         .prepare(&format!("SELECT {COLUMNS} FROM people_messages WHERE contact_id = ?1 ORDER BY at, rowid"))
         .map_err(err)?;
     let rows = stmt.query_map([contact], |r| row_view(c, r)).map_err(err)?;
-    Ok(rows.filter_map(Result::ok).collect())
+    let mut list: Vec<MessageView> = rows.filter_map(Result::ok).collect();
+    // A big file of this user's on its way: how far it's got.
+    for m in list.iter_mut().filter(|m| m.from_me) {
+        if let Some(f) = m.file.as_mut() {
+            f.got = files::sending(contact, &m.id);
+        }
+    }
+    Ok(list)
 }
 
 fn last_message(conn: &Connection, c: &Cipher, contact: &str) -> Option<MessageView> {
@@ -328,23 +364,42 @@ fn unread(conn: &Connection) -> HashMap<String, i64> {
 /// What's waiting for someone (leaving out what's already on its way), up
 /// to what one batch carries.
 fn outgoing(state: &AppState, c: &Cipher, contact: &str, skip: &HashSet<String>) -> Result<Vec<Item>, String> {
-    let rows: Vec<(String, i64, String, Option<String>)> = {
+    type Row = (String, i64, String, Option<String>, i64, Option<i64>, Option<String>, Option<String>);
+    let rows: Vec<Row> = {
         let conn = state.db.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, at, body, file_name FROM people_messages WHERE contact_id = ?1 AND from_me = 1 AND sent = 0 AND deleted = 0 ORDER BY at, rowid")
+            .prepare("SELECT id, at, body, file_name, file_parts, file_size, file_sha, file_kind FROM people_messages WHERE contact_id = ?1 AND from_me = 1 AND sent = 0 AND deleted = 0 ORDER BY at, rowid")
             .map_err(err)?;
-        let rows = stmt.query_map([contact], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).map_err(err)?;
-        rows.filter_map(Result::ok).filter(|r: &(String, i64, String, Option<String>)| !skip.contains(&r.0)).collect()
+        let rows = stmt.query_map([contact], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?))).map_err(err)?;
+        rows.filter_map(Result::ok).filter(|r: &Row| !skip.contains(&r.0)).collect()
     };
     let mut items = Vec::new();
     let mut size = 0;
-    for (id, at, body, file_name) in rows {
+    for (id, at, body, file_name, in_parts, file_size, sha, kind) in rows {
         let text = c.decrypt(&body)?;
+        // A big file: only to an app that takes parts (it waits until then);
+        // the parts follow when they ask for them.
+        if in_parts == 1 {
+            if !files::capable(contact) {
+                continue;
+            }
+            let file = FileItem {
+                name: file_name.map(|n| c.decrypt_or(&n, "file")).unwrap_or_default(),
+                parts: true,
+                size: file_size.unwrap_or(0).max(0) as u64,
+                sha: sha.unwrap_or_default(),
+                folder: kind.as_deref() == Some("folder"),
+                ..Default::default()
+            };
+            size += text.len() + 512;
+            items.push(Item { id, at, text, file: Some(file) });
+            continue;
+        }
         // A file that can't be read anymore goes without it rather than holding up the rest.
         let file = file_name.and_then(|n| {
             let blob = std::fs::read(files_dir(state, contact).join(&id)).ok()?;
             let data = c.open_bytes(&blob).ok()?;
-            Some(FileItem { name: c.decrypt_or(&n, "file"), data: B64.encode(data) })
+            Some(FileItem { name: c.decrypt_or(&n, "file"), data: B64.encode(data), ..Default::default() })
         });
         let n = text.len() + file.as_ref().map_or(0, |f| f.data.len() + f.name.len()) + 256;
         if !items.is_empty() && size + n > SEND_BUDGET {
@@ -391,7 +446,19 @@ fn take(state: &AppState, c: &Cipher, p: &Contact, items: Vec<Item>) -> Result<(
         }
         it.text = it.text.chars().take(MAX_TEXT).collect();
         let mut file = None;
-        if let Some(f) = it.file.take() {
+        // A big file: it starts empty here and its parts are asked for.
+        let mut in_parts = None;
+        if let Some(f) = it.file.take_if(|f| f.parts) {
+            let sha_ok = f.sha.is_empty() || f.sha.len() == 64 && f.sha.chars().all(|ch| ch.is_ascii_hexdigit());
+            if f.size == 0 || f.size > files::MAX_BIG || !sha_ok {
+                got.push(it.id);
+                continue;
+            }
+            files::begin(state, c, &p.id, &it.id)?;
+            file = Some((clean_file_name(&f.name), f.size as i64));
+            in_parts = Some((f.sha.clone(), f.folder));
+            it.file = Some(FileItem { name: clean_file_name(&f.name), ..Default::default() });
+        } else if let Some(f) = it.file.take() {
             let data = B64.decode(f.data.as_bytes()).ok().filter(|d| d.len() as u64 <= MAX_FILE);
             let Some(data) = data else {
                 got.push(it.id);
@@ -401,7 +468,7 @@ fn take(state: &AppState, c: &Cipher, p: &Contact, items: Vec<Item>) -> Result<(
             std::fs::create_dir_all(&dir).map_err(err)?;
             std::fs::write(dir.join(&it.id), c.seal_bytes(&data)).map_err(err)?;
             file = Some((clean_file_name(&f.name), data.len() as i64));
-            it.file = Some(FileItem { name: clean_file_name(&f.name), data: String::new() });
+            it.file = Some(FileItem { name: clean_file_name(&f.name), ..Default::default() });
         }
         if it.text.trim().is_empty() && file.is_none() {
             got.push(it.id);
@@ -410,11 +477,25 @@ fn take(state: &AppState, c: &Cipher, p: &Contact, items: Vec<Item>) -> Result<(
         it.at = it.at.clamp(0, now);
         let conn = state.db.lock().unwrap();
         conn.execute(
-            "INSERT OR IGNORE INTO people_messages (contact_id, id, from_me, at, body, file_name, file_size, sent, read)
-             VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, 1, 0)",
-            params![p.id, it.id, it.at, c.encrypt(&it.text), file.as_ref().map(|f| c.encrypt(&f.0)), file.as_ref().map(|f| f.1)],
+            "INSERT OR IGNORE INTO people_messages (contact_id, id, from_me, at, body, file_name, file_size, sent, read, file_parts, file_got, file_sha, file_kind)
+             VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, 1, 0, ?7, ?8, ?9, ?10)",
+            params![
+                p.id,
+                it.id,
+                it.at,
+                c.encrypt(&it.text),
+                file.as_ref().map(|f| c.encrypt(&f.0)),
+                file.as_ref().map(|f| f.1),
+                in_parts.is_some() as i64,
+                in_parts.as_ref().map(|_| 0i64),
+                in_parts.as_ref().map(|s| s.0.clone()).filter(|s| !s.is_empty()),
+                in_parts.as_ref().filter(|s| s.1).map(|_| "folder")
+            ],
         )
         .map_err(err)?;
+        if in_parts.is_some() {
+            link::send(&p.id, link::Frame::Want { id: it.id.clone(), from: 0 });
+        }
         got.push(it.id.clone());
         fresh.push(it);
     }
@@ -630,9 +711,14 @@ fn keep(state: &AppState, c: &Cipher, id: &str, name: &str, key: &[u8], addr: Op
     update(state, |b| {
         let before = b.contacts.iter().find(|p| p.id == id).cloned();
         b.contacts.retain(|p| p.id != id);
+        // Linked again: a name this user gave them stays.
+        let renamed = before.as_ref().filter(|p| p.renamed).map(|p| p.name.clone());
         b.contacts.push(Contact {
             id: id.to_string(),
-            name: name.clone(),
+            name: renamed.clone().unwrap_or_else(|| name.clone()),
+            renamed: renamed.is_some(),
+            their_name: name.clone(),
+            lend: before.as_ref().map(|p| p.lend.clone()).unwrap_or_default(),
             key: sealed,
             addr: addr.map(|a| a.to_string()).or(before.as_ref().and_then(|p| p.addr.clone())),
             added_at: before.as_ref().map_or(now, |p| p.added_at),
@@ -738,6 +824,39 @@ async fn resolve(target: &str) -> Result<SocketAddr, String> {
     addrs.find(|a| a.is_ipv4()).ok_or_else(|| help.to_string())
 }
 
+pub fn message_params() -> serde_json::Value {
+    serde_json::json!({ "type": "object", "required": ["person", "text"], "properties": {
+        "person": { "type": "string", "description": "Their name as it appears in People." },
+        "text": { "type": "string", "description": "The message, as the user wants it sent." } } })
+}
+
+/// The `message_person` tool: a People message from the user to someone
+/// linked. Asked first like anything sent, or approved with the timed
+/// action that sends it ("message Josh at midnight: happy birthday").
+pub fn message_tool(args: &serde_json::Value, ctx: &crate::tools::Ctx<'_>) -> crate::tools::Outcome {
+    use crate::tools::Outcome;
+    let person = args.get("person").and_then(|v| v.as_str()).unwrap_or_default();
+    let text: String = args.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().chars().take(MAX_TEXT).collect();
+    let title = format!("Messaged {person}");
+    if text.is_empty() {
+        return Outcome::error(title, "Write the message.");
+    }
+    let p = match ask::find(ctx.state, person) {
+        Ok(p) => p,
+        Err(e) => return Outcome::error(title, e),
+    };
+    let title = format!("Messaged {} in People", p.name);
+    match queue(ctx.state, ctx.memory.cipher, &p.id, &text, None) {
+        Ok(_) => {
+            emit(ctx.state, "people:message", serde_json::json!({ "contact_id": p.id }));
+            ctx.state.log("people", &format!("Your assistant sent {} a message you approved", p.name));
+            let later = if link::reachable(&p.id) { "" } else { " It goes as soon as their app is reached." };
+            Outcome::ok(format!("Sent to {}: “{text}”.{later}", p.name), title, "text", Some(text))
+        }
+        Err(e) => Outcome::error(title, e),
+    }
+}
+
 /// For the assistant's instructions: who the user is linked with, when
 /// anyone is (None hides the People tools).
 pub fn assistant_note(state: &AppState) -> Option<String> {
@@ -751,9 +870,9 @@ pub fn assistant_note(state: &AppState) -> Option<String> {
         .map(|p| format!("{} ({})", p.name, if link::connected(&p.id) { "connected" } else { "not connected" }))
         .collect();
     Some(format!(
-        "
-
-The user is linked in People with: {}. With ask_person you can ask a connected person's assistant something only they would know;          with work_with_person your assistants can work something out together, like a time to meet. Only use these when the user's request needs the other person.",
+        "\n\nThe user is linked in People with: {}. With message_person you send one of them a message from the user (it goes now, or when their app \
+         is next reached); with ask_person you ask a connected person's assistant something only they would know; with work_with_person your \
+         assistants work something out together, like a time to meet. Only use these when the user's request needs the other person.",
         people.join(", ")
     ))
 }
@@ -788,6 +907,10 @@ pub struct ContactView {
     offer_relay: bool,
     /// This user tells them when they've read their messages.
     read_receipts: bool,
+    /// What they may use of this PC's models in chats shared with them.
+    lend: lend::Lend,
+    /// The name they gave themselves, when this user renamed them.
+    their_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -854,6 +977,8 @@ fn view(state: &AppState, c: &Cipher) -> PeopleView {
                 via_pipe: pipe::through(&p.id),
                 offer_relay: p.offer_relay,
                 read_receipts: p.read_receipts,
+                lend: p.lend.clone(),
+                their_name: (p.renamed && !p.their_name.is_empty() && p.their_name != p.name).then(|| p.their_name.clone()),
             }
         })
         .collect();
@@ -1007,6 +1132,32 @@ pub(super) fn they_read(state: &AppState, contact: &str, ids: &[String]) {
     }
 }
 
+/// Names someone for this user only (they don't see it); an empty name goes
+/// back to the one they gave themselves.
+#[tauri::command(async)]
+pub fn people_rename(state: AppStateRef, id: String, name: String) -> Result<(), String> {
+    features::require(&state, Feature::People)?;
+    // Empty: their own name again.
+    let name = if name.trim().is_empty() { String::new() } else { clean_name(&name) };
+    let found = update(&state, |b| {
+        b.contacts.iter_mut().find(|x| x.id == id).map(|x| {
+            if x.their_name.is_empty() {
+                x.their_name = x.name.clone();
+            }
+            if name.trim().is_empty() || name == x.their_name {
+                x.renamed = false;
+                x.name = x.their_name.clone();
+            } else {
+                x.renamed = true;
+                x.name = name.clone();
+            }
+        })
+    })?;
+    found.ok_or("They aren't linked anymore.")?;
+    changed(&state);
+    Ok(())
+}
+
 /// Whether to tell this person when their messages have been read. Turning
 /// it on tells them about the latest ones read already.
 #[tauri::command(async)]
@@ -1043,6 +1194,53 @@ pub(super) fn set_read_receipts(state: &AppState, id: &str, on: bool) -> Result<
     Ok(())
 }
 
+/// A folder (zipped) or a big file for someone: sealed here in parts, then
+/// the message goes like any other and the parts follow when they ask.
+fn queue_big(state: &AppState, c: &Cipher, contact: &str, text: &str, path: &std::path::Path, folder: bool) -> Result<MessageView, String> {
+    let msg_id = uuid::Uuid::new_v4().simple().to_string();
+    let dir = files_dir(state, contact);
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let stored = dir.join(&msg_id);
+    let base = clean_file_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    let sealed = if folder { files::seal_folder(c, path, &stored).map(|(s, h, _)| (s, h)) } else { files::seal_file(c, path, &stored) };
+    let (size, sha) = match sealed {
+        Ok(x) => x,
+        Err(e) => {
+            let _ = std::fs::remove_file(&stored);
+            return Err(e);
+        }
+    };
+    let name = if folder { format!("{base}.zip") } else { base };
+    let at = db::now_ms();
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO people_messages (contact_id, id, from_me, at, body, file_name, file_size, sent, read, file_parts, file_sha, file_kind) VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, 0, 1, 1, ?7, ?8)",
+            params![contact, msg_id, at, c.encrypt(text), c.encrypt(&name), size as i64, sha, folder.then_some("folder")],
+        )
+        .map_err(err)?;
+    if link::connected(contact) {
+        link::flush(state, contact);
+    } else {
+        link::reset(contact);
+        mailbox::nudge(contact);
+        link::wake();
+    }
+    Ok(MessageView {
+        id: msg_id,
+        from_me: true,
+        at,
+        text: text.to_string(),
+        file: Some(FileView { name, size, folder, got: None, failed: false }),
+        delivered: false,
+        read: false,
+        edited: false,
+        deleted: false,
+    })
+}
+
 /// Stores a message for someone; it goes right away if they're connected,
 /// or waits until they are.
 fn queue(state: &AppState, c: &Cipher, contact: &str, text: &str, file: Option<(String, Vec<u8>)>) -> Result<MessageView, String> {
@@ -1075,7 +1273,7 @@ fn queue(state: &AppState, c: &Cipher, contact: &str, text: &str, file: Option<(
         from_me: true,
         at,
         text: text.to_string(),
-        file: file.map(|(name, data)| FileView { name, size: data.len() as u64 }),
+        file: file.map(|(name, data)| FileView { name, size: data.len() as u64, folder: false, got: None, failed: false }),
         delivered: false,
         read: false,
         edited: false,
@@ -1090,6 +1288,16 @@ pub fn people_send(state: AppStateRef, id: String, text: String, file: Option<St
     let c = state.cipher()?;
     let p = contact(&state, &id).ok_or("They aren't linked anymore.")?;
     let text: String = text.trim().chars().take(MAX_TEXT).collect();
+    // A folder, or a file over what one message carries: in parts.
+    if let Some(path) = file.as_deref().filter(|f| !f.trim().is_empty()).map(PathBuf::from) {
+        let meta = std::fs::metadata(&path).map_err(|_| "That file couldn't be read.".to_string())?;
+        if meta.is_dir() || meta.len() > MAX_FILE {
+            if meta.len() > files::MAX_BIG {
+                return Err(format!("That file is {} GB. Files up to {} GB can be sent.", meta.len() >> 30, files::MAX_BIG >> 30));
+            }
+            return queue_big(&state, &c, &p.id, &text, &path, meta.is_dir());
+        }
+    }
     let file = match file.filter(|f| !f.trim().is_empty()) {
         Some(path) => {
             let path = PathBuf::from(path);
@@ -1109,7 +1317,8 @@ pub fn people_send(state: AppStateRef, id: String, text: String, file: Option<St
     queue(&state, &c, &p.id, &text, file)
 }
 
-/// Saves a file someone sent (or you sent) where the user picked.
+/// Saves a file someone sent (or you sent) where the user picked: a folder
+/// is unpacked into the folder picked.
 #[tauri::command(async)]
 pub fn people_save_file(state: AppStateRef, id: String, message: String, to: String) -> Result<(), String> {
     features::require(&state, Feature::People)?;
@@ -1117,7 +1326,30 @@ pub fn people_save_file(state: AppStateRef, id: String, message: String, to: Str
     if !safe_id(&id) || !safe_id(&message) {
         return Err("That file isn't here.".into());
     }
-    let blob = std::fs::read(files_dir(&state, &id).join(&message)).map_err(|_| "That file isn't on this PC anymore.".to_string())?;
+    let stored = files_dir(&state, &id).join(&message);
+    if files::in_parts(&stored) {
+        let (got, kind): (Option<i64>, Option<String>) = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT file_got, file_kind FROM people_messages WHERE contact_id = ?1 AND id = ?2", params![id, message], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|_| "That file isn't here.".to_string())?;
+        if got.is_some() {
+            return Err("It hasn't all arrived yet.".into());
+        }
+        let folder = kind.as_deref() == Some("folder");
+        let to = PathBuf::from(&to);
+        // A folder goes in a folder of its own name, inside the one picked.
+        let to = if folder {
+            let name = state.db.lock().unwrap().query_row("SELECT file_name FROM people_messages WHERE contact_id = ?1 AND id = ?2", params![id, message], |r| r.get::<_, Option<String>>(0)).ok().flatten();
+            let name = name.map(|n| c.decrypt_or(&n, "folder")).unwrap_or_else(|| "folder".into());
+            to.join(clean_file_name(name.trim_end_matches(".zip")))
+        } else {
+            to
+        };
+        return files::save(&c, &stored, &to, folder);
+    }
+    let blob = std::fs::read(&stored).map_err(|_| "That file isn't on this PC anymore.".to_string())?;
     let data = c.open_bytes(&blob)?;
     std::fs::write(&to, data).map_err(|e| format!("Couldn't save it there ({e})."))?;
     Ok(())

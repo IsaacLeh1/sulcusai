@@ -231,6 +231,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
             use_tools: true,
             vision: false,
             unattended: false,
+            pre_approved: None,
             base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
             about: String::new(),
             cancel: Arc::new(AtomicBool::new(false)),
@@ -351,7 +352,7 @@ async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, ru
 /// lets a 20B mixture of experts run beside a 12 GB card), and for gpt-oss
 /// the request settings `llm_endpoint` adds (reasoning effort, a reply long
 /// enough to think in).
-async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
+pub(crate) async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
     let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
     let ctx: u32 = std::env::var("SULCUSAI_TEST_CTX").ok().and_then(|v| v.parse().ok()).unwrap_or(16_384);
     // Only a mixture of experts has experts to keep in memory (llama-server
@@ -622,6 +623,7 @@ async fn e2e_chat_works_on_an_attached_song() {
         use_tools: true,
         vision: false,
         unattended: false,
+        pre_approved: None,
         base: chat::system_prompt(&Profile::default(), "today").0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -671,6 +673,7 @@ async fn e2e_lyrics_are_refined_as_text() {
             use_tools: true,
             vision: false,
             unattended: false,
+            pre_approved: None,
             base: chat::system_prompt(&Profile::default(), "today").0,
             about: String::new(),
             cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -797,6 +800,7 @@ async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cip
         use_tools: true,
         vision: false,
         unattended: false,
+        pre_approved: None,
         base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -1367,7 +1371,11 @@ async fn a_compacted_chat_carries_on_from_its_summary() {
     let system = msgs[0]["content"].as_str().unwrap();
     assert!(system.contains("Earlier in this conversation") && system.contains("trip to Zion in November"), "the summary is in the instructions");
     let said: Vec<&str> = msgs[1..].iter().filter_map(|m| m["content"].as_str()).collect();
-    assert!(said.len() == 1 && said[0].ends_with("What should I pack?"), "the older messages are left to the summary: {said:?}");
+    // (The chat's notes ride after it; the summary isn't repeated there.)
+    assert!(said.len() == 1 && said[0].contains("What should I pack?"), "the older messages are left to the summary: {said:?}");
+    assert_eq!(said[0].matches("trip to Zion in November").count(), 0, "the summary only once, in the instructions");
+    let notes = crate::chatnotes::get(&state.db.lock().unwrap(), &cipher, &chat.id);
+    assert!(notes.contains("## Earlier in this chat") && notes.contains("trip to Zion in November"), "kept in the chat's notes: {notes}");
     // The person still sees everything, with the summary marked.
     let all = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
     assert!(all.iter().any(|m| m.content == "Help me plan a trip to Zion."));
@@ -2141,7 +2149,9 @@ async fn e2e_second_voice_and_real_work() {
         let code = all_text(&site).to_lowercase();
         let has = |w: &[&str]| w.iter().any(|x| code.contains(x));
         let features = [("saved", has(&["localstorage"])), ("delete", has(&["delete", "remove"])), ("edit", has(&["edit"])), ("chart", has(&["<canvas", "chart"])), ("balance", has(&["balance"]))];
-        results.push(format!("build: in {}, files {:?}, problems at each check {checks:?}, features {features:?}, {steps} steps, stops {stopped:?}, {:.0}s", site.display(), walkdir_names(&site), t.elapsed().as_secs_f64()));
+        // Parts left as "TODO" aren't done, whatever words are there.
+        let unfinished = crate::tools::fs::added_stubs("", &code).len();
+        results.push(format!("build: in {}, files {:?}, problems at each check {checks:?}, features {features:?}, unfinished lines {unfinished}, {steps} steps, stops {stopped:?}, {:.0}s", site.display(), walkdir_names(&site), t.elapsed().as_secs_f64()));
     }
 
     approver.abort();
@@ -4505,6 +4515,7 @@ async fn e2e_chat_real_photo_and_uploaded_edit() {
         use_tools: true,
         vision: false,
         unattended: false,
+        pre_approved: None,
         base: chat::system_prompt(&Profile::default(), &chrono::Local::now().format("%A, %B %-d, %Y").to_string()).0,
         about: String::new(),
         cancel: std::sync::Arc::new(AtomicBool::new(false)),
@@ -4622,7 +4633,7 @@ async fn e2e_advanced() {
         a.processing.thinking = crate::advanced::Thinking::Off;
         crate::db::set(&conn, "advanced", &a).unwrap();
     }
-    let (ep, _, _) = crate::llm_endpoint(&state, Some(spec.id.clone()), false, || {}).await.unwrap();
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(spec.id.clone()), false, |_| {}).await.unwrap();
     let st = state.engine.lock().await.status();
     println!("engine: ctx {:?}, gpu layers {:?}; request extra {}", st.ctx, st.gpu_layers, ep.extra);
     assert_eq!((st.ctx, st.gpu_layers), (Some(2048), Some(0)));
@@ -4745,9 +4756,9 @@ async fn e2e_cloud_anthropic() {
     tokio::spawn(async move { axum::serve(listener, app).await.ok() });
 
     let model = crate::cloud::CloudModel { id: "claude-opus-5-5".into(), name: "Claude Opus 5.5".into(), ctx: 1_000_000, max_output: 128_000, vision: true, price_in: Some(4.0), price_out: Some(20.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model], media: Vec::new(), cookies: String::new() });
+    let state = cloud_state(crate::cloud::Provider { id: "anthropic".into(), name: "Anthropic".into(), kind: crate::cloud::Kind::Anthropic, base_url: format!("http://127.0.0.1:{port}"), enabled: true, key: "sk-ant-test".into(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![] });
     let id = "cloud:anthropic:claude-opus-5-5".to_string();
-    let (ep, spec, _) = crate::llm_endpoint(&state, Some(id.clone()), false, || {}).await.unwrap();
+    let (ep, spec, _) = crate::llm_endpoint(&state, Some(id.clone()), false, |_| {}).await.unwrap();
     assert_eq!(spec.name, "Claude Opus 5.5");
     let tools = serde_json::json!([{ "type": "function", "function": { "name": "weather", "description": "Weather for a place", "parameters": { "type": "object", "properties": { "place": { "type": "string" } } } } }]);
     let messages = vec![serde_json::json!({ "role": "system", "content": "Be brief." }), serde_json::json!({ "role": "user", "content": "Weather in Paris? Then email jo@example.com." })];
@@ -4781,11 +4792,11 @@ async fn e2e_cloud_anthropic() {
     // Over budget: refused before anything is sent.
     let month = chrono::Local::now().format("%Y-%m").to_string();
     crate::db::set(&state.db.lock().unwrap(), "cloud_spend", &crate::cloud::Spend { month, usd: 9.0, ..Default::default() }).unwrap();
-    let e = crate::llm_endpoint(&state, Some(id.clone()), false, || {}).await.err().unwrap();
+    let e = crate::llm_endpoint(&state, Some(id.clone()), false, |_| {}).await.err().unwrap();
     assert!(e.contains("budget"), "{e}");
     // Not at the Cloud level: refused.
     crate::db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = crate::net::Connectivity::Web).unwrap();
-    let e = crate::llm_endpoint(&state, Some(id), false, || {}).await.err().unwrap();
+    let e = crate::llm_endpoint(&state, Some(id), false, |_| {}).await.err().unwrap();
     assert!(e.contains("Cloud level"), "{e}");
     std::fs::remove_dir_all(&state.paths.data).ok();
 }
@@ -4807,8 +4818,8 @@ async fn e2e_cloud_openai() {
     let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None };
     let local = eng.ensure(launch, None).await.unwrap();
     let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
-    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new(), cookies: String::new() });
-    let (ep, _, _) = crate::llm_endpoint(&state, Some("cloud:custom-test:qwen3-1.7b".into()), false, || {}).await.unwrap();
+    let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![] });
+    let (ep, _, _) = crate::llm_endpoint(&state, Some("cloud:custom-test:qwen3-1.7b".into()), false, |_| {}).await.unwrap();
 
     let ask = vec![serde_json::json!({ "role": "user", "content": "Repeat exactly, nothing else: my address is jo@example.com /no_think" })];
     let done = crate::chat::stream(&ep, ask, None, &std::sync::atomic::AtomicBool::new(false), |_| {}).await.unwrap();
@@ -4975,7 +4986,7 @@ async fn e2e_cloud_media() {
         CloudMedia { id: "sora-2".into(), name: "Sora 2".into(), kind: MediaKind::Video, price: Some(0.10) },
         CloudMedia { id: "gpt-4o-mini-tts".into(), name: "Voices".into(), kind: MediaKind::Speech, price: Some(12.0) },
     ];
-    let state = cloud_state(crate::cloud::Provider { id: "openai".into(), name: "OpenAI".into(), kind: crate::cloud::Kind::Openai, base_url: format!("http://127.0.0.1:{port}/v1"), enabled: true, key: "sk-test".into(), models: Vec::new(), media, cookies: String::new() });
+    let state = cloud_state(crate::cloud::Provider { id: "openai".into(), name: "OpenAI".into(), kind: crate::cloud::Kind::Openai, base_url: format!("http://127.0.0.1:{port}/v1"), enabled: true, key: "sk-test".into(), models: Vec::new(), media, cookies: String::new(), share_pcs: false, share_people: vec![] });
     assert_eq!(crate::cloud::media_choices(&state.db.lock().unwrap()).len(), 3);
     assert!(crate::media::can_make(&state, crate::media::Kind::Image), "chats offer pictures through the cloud");
 

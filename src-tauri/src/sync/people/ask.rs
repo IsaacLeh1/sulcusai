@@ -421,7 +421,7 @@ fn start_answer(state: Arc<AppState>, contact: String, id: String) {
         };
         let system = answer_brief(&state, &c, &p);
         let history = vec![message("user", &a.question)];
-        let result = think(&state, &p.allow, &system, history, &stop, &on_step, &p.name).await;
+        let result = think(&state, &p.allow, &system, history, &stop, &on_step, Some(&p)).await;
         WORKING.lock().unwrap().remove(&id);
         let (text, status) = match result {
             Ok(t) if !t.trim().is_empty() => (short(&t), "answered"),
@@ -607,11 +607,14 @@ pub(super) fn is_free(state: &AppState, c: &Cipher, args: &Value, times: bool) -
     let mut text = match time.and_then(|t| crate::notes::to_ms(date, Some(t))) {
         Some(start) => {
             let end = start + minutes * 60_000;
-            let at = format!("{label}, {} – {}", clock(start), clock(end));
+            // The time asked about only: a range read like when something is
+            // (a 4B model said "busy from 3:30 to 4:30" for a dentist at 3).
+            let at = format!("{label} at {}", clock(start));
+            let span = if minutes == 60 { "an hour".to_string() } else { format!("{minutes} minutes") };
             if busy.iter().any(|(s, e)| *s < end && *e > start) {
-                format!("No: busy then ({at}).")
+                format!("No: not free on {at} (for {span} from then). Say only that; it isn't when anything starts or ends.")
             } else {
-                format!("Yes: free then ({at}).")
+                format!("Yes: free on {at}, for {span} from then.")
             }
         }
         None if busy.iter().all(|(s, e)| *e <= day + 9 * 3_600_000 || *s >= day + 17 * 3_600_000) => format!("Yes: free {label} between 9 and 5."),
@@ -663,7 +666,7 @@ pub(super) async fn endpoint(state: &Arc<AppState>, model: Option<String>) -> Re
         return Ok((ep, false));
     }
     let before = state.engine.lock().await.current().map(|(_, ep)| ep.key);
-    let (ep, _, _) = crate::llm_endpoint(state, model, false, || {}).await?;
+    let (ep, _, _) = crate::llm_endpoint(state, model, false, |_| {}).await?;
     let mut ours = LOADED_FOR_ASKS.lock().unwrap();
     let only_for_this = ep.cloud.is_none() && (before.as_deref() != Some(ep.key.as_str()) || ours.contains(&ep.key));
     if only_for_this {
@@ -697,9 +700,10 @@ fn unload_later(state: &Arc<AppState>, key: String) {
     });
 }
 
-/// Runs this app's assistant for someone else's (`who`; empty for this
+/// Runs this app's assistant for someone else's (`who`; None for this
 /// user's own): the model `allow` picks, with the tools it allows, from
-/// `history`, writing a little at a time. Returns its final words.
+/// `history`, writing a little at a time. Returns its final words. What it
+/// used of this PC for someone else is logged (`lend`).
 pub(super) async fn think(
     state: &Arc<AppState>,
     allow: &Allow,
@@ -707,10 +711,13 @@ pub(super) async fn think(
     mut history: Vec<Message>,
     stop: &AtomicBool,
     on_step: &(dyn Fn(String) + Send + Sync),
-    who: &str,
+    who: Option<&Contact>,
 ) -> Result<String, String> {
     let c = state.work_cipher()?;
+    let started = (db::now_ms(), Instant::now());
     let (mut ep, only_for_this) = endpoint(state, allow.model.clone()).await?;
+    let model_name = super::lend::model_name(state, allow.model.as_deref());
+    let (mut tokens_in, mut tokens_out) = (0i64, 0i64);
     let key = ep.key.clone();
     // Short steps: a question about someone needs no long writing.
     if !ep.extra.is_object() {
@@ -754,6 +761,8 @@ pub(super) async fn think(
             // The last step must answer.
             let offer = if step + 1 == STEPS { None } else { offer };
             let finished = crate::chat::stream(&ep, crate::chat::api_messages(system, &kept), offer, stop, |_| {}).await?;
+            tokens_in += finished.prompt_tokens.unwrap_or(0) as i64;
+            tokens_out += finished.completion_tokens.unwrap_or(0) as i64;
             if finished.tool_calls.is_empty() {
                 return Ok(finished.content.trim().to_string());
             }
@@ -768,7 +777,7 @@ pub(super) async fn think(
                     ADD_EVENT if added >= MOST_ADDS => Outcome::error("Didn't add more", "That's as many events as can be added for one question."),
                     ADD_EVENT => {
                         added += 1;
-                        add_event(state, &args, &ctx, if who.is_empty() { "you" } else { who }).await
+                        add_event(state, &args, &ctx, who.map_or("you", |p| p.name.as_str())).await
                     }
                     n => tools::run(n, &args, &ctx).await,
                 };
@@ -783,6 +792,17 @@ pub(super) async fn think(
     .await;
     if only_for_this {
         unload_later(state, key);
+    }
+    if let Some(p) = who {
+        let usd = ep.cloud.as_ref().map_or(0.0, |t| tokens_in as f64 * t.model.price_in.unwrap_or(0.0) / 1e6 + tokens_out as f64 * t.model.price_out.unwrap_or(0.0) / 1e6);
+        let outcome = match &result {
+            Ok(_) => "done".to_string(),
+            Err(_) if stop.load(std::sync::atomic::Ordering::Relaxed) => "stopped".to_string(),
+            Err(e) => format!("failed: {e}"),
+        };
+        let run = super::lend::Run { at: started.0, kind: "question".into(), chat_id: None, chat_title: None, model: model_name, ms: started.1.elapsed().as_millis() as i64, tokens_in, tokens_out, usd, outcome };
+        super::lend::log_run(&state.db.lock().unwrap(), &p.id, &run);
+        emit(state, "people:runs", json!({ "contact_id": p.id }));
     }
     result
 }

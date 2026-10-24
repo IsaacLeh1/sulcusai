@@ -290,6 +290,13 @@ fn time_of(s: &str) -> Option<NaiveTime> {
 /// into a date (and maybe a time), counting from `from`.
 pub fn parse_due(text: &str, from: NaiveDate) -> Option<(NaiveDate, Option<NaiveTime>)> {
     let t = text.trim().to_lowercase();
+    // A model's ISO time ("2026-10-09T15:30:00Z"): the date, then the time.
+    static ISO: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^(\d{4}-\d{2}-\d{2})[t ](\d{1,2}:\d{2})(:\d{2})?(\.\d+)?(z|[+-]\d{2}:?\d{2})?$").unwrap());
+    let t = match ISO.captures(&t) {
+        Some(c) => format!("{} {}", &c[1], &c[2]),
+        None => t,
+    };
     let t = t.trim_start_matches("by ").trim_start_matches("due ").trim_start_matches("on ").trim();
     if t.is_empty() {
         return None;
@@ -321,6 +328,9 @@ pub fn parse_due(text: &str, from: NaiveDate) -> Option<(NaiveDate, Option<Naive
         _ => {
             if let Ok(iso) = NaiveDate::parse_from_str(d, "%Y-%m-%d") {
                 iso
+            } else if let Ok(us) = NaiveDate::parse_from_str(d, "%m/%d/%Y") {
+                // "10/09/2026", as written in the US.
+                us
             } else if let Some(wd) = weekday(d.trim_start_matches("next ").trim_start_matches("this ")) {
                 let mut ahead = (wd.num_days_from_monday() as i64 - from.weekday().num_days_from_monday() as i64).rem_euclid(7);
                 // The same weekday as today means next week's.
@@ -534,6 +544,20 @@ mod tests {
         assert_eq!(parse_due("noon", tue).unwrap().1, NaiveTime::from_hms_opt(12, 0, 0));
         assert_eq!(parse_due("soon", tue), None);
         assert_eq!(parse_due("", tue), None);
+    }
+
+    #[test]
+    fn times_the_way_small_models_write_them() {
+        // What a small model passes to is_free or add_to_calendar.
+        let tue = day(2026, 10, 6);
+        let at = |h, m| NaiveTime::from_hms_opt(h, m, 0);
+        assert_eq!(parse_due("Friday, October 9 at 3:30 pm", tue), Some((day(2026, 10, 9), at(15, 30))));
+        assert_eq!(parse_due("2026-10-09 15:30", tue), Some((day(2026, 10, 9), at(15, 30))));
+        assert_eq!(parse_due("2026-10-09T15:30:00", tue), Some((day(2026, 10, 9), at(15, 30))));
+        assert_eq!(parse_due("Oct 9, 2026 3:30 PM", tue), Some((day(2026, 10, 9), at(15, 30))));
+        assert_eq!(parse_due("friday 10am", tue), Some((day(2026, 10, 9), at(10, 0))));
+        assert_eq!(parse_due("Tuesday at noon", tue), Some((day(2026, 10, 13), at(12, 0))));
+        assert_eq!(parse_due("10/09/2026 3:30pm", tue), Some((day(2026, 10, 9), at(15, 30))));
     }
 
     #[test]

@@ -70,6 +70,10 @@ pub struct Schedule {
     pub project_id: Option<String>,
     /// Run in Bypass mode with every tool; otherwise read-only.
     pub allow_changes: bool,
+    /// Tools it may use without asking, approved when it was set up (a
+    /// one-time action: message_person, email_send, …).
+    #[serde(default)]
+    pub actions: Vec<String>,
     pub enabled: bool,
     pub last_run: Option<i64>,
     pub next_run: Option<i64>,
@@ -220,8 +224,24 @@ pub fn delete(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A model for scheduled runs in tests (the state there has none installed).
+#[cfg(test)]
+pub(crate) static TEST_ENDPOINT: std::sync::Mutex<Option<crate::engine::Endpoint>> = std::sync::Mutex::new(None);
+
 /// Runs one schedule now and saves the result as a chat. Returns the chat id.
 pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result<String, String> {
+    let emitter = app.clone();
+    let emit: agent::Emit = Arc::new(move |event: &str, payload: serde_json::Value| {
+        emitter.emit(event, payload).ok();
+    });
+    let (chat_id, result) = run_with(state, s, emit).await?;
+    app.emit("chat:done", json!({ "chat_id": chat_id, "error": result.as_ref().err() })).ok();
+    result.map(|_| chat_id)
+}
+
+/// The run itself, telling `emit` what happens (the window, or nothing in
+/// a test). The chat it made, and how its turn went.
+pub async fn run_with(state: &Arc<AppState>, s: &Schedule, emit: agent::Emit) -> Result<(String, Result<(), String>), String> {
     let cipher = state.work_cipher()?;
     let (profile, title) = {
         let conn = state.db.lock().unwrap();
@@ -234,7 +254,7 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         let conn = state.db.lock().unwrap();
         let chat = db::create_chat_in(&conn, &cipher, s.model_id.clone(), s.project_id.clone(), false)?;
         db::set_chat_title(&conn, &cipher, &chat.id, &title)?;
-        db::set_chat_mode(&conn, &chat.id, if s.allow_changes { "bypass" } else { "plan" })?;
+        db::set_chat_mode(&conn, &chat.id, if s.allow_changes { "bypass" } else if s.actions.is_empty() { "plan" } else { "auto" })?;
         let turn_id = uuid::Uuid::new_v4().to_string();
         db::add_message(&conn, &cipher, &Message {
             id: turn_id.clone(),
@@ -247,33 +267,47 @@ pub async fn run(app: &AppHandle, state: &Arc<AppState>, s: &Schedule) -> Result
         (chat.id, turn_id)
     };
     let Some((cancel, _guard)) = crate::claim(&state.generations, &chat_id) else { return Err("Already running.".into()) };
-    let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), false, || {}).await?;
-    db::set_chat_model(&state.db.lock().unwrap(), &chat_id, &installed.model_id)?;
+    #[cfg(test)]
+    let test = TEST_ENDPOINT.lock().unwrap().clone();
+    #[cfg(not(test))]
+    let test: Option<crate::engine::Endpoint> = None;
+    let (ep, use_tools) = match test {
+        Some(ep) => (ep, true),
+        None => {
+            let (ep, spec, installed) = crate::llm_endpoint(state, s.model_id.clone(), false, |_| {}).await?;
+            db::set_chat_model(&state.db.lock().unwrap(), &chat_id, &installed.model_id)?;
+            (ep, spec.tools)
+        }
+    };
     let today = Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
     let base = format!("{}\n\n{}", crate::advanced::get(&state).base_prompt(base), chat::runs_where(&ep));
     let base = format!("{base}\n\nThis is a scheduled task (\"{}\") running on its own; the user isn't watching. Do the task and reply with the result.", s.name);
-    let emitter = app.clone();
+    let base = if s.actions.is_empty() {
+        base
+    } else {
+        format!("{base} The user approved it when they set it up, so do exactly what it says now with your tools (they won't be asked again), and only that.")
+    };
     let turn = agent::Turn {
-        emit: Arc::new(move |event: &str, payload: serde_json::Value| {
-            emitter.emit(event, payload).ok();
-        }),
+        emit,
         state: state.clone(),
         chat_id: chat_id.clone(),
         turn_id,
         cipher,
         ep,
-        mode: if s.allow_changes { tools::Mode::Bypass } else { tools::Mode::Plan },
-        use_tools: spec.tools,
+        mode: if s.allow_changes { tools::Mode::Bypass } else if s.actions.is_empty() { tools::Mode::Plan } else { tools::Mode::Auto },
+        use_tools,
         vision: false,
         unattended: true,
+        // A one-time action (or any task) with actions approved when it was
+        // set up: those, and nothing else that changes or sends.
+        pre_approved: (!s.allow_changes && !s.actions.is_empty()).then(|| s.actions.clone()),
         base,
         about,
         cancel,
     };
-    let result = turn.run().await;
-    app.emit("chat:done", json!({ "chat_id": chat_id, "error": result.as_ref().err() })).ok();
-    result.map(|_| chat_id)
+    let result = turn.run().await.map(|_| ());
+    Ok((chat_id, result))
 }
 
 /// Checks every half minute for due tasks while the app is open and unlocked.
@@ -375,6 +409,11 @@ pub async fn run_schedule_now(app: AppHandle, state: AppStateRef<'_>, id: String
     if let Some(mut fresh) = list(&conn, &c).into_iter().find(|s| s.id == id) {
         fresh.last_run = Some(now_ms());
         fresh.last_chat = Some(chat_id.clone());
+        // A one-time action done early is done: it doesn't run again at its time.
+        if matches!(fresh.cadence, Cadence::Once { .. }) {
+            fresh.enabled = false;
+            fresh.next_run = None;
+        }
         save(&conn, &c, &fresh)?;
     }
     Ok(chat_id)
@@ -472,6 +511,7 @@ mod tests {
             model_id: None,
             project_id: None,
             allow_changes: false,
+            actions: Vec::new(),
             enabled: true,
             last_run: None,
             next_run: Some(1),

@@ -18,6 +18,7 @@ mod browsers;
 mod calendar;
 mod catalog;
 mod chat;
+mod chatnotes;
 mod compact;
 mod cloud;
 mod checkpoint;
@@ -1205,7 +1206,7 @@ fn speed_progress(app: &AppHandle, update: impl FnOnce(&mut SpeedStatus), extra:
 
 /// One model's speed test, loaded as chats load it.
 async fn test_speed(state: &Arc<AppState>, model_id: &str) -> Result<engine::Speed, String> {
-    let (ep, spec, _) = llm_endpoint(state, Some(model_id.to_string()), false, || {}).await?;
+    let (ep, spec, _) = llm_endpoint(state, Some(model_id.to_string()), false, |_| {}).await?;
     let sp = engine::measure(&ep).await?;
     db::set_speed(&state.db.lock().unwrap(), model_id, sp.tps, sp.prompt_tps)?;
     state.log("model", &format!("Measured {}: writes {:.1} tokens/sec, reads {} tokens/sec", spec.name, sp.tps, sp.prompt_tps.map(|p| format!("{p:.0}")).unwrap_or_else(|| "?".into())));
@@ -1598,10 +1599,7 @@ async fn compact_chat(app: AppHandle, state: AppStateRef<'_>, chat_id: String) -
     if covered == 0 {
         return Err("There's nothing new to compact yet.".into());
     }
-    let (ep, _, _) = llm_endpoint(&state, chat.model_id.clone(), false, || {
-        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
-    })
-    .await?;
+    let (ep, _, _) = llm_endpoint(&state, chat.model_id.clone(), false, chat_waiting(&app, &chat_id)).await?;
     app.emit("chat:status", json!({ "chat_id": chat_id, "status": "compacting" })).ok();
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
@@ -1632,7 +1630,7 @@ fn set_auto_model(state: AppStateRef, on: bool) -> Result<Settings, String> {
 /// models, a model taught here, or one on this PC.
 pub(crate) fn model_known(conn: &rusqlite::Connection, model_id: &str) -> bool {
     if cloud::is_cloud(model_id) {
-        cloud::choices(conn).iter().any(|c| c.id == model_id)
+        cloud::resolve(conn, model_id).is_some()
     } else if let Some(aid) = finetune::parse_ref(model_id) {
         db::get::<Vec<finetune::Adapter>>(conn, "adapters").unwrap_or_default().iter().any(|a| a.id == aid)
     } else {
@@ -1763,7 +1761,13 @@ fn set_chat_model(state: AppStateRef, chat_id: String, model_id: String) -> Resu
         });
     }
     state.contexts.lock().unwrap().remove(&chat_id);
-    db::set_chat_model(&conn, &chat_id, &model_id)
+    db::set_chat_model(&conn, &chat_id, &model_id)?;
+    drop(conn);
+    // A cloud provider's chats may go to people (Settings, Cloud models).
+    if let Ok(c) = state.cipher() {
+        sync::people::share::follow_provider(&state, &c, &chat_id);
+    }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1893,6 +1897,10 @@ fn chat_live(state: AppStateRef, chat_id: String) -> Option<serde_json::Value> {
 
 #[tauri::command]
 async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, text: String, images: Option<Vec<String>>) -> Result<Option<Message>, String> {
+    // A new chat on a cloud model whose provider shares its chats with people.
+    if let Ok(c) = state.cipher() {
+        sync::people::share::follow_provider(&state, &c, &chat_id);
+    }
     // The turn is built on the heap: a command starts on the main thread,
     // and in 0.9.26 sending a message overflowed its stack (the app closed).
     Box::pin(run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None)).await
@@ -1982,10 +1990,7 @@ async fn run_turn_with(
                 app.emit("chat:routed", json!({ "chat_id": chat_id, "model_id": p.model_id, "name": p.name, "task": p.task.word() })).ok();
             }
             let model_id = routed.map(|p| p.model_id).or_else(|| chat.model_id.clone());
-            let (ep, spec, _) = llm_endpoint(state, model_id, pictures, || {
-                app.emit("chat:status", json!({ "chat_id": chat_id, "status": "loading" })).ok();
-            })
-            .await?;
+            let (ep, spec, _) = llm_endpoint(state, model_id, pictures, chat_waiting(app, &chat_id)).await?;
             let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
             (ep, spec.tools, vision)
         }
@@ -2081,6 +2086,7 @@ async fn run_turn_with(
         use_tools,
         vision,
         unattended: false,
+        pre_approved: None,
         base,
         about,
         cancel,
@@ -2238,9 +2244,25 @@ fn load_failed(state: &AppState, spec: &ModelSpec, quant: &str, ctx: u32, layers
     format!("{} couldn't load: the engine stopped while loading it. {reason}", spec.name)
 }
 
+/// A chat's status while its model is on the way: loading, or its place in
+/// line behind other chats using another model.
+pub(crate) fn chat_waiting<'a>(app: &'a AppHandle, chat_id: &'a str) -> impl FnMut(engine::Wait) + 'a {
+    move |w| {
+        let status = match w {
+            engine::Wait::Loading => json!({ "chat_id": chat_id, "status": "loading" }),
+            engine::Wait::Line(place, other) => json!({ "chat_id": chat_id, "status": "queued", "place": place, "detail": other }),
+        };
+        app.emit("chat:status", status).ok();
+    }
+}
+
 /// How long a request for another model waits for the replies using the
 /// loaded one to finish (an agent task can take minutes).
 const WAIT_FOR_REPLIES: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// How long a request waits in line for another model (the chats ahead of
+/// it can each run a long agent task).
+const WAIT_IN_LINE: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
 /// The stop flags of the replies running now.
 fn replies(state: &AppState) -> Vec<Arc<AtomicBool>> {
@@ -2249,12 +2271,13 @@ fn replies(state: &AppState) -> Vec<Arc<AtomicBool>> {
 
 /// Starts (or reuses) the engine for a model: the given one, else the
 /// default. Returns the endpoint and the model. Another model isn't stopped
-/// while replies are using it: this waits for them, then gives up.
+/// while replies are using it: one model runs at a time, so this waits in
+/// line (`on_wait` hears its place) for them, then loads it.
 pub(crate) async fn llm_endpoint(
     state: &Arc<AppState>,
     model_id: Option<String>,
     pictures: bool,
-    on_loading: impl FnOnce(),
+    on_wait: impl FnMut(engine::Wait),
 ) -> Result<(engine::Endpoint, ModelSpec, InstalledModel), String> {
     // Replies running before this request that weren't given a model yet:
     // this request's own, when a chat makes it.
@@ -2323,7 +2346,16 @@ pub(crate) async fn llm_endpoint(
         return Err(format!("{}'s model file is damaged: {why}. Open Models and press Download again on it.", spec.name));
     }
     let encoder = if pictures { ensure_vision(state, &spec).await? } else { vision_file(&state.paths, &spec) };
-    let mut on_loading = Some(on_loading);
+    // Said once each time it changes.
+    let mut on_wait = on_wait;
+    let mut told: Option<engine::Wait> = None;
+    let mut tell = move |w: engine::Wait| {
+        if told.as_ref() != Some(&w) {
+            told = Some(w.clone());
+            on_wait(w);
+        }
+    };
+    let mut ticket: Option<engine::Ticket> = None;
     let asked = std::time::Instant::now();
     let mut ep = loop {
         let mut engine = state.engine.lock().await;
@@ -2357,21 +2389,22 @@ pub(crate) async fn llm_endpoint(
             if busy > 0 || engine.matches_tuned(&launch, plan.tuning) {
                 break ep;
             }
-        } else if busy > 0 {
+        } else if busy > 0 || ticket.as_ref().map_or(engine::waiting() > 0, |t| t.place() > 1) {
+            // Replies on the model running now, or others who asked for
+            // another model first: this waits its turn in line.
             drop(engine);
             if before.iter().any(|f| f.load(Ordering::Relaxed)) {
                 return Err("Stopped before the model loaded.".into());
             }
-            if asked.elapsed() >= WAIT_FOR_REPLIES {
-                let other = loaded.map(|(id, _)| state.model_spec(&id).map_or(id, |s| s.name)).unwrap_or_default();
-                if held == busy {
+            let other = loaded.map(|(id, _)| state.model_spec(&id).map_or(id, |s| s.name)).unwrap_or_default();
+            if asked.elapsed() >= WAIT_IN_LINE {
+                if held == busy && busy > 0 {
                     return Err(format!("A background job (the mail report, meeting notes or a translation) is still using {other}. Try again when it's done."));
                 }
-                return Err(format!("Another chat is still answering with {other}, and stopping it would cut that reply off. Try again when it's done, or stop it first."));
+                return Err(format!("This waited 30 minutes in line while other chats answered with {other}. Try again when they're done, or stop them first."));
             }
-            if let Some(f) = on_loading.take() {
-                f();
-            }
+            let place = ticket.get_or_insert_with(engine::Ticket::new).place();
+            tell(engine::Wait::Line(place, other));
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             continue;
         }
@@ -2390,9 +2423,7 @@ pub(crate) async fn llm_endpoint(
         if now != was || now.is_some_and(|key| engine::held(&key) + engine::USERS.lock().unwrap().others(&replies(state), &before, &key, task) > 0) {
             continue;
         }
-        if let Some(f) = on_loading.take() {
-            f();
-        }
+        tell(engine::Wait::Loading);
         let ep = match engine.ensure_tuned(launch, plan.tuning, state.job()).await {
             Ok(ep) => ep,
             Err(e) => return Err(load_failed(state, &spec, &installed.quant, plan.ctx, plan.gpu_layers, want, e)),
@@ -2513,7 +2544,7 @@ pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine
         watch_work(state, &ep);
         return Ok((ep, spec, hold));
     }
-    let (ep, spec, _) = llm_endpoint(state, None, false, || {}).await?;
+    let (ep, spec, _) = llm_endpoint(state, None, false, |_| {}).await?;
     let hold = engine::Hold::new(&ep.key);
     Ok((ep, spec, hold))
 }
@@ -2529,7 +2560,7 @@ async fn engine_status(state: AppStateRef<'_>) -> Result<EngineStatus, String> {
 #[tauri::command]
 async fn load_default_model(state: AppStateRef<'_>) -> Result<(), String> {
     let state = state.inner().clone();
-    llm_endpoint(&state, None, false, || {}).await?;
+    llm_endpoint(&state, None, false, |_| {}).await?;
     Ok(())
 }
 
@@ -2728,6 +2759,7 @@ pub fn run() {
             viewer::viewer_hide,
             viewer::viewer_go,
             viewer::viewer_url,
+            viewer::viewer_exists,
             viewer::viewer_close,
             docs::open_document,
             docs::show_in_folder,
@@ -2792,6 +2824,8 @@ pub fn run() {
             hidden::hidden_chats,
             hidden::set_chat_hidden,
             hidden::sidebar_layout,
+            chatnotes::chat_notes,
+            chatnotes::set_chat_notes,
             hidden::set_sidebar_layout,
             sitekeys::site_key_ask,
             sitekeys::site_key_give,
@@ -2897,6 +2931,7 @@ pub fn run() {
             cloud::set_cloud_media,
             cloud::set_cloud_options,
             cloud::cloud_choices,
+            cloud::set_cloud_sharing,
             cloud::cloud_sign_in,
             cloud::chat_cloud_spend,
             backup::make_backup,
@@ -2943,6 +2978,8 @@ pub fn run() {
             sync::people::share::people_unwatch,
             sync::people::share::people_shared_chats,
             sync::people::share::people_shared_post,
+            sync::people::share::people_shared_model,
+            sync::people::share::people_set_shared_model,
             sync::people::share::people_shared_stop,
             sync::people::ask::people_requests,
             sync::people::ask::people_reply,
@@ -2952,6 +2989,10 @@ pub fn run() {
             sync::people::ask::people_asks,
             sync::people::mailbox::people_set_relay_offer,
             sync::people::people_set_read_receipts,
+            sync::people::people_rename,
+            sync::people::lend::people_runs,
+            sync::people::lend::people_set_lend,
+            sync::people::lend::people_lent,
             finetune::finetune_view,
             finetune::start_finetune,
             finetune::cancel_finetune,

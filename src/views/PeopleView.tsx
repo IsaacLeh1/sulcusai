@@ -3,7 +3,7 @@
 // directly. Messages go app to app; they never go to a model.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { open as openFile, save } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
+import { api, errorText, on, type Lend, type LendOffer, type LendRuns, type LendTotals, type PeopleView as View, type PersonAllow, type PersonAsk, type PersonContact, type PersonMessage, type SharedChat, type SharedView } from "../api";
 import { Markdown } from "../components/Markdown";
 import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartInput";
 import { PeopleConnect } from "../components/PeopleConnect";
@@ -11,8 +11,8 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
-import { PaperclipIcon } from "../components/Icons";
-import { ModelSelect } from "../components/ModelChoices";
+import { FolderIcon, PaperclipIcon } from "../components/Icons";
+import { ModelSelect, useModelChoices } from "../components/ModelChoices";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -198,12 +198,19 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
   const [text, setText] = useState("");
   const helpers = useTypingHelpers();
   const [file, setFile] = useState<string | null>(null);
+  // The pick is a folder (it goes zipped).
+  const [isFolder, setIsFolder] = useState(false);
+  // Big files and folders going or arriving: bytes so far, as they move.
+  const [moving, setMoving] = useState<Record<string, number>>({});
   const [sending, setSending] = useState(false);
   const [menu, setMenu] = useState(false);
   const [address, setAddress] = useState<string | null>(null);
   const [tab, setTab] = useState<"messages" | "shared">("messages");
   const [asks, setAsks] = useState<PersonAsk[]>([]);
   const [allowing, setAllowing] = useState(false);
+  const [lending, setLending] = useState(false);
+  // Their name being changed (for this user only).
+  const [renaming, setRenaming] = useState<string | null>(null);
   // "Also ask {name}'s assistant" for the message being written (one message at a time).
   const [alsoAsk, setAlsoAsk] = useState(false);
   // A message of this user's being changed.
@@ -224,6 +231,11 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
     load();
     const subs = [
       on("people:message", (p) => p.contact_id === c.id && load()),
+      on("people:file", (p) => {
+        if (p.contact_id !== c.id) return;
+        setMoving((all) => ({ ...all, [p.id]: p.got }));
+        if (p.got >= p.size) load();
+      }),
       on("people:changed", load),
       on("people:ask", (p) => p.contact_id === c.id && api.peopleAsks(c.id).then(setAsks).catch(() => {})),
     ];
@@ -260,6 +272,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
       }
       setText("");
       setFile(null);
+      setIsFolder(false);
       setAlsoAsk(false);
       atBottom.current = true;
     } catch (e) {
@@ -287,17 +300,26 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
       toast(errorText(e), "error");
     }
   };
-  const pick = async () => {
-    const path = await openFile({ multiple: false, directory: false });
-    if (typeof path === "string") setFile(path);
+  const pick = async (folder: boolean) => {
+    const path = await openFile({ multiple: false, directory: folder });
+    if (typeof path === "string") {
+      setFile(path);
+      setIsFolder(folder);
+    }
   };
+  const copy = (m: PersonMessage) =>
+    navigator.clipboard
+      .writeText(m.text)
+      .then(() => toast(t("Copied."), "success"))
+      .catch(() => toast(t("Couldn't copy it."), "error"));
   const saveFile = async (m: PersonMessage) => {
     if (!m.file) return;
-    const to = await save({ defaultPath: m.file.name });
-    if (!to) return;
+    // A folder is unpacked inside the folder picked; a file is saved as picked.
+    const to = m.file.folder ? await openFile({ directory: true, multiple: false }) : await save({ defaultPath: m.file.name });
+    if (typeof to !== "string" || !to) return;
     try {
       await api.peopleSaveFile(c.id, m.id, to);
-      toast(t("Saved {name}.", { name: m.file.name }), "success");
+      toast(m.file.folder ? t("Saved the folder {name} in {place}.", { name: m.file.name.replace(/\.zip$/i, ""), place: to }) : t("Saved {name}.", { name: m.file.name }), "success");
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -307,6 +329,16 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
     if (!window.confirm(t("Remove {name}? Your messages with them are deleted from this PC, and they can't reach you until you connect again.", { name: c.name }))) return;
     try {
       await api.peopleRemove(c.id);
+      onChanged();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const rename = async () => {
+    if (renaming === null) return;
+    try {
+      await api.peopleRename(c.id, renaming);
+      setRenaming(null);
       onChanged();
     } catch (e) {
       toast(errorText(e), "error");
@@ -332,7 +364,29 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
       <header className="people-chat-head">
         <Avatar name={c.name} online={c.online} />
         <div className="person-text">
-          <strong>{c.name}</strong>
+          {renaming !== null ? (
+            <span className="row rename-row">
+              <input
+                className="input small"
+                value={renaming}
+                autoFocus
+                maxLength={60}
+                aria-label={t("Their name, for you")}
+                onChange={(e) => setRenaming(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") rename();
+                  if (e.key === "Escape") setRenaming(null);
+                }}
+              />
+              <button className="btn small primary" onClick={rename}>{t("Save")}</button>
+              <button className="btn small ghost" onClick={() => setRenaming(null)}>{t("Cancel")}</button>
+            </span>
+          ) : (
+            <strong title={c.their_name ? t("They call themselves {name}", { name: c.their_name }) : undefined}>
+              {c.name}
+              {c.their_name && <span className="small muted"> ({c.their_name})</span>}
+            </strong>
+          )}
           <span className="small muted">
             {c.online ? (c.via_pipe ? t("Online, through SulcusAI's relay (encrypted)") : t("Online")) : c.via_relay ? t("Through the relay") : seen(c.last_seen)}
             {!c.online && !c.via_relay && c.error && <span className="warn-text"> · {t("Can't reach them right now.")}</span>}
@@ -361,6 +415,25 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
                 }}
               >
                 {t("Your assistant for {name}…", { name: c.name })}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenu(false);
+                  setLending(true);
+                }}
+              >
+                {c.lend?.on ? "✓ " : ""}
+                {t("Let {name} use this PC's models…", { name: c.name })}
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenu(false);
+                  setRenaming(c.name);
+                }}
+              >
+                {t("Rename…")}
               </button>
               <button
                 role="menuitem"
@@ -495,20 +568,42 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
               <div className={`pmsg ${m.from_me ? "mine" : ""}`}>
                 <div className="pbubble">
                   {m.text && <span className="ptext">{m.text}</span>}
-                  {m.file && (
-                    <span className="pfile">
-                      <PaperclipIcon />
-                      <span className="ellipsis">{m.file.name}</span>
-                      <span className="muted small">{bytes(m.file.size)}</span>
-                      <button className="btn ghost small" onClick={() => saveFile(m)}>
-                        {t("Save…")}
-                      </button>
-                    </span>
-                  )}
+                  {m.file &&
+                    (() => {
+                      const f = m.file;
+                      const got = moving[m.id] ?? f.got ?? null;
+                      const going = !f.failed && got !== null && got < f.size;
+                      const pct = going ? Math.floor((got / Math.max(1, f.size)) * 100) : 100;
+                      return (
+                        <span className="pfile">
+                          {f.folder ? <FolderIcon /> : <PaperclipIcon />}
+                          <span className="ellipsis">{f.folder ? f.name.replace(/\.zip$/i, "") : f.name}</span>
+                          <span className="muted small">
+                            {f.folder ? t("folder, {size}", { size: bytes(f.size) }) : bytes(f.size)}
+                            {going && " · " + (m.from_me ? t("sending {pct}%", { pct }) : t("arriving {pct}%", { pct }))}
+                            {f.failed && " · " + t("it didn't arrive")}
+                          </span>
+                          {going && <progress className="pfile-progress" max={100} value={pct} />}
+                          {!f.failed && !(going && !m.from_me) && (
+                            <button className="btn ghost small" onClick={() => saveFile(m)}>
+                              {t("Save…")}
+                            </button>
+                          )}
+                        </span>
+                      );
+                    })()}
                 </div>
                 <span className="small muted pmeta">
                   {time(m.at)}
                   {m.edited && " · " + t("edited")}
+                  {m.text && (
+                    <>
+                      {" · "}
+                      <button className="link small" onClick={() => copy(m)} title={t("Copy the message's text")}>
+                        {t("Copy")}
+                      </button>
+                    </>
+                  )}
                   {m.from_me && (m.read ? " · ✓✓ " + t("Read") : m.delivered ? " · ✓ " + t("Delivered") : " · " + t("Waiting to send"))}
                   {m.from_me && (
                     <span className="pactions">
@@ -541,7 +636,8 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
         <div className="composer">
           {fileName && (
             <div className="row small">
-              <span className="chip"><PaperclipIcon /> {fileName}</span>
+              <span className="chip">{isFolder ? <FolderIcon /> : <PaperclipIcon />} {fileName}</span>
+              {sending && <span className="muted">{isFolder ? t("Packing the folder to send…") : t("Getting it ready to send…")}</span>}
               <button className="link small" onClick={() => setFile(null)}>
                 {t("Remove")}
               </button>
@@ -563,8 +659,11 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
             }}
           />
           <div className="composer-bar">
-            <button className="icon-btn" onClick={pick} title={t("Send a file (up to 16 MB)")} aria-label={t("Send a file")}>
+            <button className="icon-btn" onClick={() => pick(false)} title={t("Send a file (any size; over 16 MB it goes in parts while you're both connected)")} aria-label={t("Send a file")}>
               <PaperclipIcon />
+            </button>
+            <button className="icon-btn" onClick={() => pick(true)} title={t("Send a folder (it goes zipped, and unpacks where they save it)")} aria-label={t("Send a folder")}>
+              <FolderIcon />
             </button>
             <label className="check small" title={t("Their assistant answers on their PC, about them only (like whether they're free), if they allow it. Their model loads only for this.")}>
               <input type="checkbox" checked={alsoAsk} onChange={(e) => setAlsoAsk(e.target.checked)} />
@@ -586,6 +685,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
       </>
       )}
       {allowing && <AllowModal contact={c} onClose={() => setAllowing(false)} toast={toast} />}
+      {lending && <LendModal contact={c} onClose={() => setLending(false)} toast={toast} />}
       {address !== null && (
         <Modal title={t("Where to reach {name}", { name: c.name })} onClose={() => setAddress(null)}>
           <p className="muted small">{t("If their address changed, ask them for the one shown under Connect → Show my code, and type it here.")}</p>
@@ -687,6 +787,31 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
   const [mine, setMine] = useState<{ status: string; content: string } | null>(null);
   // What this user just wrote, until it comes back in their chat.
   const [pending, setPending] = useState<string | null>(null);
+  // The model that answers what this user writes here (null: the default;
+  // "lent:…": one of theirs, on their PC).
+  const [model, setModel] = useState<string | null>(null);
+  useEffect(() => {
+    api.peopleSharedModel(c.id, chat.id).then(setModel).catch(() => {});
+  }, [c.id, chat.id]);
+  // The models they let this user use here.
+  const [lent, setLent] = useState<LendOffer | null>(null);
+  useEffect(() => {
+    const load = () => api.peopleLent(c.id).then(setLent).catch(() => {});
+    load();
+    const sub = on("people:lends", (p) => p.contact_id === c.id && load());
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [c.id]);
+  const theirs = !!model?.startsWith("lent:");
+  const pickModel = async (m: string | null) => {
+    try {
+      await api.peopleSetSharedModel(c.id, chat.id, m);
+      setModel(m);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   const end = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   useEffect(() => {
@@ -709,6 +834,11 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
         setPending((t) => (t && p.view.messages.some((m) => m.mine && m.role === "user" && m.text === t) ? null : t));
       }),
       on("people:live", (p) => here(p) && setV((x) => (x ? { ...x, live: p.live } : x))),
+      on("people:lend_refused", (p) => {
+        if (!here(p)) return;
+        setPending(null);
+        toast(p.why, "error");
+      }),
       on("people:post_live", (p) => {
         if (!here(p)) return;
         if (p.status === "done") setMine(null);
@@ -727,7 +857,8 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
     setInput("");
     rememberSent(text);
     setPending(text);
-    setMine({ status: "loading", content: "" });
+    // Their PC answers: it shows as their side's live reply.
+    if (!theirs) setMine({ status: "loading", content: "" });
     try {
       await api.peopleSharedPost(c.id, chat.id, text);
     } catch (e) {
@@ -794,7 +925,11 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
         )}
         {v?.live && (
           <div className="pmsg">
-            <span className="small muted pmeta live-dot">{t(LIVE_STATUS[v.live.status] ?? "Working…")}</span>
+            <span className="small muted pmeta live-dot">
+              {v.live.status === "queued"
+                ? t("Number {place} in line on {name}'s PC: one model runs there at a time…", { place: v.live.place ?? 1, name: c.name })
+                : t(LIVE_STATUS[v.live.status] ?? "Working…")}
+            </span>
             {v.live.content && (
               <div className="pbubble">
                 <Markdown text={v.live.content} />
@@ -837,7 +972,7 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
                 send();
               }
             }}
-            placeholder={t("Write in {name}'s chat; your own model answers here", { name: c.name })}
+            placeholder={theirs ? t("Write in {name}'s chat; their PC answers", { name: c.name }) : t("Write in {name}'s chat; your own model answers here", { name: c.name })}
             aria-label={t("Message")}
           />
           {mine ? (
@@ -849,7 +984,20 @@ export function SharedChatView({ contactId, contactName, chat, onBack, toast }: 
               {t("Send")}
             </button>
           )}
-          <p className="muted small shared-compose-note">{t("{name} sees what you write and your model's answer in their chat. Your model runs on this PC.", { name: c.name })}</p>
+          <label className="row small shared-model">
+            <span className="muted">{t("Your answers here by")}</span>
+            <ModelSelect
+              value={model}
+              onChange={pickModel}
+              label={t("Your answers here by")}
+              extra={lent && lent.models.length > 0 ? { label: t("On {name}'s PC", { name: c.name }), options: lent.models.map((m) => ({ id: `lent:${m.id}`, name: m.name })) } : undefined}
+            />
+          </label>
+          <p className="muted small shared-compose-note">
+            {theirs
+              ? t("{name} sees what you write, and their PC answers it in their chat, within the limits they set{limits}.", { name: c.name, limits: lent ? lendLimits(lent.limits) : "" })
+              : t("{name} sees what you write and your model's answer in their chat. Your model runs on this PC.", { name: c.name })}
+          </p>
         </div>
       )}
     </>
@@ -1049,6 +1197,211 @@ function AllowModal({ contact: c, onClose, toast }: { contact: PersonContact; on
       <p className="muted small">
         {t("Calendar, email and folders also need their feature turned on in Features. Limits: up to 6 questions an hour and 20 a day from {name}, one at a time, each a short question with a short answer.", { name: c.name })}
       </p>
+      <div className="adv-actions">
+        <button className="btn primary" onClick={save}>
+          {t("Save")}
+        </button>
+        <button className="btn ghost" onClick={onClose}>
+          {t("Cancel")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+const NO_LEND: Lend = { on: false, models: [], answers_per_day: null, tokens_per_day: null, usd_per_month: null, days: [], from: "", until: "", max_minutes: null };
+
+/** A short weekday name in the app's language (1 is Monday). */
+function weekday(d: number): string {
+  // October 19, 2026 was a Monday.
+  return new Date(2026, 9, 18 + d).toLocaleDateString(undefined, { weekday: "short" });
+}
+
+/** ", up to 20 answers a day, Mon Tue 18:00 to 22:00" (empty when no limits). */
+function lendLimits(l: Lend): string {
+  const parts: string[] = [];
+  if (l.answers_per_day != null) parts.push(t("up to {n} answers a day", { n: l.answers_per_day }));
+  if (l.tokens_per_day != null) parts.push(t("{n} tokens a day", { n: l.tokens_per_day.toLocaleString() }));
+  if (l.usd_per_month != null) parts.push(t("${n} a month on cloud models", { n: l.usd_per_month.toFixed(2) }));
+  if (l.days.length > 0 && l.days.length < 7) parts.push(l.days.map(weekday).join(" "));
+  if (l.from && l.until) parts.push(t("{from} to {until}", { from: l.from, until: l.until }));
+  if (l.max_minutes != null) parts.push(t("{n} minutes an answer", { n: l.max_minutes }));
+  return parts.length ? ": " + parts.join(", ") : "";
+}
+
+/** "2 min 5 s", "45 s". */
+function runTime(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return t("{n} s", { n: s });
+  const m = Math.floor(s / 60);
+  if (m < 60) return t("{m} min {s} s", { m, s: s % 60 });
+  return t("{h} h {m} min", { h: Math.floor(m / 60), m: m % 60 });
+}
+
+function money(usd: number): string {
+  return usd === 0 ? "$0" : usd < 0.01 ? "<$0.01" : `$${usd.toFixed(2)}`;
+}
+
+/** A number field where empty means no limit. */
+function LimitField({ label, value, onChange, step }: { label: string; value: number | null; onChange: (v: number | null) => void; step?: number }) {
+  return (
+    <label className="adv-field lend-limit">
+      <span className="small">{label}</span>
+      <input
+        className="input"
+        type="number"
+        min={0}
+        step={step ?? 1}
+        value={value ?? ""}
+        placeholder={t("No limit")}
+        onChange={(e) => onChange(e.target.value === "" ? null : Math.max(0, Number(e.target.value)))}
+      />
+    </label>
+  );
+}
+
+function TotalsRow({ label, x }: { label: string; x: LendTotals }) {
+  return (
+    <tr>
+      <th scope="row">{label}</th>
+      <td>{x.answers}</td>
+      <td>{x.tokens.toLocaleString()}</td>
+      <td>{money(x.usd)}</td>
+      <td>{runTime(x.ms)}</td>
+      <td>{x.refused}</td>
+    </tr>
+  );
+}
+
+/** Letting someone use this PC's models in the chats shared with them: which,
+ * how much and when, and what they've used so far. */
+function LendModal({ contact: c, onClose, toast }: { contact: PersonContact; onClose: () => void; toast: PushToast }) {
+  const [l, setL] = useState<Lend>({ ...NO_LEND, ...(c.lend ?? {}) });
+  const { local, cloud } = useModelChoices();
+  const [runs, setRuns] = useState<LendRuns | null>(null);
+  useEffect(() => {
+    const load = () => api.peopleRuns(c.id).then(setRuns).catch(() => {});
+    load();
+    const sub = on("people:runs", (p) => p.contact_id === c.id && load());
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [c.id]);
+  const save = async () => {
+    try {
+      await api.peopleSetLend(c.id, l);
+      toast(l.on ? t("{name} can use the models you picked, within your limits.", { name: c.name }) : t("{name} can't use this PC's models.", { name: c.name }), "success");
+      onClose();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const toggleModel = (id: string) => setL({ ...l, models: l.models.includes(id) ? l.models.filter((m) => m !== id) : [...l.models, id] });
+  // No days picked means every day: a click turns that day off. All seven is "every day" again.
+  const toggleDay = (d: number) => {
+    const all = l.days.length ? l.days : [1, 2, 3, 4, 5, 6, 7];
+    const days = all.includes(d) ? all.filter((x) => x !== d) : [...all, d].sort();
+    if (days.length === 0) return;
+    setL({ ...l, days: days.length === 7 ? [] : days });
+  };
+  return (
+    <Modal title={t("Let {name} use this PC's models", { name: c.name })} onClose={onClose}>
+      <p className="muted small">
+        {t("In the chats you share with {name}, they can pick one of these models and your PC answers there. Their message waits in line like yours (one model runs at a time). The model gets only the shared chat: never your About you, memories, files or tools.", { name: c.name })}
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={l.on} onChange={(e) => setL({ ...l, on: e.target.checked })} />
+        {t("Let {name} use this PC's models", { name: c.name })}
+      </label>
+      <fieldset className="allow-more" disabled={!l.on}>
+        <strong className="small">{t("Models they may pick")}</strong>
+        <div className="share-list lend-models">
+          {local.length + cloud.length === 0 && <span className="small muted">{t("Install a model first.")}</span>}
+          {[...local, ...cloud].map((m) => (
+            <label key={m.id} className="check">
+              <input type="checkbox" checked={l.models.includes(m.id)} onChange={() => toggleModel(m.id)} />
+              {m.name}
+              {m.provider ? <span className="muted small"> · {t("cloud, {provider}", { provider: m.provider })}</span> : null}
+            </label>
+          ))}
+          {l.models.length === 0 && <span className="small muted">{t("None picked: your default model.")}</span>}
+        </div>
+        <strong className="small">{t("Limits")}</strong>
+        <div className="lend-limits">
+          <LimitField label={t("Answers a day")} value={l.answers_per_day} onChange={(v) => setL({ ...l, answers_per_day: v })} />
+          <LimitField label={t("Tokens a day")} value={l.tokens_per_day} step={1000} onChange={(v) => setL({ ...l, tokens_per_day: v })} />
+          <LimitField label={t("Dollars a month on cloud models")} value={l.usd_per_month} step={0.5} onChange={(v) => setL({ ...l, usd_per_month: v })} />
+          <LimitField label={t("Minutes one answer may run")} value={l.max_minutes} onChange={(v) => setL({ ...l, max_minutes: v })} />
+        </div>
+        <strong className="small">{t("When")}</strong>
+        <div className="lend-days" role="group" aria-label={t("Days they may")}>
+          {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+            <button key={d} type="button" className={`chip ${l.days.length === 0 || l.days.includes(d) ? "on" : ""}`} aria-pressed={l.days.length === 0 || l.days.includes(d)} onClick={() => toggleDay(d)}>
+              {weekday(d)}
+            </button>
+          ))}
+          <span className="small muted">{l.days.length === 0 ? t("Every day") : ""}</span>
+        </div>
+        <div className="row lend-hours">
+          <label className="small">
+            {t("From")} <input className="input" type="time" value={l.from} onChange={(e) => setL({ ...l, from: e.target.value })} />
+          </label>
+          <label className="small">
+            {t("Until")} <input className="input" type="time" value={l.until} onChange={(e) => setL({ ...l, until: e.target.value })} />
+          </label>
+          {(l.from || l.until) && (
+            <button type="button" className="link small" onClick={() => setL({ ...l, from: "", until: "" })}>
+              {t("Any time")}
+            </button>
+          )}
+        </div>
+      </fieldset>
+      <strong className="small">{t("What {name} used", { name: c.name })}</strong>
+      {runs === null ? (
+        <p className="muted small">{t("Loading…")}</p>
+      ) : (
+        <>
+          {runs.busy && <p className="small live-dot">{t("Your PC is answering {name} right now.", { name: c.name })}</p>}
+          <table className="lend-totals small">
+            <thead>
+              <tr>
+                <th />
+                <th scope="col">{t("Answers")}</th>
+                <th scope="col">{t("Tokens")}</th>
+                <th scope="col">{t("Cost")}</th>
+                <th scope="col">{t("Run time")}</th>
+                <th scope="col">{t("Not answered")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <TotalsRow label={t("Today")} x={runs.today} />
+              <TotalsRow label={t("This month")} x={runs.month} />
+              <TotalsRow label={t("All")} x={runs.all} />
+            </tbody>
+          </table>
+          {runs.runs.length === 0 ? (
+            <p className="muted small">{t("Nothing yet.")}</p>
+          ) : (
+            <ul className="lend-log small">
+              {runs.runs.map((r, i) => (
+                <li key={i} className={r.outcome === "done" || r.outcome === "stopped" ? "" : "muted"}>
+                  <div className="row lend-log-head">
+                    <span className="ellipsis">{r.kind === "question" ? t("A question from their assistant") : r.chat_title ?? t("A shared chat")}</span>
+                    <span className="muted">{new Date(r.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  </div>
+                  <div className="muted">
+                    {r.outcome === "done" ? t("Answered") : r.outcome === "stopped" ? t("Stopped") : r.outcome.startsWith("refused") ? t("Not allowed") : t("Failed")}
+                    {" · "}
+                    {r.model}
+                    {(r.outcome === "done" || r.outcome === "stopped") && ` · ${runTime(r.ms)} · ${t("{n} tokens", { n: (r.tokens_in + r.tokens_out).toLocaleString() })} · ${money(r.usd)}`}
+                    {r.outcome.includes(": ") && <span className="lend-why">{r.outcome.slice(r.outcome.indexOf(": ") + 2)}</span>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
       <div className="adv-actions">
         <button className="btn primary" onClick={save}>
           {t("Save")}

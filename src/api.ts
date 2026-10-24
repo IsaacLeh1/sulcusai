@@ -320,7 +320,9 @@ export interface PersonMessage {
   from_me: boolean;
   at: number;
   text: string;
-  file: { name: string; size: number } | null;
+  /** `folder`: a folder, zipped (saved by unpacking it); `got`: still
+   * arriving (or going) in parts, the bytes so far; `failed`: it couldn't arrive. */
+  file: { name: string; size: number; folder?: boolean; got?: number | null; failed?: boolean } | null;
   /** For messages from here: they have it. */
   delivered: boolean;
   /** For messages from here: they've read it (they send read receipts). */
@@ -366,8 +368,10 @@ export interface SharedHere {
 }
 
 export interface SharedLive {
-  status: "loading" | "thinking" | "writing" | "working" | string;
+  status: "loading" | "queued" | "thinking" | "writing" | "working" | string;
   content: string;
+  /** "queued": its place in line on their PC (1 is next). */
+  place?: number;
 }
 
 export interface SharedView {
@@ -456,6 +460,70 @@ export interface PersonContact {
   offer_relay: boolean;
   /** This user tells them when they've read their messages. */
   read_receipts: boolean;
+  /** What they may use of this PC's models in chats shared with them. */
+  lend: Lend;
+  /** The name they gave themselves, when this user renamed them. */
+  their_name: string | null;
+}
+
+/** What someone may use of this PC's models, and how much (null: no limit). */
+export interface Lend {
+  on: boolean;
+  /** Model ids they may pick; empty: this user's default model. */
+  models: string[];
+  answers_per_day: number | null;
+  tokens_per_day: number | null;
+  usd_per_month: number | null;
+  /** 1 is Monday, 7 Sunday; empty: every day. */
+  days: number[];
+  /** "HH:MM"; both empty: any time. */
+  from: string;
+  until: string;
+  max_minutes: number | null;
+}
+
+/** A model someone lends this user (`id` empty: their default). */
+export interface LentModel {
+  id: string;
+  name: string;
+  cloud: boolean;
+}
+
+export interface LendOffer {
+  models: LentModel[];
+  limits: Lend;
+}
+
+export interface LendTotals {
+  answers: number;
+  tokens: number;
+  usd: number;
+  ms: number;
+  refused: number;
+}
+
+/** One use of this PC by someone. */
+export interface LendRun {
+  at: number;
+  /** "chat": an answer in a shared chat; "question": their assistant asked this one. */
+  kind: "chat" | "question";
+  chat_id: string | null;
+  chat_title: string | null;
+  model: string;
+  ms: number;
+  tokens_in: number;
+  tokens_out: number;
+  usd: number;
+  /** "done", "stopped", "refused: why" or "failed: why". */
+  outcome: string;
+}
+
+export interface LendRuns {
+  today: LendTotals;
+  month: LendTotals;
+  all: LendTotals;
+  runs: LendRun[];
+  busy: boolean;
 }
 
 /** A code for linking: it doesn't expire; it works for up to `max` people. */
@@ -531,6 +599,10 @@ export interface CloudProvider {
   models: CloudModel[];
   media: CloudMedia[];
   media_suggestions: CloudMedia[];
+  /** Its chats go to this user's other PCs that use the same key. */
+  share_pcs: boolean;
+  /** People (linked in People) its chats are shared with. */
+  share_people: string[];
 }
 
 /** Cloud spending: a month's, or a chat's (all its months). */
@@ -555,6 +627,11 @@ export interface CloudView {
 export interface SidebarLayout {
   nav: string[];
   chats: string[];
+  /** Pages in the folding "Collapse" group. */
+  collapsed?: string[];
+  collapse_open?: boolean;
+  /** The whole sidebar folded away. */
+  hidden?: boolean;
 }
 
 export interface CloudChoice {
@@ -859,6 +936,8 @@ export interface Schedule {
   model_id: string | null;
   project_id: string | null;
   allow_changes: boolean;
+  /** What it may do by itself, approved when it was set up (message_person, email_send, …). */
+  actions: string[];
   enabled: boolean;
   last_run: number | null;
   next_run: number | null;
@@ -2064,6 +2143,8 @@ export interface PortRow {
   server: string | null;
   /** Part of Windows: not stopped from here. */
   system: boolean;
+  /** What it is ("A model (the AI engine)"), when known. */
+  what?: string | null;
 }
 
 export interface ServerInfo {
@@ -2371,7 +2452,10 @@ export const api = {
   /** Chats others share with this user (for the sidebar). */
   peopleSharedChats: () => invoke<SharedHere[]>("people_shared_chats"),
   /** Writes in a chat someone shares; this user's model answers it (people:post_live). */
-  peopleSharedPost: (contactId: string, chatId: string, text: string) => invoke<void>("people_shared_post", { contactId, chatId, text }),
+  peopleSharedPost: (contactId: string, chatId: string, text: string) => invoke<void>("people_shared_post", { contactId, chatId, text, model: null }),
+  /** The model that answers what this user writes in someone's shared chat (null: the default). */
+  peopleSharedModel: (contactId: string, chatId: string) => invoke<string | null>("people_shared_model", { contactId, chatId }),
+  peopleSetSharedModel: (contactId: string, chatId: string, model: string | null) => invoke<void>("people_set_shared_model", { contactId, chatId, model }),
   peopleSharedStop: (contactId: string, chatId: string) => invoke<void>("people_shared_stop", { contactId, chatId }),
   peopleRequests: () => invoke<PersonRequest[]>("people_requests"),
   /** "assistant": let this user's assistant answer; "mine": answer with `text`; "decline". */
@@ -2383,6 +2467,13 @@ export const api = {
   /** Lets someone reach this app through this user's relay. */
   peopleSetRelayOffer: (id: string, on: boolean) => invoke<void>("people_set_relay_offer", { id, on }),
   peopleSetReadReceipts: (id: string, on: boolean) => invoke<void>("people_set_read_receipts", { id, on }),
+  /** Names someone for this user only; "" goes back to their own name. */
+  peopleRename: (id: string, name: string) => invoke<void>("people_rename", { id, name }),
+  /** What someone used this PC for. */
+  peopleRuns: (contactId: string) => invoke<LendRuns>("people_runs", { contactId }),
+  peopleSetLend: (contactId: string, lend: Lend) => invoke<void>("people_set_lend", { contactId, lend }),
+  /** The models someone lends this user (while connected). */
+  peopleLent: (contactId: string) => invoke<LendOffer>("people_lent", { contactId }),
   addCloudProvider: (preset: string | null, name: string | null, baseUrl: string | null) => invoke<CloudView>("add_cloud_provider", { preset, name, baseUrl }),
   removeCloudProvider: (id: string) => invoke<CloudView>("remove_cloud_provider", { id }),
   setCloudProvider: (id: string, enabled: boolean, key: string | null) => invoke<CloudView>("set_cloud_provider", { id, enabled, key }),
@@ -2390,8 +2481,13 @@ export const api = {
   setCloudMedia: (id: string, media: CloudMedia[]) => invoke<CloudView>("set_cloud_media", { id, media }),
   setCloudModels: (id: string, models: CloudModel[]) => invoke<CloudView>("set_cloud_models", { id, models }),
   setCloudOptions: (budget: number | null, redact: boolean) => invoke<CloudView>("set_cloud_options", { budget, redact }),
+  /** Where a provider's chats go: this user's other PCs with the same key, and people. */
+  setCloudSharing: (id: string, sharePcs: boolean, sharePeople: string[]) => invoke<CloudView>("set_cloud_sharing", { id, sharePcs, sharePeople }),
   cloudChoices: () => invoke<CloudChoice[]>("cloud_choices"),
   sidebarLayout: () => invoke<SidebarLayout>("sidebar_layout"),
+  /** A chat's notes: its memory and plan (Markdown, "- [ ] step" lines). */
+  chatNotes: (chatId: string) => invoke<string>("chat_notes", { chatId }),
+  setChatNotes: (chatId: string, text: string) => invoke<string>("set_chat_notes", { chatId, text }),
   setSidebarLayout: (layout: SidebarLayout) => invoke<SidebarLayout>("set_sidebar_layout", { layout }),
   /** Opens a server in the built-in browser to sign in; its session is used once signed in (`cloud:signed_in`). */
   cloudSignIn: (id: string) => invoke<string>("cloud_sign_in", { id }),
@@ -2655,13 +2751,15 @@ export const api = {
   /** Opens a web address in a browser outside SulcusAI (Chrome unless another was picked). */
   openOutside: (url: string) => invoke<void>("open_outside", { url }),
   /** The web viewer over `area` (window pixels), at `url` when given. */
-  viewerShow: (url: string | null, area: ViewerArea) => invoke<void>("viewer_show", { url, area }),
-  viewerArea: (area: ViewerArea) => invoke<void>("viewer_area", { area }),
-  viewerHide: () => invoke<void>("viewer_hide"),
+  /** Viewer commands take a chat's id (its own viewer), or null for the Web page's. */
+  viewerShow: (key: string | null, url: string | null, area: ViewerArea) => invoke<void>("viewer_show", { key, url, area }),
+  viewerArea: (key: string | null, area: ViewerArea) => invoke<void>("viewer_area", { key, area }),
+  viewerHide: (key: string | null) => invoke<void>("viewer_hide", { key }),
   /** "back", "forward", "reload", or what was typed in the address bar. */
-  viewerGo: (to: string) => invoke<void>("viewer_go", { to }),
-  viewerUrl: () => invoke<string | null>("viewer_url"),
-  viewerClose: () => invoke<void>("viewer_close"),
+  viewerGo: (key: string | null, to: string) => invoke<void>("viewer_go", { key, to }),
+  viewerUrl: (key: string | null) => invoke<string | null>("viewer_url", { key }),
+  viewerExists: (key: string | null) => invoke<boolean>("viewer_exists", { key }),
+  viewerClose: (key: string | null) => invoke<void>("viewer_close", { key }),
   openDocument: (path: string) => invoke<void>("open_document", { path }),
   /** Handoff notes chats left, and which chats may read them. */
   handoffsView: () => invoke<HandoffsView>("handoffs_view"),
@@ -2913,7 +3011,8 @@ export interface InstallFinished {
 }
 
 export interface ChatEvents {
-  "chat:status": { chat_id: string; status: "loading" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string };
+  /** "queued": waiting in line for another model (`place`: 1 is next; `detail`: the model running now). */
+  "chat:status": { chat_id: string; status: "loading" | "queued" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string; place?: number };
   /** Auto handed this message to another installed model, better at its task. */
   "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" };
   "chat:compacted": { chat_id: string; auto: boolean };
@@ -2935,6 +3034,8 @@ export interface ChatEvents {
   "chat:titled": { chat_id: string; title: string };
   /** The assistant deleted a chat (the user approved it). */
   "chat:deleted": { chat_id: string };
+  /** The assistant changed a chat's notes. */
+  "chat:notes": { chat_id: string };
   /** A reply's thinking was summed up (its last message has `thought_summary`). */
   "chat:thought": { chat_id: string };
   /** Lasting facts the assistant saved from a chat by itself. */
@@ -2945,8 +3046,11 @@ export interface ChatEvents {
   "cloud:spent": { chat_id: string | null };
   /** Signed in to a server in the built-in browser; its session is saved. */
   "cloud:signed_in": { id: string; name: string };
-  "viewer:page": { url: string; loading: boolean };
-  "viewer:title": { title: string };
+  /** `key`: the viewer's chat id, or "main" for the Web page's. */
+  "viewer:page": { key: string; url: string; loading: boolean };
+  "viewer:title": { key: string; title: string };
+  /** A chat's assistant opened a page in its chat's viewer: show it beside the chat. */
+  "viewer:dock": { key: string };
   "chat:queue": { chat_id: string; queue: QueueItem[] };
   "chat:inbox": { chat_id: string; waiting: QueueItem[] };
   /** The model has read this chat's messages up to then (it started answering). */
@@ -3003,6 +3107,14 @@ export interface ChatEvents {
   "people:live": { contact_id: string; chat_id: string; live: SharedLive | null };
   /** This user's model answering in a chat someone shares. */
   "people:post_live": { contact_id: string; chat_id: string; status: "loading" | "writing" | "done"; delta: string | null };
+  /** What someone lends this user changed. */
+  "people:lends": { contact_id: string };
+  /** A big file or folder going or arriving in parts: how far it's got. */
+  "people:file": { contact_id: string; id: string; got: number; size: number };
+  /** Their PC didn't answer a message here with the model they lend. */
+  "people:lend_refused": { contact_id: string; chat_id: string; why: string };
+  /** Someone used this PC (a lent answer or a question to this user's assistant). */
+  "people:runs": { contact_id: string };
   /** Someone wrote in a chat this user shares (or their model did). */
   "chat:changed": { chat_id: string };
   "update:progress": { received: number; total: number | null };

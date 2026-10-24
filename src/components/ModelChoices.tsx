@@ -12,6 +12,14 @@ export interface ModelChoice {
   price_out?: number | null;
 }
 
+/** The cloud choice a model id names: the same one, or the same model from a
+ * provider this PC keeps under another id (a chat synced from another PC). */
+export function findCloud<T extends { id: string }>(choices: T[], id: string | null | undefined): T | null {
+  if (!id?.startsWith("cloud:")) return null;
+  const model = (x: string) => x.split(":").slice(2).join(":");
+  return choices.find((c) => c.id === id) ?? choices.find((c) => model(c.id) === model(id)) ?? null;
+}
+
 /** "$3 in · $15 out per M tokens", or "" when the prices aren't known. */
 export function priceText(price_in?: number | null, price_out?: number | null): string {
   if (price_in == null && price_out == null) return "";
@@ -31,10 +39,25 @@ export function useModelChoices(): { local: ModelChoice[]; cloud: ModelChoice[] 
 }
 
 /** A model picker: the default model first, then this PC's, then the cloud's. */
-export function ModelSelect({ value, onChange, label, defaultLabel }: { value: string | null; onChange: (id: string | null) => void; label: string; defaultLabel?: string }) {
+export function ModelSelect({
+  value,
+  onChange,
+  label,
+  defaultLabel,
+  extra,
+}: {
+  value: string | null;
+  onChange: (id: string | null) => void;
+  label: string;
+  defaultLabel?: string;
+  /** More choices after these (models someone lends this user). */
+  extra?: { label: string; options: { id: string; name: string }[] };
+}) {
   const { local, cloud } = useModelChoices();
+  const found = findCloud(cloud, value);
+  const inExtra = !!extra?.options.some((o) => o.id === value);
   return (
-    <select className="input" value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} aria-label={label}>
+    <select className="input" value={found?.id ?? value ?? ""} onChange={(e) => onChange(e.target.value || null)} aria-label={label}>
       <option value="">{defaultLabel ?? t("Your default model")}</option>
       {local.length > 0 && (
         <optgroup label={t("On this PC")}>
@@ -55,7 +78,16 @@ export function ModelSelect({ value, onChange, label, defaultLabel }: { value: s
           ))}
         </optgroup>
       )}
-      {value && !local.some((m) => m.id === value) && !cloud.some((m) => m.id === value) && <option value={value}>{t("(removed model)")}</option>}
+      {extra && extra.options.length > 0 && (
+        <optgroup label={extra.label}>
+          {extra.options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {value && !local.some((m) => m.id === value) && !found && !inExtra && <option value={value}>{t("(removed model)")}</option>}
     </select>
   );
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Tasks: a to-do list with due dates, priorities, subtasks and reminders.
 import { useEffect, useMemo, useState } from "react";
-import { api, errorText, on, type Task } from "../api";
+import { api, errorText, on, type ScheduleView, type Task } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
@@ -29,7 +29,95 @@ function blank(title: string): Task {
   return { id: "", title, notes: "", subtasks: [], source: null, due: null, due_has_time: false, priority: 0, remind_at: null, done_at: null, created_at: 0 };
 }
 
-export function TasksView({ toast }: { toast: PushToast }) {
+/** What a timed action may do by itself, as its approval card said it. */
+const ACTION_WORDS: Record<string, string> = {
+  message_person: tx("send a People message"),
+  ask_person: tx("ask someone's assistant"),
+  email_send: tx("send an email"),
+  calendar_create_event: tx("add a calendar event"),
+  create_task: tx("add a task"),
+  complete_task: tx("mark a task done"),
+  create_note: tx("write a note"),
+  create_music: tx("make a song"),
+  create_image: tx("make a picture"),
+  create_video: tx("make a video"),
+  message_chat: tx("ask another chat"),
+  write_file: tx("write files in its folders"),
+  edit_file: tx("change files in its folders"),
+  run_command: tx("run commands"),
+};
+
+/** One-time actions set for a time ("message Josh at midnight: happy
+ * birthday"): waiting to run, or done. They run by themselves while
+ * SulcusAI is open, doing what was approved when they were set up. */
+function TimedActions({ done, onOpenChat, toast }: { done: boolean; onOpenChat: (id: string) => void; toast: PushToast }) {
+  const [all, setAll] = useState<ScheduleView[]>([]);
+  const load = () =>
+    api
+      .schedules()
+      .then((s) => setAll(s.filter((x) => x.cadence.kind === "once")))
+      .catch(() => {});
+  useEffect(() => {
+    load();
+    const sub = on("schedule:ran", () => load());
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const act = async (f: () => Promise<unknown>) => {
+    try {
+      await f();
+      load();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const shown = all.filter((s) => (done ? !s.enabled && s.last_run !== null : s.enabled));
+  if (shown.length === 0) return null;
+  return (
+    <section className="timed-actions">
+      <h2 className="small">{done ? t("Done at a set time") : t("At a set time")}</h2>
+      <ul className="task-list">
+        {shown.map((s) => (
+          <li key={s.id} className="timed-item">
+            <div className="timed-text">
+              <strong>{s.name}</strong>
+              <span className="muted small block">
+                {s.when}
+                {s.actions.length > 0 && ` · ${t("may: {what}", { what: s.actions.map((a) => t(ACTION_WORDS[a] ?? a)).join(", ") })}`}
+              </span>
+              <span className="small block">{s.prompt}</span>
+            </div>
+            <div className="row">
+              {done ? (
+                s.last_chat && (
+                  <button className="link small" onClick={() => onOpenChat(s.last_chat!)}>
+                    {t("See what it did")}
+                  </button>
+                )
+              ) : (
+                <>
+                  <button
+                    className="btn ghost small"
+                    onClick={() => act(() => api.runScheduleNow(s.id))}
+                  >
+                    {t("Do it now")}
+                  </button>
+                  <button className="btn ghost small danger" onClick={() => window.confirm(t("Cancel “{name}”? It won't run.", { name: s.name })) && act(() => api.deleteSchedule(s.id))}>
+                    {t("Cancel")}
+                  </button>
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {!done && <p className="muted small">{t("These run by themselves at their time while SulcusAI is open (if it's closed then, as soon as it opens), and each is done once it has run.")}</p>}
+    </section>
+  );
+}
+
+export function TasksView({ onOpenChat, toast }: { onOpenChat: (id: string) => void; toast: PushToast }) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [list, setList] = useState<List>("today");
   const [quick, setQuick] = useState("");
@@ -70,7 +158,12 @@ export function TasksView({ toast }: { toast: PushToast }) {
   // "Call Sam Friday 3pm": a due date at the end is read and taken off.
   const addQuick = async () => {
     const text = quick.trim();
-    if (!text) return;
+    // Nothing typed: the full form for a new task (the button was greyed out
+    // until something was typed, and looked broken).
+    if (!text) {
+      setEditing(blank(""));
+      return;
+    }
     const task = blank(text);
     const words = text.split(/\s+/);
     for (let k = Math.max(1, words.length - 4); k < words.length; k++) {
@@ -111,6 +204,7 @@ export function TasksView({ toast }: { toast: PushToast }) {
             </button>
           ))}
         </div>
+        <TimedActions done={list === "done"} onOpenChat={onOpenChat} toast={toast} />
         {list !== "done" && (
           <form
             className="row quick-add"
@@ -120,7 +214,7 @@ export function TasksView({ toast }: { toast: PushToast }) {
             }}
           >
             <input className="input" value={quick} onChange={(e) => setQuick(e.target.value)} placeholder={t("Add a task, e.g. “Send the budget Friday 3pm”")} aria-label={t("New task")} />
-            <button className="btn primary" type="submit" disabled={!quick.trim()}>{t("Add")}</button>
+            <button className="btn primary" type="submit" title={quick.trim() ? undefined : t("Add a task with a due date, notes and steps")}>{t("Add")}</button>
           </form>
         )}
         <ul className="task-list">
@@ -158,6 +252,8 @@ export function TasksView({ toast }: { toast: PushToast }) {
             if (await save(task)) setEditing(null);
           }}
           onDelete={async () => {
+            // A new task that was never saved: nothing to delete.
+            if (!editing.id) return setEditing(null);
             try {
               await api.deleteTask(editing.id);
               setEditing(null);

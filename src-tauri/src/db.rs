@@ -248,6 +248,13 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("people_messages", "edited", "INTEGER"),
     ("people_messages", "deleted", "INTEGER NOT NULL DEFAULT 0"),
     ("people_messages", "change_sent", "INTEGER NOT NULL DEFAULT 1"),
+    // People: a big file or a folder (as a zip) sent in parts (files.rs):
+    // "folder" or none, 1 when in parts, the bytes in so far (none when it's
+    // all here; -1 when it failed), and its SHA-256.
+    ("people_messages", "file_kind", "TEXT"),
+    ("people_messages", "file_parts", "INTEGER NOT NULL DEFAULT 0"),
+    ("people_messages", "file_got", "INTEGER"),
+    ("people_messages", "file_sha", "TEXT"),
     // When the user marked a message read with the button (Marked read).
     ("mail_messages", "marked_at", "INTEGER"),
     // When the user last opened a message (Subscriptions: lists never opened).
@@ -628,6 +635,8 @@ pub fn delete_chat(conn: &Connection, id: &str) -> Result<(), String> {
     conn.execute("DELETE FROM settings WHERE key = ?1", [format!("context:{id}")]).map_err(err)?;
     // What it cost on cloud models (the month's total keeps it).
     conn.execute("DELETE FROM settings WHERE key = ?1", [crate::cloud::chat_spend_key(id)]).map_err(err)?;
+    // Its notes.
+    crate::chatnotes::forget(conn, id);
     Ok(())
 }
 

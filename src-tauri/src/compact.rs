@@ -82,6 +82,11 @@ pub fn save(conn: &Connection, c: &Cipher, chat_id: &str, summary: &str, message
         ..Default::default()
     };
     db::add_message(conn, c, &m)?;
+    // And in the chat's notes, where what's behind the chat is kept.
+    let notes = crate::chatnotes::get(conn, c, chat_id);
+    let when = chrono::Local::now().format("%b %-d, %H:%M");
+    let earlier = format!("(Summarized {when}, from {messages} messages.)\n{summary}");
+    let _ = crate::chatnotes::set(conn, c, chat_id, &crate::chatnotes::with_section(&notes, crate::chatnotes::EARLIER, &earlier, false));
     Ok(m)
 }
 

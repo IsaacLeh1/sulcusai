@@ -28,8 +28,14 @@ const MOST_BETWEEN: Duration = Duration::from_secs(120);
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "k", rename_all = "snake_case")]
 pub(super) enum Frame {
-    /// The first frame each way: who this is now, and where it takes calls.
-    Hello { name: String, port: u16 },
+    /// The first frame each way: who this is now, and where it takes calls
+    /// (`parts`: it takes big files in parts).
+    Hello {
+        name: String,
+        port: u16,
+        #[serde(default)]
+        parts: bool,
+    },
     Ping,
     Msgs { items: Vec<Item> },
     /// Messages now stored on the other side.
@@ -63,6 +69,20 @@ pub(super) enum Frame {
     /// and the answer this side's model gave to it.
     Post { chat_id: String, id: String, text: String },
     PostReply { chat_id: String, id: String, text: String, model: String },
+    /// A big file's parts (files.rs): asked for from a point, a part, how
+    /// far they've arrived, and "that file isn't here anymore".
+    Want { id: String, from: u64 },
+    Part { id: String, at: u64, data: String },
+    Have { id: String, upto: u64 },
+    NoFile { id: String },
+    /// What this side lets the other use in the chats it shares with them:
+    /// its models (none: nothing) and the limits.
+    Lends { models: Vec<lend::LentModel>, limits: lend::Lend },
+    /// A message written in a chat the other side shares, for one of the
+    /// models it lends to answer there (`model`; empty: its default).
+    Borrow { chat_id: String, id: String, text: String, model: String },
+    /// That side's PC didn't answer it, and why.
+    Refused { chat_id: String, why: String },
     #[serde(other)]
     Unknown,
 }
@@ -150,7 +170,7 @@ pub(super) fn hang_up(id: &str) {
 pub(super) fn hello_all(state: &AppState) {
     let name = my_name(state);
     for c in CONNS.lock().unwrap().values() {
-        let _ = c.tx.send(Frame::Hello { name: name.clone(), port: listening_port() });
+        let _ = c.tx.send(Frame::Hello { name: name.clone(), port: listening_port(), parts: true });
     }
 }
 
@@ -237,7 +257,7 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
 ) {
     let (mut r, mut w) = tokio::io::split(stream);
     let (tx, mut rx) = mpsc::unbounded_channel::<Frame>();
-    let _ = tx.send(Frame::Hello { name: my_name(&state), port: listening_port() });
+    let _ = tx.send(Frame::Hello { name: my_name(&state), port: listening_port(), parts: true });
     let writer = tokio::spawn(async move {
         while let Some(f) = rx.recv().await {
             let Ok(bytes) = serde_json::to_vec(&f) else { continue };
@@ -247,7 +267,7 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
         }
         let _ = w.shutdown().await;
     });
-    let Ok(Frame::Hello { name, port }) = read(&mut r, &mut inn, HANDSHAKE).await else {
+    let Ok(Frame::Hello { name, port, parts }) = read(&mut r, &mut inn, HANDSHAKE).await else {
         writer.abort();
         return;
     };
@@ -258,6 +278,7 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
         return;
     }
     drop(busy);
+    files::set_capable(&p.id, parts);
     let addr = called.or_else(|| from.filter(|_| port != 0).map(|a| SocketAddr::new(a.ip(), port)));
     heard_from(&state, &p, addr, &name);
     mailbox::direct(&p.id);
@@ -266,6 +287,11 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
     super::send_change(&state, &p.id);
     share::connected(&state, &p.id);
     ask::connected(&state, &p.id);
+    if let Some(p) = contact(&state, &p.id) {
+        lend::connected(&state, &p);
+    }
+    // Big files from them that didn't all arrive carry on.
+    files::ask_for_missing(&state, &p.id);
     changed(&state);
 
     // Pings keep it open through routers and VPNs, and show when it's gone.
@@ -304,17 +330,24 @@ async fn run<S: AsyncRead + AsyncWrite + Send + 'static>(
             }
         });
         share::disconnected(&state, &p.id);
+        lend::disconnected(&p.id);
+        files::set_capable(&p.id, false);
     }
     changed(&state);
 }
 
 pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
     match f {
-        Frame::Hello { name, .. } => {
+        Frame::Hello { name, parts, .. } => {
+            files::set_capable(&p.id, parts);
             let name = clean_name(&name);
             let _ = update(state, |b| {
                 if let Some(x) = b.contacts.iter_mut().find(|x| x.id == p.id) {
-                    x.name = name;
+                    // A name this user gave them stays.
+                    if !x.renamed {
+                        x.name = name.clone();
+                    }
+                    x.their_name = name;
                 }
             });
             changed(state);
@@ -370,6 +403,20 @@ pub(super) fn dispatch(state: &Arc<AppState>, p: &Contact, f: Frame) {
         Frame::Shared { chats } => share::listed(state, &p.id, chats),
         Frame::Post { chat_id, id, text } => share::posted(state, &p.id, &chat_id, &id, &text, None),
         Frame::PostReply { chat_id, id, text, model } => share::posted(state, &p.id, &chat_id, &id, &text, Some(&model)),
+        Frame::Lends { models, limits } => lend::lends(state, &p.id, models, limits),
+        Frame::Want { id, from } => files::want(state, &p.id, &id, from),
+        Frame::Part { id, at, data } => files::part(state, &p.id, &id, at, &data),
+        Frame::Have { id, upto } => files::have(state, &p.id, &id, upto),
+        Frame::NoFile { id } => files::gone(state, &p.id, &id),
+        Frame::Borrow { chat_id, id, text, model } => {
+            share::posted(state, &p.id, &chat_id, &id, &text, None);
+            if let Some(p) = contact(state, &p.id) {
+                if share::is_shared_with(state, &chat_id, &p.id) {
+                    lend::borrow(state, &p, &chat_id, &text, &model);
+                }
+            }
+        }
+        Frame::Refused { chat_id, why } => lend::refused(state, &p.id, &chat_id, &why),
         Frame::Watch { chat_id } => share::watch(state, &p.id, &chat_id),
         Frame::Unwatch { chat_id } => share::unwatch(&p.id, &chat_id),
         Frame::Snapshot { chat, messages } => share::snapshot(state, &p.id, chat, messages),

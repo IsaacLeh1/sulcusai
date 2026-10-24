@@ -315,7 +315,7 @@ async fn chat(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<V
     if loaded.as_deref() != Some(id.as_str()) && !state.generations.lock().unwrap().is_empty() {
         return error(StatusCode::CONFLICT, "SulcusAI is busy replying with another model. Try again in a moment, or use the model that's loaded.");
     }
-    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.clone()), false, || {}).await {
+    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.clone()), false, |_| {}).await {
         Ok(x) => x,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, &e),
     };
@@ -347,7 +347,7 @@ async fn chat(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<V
 /// A cloud model turned on in SulcusAI: the request goes to its provider
 /// with the key kept here (the program never sees it), counted in the budget.
 async fn cloud_reply(state: &Arc<AppState>, id: &str, body: &Value) -> Response {
-    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.to_string()), false, || {}).await {
+    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.to_string()), false, |_| {}).await {
         Ok(x) => x,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, &e),
     };

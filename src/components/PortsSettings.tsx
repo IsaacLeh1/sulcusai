@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, type PortsView, type PortRow } from "../api";
-import { t } from "../i18n";
+import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
-/** Settings → Servers and ports: what's listening on this PC, the servers
- * the assistant started (stop, start again), and previews in SulcusAI's browser. */
+// What the core calls its programs (ports.rs), for translation.
+void [tx("A model (the AI engine)"), tx("A picture, video, voice or music model")];
+
+/** Settings → Servers and ports: the ports SulcusAI's models and the
+ * programs it started have open (nothing else on this PC), the servers the
+ * assistant started (stop, start again), and previews in SulcusAI's browser. */
 export function PortsSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<PortsView | null>(null);
-  const [all, setAll] = useState(false);
   const [stopping, setStopping] = useState<PortRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -40,14 +43,14 @@ export function PortsSettings({ toast }: { toast: PushToast }) {
   };
 
   if (!v) return null;
-  const shown = v.ports.filter((p) => all || !p.system);
+  const shown = v.ports;
   return (
     <section className="card ports">
       <div className="adv-head">
         <h2>{t("Servers and ports")}</h2>
         <button className="btn ghost small" onClick={load}>{t("Refresh")}</button>
       </div>
-      <p className="muted small">{t("Programs on this PC that are waiting for connections, and the port each one uses. View opens one in SulcusAI's browser.")}</p>
+      <p className="muted small">{t("The ports SulcusAI's models and the programs it started have open. Other programs on this PC aren't listed, so nothing they need can be stopped from here. View opens one in SulcusAI's browser.")}</p>
 
       <h3>{t("Servers the assistant started")}</h3>
       {v.servers.length === 0 ? (
@@ -78,17 +81,11 @@ export function PortsSettings({ toast }: { toast: PushToast }) {
         </ul>
       )}
 
-      <div className="adv-head">
-        <h3>{t("Ports in use")}</h3>
-        <label className="check small">
-          <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
-          <span>{t("Show Windows' own")}</span>
-        </label>
-      </div>
+      <h3>{t("Ports SulcusAI opened")}</h3>
       {!v.supported ? (
         <p className="muted small">{t("Listing ports works on Windows only for now.")}</p>
       ) : shown.length === 0 ? (
-        <p className="muted small">{t("Nothing is listening right now.")}</p>
+        <p className="muted small">{t("None open right now: no model is loaded and nothing the assistant started is running.")}</p>
       ) : (
         <table className="ports-table small">
           <thead>
@@ -104,7 +101,7 @@ export function PortsSettings({ toast }: { toast: PushToast }) {
               <tr key={`${p.port}-${p.pid}`}>
                 <td><strong>{p.port}</strong></td>
                 <td className="ellipsis" title={`${p.program} (${p.pid})`}>
-                  {p.program} <span className="muted">({p.pid})</span>
+                  {p.what ? t(p.what) : p.program} <span className="muted">({p.program}, {p.pid})</span>
                   {p.server && <span className="badge subtle">{t("started by the assistant")}</span>}
                 </td>
                 <td>{p.local_only ? t("This PC only") : t("Your network too")}</td>

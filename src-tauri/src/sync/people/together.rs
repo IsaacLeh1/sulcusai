@@ -190,7 +190,7 @@ pub async fn tool(args: &Value, ctx: &tools::Ctx<'_>) -> Outcome {
             break Err("The user stopped it.".into());
         }
         // The chat's Stop button stops this side's thinking too.
-        let mine = match ask::think(state, &own_allow(), &system, history(&goal, &a.thread), ctx.cancel, &|_| {}, "").await {
+        let mine = match ask::think(state, &own_allow(), &system, history(&goal, &a.thread), ctx.cancel, &|_| {}, None).await {
             Ok(t) if !t.trim().is_empty() => t,
             Ok(_) => break Err("This assistant had nothing to say.".into()),
             Err(e) => {
@@ -284,7 +284,7 @@ async fn reply(state: &Arc<AppState>, contact: &str, id: &str) {
     ask::asks_changed(state, contact, id);
     let stop = stop_flag(id);
     let system = brief(state, &c, &p, &a.question, false);
-    match ask::think(state, &p.allow, &system, history(&a.question, &a.thread), &stop, &|_| {}, &p.name).await {
+    match ask::think(state, &p.allow, &system, history(&a.question, &a.thread), &stop, &|_| {}, Some(&p)).await {
         Ok(text) if !text.trim().is_empty() => {
             let done = outcome(&text).is_some();
             push(state, &c, &mut a, true, &text);

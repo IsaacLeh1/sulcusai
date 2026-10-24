@@ -108,5 +108,46 @@
     return true;
   }
 
-  globalThis.__sulcus = { read, target, click, type, banner };
+  /** Scrolls by screens: the page, or the box under the middle when the page itself doesn't move. */
+  function scroll(down, screens) {
+    const dy = innerHeight * 0.85 * Math.min(10, Math.max(0.25, screens)) * (down ? 1 : -1);
+    const before = scrollY;
+    scrollBy(0, dy);
+    if (scrollY !== before) return true;
+    let el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    while (el && el !== document.body) {
+      const s = getComputedStyle(el);
+      if (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight) {
+        el.scrollBy(0, dy);
+        return true;
+      }
+      el = el.parentElement;
+    }
+    return true;
+  }
+
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable=""], [contenteditable=true]';
+
+  /** Presses a key: what pages listen for (Escape closes their pop-ups), and
+   * what the browser would do itself (Tab moves on, PageDown scrolls). */
+  function key(name) {
+    const keys = { Escape: 27, Tab: 9, ArrowDown: 40, ArrowUp: 38, ArrowLeft: 37, ArrowRight: 39, PageDown: 34, PageUp: 33, Home: 36, End: 35, Space: 32, Backspace: 8, Delete: 46 };
+    const k = Object.keys(keys).find((x) => x.toLowerCase() === name.toLowerCase());
+    if (!k) return false;
+    const el = document.activeElement || document.body;
+    const opts = { key: k === "Space" ? " " : k, code: k, keyCode: keys[k], which: keys[k], bubbles: true, cancelable: true };
+    const go = el.dispatchEvent(new KeyboardEvent("keydown", opts));
+    el.dispatchEvent(new KeyboardEvent("keyup", opts));
+    if (!go) return true;
+    if (k === "Tab") {
+      const all = [...document.querySelectorAll(FOCUSABLE)].filter(shown);
+      const next = all[(all.indexOf(el) + 1) % Math.max(1, all.length)];
+      next?.focus();
+    } else if (k === "PageDown" || k === "PageUp" || k === "Space") scroll(k !== "PageUp", 1);
+    else if (k === "Home") scrollTo(0, 0);
+    else if (k === "End") scrollTo(0, document.documentElement.scrollHeight);
+    return true;
+  }
+
+  globalThis.__sulcus = { read, target, click, type, banner, scroll, key };
 })();

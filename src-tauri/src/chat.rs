@@ -568,7 +568,7 @@ pub async fn stream(
         let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
         again.thinking = format!("{}{}", first.thinking, again.thinking);
         if again.content.trim().is_empty() && again.tool_calls.is_empty() && !again.cancelled {
-            return Err("The model spent its whole reply thinking and never answered. Try again, or turn its thinking off in Advanced settings.".into());
+            return Err(THOUGHT_ONLY.into());
         }
         return Ok(again);
     }
@@ -1306,6 +1306,60 @@ pub const CARRY_ON: &str = "Don't explain the steps or ask whether to go ahead: 
 pub const GO_ON: &str = "You stopped partway: you said what you'd do next but didn't do it. Do it now with your tools and keep going \
      until the work is done (run the tests or the check again if there are any), then say briefly what you did.";
 
+/// Told when its reply was all thinking, cut off before it did anything.
+pub const THINK_LESS: &str = "Your last reply ran out of room while you were still thinking, so nothing was done. Don't work it all out \
+     again: take the next step now with one tool call (or, if the work is done, say so briefly).";
+
+/// Told when it stops while the last command it ran failed.
+pub const FIX_FAILING: &str = "The last command you ran failed, and you stopped there. Read what it printed, fix the cause in the files, \
+     and run it again; keep going until it works, then say briefly what you did.";
+
+/// Told once when it keeps sending a call that fails.
+pub const STEP_BACK: &str = "You've sent the same call more than once and it fails every time, so it won't work this way. Step back: \
+     read the whole file once, decide what it should say, and send the complete fixed file with write_file (or go on to the next part of \
+     the work).";
+
+/// Told when its reply after looking things up was empty.
+pub const ANSWER_NOW: &str = "Your last reply was empty. Answer the user now from what you found (or take the next step with a tool).";
+
+/// Told when it was asked to change something and stopped having changed nothing.
+pub const CHANGE_NOW: &str = "You haven't changed anything yet, and the user asked you to. Do it now with your tools (write or edit the files, \
+     then run the tests or the check if there are any), and keep going until it's done; then say briefly what you did.";
+
+/// The person asked for something in their files to be changed or made.
+pub fn asks_to_change(user: &str) -> bool {
+    static CHANGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)\b(add|fix|implement|change|update|build|create|write|make|refactor|rename|remove|finish|extend)\b").unwrap()
+    });
+    CHANGE.is_match(user)
+}
+
+/// Told when the engine couldn't read its last tool call.
+pub const RESEND_CALL: &str = "Your last tool call couldn't be read: its arguments weren't valid JSON (a quote or a line break inside a \
+     string wasn't escaped). Send it again as valid JSON. For a long file, write the first half with write_file, then add the rest with \
+     edit_file and an empty old_text (that adds it at the end).";
+
+/// Told when it stops with unfinished parts it wrote ("TODO") still there.
+pub const FINISH_STUBS: &str = "Some of what you wrote is still unfinished (the note after your change listed the lines, like a TODO). \
+     Finish those parts now if they're part of what was asked, check them, then say briefly what's done.";
+
+/// Told when it stops with a file it changed that doesn't parse.
+pub const FIX_BROKEN: &str = "A file you changed doesn't parse now (the warning after your edit said where). Read it, fix it, run the \
+     tests or the command again, and keep going until it works, then say briefly what you did.";
+
+/// Told once, when a site it built checks out, before it finishes.
+pub const CHECK_ASKED: &str = "Before you finish: go through everything the user asked for, one thing at a time (each feature, button and \
+     page), and check the files really do it; read them back if you need to. A button that does nothing, or a library that's used but \
+     never loaded, counts as missing. Fix or add what's missing, check the site again, then say briefly what's done.";
+
+/// Told once, after longer work on files or commands, before it finishes.
+pub const CHECK_WORK: &str = "Before you finish: go through what the user asked for, one thing at a time (each change, feature and test \
+     they asked for), and check it's really done; read the files back if you need to, and run the tests or the command again if there \
+     are any. Do what's missing, then say briefly what's done.";
+
+/// What `stream` says when a reply was all thinking, even when asked again.
+pub const THOUGHT_ONLY: &str = "The model spent its whole reply thinking and never answered. Try again, or turn its thinking off in Advanced settings.";
+
 /// A reply that ends by saying what it does next ("Need to adjust the
 /// names. Let's update the uses.") instead of finishing: a 20B model adding
 /// a feature stopped like that with a test still failing.
@@ -1318,8 +1372,9 @@ pub fn stops_midway(reply: &str) -> bool {
     });
     let prose = without_code(reply);
     let t = prose.trim();
-    // A finished answer is longer, or ends by asking the user something.
-    if t.is_empty() || t.chars().count() > 600 || t.ends_with('?') {
+    // A finished answer ends by asking the user something; a summary is
+    // long (the 20B model's unfinished notes ran to 620 characters).
+    if t.is_empty() || t.chars().count() > 1_500 || t.ends_with('?') {
         return false;
     }
     // Its last two sentences.
@@ -2166,6 +2221,13 @@ Found it.
         assert!(stops_midway("Need to adjust variable names. Let's update uses."));
         assert!(stops_midway("The import is wrong. Now I'll fix the path and run the tests again."));
         assert!(stops_midway("Next, we need to export pnl from src/pnl.js."));
+        // Its notes on what's left, at length, ending with what it does next.
+        let notes = "We added a pct function but the code still references pct(total).toFixed(2). But we didn't add pct function earlier. \
+                     We added a function pct(n) that returns n. But we need to export it. At bottom we already export {report, pnl, money}. \
+                     We need to export pct as well. Let's edit bottom.\n\nAlso we need to implement function pnl similar to report but with percent. \
+                     We didn't create function pnl in report.js. We only exported it. We need to define function pnl. Let's add.\n\n\
+                     Also tests need to check that pnl outputs correct lines.\n\nLet's edit report.js to add function pnl.\n\nAlso we need to export pct. Let's modify.";
+        assert!(notes.chars().count() > 600 && stops_midway(notes));
         // Finished, or asking the user: the end.
         assert!(!stops_midway("All four tests pass now. The pnl command prints each position's profit in percent, best first."));
         assert!(!stops_midway("Done. Let me know if you'd like the report sorted differently."));

@@ -150,6 +150,9 @@ pub struct Turn {
     /// Nobody's watching (a scheduled task): nothing waits for an answer
     /// to a popup; what would need one is declined.
     pub unattended: bool,
+    /// Approved ahead (a timed action the user set up): these tools run
+    /// without asking, and nothing else that changes or sends runs at all.
+    pub pre_approved: Option<Vec<String>>,
     pub base: String,
     pub about: String,
     pub cancel: Arc<AtomicBool>,
@@ -456,7 +459,7 @@ impl Turn {
             media_note.push("music and sound effects (create_music)");
         }
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
-            extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back"]);
+            extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back", "browser_scroll", "browser_key"]);
         }
         // Asking (and working with) the assistants of people linked in People.
         let people_note = if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::People) {
@@ -465,7 +468,11 @@ impl Turn {
             None
         };
         if people_note.is_some() {
-            extra.extend(["ask_person", "work_with_person"]);
+            extra.extend(["ask_person", "work_with_person", "message_person"]);
+        }
+        // This chat's notes: its memory and plan, kept up to date as it works.
+        if self.use_tools && !incognito {
+            extra.extend(["read_chat_notes", "update_chat_notes", "check_plan_step"]);
         }
         // The user's other chats: searching, reading, and asking their assistants.
         let chats_note = self.use_tools && features.contains(&Feature::ChatTeam) && !incognito;
@@ -559,6 +566,13 @@ impl Turn {
         let local = self.ep.cloud.is_none();
         let memory_part = if memory_tools { memory::prompt_section(if local { &[] } else { &recalled }) } else { String::new() };
         let recall_note = if local { memory::recall_note(&recalled) } else { String::new() };
+        // This chat's notes go with the newest message too: they change as it works.
+        let recall_note = if self.use_tools && !incognito {
+            let notes = crate::chatnotes::get(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
+            format!("{recall_note}{}", crate::chatnotes::prompt_section(&notes))
+        } else {
+            recall_note
+        };
         about.push_str(&memory_part);
         let mut accounts_part = String::new();
         if !media_note.is_empty() {
@@ -692,9 +706,23 @@ impl Turn {
         let mut failed_repeats = 0;
         // Told once this turn to carry out steps it only explained.
         let mut told_to_act = false;
-        // It stopped saying what it does next: told to go on (up to three times a turn).
+        // It stopped short (saying what it does next, all thinking and no
+        // step, or with the last command failing): told to go on, up to four
+        // times a turn.
         let mut go_on: Option<&str> = None;
         let mut midway = 0;
+        // The last command it ran failed (and nothing ran since), or the
+        // last file it changed doesn't parse.
+        let mut failing_run = false;
+        let mut broken_file = false;
+        // A site it built was checked against what was asked.
+        let mut reviewed_asks = false;
+        // Told once to step back from a call it kept repeating.
+        let mut stepped_back = false;
+        // Unfinished lines ("TODO") it wrote this turn, by file.
+        let mut stubs: Vec<(std::path::PathBuf, String)> = Vec::new();
+        // It changed, ran, made or sent something this turn (not only looked).
+        let mut did_something = false;
         for step in 0..most_steps {
             if step >= limit {
                 break;
@@ -882,6 +910,25 @@ impl Turn {
                 }
                 let finished = match result {
                     Ok(f) => f,
+                    // All thinking, cut off before it did anything (asked
+                    // again too): in the middle of work it's told to take the
+                    // next step, and what it thought stays on screen.
+                    Err(e) if e == chat::THOUGHT_ONLY && tools.is_some() && midway < 4 && step < limit - 1 && !self.cancel.load(Ordering::Relaxed) => {
+                        midway += 1;
+                        carry_on = Some(chat::THINK_LESS);
+                        self.emit("chat:delta", json!({ "chat_id": self.chat_id, "message_id": message_id, "content": null, "thinking": (!shown.1.trim().is_empty()).then_some("\n\n") }));
+                        aside = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
+                        continue;
+                    }
+                    // A call the engine couldn't read (gpt-oss writing a long
+                    // file left a quote unescaped, and llama-server answered
+                    // 500): told to send it again, valid, split if it's long.
+                    Err(e) if e.contains("Failed to parse tool call arguments") && tools.is_some() && midway < 4 && step < limit - 1 && !self.cancel.load(Ordering::Relaxed) => {
+                        midway += 1;
+                        carry_on = Some(chat::RESEND_CALL);
+                        aside = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
+                        continue;
+                    }
                     // What it wrote before the error stays in the chat.
                     Err(e) => {
                         let (content, thinking) = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
@@ -1078,12 +1125,44 @@ impl Turn {
                         continue;
                     }
                 }
-                // It stopped partway: its last words say what it does next
-                // ("Let's update the uses.") and it didn't do it.
+                // It stopped partway: the last command it ran (asked to get
+                // something done) failed, or its last words say what it does
+                // next ("Let's update the uses.") and it didn't do it.
                 let said = result.last.as_ref().map(|m| m.content.as_str()).unwrap_or_default();
-                if midway < 3 && tools.is_some() && self.mode != tools::Mode::Plan && step < limit - 1 && chat::stops_midway(said) {
+                // A site it built that checks out: once, it goes through what
+                // was asked, item by item, against the files (a 20B model's
+                // budget app had Edit and Delete buttons that did nothing).
+                // Other work that took a while (files changed or commands run
+                // over several steps) the same way: the 20B model added a
+                // command without the test it was asked for.
+                let built = build_ask && !written.is_empty() && previewed && problems_left.is_none();
+                let worked = progressed_at.is_some() && step >= 4 && chat::asks_to_act(&request);
+                // Unfinished lines it wrote that are still there.
+                let unfinished = stubs.iter().any(|(p, l)| std::fs::read_to_string(p).is_ok_and(|t| t.lines().any(|x| x.trim() == l)));
+                // Asked to change something in its folders, and nothing's
+                // changed: gpt-oss 20B wrote out a plan for a new command and
+                // stopped there.
+                let unchanged = !sandbox.is_empty() && !did_something && chat::asks_to_change(&request) && !said.trim_end().ends_with('?');
+                let short = if said.trim().is_empty() && step > 0 && !result.cancelled {
+                    // Nothing at all after its lookups (an empty reply).
+                    Some(chat::ANSWER_NOW)
+                } else if (failing_run || broken_file) && chat::asks_to_act(&request) {
+                    Some(if broken_file { chat::FIX_BROKEN } else { chat::FIX_FAILING })
+                } else if unchanged {
+                    Some(chat::CHANGE_NOW)
+                } else if unfinished && chat::asks_to_act(&request) {
+                    Some(chat::FINISH_STUBS)
+                } else if (built || worked) && !reviewed_asks {
+                    reviewed_asks = true;
+                    Some(if built { chat::CHECK_ASKED } else { chat::CHECK_WORK })
+                } else if chat::stops_midway(said) {
+                    Some(chat::GO_ON)
+                } else {
+                    None
+                };
+                if let Some(note) = short.filter(|_| midway < 4 && tools.is_some() && self.mode != tools::Mode::Plan && step < limit - 1) {
                     midway += 1;
-                    go_on = Some(chat::GO_ON);
+                    go_on = Some(note);
                     self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                     continue;
                 }
@@ -1193,6 +1272,23 @@ impl Turn {
                     }
                     o
                 };
+                // The last command failed: not done until one runs right. A
+                // file it left that doesn't parse counts the same, until a
+                // change to it parses.
+                if call.name == "run_command" {
+                    failing_run = outcome.meta["status"] == "error";
+                }
+                // Something done (not only looked at) this turn.
+                if outcome.meta["status"] == "ok" && tools::find(&call.name).is_some_and(|t| t.risk != Risk::Read) {
+                    did_something = true;
+                }
+                if matches!(call.name.as_str(), "write_file" | "edit_file") && outcome.meta["status"] != "error" {
+                    broken_file = outcome.meta["broken"] == true;
+                    // Unfinished lines it added ("TODO"), looked for again when it stops.
+                    if let (Some(path), Some(lines)) = (outcome.meta["unfinished"]["path"].as_str(), outcome.meta["unfinished"]["lines"].as_array()) {
+                        stubs.extend(lines.iter().filter_map(Value::as_str).map(|l| (std::path::PathBuf::from(path), l.to_string())));
+                    }
+                }
                 // Declined: nothing more is pushed on them this turn (a declined
                 // file write came back up to 12 times).
                 if outcome.meta["status"] == "denied" {
@@ -1281,7 +1377,15 @@ impl Turn {
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
             }
-            // The same failing call again and again: stop, and say what went wrong.
+            // The same failing call again and again: once, it's told to step
+            // back and do it another way (gpt-oss 20B sent one edit 30 times
+            // over); the next time, stop and say what went wrong.
+            if failed_repeats >= 2 && !stepped_back && step < limit - 1 {
+                stepped_back = true;
+                failed_repeats = 0;
+                go_on = Some(chat::STEP_BACK);
+                continue;
+            }
             if failed_repeats >= 2 {
                 let why = failed_calls.last().map(|(_, w)| w.clone()).unwrap_or_default();
                 let online = failed_calls.last().is_some_and(|(k, _)| is_network_tool(k.split('{').next().unwrap_or_default()));
@@ -1391,7 +1495,7 @@ impl Turn {
         let mut risk = def.risk;
         let mut browser_preview = None;
         if matches!(call.name.as_str(), "browser_click" | "browser_type") {
-            match tools::browser::assess(self.state.app.get(), &call.name, &args).await {
+            match tools::browser::assess(self.state.app.get(), &self.chat_id, &call.name, &args).await {
                 Ok(None) => {}
                 Ok(Some(p)) => {
                     risk = Risk::Submit;
@@ -1462,6 +1566,19 @@ impl Turn {
         // Deleting a chat always asks, in every mode (Bypass too).
         if call.name == "delete_chat" && permission == Permission::Run {
             permission = Permission::Ask;
+        }
+        // A timed action the user approved when they set it up: what it was
+        // approved for runs, and nothing else that changes or sends.
+        if let Some(approved) = &self.pre_approved {
+            if !matches!(risk, Risk::Read | Risk::Memory) {
+                if !approved.iter().any(|t| *t == call.name) {
+                    return Outcome::error(
+                        tools::failed_title(&call.name, &args),
+                        format!("This task was only approved to use {} when it was set up, so it can't do this. Do what it says with those, or say what else it needs.", approved.join(", ")),
+                    );
+                }
+                permission = Permission::Run;
+            }
         }
         // A secret in what goes out (a key in a search or a web address, a
         // password in an email or a message, a key file a command sends)

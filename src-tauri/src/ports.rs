@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Servers and ports: what's listening on this PC and which program owns
-//! each port, the servers the assistant started (stop, start again), and
-//! previews of local servers in SulcusAI's own browser.
+//! Servers and ports: the ports SulcusAI's models and the programs it
+//! started have open (only those: nothing else on this PC is listed or
+//! stopped from here), the servers the assistant started (stop, start
+//! again), and previews of local servers in SulcusAI's own browser.
 //!
 //! The browser refuses addresses on this PC and the local network (a page
 //! could otherwise steer it at a router or a local admin page). Two kinds of
@@ -154,6 +155,8 @@ pub struct PortRow {
     server: Option<String>,
     /// Windows itself or a service: not stopped from here.
     system: bool,
+    /// What it is ("A model (the AI engine)"), when known.
+    what: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -171,12 +174,46 @@ fn is_system(pid: u32, program: &str) -> bool {
     pid <= 4 || SYSTEM.contains(&program.to_ascii_lowercase().as_str())
 }
 
+/// A program SulcusAI started, or one those started (an AI engine, a
+/// server the assistant ran): not SulcusAI itself, and nothing else.
+fn started_by_us(pid: u32, parents: &HashMap<u32, (String, Option<u32>)>) -> bool {
+    let me = std::process::id();
+    let mut at = pid;
+    for _ in 0..32 {
+        let Some((_, Some(parent))) = parents.get(&at) else { return false };
+        if *parent == me {
+            return true;
+        }
+        if *parent == at || *parent == 0 {
+            return false;
+        }
+        at = *parent;
+    }
+    false
+}
+
+/// What a program of SulcusAI's is, in words.
+fn what_it_is(program: &str) -> Option<&'static str> {
+    let p = program.to_ascii_lowercase();
+    if p.starts_with("llama-server") {
+        Some("A model (the AI engine)")
+    } else if p.contains("python") || p.contains("comfy") {
+        Some("A picture, video, voice or music model")
+    } else {
+        None
+    }
+}
+
 fn view() -> PortsView {
     let servers = shell::servers();
     let ids: Vec<(String, u32)> = servers.iter().filter_map(|s| Some((s.id.clone(), s.pid?))).collect();
     let parents = parents();
     let mut rows: Vec<PortRow> = Vec::new();
     for l in listening() {
+        // Only what SulcusAI started: nothing else on this PC shows here.
+        if !started_by_us(l.pid, &parents) {
+            continue;
+        }
         let local = l.address.starts_with("127.") || l.address == "[::1]";
         if let Some(r) = rows.iter_mut().find(|r| r.port == l.port && r.pid == l.pid) {
             if !r.addresses.contains(&l.address) {
@@ -193,6 +230,8 @@ fn view() -> PortsView {
             pid: l.pid,
             system: is_system(l.pid, &program),
             server: server_of(l.pid, &ids, &parents),
+            // A server the assistant ran is named by its command instead.
+            what: what_it_is(&program).filter(|_| server_of(l.pid, &ids, &parents).is_none()).map(str::to_string),
             program,
         });
     }
@@ -217,6 +256,10 @@ pub fn stop_port_program(state: AppStateRef, pid: u32) -> Result<PortsView, Stri
     let program = parents.get(&pid).map(|(n, _)| n.clone()).ok_or("That program has already ended.")?;
     if is_system(pid, &program) || pid == std::process::id() {
         return Err("That's part of Windows (or SulcusAI itself), so it isn't stopped from here.".into());
+    }
+    // Only programs SulcusAI started.
+    if !started_by_us(pid, &parents) {
+        return Err("SulcusAI didn't start that program, so it isn't stopped from here.".into());
     }
     // One of the assistant's servers: stop it as a whole, so it can start again.
     let ids: Vec<(String, u32)> = shell::servers().into_iter().filter_map(|s| Some((s.id, s.pid?))).collect();

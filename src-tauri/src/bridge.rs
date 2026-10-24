@@ -73,6 +73,14 @@ impl Default for Bridge {
 }
 
 impl Bridge {
+    /// The connected extension is older than `want` ("0.2.0"): it was loaded
+    /// before the app updated its files, and Chrome keeps the old ones until
+    /// it's reloaded.
+    pub fn older_than(&self, want: &str) -> bool {
+        let parse = |v: &str| v.split('.').map(|n| n.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
+        self.version.lock().unwrap().as_deref().is_some_and(|v| parse(v) < parse(want))
+    }
+
     /// The extension has said hello on the current connection.
     pub fn connected(&self) -> bool {
         self.conn.lock().unwrap().is_some() && self.version.lock().unwrap().is_some()

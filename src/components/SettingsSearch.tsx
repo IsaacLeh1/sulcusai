@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo, useRef, useState, type RefObject } from "react";
+import { unfold } from "./CardFolds";
 import { rank } from "../fuzzy";
 import { t } from "../i18n";
 
@@ -149,6 +150,8 @@ export function SettingsSearch({ pageRef }: { pageRef: RefObject<HTMLDivElement 
     if (!m) return;
     setOpen(false);
     const el = m.item.el;
+    // Inside a folded card: it opens first.
+    unfold(el);
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     el.classList.remove("search-hit");
     // Restarts the highlight if the same one is picked again.

@@ -29,6 +29,7 @@ import { UpdateNotes, UpdateSettings } from "../components/Updates";
 import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
 import { SettingsSearch } from "../components/SettingsSearch";
+import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
   { name: "Tauri", license: "MIT / Apache-2.0", url: "https://github.com/tauri-apps/tauri" },
@@ -227,6 +228,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
   // After a quick link, the picked section stays marked until the person
   // scrolls themselves (a section near the end can't reach the top).
   const pageRef = useRef<HTMLDivElement>(null);
+  // Each card folds by its heading.
+  useCardFolds(pageRef);
   const held = useRef(false);
   const release = () => {
     held.current = false;
@@ -253,6 +256,8 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
     if (!jump) return;
     held.current = true;
     onSection(jump.id);
+    // A folded card opens when its quick link is picked.
+    unfold(document.getElementById(`settings-${jump.id}`)?.nextElementSibling);
     const go = (behavior: ScrollBehavior) => document.getElementById(`settings-${jump.id}`)?.scrollIntoView({ behavior, block: "start" });
     if (Date.now() - opened.current > 1500) {
       go("smooth");
@@ -275,6 +280,14 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <header className="page-head settings-head">
         <h1>{t("Settings")}</h1>
         <SettingsSearch pageRef={pageRef} />
+        <span className="row settings-folds">
+          <button className="btn ghost small" onClick={() => foldAll(pageRef.current, false)} title={t("Open every section")}>
+            {t("Expand all")}
+          </button>
+          <button className="btn ghost small" onClick={() => foldAll(pageRef.current, true)} title={t("Fold every section to its heading")}>
+            {t("Collapse all")}
+          </button>
+        </span>
       </header>
 
       <span id="settings-appearance" className="settings-anchor" />

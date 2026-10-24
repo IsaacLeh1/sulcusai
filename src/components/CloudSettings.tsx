@@ -121,6 +121,49 @@ function MediaPicker({ p, run }: { p: CloudProvider; run: (f: () => Promise<Clou
   );
 }
 
+/** Where a provider's chats go: this user's other PCs that use the same key,
+ * and people linked in People. Off: they stay on this PC. */
+function ChatSharing({ p, run }: { p: CloudProvider; run: (f: () => Promise<CloudView>) => Promise<void> }) {
+  const [people, setPeople] = useState<{ id: string; name: string }[] | null>(null);
+  useEffect(() => {
+    api
+      .peopleView()
+      .then((v) => setPeople(v.contacts.map((c) => ({ id: c.id, name: c.name }))))
+      .catch(() => setPeople([]));
+  }, []);
+  const set = (pcs: boolean, who: string[]) => run(() => api.setCloudSharing(p.id, pcs, who));
+  const shared = (p.share_pcs ? 1 : 0) + p.share_people.length;
+  return (
+    <details className="cloud-media small">
+      <summary>
+        {t("Where its chats go")}
+        {shared > 0 ? ` (${p.share_pcs ? t("your PCs") : ""}${p.share_pcs && p.share_people.length ? ", " : ""}${p.share_people.length ? t("{n} people", { n: p.share_people.length }) : ""})` : ` (${t("this PC only")})`}
+      </summary>
+      <label className="check">
+        <input type="checkbox" checked={p.share_pcs} disabled={!p.has_key} onChange={(e) => set(e.target.checked, p.share_people)} />
+        {t("Show its chats on my other PCs that use the same key")}
+      </label>
+      <p className="muted">
+        {t("Your PCs paired in Settings → Your devices compare a fingerprint of the key (it can't be turned back into the key) inside their encrypted link, and only a PC with the same key gets these chats. {name} never learns which PCs or people see them. Turn this on on each PC whose chats should show on the others.", { name: p.name })}
+      </p>
+      {people && people.length > 0 && (
+        <>
+          <span>{t("Share its chats with")}</span>
+          <div className="share-list">
+            {people.map((c) => (
+              <label key={c.id} className="check">
+                <input type="checkbox" checked={p.share_people.includes(c.id)} onChange={(e) => set(p.share_pcs, e.target.checked ? [...p.share_people, c.id] : p.share_people.filter((x) => x !== c.id))} />
+                {c.name}
+              </label>
+            ))}
+          </div>
+          <p className="muted">{t("They see these chats live in People while you're both connected, and can take part. Chats you share by hand stay shared.")}</p>
+        </>
+      )}
+    </details>
+  );
+}
+
 function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v: CloudView) => void; toast: PushToast }) {
   const [key, setKey] = useState("");
   const [picking, setPicking] = useState(false);
@@ -221,6 +264,7 @@ function ProviderCard({ p, onChanged, toast }: { p: CloudProvider; onChanged: (v
         </table>
       )}
       {(p.media_suggestions.length > 0 || p.media.length > 0) && <MediaPicker p={p} run={run} />}
+      <ChatSharing p={p} run={run} />
       {picking && <ModelPicker provider={p} onClose={() => setPicking(false)} onSaved={onChanged} toast={toast} />}
     </div>
   );

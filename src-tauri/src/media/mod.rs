@@ -2205,7 +2205,7 @@ async fn make_room(state: &Arc<AppState>, req: &Request, model: Option<&MediaMod
 /// Starts a model paused for a chat's picture again, at its old address, so
 /// the chat's reply carries on.
 pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paused) {
-    match crate::llm_endpoint(state, Some(paused.model_id.clone()), paused.vision, || {}).await {
+    match crate::llm_endpoint(state, Some(paused.model_id.clone()), paused.vision, |_| {}).await {
         Ok(_) => crate::applog::line("media", &format!("Started {} again after the picture", paused.model_id)),
         Err(e) => crate::applog::line("media", &format!("Couldn't start {} again after the picture: {e}", paused.model_id)),
     }
@@ -4237,7 +4237,7 @@ pub async fn improve_media_prompt(state: AppStateRef<'_>, prompt: String, kind: 
         "music" => "a piece of music: the genre, mood, instruments, tempo and voice (if any)",
         _ => "a picture: the subject, setting, composition, light and mood",
     };
-    let (ep, _, _) = crate::llm_endpoint(state.inner(), None, false, || {}).await?;
+    let (ep, _, _) = crate::llm_endpoint(state.inner(), None, false, |_| {}).await?;
     let messages = vec![
         json!({ "role": "system", "content": format!(
             "You write descriptions for a model that makes media. Rewrite the person's idea as one vivid, specific description of {guide}. \
