@@ -1861,6 +1861,16 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .side-section > .chat-list { flex: 0 0 auto; min-height: 0; max-height: 30vh; border-top: none; padding-top: 0; }
 .brand .lock-btn + .side-fold { margin-left: 0; }
 
+/* People, beside the menu's fold button; a dot for unread messages. */
+.brand .people-btn { margin-left: auto; color: var(--muted); position: relative; }
+.brand .people-btn.active { color: var(--accent); }
+.brand .lock-btn + .people-btn, .brand .people-btn + .side-fold { margin-left: 0; }
+.brand .people-unread { position: absolute; top: 1px; right: 1px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); background-clip: border-box; }
+.people-head .people-head-actions { display: flex; gap: 6px; align-items: center; }
+/* People in a window of its own. */
+.people-window { height: 100vh; display: flex; flex-direction: column; background: var(--bg); }
+.people-window > .people-page { flex: 1; min-height: 0; }
+
 /* A chat's own browser, beside it (laid out like the site preview). */
 .browser-panel .web-viewer { flex: 1; min-height: 0; }
 .browser-panel .viewer-area { margin-left: 5px; }

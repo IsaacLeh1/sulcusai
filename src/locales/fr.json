@@ -4296,5 +4296,9 @@
  "Write the proxy like socks5h://127.0.0.1:1080.": "Écrivez le proxy ainsi : socks5h://127.0.0.1:1080.",
  "direct": "directe",
  "through its own proxy": "par son propre proxy",
- "{name} proxy": "Proxy de {name}"
+ "{name} proxy": "Proxy de {name}",
+ "People (Shift+click opens them in their own window)": "Personnes (Maj+clic les ouvre dans leur propre fenêtre)",
+ "People, {n} unread": "Personnes, {n} non lus",
+ "Open People in its own window": "Ouvrir Personnes dans sa propre fenêtre",
+ "SulcusAI is locked. Unlock it in the main window.": "SulcusAI est verrouillé. Déverrouille-le dans la fenêtre principale."
 }

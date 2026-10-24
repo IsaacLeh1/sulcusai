@@ -685,6 +685,20 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               <LockIcon />
             </button>
           )}
+          {peopleOn && (
+            <button
+              className={`icon-btn people-btn ${view === "people" ? "active" : ""}`}
+              title={t("People (Shift+click opens them in their own window)")}
+              aria-label={peopleUnread > 0 ? t("People, {n} unread", { n: peopleUnread }) : t("People")}
+              onClick={(e) => {
+                if (e.shiftKey && !phone) api.openPeopleWindow().catch((err) => toast(errorText(err), "error"));
+                else setView("people");
+              }}
+            >
+              <PeopleIcon />
+              {peopleUnread > 0 && <span className="people-unread" aria-hidden="true" />}
+            </button>
+          )}
           {!phone && (
             <button className="icon-btn side-fold" title={t("Hide the menu (Ctrl+B)")} aria-label={t("Hide the menu")} onClick={() => saveLayout({ ...layout, hidden: true })}>
               <SidebarIcon />

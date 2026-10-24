@@ -67,6 +67,7 @@ mod outgoing;
 mod oauth;
 mod paths;
 mod pcstatus;
+mod people_window;
 mod perf;
 mod placement;
 mod places;
@@ -2630,7 +2631,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(quick::plugin())
-        .on_window_event(quick::on_main_event)
+        .on_window_event(|w, e| {
+            quick::on_main_event(w, e);
+            people_window::on_main_event(w, e);
+        })
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
@@ -2761,6 +2765,7 @@ pub fn run() {
             viewer::viewer_url,
             viewer::viewer_exists,
             viewer::viewer_close,
+            people_window::open_people_window,
             docs::open_document,
             docs::show_in_folder,
             quick::quick_clipboard,

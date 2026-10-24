@@ -4296,5 +4296,9 @@
  "Write the proxy like socks5h://127.0.0.1:1080.": "プロキシは socks5h://127.0.0.1:1080 のように書いてください。",
  "direct": "直接",
  "through its own proxy": "専用のプロキシ経由",
- "{name} proxy": "{name} のプロキシ"
+ "{name} proxy": "{name} のプロキシ",
+ "People (Shift+click opens them in their own window)": "ピープル（Shift+クリックで専用のウィンドウに開く）",
+ "People, {n} unread": "ピープル、未読 {n} 件",
+ "Open People in its own window": "ピープルを専用のウィンドウで開く",
+ "SulcusAI is locked. Unlock it in the main window.": "SulcusAI はロックされています。メインウィンドウでロックを解除してください。"
 }

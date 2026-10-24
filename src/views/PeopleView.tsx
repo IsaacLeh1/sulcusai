@@ -11,7 +11,8 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
-import { FolderIcon, PaperclipIcon } from "../components/Icons";
+import { FolderIcon, NewWindowIcon, PaperclipIcon } from "../components/Icons";
+import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
 
 function seen(ms: number | null): string {
@@ -38,7 +39,8 @@ function Avatar({ name, online }: { name: string; online?: boolean }) {
   );
 }
 
-export function PeopleView({ toast }: { toast: PushToast }) {
+/** `inWindow`: shown in a window of its own (no button to open one). */
+export function PeopleView({ toast, inWindow = false }: { toast: PushToast; inWindow?: boolean }) {
   const [v, setV] = useState<View | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -104,9 +106,16 @@ export function PeopleView({ toast }: { toast: PushToast }) {
       <aside className="people-list">
         <div className="row people-head">
           <h2>{t("People")}</h2>
-          <button className="btn primary small" onClick={() => setConnecting(true)}>
-            {t("+ Connect")}
-          </button>
+          <span className="people-head-actions">
+            {!inWindow && !onPhone() && (
+              <button className="icon-btn" title={t("Open People in its own window")} aria-label={t("Open People in its own window")} onClick={() => api.openPeopleWindow().catch((e) => toast(errorText(e), "error"))}>
+                <NewWindowIcon />
+              </button>
+            )}
+            <button className="btn primary small" onClick={() => setConnecting(true)}>
+              {t("+ Connect")}
+            </button>
+          </span>
         </div>
         {v.contacts.length === 0 && (
           <p className="muted small">{t("No one yet. To connect with someone, one of you shows a code and the other types it in.")}</p>

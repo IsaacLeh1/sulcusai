@@ -4296,5 +4296,9 @@
  "Write the proxy like socks5h://127.0.0.1:1080.": "代理请写成这样：socks5h://127.0.0.1:1080。",
  "direct": "直接",
  "through its own proxy": "经由自己的代理",
- "{name} proxy": "{name} 的代理"
+ "{name} proxy": "{name} 的代理",
+ "People (Shift+click opens them in their own window)": "联系人（按住 Shift 点击可在单独的窗口中打开）",
+ "People, {n} unread": "联系人，{n} 条未读",
+ "Open People in its own window": "在单独的窗口中打开联系人",
+ "SulcusAI is locked. Unlock it in the main window.": "SulcusAI 已锁定。请在主窗口中解锁。"
 }

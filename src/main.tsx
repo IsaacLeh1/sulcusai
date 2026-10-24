@@ -10,9 +10,13 @@ import "./styles.css";
 // The quick-ask window loads only what it needs.
 const App = lazy(() => import("./App"));
 const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m.QuickAsk })));
+const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
 
-// The same page runs the quick-ask box, in its own small window.
-const quick = getCurrentWindow().label === "quick";
+// The same page runs the quick-ask box, in its own small window, and People
+// in a window of its own.
+const label = getCurrentWindow().label;
+const quick = label === "quick";
+const people = label === "people";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
 
@@ -34,16 +38,19 @@ if (!quick) {
     }
     import("./api").then(({ api }) => api.reportWindowError(String(r?.message ?? r), r?.stack ?? null).catch(() => {}));
   });
-  const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));
-  ping();
-  setInterval(ping, 30_000);
+  // The main window's: the People window answering doesn't mean it does.
+  if (!people) {
+    const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));
+    ping();
+    setInterval(ping, 30_000);
+  }
 }
 
 // Changing the language redraws the window where it is (the new elements
 // re-render everything below them).
 function Root() {
   useLanguage();
-  return <Suspense fallback={null}>{quick ? <QuickAsk /> : <App />}</Suspense>;
+  return <Suspense fallback={null}>{quick ? <QuickAsk /> : people ? <PeopleWindow /> : <App />}</Suspense>;
 }
 
 initLanguage().then(() =>

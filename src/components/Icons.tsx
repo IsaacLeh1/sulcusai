@@ -103,7 +103,17 @@ export function ExternalIcon(p: IconProps) {
   );
 }
 
-/** Three lines: opens the menu (on a phone). */
+/** A window in front of another: open in a window of its own. */
+export function NewWindowIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="8" y="3" width="13" height="11" rx="1.5" />
+      <path d="M8 6.5h13" />
+      <path d="M16 17v2.5a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 3 19.5V11a1.5 1.5 0 0 1 1.5-1.5H8" />
+    </Icon>
+  );
+}
+
 /** A window with a side panel: show or hide the sidebar. */
 export function SidebarIcon(p: IconProps) {
   return (
@@ -114,6 +124,7 @@ export function SidebarIcon(p: IconProps) {
   );
 }
 
+/** Three lines: opens the menu (on a phone). */
 export function MenuIcon(p: IconProps) {
   return (
     <Icon {...p}>

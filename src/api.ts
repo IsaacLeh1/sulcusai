@@ -2424,6 +2424,8 @@ export const api = {
   copyModelFrom: (peerId: string, modelId: string) => invoke<void>("copy_model_from", { peerId, modelId }),
   peopleView: () => invoke<PeopleView>("people_view"),
   peopleUnread: () => invoke<number>("people_unread"),
+  /** People in a window of its own (brought forward if it's open). */
+  openPeopleWindow: () => invoke<void>("open_people_window"),
   setPeopleName: (name: string) => invoke<PeopleView>("set_people_name", { name }),
   /** A new code, good for `max` people. */
   peopleNewCode: (max: number, label: string | null) => invoke<PeopleView>("people_new_code", { max, label }),
