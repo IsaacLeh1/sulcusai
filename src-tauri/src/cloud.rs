@@ -1520,15 +1520,25 @@ pub(crate) async fn check_provider(p: &Provider, c: &Cipher) -> String {
         Err(e) => return report + &e,
     };
     let started = std::time::Instant::now();
-    match list_models(p, &key, &cookies, &client).await {
-        Ok(models) => report += &format!("offers {} models in {} ms; ", models.len(), started.elapsed().as_millis()),
+    let offered = match list_models(p, &key, &cookies, &client).await {
+        Ok(models) => {
+            report += &format!("offers {} models in {} ms: {}; ", models.len(), started.elapsed().as_millis(), models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", "));
+            models
+        }
         Err(e) => return report + &format!("listing its models failed after {} ms: {e}", started.elapsed().as_millis()),
-    }
+    };
     if p.kind != Kind::Openai {
         return report;
     }
     let base = p.base_url.trim_end_matches('/');
-    for m in &p.models {
+    // The models picked here, or (none picked yet) the first two it offers
+    // that aren't for pictures, speech or embeddings.
+    let tried: Vec<CloudModel> = if p.models.is_empty() {
+        offered.into_iter().filter(|m| !["embed", "tts", "whisper", "image", "dall", "rerank", "moderation"].iter().any(|w| m.id.to_lowercase().contains(w))).take(2).collect()
+    } else {
+        p.models.clone()
+    };
+    for m in &tried {
         let t = std::time::Instant::now();
         let body = json!({ "model": m.id, "messages": [{ "role": "user", "content": "Reply with only the word OK." }], "max_tokens": 200, "stream": false });
         let mut req = client.post(format!("{base}/chat/completions")).bearer_auth(&key).json(&body).timeout(Duration::from_secs(120));

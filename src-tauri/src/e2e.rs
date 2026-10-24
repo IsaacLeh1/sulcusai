@@ -32,8 +32,16 @@ async fn real_cloud_providers_answer() {
     let c = vault.work_cipher().expect("the app's data key is locked with a password");
     let s = crate::cloud::settings(&conn);
     println!("{} cloud providers set up", s.providers.len());
+    // SULCUSAI_TRY_PROXY tries the providers named in SULCUSAI_TRY_PROXY_FOR
+    // (default "LiteLLM") through a proxy, without saving it.
+    let try_proxy = std::env::var("SULCUSAI_TRY_PROXY").ok();
+    let proxy_for = std::env::var("SULCUSAI_TRY_PROXY_FOR").unwrap_or_else(|_| "LiteLLM".into()).to_lowercase();
     for p in s.providers.iter().filter(|p| !p.key.is_empty()) {
-        println!("{}", crate::cloud::check_provider(p, &c).await);
+        let mut p = p.clone();
+        if let Some(proxy) = try_proxy.as_deref().filter(|_| p.name.to_lowercase().contains(&proxy_for)) {
+            p.proxy = c.encrypt(proxy);
+        }
+        println!("{}", crate::cloud::check_provider(&p, &c).await);
     }
 }
 
