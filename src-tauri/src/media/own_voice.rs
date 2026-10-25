@@ -622,7 +622,7 @@ async fn add_one(state: &Arc<AppState>, c: &Cipher, voice_id: &str, path: &Path,
         let threads = state.limits().threads;
         let mix = song.mono();
         let vocals = tokio::task::spawn_blocking(move || {
-            let r = stems::separate(&dll, &model, &song, threads, &[3], card).map(|(parts, _)| parts[0].mono());
+            let r = stems::separate(&dll, &model, &song, threads, &[3], card, &AtomicBool::new(false)).map(|(parts, _)| parts[0].mono());
             stems::unload();
             r
         })
@@ -1122,7 +1122,7 @@ mod tests {
         let started = std::time::Instant::now();
         let song = decode(&song_path);
         let reference = decode(&voice_path).mono();
-        let (parts, _) = stems::separate(&dll, &models.join("media").join("helpers").join("htdemucs_fp16weights.onnx"), &song, 8, &[0, 1, 2, 3], card).unwrap();
+        let (parts, _) = stems::separate(&dll, &models.join("media").join("helpers").join("htdemucs_fp16weights.onnx"), &song, 8, &[0, 1, 2, 3], card, &AtomicBool::new(false)).unwrap();
         stems::unload();
         let apart = started.elapsed().as_secs_f64();
         let band = stems::Stereo { rate: stems::RATE, ch: [0, 1].map(|c| (0..song.len()).map(|i| parts[0].ch[c][i] + parts[1].ch[c][i] + parts[2].ch[c][i]).collect()) };

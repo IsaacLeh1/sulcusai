@@ -404,6 +404,27 @@ fn missing_bytes(paths: &Paths, m: &MediaModel) -> u64 {
     m.files.iter().filter(|f| !file_path(paths, m, f).metadata().is_ok_and(|md| md.len() == f.size)).map(|f| f.size).sum()
 }
 
+/// An installed model whose files have gone (removed by hand, or a download
+/// that never finished) stops the job with what to do, not the engine's
+/// "not found in registry"; and, with the models folder there (not a drive
+/// that's away), it's no longer listed as installed so it can be installed
+/// again.
+fn files_here(state: &AppState, m: &MediaModel) -> Result<(), String> {
+    let gone: Vec<&str> = m.files.iter().filter(|f| !file_path(&state.paths, m, f).metadata().is_ok_and(|md| md.len() == f.size)).map(|f| f.file.as_str()).collect();
+    if gone.is_empty() {
+        return Ok(());
+    }
+    let dir = model_dir(&state.paths, m);
+    crate::applog::line("media", &format!("{}'s files are missing from {}: {}", m.name, dir.display(), gone.join(", ")));
+    if state.paths.models.is_dir() {
+        let conn = state.db.lock().unwrap();
+        let mut list = installed(&conn);
+        list.retain(|i| i.model_id != m.id);
+        save_installed(&conn, &list)?;
+    }
+    Err(format!("{}'s model files are missing from {} (removed, or a download that didn't finish). Install it again from Models in the Studio.", m.name, dir.display()))
+}
+
 fn sd_dir(c: &MediaCatalog, backend: &str) -> String {
     format!("sd-{}-{backend}", c.engine.build)
 }
@@ -1463,6 +1484,9 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
     let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    if let Some(m) = &model {
+        files_here(state, m)?;
+    }
     let est = match (&model, &on_cloud) {
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
@@ -2831,11 +2855,13 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "revoice" => revoice_job(&ctx).await,
         "music" | "sound" => {
             let mut items = song(&ctx, model.ok_or("No music model.")?, &work.0).await?;
-            // To be sung in a recorded voice: each version sung again in it,
-            // kept beside the song as the music model made it.
+            // To be sung in a recorded voice: the first version sung again in
+            // it, kept beside the songs as the music model made them (each
+            // version took as long again; the others can be sung from the
+            // gallery).
             if let Some(voice) = req.music.as_ref().and_then(|m| m.own_voice.clone()).filter(|_| req.op == "music") {
                 let made = items.clone();
-                for item in made.into_iter().filter(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)) {
+                for item in made.into_iter().filter(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)).take(1) {
                     match revoice_item(&ctx, &item, &voice).await {
                         Ok(v) => items.insert(0, v),
                         Err(e) if e == download::CANCELLED => return Err(e),
@@ -3830,7 +3856,7 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
         let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
         let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
         let started = Instant::now();
-        let (stems, on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card)?;
+        let (stems, on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, &AtomicBool::new(false))?;
         stems::unload();
         let apart = started.elapsed().as_secs_f64();
         let card = card.filter(|_| on_card);
@@ -3917,7 +3943,7 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
         let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
         let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
         let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
-        let (parts, apart_on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card)?;
+        let (parts, apart_on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, ctx.cancel)?;
         stems::unload();
         if ctx.cancel.load(Ordering::Relaxed) {
             return Err(download::CANCELLED.into());

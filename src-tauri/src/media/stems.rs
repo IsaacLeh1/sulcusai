@@ -132,7 +132,8 @@ pub const PARTS: [&str; 4] = ["drums", "bass", "other", "vocals"];
 /// first time ever, while CUDA builds its kernels). A 2:41 song came apart
 /// in 17 s on the card and 41-84 s on the processor. Should the card fail,
 /// it goes on on the processor.
-pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: &[usize], card: Option<crate::natural::Card>) -> Result<(Vec<Stereo>, bool), String> {
+/// Stopping (`cancel`) is checked at each piece.
+pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: &[usize], card: Option<crate::natural::Card>, cancel: &std::sync::atomic::AtomicBool) -> Result<(Vec<Stereo>, bool), String> {
     crate::natural::runtime_ready(dll)?;
     let mut guard = session().lock().unwrap();
     if guard.as_ref().map(|(p, on, _)| (p.as_path(), *on)) != Some((model, card.is_some())) {
@@ -155,6 +156,9 @@ pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: 
         let a = i * stride;
         if a >= total {
             break;
+        }
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(crate::download::CANCELLED.into());
         }
         let b = (a + SEP_LEN).min(total);
         input.iter_mut().for_each(|v| *v = 0.0);

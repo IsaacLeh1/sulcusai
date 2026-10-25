@@ -1142,8 +1142,8 @@ function MusicComposer({
   // Each layered harmony is another pass, by a slower model (about twice the song's time).
   const layers = mode === "song" && harmonyLayer && canLayer ? (singing && harmonyVoice ? 1 : 0) + (harmonyInstrument ? 1 : 0) : 0;
   const songSecs = mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : auto ? autoGuess ?? 150 : secs;
-  // Singing it again in a recorded voice: about twice the song's length.
-  const revoicing = mode === "song" && !!spec().own_voice ? 2 * songSecs * versions : 0;
+  // Singing the first version again in a recorded voice: about twice the song's length.
+  const revoicing = mode === "song" && !!spec().own_voice ? 2 * songSecs : 0;
   const est = m ? (m.fit.est_secs * songSecs * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 + revoicing : 0;
   return (
     <div className="form music-composer">

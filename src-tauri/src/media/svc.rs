@@ -41,9 +41,6 @@ pub const MAX_PROMPT_S: f32 = 12.0;
 const VOICED: f32 = 1.0;
 /// The pieces, by file name.
 pub const PIECES: [&str; 8] = ["whisper_mel.onnx", "whisper.onnx", "rmvpe.onnx", "campplus.onnx", "mel44.onnx", "regulator.onnx", "dit.onnx", "bigvgan.onnx"];
-/// The most a piece may take on the graphics card: the transformer's
-/// attention over a 30 s window, for both guidance halves, is ~1.3 GB.
-const ARENA: usize = 6 << 30;
 
 fn e(err: impl std::fmt::Display) -> String {
     format!("Singing in your voice failed: {err}")
@@ -87,6 +84,20 @@ pub struct Converter {
     open: HashMap<&'static str, (Session, bool)>,
     /// Every piece run so far ran on the graphics card.
     pub on_card: bool,
+    /// The last audio's pitch: its length, first sample and the pitch.
+    pitch_of: Option<(usize, f32, Vec<f32>)>,
+}
+
+/// The most each piece may take on the graphics card (past it, that piece
+/// goes on on the processor): the transformer's attention over a 30 s
+/// window, for both guidance halves, is ~1.3 GB besides its weights.
+fn arena_of(piece: &str) -> usize {
+    match piece {
+        "dit.onnx" => 4 << 30,
+        "bigvgan.onnx" => 3 << 30,
+        "rmvpe.onnx" | "whisper.onnx" => 2 << 30,
+        _ => 1 << 30,
+    }
 }
 
 impl Converter {
@@ -97,14 +108,21 @@ impl Converter {
                 return Err(e(format!("{p} is missing")));
             }
         }
-        Ok(Converter { dir: dir.to_path_buf(), threads, card, open: HashMap::new(), on_card: card.is_some() })
+        Ok(Converter { dir: dir.to_path_buf(), threads, card, open: HashMap::new(), on_card: card.is_some(), pitch_of: None })
+    }
+
+    /// Closes pieces that aren't needed any more: each keeps the most it took
+    /// on the card until it's closed, and together they filled a 12 GB card,
+    /// which then swapped and crawled (a 3-minute song took 20 minutes).
+    fn close(&mut self, pieces: &[&str]) {
+        self.open.retain(|p, _| !pieces.contains(p));
     }
 
     /// Runs a piece on float inputs (name, shape, values): its first output.
     /// Should the card fail at it (out of room), it goes on on the processor.
     pub(crate) fn run(&mut self, piece: &'static str, inputs: Vec<(&'static str, Vec<i64>, Vec<f32>)>) -> Result<Vec<f32>, String> {
         if !self.open.contains_key(piece) {
-            let (s, on) = crate::natural::session_within(&self.dir.join(piece), self.threads, self.card, ARENA)?;
+            let (s, on) = crate::natural::session_within(&self.dir.join(piece), self.threads, self.card, arena_of(piece))?;
             self.open.insert(piece, (s, on));
         }
         let once = |s: &mut Session, inputs: Vec<(&'static str, Vec<i64>, Vec<f32>)>| -> Result<Vec<f32>, String> {
@@ -121,7 +139,7 @@ impl Converter {
             Ok(v) => Ok(v),
             Err(err) => {
                 crate::applog::line("media", &format!("The graphics card couldn't run {piece} ({err}); going on on the processor"));
-                let (s, _) = crate::natural::session_within(&self.dir.join(piece), self.threads, None, ARENA)?;
+                let (s, _) = crate::natural::session_within(&self.dir.join(piece), self.threads, None, arena_of(piece))?;
                 self.open.insert(piece, (s, false));
                 self.on_card = false;
                 once(&mut self.open.get_mut(piece).unwrap().0, inputs)
@@ -170,10 +188,44 @@ impl Converter {
         Ok((frames, all))
     }
 
-    /// RMVPE's pitch every 10 ms of 16 kHz audio (0 where there's none).
+    /// RMVPE's pitch every 10 ms of 16 kHz audio (0 where there's none), 30 s
+    /// at a time with a second either side for context: a whole song at once
+    /// took gigabytes of the card. The last song's is kept, as the song's
+    /// middle pitch is asked for before it's converted.
     fn pitch(&mut self, w16: &[f32]) -> Result<Vec<f32>, String> {
-        let salience = self.run("rmvpe.onnx", vec![("wave", vec![1, w16.len() as i64], w16.to_vec())])?;
-        Ok(decode_pitch(&salience, 0.03))
+        if let Some((len, first, f0)) = &self.pitch_of {
+            if *len == w16.len() && w16.first() == Some(first) {
+                return Ok(f0.clone());
+            }
+        }
+        const HOP: usize = 160;
+        const PIECE: usize = 16_000 * 30;
+        const EDGE: usize = 16_000;
+        let whole = |s: &mut Self, w: &[f32]| -> Result<Vec<f32>, String> {
+            let salience = s.run("rmvpe.onnx", vec![("wave", vec![1, w.len() as i64], w.to_vec())])?;
+            Ok(decode_pitch(&salience, 0.03))
+        };
+        let f0 = if w16.len() <= PIECE + 2 * EDGE {
+            whole(self, w16)?
+        } else {
+            let frames = w16.len() / HOP + 1;
+            let mut f0 = Vec::with_capacity(frames);
+            let mut start = 0;
+            while start < w16.len() {
+                let (a, b) = (start.saturating_sub(EDGE), (start + PIECE + EDGE).min(w16.len()));
+                let p = whole(self, &w16[a..b])?;
+                let skip = (start - a) / HOP;
+                let take = ((start + PIECE).min(w16.len()) - start) / HOP;
+                f0.extend_from_slice(&p[skip.min(p.len())..(skip + take).min(p.len())]);
+                start += PIECE;
+            }
+            f0.resize(frames, 0.0);
+            f0
+        };
+        if let Some(&first) = w16.first() {
+            self.pitch_of = Some((w16.len(), first, f0.clone()));
+        }
+        Ok(f0)
     }
 
     /// The person's voice from their recording (44.1 kHz, `MAX_PROMPT_S` at most).
@@ -214,9 +266,12 @@ impl Converter {
     /// A sung part (44.1 kHz mono) in the person's voice; `progress` gets
     /// 0..1.
     pub fn convert(&mut self, voice: &Voice, sung: &[f32], s: Settings, cancel: &AtomicBool, progress: &dyn Fn(f64)) -> Result<Vec<f32>, String> {
+        let stopped = || if cancel.load(Ordering::Relaxed) { Err(crate::download::CANCELLED.to_string()) } else { Ok(()) };
         let w16 = stems::resample(sung, RATE, 16_000);
         let (n, content) = self.content(&w16)?;
+        stopped()?;
         let mut f0 = self.pitch(&w16)?;
+        stopped()?;
         if s.semitones != 0 {
             let k = 2f32.powf(s.semitones as f32 / 12.0);
             f0.iter_mut().filter(|v| **v > VOICED).for_each(|v| *v *= k);
@@ -225,6 +280,8 @@ impl Converter {
         let frames = mel.len() / MELS;
         drop(mel);
         let cond = self.regulate(&content, n, &f0, frames)?;
+        // Only the transformer and the vocoder are needed from here.
+        self.close(&["whisper_mel.onnx", "whisper.onnx", "rmvpe.onnx", "campplus.onnx", "mel44.onnx", "regulator.onnx"]);
         progress(0.1);
         let room = WINDOW.saturating_sub(voice.frames).max(OVERLAP * 4);
         let mut rng = Noise::new(s.seed);
@@ -239,7 +296,7 @@ impl Converter {
             let end = (done + room).min(frames);
             let last = done + room >= frames;
             let noise: Vec<f32> = (0..MELS * (voice.frames + end - done)).map(|_| rng.normal()).collect();
-            let mel = self.sample(voice, &cond[done * WIDTH..end * WIDTH], end - done, s, noise, &|f| progress(0.1 + 0.85 * (done as f64 + f * (end - done) as f64) / frames as f64))?;
+            let mel = self.sample(voice, &cond[done * WIDTH..end * WIDTH], end - done, s, noise, cancel, &|f| progress(0.1 + 0.85 * (done as f64 + f * (end - done) as f64) / frames as f64))?;
             let wave = self.run("bigvgan.onnx", vec![("mel", vec![1, MELS as i64, (end - done) as i64], mel)])?;
             match previous.take() {
                 None if last => out.extend_from_slice(&wave),
@@ -269,8 +326,9 @@ impl Converter {
 
     /// One window's mel spectrogram (`frames` of the song), the person's
     /// prompt before it, by Euler steps of the flow with guidance from
-    /// `noise` (MELS x (prompt + frames)).
-    fn sample(&mut self, voice: &Voice, cond: &[f32], frames: usize, s: Settings, noise: Vec<f32>, progress: &dyn Fn(f64)) -> Result<Vec<f32>, String> {
+    /// `noise` (MELS x (prompt + frames)). Stopping is checked at every step.
+    #[allow(clippy::too_many_arguments)]
+    fn sample(&mut self, voice: &Voice, cond: &[f32], frames: usize, s: Settings, noise: Vec<f32>, cancel: &AtomicBool, progress: &dyn Fn(f64)) -> Result<Vec<f32>, String> {
         let p = voice.frames;
         let total = p + frames;
         let mut condition = Vec::with_capacity(total * WIDTH);
@@ -286,6 +344,9 @@ impl Converter {
         let steps = s.steps.max(1);
         let dt = 1.0 / steps as f32;
         for k in 0..steps {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(crate::download::CANCELLED.into());
+            }
             let t = k as f32 * dt;
             let v = self.run(
                 "dit.onnx",
@@ -471,6 +532,65 @@ mod tests {
         (dll, card.then_some(crate::natural::Card { device: 0 }))
     }
 
+    /// Stop, pressed while a song is being sung again, ends it within a step
+    /// (on the processor, where a step is slowest), not at the end of a
+    /// 30 s window.
+    ///     cargo test stopping_a_conversion -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn stopping_a_conversion_is_quick() {
+        let dir = PathBuf::from(std::env::var("SULCUSAI_SVC_DIR").unwrap_or_else(|_| r"C:\dev\tools\voice\onnx16".into()));
+        let pcm = crate::audio::wav_decode(&std::fs::read(r"C:\dev\tools\voice\tests\own-words-stems\vocals.wav").unwrap()).unwrap();
+        let sung = stems::resample(&pcm.samples, pcm.rate, RATE);
+        let (dll, card) = runtime();
+        let mut conv = Converter::new(&dll, &dir, 8, card).unwrap();
+        let voice = conv.voice(&sung[..RATE as usize * 10]).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let (flag, started) = (stop.clone(), std::time::Instant::now());
+        let pressed = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let at = pressed.clone();
+        let progress = move |f: f64| {
+            // Pressed once the steps are under way.
+            if f > 0.12 && at.lock().unwrap().is_none() {
+                *at.lock().unwrap() = Some(std::time::Instant::now());
+                flag.store(true, Ordering::Relaxed);
+            }
+        };
+        let r = conv.convert(&voice, &sung, Settings { steps: 10, ..Default::default() }, &stop, &progress);
+        let after = pressed.lock().unwrap().map(|t| t.elapsed().as_secs_f64()).unwrap();
+        println!("stopped {after:.1} s after Stop ({:.0} s in all)", started.elapsed().as_secs_f64());
+        assert_eq!(r.unwrap_err(), crate::download::CANCELLED);
+        assert!(after < 15.0);
+    }
+
+    /// The pitch of a song longer than a piece, found 30 s at a time, against
+    /// one pass over all of it (on the processor): the same frames, voiced
+    /// in the same places, within a few cents.
+    ///     cargo test long_songs_pitch_in_pieces -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn long_songs_pitch_in_pieces_as_in_one_pass() {
+        let dir = PathBuf::from(std::env::var("SULCUSAI_SVC_DIR").unwrap_or_else(|_| r"C:\dev\tools\voice\onnx16".into()));
+        let pcm = crate::audio::wav_decode(&std::fs::read(r"C:\dev\tools\voice\tests\own-words-stems\vocals.wav").unwrap()).unwrap();
+        let w16 = stems::resample(&pcm.samples, pcm.rate, 16_000);
+        assert!(w16.len() > 16_000 * 32, "needs more than one piece: {} s", w16.len() / 16_000);
+        let (dll, _) = runtime();
+        let mut conv = Converter::new(&dll, &dir, 8, None).unwrap();
+        let pieces = conv.pitch(&w16).unwrap();
+        let salience = conv.run("rmvpe.onnx", vec![("wave", vec![1, w16.len() as i64], w16.clone())]).unwrap();
+        let whole = decode_pitch(&salience, 0.03);
+        assert_eq!(pieces.len(), whole.len());
+        let both: Vec<(f32, f32)> = pieces.iter().copied().zip(whole.iter().copied()).filter(|(a, b)| *a > VOICED && *b > VOICED).collect();
+        let agree = pieces.iter().zip(&whole).filter(|(a, b)| (**a > VOICED) == (**b > VOICED)).count() as f32 / whole.len() as f32;
+        let cents = both.iter().map(|(a, b)| (1200.0 * (a / b).log2()).abs()).sum::<f32>() / both.len().max(1) as f32;
+        println!("{} frames: voiced the same in {:.1}%, {:.1} cents apart on average", whole.len(), agree * 100.0, cents);
+        assert!(agree > 0.98 && cents < 10.0);
+        // Asked again for the same audio, it isn't worked out again.
+        let t = std::time::Instant::now();
+        assert_eq!(conv.pitch(&w16).unwrap(), pieces);
+        assert!(t.elapsed().as_millis() < 50);
+    }
+
     /// The Rust side against Seed-VC's own run (`export_svc.py`'s saved
     /// values): each piece from the same inputs, and the sampling from the
     /// same noise.
@@ -504,7 +624,7 @@ mod tests {
         let voice = Voice { mel: mel2, frames: frames_ref, condition: prompt, style, pitch: middle_pitch(&f0_ori) };
         let s = Settings { steps: 10, ..Default::default() };
         let started = std::time::Instant::now();
-        let mel = conv.sample(&voice, &cond, frames_src, s, r("z"), &|_| {}).unwrap();
+        let mel = conv.sample(&voice, &cond, frames_src, s, r("z"), &AtomicBool::new(false), &|_| {}).unwrap();
         println!("10 steps over {} frames in {:.1} s ({})", frames_ref + frames_src, started.elapsed().as_secs_f64(), if conv.on_card { "card" } else { "processor" });
         let want = r("vc_mel");
         let want_src: Vec<f32> = (0..MELS).flat_map(|m| want[m * (frames_ref + frames_src) + frames_ref..(m + 1) * (frames_ref + frames_src)].to_vec()).collect();
