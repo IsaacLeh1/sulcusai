@@ -212,7 +212,7 @@ export async function saveAs(item: MediaItem, toast: PushToast) {
   if (!path) return;
   try {
     await api.mediaExport(item.id, path);
-    toast(t("Saved."), "success");
+    toast(t("Saved to {path}", { path }), "success");
   } catch (e) {
     toast(errorText(e), "error");
   }
@@ -310,7 +310,7 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
 
   return (
     <div className="audio-player">
-      {src && <audio ref={audio} src={src} controls preload="auto" onPlay={() => audio.current && audio.current.currentTime < range[0] && (audio.current.currentTime = range[0])} />}
+      {src && <audio ref={audio} src={src} controls controlsList="nodownload" preload="auto" onPlay={() => audio.current && audio.current.currentTime < range[0] && (audio.current.currentTime = range[0])} />}
       <canvas ref={canvas} className="wave" onClick={seek} aria-label={t("Waveform: click to jump")} />
       {dur > 0 && (
         <>
@@ -372,7 +372,7 @@ function InlineOne({ item, onOpen }: { item: MediaItem; onOpen?: (i: MediaItem) 
       </button>
     );
   if (item.kind === "video") return <video src={src} controls loop playsInline className="media-inline-video" />;
-  return <audio src={src} controls className="media-inline-audio" />;
+  return <audio src={src} controls controlsList="nodownload" className="media-inline-audio" />;
 }
 
 /** A full-size look at a picture from a chat. */

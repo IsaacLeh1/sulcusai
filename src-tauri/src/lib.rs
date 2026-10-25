@@ -2775,6 +2775,7 @@ pub fn run() {
             media::own_voice::own_voice_cancel,
             media::own_voice::own_voice_take,
             media::own_voice::own_voice_take_delete,
+            media::own_voice::own_voice_upload,
             media::own_voice::own_voice_try,
             docs::open_document,
             docs::show_in_folder,

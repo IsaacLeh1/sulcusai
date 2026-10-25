@@ -2134,6 +2134,12 @@ export interface OwnVoiceTake {
   /** "quiet", "loud" (it distorted) or "noisy". */
   notes: string[];
   at: number;
+  /** A recording the person added ("added-<n>"): singing or speaking. */
+  kind?: "speak" | "sing" | null;
+  /** The added file's name. */
+  file?: string;
+  /** How much of what was kept is voice (0 to 1); the clearest is used first. */
+  score?: number;
 }
 
 /** A recorded voice: narration and songs in it. */
@@ -2896,6 +2902,8 @@ export const api = {
   /** A take as WAV, base64. */
   ownVoiceTake: (voice: string, line: string) => invoke<string>("own_voice_take", { voice, line }),
   ownVoiceTakeDelete: (voice: string, line: string) => invoke<OwnVoicesView>("own_voice_take_delete", { voice, line }),
+  /** Adds recordings the person has (songs they sang, or speaking): the clearest 15 s of each, a song's voice taken out of its music. */
+  ownVoiceUpload: (voice: string, paths: string[], singing: boolean) => invoke<OwnVoicesView & { problems: string[] }>("own_voice_upload", { voice, paths, singing }),
   /** A sentence read in the voice, to hear it (WAV, base64); the first time downloads the voice engine. */
   ownVoiceTry: (voice: string, text: string, language: string | null) => invoke<string>("own_voice_try", { voice, text, language }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null }) =>
@@ -3162,6 +3170,8 @@ export interface ChatEvents {
   "own_voice:level": { voice: string; line: string; level: number; seconds: number };
   /** The line reached its longest, and recording should stop. */
   "own_voice:full": { voice: string; line: string };
+  /** Adding recordings: which file (n of `of`) and what it's doing. */
+  "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing"; n: number; of: number };
   "people:shared": { contact_id: string };
   "people:ask": { contact_id: string; id: string };
   /** Linking, step by step: find, reach, check, save. */

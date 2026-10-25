@@ -3681,6 +3681,18 @@ async fn ensure_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel:
     Ok((dll, fetch_helper(state, h, getting, cancel, progress).await?))
 }
 
+/// The part separator for work outside a job (a recording added to a
+/// voice): ONNX Runtime, HTDemucs, and the NVIDIA card when its runtime is
+/// already here and loaded (it isn't downloaded for this; the processor
+/// does it otherwise).
+pub(crate) async fn separator(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, PathBuf, Option<crate::natural::Card>), String> {
+    let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
+    let (dll, model) = ensure_helper(state, &sep, "Getting the part separator (once)", cancel, progress).await?;
+    let ready = crate::natural::nvidia_here(state) && crate::natural::gpu_runtime_dll(&state.paths, &state.catalog.voices).is_some() && !crate::natural::loaded_for_processor();
+    let card = if ready { crate::natural::cuda_card(state).await.ok() } else { None };
+    Ok((dll, model, card))
+}
+
 /// A helper's file, downloaded the first time.
 async fn fetch_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<PathBuf, String> {
     let dest = state.paths.models.join("media").join("helpers").join(&h.file.file);

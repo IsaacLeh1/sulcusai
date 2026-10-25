@@ -790,7 +790,7 @@ function SongSource({ song, gallery, onPick, toast }: { song: MediaItem | null; 
           <strong className="small">{song.prompt || t("A song")}</strong>
           {song.seconds > 0 && <span className="small muted">{mmss(song.seconds)}</span>}
           <button className="link small" onClick={() => onPick(null)}>{t("Change")}</button>
-          {src && <audio controls src={src} className="music-player" />}
+          {src && <audio controls controlsList="nodownload" src={src} className="music-player" />}
         </div>
       ) : (
         <div className="row wrap">

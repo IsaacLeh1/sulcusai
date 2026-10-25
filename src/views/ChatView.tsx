@@ -1248,7 +1248,7 @@ function UserSong({ item }: { item: MediaItem }) {
   return (
     <div className="user-song">
       <span className="small">{item.prompt || t("A song")}</span>
-      {src && <audio controls src={src} />}
+      {src && <audio controls controlsList="nodownload" src={src} />}
     </div>
   );
 }

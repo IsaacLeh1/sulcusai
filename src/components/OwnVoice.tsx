@@ -3,9 +3,11 @@
 // ways) and sings a little; narration can then read in their voice and
 // songs can be sung in it. The recordings stay on this PC, encrypted.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errorText, on, type OwnVoice, type OwnVoiceLine, type OwnVoicesView } from "../api";
+import { api, errorText, on, type OwnVoice, type OwnVoiceLine, type OwnVoicesView, type OwnVoiceTake } from "../api";
 import { bytes } from "../format";
 import { language, t, tx } from "../i18n";
+import { open as openFile } from "@tauri-apps/plugin-dialog";
+import { saveAs } from "./MediaBits";
 import type { PushToast } from "./Toasts";
 
 /** How to say each line, and its words. The song's lines are SulcusAI's own. */
@@ -60,9 +62,19 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
   const [deleting, setDeleting] = useState(false);
   const [tryText, setTryText] = useState(t("This is how I sound when SulcusAI reads something for me."));
   const [trying, setTrying] = useState(false);
-  const [tried, setTried] = useState<string | null>(null);
+  // The last sentence heard: its sound (to play and keep) and words.
+  const [tried, setTried] = useState<{ url: string; b64: string; text: string } | null>(null);
   const player = useRef<HTMLAudioElement | null>(null);
   const stopping = useRef(false);
+  // Recordings the person already has, being added: which file and what's happening.
+  const [adding, setAdding] = useState<{ file: string; step: string; n: number; of: number } | null>(null);
+  const [addKind, setAddKind] = useState<"sing" | "speak">("sing");
+  useEffect(() => {
+    const sub = on("own_voice:adding", (d) => setAdding({ file: d.file, step: d.step, n: d.n, of: d.of }));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
 
   const take = useCallback((v: OwnVoicesView) => {
     setView(v);
@@ -146,11 +158,45 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
     if (!voice || !tryText.trim()) return;
     setTrying(true);
     try {
-      setTried(wavUrl(await api.ownVoiceTry(voice.id, tryText, language())));
+      const b64 = await api.ownVoiceTry(voice.id, tryText, language());
+      setTried({ url: wavUrl(b64), b64, text: tryText });
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
       setTrying(false);
+    }
+  };
+
+  const addFiles = async () => {
+    if (!voice) return;
+    const picked = await openFile({ multiple: true, filters: [{ name: t("Recordings"), extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "wma", "mp4"] }] });
+    const paths = Array.isArray(picked) ? picked : typeof picked === "string" ? [picked] : [];
+    if (paths.length === 0) return;
+    player.current?.pause();
+    setAdding({ file: "", step: "reading", n: 1, of: paths.length });
+    try {
+      const r = await api.ownVoiceUpload(voice.id, paths, addKind === "sing");
+      take(r);
+      if (r.problems.length) toast(r.problems.join("\n"), "error");
+      else toast(t("Added. Your recordings are used before the lines below."), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setAdding(null);
+    }
+  };
+
+  // The sentence heard, kept in the gallery as a narration (and saved where
+  // the person picks, with `save`).
+  const keep = async (save: boolean) => {
+    if (!tried) return;
+    try {
+      const seconds = Math.max(0, atob(tried.b64).length - 44) / 2 / 24000;
+      const item = await api.mediaAdd({ data: tried.b64, mime: "audio/wav", op: "narrate", prompt: tried.text, seconds });
+      if (save) await saveAs(item, toast);
+      else toast(t("Kept in the gallery (Studio, Sound)."), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
     }
   };
 
@@ -177,7 +223,7 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
     const s = SCRIPT[l.id];
     const done = voice?.takes.find((x) => x.line === l.id);
     const live = recording === l.id;
-    const busy = (recording !== null && !live) || saving !== null;
+    const busy = (recording !== null && !live) || saving !== null || adding !== null;
     const shown = s ? t(s.words) : "";
     // What speech recognition heard, when it's clearly not the line as written.
     const heardOther = done && l.kind === "speak" && done.words && done.words.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "") !== shown.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, "");
@@ -223,6 +269,31 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
       </div>
     );
   };
+
+  // A recording the person added: its file, kind, length and how clear it is.
+  const addedRow = (x: OwnVoiceTake) => (
+    <div key={x.line} className="own-voice-added-row">
+      <div className="row wrap">
+        <strong className="small ellipsis">{x.file || t("A recording")}</strong>
+        <span className="small muted">
+          {x.kind === "speak" ? t("Talking") : t("Singing")} · {t("{s} s", { s: x.seconds.toFixed(0) })} · {t("{p}% voice", { p: Math.round((x.score ?? 0) * 100) })}
+        </span>
+        <span className="spacer" />
+        <button className="btn ghost small" disabled={recording !== null || adding !== null} onClick={() => play(x.line)}>{t("Listen")}</button>
+        <button
+          className="btn ghost small"
+          disabled={recording !== null || adding !== null}
+          onClick={() => voice && api.ownVoiceTakeDelete(voice.id, x.line).then(take).catch((e) => toast(errorText(e), "error"))}
+        >
+          {t("Remove")}
+        </button>
+      </div>
+      {x.notes.length > 0 && <p className="small warn-text">{x.notes.map((n) => (NOTES[n] ? t(NOTES[n]) : n)).join(" ")}</p>}
+      {x.kind === "speak" && x.words && <p className="small muted">{t("Heard: “{words}”", { words: x.words })}</p>}
+    </div>
+  );
+  const STEPS: Record<string, string> = { reading: tx("Reading it…"), separating: tx("Taking your voice out of the music…"), choosing: tx("Finding the clearest part…") };
+  const added = voice?.takes.filter((x) => x.line.startsWith("added-")) ?? [];
 
   const speakLines = view.lines.filter((l) => l.kind === "speak");
   const singLines = view.lines.filter((l) => l.kind === "sing");
@@ -281,6 +352,24 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
 
           {voice && (
             <>
+              <h3>{t("Recordings you already have")}</h3>
+              <p className="small muted">
+                {t("Add songs you've sung, or recordings of you talking, instead of (or as well as) the lines below. From a song, your voice is taken out of the music. The clearest 15 seconds of each are kept, and the clearest recording is used first. The lines you've recorded stay as they are.")}
+              </p>
+              <div className="row wrap">
+                <div className="filters tight">
+                  <button className={`chip ${addKind === "sing" ? "active" : ""}`} onClick={() => setAddKind("sing")}>{t("Songs I sang")}</button>
+                  <button className={`chip ${addKind === "speak" ? "active" : ""}`} onClick={() => setAddKind("speak")}>{t("Me talking")}</button>
+                </div>
+                <button className="btn" disabled={adding !== null || recording !== null} onClick={addFiles}>{t("Add recordings…")}</button>
+                {adding && (
+                  <span className="small muted">
+                    {adding.file ? t("{file} ({n} of {of}): {step}", { file: adding.file, n: adding.n, of: adding.of, step: t(STEPS[adding.step] ?? adding.step) }) : t("Reading it…")}
+                  </span>
+                )}
+              </div>
+              {added.length > 0 && <div className="own-voice-added">{added.map(addedRow)}</div>}
+
               <h3>{t("Speaking ({done} of {n})", { done: count(speakLines), n: speakLines.length })}</h3>
               <p className="small muted">
                 {voice.can_speak
@@ -305,7 +394,13 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
                   <textarea className="input" rows={2} value={tryText} aria-label={t("Text to hear in this voice")} onChange={(e) => setTryText(e.target.value)} />
                   <div className="row wrap">
                     <button className="btn" disabled={trying || !tryText.trim() || recording !== null} onClick={tryIt}>{trying ? t("Reading in your voice…") : t("Read it in this voice")}</button>
-                    {tried && <audio src={tried} controls autoPlay />}
+                    {tried && (
+                      <>
+                        <audio src={tried.url} controls controlsList="nodownload" autoPlay />
+                        <button className="btn small" onClick={() => keep(true)}>{t("Save…")}</button>
+                        <button className="btn ghost small" onClick={() => keep(false)}>{t("Keep in the gallery")}</button>
+                      </>
+                    )}
                   </div>
                   {view.speak_size > 0 && <p className="small muted">{t("The first time, the voice engine and its model download ({size}).", { size: bytes(view.speak_size) })}</p>}
                 </div>
