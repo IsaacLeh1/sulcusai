@@ -48,6 +48,12 @@ pub struct Capture {
 
 impl Capture {
     pub fn start(source: Source, sink: Sink) -> Result<Capture, String> {
+        Capture::start_at(source, sink, RATE)
+    }
+
+    /// Capture at another rate, such as 48 kHz for recording someone's
+    /// voice to sound like them.
+    pub fn start_at(source: Source, sink: Sink, rate: u32) -> Result<Capture, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let level = Arc::new(AtomicU32::new(0));
         let error = Arc::new(Mutex::new(None));
@@ -55,7 +61,7 @@ impl Capture {
         let (s, l, e) = (stop.clone(), level.clone(), error.clone());
         let thread = std::thread::Builder::new()
             .name("audio-capture".into())
-            .spawn(move || imp::capture_thread(source, sink, s, l, e, ready_tx))
+            .spawn(move || imp::capture_thread(source, sink, rate, s, l, e, ready_tx))
             .map_err(|e| e.to_string())?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Capture { stop, thread: Some(thread), level, error }),
@@ -329,7 +335,7 @@ mod imp {
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
     };
 
-    use super::{finish_clip, Clip, Device, Flow, Format, Resampler, Sink, Source, RATE};
+    use super::{finish_clip, Clip, Device, Flow, Format, Resampler, Sink, Source};
 
     const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
     const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
@@ -457,7 +463,7 @@ mod imp {
         convert: Option<(Format, Resampler)>,
     }
 
-    unsafe fn open_capture(source: &Source) -> windows::core::Result<Stream> {
+    unsafe fn open_capture(source: &Source, rate: u32) -> windows::core::Result<Stream> {
         let en = enumerator()?;
         let (flow, id, loopback, voice) = match source {
             Source::Mic { device, voice } => (eCapture, device.as_deref(), false, *voice),
@@ -483,12 +489,12 @@ mod imp {
             Ok(client)
         };
 
-        // Ask Windows to deliver 16 kHz mono floats directly.
+        // Ask Windows to deliver mono floats at `rate` directly.
         let want = WAVEFORMATEX {
             wFormatTag: WAVE_FORMAT_IEEE_FLOAT,
             nChannels: 1,
-            nSamplesPerSec: RATE,
-            nAvgBytesPerSec: RATE * 4,
+            nSamplesPerSec: rate,
+            nAvgBytesPerSec: rate * 4,
             nBlockAlign: 4,
             wBitsPerSample: 32,
             cbSize: 0,
@@ -506,7 +512,7 @@ mod imp {
                 let r = client.Initialize(AUDCLNT_SHAREMODE_SHARED, base_flags, BUFFER_HNS, 0, mix, None);
                 CoTaskMemFree(Some(mix as *const _));
                 r?;
-                (client, Some((fmt, Resampler::new(fmt.rate, RATE))))
+                (client, Some((fmt, Resampler::new(fmt.rate, rate))))
             }
         };
         let capture: IAudioCaptureClient = client.GetService()?;
@@ -523,6 +529,7 @@ mod imp {
     pub fn capture_thread(
         source: Source,
         sink: Sink,
+        rate: u32,
         stop: Arc<AtomicBool>,
         level: Arc<AtomicU32>,
         error: Arc<Mutex<Option<String>>>,
@@ -532,7 +539,7 @@ mod imp {
         let mic = matches!(source, Source::Mic { .. });
         let loopback = !mic;
         // SAFETY: COM is initialized on this thread; the stream lives here.
-        let mut stream = match unsafe { open_capture(&source) } {
+        let mut stream = match unsafe { open_capture(&source, rate) } {
             Ok(s) => s,
             Err(e) => {
                 let _ = ready.send(Err(friendly(&e, mic)));
@@ -582,9 +589,9 @@ mod imp {
                 // Loopback sends nothing while the PC is silent; fill the gap
                 // so timestamps stay true to the clock.
                 if loopback && !got {
-                    let expected = (started.elapsed().as_secs_f64() * RATE as f64) as u64;
-                    if expected > delivered + RATE as u64 / 5 {
-                        let fill = (expected - delivered - RATE as u64 / 10) as usize;
+                    let expected = (started.elapsed().as_secs_f64() * rate as f64) as u64;
+                    if expected > delivered + rate as u64 / 5 {
+                        let fill = (expected - delivered - rate as u64 / 10) as usize;
                         delivered += fill as u64;
                         smoothed *= 0.85;
                         level.store(smoothed.to_bits(), Ordering::Relaxed);
@@ -748,7 +755,7 @@ mod imp {
 
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-    use super::{finish_clip, resample, rms, Clip, Device, Flow, Resampler, Sink, Source, RATE};
+    use super::{finish_clip, resample, rms, Clip, Device, Flow, Resampler, Sink, Source};
 
     pub fn devices(flow: Flow) -> Result<Vec<Device>, String> {
         let host = cpal::default_host();
@@ -782,6 +789,7 @@ mod imp {
     pub fn capture_thread(
         source: Source,
         sink: Sink,
+        rate: u32,
         stop: Arc<AtomicBool>,
         level: Arc<AtomicU32>,
         error: Arc<Mutex<Option<String>>>,
@@ -806,7 +814,7 @@ mod imp {
             }
         };
         let channels = config.channels() as usize;
-        let resampler = Arc::new(Mutex::new(Resampler::new(config.sample_rate().0, RATE)));
+        let resampler = Arc::new(Mutex::new(Resampler::new(config.sample_rate().0, rate)));
         let deliver = move |mono: Vec<f32>| {
             level.store(rms(&mono).to_bits(), Ordering::Relaxed);
             let out = resampler.lock().unwrap().process(&mono);

@@ -20,7 +20,7 @@ import {
   type VocalEffect,
   type Voice,
 } from "../api";
-import { clock } from "../format";
+import { bytes, clock } from "../format";
 import { t, tf, tx } from "../i18n";
 import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, SongListener, useMediaJobs } from "../components/MediaBits";
@@ -36,11 +36,12 @@ import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
+import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
 
-type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "voice";
 type Shape = NonNullable<MediaRequest["shape"]>;
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music", voice: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
@@ -54,7 +55,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "voice"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   // A song written as notes, open in Compose's editor (item: where it's kept).
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
@@ -178,7 +179,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration"), voice: t("Your voice") }[tb]}
           </button>
         ))}
       </div>
@@ -235,9 +236,12 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             toast={toast}
             seed={songToWork}
             onCompose={(composition) => setComposing({ item: null, composition })}
+            onYourVoice={() => setTab("voice")}
           />
+        ) : tab === "voice" ? (
+          <OwnVoicePanel toast={toast} />
         ) : (
-          <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} />
+          <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} onYourVoice={() => setTab("voice")} />
         )}
       </section>
 
@@ -818,6 +822,7 @@ function MusicComposer({
   toast,
   seed,
   onCompose,
+  onYourVoice,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -830,8 +835,13 @@ function MusicComposer({
   seed?: { item: MediaItem; task: SongTask } | null;
   /** Written as notes first: opens in Compose's editor. */
   onCompose: (c: Composition) => void;
+  /** Opens Your voice, to record one. */
+  onYourVoice: () => void;
 }) {
   const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
+  // Sung again in a recorded voice (kept beside the song as made).
+  const ownVoices = (useOwnVoices()?.voices ?? []).filter((v) => v.can_sing);
+  const [ownVoice, setOwnVoice] = useState("");
   const [prompt, setPrompt] = useState("");
   // Several styles, moods and feelings can be picked together.
   const [genre, setGenre] = useState<string[]>([]);
@@ -944,6 +954,7 @@ function MusicComposer({
     production: production || null,
     era: era || null,
     auto_length: auto,
+    own_voice: mode === "song" && singing && ownVoices.some((v) => v.id === ownVoice) ? ownVoice : null,
     persona: mode === "song" && personaId ? personaId : null,
     voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
     emotion: joined(emotion),
@@ -1130,7 +1141,10 @@ function MusicComposer({
   };
   // Each layered harmony is another pass, by a slower model (about twice the song's time).
   const layers = mode === "song" && harmonyLayer && canLayer ? (singing && harmonyVoice ? 1 : 0) + (harmonyInstrument ? 1 : 0) : 0;
-  const est = m ? (m.fit.est_secs * (mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : auto ? autoGuess ?? 150 : secs) * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 : 0;
+  const songSecs = mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : auto ? autoGuess ?? 150 : secs;
+  // Singing it again in a recorded voice: about twice the song's length.
+  const revoicing = mode === "song" && !!spec().own_voice ? 2 * songSecs * versions : 0;
+  const est = m ? (m.fit.est_secs * songSecs * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 + revoicing : 0;
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1324,6 +1338,21 @@ function MusicComposer({
               </>
             )}
           </div>
+          {vocals !== "none" &&
+            (ownVoices.length > 0 ? (
+              <label className="small row wrap">
+                {t("Sung in")}
+                <select value={ownVoice} onChange={(e) => setOwnVoice(e.target.value)} aria-label={t("Sung in")}>
+                  <option value="">{t("The music model's singer")}</option>
+                  {ownVoices.map((v) => (
+                    <option key={v.id} value={v.id}>{t("{name} (recorded voice)", { name: v.name })}</option>
+                  ))}
+                </select>
+                {ownVoice && <span className="muted">{t("The song is made first, then sung again in this voice and kept beside it. It takes a few minutes more.")}</span>}
+              </label>
+            ) : (
+              <button className="link small" onClick={onYourVoice}>{t("Sing it in your own voice…")}</button>
+            ))}
         </div>
       )}
 
@@ -1542,12 +1571,15 @@ function MusicComposer({
 
 const CLOUD_VOICES = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
 
-function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStart: (r: MediaRequest) => Promise<boolean> }) {
+function NarrateComposer({ cloud, onStart, onYourVoice }: { cloud: CloudMediaChoice[]; onStart: (r: MediaRequest) => Promise<boolean>; onYourVoice: () => void }) {
   const [text, setText] = useState("");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [voice, setVoice] = useState("");
   const [engine, setEngine] = useState("");
   const [cloudVoice, setCloudVoice] = useState("alloy");
+  // Recorded voices that can read ("own:<id>").
+  const own = useOwnVoices();
+  const ownVoices = (own?.voices ?? []).filter((v) => v.can_speak);
   useEffect(() => {
     api.voices().then((v) => {
       setVoices(v);
@@ -1578,14 +1610,27 @@ function NarrateComposer({ cloud, onStart }: { cloud: CloudMediaChoice[]; onStar
           </select>
         ) : (
           <select value={voice} onChange={(e) => setVoice(e.target.value)} title={t("Voice")}>
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
+            {ownVoices.length > 0 && (
+              <optgroup label={t("Recorded voices")}>
+                {ownVoices.map((v) => (
+                  <option key={v.id} value={`own:${v.id}`}>{v.name}</option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label={t("Voices on this PC")}>
+              {voices.map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </optgroup>
           </select>
         )}
+        {ownVoices.length === 0 && !engine && <button className="link small" onClick={onYourVoice}>{t("Read it in your own voice…")}</button>}
         <span className="spacer" />
         <button className="btn primary" disabled={!text.trim()} onClick={go}>{t("Read aloud")}</button>
       </div>
+      {!engine && voice.startsWith("own:") && (own?.speak_size ?? 0) > 0 && (
+        <p className="small muted">{t("Read in your recorded voice. The first time, the voice engine and its model download ({size}).", { size: bytes(own!.speak_size) })}</p>
+      )}
     </div>
   );
 }
@@ -1640,6 +1685,9 @@ function Viewer({
   const painter = useRef<MaskHandle>(null);
   const can = (op: string) => imageModels.some((m) => m.can.includes(op));
   const ask = useAskFirst();
+  // Recorded voices a song can be sung again in.
+  const singers = (useOwnVoices()?.voices ?? []).filter((v) => v.can_sing);
+  const [singer, setSinger] = useState("");
 
   useEffect(() => {
     setTool(null);
@@ -1761,6 +1809,16 @@ function Viewer({
                   <button key={task} className="chip" onClick={() => onWorkOn(item, task)}>{t(TASKS.find(([id]) => id === task)![1])}</button>
                 ))}
               </div>
+              {item.op !== "narrate" && singers.length > 0 && (
+                <div className="row wrap small">
+                  <select value={singer} onChange={(e) => setSinger(e.target.value)} aria-label={t("Recorded voice")}>
+                    {singers.map((v) => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                  <button className="btn small" onClick={() => run({ op: "revoice", prompt: "", voice: singer || singers[0].id })}>{t("Sing it in this voice")}</button>
+                </div>
+              )}
             </div>
           )}
 

@@ -56,6 +56,7 @@ pub fn create_music_params() -> Value {
             "on": { "type": "string", "enum": ["all", "verse", "pre-chorus", "chorus", "bridge", "final-chorus"] } } },
             "description": "Ways of singing on parts of the song, e.g. [{\"how\": \"screamed\", \"on\": \"chorus\"}, {\"how\": \"vibrato\", \"on\": \"all\"}]." },
         "artist": { "type": "string", "description": "One of the user's saved artists (from the Studio), by name: the song gets their voice and sound, so it sounds like the same artist as their other songs." },
+        "sung_in": { "type": "string", "description": "When the user asks for the song in their own voice (or another voice they recorded in Studio › Your voice): that voice's name, or \"my voice\". The song is made, then sung again in it." },
         "sound_like": { "type": "string", "description": "A singer or band whose style the song follows (\"sing as Taylor Swift\"): written and arranged their way, sung by a voice of the same kind (not their own voice)." },
         "era": { "type": "string", "enum": ["1950s", "1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s"], "description": "The decade the song sounds like it's from, when the user names one (\"an 80s song\")." },
         "beat": { "type": "string", "description": "The beat's feel, e.g. four on the floor, trap, boom bap, swing, half-time." },
@@ -289,6 +290,19 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             if change.is_some() && song.is_none() {
                 return Outcome::error("Couldn't work on a song", "There's no song in this chat to work on. Make one with create_music first, or ask the user to attach theirs (the paperclip takes songs too).");
             }
+            // Sung in a voice the person recorded.
+            let own_voice = match s("sung_in") {
+                Some(name) => {
+                    let voices = media::own_voice::list(&ctx.memory.db.lock().unwrap(), ctx.memory.cipher);
+                    match media::own_voice::find(&voices, &name) {
+                        Some(v) if v.can_sing() => Some(v.id.clone()),
+                        Some(v) => return Outcome::error("Couldn't sing it in that voice", format!("{} has too little recorded yet. Ask the user to record a few lines in Studio › Your voice.", v.name)),
+                        None if voices.is_empty() => return Outcome::error("Couldn't sing it in that voice", "The user hasn't recorded their voice yet. Tell them to record it once in Studio › Your voice (a few lines read, a little singing), then ask again."),
+                        None => return Outcome::error("Couldn't find that voice", format!("Recorded voices: {}. Use one of these names.", voices.iter().map(|v| v.name.as_str()).collect::<Vec<_>>().join(", "))),
+                    }
+                }
+                None => None,
+            };
             let music = media::MusicSpec {
                 genre: s("genre"),
                 mood: s("mood"),
@@ -308,6 +322,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 vocal_effects: args.get("vocal_effects").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()).unwrap_or_default(),
                 sound_like: s("sound_like"),
                 persona: s("artist"),
+                own_voice,
                 region: match (num("from"), num("to")) {
                     (Some(a), Some(b)) => Some([a, b]),
                     _ => None,

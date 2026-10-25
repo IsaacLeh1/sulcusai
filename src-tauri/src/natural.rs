@@ -415,13 +415,18 @@ pub async fn cuda_card(state: &AppState) -> Result<Card, String> {
 /// given and this process's ONNX Runtime can use it, else on the processor;
 /// and whether it's on the card.
 pub fn session_on(model: &Path, threads: usize, card: Option<Card>) -> Result<(Session, bool), String> {
+    session_within(model, threads, card, CARD_ARENA)
+}
+
+/// `session_on` with another most it may take on the card (bytes).
+pub fn session_within(model: &Path, threads: usize, card: Option<Card>, arena: usize) -> Result<(Session, bool), String> {
     let fail = |err: ort::Error| format!("Couldn't open {}: {err}", model.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()));
     if let Some(c) = card.filter(|_| loaded_for_cards()) {
         let cuda = ort::ep::CUDA::default()
             .with_device_id(c.device)
             .with_conv_algorithm_search(ort::ep::cuda::ConvAlgorithmSearch::Heuristic)
             .with_arena_extend_strategy(ort::ep::ArenaExtendStrategy::SameAsRequested)
-            .with_memory_limit(CARD_ARENA)
+            .with_memory_limit(arena)
             .build()
             .error_on_failure();
         match Session::builder().and_then(|b| b.with_execution_providers([cuda]).map_err(Into::into)).and_then(|mut b| b.commit_from_file(model)) {

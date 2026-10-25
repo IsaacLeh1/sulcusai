@@ -1,0 +1,999 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Your voice: the person reads a short script once (lines said in different
+//! ways) and sings a little, and SulcusAI then narrates in their voice and
+//! sings songs in it.
+//!
+//! - Narration: Qwen3-TTS 12 Hz Base (Apache-2.0) through qwentts.cpp (MIT,
+//!   ggml). It clones from ~12 s of their reading together with its words as
+//!   speech recognition heard them ("in-context" cloning), which keeps their
+//!   way of speaking, not only their sound.
+//! - Singing: a song's voice is taken out (HTDemucs), sung again in theirs by
+//!   Seed-VC (`svc`), and put back over the band (`sing`).
+//!
+//! The recordings are kept like everything else made here: the list
+//! encrypted in the settings, each recording sealed in its own file. The
+//! person says first that the voice is theirs, or that its owner agreed.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use tauri::{AppHandle, Emitter};
+
+use super::{stems, svc, MediaFile};
+use crate::audio::{Capture, Source};
+use crate::crypto::Cipher;
+use crate::paths::Paths;
+use crate::{db, download, engine, net, AppState, AppStateRef};
+
+const KEY: &str = "own_voices";
+/// Recordings are made at 48 kHz, so the voice keeps its brightness.
+const REC_RATE: u32 = 48_000;
+/// Qwen3-TTS works at 24 kHz.
+const TTS_RATE: u32 = 24_000;
+const TTS_EXE: &str = if cfg!(windows) { "qwen-tts.exe" } else { "qwen-tts" };
+
+// ---------- catalog ----------
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct OwnVoiceCatalog {
+    pub speak: SpeakSpec,
+    pub sing: SingSpec,
+}
+
+/// Narration in the person's voice: the engine, the model for a graphics
+/// card (1.7B) and the smaller one for the processor (0.6B).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SpeakSpec {
+    pub name: String,
+    pub source: String,
+    pub license: crate::catalog::License,
+    pub engine: crate::catalog::EngineSpec,
+    pub files: Vec<MediaFile>,
+    pub processor_files: Vec<MediaFile>,
+}
+
+/// Singing in the person's voice: Seed-VC's eight ONNX pieces.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SingSpec {
+    pub name: String,
+    pub source: String,
+    pub license: crate::catalog::License,
+    pub files: Vec<MediaFile>,
+}
+
+// ---------- the script ----------
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LineKind {
+    Speak,
+    Sing,
+}
+
+/// A line of the script: its id, kind, and shortest and longest takes (s).
+/// The window shows the words and how to say them, in the person's language.
+pub const LINES: &[(&str, LineKind, f32, f32)] = &[
+    ("intro", LineKind::Speak, 2.0, 25.0),
+    ("everyday", LineKind::Speak, 2.0, 25.0),
+    ("story", LineKind::Speak, 3.0, 30.0),
+    ("question", LineKind::Speak, 1.5, 20.0),
+    ("excited", LineKind::Speak, 1.5, 20.0),
+    ("calm", LineKind::Speak, 2.0, 25.0),
+    ("sounds", LineKind::Speak, 2.0, 25.0),
+    ("numbers", LineKind::Speak, 2.0, 25.0),
+    ("hold", LineKind::Sing, 2.5, 20.0),
+    ("scale", LineKind::Sing, 3.0, 30.0),
+    ("song", LineKind::Sing, 6.0, 75.0),
+    ("soft_loud", LineKind::Sing, 3.0, 30.0),
+];
+
+fn line(id: &str) -> Option<(LineKind, f32, f32)> {
+    LINES.iter().find(|l| l.0 == id).map(|l| (l.1, l.2, l.3))
+}
+
+/// The order recordings are joined in for each use: conversational reading
+/// first for narration; singing (a song, then the scale) for songs.
+const SPEAK_ORDER: &[&str] = &["everyday", "intro", "story", "question", "excited", "calm", "sounds", "numbers"];
+const SING_ORDER: &[&str] = &["song", "scale", "soft_loud", "hold"];
+
+// ---------- voices ----------
+
+/// One recording of a line.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Take {
+    pub line: String,
+    pub seconds: f32,
+    /// What was said, as speech recognition heard it (else the line's words).
+    pub words: String,
+    /// What could be better: "quiet", "loud" (it distorted), "noisy".
+    pub notes: Vec<String>,
+    pub at: i64,
+}
+
+/// A voice: whose it is and its recordings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OwnVoice {
+    pub id: String,
+    pub name: String,
+    pub takes: Vec<Take>,
+    pub created_at: i64,
+    /// When the person said the voice is theirs or its owner agreed.
+    pub agreed_at: i64,
+}
+
+impl OwnVoice {
+    fn takes_of(&self, kind: LineKind) -> impl Iterator<Item = &Take> {
+        self.takes.iter().filter(move |t| line(&t.line).is_some_and(|l| l.0 == kind))
+    }
+
+    /// Narration needs three lines read.
+    pub fn can_speak(&self) -> bool {
+        self.takes_of(LineKind::Speak).count() >= 3
+    }
+
+    /// Songs work from reading too, and sound more like the person with
+    /// some singing.
+    pub fn can_sing(&self) -> bool {
+        self.takes_of(LineKind::Sing).next().is_some() || self.can_speak()
+    }
+}
+
+pub fn list(conn: &Connection, c: &Cipher) -> Vec<OwnVoice> {
+    let mut all: Vec<OwnVoice> = db::get::<String>(conn, KEY).and_then(|s| c.decrypt(&s).ok()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    all.sort_by_key(|v| v.created_at);
+    all
+}
+
+fn store(conn: &Connection, c: &Cipher, all: &[OwnVoice]) -> Result<(), String> {
+    db::set(conn, KEY, &c.encrypt(&serde_json::to_string(all).map_err(|e| e.to_string())?))
+}
+
+pub fn get(conn: &Connection, c: &Cipher, id: &str) -> Option<OwnVoice> {
+    list(conn, c).into_iter().find(|v| v.id == id)
+}
+
+/// A voice by what a chat called it: its name (or part of it), or "my
+/// voice", "me", "mine" for the first one recorded.
+pub fn find<'a>(voices: &'a [OwnVoice], name: &str) -> Option<&'a OwnVoice> {
+    let n = name.trim().to_lowercase();
+    voices
+        .iter()
+        .find(|v| v.name.trim().to_lowercase() == n)
+        .or_else(|| voices.iter().find(|v| !n.is_empty() && v.name.to_lowercase().contains(&n)))
+        .or_else(|| matches!(n.as_str(), "my voice" | "my own voice" | "me" | "mine" | "myself" | "the user's voice" | "user").then(|| voices.first()).flatten())
+}
+
+fn voices_dir(paths: &Paths) -> PathBuf {
+    paths.data.join("voices")
+}
+
+fn take_path(paths: &Paths, voice: &str, line: &str) -> Result<PathBuf, String> {
+    let ok = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !ok(voice) || !ok(line) {
+        return Err("Bad voice or line.".into());
+    }
+    Ok(voices_dir(paths).join(voice).join(format!("{line}.sealed")))
+}
+
+/// A take's samples (48 kHz mono).
+fn read_take(paths: &Paths, c: &Cipher, voice: &str, line: &str) -> Result<Vec<f32>, String> {
+    let sealed = std::fs::read(take_path(paths, voice, line)?).map_err(|_| "A recording of this voice is missing; record that line again.".to_string())?;
+    let wav = c.open_bytes(&sealed).map_err(|_| "A recording of this voice couldn't be opened.".to_string())?;
+    let pcm = crate::audio::wav_decode(&wav)?;
+    Ok(stems::resample(&pcm.samples, pcm.rate, REC_RATE))
+}
+
+/// Takes joined in `order` (a short pause between them) up to `max_s`, at
+/// `rate`, and their words.
+fn joined(paths: &Paths, c: &Cipher, voice: &OwnVoice, order: &[&str], rate: u32, max_s: f32) -> Result<(Vec<f32>, String), String> {
+    let gap = vec![0f32; (REC_RATE as f32 * 0.3) as usize];
+    let (mut out, mut words) = (Vec::new(), Vec::new());
+    for id in order {
+        let Some(t) = voice.takes.iter().find(|t| t.line == *id) else { continue };
+        if !out.is_empty() && (out.len() as f32 + t.seconds * REC_RATE as f32) / REC_RATE as f32 > max_s {
+            break;
+        }
+        if !out.is_empty() {
+            out.extend_from_slice(&gap);
+        }
+        out.extend(read_take(paths, c, &voice.id, id)?);
+        words.push(t.words.trim().to_string());
+    }
+    if out.is_empty() {
+        return Err("Record a few lines of your voice first (Studio › Your voice).".into());
+    }
+    out.truncate((max_s * REC_RATE as f32) as usize);
+    Ok((stems::resample(&out, REC_RATE, rate), words.join(" ")))
+}
+
+/// What narration clones from: up to 15 s of reading at 24 kHz, and its words.
+pub fn speech_reference(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<(Vec<f32>, String), String> {
+    if !voice.can_speak() {
+        return Err("Read at least three lines in Studio › Your voice first.".into());
+    }
+    joined(paths, c, voice, SPEAK_ORDER, TTS_RATE, 15.0)
+}
+
+/// What songs are sung like: their singing (else their reading), at 44.1
+/// kHz; and whether it was singing.
+pub fn singing_reference(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<(Vec<f32>, bool), String> {
+    if voice.takes_of(LineKind::Sing).next().is_some() {
+        return Ok((joined(paths, c, voice, SING_ORDER, svc::RATE, svc::MAX_PROMPT_S)?.0, true));
+    }
+    Ok((joined(paths, c, voice, SPEAK_ORDER, svc::RATE, svc::MAX_PROMPT_S)?.0, false))
+}
+
+// ---------- recording ----------
+
+struct Recording {
+    voice: String,
+    line: String,
+    capture: Capture,
+    samples: Arc<Mutex<Vec<f32>>>,
+}
+
+static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
+
+/// A take cleaned up: quiet ends trimmed, brought to a steady level, and
+/// what could be better about it. Too short or silent is an error.
+fn clean(samples: &[f32], min_s: f32) -> Result<(Vec<f32>, Vec<String>), String> {
+    const FRAME: usize = (REC_RATE / 50) as usize;
+    let rms: Vec<f32> = samples.chunks(FRAME).map(crate::audio::rms).collect();
+    if rms.is_empty() {
+        return Err("Nothing was recorded. Check the microphone in Settings › Voice.".into());
+    }
+    let mut sorted = rms.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let at = |q: f32| sorted[((sorted.len() - 1) as f32 * q) as usize];
+    let (floor, loud) = (at(0.1), at(0.95));
+    // Never above half the loud level: a take with no quiet at all (started
+    // the moment Record was pressed) is all voice, not nothing.
+    let threshold = (floor * 2.5).max(loud * 0.08).max(0.003).min(loud * 0.5);
+    let first = rms.iter().position(|r| *r > threshold);
+    let last = rms.iter().rposition(|r| *r > threshold);
+    let (Some(first), Some(last)) = (first, last) else {
+        return Err("I couldn't hear anything. Check the microphone in Settings › Voice.".into());
+    };
+    let start = first.saturating_sub(10) * FRAME;
+    let end = ((last + 16) * FRAME).min(samples.len());
+    let mut take = samples[start..end].to_vec();
+    let seconds = take.len() as f32 / REC_RATE as f32;
+    if seconds < min_s {
+        return Err(format!("That was only {seconds:.1} seconds. Say the whole line, then press Stop."));
+    }
+    let peak = take.iter().fold(0f32, |m, s| m.max(s.abs()));
+    let clipped = take.iter().filter(|s| s.abs() >= 0.985).count() as f32 / take.len() as f32;
+    let mut notes = Vec::new();
+    if clipped > 0.0005 {
+        notes.push("loud".to_string());
+    } else if peak < 0.06 {
+        notes.push("quiet".to_string());
+    }
+    // Noise shows in the pauses; with hardly any, it can't be told.
+    let pauses = rms.iter().filter(|r| **r < threshold).count();
+    if pauses * 10 >= rms.len() && 20.0 * (loud / floor.max(1e-5)).log10() < 20.0 {
+        notes.push("noisy".to_string());
+    }
+    // About -20 dBFS where it's loud, never past 0.95.
+    let gain = (0.1 / loud.max(1e-4)).min(0.95 / peak.max(1e-4));
+    take.iter_mut().for_each(|s| *s *= gain);
+    Ok((take, notes))
+}
+
+/// What speech recognition heard in a take (None when no speech model is
+/// installed or it heard nothing).
+async fn heard(state: &Arc<AppState>, take: &[f32]) -> Option<String> {
+    if crate::speech::installed(&state.db.lock().unwrap()).is_empty() {
+        return None;
+    }
+    let _hold = crate::speech::hold(state);
+    let ep = crate::speech::endpoint(state, crate::speech::Use::Accurate).await.ok()?;
+    let s16 = stems::resample(take, REC_RATE, crate::audio::RATE);
+    let t = crate::speech::transcribe(&ep, &s16, &crate::speech::Options::default()).await.ok()?;
+    Some(t.text.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+#[derive(Serialize)]
+pub struct OwnVoicesView {
+    voices: Vec<VoiceView>,
+    /// Lines: id, kind, shortest and longest take.
+    lines: Vec<serde_json::Value>,
+    /// What narration and singing download the first time (bytes).
+    speak_size: u64,
+    sing_size: u64,
+}
+
+#[derive(Serialize)]
+struct VoiceView {
+    #[serde(flatten)]
+    voice: OwnVoice,
+    can_speak: bool,
+    can_sing: bool,
+}
+
+fn view(state: &AppState) -> Result<OwnVoicesView, String> {
+    let c = state.work_cipher()?;
+    let voices = list(&state.db.lock().unwrap(), &c).into_iter().map(|v| VoiceView { can_speak: v.can_speak(), can_sing: v.can_sing(), voice: v }).collect();
+    let lines = LINES.iter().map(|(id, kind, min, max)| json!({ "id": id, "kind": kind, "min_s": min, "max_s": max })).collect();
+    let cat = state.catalog.media.own_voice.as_ref();
+    let gpu = state.budget().vram > 0;
+    let speak_size = cat.map_or(0, |c| (if gpu { &c.speak.files } else { &c.speak.processor_files }).iter().map(|f| f.size).sum::<u64>());
+    let sing_size = cat.map_or(0, |c| c.sing.files.iter().map(|f| f.size).sum());
+    Ok(OwnVoicesView { voices, lines, speak_size, sing_size })
+}
+
+#[tauri::command]
+pub fn own_voices(state: AppStateRef<'_>) -> Result<OwnVoicesView, String> {
+    view(&state)
+}
+
+/// A new voice. `agreed`: the person says it's their own voice, or that
+/// whoever it belongs to said yes.
+#[tauri::command]
+pub fn own_voice_create(state: AppStateRef<'_>, name: String, agreed: bool) -> Result<OwnVoicesView, String> {
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    if !agreed {
+        return Err("Only record your own voice, or someone who has said yes.".into());
+    }
+    let name = name.trim().chars().take(60).collect::<String>();
+    if name.is_empty() {
+        return Err("Give the voice a name.".into());
+    }
+    let c = state.work_cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    let now = db::now_ms();
+    all.push(OwnVoice { id: super::store::new_id(), name, takes: Vec::new(), created_at: now, agreed_at: now });
+    store(&conn, &c, &all)?;
+    drop(conn);
+    state.log("media", "Added a voice to record");
+    view(&state)
+}
+
+#[tauri::command]
+pub fn own_voice_rename(state: AppStateRef<'_>, id: String, name: String) -> Result<OwnVoicesView, String> {
+    let name = name.trim().chars().take(60).collect::<String>();
+    if name.is_empty() {
+        return Err("Give the voice a name.".into());
+    }
+    let c = state.work_cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    all.iter_mut().find(|v| v.id == id).ok_or("That voice is no longer here.")?.name = name;
+    store(&conn, &c, &all)?;
+    drop(conn);
+    view(&state)
+}
+
+/// Removes a voice and every recording of it.
+#[tauri::command]
+pub fn own_voice_delete(state: AppStateRef<'_>, id: String) -> Result<OwnVoicesView, String> {
+    let c = state.work_cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    all.retain(|v| v.id != id);
+    store(&conn, &c, &all)?;
+    drop(conn);
+    let dir = take_path(&state.paths, &id, "x")?.parent().map(Path::to_path_buf);
+    if let Some(d) = dir {
+        let _ = std::fs::remove_dir_all(d);
+    }
+    state.log("media", "Deleted a recorded voice");
+    view(&state)
+}
+
+/// Starts recording a line. "own_voice:level" events carry the loudness
+/// (0..1) and the seconds so far; at the line's longest it stops by itself
+/// ("own_voice:full").
+#[tauri::command]
+pub async fn own_voice_record(app: AppHandle, state: AppStateRef<'_>, voice: String, line: String) -> Result<(), String> {
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    let (_, _, max_s) = self::line(&line).ok_or("Unknown line.")?;
+    let c = state.work_cipher()?;
+    if get(&state.db.lock().unwrap(), &c, &voice).is_none() {
+        return Err("That voice is no longer here.".into());
+    }
+    let mut slot = RECORDING.lock().unwrap();
+    if slot.is_some() {
+        return Err("A recording is already running.".into());
+    }
+    let mic = crate::speech::voice_settings(&state.db.lock().unwrap()).mic;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<f32>>();
+    // Windows' voice processing (echo and noise removal) changes how a voice
+    // sounds: it's off for these.
+    let capture = Capture::start_at(Source::Mic { device: mic, voice: false }, tx, REC_RATE)?;
+    let samples = Arc::new(Mutex::new(Vec::new()));
+    let into = samples.clone();
+    let (v, l) = (voice.clone(), line.clone());
+    tauri::async_runtime::spawn(async move {
+        let mut since = 0usize;
+        while let Some(chunk) = rx.recv().await {
+            let total = {
+                let mut all = into.lock().unwrap();
+                all.extend_from_slice(&chunk);
+                all.len()
+            };
+            since += chunk.len();
+            if since >= (REC_RATE / 10) as usize {
+                since = 0;
+                let level = (crate::audio::rms(&chunk) * 4.0).min(1.0);
+                let _ = app.emit("own_voice:level", json!({ "voice": v, "line": l, "level": level, "seconds": total as f32 / REC_RATE as f32 }));
+            }
+            if total as f32 / REC_RATE as f32 >= max_s {
+                let _ = app.emit("own_voice:full", json!({ "voice": v, "line": l }));
+                break;
+            }
+        }
+    });
+    *slot = Some(Recording { voice, line, capture, samples });
+    Ok(())
+}
+
+/// Stops recording and keeps the take (in place of an earlier one of the
+/// line). `words`: the line as the window showed it, for when speech
+/// recognition isn't installed.
+#[tauri::command]
+pub async fn own_voice_stop(state: AppStateRef<'_>, words: String) -> Result<OwnVoicesView, String> {
+    let rec = RECORDING.lock().unwrap().take().ok_or("Nothing is being recorded.")?;
+    let device_error = rec.capture.error();
+    drop(rec.capture);
+    let samples = std::mem::take(&mut *rec.samples.lock().unwrap());
+    if let Some(e) = device_error.filter(|_| samples.is_empty()) {
+        return Err(e);
+    }
+    let (kind, min_s, _) = line(&rec.line).ok_or("Unknown line.")?;
+    let (take, notes) = clean(&samples, min_s)?;
+    let state = state.inner().clone();
+    let words = match kind {
+        LineKind::Speak => heard(&state, &take).await.unwrap_or(words),
+        LineKind::Sing => words,
+    };
+    let c = state.work_cipher()?;
+    let path = take_path(&state.paths, &rec.voice, &rec.line)?;
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, c.seal_bytes(&crate::audio::wav_encode(&take, REC_RATE))).map_err(|e| e.to_string())?;
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all = list(&conn, &c);
+        let v = all.iter_mut().find(|v| v.id == rec.voice).ok_or("That voice is no longer here.")?;
+        v.takes.retain(|t| t.line != rec.line);
+        v.takes.push(Take { line: rec.line.clone(), seconds: take.len() as f32 / REC_RATE as f32, words: words.trim().to_string(), notes, at: db::now_ms() });
+        store(&conn, &c, &all)?;
+    }
+    view(&state)
+}
+
+/// A voice from takes already recorded (line, 48 kHz samples, words), kept
+/// the way recording keeps them: for tests.
+#[cfg(test)]
+pub fn add_for_test(state: &AppState, name: &str, takes: &[(&str, Vec<f32>, &str)]) -> String {
+    let c = state.work_cipher().unwrap();
+    let id = super::store::new_id();
+    let mut voice = OwnVoice { id: id.clone(), name: name.into(), created_at: db::now_ms(), agreed_at: db::now_ms(), takes: Vec::new() };
+    for (line, samples, words) in takes {
+        let path = take_path(&state.paths, &id, line).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, c.seal_bytes(&crate::audio::wav_encode(samples, REC_RATE))).unwrap();
+        voice.takes.push(Take { line: line.to_string(), seconds: samples.len() as f32 / REC_RATE as f32, words: words.to_string(), notes: Vec::new(), at: db::now_ms() });
+    }
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    all.push(voice);
+    store(&conn, &c, &all).unwrap();
+    id
+}
+
+/// Stops recording and throws it away.
+#[tauri::command]
+pub fn own_voice_cancel() {
+    RECORDING.lock().unwrap().take();
+}
+
+/// A take to listen to: WAV, base64.
+#[tauri::command]
+pub fn own_voice_take(state: AppStateRef<'_>, voice: String, line: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let c = state.work_cipher()?;
+    let take = read_take(&state.paths, &c, &voice, &line)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(crate::audio::wav_encode(&take, REC_RATE)))
+}
+
+#[tauri::command]
+pub fn own_voice_take_delete(state: AppStateRef<'_>, voice: String, line: String) -> Result<OwnVoicesView, String> {
+    let c = state.work_cipher()?;
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all = list(&conn, &c);
+        all.iter_mut().find(|v| v.id == voice).ok_or("That voice is no longer here.")?.takes.retain(|t| t.line != line);
+        store(&conn, &c, &all)?;
+    }
+    let _ = std::fs::remove_file(take_path(&state.paths, &voice, &line)?);
+    view(&state)
+}
+
+// ---------- narration in the voice ----------
+
+/// Qwen3-TTS's name for a language (None: it works it out).
+fn tts_language(code: Option<&str>) -> &'static str {
+    match code.map(|c| c.split(['-', '_']).next().unwrap_or("").to_lowercase()).as_deref() {
+        Some("en") => "English",
+        Some("zh") => "Chinese",
+        Some("ja") => "Japanese",
+        Some("ko") => "Korean",
+        Some("de") => "German",
+        Some("fr") => "French",
+        Some("ru") => "Russian",
+        Some("pt") => "Portuguese",
+        Some("es") => "Spanish",
+        Some("it") => "Italian",
+        _ => "auto",
+    }
+}
+
+/// Text in lines of whole sentences, each at most ~300 characters: the
+/// engine speaks each line on its own, with the person's voice each time.
+fn lines_of(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for paragraph in text.split('\n').map(str::trim).filter(|p| !p.is_empty()) {
+        let mut sentence = String::new();
+        let flush = |s: &mut String, cur: &mut String, out: &mut Vec<String>| {
+            let s2 = s.trim().to_string();
+            s.clear();
+            if s2.is_empty() {
+                return;
+            }
+            if !cur.is_empty() && cur.len() + s2.len() > 300 {
+                out.push(std::mem::take(cur));
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(&s2);
+        };
+        for ch in paragraph.chars() {
+            sentence.push(ch);
+            if matches!(ch, '.' | '!' | '?' | '。' | '！' | '？' | ';') {
+                flush(&mut sentence, &mut cur, &mut out);
+            }
+        }
+        flush(&mut sentence, &mut cur, &mut out);
+        if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    out
+}
+
+/// Each line's WAV from the engine's output (`--stream-by-line -o -`): one
+/// header per line, each 44 bytes with no length (0x7fffffff), 16-bit mono.
+fn split_streamed(bytes: &[u8]) -> Vec<Vec<f32>> {
+    const MARK: &[u8] = b"RIFF\xff\xff\xff\x7fWAVE";
+    let mut starts: Vec<usize> = bytes.windows(MARK.len()).enumerate().filter(|(_, w)| *w == MARK).map(|(i, _)| i).collect();
+    starts.push(bytes.len());
+    starts
+        .windows(2)
+        .map(|w| bytes[(w[0] + 44).min(w[1])..w[1]].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0).collect())
+        .collect()
+}
+
+/// The narration engine and model, downloaded the first time: the
+/// graphics-card build and the bigger model where there's a card.
+async fn speak_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let spec = state.catalog.media.own_voice.as_ref().map(|c| c.speak.clone()).ok_or("Speaking in your voice isn't available on this system yet.")?;
+    let gpu = state.budget().vram > 0 && cfg!(all(windows, target_arch = "x86_64"));
+    let getting = "Getting the voice engine (once)";
+    let mut exe = None;
+    if let Some(asset) = spec.engine.assets.get("vulkan-x64").filter(|_| gpu) {
+        let dir = format!("qwentts-{}-vulkan-x64", spec.engine.build);
+        match engine::ensure_unpacked(&state.paths, &dir, asset, TTS_EXE, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await {
+            Ok(p) => exe = Some(p),
+            Err(e) if e == download::CANCELLED => return Err(e),
+            Err(e) => state.log("media", &format!("The graphics-card voice engine didn't download ({e}); using the processor one")),
+        }
+    }
+    let exe = match exe {
+        Some(e) => e,
+        None => {
+            let asset = spec.engine.assets.get(engine::cpu_key()).ok_or("Speaking in your voice isn't available on this system yet.")?;
+            let dir = format!("qwentts-{}-{}", spec.engine.build, engine::cpu_key());
+            engine::ensure_unpacked(&state.paths, &dir, asset, TTS_EXE, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await?
+        }
+    };
+    let on_card = exe.to_string_lossy().contains("vulkan");
+    let files = if on_card { &spec.files } else { &spec.processor_files };
+    Ok((exe, fetch_all(state, files, "own-voice", "Getting the voice model (once", cancel, progress).await?))
+}
+
+/// Model files into models/media/<dir>, downloaded the first time.
+async fn fetch_all(state: &Arc<AppState>, files: &[MediaFile], dir: &str, getting: &str, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<PathBuf>, String> {
+    let base = state.paths.models.join("media").join(dir);
+    let missing: u64 = files.iter().filter(|f| !base.join(&f.file).metadata().is_ok_and(|m| m.len() == f.size)).map(|f| f.size).sum();
+    let label = format!("{getting}, {})", crate::size_label(missing));
+    let mut done = 0u64;
+    let mut out = Vec::new();
+    for f in files {
+        let dest = base.join(&f.file);
+        if !dest.metadata().is_ok_and(|m| m.len() == f.size) {
+            state.log("network", &format!("Downloading {} ({}) from {}", f.file, crate::size_label(f.size), crate::host_of(&f.url)));
+            let client = net::external_client(state.settings().connectivity, net::Purpose::ModelDownload, false)?;
+            let before = done;
+            download::fetch_verified(&client, &f.url, &dest, f.size, &f.sha256, cancel, |r, _| progress(&label, (before + r) as f64 / missing.max(1) as f64)).await?;
+            done += f.size;
+        }
+        out.push(dest);
+    }
+    Ok(out)
+}
+
+/// Reads `text` aloud in a recorded voice: 24 kHz samples.
+pub async fn speak(state: &Arc<AppState>, voice_id: &str, text: &str, language: Option<&str>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(Vec<f32>, u32), String> {
+    let c = state.work_cipher()?;
+    let voice = get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That voice is no longer here.")?;
+    let (reference, words) = speech_reference(&state.paths, &c, &voice)?;
+    let lines = lines_of(text);
+    if lines.is_empty() {
+        return Err("Type the text to read aloud.".into());
+    }
+    let (exe, files) = speak_parts(state, cancel, progress).await?;
+    progress("Reading in your voice", 0.1);
+    read_with(&exe, &files, &reference, &words, &lines, language, cancel).await
+}
+
+/// One run of the engine: `lines` read in the voice of `reference` (24 kHz)
+/// whose words are `words`.
+async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str, lines: &[String], language: Option<&str>, cancel: &AtomicBool) -> Result<(Vec<f32>, u32), String> {
+    // The recording goes to the engine as a file for the run only.
+    let work = std::env::temp_dir().join(format!("sulcusai-voice-{}", super::store::new_id()));
+    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    let result = async {
+        std::fs::write(work.join("ref.wav"), crate::audio::wav_encode(reference, TTS_RATE)).map_err(|e| e.to_string())?;
+        std::fs::write(work.join("ref.txt"), words).map_err(|e| e.to_string())?;
+        let mut cmd = tokio::process::Command::new(exe);
+        cmd.current_dir(exe.parent().unwrap_or(Path::new(".")))
+            .arg("--model")
+            .arg(&files[0])
+            .arg("--codec")
+            .arg(&files[1])
+            .arg("--ref-wav")
+            .arg(work.join("ref.wav"))
+            .arg("--ref-text")
+            .arg(work.join("ref.txt"))
+            .args(["--lang", tts_language(language), "--stream-by-line", "-o", "-"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+        let mut child = cmd.spawn().map_err(|e| format!("The voice engine didn't start: {e}"))?;
+        let input = lines.join("\n") + "\n";
+        let mut stdin = child.stdin.take().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(input.as_bytes()).await;
+        });
+        let out = child.wait_with_output();
+        tokio::pin!(out);
+        let out = loop {
+            tokio::select! {
+                o = &mut out => break o.map_err(|e| e.to_string())?,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                    if cancel.load(Ordering::Relaxed) {
+                        return Err(download::CANCELLED.to_string());
+                    }
+                }
+            }
+        };
+        if !out.status.success() {
+            let err = String::from_utf8_lossy(&out.stderr);
+            crate::applog::line("media", &format!("The voice engine failed: {}", err.lines().rev().take(4).collect::<Vec<_>>().join(" | ")));
+            return Err("The voice engine stopped with an error.".into());
+        }
+        let parts = split_streamed(&out.stdout);
+        let gap = vec![0f32; (TTS_RATE as f32 * 0.35) as usize];
+        let mut all = Vec::new();
+        for p in parts.into_iter().filter(|p| !p.is_empty()) {
+            if !all.is_empty() {
+                all.extend_from_slice(&gap);
+            }
+            all.extend(p);
+        }
+        if all.is_empty() {
+            return Err("The voice engine made no sound.".into());
+        }
+        Ok((all, TTS_RATE))
+    }
+    .await;
+    let _ = std::fs::remove_dir_all(&work);
+    result
+}
+
+/// Hears a sentence in a voice, to check it: WAV, base64.
+#[tauri::command]
+pub async fn own_voice_try(state: AppStateRef<'_>, voice: String, text: String, language: Option<String>) -> Result<String, String> {
+    use base64::Engine as _;
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    let state = state.inner().clone();
+    let never = AtomicBool::new(false);
+    let (samples, rate) = speak(&state, &voice, &text, language.as_deref(), &never, &|_, _| {}).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(crate::audio::wav_encode(&samples, rate)))
+}
+
+// ---------- singing in the voice ----------
+
+/// Seed-VC's pieces, downloaded the first time.
+pub async fn sing_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<PathBuf, String> {
+    let spec = state.catalog.media.own_voice.as_ref().map(|c| c.sing.clone()).ok_or("Singing in your voice isn't available on this system yet.")?;
+    // Each piece kept under the name the converter knows ("dit.onnx").
+    let files: Vec<MediaFile> = spec.files.iter().map(|f| MediaFile { file: format!("{}.onnx", f.role), ..f.clone() }).collect();
+    let got = fetch_all(state, &files, "own-voice-sing", "Getting the singing voice model (once", cancel, progress).await?;
+    Ok(got[0].parent().unwrap().to_path_buf())
+}
+
+/// 16-bit stereo WAV bytes.
+pub fn wav_stereo(l: &[f32], r: &[f32], rate: u32) -> Vec<u8> {
+    let n = l.len().min(r.len());
+    let data_len = (n * 4) as u32;
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&2u16.to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * 4).to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for i in 0..n {
+        out.extend_from_slice(&crate::audio::to_i16(l[i]).to_le_bytes());
+        out.extend_from_slice(&crate::audio::to_i16(r[i]).to_le_bytes());
+    }
+    out
+}
+
+/// The new voice at the old one's loudness, where each is sung, and the
+/// two put over the band; the whole kept under clipping.
+pub fn mix(band: &stems::Stereo, old_voice: &[f32], new_voice: &[f32]) -> stems::Stereo {
+    let loud = |x: &[f32]| {
+        let mut r: Vec<f32> = x.chunks(4410).map(crate::audio::rms).filter(|v| *v > 1e-3).collect();
+        r.sort_by(|a, b| a.total_cmp(b));
+        r.get(r.len() * 3 / 4).copied().unwrap_or(0.0)
+    };
+    let gain = (loud(old_voice) / loud(new_voice).max(1e-4)).clamp(0.1, 8.0);
+    let n = band.len().min(new_voice.len());
+    let mut ch = [band.ch[0][..n].to_vec(), band.ch[1][..n].to_vec()];
+    for c in ch.iter_mut() {
+        for (i, s) in c.iter_mut().enumerate() {
+            *s += new_voice[i] * gain;
+        }
+    }
+    let peak = ch.iter().flat_map(|c| c.iter()).fold(0f32, |m, s| m.max(s.abs()));
+    if peak > 0.98 {
+        let k = 0.98 / peak;
+        ch.iter_mut().for_each(|c| c.iter_mut().for_each(|s| *s *= k));
+    }
+    stems::Stereo { rate: band.rate, ch }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_goes_in_sentence_lines() {
+        let l = lines_of("Hello there. How are you?\n\nFine!");
+        assert_eq!(l, vec!["Hello there. How are you?", "Fine!"]);
+        let long = "This sentence is about forty characters. ".repeat(12);
+        let l = lines_of(&long);
+        assert!(l.len() >= 2 && l.iter().all(|x| x.len() <= 330), "{l:?}");
+    }
+
+    #[test]
+    fn streamed_lines_are_split_at_their_headers() {
+        let head = |n: usize| {
+            let mut h = b"RIFF\xff\xff\xff\x7fWAVEfmt ".to_vec();
+            h.resize(44, 0);
+            h.extend(std::iter::repeat_n([0x00u8, 0x40], n).flatten());
+            h
+        };
+        let mut b = head(3);
+        b.extend(head(2));
+        let parts = split_streamed(&b);
+        assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 2]);
+        assert!((parts[0][0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn takes_are_trimmed_checked_and_levelled() {
+        let rate = REC_RATE as usize;
+        let mut s = vec![0.0005f32; rate];
+        s.extend((0..rate * 3).map(|i| 0.3 * (i as f32 * 0.05).sin()));
+        s.extend(vec![0.0005f32; rate]);
+        let (take, notes) = clean(&s, 2.0).unwrap();
+        let secs = take.len() as f32 / REC_RATE as f32;
+        assert!((3.0..3.7).contains(&secs), "{secs}");
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(clean(&s, 5.0).unwrap_err().contains("only"));
+        assert!(clean(&vec![0.0; rate * 2], 1.0).is_err());
+        // All voice from the first moment: kept whole, and not called noisy.
+        let loud: Vec<f32> = (0..rate * 3).map(|i| if i % 50 < 5 { 1.0 } else { 0.4 * (i as f32 * 0.05).sin() }).collect();
+        let (all, notes) = clean(&loud, 1.0).unwrap();
+        assert_eq!(all.len(), loud.len());
+        assert_eq!(notes, vec!["loud".to_string()]);
+        // A hum under every pause is noise.
+        let mut hum: Vec<f32> = (0..rate).map(|i| 0.02 * (i as f32 * 0.3).sin()).collect();
+        hum.extend((0..rate * 2).map(|i| 0.1 * (i as f32 * 0.05).sin() + 0.02 * (i as f32 * 0.3).sin()));
+        hum.extend((0..rate).map(|i| 0.02 * (i as f32 * 0.3).sin()));
+        assert!(clean(&hum, 1.0).unwrap().1.contains(&"noisy".to_string()));
+    }
+
+    #[test]
+    fn voices_are_found_by_what_a_chat_calls_them() {
+        let v = |id: &str, name: &str| OwnVoice { id: id.into(), name: name.into(), ..Default::default() };
+        let voices = vec![v("a", "My voice"), v("b", "Grandpa Joe")];
+        assert_eq!(find(&voices, "grandpa joe").map(|x| x.id.as_str()), Some("b"));
+        assert_eq!(find(&voices, "Grandpa").map(|x| x.id.as_str()), Some("b"));
+        assert_eq!(find(&voices, "me").map(|x| x.id.as_str()), Some("a"));
+        assert!(find(&voices, "Mozart").is_none());
+        assert!(find(&[], "my voice").is_none());
+    }
+
+    #[test]
+    fn voices_know_what_they_can_do() {
+        let t = |l: &str| Take { line: l.into(), seconds: 3.0, ..Default::default() };
+        let mut v = OwnVoice { takes: vec![t("intro"), t("story")], ..Default::default() };
+        assert!(!v.can_speak() && !v.can_sing());
+        v.takes.push(t("calm"));
+        assert!(v.can_speak() && v.can_sing());
+        let only_singing = OwnVoice { takes: vec![t("song")], ..Default::default() };
+        assert!(!only_singing.can_speak() && only_singing.can_sing());
+    }
+
+    /// A song sung again in another voice, the way `revoice_item` does it,
+    /// written out for listening: SULCUSAI_SONG (default a Compose test
+    /// song), the voice from SULCUSAI_VOICE (default qwentts.cpp's example
+    /// speech), Seed-VC's pieces in SULCUSAI_SVC_DIR, the installed app's
+    /// separator and ONNX Runtime (the card's with SULCUSAI_ONNX_CARD).
+    /// Prints how much nearer the voice print came to the voice (CAMPPlus,
+    /// the converter's own, so listen too).
+    ///     cargo test sings_a_song_in_a_recorded_voice -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn sings_a_song_in_a_recorded_voice() {
+        let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+        let song_path = PathBuf::from(env("SULCUSAI_SONG", r"C:\dev\tools\compose-merge\own-words-real-0.375.mp3"));
+        let voice_path = PathBuf::from(env("SULCUSAI_VOICE", r"C:\dev\tools\voice\qwentts.cpp\examples\freeman.wav"));
+        let svc_dir = PathBuf::from(env("SULCUSAI_SVC_DIR", r"C:\dev\tools\voice\onnx16"));
+        let out = PathBuf::from(env("SULCUSAI_OUT", r"C:\dev\tools\voice\tests\sung"));
+        let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("app.sulcusai.desktop");
+        let models = crate::storage::models_dir(&local);
+        let card = std::env::var_os("SULCUSAI_ONNX_CARD").is_some();
+        let rt = local.join("engines").join(if card { "onnxruntime-1.30.0-cuda13" } else { "onnxruntime-1.30.0-cpu-x64" });
+        let dll = [rt.join("onnxruntime.dll"), rt.join("onnxruntime-win-x64-1.30.0").join("lib").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+        let card = card.then_some(crate::natural::Card { device: 0 });
+        let decode = |p: &Path| {
+            let (s, rate, ch) = super::super::audio_in::decode(p).unwrap();
+            let ch = ch.max(1) as usize;
+            stems::Stereo { rate, ch: [s.chunks(ch).map(|f| f[0]).collect(), s.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect()] }.resampled(stems::RATE)
+        };
+        let started = std::time::Instant::now();
+        let song = decode(&song_path);
+        let reference = decode(&voice_path).mono();
+        let (parts, _) = stems::separate(&dll, &models.join("media").join("helpers").join("htdemucs_fp16weights.onnx"), &song, 8, &[0, 1, 2, 3], card).unwrap();
+        stems::unload();
+        let apart = started.elapsed().as_secs_f64();
+        let band = stems::Stereo { rate: stems::RATE, ch: [0, 1].map(|c| (0..song.len()).map(|i| parts[0].ch[c][i] + parts[1].ch[c][i] + parts[2].ch[c][i]).collect()) };
+        let sung = parts[3].mono();
+        let mut conv = svc::Converter::new(&dll, &svc_dir, 8, card).unwrap();
+        let v = conv.voice(&reference).unwrap();
+        let song_pitch = conv.middle_pitch_of(&sung).unwrap();
+        let semitones = svc::octave_shift(song_pitch, v.pitch * 1.26);
+        let steps = if card.is_some() { 30 } else { 10 };
+        let t = std::time::Instant::now();
+        let never = AtomicBool::new(false);
+        let new_voice = conv.convert(&v, &sung, svc::Settings { steps, semitones, ..Default::default() }, &never, &|_| {}).unwrap();
+        println!(
+            "{:.0} s song: apart in {apart:.0} s, sung again in {:.0} s ({} steps, {semitones} semitones: song {song_pitch:.0} Hz, voice {:.0} Hz) on the {}",
+            song.len() as f64 / stems::RATE as f64,
+            t.elapsed().as_secs_f64(),
+            steps,
+            v.pitch,
+            if conv.on_card { "card" } else { "processor" }
+        );
+        let mixed = mix(&band, &sung, &new_voice);
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("as-made.wav"), wav_stereo(&song.ch[0], &song.ch[1], stems::RATE)).unwrap();
+        std::fs::write(out.join("in-the-voice.wav"), wav_stereo(&mixed.ch[0], &mixed.ch[1], stems::RATE)).unwrap();
+        std::fs::write(out.join("voice-alone.wav"), crate::audio::wav_encode(&new_voice, stems::RATE)).unwrap();
+        // Voice prints of the voice, the song's singer and the new singer.
+        let mut print = |x: &[f32]| {
+            let w16 = stems::resample(x, stems::RATE, 16_000);
+            let (n, fb) = crate::diarize::fbank_with(&w16, true);
+            let e = conv.run("campplus.onnx", vec![("fbank", vec![1, n as i64, 80], fb)]).unwrap();
+            let norm = e.iter().map(|v| v * v).sum::<f32>().sqrt();
+            e.into_iter().map(|v| v / norm).collect::<Vec<f32>>()
+        };
+        let (target, before, after) = (print(&reference), print(&sung), print(&new_voice));
+        let cos = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        println!("voice print likeness to the voice: song's singer {:.2}, sung again {:.2}", cos(&before, &target), cos(&after, &target));
+        assert!(cos(&after, &target) > cos(&before, &target));
+    }
+
+    /// Narration in a recorded voice through the engine, as `speak` runs it:
+    /// qwentts.cpp in SULCUSAI_TTS_DIR (default the graphics-card build),
+    /// its models in SULCUSAI_TTS_MODELS, the voice from qwentts.cpp's
+    /// example speech and its words. Prints the time and how near the voice
+    /// print came (CAMPPlus, from Seed-VC's pieces in SULCUSAI_SVC_DIR);
+    /// writes the reading out for listening.
+    ///     cargo test reads_in_a_recorded_voice -- --ignored --nocapture
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn reads_in_a_recorded_voice() {
+        let env = |k: &str, d: &str| PathBuf::from(std::env::var(k).unwrap_or_else(|_| d.to_string()));
+        let dir = env("SULCUSAI_TTS_DIR", r"C:\dev\qb");
+        let models = env("SULCUSAI_TTS_MODELS", r"C:\dev\tools\voice\models");
+        let example = PathBuf::from(r"C:\dev\tools\voice\qwentts.cpp\examples");
+        let big = std::env::var_os("SULCUSAI_TTS_SMALL").is_none();
+        let files = [models.join(if big { "qwen-talker-1.7b-base-Q8_0.gguf" } else { "qwen-talker-0.6b-base-Q8_0.gguf" }), models.join("qwen-tokenizer-12hz-Q8_0.gguf")];
+        let pcm = crate::audio::wav_decode(&std::fs::read(example.join("freeman.wav")).unwrap()).unwrap();
+        let reference = stems::resample(&pcm.samples, pcm.rate, TTS_RATE);
+        let words = std::fs::read_to_string(example.join("freeman.txt")).unwrap();
+        let lines = lines_of("Your package from the bakery arrives on Thursday afternoon. Please leave the side gate open, and the dog inside!");
+        let t = std::time::Instant::now();
+        let never = AtomicBool::new(false);
+        let (said, rate) = read_with(&dir.join(TTS_EXE), &files, &reference, words.trim(), &lines, Some("en"), &never).await.unwrap();
+        let secs = said.len() as f64 / rate as f64;
+        println!("{} lines, {secs:.1} s of speech in {:.1} s ({})", lines.len(), t.elapsed().as_secs_f64(), if big { "1.7B" } else { "0.6B" });
+        assert!(secs > 3.0);
+        let out = env("SULCUSAI_OUT", r"C:\dev\tools\voice\tests");
+        std::fs::write(out.join("read-in-the-voice.wav"), crate::audio::wav_encode(&said, rate)).unwrap();
+        // Voice prints: the reading against the voice, and against a voice
+        // of Windows' own reading the same words.
+        let local = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("app.sulcusai.desktop");
+        let rt = local.join("engines").join("onnxruntime-1.30.0-cpu-x64");
+        let dll = [rt.join("onnxruntime.dll"), rt.join("onnxruntime-win-x64-1.30.0").join("lib").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+        let mut conv = svc::Converter::new(&dll, &env("SULCUSAI_SVC_DIR", r"C:\dev\tools\voice\onnx16"), 8, None).unwrap();
+        let mut print = |x: &[f32], from: u32| {
+            let w16 = stems::resample(x, from, 16_000);
+            let (n, fb) = crate::diarize::fbank_with(&w16, true);
+            let e = conv.run("campplus.onnx", vec![("fbank", vec![1, n as i64, 80], fb)]).unwrap();
+            let norm = e.iter().map(|v| v * v).sum::<f32>().sqrt();
+            e.into_iter().map(|v| v / norm).collect::<Vec<f32>>()
+        };
+        let other = crate::tts::synthesize(&lines.join(" "), None, Some("en"), 1.0).unwrap();
+        let other_samples: Vec<f32> = other.samples.iter().map(|s| *s as f32 / 32768.0).collect();
+        let (target, clone, windows) = (print(&reference, TTS_RATE), print(&said, rate), print(&other_samples, other.rate));
+        let cos = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        println!("voice print likeness to the voice: the reading {:.2}, Windows' voice {:.2}", cos(&clone, &target), cos(&windows, &target));
+        assert!(cos(&clone, &target) > cos(&windows, &target));
+    }
+
+    #[test]
+    fn languages_get_the_engines_names() {
+        assert_eq!(tts_language(Some("en-US")), "English");
+        assert_eq!(tts_language(Some("pt")), "Portuguese");
+        assert_eq!(tts_language(Some("nl")), "auto");
+        assert_eq!(tts_language(None), "auto");
+    }
+
+    #[test]
+    fn the_new_voice_sits_where_the_old_one_was() {
+        let band = stems::Stereo { rate: 44_100, ch: [vec![0.1; 44_100], vec![0.1; 44_100]] };
+        let old: Vec<f32> = (0..44_100).map(|i| 0.2 * (i as f32 * 0.03).sin()).collect();
+        let new: Vec<f32> = old.iter().map(|x| x * 0.25).collect();
+        let m = mix(&band, &old, &new);
+        let voice: Vec<f32> = m.ch[0].iter().map(|x| x - 0.1).collect();
+        let r = |x: &[f32]| crate::audio::rms(x);
+        assert!((r(&voice) / r(&old) - 1.0).abs() < 0.05, "{}", r(&voice) / r(&old));
+    }
+}

@@ -50,6 +50,9 @@ const THIRD_PARTY = [
   { name: tx("acestep.cpp (downloaded with a music model)"), license: "MIT", url: "https://github.com/ServeurpersoCom/acestep.cpp" },
   { name: tx("image (pictures)"), license: "MIT / Apache-2.0", url: "https://github.com/image-rs/image" },
   { name: tx("Arti (Tor, for the private connection)"), license: "MIT / Apache-2.0", url: "https://gitlab.torproject.org/tpo/core/arti" },
+  { name: tx("qwentts.cpp and Qwen3-TTS (reading in your voice)"), license: "MIT / Apache-2.0", url: "https://github.com/ServeurpersoCom/qwentts.cpp" },
+  { name: tx("Seed-VC (singing in your voice)"), license: "GPL-3.0", url: "https://github.com/Plachtaa/seed-vc" },
+  { name: tx("BigVGAN, RMVPE, CAMPPlus and Whisper (parts of singing in your voice)"), license: "MIT / Apache-2.0", url: "" },
   { name: tx("Rust crates (serde, tokio, reqwest, rusqlite, sysinfo, zip, windows…)"), license: "MIT / Apache-2.0", url: "" },
 ];
 

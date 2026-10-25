@@ -104,6 +104,13 @@ fn mel(f: f32) -> f32 {
 /// window, pre-emphasis 0.97, 80 bands from 20 Hz to 8 kHz, then the mean
 /// over time removed. Input: 16 kHz samples in -1..1.
 pub fn fbank(samples: &[f32]) -> (usize, Vec<f32>) {
+    fbank_with(samples, false)
+}
+
+/// `fbank` with Kaldi's own default window ("povey": Hann to the power
+/// 0.85), as torchaudio's `kaldi.fbank` makes it (CAMPPlus, for singing in
+/// the person's voice).
+pub fn fbank_with(samples: &[f32], povey: bool) -> (usize, Vec<f32>) {
     const LEN: usize = 400;
     const SHIFT: usize = 160;
     const NFFT: usize = 512;
@@ -112,7 +119,12 @@ pub fn fbank(samples: &[f32]) -> (usize, Vec<f32>) {
         return (0, Vec::new());
     }
     let frames = 1 + (samples.len() - LEN) / SHIFT;
-    let window: Vec<f32> = (0..LEN).map(|i| 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / (LEN - 1) as f32).cos()).collect();
+    let window: Vec<f32> = (0..LEN)
+        .map(|i| {
+            let c = (std::f32::consts::TAU * i as f32 / (LEN - 1) as f32).cos();
+            if povey { (0.5 - 0.5 * c).powf(0.85) } else { 0.54 - 0.46 * c }
+        })
+        .collect();
     // Triangular filters, evenly spaced on the mel scale.
     let (lo, hi) = (mel(20.0), mel(8000.0));
     let delta = (hi - lo) / (BINS + 1) as f32;

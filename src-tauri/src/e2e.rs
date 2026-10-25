@@ -684,6 +684,81 @@ async fn e2e_agent_asks_before_sending() {
     assert!(asked.iter().all(|a| a.ends_with("once: true")), "no allowing for the whole chat: {asked:?}");
 }
 
+/// Your voice through the jobs as the app runs them: a voice from
+/// qwentts.cpp's example speech (split at its pauses into three read
+/// lines), narration in it, and a gallery song sung again in it. The engine
+/// and models download from the catalog the first time, into the real
+/// engines and models folders, as the installed app would.
+/// SULCUSAI_SONG picks the song (default a Compose test song).
+///     cargo test e2e_own_voice_reads_and_sings -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_own_voice_reads_and_sings() {
+    use crate::media::{self, own_voice, store, Request};
+    let state = media_state();
+    let cipher = state.work_cipher().unwrap();
+    let example = std::path::PathBuf::from(r"C:\dev\tools\voice\qwentts.cpp\examples");
+    let pcm = crate::audio::wav_decode(&std::fs::read(example.join("freeman.wav")).unwrap()).unwrap();
+    let speech = media::stems::resample(&pcm.samples, pcm.rate, 48_000);
+    // The two longest pauses inside it, as the line breaks.
+    let frame = 960;
+    let rms: Vec<f32> = speech.chunks(frame).map(crate::audio::rms).collect();
+    let quiet = rms.iter().copied().fold(f32::MAX, f32::min).max(1e-4) * 4.0;
+    let mut pauses: Vec<(usize, usize)> = Vec::new();
+    let mut start = None;
+    for (i, r) in rms.iter().enumerate() {
+        match (start, *r < quiet) {
+            (None, true) => start = Some(i),
+            (Some(s), false) => {
+                if s > 10 && i < rms.len() - 10 {
+                    pauses.push((i - s, (s + i) / 2));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    pauses.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut cuts: Vec<usize> = pauses.iter().take(2).map(|p| p.1 * frame).collect();
+    cuts.sort();
+    assert_eq!(cuts.len(), 2, "two pauses in the example");
+    let words = std::fs::read_to_string(example.join("freeman.txt")).unwrap();
+    let sentences: Vec<&str> = words.trim().split_inclusive(". ").collect();
+    let third = |i: usize| sentences.iter().skip(i * sentences.len() / 3).take(sentences.len() / 3 + usize::from(i == 2)).copied().collect::<String>();
+    let voice = own_voice::add_for_test(
+        &state,
+        "Test voice",
+        &[
+            ("everyday", speech[..cuts[0]].to_vec(), &third(0)),
+            ("intro", speech[cuts[0]..cuts[1]].to_vec(), &third(1)),
+            ("story", speech[cuts[1]..].to_vec(), &third(2)),
+        ],
+    );
+    let started = std::time::Instant::now();
+    let read = media::run(&state, store::new_id(), Request { op: "narrate".into(), prompt: "The bakery opens at seven. Bring the blue umbrella, it might rain later.".into(), voice: Some(format!("own:{voice}")), language: Some("en".into()), ..Default::default() })
+        .await
+        .unwrap()
+        .remove(0);
+    println!("narration: {:.1} s of speech in {:.0} s (first time includes the downloads)", read.seconds, started.elapsed().as_secs_f64());
+    assert!(read.seconds > 2.0);
+    // A song in the gallery, sung again in the voice.
+    let song_path = std::env::var("SULCUSAI_SONG").unwrap_or_else(|_| r"C:\dev\tools\compose-merge\own-words-real-0.375.mp3".into());
+    let bytes = std::fs::read(&song_path).unwrap();
+    let item = media::MediaItem { kind: "audio".into(), mime: "audio/mpeg".into(), op: "import".into(), prompt: "a song".into(), seconds: 100.7, ..Default::default() };
+    let song = store::save(&state.db.lock().unwrap(), &state.paths, &cipher, item, &bytes, None).unwrap();
+    let started = std::time::Instant::now();
+    let sung = media::run(&state, store::new_id(), Request { op: "revoice".into(), prompt: String::new(), source: Some(song.id.clone()), voice: Some(voice.clone()), ..Default::default() })
+        .await
+        .unwrap()
+        .remove(0);
+    println!("sung again: {:.0} s song in {:.0} s; note: {:?}", sung.seconds, started.elapsed().as_secs_f64(), sung.note);
+    assert_eq!(sung.parent.as_deref(), Some(song.id.as_str()));
+    assert!((sung.seconds - song.seconds).abs() < 2.0, "{} vs {}", sung.seconds, song.seconds);
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests");
+    std::fs::write(out.join("e2e-narration.wav"), store::read(&state.paths, &cipher, &read.id).unwrap()).unwrap();
+    std::fs::write(out.join("e2e-sung.wav"), store::read(&state.paths, &cipher, &sung.id).unwrap()).unwrap();
+}
+
 /// A song attached to a chat is worked on: "make this longer" calls
 /// create_music on that song, and the result is that much longer. A small
 /// model (SULCUSAI_TEST_GGUF, Qwen3 4B) so the music engine fits beside it.

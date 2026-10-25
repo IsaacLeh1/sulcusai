@@ -181,6 +181,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   listen: tx("Listening to a song"),
   remake: tx("Making the unclear parts again"),
   map: tx("Seeing how a song is built"),
+  revoice: tx("Singing a song in a recorded voice"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

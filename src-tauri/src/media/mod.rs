@@ -25,7 +25,9 @@ pub mod look;
 pub(crate) mod lyrics;
 mod audio_in;
 pub(crate) mod music;
+pub mod own_voice;
 pub(crate) mod proc;
+pub(crate) mod svc;
 pub mod prompts;
 pub mod screen;
 mod sd;
@@ -83,6 +85,9 @@ pub struct MediaCatalog {
     /// sound set, played in the window).
     #[serde(default)]
     pub instruments: Option<Helper>,
+    /// Narration and songs in the person's own recorded voice (`own_voice`).
+    #[serde(default)]
+    pub own_voice: Option<own_voice::OwnVoiceCatalog>,
 }
 
 /// A small model an engine's work uses along the way, fetched with the
@@ -232,7 +237,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" => Some(Feature::Music),
+        "narrate" | "listen" | "map" | "revoice" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -701,6 +706,9 @@ pub struct MusicSpec {
     /// description, else what the lyrics or the sections need, else what
     /// the lyrics written for it come to.
     pub auto_length: bool,
+    /// Sung in a voice the person recorded (`own_voice`, by id): the song is
+    /// made, then its voice is sung again in theirs (kept beside the song).
+    pub own_voice: Option<String>,
     /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
     /// "modern" (older songs may say a decade, as `era` does now).
     pub production: Option<String>,
@@ -1369,6 +1377,17 @@ pub fn can_make(state: &AppState, kind: Kind) -> bool {
         })
 }
 
+/// The recorded voice (`own_voice`) a job uses: the one a song is sung again
+/// in ("revoice", `voice`), narration's "own:<id>", or a new song's.
+fn recorded_voice(req: &Request) -> Option<&str> {
+    match req.op.as_str() {
+        "revoice" => req.voice.as_deref(),
+        "narrate" => req.voice.as_deref().and_then(|v| v.strip_prefix("own:")),
+        "music" => req.music.as_ref().and_then(|m| m.own_voice.as_deref()),
+        _ => None,
+    }
+}
+
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     let f = op_feature(&req.op).ok_or("Unknown kind of job.")?;
     crate::features::require(state, f)?;
@@ -1379,11 +1398,23 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map") {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice") && req.source.is_none() {
         return Err("Pick a song first.".into());
+    }
+    // A recorded voice: one that's here and has what the job needs.
+    if let Some(id) = recorded_voice(req) {
+        let v = own_voice::get(&state.db.lock().unwrap(), &state.work_cipher()?, id).ok_or("That recorded voice is no longer here.")?;
+        if req.op == "narrate" && !v.can_speak() {
+            return Err(format!("Read at least three lines for {} in Studio › Your voice first.", v.name));
+        }
+        if req.op != "narrate" && !v.can_sing() {
+            return Err(format!("Record a little of {} in Studio › Your voice first.", v.name));
+        }
+    } else if req.op == "revoice" {
+        return Err("Pick whose voice sings it.".into());
     }
     let needs_source = matches!(req.op.as_str(), "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background");
     if needs_source && req.source.is_none() {
@@ -1431,7 +1462,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     let est = match (&model, &on_cloud) {
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
@@ -2258,7 +2289,7 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     }
     // Not for upscaling: its model is 64 MB, and stopping a 14 GB chat model
     // for it cost the next message a reload.
-    let paused = if music_on_gpu || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach") {
+    let paused = if music_on_gpu || recorded_voice(req).is_some() || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach") {
         make_room(state, req, model).await
     } else {
         None
@@ -2797,8 +2828,21 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "video" => {
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
+        "revoice" => revoice_job(&ctx).await,
         "music" | "sound" => {
             let mut items = song(&ctx, model.ok_or("No music model.")?, &work.0).await?;
+            // To be sung in a recorded voice: each version sung again in it,
+            // kept beside the song as the music model made it.
+            if let Some(voice) = req.music.as_ref().and_then(|m| m.own_voice.clone()).filter(|_| req.op == "music") {
+                let made = items.clone();
+                for item in made.into_iter().filter(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)) {
+                    match revoice_item(&ctx, &item, &voice).await {
+                        Ok(v) => items.insert(0, v),
+                        Err(e) if e == download::CANCELLED => return Err(e),
+                        Err(e) => crate::applog::line("media", &format!("The song wasn't sung again in the recorded voice: {e}")),
+                    }
+                }
+            }
             // Made from the song view: the new version's sections and notes,
             // read from it, so it opens with everything in place.
             if req.then_map == Some(true) {
@@ -3816,6 +3860,96 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
     Ok(item)
 }
 
+/// Sings a song from the gallery (`req.source`) again in a recorded voice
+/// (`req.voice`).
+async fn revoice_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
+    let id = ctx.req.source.as_deref().ok_or("Pick a song first.")?;
+    let voice = ctx.req.voice.clone().ok_or("Pick whose voice sings it.")?;
+    let item = store::get(&ctx.state.db.lock().unwrap(), &ctx.state.work_cipher()?, id).ok_or("That song is no longer in the gallery.")?;
+    if item.kind != "audio" {
+        return Err("Only a song can be sung in another voice.".into());
+    }
+    Ok(vec![revoice_item(ctx, &item, &voice).await?])
+}
+
+/// A song with its voice sung again in a recorded one: the voice taken out
+/// (HTDemucs), sung in theirs (`svc`, whole octaves up or down to suit
+/// them), and put back over the band at its old loudness. Kept as a new
+/// song beside the first.
+async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Result<MediaItem, String> {
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    let voice = own_voice::get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That recorded voice is no longer here.")?;
+    let (reference, sung) = own_voice::singing_reference(&state.paths, &c, &voice)?;
+    let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
+    let card = map_card(ctx).await?;
+    let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
+    let models = own_voice::sing_parts(state, ctx.cancel, ctx.progress).await?;
+    (ctx.progress)("Taking the voice out", 0.05);
+    let bytes = store::read(&state.paths, &c, &item.id)?;
+    let threads = state.limits().threads;
+    let ext = if item.mime.contains("wav") { "wav" } else { "mp3" };
+    let singing = format!("Singing it in {}'s voice", voice.name);
+    // Long work that reports as it goes and can be stopped: it borrows the
+    // job's progress and cancel, so it runs here rather than on its own thread.
+    let (out, on_card, secs) = tokio::task::block_in_place(|| -> Result<(stems::Stereo, bool, f64), String> {
+        let started = Instant::now();
+        let dir = std::env::temp_dir().join(format!("sulcusai-revoice-{}", store::new_id()));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(format!("song.{ext}"));
+        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        let decoded = audio_in::decode(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        let (samples, rate, channels) = decoded?;
+        let ch = channels.max(1) as usize;
+        let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
+        let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
+        let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
+        let (parts, apart_on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card)?;
+        stems::unload();
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        let band = stems::Stereo {
+            rate: stems::RATE,
+            ch: [0, 1].map(|c| (0..song.len()).map(|i| parts[0].ch[c][i] + parts[1].ch[c][i] + parts[2].ch[c][i]).collect()),
+        };
+        let sung_part = parts[3].mono();
+        drop(parts);
+        (ctx.progress)(&singing, 0.25);
+        let mut conv = svc::Converter::new(&dll, &models, threads, card)?;
+        let v = conv.voice(&reference)?;
+        // Speech sits about four semitones under the same person's singing.
+        let person = if sung { v.pitch } else { v.pitch * 1.26 };
+        let semitones = svc::octave_shift(conv.middle_pitch_of(&sung_part)?, person);
+        // Seed-VC's 30 steps on a card; on the processor each is ~6 s for
+        // 30 s of song, so fewer.
+        let steps = if conv.on_card { 30 } else { 10 };
+        let new_voice = conv.convert(&v, &sung_part, svc::Settings { steps, semitones, ..Default::default() }, ctx.cancel, &|f| (ctx.progress)(&singing, 0.25 + 0.7 * f))?;
+        let on_card = conv.on_card && apart_on_card;
+        drop(conv);
+        crate::applog::line("media", &format!("Sang a song again in a recorded voice: {semitones} semitones, {steps} steps"));
+        Ok((own_voice::mix(&band, &sung_part, &new_voice), on_card, started.elapsed().as_secs_f64()))
+    })?;
+    crate::applog::line("media", &format!("Sang a {:.0} s song in a recorded voice in {secs:.0} s on the {}", out.len() as f64 / out.rate as f64, if on_card { "graphics card" } else { "processor" }));
+    let wav = own_voice::wav_stereo(&out.ch[0], &out.ch[1], out.rate);
+    let new = MediaItem {
+        kind: "audio".into(),
+        op: item.op.clone(),
+        prompt: item.prompt.clone(),
+        model_id: item.model_id.clone(),
+        mime: "audio/wav".into(),
+        seconds: out.len() as f64 / out.rate as f64,
+        parent: Some(item.id.clone()),
+        chat_id: ctx.req.chat_id.clone().or_else(|| item.chat_id.clone()),
+        seed: item.seed,
+        lyrics: item.lyrics.clone(),
+        note: Some(format!("Sung in {}'s voice", voice.name)),
+        ..Default::default()
+    };
+    store::save(&state.db.lock().unwrap(), &state.paths, &c, new, &wav, None)
+}
+
 /// Makes again the stretches of a song (`req.source`) whose words weren't
 /// clear, one after another on the same song (the music model's repaint,
 /// asked for a clear voice), then listens to the result. The steps between
@@ -3882,19 +4016,23 @@ async fn narrate(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
         return Err("Type the text to read aloud.".into());
     }
     let (voice, language) = (req.voice.clone(), req.language.clone().filter(|l| l != "auto"));
-    (ctx.progress)("Reading", 0.3);
-    let speech = tokio::task::spawn_blocking(move || crate::tts::synthesize(&text, voice.as_deref(), language.as_deref(), 1.0))
-        .await
-        .map_err(|e| e.to_string())??;
-    let floats: Vec<f32> = speech.samples.iter().map(|s| *s as f32 / 32768.0).collect();
-    let wav = crate::audio::wav_encode(&floats, speech.rate);
+    let (floats, rate) = if let Some(own) = recorded_voice(req) {
+        own_voice::speak(ctx.state, own, &text, language.as_deref(), ctx.cancel, ctx.progress).await?
+    } else {
+        (ctx.progress)("Reading", 0.3);
+        let speech = tokio::task::spawn_blocking(move || crate::tts::synthesize(&text, voice.as_deref(), language.as_deref(), 1.0))
+            .await
+            .map_err(|e| e.to_string())??;
+        (speech.samples.iter().map(|s| *s as f32 / 32768.0).collect(), speech.rate)
+    };
+    let wav = crate::audio::wav_encode(&floats, rate);
     let c = ctx.state.work_cipher()?;
     let item = MediaItem {
         kind: "audio".into(),
         op: "narrate".into(),
         prompt: req.prompt.trim().to_string(),
         mime: "audio/wav".into(),
-        seconds: floats.len() as f64 / speech.rate.max(1) as f64,
+        seconds: floats.len() as f64 / rate.max(1) as f64,
         chat_id: req.chat_id.clone(),
         ..Default::default()
     };

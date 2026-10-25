@@ -2116,7 +2116,43 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice";
+
+/** A line of the voice script (the window holds its words). */
+export interface OwnVoiceLine {
+  id: string;
+  kind: "speak" | "sing";
+  min_s: number;
+  max_s: number;
+}
+
+export interface OwnVoiceTake {
+  line: string;
+  seconds: number;
+  /** What was said, as speech recognition heard it. */
+  words: string;
+  /** "quiet", "loud" (it distorted) or "noisy". */
+  notes: string[];
+  at: number;
+}
+
+/** A recorded voice: narration and songs in it. */
+export interface OwnVoice {
+  id: string;
+  name: string;
+  takes: OwnVoiceTake[];
+  created_at: number;
+  can_speak: boolean;
+  can_sing: boolean;
+}
+
+export interface OwnVoicesView {
+  voices: OwnVoice[];
+  lines: OwnVoiceLine[];
+  /** What narration and singing download the first time (bytes). */
+  speak_size: number;
+  sing_size: number;
+}
 
 export interface DevModeView {
   on: boolean;
@@ -2204,6 +2240,8 @@ export interface MusicSpec {
   era?: string | null;
   /** The length follows the song: a length named in the description, the lyrics, the sections, or the lyrics written for it. */
   auto_length?: boolean;
+  /** Sung again in a recorded voice (its id), kept beside the song as made. */
+  own_voice?: string | null;
   /** A saved artist (id or name): their voice and sound for this song. */
   persona?: string | null;
   /** The singer's voice in words (a saved artist's). */
@@ -2845,6 +2883,21 @@ export const api = {
   /** Saves an artist (a new one when id is empty). */
   musicPersonaSave: (persona: Persona) => invoke<Persona>("music_persona_save", { persona }),
   musicPersonaDelete: (id: string) => invoke<void>("music_persona_delete", { id }),
+  ownVoices: () => invoke<OwnVoicesView>("own_voices"),
+  /** `agreed`: it's the person's own voice, or its owner said yes. */
+  ownVoiceCreate: (name: string, agreed: boolean) => invoke<OwnVoicesView>("own_voice_create", { name, agreed }),
+  ownVoiceRename: (id: string, name: string) => invoke<OwnVoicesView>("own_voice_rename", { id, name }),
+  ownVoiceDelete: (id: string) => invoke<OwnVoicesView>("own_voice_delete", { id }),
+  /** Starts recording a line ("own_voice:level" while it records, "own_voice:full" at its longest). */
+  ownVoiceRecord: (voice: string, line: string) => invoke<void>("own_voice_record", { voice, line }),
+  /** Keeps the take; `words`: the line as shown, used when speech recognition isn't installed. */
+  ownVoiceStop: (words: string) => invoke<OwnVoicesView>("own_voice_stop", { words }),
+  ownVoiceCancel: () => invoke<void>("own_voice_cancel"),
+  /** A take as WAV, base64. */
+  ownVoiceTake: (voice: string, line: string) => invoke<string>("own_voice_take", { voice, line }),
+  ownVoiceTakeDelete: (voice: string, line: string) => invoke<OwnVoicesView>("own_voice_take_delete", { voice, line }),
+  /** A sentence read in the voice, to hear it (WAV, base64); the first time downloads the voice engine. */
+  ownVoiceTry: (voice: string, text: string, language: string | null) => invoke<string>("own_voice_try", { voice, text, language }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null }) =>
     invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null, lyrics: input.lyrics ?? null }),
   /** A song's notes as a MIDI file, saved at `path`: `map` as edited, else the song's own. */
@@ -3105,6 +3158,10 @@ export interface ChatEvents {
   "sync:changed": null;
   "people:changed": null;
   "people:message": { contact_id: string };
+  /** A voice line being recorded: its loudness (0 to 1) and seconds so far. */
+  "own_voice:level": { voice: string; line: string; level: number; seconds: number };
+  /** The line reached its longest, and recording should stop. */
+  "own_voice:full": { voice: string; line: string };
   "people:shared": { contact_id: string };
   "people:ask": { contact_id: string; id: string };
   /** Linking, step by step: find, reach, check, save. */

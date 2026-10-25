@@ -167,6 +167,7 @@ fits   = needed <= VRAM                          (full GPU)
   - When no video model fits the PC, the section explains why.
 - **Music and audio:** music from a prompt (genre, mood, length, optional lyrics and vocals), sound effects, and narration.
   - Built-in player with trim, loop and download.
+  - **Your voice:** the person reads a short script and sings a little once; narration can then read in their voice and way of speaking, and songs can be sung again in their voice (kept beside the original). Recordings stay on the PC, encrypted; only one's own voice, or with its owner's yes.
 
 ### 4.6 Productivity
 
