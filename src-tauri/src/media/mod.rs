@@ -3889,7 +3889,7 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
     let bytes = store::read(&state.paths, &c, &item.id)?;
     let threads = state.limits().threads;
     let ext = if item.mime.contains("wav") { "wav" } else { "mp3" };
-    let singing = format!("Singing it in {}'s voice", voice.name);
+    let singing = format!("Singing it in the recorded voice “{}”", voice.name);
     // Long work that reports as it goes and can be stopped: it borrows the
     // job's progress and cancel, so it runs here rather than on its own thread.
     let (out, on_card, secs) = tokio::task::block_in_place(|| -> Result<(stems::Stereo, bool, f64), String> {
@@ -3944,7 +3944,7 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
         chat_id: ctx.req.chat_id.clone().or_else(|| item.chat_id.clone()),
         seed: item.seed,
         lyrics: item.lyrics.clone(),
-        note: Some(format!("Sung in {}'s voice", voice.name)),
+        note: Some(format!("Sung in the recorded voice “{}”", voice.name)),
         ..Default::default()
     };
     store::save(&state.db.lock().unwrap(), &state.paths, &c, new, &wav, None)

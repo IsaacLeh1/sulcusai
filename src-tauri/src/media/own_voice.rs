@@ -646,8 +646,62 @@ pub async fn speak(state: &Arc<AppState>, voice_id: &str, text: &str, language: 
     read_with(&exe, &files, &reference, &words, &lines, language, cancel).await
 }
 
-/// One run of the engine: `lines` read in the voice of `reference` (24 kHz)
-/// whose words are `words`.
+/// The longest a line may take read slowly (8 characters a second), and 3 s
+/// more.
+fn longest_s(line: &str) -> f32 {
+    line.chars().count() as f32 / 8.0 + 3.0
+}
+
+/// The engine making `lines` in the voice of the reference in `work`
+/// (`ref.wav`; with `with_words`, also `ref.txt`, its words: in-context
+/// cloning, which keeps the way the person speaks): one reading per line.
+/// Each is capped near its line's length (the engine's own cap is ~170 s).
+async fn run_engine(exe: &Path, files: &[PathBuf], work: &Path, lines: &[String], language: Option<&str>, with_words: bool, cancel: &AtomicBool) -> Result<Vec<Vec<f32>>, String> {
+    // Qwen3-TTS makes 12.5 frames a second.
+    let max_new = lines.iter().map(|l| longest_s(l)).fold(0f32, f32::max) * 12.5;
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.current_dir(exe.parent().unwrap_or(Path::new("."))).arg("--model").arg(&files[0]).arg("--codec").arg(&files[1]).arg("--ref-wav").arg(work.join("ref.wav"));
+    if with_words {
+        cmd.arg("--ref-text").arg(work.join("ref.txt"));
+    }
+    cmd.args(["--lang", tts_language(language), "--max-new", &(max_new.ceil() as u32).to_string(), "--stream-by-line", "-o", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let mut child = cmd.spawn().map_err(|e| format!("The voice engine didn't start: {e}"))?;
+    let input = lines.join("\n") + "\n";
+    let mut stdin = child.stdin.take().unwrap();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let _ = stdin.write_all(input.as_bytes()).await;
+    });
+    let out = child.wait_with_output();
+    tokio::pin!(out);
+    let out = loop {
+        tokio::select! {
+            o = &mut out => break o.map_err(|e| e.to_string())?,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(download::CANCELLED.to_string());
+                }
+            }
+        }
+    };
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        crate::applog::line("media", &format!("The voice engine failed: {}", err.lines().rev().take(4).collect::<Vec<_>>().join(" | ")));
+        return Err("The voice engine stopped with an error.".into());
+    }
+    Ok(split_streamed(&out.stdout))
+}
+
+/// `lines` read in the voice of `reference` (24 kHz) whose words are
+/// `words`. A line that runs on far past its length (the engine lost its
+/// end, as when the words don't match the recording) is read again from the
+/// voice alone, without the words.
 async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str, lines: &[String], language: Option<&str>, cancel: &AtomicBool) -> Result<(Vec<f32>, u32), String> {
     // The recording goes to the engine as a file for the run only.
     let work = std::env::temp_dir().join(format!("sulcusai-voice-{}", super::store::new_id()));
@@ -655,51 +709,26 @@ async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str
     let result = async {
         std::fs::write(work.join("ref.wav"), crate::audio::wav_encode(reference, TTS_RATE)).map_err(|e| e.to_string())?;
         std::fs::write(work.join("ref.txt"), words).map_err(|e| e.to_string())?;
-        let mut cmd = tokio::process::Command::new(exe);
-        cmd.current_dir(exe.parent().unwrap_or(Path::new(".")))
-            .arg("--model")
-            .arg(&files[0])
-            .arg("--codec")
-            .arg(&files[1])
-            .arg("--ref-wav")
-            .arg(work.join("ref.wav"))
-            .arg("--ref-text")
-            .arg(work.join("ref.txt"))
-            .args(["--lang", tts_language(language), "--stream-by-line", "-o", "-"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true);
-        #[cfg(windows)]
-        cmd.creation_flags(0x0800_0000);
-        let mut child = cmd.spawn().map_err(|e| format!("The voice engine didn't start: {e}"))?;
-        let input = lines.join("\n") + "\n";
-        let mut stdin = child.stdin.take().unwrap();
-        tokio::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(input.as_bytes()).await;
-        });
-        let out = child.wait_with_output();
-        tokio::pin!(out);
-        let out = loop {
-            tokio::select! {
-                o = &mut out => break o.map_err(|e| e.to_string())?,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Err(download::CANCELLED.to_string());
-                    }
+        let mut parts = run_engine(exe, files, &work, lines, language, !words.trim().is_empty(), cancel).await?;
+        let ran_on = |line: &str, p: &[f32]| p.len() as f32 / TTS_RATE as f32 > longest_s(line) - 0.5;
+        let again: Vec<usize> = (0..lines.len().min(parts.len())).filter(|i| ran_on(&lines[*i], &parts[*i])).collect();
+        if !again.is_empty() {
+            crate::applog::line("media", &format!("{} of {} lines ran on in the recorded voice; reading them again from the voice alone", again.len(), lines.len()));
+            let retry: Vec<String> = again.iter().map(|i| lines[*i].clone()).collect();
+            let redone = run_engine(exe, files, &work, &retry, language, false, cancel).await?;
+            for (i, p) in again.iter().zip(redone) {
+                if !ran_on(&lines[*i], &p) || p.len() < parts[*i].len() {
+                    parts[*i] = p;
                 }
             }
-        };
-        if !out.status.success() {
-            let err = String::from_utf8_lossy(&out.stderr);
-            crate::applog::line("media", &format!("The voice engine failed: {}", err.lines().rev().take(4).collect::<Vec<_>>().join(" | ")));
-            return Err("The voice engine stopped with an error.".into());
         }
-        let parts = split_streamed(&out.stdout);
         let gap = vec![0f32; (TTS_RATE as f32 * 0.35) as usize];
         let mut all = Vec::new();
-        for p in parts.into_iter().filter(|p| !p.is_empty()) {
+        for (i, mut p) in parts.into_iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+            // Still running on: kept to its line's length.
+            if let Some(line) = lines.get(i) {
+                p.truncate((longest_s(line) * TTS_RATE as f32) as usize);
+            }
             if !all.is_empty() {
                 all.extend_from_slice(&gap);
             }
@@ -976,6 +1005,14 @@ mod tests {
         let cos = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
         println!("voice print likeness to the voice: the reading {:.2}, Windows' voice {:.2}", cos(&clone, &target), cos(&windows, &target));
         assert!(cos(&clone, &target) > cos(&windows, &target));
+    }
+
+    #[test]
+    fn a_line_may_take_about_its_length() {
+        // 72 characters: 12 s at most, while a natural reading is ~5 s.
+        let line = "The bakery opens at seven. Bring the blue umbrella, it might rain later.";
+        assert!((longest_s(line) - 12.0).abs() < 0.1, "{}", longest_s(line));
+        assert!((longest_s("Hi.") - 3.375).abs() < 0.01);
     }
 
     #[test]
