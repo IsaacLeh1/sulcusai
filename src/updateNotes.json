@@ -1,5 +1,10 @@
 [
  {
+  "version": "0.9.39",
+  "date": "2026-10-26",
+  "notes": "## Always see what's working\n- The status bar now shows what SulcusAI is working on, with a progress bar: a model downloading (any kind: chat, pictures, video, music, speech), the AI engine being set up, or a picture, video, song or training being made. Downloads show first, with their name, step and percent; anything else waiting shows as \"+1 more\", and hovering lists it all. Click it to go to Models or the Studio.\n- With nothing going on, it says No work.\n- Chat and Studio windows of their own show it at the bottom too."
+ },
+ {
   "version": "0.9.38",
   "date": "2026-10-26",
   "notes": "## Windows of their own\n- **A chat in its own window**: right-click a chat and choose Open in a new window, use the new-window button in a chat's header, or Shift+click New chat for a new chat in a window. Each window keeps its own model, so you can have several model sessions side by side. Local models take turns answering as before (one on the graphics card at a time); cloud models answer at once.\n- **The whole Studio in its own window**: pictures, video, wallpapers, music, narration and your voice, beside your chats. Shift+click Studio in the menu, right-click it, or use the Studio's new-window button; open as many as you like.\n- **A song studio project in its own window**: the new-window button in the song studio. Opening the project again brings its window forward instead of opening it twice.\n- A chat's browser opens in the window that chat is in, and its permission questions (the web, a folder, a key, sharing) ask there too.\n- Everything stays in step: a reply, a new picture or song, a deleted chat shows in every window, and the windows close with the main one."
