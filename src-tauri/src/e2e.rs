@@ -4098,6 +4098,39 @@ async fn e2e_suno_features() {
     }
 }
 
+/// The song studio's new part: a guitar added to the synth-pop song from
+/// e2e_suno_features by ACE-Step Base and taken out alone (one take), its
+/// length and loudness against the mix; then its notes read (Basic Pitch).
+/// The part is kept in C:\dev\tools\music\ab\studio-part.wav.
+///     cargo test e2e_studio_part -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_studio_part() {
+    use crate::media::{self, store, MediaItem, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    media::install_for_test(&state, "ace-step-1.5-base").await.unwrap();
+    let mp3 = std::fs::read(r"C:\dev\tools\music\ab\features\song.mp3").expect("run e2e_suno_features first");
+    let mix = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "audio".into(), op: "studio".into(), prompt: "mix".into(), mime: "audio/mpeg".into(), seconds: 45.0, hidden: true, ..Default::default() }, &mp3, None).unwrap();
+    let t = std::time::Instant::now();
+    let parts = media::run(&state, store::new_id(), Request { op: "studio_part".into(), prompt: "bright funky rhythm guitar".into(), source: Some(mix.id.clone()), count: Some(1), music: Some(MusicSpec { track: Some("guitar".into()), ..Default::default() }), ..Default::default() }).await.unwrap();
+    let part = &parts[0];
+    let wav = store::read(&state.paths, &c, &part.id).unwrap();
+    let file = std::path::PathBuf::from(r"C:\dev\tools\music\ab\studio-part").with_extension(if part.mime.contains("wav") { "wav" } else { "mp3" });
+    std::fs::write(&file, &wav).unwrap();
+    let (samples, _, _) = crate::media::audio_in_decode_for_test(&file);
+    let (mix_samples, _, _) = crate::media::audio_in_decode_for_test(std::path::Path::new(r"C:\dev\tools\music\ab\features\song.mp3"));
+    let db = |x: &[f32]| 20.0 * crate::audio::rms(x).max(1e-9).log10();
+    println!("part in {:.0} s: {:.0} s long ({:.0} s mix), {:.1} dB against the mix's {:.1} dB, hidden {}, title {:?}", t.elapsed().as_secs_f64(), part.seconds, mix.seconds, db(&samples), db(&mix_samples), part.hidden, part.title);
+    assert!(part.hidden && (part.seconds - 45.0).abs() < 3.0 && db(&samples) > -45.0);
+    assert!(store::get(&state.db.lock().unwrap(), &c, &parts[0].id).is_some());
+    let t = std::time::Instant::now();
+    let notes = media::studio_midi_for_test(&state, &part.id, false).await.unwrap();
+    println!("{} notes read in {:.0} s", notes.len(), t.elapsed().as_secs_f64());
+    assert!(!notes.is_empty());
+}
+
 /// A custom model trained the Studio's way on six songs (the test songs in
 /// C:\dev\tools\music\train-test\audio): the trainer set up from the
 /// catalog (uv and its packages; the source from the release zip in

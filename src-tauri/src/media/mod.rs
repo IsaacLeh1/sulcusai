@@ -4291,8 +4291,24 @@ pub fn studio_record_cancel() {
 /// Basic Pitch's notes, or with `drums` the kick, snare and hat hits.
 #[tauri::command]
 pub async fn studio_midi(state: AppStateRef<'_>, id: String, drums: bool) -> Result<Vec<notes::Note>, String> {
-    let c = state.cipher()?;
-    let state = state.inner().clone();
+    state.cipher()?;
+    read_notes(state.inner(), &id, drums).await
+}
+
+#[cfg(test)]
+pub(crate) async fn studio_midi_for_test(state: &Arc<AppState>, id: &str, drums: bool) -> Result<Vec<notes::Note>, String> {
+    read_notes(state, id, drums).await
+}
+
+#[cfg(test)]
+pub(crate) fn audio_in_decode_for_test(path: &std::path::Path) -> (Vec<f32>, u32, u16) {
+    audio_in::decode(path).unwrap()
+}
+
+async fn read_notes(state: &Arc<AppState>, id: &str, drums: bool) -> Result<Vec<notes::Note>, String> {
+    let c = state.work_cipher()?;
+    let state = state.clone();
+    let id = id.to_string();
     let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That sound is no longer here.")?;
     let bytes = store::read(&state.paths, &c, &id)?;
     let threads = state.limits().threads;
