@@ -4037,6 +4037,67 @@ async fn e2e_suno_style_lyrics() {
     }
 }
 
+/// The Suno-style song features through the app's own jobs: best of 2 (the
+/// clearest kept, with its review), the hook as the title, the settings kept
+/// for Reuse, cover art from Z-Image Turbo, and the stems as songs of their
+/// own. The song, its art and its parts go to C:\dev\tools\music\ab\features.
+///     cargo test e2e_suno_features -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_suno_features() {
+    use crate::media::{self, store, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    for model in ["ace-step-1.5-xl", "z-image-turbo"] {
+        media::install_for_test(&state, model).await.unwrap_or_else(|e| panic!("installing {model}: {e}"));
+    }
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab\features");
+    std::fs::create_dir_all(&out).unwrap();
+    let lyrics = "[Verse 1]\nWindows down on the coast road\nRadio loud and the night is young\n\n[Chorus]\nSummer nights, we were golden\nDancing under the neon sun\nSummer nights, we were golden\nNever wanted the night to be done";
+    let t = std::time::Instant::now();
+    let req = Request {
+        op: "music".into(),
+        model_id: Some("ace-step-1.5-xl".into()),
+        prompt: "upbeat 80s-inspired synth pop about a summer drive".into(),
+        lyrics: Some(lyrics.into()),
+        seconds: Some(45.0),
+        seed: Some(5),
+        count: Some(2),
+        language: Some("en".into()),
+        music: Some(MusicSpec { voice: Some("female".into()), best_of: true, exclude: Some("saxophone".into()), ..Default::default() }),
+        ..Default::default()
+    };
+    let made = media::run(&state, store::new_id(), req).await.unwrap();
+    println!("best of 2 in {:.0} s: {} kept, note {:?}, title {:?}", t.elapsed().as_secs_f64(), made.len(), made[0].note, made[0].title);
+    assert_eq!(made.len(), 1, "only the clearest is kept");
+    let song = made[0].clone();
+    assert_eq!(song.title.as_deref(), Some("Summer Nights"));
+    assert!(song.review.is_some() && song.note.as_deref().is_some_and(|n| n.contains("clearest of 2")));
+    assert_eq!(song.music.as_ref().and_then(|m| m.exclude.as_deref()), Some("saxophone"), "its settings are kept for Reuse");
+    std::fs::write(out.join("song.mp3"), store::read(&state.paths, &c, &song.id).unwrap()).unwrap();
+    let t = std::time::Instant::now();
+    let art = media::run(&state, store::new_id(), Request { op: "cover_art".into(), source: Some(song.id.clone()), ..Default::default() }).await.unwrap().remove(0);
+    assert!(art.poster && art.id == song.id);
+    let jpeg = store::read_thumb(&state.paths, &c, &song.id).unwrap();
+    let img = image::load_from_memory(&jpeg).unwrap();
+    std::fs::write(out.join("cover.jpg"), &jpeg).unwrap();
+    println!("cover art in {:.0} s: {}x{}", t.elapsed().as_secs_f64(), img.width(), img.height());
+    assert_eq!(img.width(), img.height());
+    assert_eq!(store::list(&state.db.lock().unwrap(), &c, Some("image"), 50, None).len(), 0, "the picture itself isn't kept");
+    let t = std::time::Instant::now();
+    let parts = media::run(&state, store::new_id(), Request { op: "stems".into(), source: Some(song.id.clone()), music: Some(MusicSpec { track: Some("all".into()), ..Default::default() }), ..Default::default() }).await.unwrap();
+    println!("stems in {:.0} s: {:?}", t.elapsed().as_secs_f64(), parts.iter().map(|p| (p.title.clone().unwrap_or_default(), p.seconds.round())).collect::<Vec<_>>());
+    assert_eq!(parts.len(), 4);
+    for p in &parts {
+        assert_eq!(p.parent.as_deref(), Some(song.id.as_str()));
+        assert!((p.seconds - song.seconds).abs() < 1.0);
+        std::fs::write(out.join(format!("{}.wav", p.title.clone().unwrap_or_default())), store::read(&state.paths, &c, &p.id).unwrap()).unwrap();
+    }
+}
+
 /// The singer's middle pitch in each song in a folder (SULCUSAI_PITCH_DIR,
 /// default C:\dev\tools\music\ab): the voice taken out (HTDemucs) and its
 /// pitch found (RMVPE, from the singing model's pieces). Under ~200 Hz is a
