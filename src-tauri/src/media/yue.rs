@@ -30,10 +30,13 @@ pub struct YueRequest<'a> {
     pub versions: u32,
     pub backbone: &'a str,
     pub vae: &'a str,
+    /// How far from the usual its melody and chords go, 0 to 1 (None: its
+    /// own, 0.7 temperature, as at a half).
+    pub weirdness: Option<f32>,
 }
 
 pub fn request_json(r: &YueRequest<'_>) -> Value {
-    json!({
+    let mut v = json!({
         "style": r.style,
         "lyrics": r.lyrics,
         "cot": "full",
@@ -43,7 +46,12 @@ pub fn request_json(r: &YueRequest<'_>) -> Value {
         "lm_batch_size": r.versions.clamp(1, 3),
         "output_format": "mp3",
         "mp3_bitrate": 320,
-    })
+    });
+    if let Some(w) = r.weirdness {
+        // The score's writing temperature: 0.4 at the bottom, 1 at the top.
+        v["abc_sampling"] = json!({ "temperature": 0.4 + 0.6 * w.clamp(0.0, 1.0) });
+    }
+    v
 }
 
 /// How far along a run is, from its log: the score, the sound's codes, the
@@ -152,9 +160,12 @@ mod tests {
 
     #[test]
     fn requests_carry_the_song() {
-        let r = YueRequest { style: "country, male vocal", lyrics: "[Verse]\nla", seconds: 90.0, seed: 7, versions: 2, backbone: "b.gguf", vae: "v.gguf" };
+        let r = YueRequest { style: "country, male vocal", lyrics: "[Verse]\nla", seconds: 90.0, seed: 7, versions: 2, backbone: "b.gguf", vae: "v.gguf", weirdness: None };
         let v = request_json(&r);
         assert_eq!((v["style"].as_str(), v["duration"].as_f64(), v["lm_batch_size"].as_u64(), v["mp3_bitrate"].as_u64()), (Some("country, male vocal"), Some(90.0), Some(2), Some(320)));
+        assert!(v.get("abc_sampling").is_none(), "its own sampling unless asked");
+        let weird = request_json(&YueRequest { weirdness: Some(1.0), ..r });
+        assert!((weird["abc_sampling"]["temperature"].as_f64().unwrap() - 1.0).abs() < 1e-6);
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub struct Persona {
 
 /// What of a song's settings belongs to its artist: everything but the
 /// work on one song (task, source, region, part, strength), its sections,
-/// its length and the artist link itself.
+/// its length, its title, best of 3 and cover art, and the artist link itself.
 pub fn sound_of(spec: &MusicSpec) -> MusicSpec {
     MusicSpec {
         task: None,
@@ -58,6 +58,9 @@ pub fn sound_of(spec: &MusicSpec) -> MusicSpec {
         auto_length: false,
         persona: None,
         voice_detail: None,
+        title: None,
+        best_of: false,
+        cover_art: false,
         ..spec.clone()
     }
 }

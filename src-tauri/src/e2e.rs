@@ -3949,6 +3949,51 @@ async fn e2e_music_planned_or_not() {
     println!("\n{}\nsongs in {}", rows.join("\n"), out.display());
 }
 
+/// One music model at several guidance strengths: the same lyrics and seeds,
+/// with the time and the lyric words Whisper hears. Songs kept in
+/// C:\dev\tools\music\ab as guide-<g>-<seed>.mp3. SULCUSAI_GUIDE_DIT picks
+/// the model file (default ACE-Step 1.5 Base), SULCUSAI_GUIDES the strengths.
+///     cargo test e2e_music_guidance -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_guidance() {
+    use crate::media::music;
+    let state = media_state();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab");
+    std::fs::create_dir_all(&out).unwrap();
+    let dit = std::env::var("SULCUSAI_GUIDE_DIT").unwrap_or_else(|_| "acestep-v15-base-Q8_0.gguf".into());
+    let guides = std::env::var("SULCUSAI_GUIDES").unwrap_or_else(|_| "1,3,7".into());
+    let models = state.paths.models.join("media").join("music");
+    let dir = crate::media::music_engine_dir(&state).expect("the music engine is installed");
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me\n\n[Verse 2]\nOld guitar by the doorway\nStrings still tuned to the past\nEvery chord is a promise\nThat the good days will last\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let caption = "modern country, warm male lead vocal, acoustic guitar, pedal steel, punchy live drums, warm bass, catchy chorus, polished Nashville production";
+    let wanted = sung_words(lyrics);
+    let mut rows = vec![format!("{dit}")];
+    for g in guides.split(',').filter_map(|g| g.trim().parse::<f32>().ok()) {
+        for seed in [11i64, 22] {
+            let (bpm, key, time) = music::settle(caption, None, None, None, seed);
+            let work = std::env::temp_dir().join(format!("sulcusai-guide-{}", crate::media::store::new_id()));
+            std::fs::create_dir_all(&work).unwrap();
+            let engine = music::Engine { dir: &dir, models: &models, low_priority: false, job: None, logs: &state.paths.logs };
+            let r = music::SongRequest { caption, lyrics, seconds: 100.0, seed, language: Some("en"), dit_file: &dit, bpm: Some(bpm), key: Some(&key), time_signature: Some(&time), versions: 1, guidance: Some(g), ..Default::default() };
+            let t = std::time::Instant::now();
+            let song = music::make(&engine, &work, &r, &AtomicBool::new(false), &|_, _| {}).await.unwrap().remove(0);
+            let took = t.elapsed().as_secs_f64();
+            let _ = std::fs::remove_dir_all(&work);
+            let file = out.join(format!("guide-{g}-{seed}.mp3"));
+            std::fs::write(&file, &song.mp3).unwrap();
+            let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+            let matched = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+            rows.push(format!("guidance {g} seed {seed}: {took:.0} s, {matched} of {} lyric words heard", wanted.len()));
+            println!("{}", rows.last().unwrap());
+        }
+    }
+    println!("\n{}", rows.join("\n"));
+}
+
 /// A song from lyrics written Suno's way (directions in the brackets), as
 /// the Studio makes it: on YuE2 (installed from the catalog: its engine from
 /// the engines release) and on ACE-Step 1.5 XL, each kept in

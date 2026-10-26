@@ -912,9 +912,65 @@ pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: Option<f32>, la
     Err(why.unwrap_or_else(|| NotWritten::NoModel("no chat model is installed".into())))
 }
 
+/// The lines of `part` (some of `whole`) written again by the chat model, as
+/// Suno's lyric editor does: as many lines, about as long, rhyming as they
+/// did, changed as `how` says (else just better). Tags and blank lines in
+/// the part stay where they are. Returns the part with its new lines.
+pub async fn rewrite(state: &Arc<AppState>, whole: &str, part: &str, how: &str, language: Option<&str>) -> Result<String, String> {
+    let sung: Vec<&str> = part.lines().map(str::trim).filter(|l| !l.is_empty() && !(l.starts_with('[') && l.ends_with(']'))).collect();
+    if sung.is_empty() {
+        return Err("Select the lines to write again (not only tags).".into());
+    }
+    let how = how.trim();
+    let ask = format!(
+        "These are a song's lyrics:\n\n{whole}\n\nWrite these {n} line(s) again:\n\n{lines}\n\n{change}Keep exactly {n} line(s), each about as long (the same number of syllables) as the line it replaces, rhyming where the old ones rhymed, fitting the rest of the song.{lang} Answer with the new lines only, one a line: no tags, no numbers, no quotes, nothing else.",
+        n = sung.len(),
+        lines = sung.join("\n"),
+        change = if how.is_empty() { "Make them better: fresher images, a stronger hook, more natural to sing. ".to_string() } else { format!("Change them like this: {how}. ") },
+        lang = language.filter(|l| !l.is_empty() && *l != "auto").map(|l| format!(" Write in {}.", crate::translate::language_name(l))).unwrap_or_default(),
+    );
+    let (ep, _, _hold) = crate::background_endpoint(state).await.map_err(|_| "Writing lines again needs a chat model. Install one from Models.".to_string())?;
+    let raw = crate::chat::complete(&ep, vec![json!({ "role": "user", "content": ask })], json!({ "temperature": 0.8 }), (sung.len() as u32) * 30 + 200).await?;
+    fit_rewrite(part, &raw).ok_or_else(|| "The chat model didn't write the lines again. Try again.".to_string())
+}
+
+/// The part with its sung lines replaced, in order, by the answer's lines
+/// (cleaned of numbers, quotes and tags); None when the answer has fewer.
+fn fit_rewrite(part: &str, answer: &str) -> Option<String> {
+    // "1. ", "2) ", "- " or "* " in front of a line is the list, not the words.
+    let unlisted = |l: &str| -> String {
+        let l = l.trim();
+        let digits = l.chars().take_while(char::is_ascii_digit).count();
+        let l = match l[digits..].strip_prefix(['.', ')']) {
+            Some(rest) if digits > 0 => rest,
+            _ => l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).unwrap_or(l),
+        };
+        l.trim().trim_matches(|c| c == '"' || c == '“' || c == '”').trim().to_string()
+    };
+    let mut new = answer.lines().map(unlisted).filter(|l| !l.is_empty() && !(l.starts_with('[') && l.ends_with(']')));
+    let mut out = Vec::new();
+    for l in part.lines() {
+        let t = l.trim();
+        if t.is_empty() || (t.starts_with('[') && t.ends_with(']')) {
+            out.push(l.to_string());
+        } else {
+            out.push(new.next()?);
+        }
+    }
+    Some(out.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rewritten_lines_take_the_old_ones_places() {
+        let part = "Morning light on the window\n\n[Chorus]\nSing it loud";
+        assert_eq!(fit_rewrite(part, "1. \"Sunrise spills across the glass\"\n[Chorus]\n2) Shout it out\n").as_deref(), Some("Sunrise spills across the glass\n\n[Chorus]\nShout it out"));
+        assert_eq!(fit_rewrite(part, "Only one line"), None, "too few lines: not used");
+        assert_eq!(fit_rewrite("a\nb", "99 red balloons\n- Up they go").as_deref(), Some("99 red balloons\nUp they go"), "a number in the words stays");
+    }
 
     #[test]
     fn songs_are_named_by_their_hook() {

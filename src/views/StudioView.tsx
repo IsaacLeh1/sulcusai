@@ -17,6 +17,7 @@ import {
   type MediaRequest,
   type MusicSpec,
   type Persona,
+  type Taste,
   type VocalEffect,
   type Voice,
 } from "../api";
@@ -37,6 +38,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
+import { AddToPlaylist, Playlists } from "../components/Library";
 
 type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "voice";
 type Shape = NonNullable<MediaRequest["shape"]>;
@@ -61,11 +63,15 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
   // A song picked in the viewer to work on in the music tab.
   const [songToWork, setSongToWork] = useState<{ item: MediaItem; task: SongTask } | null>(null);
+  // A song whose settings fill the song form again (Reuse these settings).
+  const [songToReuse, setSongToReuse] = useState<MediaItem | null>(null);
+  // A playlist's songs, whose shared sound fills the song form.
+  const [inspire, setInspire] = useState<string[] | null>(null);
   const [view, reloadView] = useMediaView();
   const jobs = useMediaJobs();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [more, setMore] = useState(false);
-  const [filter, setFilter] = useState<"all" | "image" | "video" | "audio" | "favorites">("all");
+  const [filter, setFilter] = useState<"all" | "image" | "video" | "audio" | "favorites" | "playlists">("all");
   const [viewing, setViewing] = useState<MediaItem | null>(null);
   const [models, setModels] = useState<MediaKind[] | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
@@ -237,6 +243,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             gallery={items}
             toast={toast}
             seed={songToWork}
+            reuse={songToReuse}
+            inspire={inspire}
             onCompose={(composition) => setComposing({ item: null, composition })}
             onYourVoice={() => setTab("voice")}
             canArt={installedOf("image").some((m) => m.can.includes("generate"))}
@@ -258,15 +266,24 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
 
       <section>
         <div className="filters">
-          {(["all", "image", "video", "audio", "favorites"] as const).map((f) => (
+          {(["all", "image", "video", "audio", "favorites", "playlists"] as const).map((f) => (
             <button key={f} className={`chip ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {{ all: t("Everything"), image: t("Pictures"), video: t("Video"), audio: t("Sound"), favorites: t("★ Favorites") }[f]}
+              {{ all: t("Everything"), image: t("Pictures"), video: t("Video"), audio: t("Sound"), favorites: t("★ Favorites"), playlists: t("Playlists") }[f]}
             </button>
           ))}
           <span className="spacer" />
           {view && <span className="small muted">{t("{n} in the gallery", { n: view.gallery })}</span>}
         </div>
-        {items.length === 0 ? (
+        {filter === "playlists" ? (
+          <Playlists
+            toast={toast}
+            onOpen={setViewing}
+            onInspire={(ids) => {
+              setInspire([...ids]);
+              setTab("music");
+            }}
+          />
+        ) : items.length === 0 ? (
           <p className="muted small">{t("Nothing here yet. What you make appears here.")}</p>
         ) : (
           <div className="media-grid">
@@ -306,6 +323,11 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           }}
           onWorkOn={(i, task) => {
             setSongToWork({ item: i, task });
+            setTab("music");
+            setViewing(null);
+          }}
+          onReuse={(i) => {
+            setSongToReuse({ ...i });
             setTab("music");
             setViewing(null);
           }}
@@ -827,6 +849,8 @@ function MusicComposer({
   onCompose,
   onYourVoice,
   canArt,
+  reuse,
+  inspire,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -843,6 +867,10 @@ function MusicComposer({
   onYourVoice: () => void;
   /** A picture model is here to make cover art. */
   canArt: boolean;
+  /** A song whose settings fill the form again. */
+  reuse?: MediaItem | null;
+  /** Songs whose shared sound fills the form (a playlist's). */
+  inspire?: string[] | null;
 }) {
   const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
   // Sung in a recorded voice (the song as made is under "← The original").
@@ -891,6 +919,11 @@ function MusicComposer({
   const [versionsSet, setVersions] = useState<number | null>(null);
   // Best of 3: three made, each listened to, the one whose words come through clearest kept.
   const [bestOf, setBestOf] = useState(false);
+  // Suno's advanced options: a title, Weirdness and Style influence (null: the model's own), and styles left out.
+  const [title, setTitle] = useState("");
+  const [weird, setWeird] = useState<number | null>(null);
+  const [influence, setInfluence] = useState<number | null>(null);
+  const [exclude, setExclude] = useState("");
   // Cover art for each song, made by the picture model after it (kept on for next time).
   const [coverArt, setCoverArtState] = useState(() => {
     try {
@@ -981,6 +1014,10 @@ function MusicComposer({
     own_voice: mode === "song" && singing && ownVoices.some((v) => v.id === ownVoice) ? ownVoice : null,
     best_of: mode === "song" && singing && bestOf,
     cover_art: mode === "song" && canArt && coverArt,
+    title: mode === "song" && title.trim() ? title.trim() : null,
+    weirdness: mode !== "edit" && weird != null ? weird / 100 : null,
+    influence: influence != null ? influence / 100 : null,
+    exclude: exclude.trim() || null,
     persona: mode === "song" && personaId ? personaId : null,
     voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
     emotion: joined(emotion),
@@ -1031,6 +1068,50 @@ function MusicComposer({
       setArranging(false);
     }
   };
+  // My taste: what the liked and made songs share, filled in on request.
+  const [taste, setTaste] = useState<Taste | null>(null);
+  const fillMyTaste = async (ids?: string[]) => {
+    try {
+      const s = await api.musicTaste(ids);
+      if (!s.songs) return toast(t("Make or like a few songs first: My taste comes from them."), "info");
+      setTaste(s);
+      const known = (list: string[], v: string) => list.find((o) => o.toLowerCase() === v.toLowerCase()) ?? v;
+      if (s.genres.length) setGenre(s.genres.map((g) => known(GENRES, g)));
+      if (s.moods.length) setMood(s.moods.map((x) => known(MOODS, x)));
+      if (s.instruments.length) setInstruments(s.instruments.map((i) => known(INSTRUMENTS, i)));
+      if (s.voice) setVoice(s.voice);
+      if (s.era) setEra(s.era);
+      if (s.production) setProduction(s.production);
+      if (s.avoid.length) setExclude(s.avoid.join(", "));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  // Lines selected in the lyrics, to be written again (whole lines: the selection widened to them).
+  const [picked, setPicked] = useState<[number, number] | null>(null);
+  const [how, setHow] = useState("");
+  const [rewriting, setRewriting] = useState(false);
+  const pickLines = (el: HTMLTextAreaElement) => {
+    const { selectionStart: a, selectionEnd: b, value } = el;
+    if (b - a < 2) return setPicked(null);
+    const from = value.lastIndexOf("\n", a - 1) + 1;
+    const end = value.indexOf("\n", b - (value[b - 1] === "\n" ? 1 : 0));
+    setPicked([from, end < 0 ? value.length : end]);
+  };
+  const pickedLines = picked ? lyrics.slice(picked[0], picked[1]) : "";
+  const rewriteLines = async () => {
+    if (!picked) return;
+    setRewriting(true);
+    try {
+      const fresh = await api.musicRewriteLines(lyrics, pickedLines, how, language === "auto" ? null : language);
+      setLyrics(lyrics.slice(0, picked[0]) + fresh + lyrics.slice(picked[1]));
+      setPicked([picked[0], picked[0] + fresh.length]);
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setRewriting(false);
+    }
+  };
   const writeLyrics = async () => {
     setWriting(true);
     try {
@@ -1072,7 +1153,13 @@ function MusicComposer({
     setVoiceWords(p?.voice_words ?? "");
     setFollowVoice(!!p?.follow_voice_song);
     if (!p) return;
-    const s = p.sound;
+    applySound(p.sound);
+    if (p.language) setLanguage(p.language);
+    setReference(p.follow_voice_song ? gallery.find((g) => g.id === p.voice_song) ?? null : null);
+    if (vocals === "none") setVocals("write");
+  };
+  // A sound (an artist's, or a song's own settings) filled in, to see and change.
+  const applySound = (s: MusicSpec) => {
     const [note, scale] = (s.key ?? "").split(" ");
     setGenre(listed(s.genre));
     setMood(listed(s.mood));
@@ -1101,10 +1188,35 @@ function MusicComposer({
     setVocalEffects(s.vocal_effects ?? []);
     setSoundLike(s.sound_like ?? "");
     setArtist(s.sound_like && s.artist_sound ? { name: s.sound_like, sound: s.artist_sound, writing: s.artist_writing ?? "" } : null);
-    if (p.language) setLanguage(p.language);
-    setReference(p.follow_voice_song ? gallery.find((g) => g.id === p.voice_song) ?? null : null);
-    if (vocals === "none") setVocals("write");
   };
+  // A playlist's sound (what its songs share), filled in for a new song.
+  useEffect(() => {
+    if (!inspire?.length) return;
+    setMode("song");
+    fillMyTaste(inspire);
+  }, [inspire]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A song's own settings again (Suno's Reuse prompt): its description,
+  // sound, words and choices, for another take or a change.
+  useEffect(() => {
+    if (!reuse) return;
+    const s = reuse.music ?? {};
+    setMode("song");
+    setPrompt(reuse.prompt);
+    applySound(s);
+    setSections(s.sections ?? []);
+    setAutoLength(!!s.auto_length);
+    if (!s.auto_length && reuse.seconds) setSeconds(Math.round(reuse.seconds));
+    setOwnVoice(s.own_voice ?? "");
+    setPersonaId(s.persona ?? "");
+    setWeird(s.weirdness != null ? Math.round(s.weirdness * 100) : null);
+    setInfluence(s.influence != null ? Math.round(s.influence * 100) : null);
+    setExclude(s.exclude ?? "");
+    setReference(s.reference ? gallery.find((g) => g.id === s.reference) ?? null : null);
+    if (reuse.lyrics) {
+      setLyrics(reuse.lyrics);
+      setVocals("mine");
+    } else setVocals("none");
+  }, [reuse]); // eslint-disable-line react-hooks/exhaustive-deps
   // These settings as a new artist, or as the picked one's.
   const saveArtist = async (asNew: boolean) => {
     const name = asNew ? (naming ?? "").trim() : persona?.name ?? "";
@@ -1163,7 +1275,10 @@ function MusicComposer({
       count: mode === "song" ? versions : undefined,
       music: mode === "sound" ? null : spec(),
     });
-    if (ok && mode !== "edit") setPrompt("");
+    if (ok && mode !== "edit") {
+      setPrompt("");
+      setTitle("");
+    }
   };
   // Each layered harmony is another pass, by a slower model (about twice the song's time).
   const layers = mode === "song" && harmonyLayer && canLayer ? (singing && harmonyVoice ? 1 : 0) + (harmonyInstrument ? 1 : 0) : 0;
@@ -1274,6 +1389,9 @@ function MusicComposer({
         </>
       )}
 
+      {mode === "song" && (
+        <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("Title (optional): else it's named by its hook")} aria-label={t("Title")} />
+      )}
       <textarea
         className="input"
         rows={mode === "edit" ? 2 : 3}
@@ -1313,6 +1431,14 @@ function MusicComposer({
         </div>
       )}
 
+      {mode === "song" && (
+        <div className="row wrap small">
+          <button className="btn small" onClick={() => fillMyTaste()} title={t("Fill in the style, mood, instruments and voice of the songs you liked and made (and leave out what's in the ones marked Not for me)")}>
+            {t("Use my taste")}
+          </button>
+          {taste && <span className="muted ellipsis">{tasteLine(taste)}</span>}
+        </div>
+      )}
       {styled && (
         <>
           <PickMany label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Add another style (Enter)")} />
@@ -1409,7 +1535,25 @@ function MusicComposer({
             <button className="btn small" onClick={writeLyrics} disabled={writing}>{writing ? t("Writing…") : t("Write lyrics for me")}</button>
           </div>
           {(vocals === "mine" || mode === "edit") && (
-            <textarea className="input lyrics-box" rows={8} value={lyrics} aria-label={t("Lyrics")} placeholder={"[Verse]\n…\n\n[Chorus]\n…"} onChange={(e) => setLyrics(e.target.value)} />
+            <textarea
+              className="input lyrics-box"
+              rows={8}
+              value={lyrics}
+              aria-label={t("Lyrics")}
+              placeholder={"[Verse]\n…\n\n[Chorus]\n…"}
+              onChange={(e) => {
+                setLyrics(e.target.value);
+                setPicked(null);
+              }}
+              onSelect={(e) => pickLines(e.currentTarget)}
+            />
+          )}
+          {picked && pickedLines.trim() && (vocals === "mine" || mode === "edit") && (
+            <div className="row wrap small">
+              <span className="muted">{t("{n} line(s) selected", { n: pickedLines.split("\n").filter((l) => l.trim() && !/^\[.*\]$/.test(l.trim())).length })}</span>
+              <input className="input" value={how} onChange={(e) => setHow(e.target.value)} placeholder={t("How to change them (optional), e.g. more hopeful, about the sea")} aria-label={t("How to change them")} onKeyDown={(e) => e.key === "Enter" && rewriteLines()} />
+              <button className="btn small" disabled={rewriting} onClick={rewriteLines}>{rewriting ? t("Writing…") : t("Write these lines again")}</button>
+            </div>
           )}
           {mode === "song" && !auto && vocals === "mine" && sungLines(lyrics) > Math.round(secs / SECS_PER_LINE) * 1.25 && (
             <p className="callout small">
@@ -1525,8 +1669,30 @@ function MusicComposer({
 
       {mode !== "sound" && (
         <button className="link small music-more" onClick={() => setMore((x) => !x)} aria-expanded={more}>
-          {more ? t("Fewer settings") : t("More settings: a song to sound like")}
+          {more ? t("Fewer settings") : t("More settings: weirdness, style influence, leave out, a song to sound like")}
         </button>
+      )}
+      {more && mode !== "sound" && (
+        <div className="row wrap small">
+          {mode === "song" && (
+            <label className="row music-length" title={t("How far from the usual: surprising sounds, words and structure at the top, by the book at the bottom")}>
+              {t("Weirdness")}
+              <input type="range" min={0} max={100} step={5} value={weird ?? 50} onChange={(e) => setWeird(+e.target.value)} />
+              {weird == null ? t("Auto") : `${weird}%`}
+            </label>
+          )}
+          <label className="row music-length" title={t("How closely the music model follows the description and style: loosely at the bottom, strictly at the top")}>
+            {t("Style influence")}
+            <input type="range" min={0} max={100} step={5} value={influence ?? 50} onChange={(e) => setInfluence(+e.target.value)} />
+            {influence == null ? t("Auto") : `${influence}%`}
+          </label>
+          {(weird != null || influence != null) && (
+            <button className="link small" onClick={() => { setWeird(null); setInfluence(null); }}>{t("Back to Auto")}</button>
+          )}
+        </div>
+      )}
+      {more && mode !== "sound" && (
+        <input className="input" value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder={t("Leave out (optional), e.g. drums, autotune, saxophone")} aria-label={t("Leave out")} />
       )}
       {more && mode !== "sound" && (
         <div className="row wrap">
@@ -1534,7 +1700,7 @@ function MusicComposer({
           <select value={reference?.id ?? ""} onChange={(e) => setReference(gallery.find((g) => g.id === e.target.value) ?? null)} aria-label={t("A song to sound like")}>
             <option value="">{t("No song")}</option>
             {gallery.filter((g) => g.kind === "audio").map((g) => (
-              <option key={g.id} value={g.id}>{g.prompt || t("A song")}</option>
+              <option key={g.id} value={g.id}>{g.title || g.prompt || t("A song")}</option>
             ))}
           </select>
         </div>
@@ -1690,6 +1856,7 @@ function Viewer({
   onStart,
   onAnimate,
   onWorkOn,
+  onReuse,
   onCompose,
   onChanged,
   onDeleted,
@@ -1704,6 +1871,8 @@ function Viewer({
   onStart: (r: MediaRequest) => void;
   onAnimate: (i: MediaItem) => void;
   onWorkOn: (i: MediaItem, task: SongTask) => void;
+  /** A song's settings back in the song form. */
+  onReuse: (i: MediaItem) => void;
   /** A composition: opened in Compose's editor. */
   onCompose: (i: MediaItem) => void;
   onChanged: (i: MediaItem) => void;
@@ -1880,6 +2049,21 @@ function Viewer({
                 {(["cover", "extend", "repaint", "add", "extract"] as SongTask[]).map((task) => (
                   <button key={task} className="chip" onClick={() => onWorkOn(item, task)}>{t(TASKS.find(([id]) => id === task)![1])}</button>
                 ))}
+                {item.op === "music" && (
+                  <button className="chip" onClick={() => onReuse(item)} title={t("Its description, sound, words and choices back in the song form, for another take or a change")}>
+                    {t("Reuse these settings")}
+                  </button>
+                )}
+                {item.op !== "stem" && (
+                  <>
+                    <button className="chip" onClick={() => run({ op: "stems", prompt: "" })} title={t("The vocals and the instrumental, each saved as a song under this one")}>
+                      {t("Get stems: vocals and instrumental")}
+                    </button>
+                    <button className="chip" onClick={() => run({ op: "stems", prompt: "", music: { track: "all" } })} title={t("The vocals, drums, bass and other instruments, each saved as a song under this one")}>
+                      {t("Get stems: every part")}
+                    </button>
+                  </>
+                )}
               </div>
               {can("generate") && (
                 <div className="row wrap small">
@@ -1995,6 +2179,17 @@ function Viewer({
             >
               {item.favorite ? t("★ Favorite") : t("☆ Favorite")}
             </button>
+            {item.kind === "audio" && (
+              <button
+                className={`btn small ${item.disliked ? "active" : ""}`}
+                onClick={() => api.mediaDislike(item.id, !item.disliked).then(onChanged).catch((e) => toast(errorText(e), "error"))}
+                aria-pressed={!!item.disliked}
+                title={t("Not for you: My taste steers away from songs like it")}
+              >
+                {item.disliked ? t("Not for me (marked)") : t("Not for me")}
+              </button>
+            )}
+            {item.kind === "audio" && <AddToPlaylist item={item} toast={toast} />}
             <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
             <span className="spacer" />
             <button className="btn ghost danger small" onClick={() => setConfirm(true)}>{t("Delete")}</button>
@@ -2026,4 +2221,9 @@ function Viewer({
       )}
     </div>
   );
+}
+
+/** My taste in a line: "country, folk · warm · acoustic guitar, pedal steel · male voice". */
+function tasteLine(s: Taste): string {
+  return [s.genres.join(", "), s.moods.join(", "), s.instruments.join(", "), s.voice ? t("{voice} voice", { voice: s.voice }) : ""].filter(Boolean).join(" · ");
 }

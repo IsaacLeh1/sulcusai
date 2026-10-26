@@ -42,6 +42,8 @@ pub struct MediaItem {
     /// Song lyrics, when the music model wrote or used them.
     pub lyrics: Option<String>,
     pub favorite: bool,
+    /// Marked as not liked (a song's thumbs down): it tells My taste what to avoid.
+    pub disliked: bool,
     /// Chat attachments and screenshots: not listed in the studio.
     pub hidden: bool,
     /// Videos: a still frame is saved as the thumbnail. Songs: their cover art is.
@@ -68,6 +70,9 @@ pub struct MediaItem {
     /// A song written as notes in Compose (`compose`); the file is its demo.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub composition: Option<super::compose::Composition>,
+    /// A new song's settings, to make it again (the Studio's Reuse).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub music: Option<super::MusicSpec>,
 }
 
 /// How long making an item took, and what it used.

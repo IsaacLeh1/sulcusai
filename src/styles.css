@@ -845,6 +845,11 @@ a.md-link { cursor: pointer; }
 .viewer-stage .audio-player { width: 100%; max-width: 640px; }
 .viewer-stage > img.song-art { width: min(320px, 70%); max-height: 45vh; aspect-ratio: 1; object-fit: cover; border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
 .song-title { font-size: 16px; }
+.playlist { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.playlist-songs { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 2px; }
+.playlist-songs li .link { max-width: 50%; text-align: left; }
+.queue-player { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; background: var(--panel); display: flex; flex-direction: column; gap: 6px; }
+.queue-player audio { width: 100%; }
 .viewer-side { width: 300px; flex: none; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .viewer-prompt { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .viewer-tools { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 10px; }

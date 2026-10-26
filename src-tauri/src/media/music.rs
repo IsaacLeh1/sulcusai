@@ -68,6 +68,9 @@ pub struct SongRequest<'a> {
     pub lm_cfg: Option<f32>,
     /// What the song shouldn't sound like (the planner's negative prompt).
     pub negative: Option<&'a str>,
+    /// How closely the description and lyrics are followed (None: as
+    /// `guidance` picks for the model).
+    pub guidance: Option<f32>,
 }
 
 /// Tempo, key and time signature for a new song, from what the person set
@@ -243,12 +246,40 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     } else if r.versions > 1 {
         v["synth_batch_size"] = json!(r.versions.min(3));
     }
-    // Words to sing: the lyrics followed more closely (they were heard better
-    // across seeds at 3 than at the turbo model's own 1).
-    if !r.lyrics.is_empty() && r.lyrics != "[Instrumental]" && r.source.is_none() {
+    if let Some(g) = r.guidance {
+        v["guidance_scale"] = json!(g.clamp(1.0, 15.0));
+    } else if !r.lyrics.is_empty() && r.lyrics != "[Instrumental]" && r.source.is_none() {
+        // Words to sing: the lyrics followed more closely (they were heard
+        // better across seeds at 3 than at the turbo model's own 1).
         v["guidance_scale"] = json!(3.0);
     }
     v
+}
+
+/// A distilled ("turbo") music model: 8 steps with the guidance built in.
+/// The others (SFT, Base) take 50 steps, and their makers run them with
+/// guidance.
+pub fn is_turbo(dit_file: &str) -> bool {
+    dit_file.to_lowercase().contains("turbo")
+}
+
+/// Base and SFT's guidance when nothing else is asked: as their makers run them.
+pub const FULL_GUIDANCE: f32 = 7.0;
+
+/// How closely a song follows its description and lyrics (the guidance
+/// scale), from Style influence (0 to 1, a half the usual): a turbo model
+/// 1 to 5, Base and SFT 3 to 11. None asked: Base and SFT `FULL_GUIDANCE`,
+/// a turbo model its own (`request_json` raises it for words to sing).
+pub fn guidance(dit_file: &str, influence: Option<f32>) -> Option<f32> {
+    let turbo = is_turbo(dit_file);
+    match influence {
+        Some(x) => {
+            let x = x.clamp(0.0, 1.0);
+            Some(if turbo { 1.0 + 4.0 * x } else { 3.0 + 8.0 * x })
+        }
+        None if !turbo => Some(FULL_GUIDANCE),
+        None => None,
+    }
 }
 
 /// Whether a song is planned by ace-lm first: a new song with a planner.

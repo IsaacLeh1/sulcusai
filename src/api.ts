@@ -1883,6 +1883,8 @@ export interface MediaItem {
   seed: number | null;
   lyrics: string | null;
   favorite: boolean;
+  /** Marked as not liked (a song's thumbs down). */
+  disliked?: boolean;
   hidden: boolean;
   /** Videos: a still frame is saved as the thumbnail. */
   poster: boolean;
@@ -1898,6 +1900,8 @@ export interface MediaItem {
   map?: SongMap | null;
   /** A song written as notes in Compose; the file is its demo. */
   composition?: Composition | null;
+  /** A new song's settings, to make it again (Reuse these settings). */
+  music?: MusicSpec | null;
 }
 
 /** A section of a composition's plan. */
@@ -2118,7 +2122,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2254,6 +2258,14 @@ export interface MusicSpec {
   best_of?: boolean;
   /** Each song gets cover art from the picture model, made next. */
   cover_art?: boolean;
+  /** How closely the description is followed, 0 to 1 (Suno's Style influence; null: the model's own). */
+  influence?: number | null;
+  /** How far from the usual, 0 to 1 (Suno's Weirdness; null: in between). */
+  weirdness?: number | null;
+  /** Styles, instruments or sounds to leave out, comma separated. */
+  exclude?: string | null;
+  /** The song's name (else its hook names it). */
+  title?: string | null;
   /** A saved artist (id or name): their voice and sound for this song. */
   persona?: string | null;
   /** The singer's voice in words (a saved artist's). */
@@ -2275,6 +2287,28 @@ export interface VocalEffect {
 }
 
 /** A saved artist (media/persona.rs): the song their voice follows, and their sound. */
+/** What the person likes in songs (My taste), from their own. */
+export interface Taste {
+  genres: string[];
+  moods: string[];
+  instruments: string[];
+  voice: string | null;
+  era: string | null;
+  production: string | null;
+  /** In songs marked "not for me", never in liked ones. */
+  avoid: string[];
+  songs: number;
+}
+
+/** A named list of songs from the gallery, in playing order. */
+export interface Playlist {
+  id: string;
+  name: string;
+  songs: string[];
+  created_at: number;
+  updated_at: number;
+}
+
 export interface Persona {
   id: string;
   name: string;
@@ -2886,13 +2920,24 @@ export const api = {
   mediaSetPoster: (id: string, data: string) => invoke<MediaItem>("media_set_poster", { id, data }),
   mediaDelete: (id: string) => invoke<void>("media_delete", { id }),
   mediaFavorite: (id: string, on: boolean) => invoke<MediaItem>("media_favorite", { id, on }),
+  /** A thumbs down (or taking it back). */
+  mediaDislike: (id: string, on: boolean) => invoke<MediaItem>("media_dislike", { id, on }),
   /** Names a song (or anything in the gallery); empty goes back to none. */
   mediaSetTitle: (id: string, title: string) => invoke<MediaItem>("media_set_title", { id, title }),  mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),
   mediaImport: (path: string, chatId: string | null = null) => invoke<MediaItem>("media_import", { path, chatId }),
   musicWriteLyrics: (prompt: string, music: MusicSpec | null, seconds: number | null, language: string | null) =>
     invoke<string>("music_write_lyrics", { prompt, music, seconds, language }),
+  /** Some lines of the lyrics written again by the chat model, changed as `how` says; returns those lines. */
+  musicRewriteLines: (whole: string, part: string, how: string, language: string | null) =>
+    invoke<string>("music_rewrite_lines", { whole, part, how, language }),
   musicArtistStyle: (name: string) => invoke<ArtistStyle>("music_artist_style", { name }),
   musicPersonas: () => invoke<Persona[]>("music_personas"),
+  musicPlaylists: () => invoke<Playlist[]>("music_playlists"),
+  /** Saves a playlist (a new one when id is empty): its name and songs in order. */
+  musicPlaylistSave: (playlist: Pick<Playlist, "id" | "name" | "songs">) => invoke<Playlist>("music_playlist_save", { playlist }),
+  musicPlaylistDelete: (id: string) => invoke<void>("music_playlist_delete", { id }),
+  /** What the person likes in songs, from their liked, made and "not for me" songs. */
+  musicTaste: (ids?: string[]) => invoke<Taste>("music_taste", { ids: ids ?? null }),
   /** Saves an artist (a new one when id is empty). */
   musicPersonaSave: (persona: Persona) => invoke<Persona>("music_persona_save", { persona }),
   musicPersonaDelete: (id: string) => invoke<void>("music_persona_delete", { id }),

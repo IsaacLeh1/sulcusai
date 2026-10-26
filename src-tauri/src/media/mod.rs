@@ -11,6 +11,7 @@ pub(crate) mod artist;
 pub mod clarify;
 pub(crate) mod compose;
 pub(crate) mod persona;
+pub(crate) mod library;
 pub mod coach;
 mod cutout;
 pub(crate) mod stems;
@@ -243,7 +244,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" | "revoice" => Some(Feature::Music),
+        "narrate" | "listen" | "map" | "revoice" | "stems" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -777,6 +778,16 @@ pub struct MusicSpec {
     pub best_of: bool,
     /// Each song gets cover art from the picture model, made next (`cover_art`).
     pub cover_art: bool,
+    /// How closely the description is followed, 0 to 1 (Suno's Style
+    /// Influence): the music model's guidance (`music::guidance`). None: its own.
+    pub influence: Option<f32>,
+    /// How far from the usual, 0 to 1 (Suno's Weirdness): the words, the
+    /// description and YuE2's melody writing. None: in between.
+    pub weirdness: Option<f32>,
+    /// Styles, instruments or sounds to leave out, comma separated.
+    pub exclude: Option<String>,
+    /// The song's name, given by the person (else its hook names it).
+    pub title: Option<String>,
     /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
     /// "modern" (older songs may say a decade, as `era` does now).
     pub production: Option<String>,
@@ -945,6 +956,18 @@ impl MusicSpec {
     /// echoes in brackets for the harmony voices.
     pub fn lyrics_guide(&self) -> String {
         let mut guide = String::new();
+        if let Some(t) = self.title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            guide.push_str(&format!(" The song is called \"{t}\": build the chorus's hook around those words."));
+        }
+        let left_out = self.excluded();
+        if !left_out.is_empty() {
+            guide.push_str(&format!(" Leave these out of the words: {}.", left_out.join(", ")));
+        }
+        match self.weirdness {
+            Some(w) if w >= 0.7 => guide.push_str(" Be daring: surprising images, unusual turns of phrase and an unexpected structure."),
+            Some(w) if w <= 0.25 => guide.push_str(" Keep it familiar: plain, classic images and a standard song structure."),
+            _ => {}
+        }
         if let Some(name) = self.sound_like.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let how = Self::some(&self.artist_writing).map(|w| format!(" ({})", w.trim_end_matches('.'))).unwrap_or_default();
             guide.push_str(&format!(" Write the way {name} writes songs{how}, in words of your own: never use lines, hooks or titles from their songs."));
@@ -1084,7 +1107,8 @@ impl MusicSpec {
         if let Some(e) = Self::some(&self.emotion) {
             parts.push(if instrumental { format!("{e} feeling") } else { format!("{e}, emotional vocal delivery") });
         }
-        let inst: Vec<String> = self.instruments.iter().map(|i| i.trim().to_lowercase()).filter(|i| !i.is_empty()).collect();
+        let left_out = self.excluded();
+        let inst: Vec<String> = self.instruments.iter().map(|i| i.trim().to_lowercase()).filter(|i| !i.is_empty() && !names_any(i, &left_out)).collect();
         if !inst.is_empty() {
             parts.push(inst.join(", "));
         }
@@ -1173,9 +1197,49 @@ impl MusicSpec {
                 other => other.to_string(),
             });
         }
+        // Weirdness, Suno's way: far from the usual at the top, by the book
+        // at the bottom.
+        match self.weirdness {
+            Some(w) if w >= 0.7 => parts.push("experimental, unexpected arrangement, unusual sounds and surprising turns".into()),
+            Some(w) if w <= 0.25 => parts.push("classic, familiar arrangement".into()),
+            _ => {}
+        }
+        // What's left out: no part that names it (the person's own words
+        // stay as written).
+        if !left_out.is_empty() {
+            let own = usize::from(!words.is_empty());
+            let mut i = 0;
+            parts.retain(|p| {
+                i += 1;
+                i <= own || !names_any(p, &left_out)
+            });
+        }
         parts.extend(tail);
         parts.join(", ")
     }
+
+    /// What's to be left out, each lowercased without a leading "no".
+    pub fn excluded(&self) -> Vec<String> {
+        let list = self.exclude.as_deref().unwrap_or_default();
+        list.split([',', ';', '\n'])
+            .map(|s| {
+                let s = s.trim().to_lowercase();
+                s.strip_prefix("no ").or_else(|| s.strip_prefix("without ")).unwrap_or(&s).trim().to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+}
+
+/// Whether a phrase names any of `terms` as whole words ("drums" is in
+/// "punchy live drums", not in "drumsticks").
+fn names_any(phrase: &str, terms: &[String]) -> bool {
+    let norm = |s: &str| format!(" {} ", s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "));
+    let p = norm(phrase);
+    terms.iter().any(|t| {
+        let t = norm(t);
+        t.trim().len() > 1 && p.contains(&t)
+    })
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -1480,10 +1544,10 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems") && req.source.is_none() {
         return Err("Pick a song first.".into());
     }
     // A recorded voice: one that's here and has what the job needs.
@@ -1544,7 +1608,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
         files_here(state, m)?;
     }
@@ -1615,7 +1679,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach" | "cover_art")
         || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // A song's parts taken apart and read on an NVIDIA card (CUDA).
-        || (req.op == "map" && crate::natural::nvidia_here(state));
+        || (matches!(req.op.as_str(), "map" | "stems") && crate::natural::nvidia_here(state));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
@@ -2971,6 +3035,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "narrate" => narrate(&ctx).await,
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
+        "stems" => stems_job(&ctx).await,
         "remake" => remake_job(&ctx, model.ok_or("No music model.")?, &work.0).await,
         "tune" => {
             let m = model.ok_or("No picture model.")?;
@@ -3697,7 +3762,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         yue::make(
             &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
             work,
-            &yue::YueRequest { style: &style, lyrics: &lyrics_text, seconds, seed, versions, backbone: &backbone.file, vae: &vae.file },
+            &yue::YueRequest { style: &style, lyrics: &lyrics_text, seconds, seed, versions, backbone: &backbone.file, vae: &vae.file, weirdness: spec.weirdness },
             ctx.cancel,
             ctx.progress,
         )
@@ -3734,6 +3799,8 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             source: source.as_ref().map(|s| s.1.as_path()),
             reference: reference.as_ref().map(|r| r.1.as_path()).or(own_reference.as_deref()),
             versions,
+            guidance: music::guidance(&dit.file, spec.influence),
+            negative: spec.exclude.as_deref(),
             ..Default::default()
         },
         ctx.cancel,
@@ -3804,6 +3871,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
                                 track: Some(part),
                                 source: Some(src.as_path()),
                                 versions: 1,
+                                guidance: music::guidance(&base_dit.file, None),
                                 ..Default::default()
                             },
                             ctx.cancel,
@@ -3842,9 +3910,15 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             parent: source.as_ref().map(|s| s.0.id.clone()),
             chat_id: req.chat_id.clone(),
             seed: Some(seed),
-            // A new song is named by its hook; work on a song keeps its name.
-            title: if task.is_none() { (!sound).then(|| lyrics::title_of(&song.lyrics)).flatten() } else { source.as_ref().and_then(|s| s.0.title.clone()) },
+            // A new song is named as asked, else by its hook; work on a song keeps its name.
+            title: if task.is_none() {
+                spec.title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).or_else(|| (!sound).then(|| lyrics::title_of(&song.lyrics)).flatten())
+            } else {
+                source.as_ref().and_then(|s| s.0.title.clone())
+            },
             lyrics: (!sound && lyrics::has_singing(&song.lyrics)).then_some(song.lyrics),
+            // A new song's settings, to make it again (none of the title: a new take gets its own).
+            music: (task.is_none() && !sound).then(|| MusicSpec { title: None, ..spec.clone() }),
             note: note.clone(),
             ..Default::default()
         };
@@ -3914,6 +3988,74 @@ async fn fetch_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel: 
 fn parts_model(state: &AppState) -> Option<MediaModel> {
     let have: Vec<String> = installed(&state.db.lock().unwrap()).into_iter().map(|i| i.model_id).collect();
     models(state).into_iter().find(|m| m.kind == Kind::Music && m.can("parts") && have.contains(&m.id))
+}
+
+/// A song from the gallery as stereo at the part separator's rate.
+fn decoded_stereo(bytes: &[u8], mime: &str) -> Result<stems::Stereo, String> {
+    let dir = std::env::temp_dir().join(format!("sulcusai-song-{}", store::new_id()));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(if mime.contains("wav") { "song.wav" } else { "song.mp3" });
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    let decoded = audio_in::decode(&path);
+    let _ = std::fs::remove_dir_all(&dir);
+    let (samples, rate, channels) = decoded?;
+    let ch = channels.max(1) as usize;
+    let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
+    let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
+    Ok(stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE))
+}
+
+/// A song's parts as songs of their own under it (Suno's Get stems): its
+/// vocals and the instrumental, or (`MusicSpec::track` "all") the vocals,
+/// drums, bass and the rest, taken apart by HTDemucs.
+async fn stems_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    let id = ctx.req.source.as_deref().ok_or("Pick a song first.")?;
+    let song = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That song is no longer in the gallery.")?;
+    if song.kind != "audio" {
+        return Err("Only a song or a sound has parts.".into());
+    }
+    let every = ctx.req.music.as_ref().and_then(|m| m.track.as_deref()) == Some("all");
+    let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
+    let card = map_card(ctx).await?;
+    let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
+    (ctx.progress)("Taking the parts apart", 0.1);
+    let bytes = store::read(&state.paths, &c, &song.id)?;
+    let threads = state.limits().threads;
+    let parts = tokio::task::block_in_place(|| -> Result<Vec<stems::Stereo>, String> {
+        let mix = decoded_stereo(&bytes, &song.mime)?;
+        let (parts, _) = stems::separate(&dll, &separator, &mix, threads, &[0, 1, 2, 3], card, ctx.cancel)?;
+        stems::unload();
+        Ok(parts)
+    })?;
+    if ctx.cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
+    // HTDemucs gives the drums, bass, the rest and the vocals, in that order.
+    let wanted: Vec<(&str, Vec<usize>)> = if every { vec![("vocals", vec![3]), ("drums", vec![0]), ("bass", vec![1]), ("other instruments", vec![2])] } else { vec![("vocals", vec![3]), ("instrumental", vec![0, 1, 2])] };
+    let name = song.title.clone().unwrap_or_else(|| song.prompt.chars().take(60).collect());
+    let mut out = Vec::new();
+    for (i, (part, idx)) in wanted.iter().enumerate() {
+        (ctx.progress)("Saving the parts", 0.8 + 0.2 * i as f64 / wanted.len() as f64);
+        let len = parts[0].len();
+        let [l, r] = [0, 1].map(|ch| (0..len).map(|s| idx.iter().map(|k| parts[*k].ch[ch][s]).sum::<f32>()).collect::<Vec<f32>>());
+        let item = MediaItem {
+            kind: "audio".into(),
+            op: "stem".into(),
+            prompt: song.prompt.clone(),
+            title: Some(format!("{name} ({part})")),
+            mime: "audio/wav".into(),
+            seconds: len as f64 / stems::RATE as f64,
+            parent: Some(song.id.clone()),
+            chat_id: ctx.req.chat_id.clone().or_else(|| song.chat_id.clone()),
+            lyrics: (*part == "vocals").then(|| song.lyrics.clone()).flatten(),
+            ..Default::default()
+        };
+        out.push(store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &own_voice::wav_stereo(&l, &r, stems::RATE), None)?);
+    }
+    crate::applog::line("media", &format!("Took a song apart into {} parts", out.len()));
+    Ok(out)
 }
 
 /// What the listener hears in a song from the gallery (`listen`): which of
@@ -4053,18 +4195,9 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
     (ctx.progress)("Taking the parts apart", 0.4);
     let bytes = store::read(&state.paths, &c, &item.id)?;
     let threads = state.limits().threads;
+    let mime = item.mime.clone();
     let (parts, on_card, times) = tokio::task::spawn_blocking(move || -> Result<(Vec<songmap::Part>, bool, [f64; 2]), String> {
-        let dir = std::env::temp_dir().join(format!("sulcusai-map-{}", store::new_id()));
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let path = dir.join("song.mp3");
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-        let decoded = audio_in::decode(&path);
-        let _ = std::fs::remove_dir_all(&dir);
-        let (samples, rate, channels) = decoded?;
-        let ch = channels.max(1) as usize;
-        let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
-        let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
-        let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
+        let song = decoded_stereo(&bytes, &mime)?;
         let started = Instant::now();
         let (stems, on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, &AtomicBool::new(false))?;
         stems::unload();
@@ -4136,23 +4269,12 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
     (ctx.progress)("Taking the voice out", 0.05);
     let bytes = store::read(&state.paths, &c, &item.id)?;
     let threads = state.limits().threads;
-    let ext = if item.mime.contains("wav") { "wav" } else { "mp3" };
     let singing = format!("Singing it in the recorded voice “{}”", voice.name);
     // Long work that reports as it goes and can be stopped: it borrows the
     // job's progress and cancel, so it runs here rather than on its own thread.
     let (out, on_card, secs) = tokio::task::block_in_place(|| -> Result<(stems::Stereo, bool, f64), String> {
         let started = Instant::now();
-        let dir = std::env::temp_dir().join(format!("sulcusai-revoice-{}", store::new_id()));
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let path = dir.join(format!("song.{ext}"));
-        std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-        let decoded = audio_in::decode(&path);
-        let _ = std::fs::remove_dir_all(&dir);
-        let (samples, rate, channels) = decoded?;
-        let ch = channels.max(1) as usize;
-        let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
-        let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
-        let song = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
+        let song = decoded_stereo(&bytes, &item.mime)?;
         let (parts, apart_on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, ctx.cancel)?;
         stems::unload();
         if ctx.cancel.load(Ordering::Relaxed) {
@@ -4192,6 +4314,7 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
         chat_id: ctx.req.chat_id.clone().or_else(|| item.chat_id.clone()),
         seed: item.seed,
         title: item.title.clone(),
+        music: item.music.clone(),
         lyrics: item.lyrics.clone(),
         note: Some(format!("Sung in the recorded voice “{}”", voice.name)),
         ..Default::default()
@@ -4750,6 +4873,7 @@ pub fn media_delete(state: AppStateRef, id: String) -> Result<(), String> {
     if let Some(parent) = store::get(&conn, &c, &id).and_then(|i| i.parent.zip(Some(i.op))).and_then(|(p, op)| store::get(&conn, &c, &p).filter(|p| p.hidden && p.op == op && p.kind == "audio")) {
         store::delete(&conn, &state.paths, &parent.id)?;
     }
+    library::forget_song(&conn, &c, &id);
     store::delete(&conn, &state.paths, &id)?;
     db::log_action(&conn, "media", "Deleted an item from the gallery");
     Ok(())
@@ -4761,8 +4885,53 @@ pub fn media_favorite(state: AppStateRef, id: String, on: bool) -> Result<MediaI
     let conn = state.db.lock().unwrap();
     let mut item = store::get(&conn, &c, &id).ok_or("That item is no longer in the gallery.")?;
     item.favorite = on;
+    item.disliked &= !on;
     store::update(&conn, &c, &item)?;
     Ok(item)
+}
+
+/// A thumbs down (or taking it back): a liked song stops being a favorite.
+#[tauri::command(async)]
+pub fn media_dislike(state: AppStateRef, id: String, on: bool) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut item = store::get(&conn, &c, &id).ok_or("That item is no longer in the gallery.")?;
+    item.disliked = on;
+    item.favorite &= !on;
+    store::update(&conn, &c, &item)?;
+    Ok(item)
+}
+
+#[tauri::command(async)]
+pub fn music_playlists(state: AppStateRef) -> Result<Vec<library::Playlist>, String> {
+    let c = state.cipher()?;
+    Ok(library::list(&state.db.lock().unwrap(), &c))
+}
+
+/// Saves a playlist (new without an id): its name and songs in order.
+#[tauri::command(async)]
+pub fn music_playlist_save(state: AppStateRef, playlist: library::Playlist) -> Result<library::Playlist, String> {
+    let c = state.cipher()?;
+    library::save(&state.db.lock().unwrap(), &c, playlist)
+}
+
+/// What the person likes in songs, from their liked, made and "not for me"
+/// songs; or what some songs share (a playlist's, each counted as liked).
+#[tauri::command(async)]
+pub fn music_taste(state: AppStateRef, ids: Option<Vec<String>>) -> Result<library::Taste, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let items = match ids {
+        Some(ids) => ids.iter().filter_map(|id| store::get(&conn, &c, id)).map(|i| MediaItem { favorite: !i.disliked, ..i }).collect(),
+        None => store::list(&conn, &c, Some("audio"), 5000, None),
+    };
+    Ok(library::taste(&items))
+}
+
+#[tauri::command(async)]
+pub fn music_playlist_delete(state: AppStateRef, id: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    library::remove(&state.db.lock().unwrap(), &c, &id)
 }
 
 /// Names a song (or anything in the gallery); empty goes back to none.
@@ -4963,6 +5132,14 @@ pub async fn music_write_lyrics(state: AppStateRef<'_>, prompt: String, music: O
             lyrics::NotWritten::NoModel(_) => "There's no chat model on this PC to write lyrics. Install one from Models, or type your own.".to_string(),
             lyrics::NotWritten::Unusable(e) => format!("The lyrics didn't come out right ({e}). Try again, or type your own."),
         })
+}
+
+/// Some lines of the lyrics (`part`, from `whole`) written again by the chat
+/// model, changed as `how` says (the Studio's "Write these lines again").
+#[tauri::command]
+pub async fn music_rewrite_lines(state: AppStateRef<'_>, whole: String, part: String, how: String, language: Option<String>) -> Result<String, String> {
+    state.cipher()?;
+    lyrics::rewrite(state.inner(), &whole, &part, &how, language.as_deref()).await
 }
 
 pub(crate) fn add(state: &AppState, c: &crate::crypto::Cipher, bytes: Vec<u8>, kind: &str, mime: &str, op: &str, prompt: &str, parent: Option<String>, chat_id: Option<String>, hidden: bool) -> Result<MediaItem, String> {
@@ -5438,6 +5615,36 @@ mod tests {
         let custom = MusicSpec { vocal_effects: vec![fx("Yodelling", "bridge")], ..Default::default() };
         assert_eq!(custom.caption("", false), "yodelling vocals on the bridge");
         assert_eq!(custom.mark_sections("[Bridge]\nla"), "[Bridge - yodelling]\nla");
+    }
+
+    /// Suno's advanced options: styles left out of the description and the
+    /// words, Weirdness at either end, a title the hook is built around, and
+    /// Style influence as the music model's guidance.
+    #[test]
+    fn styles_are_left_out_and_weirdness_is_said() {
+        let spec = MusicSpec {
+            genre: Some("Rock".into()),
+            instruments: vec!["electric guitar".into(), "drums".into(), "drumsticks clicking".into()],
+            production: Some("lo-fi".into()),
+            exclude: Some("no drums, Lo-Fi; autotune".into()),
+            weirdness: Some(0.9),
+            title: Some("Paper Moon".into()),
+            ..Default::default()
+        };
+        assert_eq!(spec.excluded(), vec!["drums", "lo-fi", "autotune"]);
+        assert_eq!(
+            spec.caption("drums and bass night drive", true),
+            "drums and bass night drive, rock, electric guitar, drumsticks clicking, instrumental, no vocals, experimental, unexpected arrangement, unusual sounds and surprising turns",
+            "the person's own words stay; a part naming what's left out goes"
+        );
+        let g = spec.lyrics_guide();
+        assert!(g.contains("called \"Paper Moon\"") && g.contains("Leave these out of the words: drums, lo-fi, autotune") && g.contains("Be daring"), "{g}");
+        let plain = MusicSpec { weirdness: Some(0.1), ..Default::default() };
+        assert_eq!(plain.caption("", true), "instrumental, no vocals, classic, familiar arrangement");
+        assert_eq!(music::guidance("acestep-v15-xl-turbo-Q8_0.gguf", None), None);
+        assert_eq!(music::guidance("acestep-v15-xl-turbo-Q8_0.gguf", Some(0.5)), Some(3.0));
+        assert_eq!(music::guidance("acestep-v15-base-Q8_0.gguf", None), Some(music::FULL_GUIDANCE));
+        assert_eq!(music::guidance("acestep-v15-xl-sft-Q8_0.gguf", Some(1.0)), Some(11.0));
     }
 
     /// The Studio's choices become the music model's description; a part
