@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Quick edits to a song in the window, on its decoded samples (one array a
-// channel): fades, a part cut out, and a new speed with or without its pitch.
+// channel): fades, a part cut out, a new speed with or without its pitch,
+// and its formants moved.
+import { fft } from "./studio/fft";
 
 export type Channels = Float32Array<ArrayBuffer>[];
 
@@ -50,6 +52,69 @@ export function resampleSpeed(chs: Channels, factor: number): Channels {
       out[i] = src[j] * (1 - f) + (src[j + 1] ?? src[j]) * f;
     }
     return out;
+  });
+}
+
+/** The formants (a voice's character, where its vowels resonate) moved by
+ * `semis` semitones with the pitch left where it is (Suno Studio's Formant):
+ * each moment's spectral envelope, the cepstrum's first 1.25 ms, is
+ * stretched, and the sound reshaped to the stretched one. */
+export function formantShift(chs: Channels, rate: number, semis: number): Channels {
+  if (!semis) return chs;
+  const N = 1024;
+  const H = N / 4;
+  const k = Math.pow(2, semis / 12);
+  const Q = Math.max(8, Math.round(rate * 0.00125));
+  const win = Float64Array.from({ length: N }, (_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / N));
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  const env = new Float64Array(N / 2 + 1);
+  const cr = new Float64Array(N);
+  const ci = new Float64Array(N);
+  return chs.map((x) => {
+    const len = x.length;
+    const out = new Float64Array(len + 2 * N);
+    const norm = new Float64Array(len + 2 * N);
+    for (let start = -N; start < len; start += H) {
+      for (let i = 0; i < N; i++) {
+        const j = start + i;
+        re[i] = (j >= 0 && j < len ? x[j] : 0) * win[i];
+        im[i] = 0;
+      }
+      fft(re, im);
+      // The envelope: the log spectrum's slow part (its low quefrencies).
+      for (let i = 0; i < N; i++) {
+        cr[i] = Math.log(Math.hypot(re[i], im[i]) + 1e-9);
+        ci[i] = 0;
+      }
+      fft(cr, ci, true);
+      for (let i = Q + 1; i < N - Q; i++) cr[i] = 0;
+      ci.fill(0);
+      fft(cr, ci);
+      for (let i = 0; i <= N / 2; i++) env[i] = cr[i];
+      for (let i = 0; i <= N / 2; i++) {
+        // What the envelope is here once stretched, against what it was.
+        const at = i / k;
+        const a = Math.min(N / 2, Math.floor(at));
+        const b = Math.min(N / 2, a + 1);
+        const moved = env[a] + (env[b] - env[a]) * (at - a);
+        const g = Math.exp(Math.max(-6, Math.min(6, moved - env[i])));
+        re[i] *= g;
+        im[i] *= g;
+        if (i > 0 && i < N / 2) {
+          re[N - i] = re[i];
+          im[N - i] = -im[i];
+        }
+      }
+      fft(re, im, true);
+      for (let i = 0; i < N; i++) {
+        out[start + N + i] += re[i] * win[i];
+        norm[start + N + i] += win[i] * win[i];
+      }
+    }
+    const y = new Float32Array(len);
+    for (let i = 0; i < len; i++) y[i] = norm[i + N] > 1e-6 ? out[i + N] / norm[i + N] : 0;
+    return y;
   });
 }
 

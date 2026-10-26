@@ -4,7 +4,7 @@
 // any point or rendered offline for export. A clip's speed, pitch and
 // direction are worked out once on its samples (`audioEdit`) and kept.
 import { fileUrl } from "../media";
-import { resampleSpeed, stretchSpeed, type Channels } from "../audioEdit";
+import { formantShift, resampleSpeed, stretchSpeed, type Channels } from "../audioEdit";
 import { chain, prepare, type Chain } from "./effects";
 import { renderNotes } from "./midi";
 import { prepareSynth, synthNode, tailOf, updateSynth, type NoteEvent } from "./synth";
@@ -116,9 +116,9 @@ export async function clipAudio(clip: Clip, track: Track): Promise<ClipAudio | n
   const source = await sourceBuffer(src);
   const from = startIn(clip);
   const warp = warped(clip);
-  const plain = clip.speed === 1 && clip.semitones === 0 && !clip.reverse && !warp && from >= 0;
+  const plain = clip.speed === 1 && clip.semitones === 0 && !clip.reverse && !warp && !clip.formant && from >= 0;
   if (plain) return { buffer: source, offset: from, duration: Math.min(clip.length, source.duration - from) };
-  const key = `${src}:${from}:${clip.length}:${clip.speed}:${clip.keepPitch}:${clip.semitones}:${clip.reverse}:${warp ? JSON.stringify(anchors(clip)) : ""}`;
+  const key = `${src}:${from}:${clip.length}:${clip.speed}:${clip.keepPitch}:${clip.semitones}:${clip.formant ?? 0}:${clip.reverse}:${warp ? JSON.stringify(anchors(clip)) : ""}`;
   let p = derived.get(key);
   if (!p) {
     p = (async () => {
@@ -138,6 +138,7 @@ export async function clipAudio(clip: Clip, track: Track): Promise<ClipAudio | n
         chs = transpose(chs);
         if (clip.speed !== 1) chs = clip.keepPitch ? stretchSpeed(chs, rate, clip.speed) : resampleSpeed(chs, clip.speed);
       }
+      if (clip.formant) chs = formantShift(chs, rate, clip.formant);
       return toBuffer(chs, rate);
     })();
     derived.set(key, p);

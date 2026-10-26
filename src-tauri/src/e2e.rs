@@ -1134,7 +1134,8 @@ fn speech_state() -> std::sync::Arc<crate::AppState> {
         bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
-        job: None,
+        // Models a test starts end with it (else they stay on the card).
+        job: crate::winjob::Job::kill_on_close().ok(),
     })
 }
 
@@ -3516,7 +3517,8 @@ pub(crate) fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<c
         bridge: crate::bridge::Bridge::default(),
         app: std::sync::OnceLock::new(),
         engine_used: std::sync::Mutex::new(std::time::Instant::now()),
-        job: None,
+        // Models a test starts end with it (else they stay on the card).
+        job: crate::winjob::Job::kill_on_close().ok(),
     })
 }
 
@@ -4147,6 +4149,7 @@ async fn e2e_studio_ask() {
         ("make a funky bass part for the first minute", &["make_part"][..]),
         ("loop from 30 to 45 seconds", &["loop"][..]),
         ("put the keys on the synth as a gritty reese bass with a slow wobble", &["synth"][..]),
+        ("build me a lo-fi telephone voice effect and put it on the song", &["build_effect"][..]),
     ];
     for (ask, want) in asks {
         let t = std::time::Instant::now();
@@ -4157,7 +4160,7 @@ async fn e2e_studio_ask() {
         println!("{ask:?} in {:.1} s -> {:?} {}", t.elapsed().as_secs_f64(), got.map(|a| serde_json::to_string(&a).unwrap()), if hit { "ok" } else { "MISSED" });
     }
     println!("{ok} of {} understood", asks.len());
-    assert!(ok >= 4);
+    assert!(ok >= 5);
 }
 
 /// The song studio's new part: a guitar added to the synth-pop song from

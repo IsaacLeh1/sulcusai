@@ -4363,22 +4363,24 @@ pub fn studio_read_sound(state: AppStateRef, path: String) -> Result<String, Str
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
+/// What the song studio keeps by name: `kind` "synth" (the wavetable
+/// synth's sounds) or "effects" (effects built from words or saved).
 #[tauri::command(async)]
-pub fn studio_synth_presets(state: AppStateRef) -> Result<Vec<serde_json::Value>, String> {
+pub fn studio_library(state: AppStateRef, kind: String) -> Result<Vec<serde_json::Value>, String> {
     let c = state.cipher()?;
-    Ok(studio::presets(&state.db.lock().unwrap(), &c))
+    Ok(studio::presets(&state.db.lock().unwrap(), &c, &kind))
 }
 
 #[tauri::command(async)]
-pub fn studio_synth_preset_save(state: AppStateRef, preset: serde_json::Value) -> Result<(), String> {
+pub fn studio_library_save(state: AppStateRef, kind: String, item: serde_json::Value) -> Result<(), String> {
     let c = state.cipher()?;
-    studio::save_preset(&state.db.lock().unwrap(), &c, preset)
+    studio::save_preset(&state.db.lock().unwrap(), &c, &kind, item)
 }
 
 #[tauri::command(async)]
-pub fn studio_synth_preset_delete(state: AppStateRef, name: String) -> Result<(), String> {
+pub fn studio_library_delete(state: AppStateRef, kind: String, name: String) -> Result<(), String> {
     let c = state.cipher()?;
-    studio::remove_preset(&state.db.lock().unwrap(), &c, &name)
+    studio::remove_preset(&state.db.lock().unwrap(), &c, &kind, &name)
 }
 
 /// The song studio's chat bar: a request turned into actions on the

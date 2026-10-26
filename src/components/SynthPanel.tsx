@@ -3,9 +3,10 @@
 // oscillators, a sub and noise, the filter, four envelopes, three LFOs, the
 // mod matrix and how it's played; factory and saved sounds; wavetables made
 // from a sound file or from a clip.
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api, errorText } from "../api";
 import { t, tx } from "../i18n";
+import { LearnContext, learnable } from "../studio/learn";
 import { frameOf, initPatch, PRESETS, TABLES, type Env, type Lfo, type MadeTable, type ModSource, type ModTarget, type Osc, type SynthPatch } from "../studio/synth";
 
 const WARPS: [Osc["warp"], string][] = [["none", tx("No warp")], ["bend", tx("Bend")], ["sync", tx("Sync")], ["pwm", tx("Pulse width")], ["mirror", tx("Mirror")]];
@@ -14,8 +15,15 @@ const TARGETS: [ModTarget, string][] = [["pitch", tx("Pitch")], ["osc1.pitch", t
 const DIVS: [number, string][] = [[16, tx("4 bars")], [8, tx("2 bars")], [4, tx("1 bar")], [2, "1/2"], [1, "1/4"], [0.5, "1/8"], [0.25, "1/16"], [1 / 3, "1/8T"], [0.125, "1/32"]];
 const SHAPES: [Lfo["shape"], string][] = [["sine", tx("Sine")], ["triangle", tx("Triangle")], ["square", tx("Square")], ["saw", tx("Saw")], ["random", tx("Random")]];
 
-/** One setting as a slider: straight, on a curve (`curve` > 1 gives the low end more room) or logarithmic. */
-function Param({ label, value, min, max, step = 0, curve = 1, log, unit = "", digits = 2, onChange, onDone }: { label: string; value: number; min: number; max: number; step?: number; curve?: number; log?: boolean; unit?: string; digits?: number; onChange: (v: number) => void; onDone: () => void }) {
+/** The track the synth plays on, for MIDI Learn's names. */
+const SynthTrack = createContext<{ id: string; name: string } | null>(null);
+
+/** One setting as a slider: straight, on a curve (`curve` > 1 gives the low end more room) or logarithmic;
+ * with a `path` into the patch, right-click learns a MIDI control for it. */
+function Param({ label, value, min, max, step = 0, curve = 1, log, unit = "", digits = 2, path, onChange, onDone }: { label: string; value: number; min: number; max: number; step?: number; curve?: number; log?: boolean; unit?: string; digits?: number; path?: string; onChange: (v: number) => void; onDone: () => void }) {
+  const learn = useContext(LearnContext);
+  const track = useContext(SynthTrack);
+  const midi = path && track ? learnable(learn, { id: `synth:${track.id}:${path}`, label: `${track.name}: ${label}`, min, max, log, step: step >= 1 ? step : undefined }) : {};
   const toU = (v: number) => (log ? Math.log(v / min) / Math.log(max / min) : Math.pow((v - min) / (max - min), 1 / curve));
   const fromU = (u: number) => {
     const v = log ? min * Math.pow(max / min, u) : min + (max - min) * Math.pow(u, curve);
@@ -25,7 +33,7 @@ function Param({ label, value, min, max, step = 0, curve = 1, log, unit = "", di
   return (
     <label className="synth-param" title={`${label}: ${shown}${unit}`}>
       <span className="synth-param-name">{label}</span>
-      <input type="range" min={0} max={1} step={0.001} value={Math.max(0, Math.min(1, toU(value) || 0))} onChange={(e) => onChange(fromU(+e.target.value))} onPointerUp={onDone} onKeyUp={onDone} aria-label={label} />
+      <input type="range" min={0} max={1} step={0.001} value={Math.max(0, Math.min(1, toU(value) || 0))} onChange={(e) => onChange(fromU(+e.target.value))} onPointerUp={onDone} onKeyUp={onDone} aria-label={label} {...midi} />
       <span className="synth-param-value mono">{shown}{unit}</span>
     </label>
   );
@@ -55,8 +63,9 @@ function Frame({ table, pos, made }: { table: string; pos: number; made?: Record
   return <canvas ref={ref} width={140} height={44} className="synth-frame" />;
 }
 
-export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCapture, toast }: {
-  /** The track it plays on, by name. */
+export function SynthPanel({ trackId, track, patch, made, onPatch, onMakeTable, canCapture, toast }: {
+  /** The track it plays on: its id and name. */
+  trackId: string;
   track: string;
   patch: SynthPatch;
   made: Record<string, MadeTable>;
@@ -70,7 +79,7 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
   const [saved, setSaved] = useState<SynthPatch[]>([]);
   const [name, setName] = useState("");
   useEffect(() => {
-    api.studioSynthPresets().then((list) => setSaved(list as SynthPatch[])).catch(() => {});
+    api.studioLibrary("synth").then((list) => setSaved(list as SynthPatch[])).catch(() => {});
   }, []);
   const set = (change: (p: SynthPatch) => void, done = true) => {
     const next: SynthPatch = structuredClone(patch);
@@ -109,7 +118,7 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
           </select>
         </div>
         <Frame table={o.table} pos={o.pos} made={made} />
-        <Param label={t("Position")} value={o.pos} min={0} max={1} onChange={(v) => live((x) => (x.pos = v))} onDone={done} />
+        <Param path={`${k}.pos`} label={t("Position")} value={o.pos} min={0} max={1} onChange={(v) => live((x) => (x.pos = v))} onDone={done} />
         <div className="row small">
           <select value={o.warp} onChange={(e) => set((p) => (p[k].warp = e.target.value as Osc["warp"]))} aria-label={t("Warp")}>
             {WARPS.map(([w, n]) => (
@@ -117,15 +126,15 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
             ))}
           </select>
         </div>
-        {o.warp !== "none" && <Param label={t("Warp")} value={o.warpAmt} min={0} max={1} onChange={(v) => live((x) => (x.warpAmt = v))} onDone={done} />}
-        <Param label={t("Level")} value={o.level} min={0} max={1} onChange={(v) => live((x) => (x.level = v))} onDone={done} />
-        <Param label={t("Octave")} value={o.octave} min={-3} max={3} step={1} onChange={(v) => live((x) => (x.octave = v))} onDone={done} />
-        <Param label={t("Semitones")} value={o.semi} min={-12} max={12} step={1} onChange={(v) => live((x) => (x.semi = v))} onDone={done} />
-        <Param label={t("Fine")} value={o.fine} min={-100} max={100} step={1} unit="¢" onChange={(v) => live((x) => (x.fine = v))} onDone={done} />
-        <Param label={t("Unison")} value={o.unison} min={1} max={7} step={1} onChange={(v) => live((x) => (x.unison = v))} onDone={done} />
-        <Param label={t("Detune")} value={o.detune} min={0} max={100} step={1} unit="¢" onChange={(v) => live((x) => (x.detune = v))} onDone={done} />
-        <Param label={t("Spread")} value={o.spread} min={0} max={1} onChange={(v) => live((x) => (x.spread = v))} onDone={done} />
-        <Param label={t("Pan")} value={o.pan} min={-1} max={1} onChange={(v) => live((x) => (x.pan = v))} onDone={done} />
+        {o.warp !== "none" && <Param path={`${k}.warpAmt`} label={t("Warp")} value={o.warpAmt} min={0} max={1} onChange={(v) => live((x) => (x.warpAmt = v))} onDone={done} />}
+        <Param path={`${k}.level`} label={t("Level")} value={o.level} min={0} max={1} onChange={(v) => live((x) => (x.level = v))} onDone={done} />
+        <Param path={`${k}.octave`} label={t("Octave")} value={o.octave} min={-3} max={3} step={1} onChange={(v) => live((x) => (x.octave = v))} onDone={done} />
+        <Param path={`${k}.semi`} label={t("Semitones")} value={o.semi} min={-12} max={12} step={1} onChange={(v) => live((x) => (x.semi = v))} onDone={done} />
+        <Param path={`${k}.fine`} label={t("Fine")} value={o.fine} min={-100} max={100} step={1} unit="¢" onChange={(v) => live((x) => (x.fine = v))} onDone={done} />
+        <Param path={`${k}.unison`} label={t("Unison")} value={o.unison} min={1} max={7} step={1} onChange={(v) => live((x) => (x.unison = v))} onDone={done} />
+        <Param path={`${k}.detune`} label={t("Detune")} value={o.detune} min={0} max={100} step={1} unit="¢" onChange={(v) => live((x) => (x.detune = v))} onDone={done} />
+        <Param path={`${k}.spread`} label={t("Spread")} value={o.spread} min={0} max={1} onChange={(v) => live((x) => (x.spread = v))} onDone={done} />
+        <Param path={`${k}.pan`} label={t("Pan")} value={o.pan} min={-1} max={1} onChange={(v) => live((x) => (x.pan = v))} onDone={done} />
       </div>
     );
   };
@@ -135,10 +144,10 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
     return (
       <div className="synth-env">
         <strong className="small">{label}</strong>
-        <Param label={t("Attack")} value={e.a} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.a = v))} onDone={done} />
-        <Param label={t("Decay")} value={e.d} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.d = v))} onDone={done} />
-        <Param label={t("Sustain")} value={e.s} min={0} max={1} onChange={(v) => live((x) => (x.s = v))} onDone={done} />
-        <Param label={t("Release")} value={e.r} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.r = v))} onDone={done} />
+        <Param path={`${k}.a`} label={t("Attack")} value={e.a} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.a = v))} onDone={done} />
+        <Param path={`${k}.d`} label={t("Decay")} value={e.d} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.d = v))} onDone={done} />
+        <Param path={`${k}.s`} label={t("Sustain")} value={e.s} min={0} max={1} onChange={(v) => live((x) => (x.s = v))} onDone={done} />
+        <Param path={`${k}.r`} label={t("Release")} value={e.r} min={0} max={10} curve={3} unit=" s" onChange={(v) => live((x) => (x.r = v))} onDone={done} />
       </div>
     );
   };
@@ -165,13 +174,14 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
             ))}
           </select>
         ) : (
-          <Param label={t("Rate")} value={l.rate} min={0.02} max={40} log unit=" Hz" onChange={(v) => set((p) => (p.lfos[i].rate = v), false)} onDone={done} />
+          <Param path={`lfos.${i}.rate`} label={t("Rate")} value={l.rate} min={0.02} max={40} log unit=" Hz" onChange={(v) => set((p) => (p.lfos[i].rate = v), false)} onDone={done} />
         )}
       </div>
     );
   };
   const presetValue = [...PRESETS, ...saved].find((x) => x.name === patch.name) ? patch.name : "";
   return (
+    <SynthTrack.Provider value={{ id: trackId, name: track }}>
     <div className="synth-panel">
       <div className="row wrap">
         <strong>{t("Wavetable synth on {track}", { track })}</strong>
@@ -204,7 +214,7 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
           onClick={async () => {
             const p = { ...patch, name: name.trim() };
             try {
-              await api.studioSynthPresetSave(p);
+              await api.studioLibrarySave("synth", p);
               setSaved((s) => [...s.filter((x) => x.name !== p.name), p]);
               onPatch(p, true);
               setName("");
@@ -221,7 +231,7 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
             className="btn ghost small"
             onClick={async () => {
               try {
-                await api.studioSynthPresetDelete(patch.name);
+                await api.studioLibraryDelete("synth", patch.name);
                 setSaved((s) => s.filter((x) => x.name !== patch.name));
               } catch (e) {
                 toast(errorText(e), "error");
@@ -244,9 +254,9 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
               <option value="square">{t("Square")}</option>
             </select>
           </div>
-          <Param label={t("Octave")} value={patch.sub.octave} min={-2} max={0} step={1} onChange={(v) => set((p) => (p.sub.octave = v), false)} onDone={done} />
-          <Param label={t("Level")} value={patch.sub.level} min={0} max={1} onChange={(v) => set((p) => (p.sub.level = v), false)} onDone={done} />
-          <Param label={t("Noise")} value={patch.noise} min={0} max={1} onChange={(v) => set((p) => (p.noise = v), false)} onDone={done} />
+          <Param path="sub.octave" label={t("Octave")} value={patch.sub.octave} min={-2} max={0} step={1} onChange={(v) => set((p) => (p.sub.octave = v), false)} onDone={done} />
+          <Param path="sub.level" label={t("Level")} value={patch.sub.level} min={0} max={1} onChange={(v) => set((p) => (p.sub.level = v), false)} onDone={done} />
+          <Param path="noise" label={t("Noise")} value={patch.noise} min={0} max={1} onChange={(v) => set((p) => (p.noise = v), false)} onDone={done} />
           <div className="row">
             <label className="row small"><input type="checkbox" checked={patch.filter.on} onChange={(e) => set((p) => (p.filter.on = e.target.checked))} /> <strong>{t("Filter")}</strong></label>
             <select value={patch.filter.type} onChange={(e) => set((p) => (p.filter.type = e.target.value as SynthPatch["filter"]["type"]))} aria-label={t("Filter")}>
@@ -256,11 +266,11 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
               <option value="notch">{t("Notch")}</option>
             </select>
           </div>
-          <Param label={t("Cutoff")} value={patch.filter.cutoff} min={20} max={20000} log unit=" Hz" onChange={(v) => set((p) => (p.filter.cutoff = v), false)} onDone={done} />
-          <Param label={t("Resonance")} value={patch.filter.resonance} min={0} max={1} onChange={(v) => set((p) => (p.filter.resonance = v), false)} onDone={done} />
-          <Param label={t("Envelope")} value={patch.filter.env} min={-6} max={6} unit=" oct" onChange={(v) => set((p) => (p.filter.env = v), false)} onDone={done} />
-          <Param label={t("Key follow")} value={patch.filter.keyTrack} min={0} max={1} onChange={(v) => set((p) => (p.filter.keyTrack = v), false)} onDone={done} />
-          <Param label={t("Drive")} value={patch.filter.drive} min={0} max={1} onChange={(v) => set((p) => (p.filter.drive = v), false)} onDone={done} />
+          <Param path="filter.cutoff" label={t("Cutoff")} value={patch.filter.cutoff} min={20} max={20000} log unit=" Hz" onChange={(v) => set((p) => (p.filter.cutoff = v), false)} onDone={done} />
+          <Param path="filter.resonance" label={t("Resonance")} value={patch.filter.resonance} min={0} max={1} onChange={(v) => set((p) => (p.filter.resonance = v), false)} onDone={done} />
+          <Param path="filter.env" label={t("Envelope")} value={patch.filter.env} min={-6} max={6} unit=" oct" onChange={(v) => set((p) => (p.filter.env = v), false)} onDone={done} />
+          <Param path="filter.keyTrack" label={t("Key follow")} value={patch.filter.keyTrack} min={0} max={1} onChange={(v) => set((p) => (p.filter.keyTrack = v), false)} onDone={done} />
+          <Param path="filter.drive" label={t("Drive")} value={patch.filter.drive} min={0} max={1} onChange={(v) => set((p) => (p.filter.drive = v), false)} onDone={done} />
         </div>
         <div className="synth-box">
           {envBox("amp", t("Amp envelope"))}
@@ -289,7 +299,7 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
                   <option key={s} value={s}>{t(n)}</option>
                 ))}
               </select>
-              <Param label={t("Amount")} value={m.amount} min={-1} max={1} onChange={(v) => set((p) => (p.matrix[i].amount = v), false)} onDone={done} />
+              <Param path={`matrix.${i}.amount`} label={t("Amount")} value={m.amount} min={-1} max={1} onChange={(v) => set((p) => (p.matrix[i].amount = v), false)} onDone={done} />
               <button className="btn ghost small" onClick={() => set((p) => p.matrix.splice(i, 1))} aria-label={t("Remove")}>✕</button>
             </div>
           ))}
@@ -308,15 +318,16 @@ export function SynthPanel({ track, patch, made, onPatch, onMakeTable, canCaptur
               <label className="row small"><input type="checkbox" checked={patch.voice.legato} onChange={(e) => set((p) => (p.voice.legato = e.target.checked))} /> {t("Legato")}</label>
             )}
           </div>
-          {patch.voice.mode === "poly" && <Param label={t("Voices")} value={patch.voice.voices} min={1} max={16} step={1} onChange={(v) => set((p) => (p.voice.voices = v), false)} onDone={done} />}
-          <Param label={t("Glide")} value={patch.voice.glide} min={0} max={2} curve={2} unit=" s" onChange={(v) => set((p) => (p.voice.glide = v), false)} onDone={done} />
-          <Param label={t("Octave")} value={patch.voice.octave} min={-3} max={3} step={1} onChange={(v) => set((p) => (p.voice.octave = v), false)} onDone={done} />
-          <Param label={t("Semitones")} value={patch.voice.semi} min={-12} max={12} step={1} onChange={(v) => set((p) => (p.voice.semi = v), false)} onDone={done} />
-          <Param label={t("Fine")} value={patch.voice.fine} min={-100} max={100} step={1} unit="¢" onChange={(v) => set((p) => (p.voice.fine = v), false)} onDone={done} />
-          <Param label={t("Velocity")} value={patch.voice.velocity} min={0} max={1} onChange={(v) => set((p) => (p.voice.velocity = v), false)} onDone={done} />
-          <Param label={t("Volume")} value={patch.level} min={0} max={1} onChange={(v) => set((p) => (p.level = v), false)} onDone={done} />
+          {patch.voice.mode === "poly" && <Param path="voice.voices" label={t("Voices")} value={patch.voice.voices} min={1} max={16} step={1} onChange={(v) => set((p) => (p.voice.voices = v), false)} onDone={done} />}
+          <Param path="voice.glide" label={t("Glide")} value={patch.voice.glide} min={0} max={2} curve={2} unit=" s" onChange={(v) => set((p) => (p.voice.glide = v), false)} onDone={done} />
+          <Param path="voice.octave" label={t("Octave")} value={patch.voice.octave} min={-3} max={3} step={1} onChange={(v) => set((p) => (p.voice.octave = v), false)} onDone={done} />
+          <Param path="voice.semi" label={t("Semitones")} value={patch.voice.semi} min={-12} max={12} step={1} onChange={(v) => set((p) => (p.voice.semi = v), false)} onDone={done} />
+          <Param path="voice.fine" label={t("Fine")} value={patch.voice.fine} min={-100} max={100} step={1} unit="¢" onChange={(v) => set((p) => (p.voice.fine = v), false)} onDone={done} />
+          <Param path="voice.velocity" label={t("Velocity")} value={patch.voice.velocity} min={0} max={1} onChange={(v) => set((p) => (p.voice.velocity = v), false)} onDone={done} />
+          <Param path="level" label={t("Volume")} value={patch.level} min={0} max={1} onChange={(v) => set((p) => (p.level = v), false)} onDone={done} />
         </div>
       </div>
     </div>
+    </SynthTrack.Provider>
   );
 }

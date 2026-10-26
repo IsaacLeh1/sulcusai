@@ -7,7 +7,7 @@
 import { tx } from "../i18n";
 import type { MadeTable, SynthPatch } from "./synth";
 
-export type EffectKind = "eq" | "compressor" | "reverb" | "delay" | "distortion" | "gate";
+export type EffectKind = "eq" | "compressor" | "reverb" | "delay" | "distortion" | "gate" | "chorus" | "phaser" | "tremolo" | "autopan" | "lowpass" | "highpass" | "bitcrusher" | "width" | "limiter";
 
 export interface Effect {
   id: string;
@@ -72,6 +72,8 @@ export interface Clip {
   keepPitch: boolean;
   /** Up or down, in semitones. */
   semitones: number;
+  /** Audio: its formants (its character) moved, in semitones (Suno's Formant). */
+  formant?: number;
   reverse: boolean;
   /** Silent and greyed (Suno's disable). */
   disabled: boolean;
@@ -112,8 +114,30 @@ export interface Project {
   song?: string;
   /** Wavetables made from sounds, by id, for the synth. */
   tables?: Record<string, MadeTable>;
+  /** Sliders following a MIDI controller's knobs (MIDI Learn). */
+  midi?: MidiBinding[];
   created_at: number;
   updated_at: number;
+}
+
+/** A MIDI control (`cc` on `channel`, 0 to 15) moving a slider (`target`, as `LearnTarget` names it) over its range. */
+export interface MidiBinding {
+  cc: number;
+  channel: number;
+  target: string;
+  label: string;
+  min: number;
+  max: number;
+  log?: boolean;
+  /** Whole steps only (an octave, a voice count). */
+  step?: number;
+}
+
+/** A MIDI control's value (0 to 127) on its slider's range. */
+export function bindingValue(b: MidiBinding, value: number) {
+  const u = Math.max(0, Math.min(1, value / 127));
+  const v = b.log && b.min > 0 ? b.min * Math.pow(b.max / b.min, u) : b.min + (b.max - b.min) * u;
+  return b.step ? Math.round(v / b.step) * b.step : v;
 }
 
 export const COLORS = ["#6d5dfc", "#e0565b", "#2fa36b", "#e19b2d", "#2f8fd8", "#b357c9", "#4fb3a9", "#c7792f"];
@@ -126,7 +150,25 @@ export const EFFECTS: Record<EffectKind, { label: string; params: Record<string,
   delay: { label: tx("Delay"), params: { time: [0.02, 1.5, 0.375], feedback: [0, 0.9, 0.35], mix: [0, 1, 0.25] } },
   distortion: { label: tx("Distortion"), params: { drive: [0, 1, 0.3], mix: [0, 1, 1] } },
   gate: { label: tx("Gate"), params: { threshold: [-80, 0, -45] } },
+  chorus: { label: tx("Chorus"), params: { rate: [0.05, 5, 0.8], depth: [0, 1, 0.5], mix: [0, 1, 0.5] } },
+  phaser: { label: tx("Phaser"), params: { rate: [0.05, 5, 0.5], depth: [0, 1, 0.7], mix: [0, 1, 0.5] } },
+  tremolo: { label: tx("Tremolo"), params: { rate: [0.5, 20, 5], depth: [0, 1, 0.5] } },
+  autopan: { label: tx("Auto-pan"), params: { rate: [0.05, 10, 0.5], depth: [0, 1, 0.8] } },
+  lowpass: { label: tx("Low-pass filter"), params: { cutoff: [40, 20000, 2000], resonance: [0, 1, 0.2], rate: [0, 10, 0], depth: [0, 1, 0] } },
+  highpass: { label: tx("High-pass filter"), params: { cutoff: [20, 10000, 200], resonance: [0, 1, 0.2], rate: [0, 10, 0], depth: [0, 1, 0] } },
+  bitcrusher: { label: tx("Bit crusher"), params: { bits: [1, 16, 6], mix: [0, 1, 1] } },
+  width: { label: tx("Stereo width"), params: { width: [0, 2, 1.4] } },
+  limiter: { label: tx("Limiter"), params: { threshold: [-24, 0, -3] } },
 };
+
+/** Settings shown on a logarithmic slider (frequencies). */
+export const LOG_PARAMS = new Set(["cutoff", "midFreq"]);
+
+/** Effects kept by name to put on any track (Suno's custom plugins, built from words or saved from a track). */
+export interface EffectChain {
+  name: string;
+  effects: Effect[];
+}
 
 let counter = 0;
 export function newId(prefix = "x"): string {
@@ -452,6 +494,7 @@ function joinable(a: Clip, b: Clip) {
     a.speed === b.speed &&
     a.keepPitch === b.keepPitch &&
     a.semitones === b.semitones &&
+    (a.formant ?? 0) === (b.formant ?? 0) &&
     a.reverse === b.reverse &&
     a.disabled === b.disabled &&
     a.gain === b.gain &&

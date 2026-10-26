@@ -3007,10 +3007,10 @@ export const api = {
   studioReadMidi: (path: string) => invoke<string>("studio_read_midi", { path }),
   /** A sound file the person picked (for a wavetable), as base64. */
   studioReadSound: (path: string) => invoke<string>("studio_read_sound", { path }),
-  /** The wavetable synth's saved sounds. */
-  studioSynthPresets: () => invoke<unknown[]>("studio_synth_presets"),
-  studioSynthPresetSave: (preset: unknown) => invoke<void>("studio_synth_preset_save", { preset }),
-  studioSynthPresetDelete: (name: string) => invoke<void>("studio_synth_preset_delete", { name }),
+  /** What the song studio keeps by name: the synth's sounds, or effects built from words or saved. */
+  studioLibrary: (kind: "synth" | "effects") => invoke<unknown[]>("studio_library", { kind }),
+  studioLibrarySave: (kind: "synth" | "effects", item: unknown) => invoke<void>("studio_library_save", { kind, item }),
+  studioLibraryDelete: (kind: "synth" | "effects", name: string) => invoke<void>("studio_library_delete", { kind, name }),
   /** A MIDI file the window wrote, saved where the person picked (a .mid path). */
   studioSaveMidi: (path: string, data: string) => invoke<void>("studio_save_midi", { path, data }),
   /** A sound's notes (Basic Pitch), or with `drums` its kick, snare and hat hits. */

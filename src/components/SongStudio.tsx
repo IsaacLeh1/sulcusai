@@ -4,7 +4,7 @@
 // trim, split, fade, copy and change speed or key; tracks have volume, pan,
 // mute, solo, effects and automation; MIDI tracks play notes on sampled
 // instruments; new parts come in takes to pick from. Kept as the window edits.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, fromBase64, on, toBase64, type MediaItem, type MediaRequest, type StudioAction } from "../api";
 import { clock } from "../format";
 import { t, tx } from "../i18n";
@@ -26,6 +26,8 @@ import {
   duplicateTrack,
   EFFECTS,
   end,
+  LOG_PARAMS,
+  type EffectChain,
   findClip,
   length as projectLength,
   midiClip,
@@ -34,6 +36,7 @@ import {
   newEffect,
   newId,
   newTrack,
+  bindingValue,
   pasteClips,
   quantizeWarp,
   recordedClips,
@@ -61,6 +64,7 @@ import {
   type Track,
   type WarpMarker,
 } from "../studio/model";
+import { applyBinding, LearnContext, learnable, type Learn, type LearnTarget } from "../studio/learn";
 import { onsets } from "../studio/onsets";
 import { encodeFrames, framesFromSound, initPatch, LiveWave, PRESETS, withSettings, type SynthPatch } from "../studio/synth";
 import { SynthPanel } from "./SynthPanel";
@@ -77,6 +81,7 @@ const PART_NAMES: Record<string, string> = {
 // An effect setting's name, in words.
 const PARAM_NAMES: Record<string, string> = {
   low: tx("Low"), mid: tx("Middle"), high: tx("High"), midFreq: tx("Middle at (Hz)"), threshold: tx("Threshold (dB)"), ratio: tx("Ratio"), attack: tx("Attack (s)"), release: tx("Release (s)"), makeup: tx("Make-up (dB)"), size: tx("Room size (s)"), mix: tx("Mix"), time: tx("Time (s)"), feedback: tx("Repeats"), drive: tx("Drive"),
+  rate: tx("Rate (Hz)"), depth: tx("Depth"), cutoff: tx("Cutoff (Hz)"), resonance: tx("Resonance"), bits: tx("Bits"), width: tx("Width"),
 };
 const GRIDS: [number, string][] = [[0, tx("Off")], [0.25, "1/16"], [0.5, "1/8"], [1, tx("Beat")], [4, tx("Bar")]];
 // Musical typing: A to ; the white keys, W E T Y U O P the black ones (Suno's).
@@ -576,7 +581,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
         const c = findClip(acc, id)?.clip;
         return c ? updateClip(acc, id, { disabled: !c.disabled }) : acc;
       }, cur));
-      else if (e.key === "Escape") (setSel(new Set()), setRange(null));
+      else if (e.key === "Escape") (setSel(new Set()), setRange(null), setLearning(null));
     };
     const up = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
@@ -597,6 +602,76 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       window.removeEventListener("keyup", up);
     };
   });
+
+  // ---------- MIDI Learn ----------
+  const pRef = useRef(p);
+  pRef.current = p;
+  const [learning, setLearning] = useState<LearnTarget | null>(null);
+  // Knobs move sliders without a step to undo each; a pause makes them one.
+  const turnedFrom = useRef<Project | null>(null);
+  const turnedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const turned = (f: (cur: Project) => Project) => {
+    turnedFrom.current ??= pRef.current;
+    setP((cur) => f(cur));
+    setSaved(false);
+    if (turnedTimer.current) clearTimeout(turnedTimer.current);
+    turnedTimer.current = setTimeout(() => {
+      const base = turnedFrom.current;
+      turnedFrom.current = null;
+      if (base) {
+        setPast((h) => [...h.slice(-(HISTORY - 1)), base]);
+        setFuture([]);
+      }
+    }, 600);
+  };
+  const learn: Learn = {
+    learning: learning?.id ?? null,
+    bound: new Set((p.midi ?? []).map((b) => b.target)),
+    toggle: (target) => {
+      if ((p.midi ?? []).some((b) => b.target === target.id)) {
+        commit((cur) => ({ ...cur, midi: (cur.midi ?? []).filter((b) => b.target !== target.id), updated_at: Date.now() }));
+        toast(t("{what} no longer follows a MIDI control.", { what: target.label }), "success");
+        return;
+      }
+      setLearning((cur) => (cur?.id === target.id ? null : target));
+    },
+  };
+  /** A control change: learnt, followed, or one of Suno's transport controls (CC 115 to 118: play, stop, record, loop). True when used. */
+  const midiCc = useRef<(channel: number, cc: number, value: number) => boolean>(() => false);
+  midiCc.current = (channel, cc, value) => {
+    if (learning) {
+      const bind = { cc, channel, target: learning.id, label: learning.label, min: learning.min, max: learning.max, log: learning.log, step: learning.step };
+      commit((cur) => ({ ...cur, midi: [...(cur.midi ?? []).filter((b) => b.target !== bind.target && !(b.cc === cc && b.channel === channel)), bind], updated_at: Date.now() }));
+      toast(t("{what} follows MIDI control {cc} now (right-click it to forget).", { what: learning.label, cc }), "success");
+      setLearning(null);
+      return true;
+    }
+    const hits = (p.midi ?? []).filter((b) => b.cc === cc && b.channel === channel);
+    if (hits.length) {
+      for (const b of hits) {
+        const v = bindingValue(b, value);
+        if (b.target === "master") setMaster(v);
+        else turned((cur) => applyBinding(cur, b.target, v));
+      }
+      return true;
+    }
+    if (cc >= 115 && cc <= 118) {
+      if (value > 0) {
+        if (cc === 115) play();
+        else if (cc === 116) stop();
+        else if (cc === 117) record();
+        else commit((cur) => ({ ...cur, loop: cur.loop ? null : range ?? [pos, pos + bar * 4] }));
+      }
+      return true;
+    }
+    return false;
+  };
+  const midiClock = useRef<(status: number) => void>(() => {});
+  midiClock.current = (status) => {
+    if (status === 0xfc) stop();
+    else if (status === 0xfa) play(0);
+    else play(pos);
+  };
 
   // A MIDI keyboard plays like musical typing (and is kept the same way while playing).
   const midiNote = useRef<(on: boolean, pitch: number, velocity: number) => void>(() => {});
@@ -620,11 +695,15 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     let access: MIDIAccess | null = null;
     const listen = (e: MIDIMessageEvent) => {
       const d = e.data;
-      if (!d || d.length < 3) return;
+      if (!d?.length) return;
+      // The clock's start, continue and stop (one byte each).
+      if (d[0] === 0xfa || d[0] === 0xfb || d[0] === 0xfc) return midiClock.current(d[0]);
+      if (d.length < 3) return;
       const kind = d[0] & 0xf0;
       if (kind === 0x90 && d[2] > 0) midiNote.current(true, d[1], d[2]);
       else if (kind === 0x80 || (kind === 0x90 && d[2] === 0)) midiNote.current(false, d[1], 100);
       // The mod wheel and pitch bend reach the synth.
+      else if (kind === 0xb0 && midiCc.current(d[0] & 0x0f, d[1], d[2])) return;
       else if (kind === 0xb0 && d[1] === 1) wave.current?.control("mod", d[2] / 127);
       else if (kind === 0xe0) wave.current?.control("bend", (((d[2] << 7) | d[1]) - 8192) / 8192);
     };
@@ -900,6 +979,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     };
     const notes: string[] = [];
     const parts: StudioAction[] = [];
+    const built: EffectChain[] = [];
     let next = p;
     const allClips = (trackId: string, f: (c: Clip) => Clip) => {
       next = { ...next, tracks: next.tracks.map((x) => (x.id === trackId ? { ...x, clips: x.clips.map(f) } : x)) };
@@ -983,6 +1063,31 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
             notes.push(t("new instrument on {name}", { name: tr.name }));
           }
           break;
+        case "build_effect": {
+          // An effect described in words, made of the studio's effects: kept by name, and put on the track if one is named.
+          const parts = Array.isArray(a.effects) ? (a.effects as Record<string, unknown>[]) : [];
+          const effects = parts.flatMap((x) => {
+            const kind = String(x?.effect) as EffectKind;
+            if (!EFFECTS[kind]) return [];
+            const e = newEffect(kind);
+            const given = (x.settings ?? {}) as Record<string, unknown>;
+            for (const [k, [lo, hi]] of Object.entries(EFFECTS[kind].params)) e.params[k] = clamp(given[k], lo, hi, e.params[k]);
+            return [e];
+          });
+          if (!effects.length) break;
+          const name = String(a.name || t("My effect")).trim().slice(0, 60);
+          built.push({ name, effects });
+          if (tr) next = updateTrack(next, tr.id, { effects: [...tr.effects, ...effects.map((e) => ({ ...e, id: newId("fx") }))] });
+          notes.push(tr ? t("built {name} on {track}", { name, track: tr.name }) : t("built {name}", { name }));
+          break;
+        }
+        case "formant":
+          if (tr?.kind === "audio") {
+            const n = clamp(a.semitones, -12, 12, 0);
+            allClips(tr.id, (c) => ({ ...c, formant: n || undefined }));
+            notes.push(t("{name}'s formants moved {n} semitones", { name: tr.name, n }));
+          }
+          break;
         case "transpose":
           if (tr) {
             const n = clamp(a.semitones, -12, 12, 0);
@@ -1028,6 +1133,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       }
     }
     if (next !== p) commit({ ...next, updated_at: Date.now() });
+    for (const chain of built) await api.studioLibrarySave("effects", chain).catch((e) => toast(errorText(e), "error"));
     for (const a of parts) {
       const from = a.from === undefined || a.from === null ? null : clamp(a.from, 0, len, 0);
       const to = a.to === undefined || a.to === null ? null : clamp(a.to, (from ?? 0) + 1, len, len);
@@ -1158,6 +1264,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
 
   return (
     <div className="modal-backdrop">
+      <LearnContext.Provider value={learn}>
       <div className="modal song-studio" role="dialog" aria-modal="true" aria-label={t("Song studio")}>
         <div className="row wrap">
           <input className="input studio-name" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} onBlur={() => setSaved(false)} aria-label={t("Project name")} />
@@ -1201,6 +1308,12 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
             {rec ? t("Stop recording ({secs} s)", { secs: Math.round(rec.secs) }) : t("Record")}
           </button>
           {rec && <span className="rec-level" style={{ width: `${Math.round(rec.level * 60)}px` }} />}
+          {learning && (
+            <span className="learn-note small">
+              {t("Move a knob or slider on your MIDI controller for {what}.", { what: learning.label })}
+              <button className="btn ghost small" onClick={() => setLearning(null)}>{t("Stop")}</button>
+            </span>
+          )}
           <select value={countIn} onChange={(e) => setCountIn(+e.target.value)} aria-label={t("Count-in")} title={t("Clicks before recording starts")}>
             <option value={0}>{t("No count-in")}</option>
             {[1, 2, 4].map((n) => (
@@ -1229,7 +1342,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           </label>
           <label className="row small" title={t("The whole mix's volume")}>
             {t("Master")}
-            <input type="range" min={-30} max={6} step={0.5} value={master} onChange={(e) => setMaster(+e.target.value)} onDoubleClick={() => setMaster(0)} aria-label={t("Master volume")} />
+            <input type="range" min={-30} max={6} step={0.5} value={master} onChange={(e) => setMaster(+e.target.value)} onDoubleClick={() => setMaster(0)} aria-label={t("Master volume")} {...learnable(learn, { id: "master", label: t("Master volume"), min: -30, max: 6 })} />
           </label>
           <span className="spacer" />
           <button className="btn small" onClick={() => addEmptyTrack("audio")} title={t("Add an audio track (Shift+T)")}>{t("+ Audio track")}</button>
@@ -1307,8 +1420,8 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
                     </select>
                   </div>
                   <div className="row small">
-                    <input type="range" min={-40} max={6} step={0.5} value={tr.volume} onChange={(e) => setP(updateTrack(p, tr.id, { volume: +e.target.value }))} onMouseUp={() => setSaved(false)} aria-label={t("Volume")} title={t("Volume {db} dB", { db: tr.volume })} />
-                    <input type="range" min={-1} max={1} step={0.05} value={tr.pan} onChange={(e) => setP(updateTrack(p, tr.id, { pan: +e.target.value }))} onDoubleClick={() => setTrack(tr.id, { pan: 0 })} aria-label={t("Pan")} title={t("Pan (double-click: middle)")} className="pan" />
+                    <input type="range" min={-40} max={6} step={0.5} value={tr.volume} onChange={(e) => setP(updateTrack(p, tr.id, { volume: +e.target.value }))} onMouseUp={() => setSaved(false)} aria-label={t("Volume")} title={t("Volume {db} dB", { db: tr.volume })} {...learnable(learn, { id: `track:${tr.id}:volume`, label: t("{track}: volume", { track: tr.name }), min: -40, max: 6 })} />
+                    <input type="range" min={-1} max={1} step={0.05} value={tr.pan} onChange={(e) => setP(updateTrack(p, tr.id, { pan: +e.target.value }))} onDoubleClick={() => setTrack(tr.id, { pan: 0 })} aria-label={t("Pan")} title={t("Pan (double-click: middle)")} className="pan" {...learnable(learn, { id: `track:${tr.id}:pan`, label: t("{track}: pan", { track: tr.name }), min: -1, max: 1 })} />
                     <button className="link small" onClick={() => { setFocus(tr.id); setDock("effects"); }}>{t("FX {n}", { n: tr.effects.length })}</button>
                   </div>
                   {tr.kind === "midi" && (
@@ -1393,7 +1506,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           ))}
 
           {dock === "effects" && (focusTrack ? (
-            <EffectsPanel track={focusTrack} onChange={(effects) => setTrack(focusTrack.id, { effects })} />
+            <EffectsPanel track={focusTrack} onChange={(effects) => setTrack(focusTrack.id, { effects })} toast={toast} />
           ) : (
             <p className="small muted">{t("Pick a track.")}</p>
           ))}
@@ -1429,6 +1542,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           {dock === "synth" && (synthTrack ? (
             synthTrack.synth ? (
               <SynthPanel
+                trackId={synthTrack.id}
                 track={synthTrack.name}
                 patch={synthTrack.synth}
                 made={p.tables ?? {}}
@@ -1519,6 +1633,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           )}
         </div>
       </div>
+      </LearnContext.Provider>
     </div>
   );
 }
@@ -1566,6 +1681,13 @@ function ClipPanel({ clip, track, p, grid, onChange, onCommitTake, onRemoveFx }:
         <input className="input tiny" type="number" min={-12} max={12} value={clip.semitones} onChange={(e) => onChange({ semitones: Math.max(-12, Math.min(12, Math.round(+e.target.value))) })} />
         {t("semitones")}
       </label>
+      {track.kind === "audio" && (
+        <label className="row small" title={t("Moves a voice's character up or down with its pitch left alone. To keep a voice natural when changing its key, turn this the other way by as much.")}>
+          {t("Formant")}
+          <input type="range" min={-12} max={12} step={0.5} value={clip.formant ?? 0} onChange={(e) => onChange({ formant: +e.target.value || undefined })} onDoubleClick={() => onChange({ formant: undefined })} aria-label={t("Formant")} />
+          <span className="mono">{(clip.formant ?? 0) > 0 ? "+" : ""}{clip.formant ?? 0}</span>
+        </label>
+      )}
       <label className="row small">
         <input type="checkbox" checked={clip.disabled} onChange={(e) => onChange({ disabled: e.target.checked })} /> {t("Off")}
       </label>
@@ -1779,20 +1901,80 @@ function TakesPanel({ p, clipId, grid, onChange, onHear }: { p: Project; clipId:
   );
 }
 
-function EffectsPanel({ track, onChange }: { track: Track; onChange: (e: Track["effects"]) => void }) {
+/** A track's effects in order, each with its settings; effects added one
+ * by one or as a whole set kept by name (built from words in the chat bar,
+ * or saved from a track), and this track's set saved by name. */
+function EffectsPanel({ track, onChange, toast }: { track: Track; onChange: (e: Track["effects"]) => void; toast: PushToast }) {
+  const learn = useContext(LearnContext);
+  const [kept, setKept] = useState<EffectChain[]>([]);
+  const [name, setName] = useState("");
+  useEffect(() => {
+    api.studioLibrary("effects").then((l) => setKept(l as EffectChain[])).catch(() => {});
+  }, []);
   const set = (id: string, patch: Partial<Track["effects"][number]>) => onChange(track.effects.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  const add = (v: string) => {
+    if (v.startsWith("#")) {
+      const chain = kept.find((c) => c.name === v.slice(1));
+      if (chain) onChange([...track.effects, ...chain.effects.filter((e) => EFFECTS[e.kind]).map((e) => ({ ...e, id: newId("fx") }))]);
+      return;
+    }
+    if (v) onChange([...track.effects, newEffect(v as EffectKind)]);
+  };
+  const keep = async () => {
+    const chain = { name: name.trim(), effects: track.effects };
+    try {
+      await api.studioLibrarySave("effects", chain);
+      setKept((k) => [...k.filter((c) => c.name !== chain.name), chain]);
+      setName("");
+      toast(t("Saved as {name}.", { name: chain.name }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   return (
     <div className="studio-effects">
       <div className="row wrap">
         <strong>{track.name}</strong>
-        <select value="" onChange={(e) => e.target.value && onChange([...track.effects, newEffect(e.target.value as EffectKind)])} aria-label={t("Add an effect")}>
+        <select value="" onChange={(e) => add(e.target.value)} aria-label={t("Add an effect")}>
           <option value="">{t("Add an effect…")}</option>
-          {(Object.keys(EFFECTS) as EffectKind[]).map((k) => (
-            <option key={k} value={k}>{t(EFFECTS[k].label)}</option>
-          ))}
+          <optgroup label={t("Effects")}>
+            {(Object.keys(EFFECTS) as EffectKind[]).map((k) => (
+              <option key={k} value={k}>{t(EFFECTS[k].label)}</option>
+            ))}
+          </optgroup>
+          {kept.length > 0 && (
+            <optgroup label={t("Your effects")}>
+              {kept.map((c) => (
+                <option key={c.name} value={`#${c.name}`}>{c.name}</option>
+              ))}
+            </optgroup>
+          )}
         </select>
+        {track.effects.length > 0 && (
+          <>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Name to save these as")} aria-label={t("Name to save these as")} />
+            <button className="btn small" disabled={!name.trim()} onClick={keep}>{t("Save these effects")}</button>
+          </>
+        )}
       </div>
-      {!track.effects.length && <p className="small muted">{t("No effects on this track.")}</p>}
+      {kept.length > 0 && (
+        <div className="row wrap small">
+          <span className="muted">{t("Your effects:")}</span>
+          {kept.map((c) => (
+            <span key={c.name} className="chip">
+              {c.name}
+              <button
+                className="link small"
+                aria-label={t("Delete {name}", { name: c.name })}
+                onClick={() => api.studioLibraryDelete("effects", c.name).then(() => setKept((k) => k.filter((x) => x.name !== c.name))).catch((e) => toast(errorText(e), "error"))}
+              >
+                ✕
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {!track.effects.length && <p className="small muted">{t("No effects on this track. Describe one in the chat bar (\"a lo-fi telephone voice\") and it's built and kept here.")}</p>}
       {track.effects.map((e, i) => (
         <div key={e.id} className="studio-effect">
           <div className="row">
@@ -1805,12 +1987,19 @@ function EffectsPanel({ track, onChange }: { track: Track; onChange: (e: Track["
             <button className="btn ghost small" onClick={() => onChange(track.effects.filter((x) => x.id !== e.id))}>{t("Remove")}</button>
           </div>
           <div className="row wrap">
-            {Object.entries(EFFECTS[e.kind].params).map(([k, [min, max]]) => (
-              <label key={k} className="row small">
-                {t(PARAM_NAMES[k] ?? k)}
-                <input type="range" min={min} max={max} step={(max - min) / 100} value={e.params[k]} onChange={(x) => set(e.id, { params: { ...e.params, [k]: +x.target.value } })} />
-              </label>
-            ))}
+            {Object.entries(EFFECTS[e.kind].params).map(([k, [min, max]]) => {
+              // Frequencies on a logarithmic slider: as much room for each octave.
+              const log = LOG_PARAMS.has(k);
+              const toU = (v: number) => (log ? Math.log(v / min) / Math.log(max / min) : (v - min) / (max - min));
+              const fromU = (u: number) => (log ? min * Math.pow(max / min, u) : min + (max - min) * u);
+              const value = e.params[k] ?? EFFECTS[e.kind].params[k][2];
+              return (
+                <label key={k} className="row small" title={`${Math.round(value * 100) / 100}`}>
+                  {t(PARAM_NAMES[k] ?? k)}
+                  <input type="range" min={0} max={1} step={0.005} value={toU(value)} onChange={(x) => set(e.id, { params: { ...e.params, [k]: fromU(+x.target.value) } })} {...learnable(learn, { id: `fx:${track.id}:${e.id}:${k}`, label: `${track.name}: ${t(EFFECTS[e.kind].label)} ${t(PARAM_NAMES[k] ?? k)}`, min, max, log })} />
+                </label>
+              );
+            })}
           </div>
         </div>
       ))}

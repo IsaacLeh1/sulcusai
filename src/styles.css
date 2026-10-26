@@ -1950,7 +1950,7 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .studio-playhead { position: absolute; top: 0; width: 2px; background: #e0565b; pointer-events: none; z-index: 4; }
 .studio-dock { border-top: 1px solid var(--border); padding-top: 6px; max-height: 42vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .studio-clip-panel { gap: 12px; }
-.studio-clip-panel > label, .song-studio .input.tiny { flex: none; }
+.song-studio .studio-clip-panel > label, .song-studio .input.tiny { flex: none; }
 .studio-effects { display: flex; flex-direction: column; gap: 6px; }
 .studio-effect { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; }
 .studio-make { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
@@ -2000,5 +2000,8 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .synth-frame { width: 100%; height: 44px; background: var(--code-bg); border-radius: 4px; }
 .synth-route { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; align-items: center; border-top: 1px dashed var(--border); padding-top: 3px; }
 .synth-route .synth-param { grid-column: 1 / 2; }
+.song-studio input[data-midi="learning"] { outline: 2px dashed #e19b2d; outline-offset: 2px; }
+.song-studio input[data-midi="bound"] { accent-color: #2fa36b; }
+.learn-note { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: rgba(225, 155, 45, 0.15); }
 .studio-ask .input { flex: 1; min-width: 200px; }
 .studio-ask .ellipsis { max-width: 45%; }
