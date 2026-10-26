@@ -1550,6 +1550,14 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## 0.9.40 (2026-10-26): what left this PC in detail; silent Your voice readings
+
+Ask: "within the what left this PC section in the settings, make it so users can click each item, delete specific items and see more details about each item that left the pc with a purpose, timestamp and chat". Notes: `C:\dev\tools\notes-0940.md`.
+- **Core** (`outgoing.rs`): `Sent` gains `id`, `asked` (the person's last message in that chat, `db::last_user_message`, 300 chars), `items` (`SentItem` label/value/level, 12 at most, values 600 chars), `could`, `found`, `note`, all `#[serde(default)]` so older entries still load. `sent_list` gives an older entry a stable id (`old-<at>-<hash of tool, to, what, chat>`) so it can be deleted. New `privacy_sent_delete(ids)` (logged in the action log). Tests `what_left_keeps_ids_and_reads_older_items`, `the_last_request_in_a_chat_is_found`.
+- **Window** (`SharePermission.tsx`): rows are buttons showing the purpose (`PURPOSES` per tool, "Using the connector tool {tool}" otherwise) and "in “{chat}”", with a per-row delete. `SentDetails` shows what it was for (+ "You had asked"), the full date, the chat (a link that fires window event `open-chat`, which App.tsx handles; "A chat that was deleted"; "Not from a chat (the Studio)"), how personal, what was (or would have been) sent, personal details, what they can do with it, the note, and a note on older entries. Checked in the UI mock.
+- **Your voice silence** (his brother: "it would say anything after the sampling"): `own_voice::heard_any` checks the readings are finite and louder than RMS 0.003. If the Vulkan engine gave silence it reads again with `--device CPU`; if still silent it fails with a message pointing at re-recording. Non-finite samples are zeroed. Test `silent_or_broken_readings_are_caught`; `e2e_own_voice_reads_and_sings` still passes (5.4 s read, 101 s song). Not reproduced here: his card's cause is unknown; ask for a report if it still fails.
+- Tests: library 671, window 77.
+
 ## 0.9.39 (2026-10-26): the work bar
 
 Ask: "show a downloading progress bar at the top or the bottom of sulcus and if there is no download, just have it say No work". Notes: `C:\dev\tools\notes-0939.md`.

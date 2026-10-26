@@ -525,7 +525,19 @@ select, .input {
 .sent-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 10px; }
 .sent-filters .input { width: auto; }
 .sent-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 2px; }
-.sent-list li { display: flex; gap: 10px; align-items: flex-start; padding: 8px 4px; border-bottom: 1px solid var(--border); }
+.sent-list li { display: flex; gap: 6px; align-items: flex-start; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.sent-open { display: flex; gap: 10px; align-items: flex-start; flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: inherit; font: inherit; padding: 4px; border-radius: 6px; cursor: pointer; }
+.sent-open:hover { background: var(--hover); }
+.sent-delete { flex: none; opacity: 0.5; margin-top: 4px; }
+.sent-list li:hover .sent-delete { opacity: 1; }
+.sent-details { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; }
+.sent-details dt { color: var(--muted); font-size: 12.5px; padding-top: 2px; }
+.sent-details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sent-details dd p { margin: 0 0 4px; }
+.sent-asked { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.sent-items { list-style: none; padding: 0; margin: 0; display: grid; gap: 6px; }
+.sent-items li { display: flex; gap: 8px; align-items: flex-start; }
+.sent-value { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; max-height: 160px; overflow: auto; }
 .sent-list li.not-sent { opacity: 0.6; }
 .sent-list .share-dot { margin-top: 2px; }
 .sent-body { min-width: 0; flex: 1; }

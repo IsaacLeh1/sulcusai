@@ -694,6 +694,14 @@ pub fn messages(conn: &Connection, c: &Cipher, chat_id: &str) -> Vec<Message> {
     .unwrap_or_default()
 }
 
+/// The latest thing the person wrote in a chat, or None.
+pub fn last_user_message(conn: &Connection, c: &Cipher, chat_id: &str) -> Option<String> {
+    let raw: String = conn
+        .query_row("SELECT content FROM messages WHERE chat_id = ?1 AND role = 'user' ORDER BY created_at DESC, rowid DESC LIMIT 1", [chat_id], |r| r.get(0))
+        .ok()?;
+    c.decrypt(&raw).ok()
+}
+
 pub fn message_count(conn: &Connection, chat_id: &str) -> usize {
     conn.query_row("SELECT COUNT(*) FROM messages WHERE chat_id = ?1", [chat_id], |r| r.get::<_, i64>(0))
         .map(|n| n as usize)

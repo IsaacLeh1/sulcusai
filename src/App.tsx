@@ -212,6 +212,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     if (!SETTINGS_VIEWS.includes(view)) backTo.current = view;
     if (view !== "settings") setSettingsJump(null);
   }, [view]);
+  // A chat opened from elsewhere in the page (What left this PC).
+  useEffect(() => {
+    const go = (e: Event) => {
+      setActiveChat((e as CustomEvent<string>).detail);
+      setView("chat");
+    };
+    window.addEventListener("open-chat", go);
+    return () => window.removeEventListener("open-chat", go);
+  }, [setActiveChat, setView]);
   // A link elsewhere (the connectivity menu) opening a Settings section.
   useEffect(() => {
     const go = (e: Event) => {

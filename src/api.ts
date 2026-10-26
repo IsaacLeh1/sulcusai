@@ -1121,6 +1121,8 @@ export interface ShareReview {
 
 /** One thing sent off this PC ("What left this PC"). */
 export interface SentEntry {
+  /** Its own id, to delete it alone. */
+  id: string;
   at: number;
   chat_id: string;
   /** The tool, or "cloud_chat" for a turn sent to an online model. */
@@ -1130,6 +1132,13 @@ export interface SentEntry {
   what: string;
   /** False when the person chose not to send it. */
   sent: boolean;
+  /** What the person had last asked in that chat (kept from 0.9.40 on). */
+  asked?: string | null;
+  /** Everything it sent, each with how personal it was. */
+  items?: { label: string; value: string; level: number }[];
+  could?: string[];
+  found?: { level: number; what: string }[];
+  note?: string | null;
 }
 
 export interface PrivacyMode {
@@ -2779,6 +2788,8 @@ export const api = {
   privacyShare: (callId: string, edits: { key: string; value: string | null }[]) => invoke<void>("privacy_share", { callId, edits }),
   privacySent: () => invoke<SentEntry[]>("privacy_sent"),
   privacySentClear: () => invoke<void>("privacy_sent_clear"),
+  /** Takes chosen items out of "What left this PC". */
+  privacySentDelete: (ids: string[]) => invoke<void>("privacy_sent_delete", { ids }),
   siteKeys: () => invoke<SavedSiteKey[]>("site_keys"),
   siteKeyForget: (host: string) => invoke<void>("site_key_forget", { host }),
   desktopAccess: () => invoke<DesktopAccess>("desktop_access"),

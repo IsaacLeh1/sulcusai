@@ -556,9 +556,13 @@ pub fn review_cloud(provider: &str, message: &str, profile: &str, memories: &str
 
 // ---------- what left this PC ----------
 
-/// One thing sent off this PC, for the "What left this PC" list.
+/// One thing sent off this PC, for the "What left this PC" list. Items kept
+/// before 0.9.40 have only the first fields (the rest are empty).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Sent {
+    /// Its own id, to delete it alone (older ones get one when listed).
+    #[serde(default)]
+    pub id: String,
     pub at: i64,
     pub chat_id: String,
     /// The tool, or "cloud_chat" for a turn sent to an online model.
@@ -569,23 +573,79 @@ pub struct Sent {
     pub what: String,
     /// False when the person chose not to send it.
     pub sent: bool,
+    /// What the person had last asked in that chat (shortened): what it was for.
+    #[serde(default)]
+    pub asked: Option<String>,
+    /// Everything it sent, each with how personal it was.
+    #[serde(default)]
+    pub items: Vec<SentItem>,
+    /// What the receiver could do with it.
+    #[serde(default)]
+    pub could: Vec<String>,
+    /// Personal details found in it.
+    #[serde(default)]
+    pub found: Vec<Found>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+/// One part of what was sent: "Search words", its value (shortened), its level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SentItem {
+    pub label: String,
+    pub value: String,
+    pub level: u8,
 }
 
 const SENT_KEY: &str = "sent_log";
 const SENT_KEEP: usize = 1000;
 const SENT_DAYS: i64 = 30;
 
+/// Every item kept, newest first; an older one without an id gets one from
+/// what it is (the same each time, so it can be deleted).
 pub(crate) fn sent_list(conn: &rusqlite::Connection, c: &crate::crypto::Cipher) -> Vec<Sent> {
-    crate::db::get::<String>(conn, SENT_KEY).and_then(|s| c.decrypt(&s).ok()).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default()
+    let mut list: Vec<Sent> = crate::db::get::<String>(conn, SENT_KEY).and_then(|s| c.decrypt(&s).ok()).and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+    for s in list.iter_mut().filter(|s| s.id.is_empty()) {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&s.tool, &s.to, &s.what, &s.chat_id).hash(&mut h);
+        s.id = format!("old-{}-{:x}", s.at, h.finish());
+    }
+    list
 }
 
-/// Adds a call to the list (encrypted, newest first, 30 days and at most 1,000 kept).
+fn store_sent(conn: &rusqlite::Connection, c: &crate::crypto::Cipher, list: &[Sent]) -> Result<(), String> {
+    let json = serde_json::to_string(list).map_err(|e| e.to_string())?;
+    crate::db::set(conn, SENT_KEY, &c.encrypt(&json))
+}
+
+/// Adds a call to the list (encrypted, newest first, 30 days and at most 1,000 kept),
+/// with what it was for (the person's last request in the chat) and all it sent.
 pub fn record(state: &crate::AppState, c: &crate::crypto::Cipher, chat_id: &str, tool: &str, r: &Review, sent: bool) {
     let what = r.items.first().map(|i| if i.value.is_empty() { i.label.clone() } else { trimmed(&i.value, 140) }).unwrap_or_default();
     let now = chrono::Utc::now().timestamp_millis();
     let conn = state.db.lock().unwrap();
+    let asked = (!chat_id.is_empty()).then(|| crate::db::last_user_message(&conn, c, chat_id)).flatten().map(|m| trimmed(m.trim(), 300)).filter(|m| !m.is_empty());
+    let items = r.items.iter().take(12).map(|i| SentItem { label: i.label.clone(), value: trimmed(&i.value, 600), level: i.level }).collect();
     let mut list = sent_list(&conn, c);
-    list.insert(0, Sent { at: now, chat_id: chat_id.into(), tool: tool.into(), to: r.to.clone(), level: r.level, what, sent });
+    list.insert(
+        0,
+        Sent {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            at: now,
+            chat_id: chat_id.into(),
+            tool: tool.into(),
+            to: r.to.clone(),
+            level: r.level,
+            what,
+            sent,
+            asked,
+            items,
+            could: r.could.clone(),
+            found: r.found.clone(),
+            note: r.note.clone(),
+        },
+    );
     list.retain(|s| now - s.at < SENT_DAYS * 86_400_000);
     list.truncate(SENT_KEEP);
     if let Ok(json) = serde_json::to_string(&list) {
@@ -612,6 +672,20 @@ pub fn forget_chats(conn: &rusqlite::Connection, c: &crate::crypto::Cipher, chat
 pub fn privacy_sent(state: crate::AppStateRef) -> Result<Vec<Sent>, String> {
     let c = state.cipher()?;
     Ok(sent_list(&state.db.lock().unwrap(), &c))
+}
+
+/// Takes chosen items out of the list.
+#[tauri::command(async)]
+pub fn privacy_sent_delete(state: crate::AppStateRef, ids: Vec<String>) -> Result<(), String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut list = sent_list(&conn, &c);
+    let before = list.len();
+    list.retain(|s| !ids.contains(&s.id));
+    store_sent(&conn, &c, &list)?;
+    let gone = before - list.len();
+    crate::db::log_action(&conn, "privacy", &format!("Removed {gone} item{} from the list of what left this PC", if gone == 1 { "" } else { "s" }));
+    Ok(())
 }
 
 #[tauri::command]
@@ -823,5 +897,39 @@ mod tests {
         assert_eq!((m.first.as_deref(), m.last.as_deref()), (Some("Mary"), Some("Smith")));
         assert_eq!(Me::new("Prince", vec![], "").last, None);
         assert_eq!(Me::new("", vec![], "Orem, Utah").place.as_deref(), Some("Orem"));
+    }
+
+    #[test]
+    fn what_left_keeps_ids_and_reads_older_items() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_for_test(&conn);
+        let c = crate::crypto::Cipher::for_test();
+        // As 0.9.39 kept it: no id, no details.
+        let old = r#"[{"at":1,"chat_id":"c1","tool":"web_search","to":"DuckDuckGo","level":3,"what":"ryokan kyoto","sent":true}]"#;
+        crate::db::set(&conn, SENT_KEY, &c.encrypt(old)).unwrap();
+        let a = sent_list(&conn, &c);
+        assert!(a[0].id.starts_with("old-1-") && a[0].items.is_empty() && a[0].asked.is_none());
+        assert_eq!(sent_list(&conn, &c)[0].id, a[0].id, "the same id each time it's listed");
+        let new = Sent { id: "n1".into(), at: 2, asked: Some("Find me a ryokan".into()), items: vec![SentItem { label: "Search words".into(), value: "ryokan kyoto".into(), level: 3 }], ..a[0].clone() };
+        store_sent(&conn, &c, &[new, a[0].clone()]).unwrap();
+        let mut b = sent_list(&conn, &c);
+        assert_eq!(b[0].asked.as_deref(), Some("Find me a ryokan"));
+        b.retain(|s| s.id != a[0].id);
+        store_sent(&conn, &c, &b).unwrap();
+        assert_eq!(sent_list(&conn, &c).iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["n1"]);
+    }
+
+    #[test]
+    fn the_last_request_in_a_chat_is_found() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::db::init_for_test(&conn);
+        let c = crate::crypto::Cipher::for_test();
+        let chat = crate::db::create_chat(&conn, &c, None).unwrap();
+        for (i, (role, text)) in [("user", "first"), ("assistant", "ok"), ("user", "what's the weather in Kyoto?"), ("assistant", "looking")].iter().enumerate() {
+            let m = crate::db::Message { id: format!("m{i}"), chat_id: chat.id.clone(), role: role.to_string(), content: text.to_string(), created_at: i as i64, ..Default::default() };
+            crate::db::add_message(&conn, &c, &m).unwrap();
+        }
+        assert_eq!(crate::db::last_user_message(&conn, &c, &chat.id).as_deref(), Some("what's the weather in Kyoto?"));
+        assert_eq!(crate::db::last_user_message(&conn, &c, "nope"), None);
     }
 }

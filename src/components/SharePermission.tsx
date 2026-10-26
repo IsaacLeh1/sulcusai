@@ -297,15 +297,127 @@ export function PrivacyModeSettings({ toast }: { toast: PushToast }) {
   );
 }
 
+// What each kind of sending was for.
+const PURPOSES: Record<string, string> = {
+  web_search: tx("Searching the web"),
+  research: tx("Researching a question on the web"),
+  fetch_page: tx("Opening a web page"),
+  browser_open: tx("Opening a web page"),
+  open_path: tx("Opening a web address in your browser"),
+  browser_type: tx("Typing into a web page"),
+  weather: tx("Looking up the weather"),
+  wikipedia: tx("Looking something up on Wikipedia"),
+  market_quote: tx("Looking up a price"),
+  find_places: tx("Finding places on a map"),
+  email_send: tx("Sending an email"),
+  run_command: tx("Running a command that sends things online"),
+  ask_person: tx("Asking someone's assistant"),
+  work_with_person: tx("Working with someone"),
+  cloud_chat: tx("Answering with an online AI model"),
+  cloud_media: tx("Making a picture, video or song with an online model"),
+  calendar_create_event: tx("Adding an event to your calendar"),
+};
+
+/** What a sending was for, in words. */
+export function purposeOf(tool: string): string {
+  return PURPOSES[tool] ? t(PURPOSES[tool]) : t("Using the connector tool {tool}", { tool });
+}
+
+const when = (at: number) => new Date(at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+/** One item in full: what it was for, when, from which chat, everything it sent and what the receiver can do with it. */
+function SentDetails({ s, chat, onOpenChat, onDelete, onClose }: { s: SentEntry; chat: Chat | null; onOpenChat: () => void; onDelete: () => void; onClose: () => void }) {
+  return (
+    <Modal title={s.sent ? t("Sent to {to}", { to: s.to }) : t("Not sent to {to}", { to: s.to })} onClose={onClose}>
+      <dl className="sent-details">
+        <dt>{t("What it was for")}</dt>
+        <dd>
+          {purposeOf(s.tool)}
+          {s.asked && <div className="sent-asked">{t("You had asked: “{text}”", { text: s.asked })}</div>}
+        </dd>
+        <dt>{t("When")}</dt>
+        <dd>{new Date(s.at).toLocaleString([], { dateStyle: "full", timeStyle: "medium" })}</dd>
+        <dt>{t("Chat")}</dt>
+        <dd>
+          {!s.chat_id ? (
+            t("Not from a chat (the Studio)")
+          ) : chat ? (
+            <button className="link" onClick={onOpenChat}>{chat.title || t("New chat")}</button>
+          ) : (
+            <span className="muted">{t("A chat that was deleted")}</span>
+          )}
+        </dd>
+        <dt>{t("How personal")}</dt>
+        <dd>
+          <span className={`share-dot share-level-${s.level}`}>{s.level}</span> {t(LEVELS[s.level - 1] ?? "")}
+          {!s.sent && <span className="sent-chip">{t("Not sent")}</span>}
+        </dd>
+        <dt>{s.sent ? t("What was sent") : t("What would have been sent")}</dt>
+        <dd>
+          {s.items?.length ? (
+            <ul className="sent-items">
+              {s.items.map((it, i) => (
+                <li key={i}>
+                  <span className={`share-dot share-level-${it.level}`} title={t(LEVELS[it.level - 1] ?? "")}>{it.level}</span>
+                  <div>
+                    <strong className="small">{t(it.label)}</strong>
+                    {it.value && <div className="sent-value">{it.value}</div>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="sent-value">{s.what}</div>
+          )}
+        </dd>
+        {!!s.found?.length && (
+          <>
+            <dt>{t("Personal details in it")}</dt>
+            <dd>{s.found.map((f) => t(f.what)).join(", ")}</dd>
+          </>
+        )}
+        {!!s.could?.length && (
+          <>
+            <dt>{t("What they can do with it")}</dt>
+            <dd>
+              {s.could.map((c, i) => (
+                <p key={i} className="small">{t(c)}</p>
+              ))}
+            </dd>
+          </>
+        )}
+        {s.note && (
+          <>
+            <dt>{t("Note")}</dt>
+            <dd className="small">{t(s.note)}</dd>
+          </>
+        )}
+      </dl>
+      {!s.items?.length && <p className="small muted">{t("Kept before SulcusAI saved each item's full details, so only its first part is here.")}</p>}
+      <div className="modal-actions">
+        <button className="btn ghost danger" onClick={onDelete}>{t("Delete from the list")}</button>
+        <span className="spacer" />
+        <button className="btn" onClick={onClose} autoFocus>{t("Close")}</button>
+      </div>
+    </Modal>
+  );
+}
+
 /** Settings: everything sent off this PC lately (searches, pages, emails,
- * turns sent to online models), with how personal each was. Kept on this
- * PC, encrypted, for 30 days. */
+ * turns sent to online models), with how personal each was. Each opens with
+ * what it was for, when, its chat and everything it sent, and can be
+ * deleted on its own. Kept on this PC, encrypted, for 30 days. */
 export function SentLog({ toast }: { toast: PushToast }) {
   const [list, setList] = useState<SentEntry[] | null>(null);
+  const [chats, setChats] = useState<Chat[]>([]);
   const [days, setDays] = useState(7);
   const [personal, setPersonal] = useState(false);
   const [all, setAll] = useState(false);
-  const load = () => api.privacySent().then(setList).catch((e) => toast(errorText(e), "error"));
+  const [open, setOpen] = useState<SentEntry | null>(null);
+  const load = () => {
+    api.privacySent().then(setList).catch((e) => toast(errorText(e), "error"));
+    api.chats().then(setChats).catch(() => {});
+  };
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,6 +426,7 @@ export function SentLog({ toast }: { toast: PushToast }) {
   const since = Date.now() - days * 86_400_000;
   const shown = list.filter((s) => s.at >= since && (!personal || s.level >= 3));
   const visible = all ? shown : shown.slice(0, 25);
+  const chatOf = (s: SentEntry) => chats.find((c) => c.id === s.chat_id) ?? null;
   const clear = async () => {
     try {
       await api.privacySentClear();
@@ -322,11 +435,20 @@ export function SentLog({ toast }: { toast: PushToast }) {
       toast(errorText(e), "error");
     }
   };
+  const remove = async (s: SentEntry) => {
+    try {
+      await api.privacySentDelete([s.id]);
+      setList((l) => (l ?? []).filter((x) => x.id !== s.id));
+      setOpen(null);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
   return (
     <section className="card">
       <h2>{t("What left this PC")}</h2>
       <p className="muted">
-        {t("Everything the assistant sent off your PC lately: searches, pages, emails and messages to online AI models, with how personal each was. This list stays on your PC, encrypted, for 30 days.")}
+        {t("Everything the assistant sent off your PC lately: searches, pages, emails and messages to online AI models, with how personal each was. Click one to see what it was for, when, from which chat, and everything it sent. This list stays on your PC, encrypted, for 30 days.")}
       </p>
       <div className="sent-filters">
         <select className="input" value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label={t("How far back")}>
@@ -351,27 +473,51 @@ export function SentLog({ toast }: { toast: PushToast }) {
         <p className="muted small">{t("Nothing in this time.")}</p>
       ) : (
         <ul className="sent-list">
-          {visible.map((s, i) => (
-            <li key={`${s.at}-${i}`} className={s.sent ? "" : "not-sent"}>
-              <span className={`share-dot share-level-${s.level}`} title={t(LEVELS[s.level - 1] ?? "")}>
-                {s.level}
-              </span>
-              <div className="sent-body">
-                <div className="sent-head">
-                  <strong>{s.to}</strong>
-                  <span className="muted small">{new Date(s.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
-                  {!s.sent && <span className="sent-chip">{t("Not sent")}</span>}
-                </div>
-                <div className="sent-what small">{s.what}</div>
-              </div>
-            </li>
-          ))}
+          {visible.map((s) => {
+            const chat = chatOf(s);
+            return (
+              <li key={s.id} className={s.sent ? "" : "not-sent"}>
+                <button className="sent-open" onClick={() => setOpen(s)} title={t("See what it was for, when, from which chat, and everything it sent")}>
+                  <span className={`share-dot share-level-${s.level}`} title={t(LEVELS[s.level - 1] ?? "")}>
+                    {s.level}
+                  </span>
+                  <div className="sent-body">
+                    <div className="sent-head">
+                      <strong>{s.to}</strong>
+                      <span className="muted small">{when(s.at)}</span>
+                      {!s.sent && <span className="sent-chip">{t("Not sent")}</span>}
+                    </div>
+                    <div className="sent-what small">{s.what}</div>
+                    <div className="muted small">
+                      {purposeOf(s.tool)}
+                      {chat ? ` · ${t("in “{chat}”", { chat: chat.title || t("New chat") })}` : ""}
+                    </div>
+                  </div>
+                </button>
+                <button className="icon-btn sent-delete" onClick={() => remove(s)} aria-label={t("Delete from the list")} title={t("Delete from the list")}>
+                  ✕
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
       {!all && shown.length > visible.length && (
         <button className="btn ghost small" onClick={() => setAll(true)}>
           {t("Show all {n}", { n: shown.length })}
         </button>
+      )}
+      {open && (
+        <SentDetails
+          s={open}
+          chat={chatOf(open)}
+          onOpenChat={() => {
+            window.dispatchEvent(new CustomEvent("open-chat", { detail: open.chat_id }));
+            setOpen(null);
+          }}
+          onDelete={() => remove(open)}
+          onClose={() => setOpen(null)}
+        />
       )}
     </section>
   );

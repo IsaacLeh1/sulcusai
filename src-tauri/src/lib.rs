@@ -3058,6 +3058,7 @@ pub fn run() {
             outgoing::privacy_share,
             outgoing::privacy_sent,
             outgoing::privacy_sent_clear,
+            outgoing::privacy_sent_delete,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,
