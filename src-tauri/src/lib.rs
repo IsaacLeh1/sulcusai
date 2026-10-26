@@ -2297,7 +2297,7 @@ pub(crate) async fn llm_endpoint(
         let conn = state.db.lock().unwrap();
         let default = db::settings(&conn).default_model;
         // A chat whose model was removed (by hand or by the cleanup) uses the default.
-        let gone = |id: &String| !cloud::is_cloud(id) && finetune::parse_ref(id).is_none() && db::installed_model(&conn, id).is_none();
+        let gone = |id: &String| !cloud::is_cloud(id) && !sync::compute::is_compute(id) && finetune::parse_ref(id).is_none() && db::installed_model(&conn, id).is_none();
         let chosen = match model_id {
             Some(id) if gone(&id) && default.as_ref().is_some_and(|d| !gone(d)) => default.clone(),
             other => other,
@@ -2307,6 +2307,12 @@ pub(crate) async fn llm_endpoint(
     if cloud::is_cloud(&id) {
         *state.engine_used.lock().unwrap() = std::time::Instant::now();
         let found = cloud::endpoint(state, &id, &state.cipher()?)?;
+        engine::USERS.lock().unwrap().place(&replies(state), &before, "", task);
+        return Ok(found);
+    }
+    // A model on the compute PC: its turn is taken there.
+    if sync::compute::is_compute(&id) {
+        let found = sync::compute::endpoint(state, &id).await?;
         engine::USERS.lock().unwrap().place(&replies(state), &before, "", task);
         return Ok(found);
     }
@@ -2660,6 +2666,7 @@ pub fn run() {
             side_windows::on_main_event(w, e);
         })
         .setup(|app| {
+            sync::compute::started();
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
             let data = match std::env::var_os("SULCUSAI_DATA_DIR") {
@@ -3109,6 +3116,10 @@ pub fn run() {
             review::review_stop,
             review::review_delete,
             review::review_save,
+            sync::compute::compute_settings,
+            sync::compute::compute_set,
+            sync::compute::compute_status,
+            sync::compute::compute_control,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,

@@ -9,13 +9,13 @@ import { phoneInfo } from "../phone/env";
 import type { PushToast } from "../components/Toasts";
 
 /** Under 70 °C is fine, to 83 warm, above that hot (most chips slow down near 85-95). */
-function heat(temp: number | null): string {
+export function heat(temp: number | null): string {
   return temp == null ? "" : temp >= 83 ? "hot" : temp >= 70 ? "warm" : "cool";
 }
 
-const pct = (used: number | null, total: number | null) => (used != null && total ? (used / total) * 100 : null);
+export const pct = (used: number | null, total: number | null) => (used != null && total ? (used / total) * 100 : null);
 
-function Meter({ label, value, text }: { label: string; value: number | null; text: string }) {
+export function Meter({ label, value, text }: { label: string; value: number | null; text: string }) {
   return (
     <div className="pc-meter">
       <div className="pc-meter-head">
@@ -29,7 +29,7 @@ function Meter({ label, value, text }: { label: string; value: number | null; te
   );
 }
 
-function Temp({ label, value }: { label: string; value: number | null }) {
+export function Temp({ label, value }: { label: string; value: number | null }) {
   return (
     <div className={`pc-temp ${heat(value)}`}>
       <span className="pc-temp-value">{value != null ? `${Math.round(value)} °C` : "—"}</span>
@@ -38,7 +38,7 @@ function Temp({ label, value }: { label: string; value: number | null }) {
   );
 }
 
-function kindName(kind: PcStatus["jobs"][number]["kind"]): string {
+export function kindName(kind: PcStatus["jobs"][number]["kind"]): string {
   return { chat: t("Chat"), media: t("Studio"), install: t("Download"), training: t("Teaching") }[kind];
 }
 

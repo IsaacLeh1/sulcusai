@@ -14,6 +14,7 @@
 //! - Anything stored encrypted travels inside the session's encryption and
 //!   is sealed again with the receiving PC's own data key.
 
+pub mod compute;
 pub mod models;
 pub mod people;
 pub mod relay;
@@ -624,6 +625,29 @@ async fn answer(state: &Arc<AppState>, mut stream: TcpStream) -> Result<(), Stri
             let ask: models::FileAsk = serde_json::from_slice(&inn.open(&ask)?).map_err(|e| e.to_string())?;
             let (_r, mut w) = stream.into_split();
             models::serve(state, ask, &mut w, &mut out).await
+        }
+        Some("compute.status") => {
+            let v = match compute::status(state).await {
+                Ok(s) => serde_json::to_value(s).map_err(|e| e.to_string())?,
+                Err(e) => serde_json::json!({ "error": e }),
+            };
+            wire::write_frame(&mut stream, &out.seal(&serde_json::to_vec(&v).map_err(|e| e.to_string())?)).await.map_err(lost)
+        }
+        Some(kind @ ("compute.control" | "compute.chat" | "compute.media")) => {
+            let ask = timeout(HANDSHAKE, wire::read_frame(&mut stream)).await.map_err(|_| "no request".to_string())?.map_err(lost)?;
+            let ask: serde_json::Value = serde_json::from_slice(&inn.open(&ask)?).map_err(|e| e.to_string())?;
+            let (_r, mut w) = stream.into_split();
+            match kind {
+                "compute.control" => {
+                    let v = match compute::control(state, &ask).await {
+                        Ok(said) => serde_json::json!({ "said": said }),
+                        Err(e) => serde_json::json!({ "error": e }),
+                    };
+                    wire::write_frame(&mut w, &out.seal(&serde_json::to_vec(&v).map_err(|e| e.to_string())?)).await.map_err(lost)
+                }
+                "compute.chat" => compute::serve_chat(state, ask, &mut w, &mut out).await,
+                _ => compute::serve_media(state, ask, &mut w, &mut out).await,
+            }
         }
         Some(_) => Err("unknown request".into()),
         None => session(state, stream, &c, &p, out, inn, None).await.map(|_| ()),

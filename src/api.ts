@@ -2249,6 +2249,28 @@ export interface LibraryView {
   kinds: string[];
 }
 
+/** The linked compute PC's health and what it has. */
+export interface ComputeStatus {
+  name: string;
+  version: string;
+  pc: PcStatus;
+  drives: { name: string; mount: string; total: number; free: number; models: boolean }[];
+  uptime_s: number;
+  app_uptime_s: number;
+  paused: boolean;
+  models: { id: string; name: string; ctx: number; tools: boolean; vision: boolean }[];
+  default_model: string | null;
+  media: string[];
+  perf: "cool" | "balanced" | "turbo";
+}
+
+export interface ComputeSettings {
+  /** The paired PC doing the AI work. */
+  peer: string | null;
+  /** Pictures, video, songs and narration are made there. */
+  media: boolean;
+}
+
 /** A problem a code review found. */
 export interface CodeFinding {
   check: string;
@@ -3296,6 +3318,11 @@ export const api = {
   docsSearch: (query: string, limit?: number) => invoke<DocHit[]>("docs_search", { query, limit: limit ?? null }),
   /** Opens a library file in its app. */
   docsOpen: (id: string) => invoke<void>("docs_open", { id }),
+  // The compute PC.
+  computeSettings: () => invoke<{ settings: ComputeSettings; peers: [string, string][] }>("compute_settings"),
+  computeSet: (settings: ComputeSettings) => invoke<void>("compute_set", { settings }),
+  computeStatus: () => invoke<ComputeStatus>("compute_status"),
+  computeControl: (action: string, value: string | null) => invoke<string>("compute_control", { action, value }),
   // Code reviews ("review:progress" while one runs).
   reviewSetup: () => invoke<ReviewSetup>("review_setup"),
   reviews: () => invoke<CodeReport[]>("reviews"),

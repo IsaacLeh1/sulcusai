@@ -51,10 +51,15 @@ fn short(s: &str) -> String {
 
 #[tauri::command]
 pub async fn pc_status(state: AppStateRef<'_>) -> Result<PcStatus, String> {
+    status(&state).await
+}
+
+/// How this PC is doing now (the phone's PC tab, and a linked PC asking).
+pub(crate) async fn status(state: &crate::AppState) -> Result<PcStatus, String> {
     let c = state.cipher()?;
-    let gpu = crate::perf::gpu_reading(&state).await;
+    let gpu = crate::perf::gpu_reading(state).await;
     // Reading the card's temperature wakes it, so only while working.
-    let temps = if crate::perf::working(&state) { crate::perf::temps().await } else { crate::perf::quiet_temps().await };
+    let temps = if crate::perf::working(state) { crate::perf::temps().await } else { crate::perf::quiet_temps().await };
     let (ram_used, ram_total) = memory();
     let loaded = state.engine.lock().await.status().model_id;
     let model = loaded.map(|id| state.model_spec(&id).map(|m| m.name).unwrap_or(id));
@@ -99,6 +104,11 @@ pub async fn pc_status(state: AppStateRef<'_>) -> Result<PcStatus, String> {
 /// frees the graphics card. Downloads carry on. Returns how many it stopped.
 #[tauri::command]
 pub async fn stop_all(state: AppStateRef<'_>) -> Result<u32, String> {
+    stop_everything(&state).await
+}
+
+/// `stop_all`, for a linked PC asking too.
+pub(crate) async fn stop_everything(state: &crate::AppState) -> Result<u32, String> {
     state.cipher()?;
     let mut n = 0u32;
     for flag in state.generations.lock().unwrap().values() {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
-import { api, errorText, on, type PeerModels, type SyncOutcome, type SyncView } from "../api";
+import { api, errorText, on, type ComputeSettings, type PeerModels, type SyncOutcome, type SyncView } from "../api";
 import { bytes } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -228,12 +228,57 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
       )}
       {v.enabled && v.peers.some((p) => p.online) && <CopyModels toast={toast} />}
       {v.enabled && v.peers.length > 0 && <RelaySetting v={v} run={run} />}
+      {v.peers.length > 0 && <ComputeSetting toast={toast} />}
       {v.enabled && (
         <p className="muted small">
           {t("The first time, Windows may ask whether SulcusAI may use private networks: allow it, or the other PC can't reach this one. Both PCs need SulcusAI open (and unlocked) to sync.")}
         </p>
       )}
     </section>
+  );
+}
+
+/** A paired PC doing the AI work (a compute PC): which one, and whether
+ * Studio jobs go there too. Its models then show in every model menu. */
+function ComputeSetting({ toast }: { toast: PushToast }) {
+  const [v, setV] = useState<{ settings: ComputeSettings; peers: [string, string][] } | null>(null);
+  useEffect(() => {
+    api.computeSettings().then(setV).catch(() => {});
+  }, []);
+  if (!v) return null;
+  const save = async (settings: ComputeSettings) => {
+    try {
+      await api.computeSet(settings);
+      setV({ ...v, settings });
+      window.dispatchEvent(new CustomEvent("compute-changed"));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="compute-setting">
+      <h3>{t("Compute PC")}</h3>
+      <p className="small muted">
+        {t("Let a paired PC built for AI do the heavy work: its models show in every model menu, and you can watch its health. This PC keeps your chats and files.")}
+      </p>
+      <div className="row wrap">
+        <select value={v.settings.peer ?? ""} onChange={(e) => save({ ...v.settings, peer: e.target.value || null })} aria-label={t("Compute PC")}>
+          <option value="">{t("None: AI runs on this PC")}</option>
+          {v.peers.map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
+        {v.settings.peer && (
+          <button className="btn small" onClick={() => window.dispatchEvent(new CustomEvent("open-view", { detail: "compute" }))}>{t("See its health")}</button>
+        )}
+      </div>
+      {v.settings.peer && (
+        <label className="check small">
+          <input type="checkbox" checked={v.settings.media} onChange={(e) => save({ ...v.settings, media: e.target.checked })} />
+          {t("Make pictures, video, songs and narration there too (except ones using your recorded voice or files only on this PC)")}
+        </label>
+      )}
+    </div>
   );
 }
 

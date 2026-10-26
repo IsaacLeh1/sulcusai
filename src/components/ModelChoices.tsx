@@ -27,6 +27,32 @@ export function priceText(price_in?: number | null, price_out?: number | null): 
   return t("{inPrice} in · {outPrice} out per M tokens", { inPrice: n(price_in), outPrice: n(price_out) });
 }
 
+/** A model on the compute PC ("compute:<id>"), and whether it uses tools and sees pictures. */
+export interface ComputeModel {
+  id: string;
+  name: string;
+  tools: boolean;
+  vision: boolean;
+}
+
+/** The linked compute PC's models (none when no compute PC is linked or it can't be reached). */
+export function useComputeModels(): { pc: string; models: ComputeModel[] } {
+  const [v, setV] = useState<{ pc: string; models: ComputeModel[] }>({ pc: "", models: [] });
+  useEffect(() => {
+    let alive = true;
+    api.computeSettings()
+      .then((c) => (c.settings.peer ? api.computeStatus() : null))
+      .then((s) => {
+        if (alive && s) setV({ pc: s.name, models: s.models.map((m) => ({ id: `compute:${m.id}`, name: m.name, tools: m.tools, vision: m.vision })) });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return v;
+}
+
 /** The models that can be picked: on this PC, then the cloud models turned on. */
 export function useModelChoices(): { local: ModelChoice[]; cloud: ModelChoice[] } {
   const [local, setLocal] = useState<ModelChoice[]>([]);
@@ -54,6 +80,7 @@ export function ModelSelect({
   extra?: { label: string; options: { id: string; name: string }[] };
 }) {
   const { local, cloud } = useModelChoices();
+  const compute = useComputeModels();
   const found = findCloud(cloud, value);
   const inExtra = !!extra?.options.some((o) => o.id === value);
   return (
@@ -62,6 +89,15 @@ export function ModelSelect({
       {local.length > 0 && (
         <optgroup label={t("On this PC")}>
           {local.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      {compute.models.length > 0 && (
+        <optgroup label={t("On {pc} (your compute PC)", { pc: compute.pc })}>
+          {compute.models.map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
             </option>

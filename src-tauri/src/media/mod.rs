@@ -1534,6 +1534,57 @@ fn update(state: &AppState, id: &str, f: impl FnOnce(&mut JobInfo)) {
     emit(state, "media:progress", json!(info));
 }
 
+/// A job made on the compute PC: shown here as it goes, and what it makes
+/// kept here.
+async fn on_compute(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let pc = crate::sync::compute::peer_name(state).unwrap_or_else(|| "the compute PC".into());
+    let info = JobInfo {
+        id: id.clone(),
+        op: req.op.clone(),
+        prompt: req.prompt.chars().take(200).collect(),
+        model_id: req.model_id.clone(),
+        status: "running".into(),
+        stage: format!("Sending it to {pc}"),
+        fraction: 0.0,
+        eta_secs: None,
+        est_secs: 60.0,
+        chat_id: req.chat_id.clone(),
+        on: Some("compute PC".into()),
+        device: Some(pc.clone()),
+        gpu_usage: None,
+        gpu_temp: None,
+        cpu_usage: None,
+    };
+    jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
+    emit(state, "media:progress", json!(info));
+    struct Done(String);
+    impl Drop for Done {
+        fn drop(&mut self) {
+            jobs().lock().unwrap().retain(|j| j.info.id != self.0);
+        }
+    }
+    let _done = Done(id.clone());
+    let progress = |stage: &str, fraction: f64, device: Option<String>| {
+        update(state, &id, |i| {
+            i.stage = stage.to_string();
+            i.fraction = fraction.clamp(0.0, 1.0);
+            if let Some(d) = &device {
+                i.device = Some(format!("{d} on {pc}"));
+            }
+        });
+    };
+    let made = crate::sync::compute::media(state, &req, &cancel, &progress).await?;
+    let c = state.work_cipher()?;
+    let mut out = Vec::new();
+    for (item, data, thumb) in made {
+        let item = MediaItem { id: String::new(), chat_id: req.chat_id.clone(), parent: req.source.clone(), hidden: false, ..item };
+        out.push(store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &data, thumb.as_deref())?);
+    }
+    state.log("media", &format!("Made {} on {pc}", out.len()));
+    Ok(out)
+}
+
 /// Checks a request before it's queued, so mistakes show at once.
 /// What a cloud model can do with a job.
 fn cloud_can(c: &crate::cloud::MediaChoice, op: &str) -> bool {
@@ -1708,6 +1759,9 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 
 /// Queues a job and runs it when it's its turn. Returns what it made.
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
+    if crate::sync::compute::media_here(state, &req) {
+        return on_compute(state, id, req).await;
+    }
     // A custom model plays on the model it was trained on.
     let req = match req.music.as_ref().and_then(|m| m.custom.as_deref()).filter(|c| !c.is_empty()) {
         Some(_) if req.op == "music" => Request { model_id: Some(train::BASE_MODEL.into()), ..req },
@@ -5463,7 +5517,10 @@ pub(crate) fn job_done(state: &AppState, job_id: &str, result: &Result<Vec<Media
 #[tauri::command(async)]
 pub fn media_start(state: AppStateRef, request: Request) -> Result<String, String> {
     state.cipher()?;
-    check(&state, &request)?;
+    // A job for the compute PC is checked there.
+    if !crate::sync::compute::media_here(&state, &request) {
+        check(&state, &request)?;
+    }
     let id = store::new_id();
     let (state, job_id) = (state.inner().clone(), id.clone());
     tauri::async_runtime::spawn(async move {

@@ -24,7 +24,7 @@ import { t, tx } from "../i18n";
 import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
 import { CloudCost } from "../components/CloudCost";
-import { findCloud, priceText } from "../components/ModelChoices";
+import { findCloud, priceText, useComputeModels } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
 import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
@@ -220,6 +220,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   }, [connectivity]);
   // Matched by model too: a chat synced from another PC names that PC's provider.
   const cloud = findCloud(cloudChoices, modelId);
+  // Models on the linked compute PC.
+  const compute = useComputeModels();
+  const computeModel = compute.models.find((m) => m.id === modelId) ?? null;
   // Models taught on this PC (a model plus an adapter).
   const [taught, setTaught] = useState<TaughtAdapter[]>([]);
   useEffect(() => {
@@ -228,9 +231,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const teach = taught.find((a) => `adapter:${a.id}` === modelId) ?? null;
   const cloudId = modelId?.startsWith("cloud:") ? modelId : null;
   const teachBase = teach ? installed.find((m) => m.id === teach.base) ?? null : null;
-  const modelName = model?.name ?? (teach ? `${teach.base_name} + ${teach.name}` : null) ?? cloud?.name ?? null;
-  const canTools = model ? model.tools : teachBase ? teachBase.tools : !!cloud;
-  const canSee = model ? !!model.vision : !!cloud?.vision;
+  const modelName = model?.name ?? (teach ? `${teach.base_name} + ${teach.name}` : null) ?? cloud?.name ?? (computeModel ? t("{name} on {pc}", { name: computeModel.name, pc: compute.pc }) : null);
+  const canTools = model ? model.tools : teachBase ? teachBase.tools : computeModel ? computeModel.tools : !!cloud;
+  const canSee = model ? !!model.vision : computeModel ? computeModel.vision : !!cloud?.vision;
   const webOn = connectivity !== "offline" || chat.web;
   // The Web search feature: search and reading pages in every chat, even Offline.
   const searchOn = webOn || features.has("web_search");
@@ -883,7 +886,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
             <select value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
-              {cloudChoices.length > 0 || cloudId || taught.length > 0 ? (
+              {cloudChoices.length > 0 || cloudId || taught.length > 0 || compute.models.length > 0 ? (
                 <optgroup label={t("On this PC")}>
                   {installed.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -903,6 +906,15 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   {taught.map((a) => (
                     <option key={a.id} value={`adapter:${a.id}`}>
                       {a.base_name} + {a.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {compute.models.length > 0 && (
+                <optgroup label={t("On {pc} (your compute PC)", { pc: compute.pc })}>
+                  {compute.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
                     </option>
                   ))}
                 </optgroup>

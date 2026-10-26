@@ -66,6 +66,7 @@ const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default:
 const DocumentsView = lazy(() => import("./views/DocumentsView").then((m) => ({ default: m.DocumentsView })));
 const StudyView = lazy(() => import("./views/StudyView").then((m) => ({ default: m.StudyView })));
 const ReviewView = lazy(() => import("./views/ReviewView").then((m) => ({ default: m.ReviewView })));
+const ComputeView = lazy(() => import("./views/ComputeView").then((m) => ({ default: m.ComputeView })));
 const TasksView = lazy(() => import("./views/TasksView").then((m) => ({ default: m.TasksView })));
 const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m.MailView })));
 const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
@@ -75,7 +76,7 @@ const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ de
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "documents" | "study" | "review" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "documents" | "study" | "review" | "compute" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -227,6 +228,20 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     window.addEventListener("open-chat", go);
     return () => window.removeEventListener("open-chat", go);
   }, [setActiveChat, setView]);
+  // A link elsewhere opening a page ("compute").
+  useEffect(() => {
+    const go = (e: Event) => setView((e as CustomEvent<View>).detail);
+    window.addEventListener("open-view", go);
+    return () => window.removeEventListener("open-view", go);
+  }, [setView]);
+  // Whether a compute PC is linked (its page shows in the menu).
+  const [computeOn, setComputeOn] = useState(false);
+  useEffect(() => {
+    const check = () => api.computeSettings().then((c) => setComputeOn(!!c.settings.peer)).catch(() => {});
+    check();
+    window.addEventListener("compute-changed", check);
+    return () => window.removeEventListener("compute-changed", check);
+  }, []);
   // A link elsewhere (the connectivity menu) opening a Settings section.
   useEffect(() => {
     const go = (e: Event) => {
@@ -776,6 +791,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               { id: "documents", show: has("documents"), label: t("Documents") },
               { id: "study", show: has("documents"), label: t("Study") },
               { id: "review", show: has("files"), label: t("Review code") },
+              { id: "compute", show: computeOn, label: t("Compute PC") },
               { id: "tasks", show: has("tasks"), label: t("Tasks") },
               { id: "mail", show: has("email"), label: t("Mail") },
               { id: "calendar", show: has("calendar"), label: t("Calendar") },
@@ -1242,6 +1258,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "documents" && <DocumentsView toast={toast} />}
         {view === "study" && <StudyView toast={toast} onOpenStudio={() => setView("studio")} />}
         {view === "review" && <ReviewView toast={toast} />}
+        {view === "compute" && <ComputeView toast={toast} />}
         {view === "tasks" && <TasksView onOpenChat={openChat} toast={toast} />}
         {view === "mail" && <MailView toast={toast} />}
         {view === "calendar" && <CalendarView toast={toast} />}
