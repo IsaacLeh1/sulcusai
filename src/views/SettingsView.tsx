@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser, type SavedSiteKey } from "../api";
@@ -325,6 +326,12 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <p className="muted small">{t("The assistant answers in the language you write in, whatever this is set to.")}</p>
       </section>
 
+      <span id="settings-chats" className="settings-anchor" />
+      <section className="card">
+        <h2>{t("Chats")}</h2>
+        <KeepDraftsRow />
+      </section>
+
       <span id="settings-about-you" className="settings-anchor" />
       <section className="card">
         <h2>{t("About you")}</h2>
@@ -506,6 +513,39 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         />
       )}
       </div>
+    </div>
+  );
+}
+
+/** Messages typed and not sent: kept while SulcusAI runs; this keeps them after a restart as well. */
+function KeepDraftsRow() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    api.draftsKeep().then(setOn).catch(() => setOn(false));
+  }, []);
+  if (on === null) return null;
+  return (
+    <div className="toggle-row">
+      <div>
+        <strong>{t("Keep unsent messages after a restart")}</strong>
+        <span className="small muted block">
+          {t("What you type in a chat stays there when you switch chats or pages. With this on, it's also kept when SulcusAI closes, saved encrypted on this PC until you send or clear it.")}
+        </span>
+      </div>
+      <label className="switch" title={on ? t("On") : t("Off")}>
+        <input
+          type="checkbox"
+          checked={on}
+          aria-label={t("Keep unsent messages after a restart")}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            setOn(next);
+            await api.setDraftsKeep(next).catch(() => {});
+            keepDrafts(next);
+          }}
+        />
+        <span />
+      </label>
     </div>
   );
 }

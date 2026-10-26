@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
 import { api, errorText, on, type UpdateAvailable, type UpdateView } from "../api";
+import { APP_NAME } from "../brand";
 import { bytes } from "../format";
 import { language, t } from "../i18n";
 import { WarningIcon } from "./Icons";
@@ -137,9 +138,22 @@ type VersionNotes = { version: string; date: string; notes: string }[];
  * this version open. They're kept in the app (`updateNotes.json`, added by
  * `scripts/add_update_notes.py` before each release), so they show offline;
  * one ready to install shows on top with the notes that came with it. */
+/** The oldest version SulcusAI goes back to (updates.rs `OLDEST_SAFE`). */
+const OLDEST_SAFE = [0, 9, 23];
+
+function older(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) < (pb[i] ?? 0);
+  return false;
+}
+
 export function UpdateNotes() {
   const [all, setAll] = useState<VersionNotes | null>(null);
   const [v, setV] = useState<UpdateView | null>(null);
+  const [back, setBack] = useState<string | null>(null);
+  const [going, setGoing] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
   useEffect(() => {
     import("../updateNotes.json").then((m) => setAll(m.default));
     api.updateView().then(setV).catch(() => {});
@@ -167,8 +181,44 @@ export function UpdateNotes() {
             <strong>{n.version}</strong> <span className="muted small">{day(n.date)}{n.version === v?.current ? ` · ${t("This version")}` : ""}</span>
           </summary>
           <Markdown text={n.notes} />
+          {v && older(n.version, v.current) && (
+            older(n.version, OLDEST_SAFE.join("."))
+              ? <p className="small muted">{t("Going back this far isn't offered: this version has security problems that later versions fixed.")}</p>
+              : <button className="btn ghost small" onClick={() => setBack(n.version)}>{t("Go back to {version}…", { version: n.version })}</button>
+          )}
         </details>
       ))}
+      {back && v && (
+        <Modal title={t("Go back to {version}?", { version: back })} onClose={() => !going && setBack(null)}>
+          <p>{t("{app} {version} is downloaded from its GitHub release, its signature checked like any update's, and installed in place of {current}. Then it starts again.", { app: APP_NAME, version: back, current: v.current })}</p>
+          <ul className="small">
+            <li>{t("A copy of your chats and settings is saved first, in case {version} can't read something newer.", { version: back })}</li>
+            <li>{t("What came after {version} won't be there until you update again; what you made with it stays on this PC.", { version: back })}</li>
+            <li>{t("Installing updates by themselves turns off, so it stays on {version}. Updating again any time brings everything back.", { version: back })}</li>
+            <li>{t("Only versions from 0.9.23 on are offered: older ones have security problems fixed since.")}</li>
+          </ul>
+          {problem && <p className="small warn-text" role="alert">{problem}</p>}
+          <div className="modal-actions">
+            <button className="btn" disabled={going} onClick={() => setBack(null)}>{t("Cancel")}</button>
+            <button
+              className="btn primary"
+              disabled={going}
+              onClick={async () => {
+                setGoing(true);
+                setProblem(null);
+                try {
+                  await api.goBackTo(back);
+                } catch (e) {
+                  setProblem(errorText(e));
+                  setGoing(false);
+                }
+              }}
+            >
+              {going ? t("Downloading and installing…") : t("Go back to {version}", { version: back })}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { draftOf, setDraft } from "../drafts";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
@@ -168,7 +169,14 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // Auto handed the last message to another model (cleared when the next is sent).
   const [routed, setRouted] = useState<{ name: string; task: string } | null>(null);
   const [context, setContext] = useState<ContextInfo | null>(null);
-  const [input, setInput] = useState("");
+  // What's typed and not sent stays with its chat (`drafts`).
+  const [input, setInput] = useState(() => draftOf(chat.id));
+  useEffect(() => setDraft(chat.id, input), [chat.id, input]);
+  useEffect(() => {
+    const loaded = () => setInput((v) => v || draftOf(chat.id));
+    window.addEventListener("drafts:loaded", loaded);
+    return () => window.removeEventListener("drafts:loaded", loaded);
+  }, [chat.id]);
   const [error, setError] = useState<string | null>(null);
   const [tps, setTps] = useState<number | null>(null);
   const [pending, setPending] = useState<PendingApproval[]>([]);

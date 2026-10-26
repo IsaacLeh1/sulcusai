@@ -10,6 +10,7 @@ mod applog;
 mod cardfirst;
 mod cleanup;
 mod doclib;
+mod drafts;
 mod drivers;
 mod lineup;
 mod study;
@@ -2808,6 +2809,10 @@ pub fn run() {
             cardfirst::card_ask_answer,
             cardfirst::processor_fallback,
             cardfirst::set_processor_fallback,
+            drafts::drafts_keep,
+            drafts::set_drafts_keep,
+            drafts::drafts,
+            drafts::draft_set,
             drivers::driver_check,
             drivers::driver_put_off,
             lineup::lineup_list,
@@ -3164,6 +3169,7 @@ pub fn run() {
             typing::typing_next,
             privacy::test_privacy,
             updates::install_update,
+            updates::go_back_to,
             backup::backup_info,
             backup::restore_backup,
             backup::export_markdown_cmd,

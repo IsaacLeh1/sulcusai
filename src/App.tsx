@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { loadDrafts, setDraft } from "./drafts";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   api,
@@ -28,7 +29,7 @@ import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { ChatNotes, LinkedChats } from "./components/ChatPanels";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
-import { ShareChatDialog } from "./components/ShareChat";
+import { ShareChatDialog, ShareChatsDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
 import { LockScreen } from "./components/Security";
@@ -133,6 +134,10 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<string | null>(null);
   const toasts = useToasts();
   // Actions that failed with nothing to catch them say so (see main.tsx).
+  // Unsent messages kept from before a restart (when that's turned on).
+  useEffect(() => {
+    loadDrafts();
+  }, []);
   useEffect(() => {
     const show = (e: Event) => toasts.push(errorText((e as CustomEvent<string>).detail), "error");
     window.addEventListener("sulcus:error", show);
@@ -460,6 +465,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const [renamingProject, setRenamingProject] = useState<Project | null>(null);
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Chat | null>(null);
+  // Chats picked together (Ctrl+click, or Select in a chat's menu), and what's done with them.
+  const [selected, setSelected] = useState<string[]>([]);
+  const [deletingMany, setDeletingMany] = useState(false);
+  const [sharingMany, setSharingMany] = useState(false);
+  useEffect(() => {
+    if (selected.length === 0) return;
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setSelected([]);
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [selected.length]);
   // The order the user dragged the menu and the chats into (empty: the usual order).
   const [layout, setLayout] = useState<SidebarLayout>({ nav: [], chats: [] });
   useEffect(() => {
@@ -640,8 +655,15 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     <button
       key={c.id}
       role="listitem"
-      className={`chat-item ${inFolder ? "in-folder" : ""} ${view === "chat" && c.id === activeChat ? "active" : ""} ${chatOver?.id === c.id ? `drop-${chatOver.at}` : ""}`}
-      onClick={() => openChat(c.id)}
+      className={`chat-item ${inFolder ? "in-folder" : ""} ${view === "chat" && c.id === activeChat ? "active" : ""} ${chatOver?.id === c.id ? `drop-${chatOver.at}` : ""} ${selected.includes(c.id) ? "selected" : ""}`}
+      aria-pressed={selected.length > 0 ? selected.includes(c.id) : undefined}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || selected.length > 0) {
+          setSelected((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]));
+          return;
+        }
+        openChat(c.id);
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         setChatMenu({ id: c.id, x: e.clientX, y: e.clientY });
@@ -672,6 +694,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       }}
       title={c.title}
     >
+      {selected.length > 0 && <span className={`select-box ${selected.includes(c.id) ? "on" : ""}`} aria-hidden="true" />}
       {c.incognito && <IncognitoIcon title={t("Incognito")} />}
       <span className="ellipsis">{c.title}</span>
       {locks.chats.includes(c.id) && <LockIcon className="chat-kept" title={t("Locked: the automatic cleanup never removes it")} />}
@@ -882,6 +905,82 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           ))}
         </div>}
+        {selected.length > 0 && (
+          <div className="select-bar" role="toolbar" aria-label={t("Selected chats")}>
+            <div className="row">
+              <strong className="small">{t("{n} selected", { n: selected.length })}</strong>
+              <span className="spacer" />
+              <button className="link small" onClick={() => setSelected(visible.map((c) => c.id))}>{t("All")}</button>
+              <button className="link small" onClick={() => setSelected([])}>{t("Done")}</button>
+            </div>
+            <div className="select-actions">
+              <select
+                value=""
+                aria-label={t("Add to a folder")}
+                onChange={async (e) => {
+                  const to = e.target.value;
+                  if (!to) return;
+                  if (to === "new") {
+                    setFolderFor(selected[0]);
+                    return;
+                  }
+                  try {
+                    let f = folders;
+                    for (const id of selected) f = await api.moveToFolder(id, to === "out" ? null : to);
+                    setFolders(f);
+                    toast(t("Moved {n} chats.", { n: selected.length }), "success");
+                  } catch (err) {
+                    toast(errorText(err), "error");
+                  }
+                }}
+              >
+                <option value="">{t("Add to a folder…")}</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+                <option value="out">{t("Out of their folders")}</option>
+                <option value="new">{t("New folder…")}</option>
+              </select>
+              <button
+                className="btn small"
+                title={t("A new chat that reads these chats and asks them what it needs, so they work together")}
+                onClick={async () => {
+                  try {
+                    const names = selected.map((id) => `“${chats.find((c) => c.id === id)?.title ?? id}”`).join(", ");
+                    const chat = await api.createChatIn(null, false);
+                    setDraft(chat.id, t("Work with my chats {list}: read what each has so far and ask them what you need, then ", { list: names }));
+                    await refreshChats();
+                    setActiveChat(chat.id);
+                    setView("chat");
+                    setSelected([]);
+                  } catch (err) {
+                    toast(errorText(err), "error");
+                  }
+                }}
+              >
+                {t("Talk together")}
+              </button>
+              {peopleOn && <button className="btn small" onClick={() => setSharingMany(true)}>{t("Share…")}</button>}
+              <button
+                className="btn small"
+                onClick={async () => {
+                  try {
+                    let l = locks;
+                    for (const id of selected) l = await api.setKept("chat", id, true);
+                    setLocks(l);
+                    toast(t("Locked {n} chats: the cleanup never removes them.", { n: selected.length }), "success");
+                  } catch (err) {
+                    toast(errorText(err), "error");
+                  }
+                }}
+              >
+                {t("Lock")}
+              </button>
+              <button className="btn small" onClick={() => (selected.forEach((id) => hideChat(id, true)), setSelected([]))}>{t("Hide")}</button>
+              <button className="btn small danger" onClick={() => setDeletingMany(true)}>{t("Delete…")}</button>
+            </div>
+          </div>
+        )}
         {(folders.length > 0 || visible.length > 0) && (
           <FolderSection folders={folders} chats={visible} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
         )}
@@ -938,6 +1037,10 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             };
             return (
               <>
+                <button role="menuitem" onClick={() => (done(), setSelected((s) => (s.includes(id) ? s : [...s, id])))}>
+                  {t("Select")} <span className="muted small">{t("(Ctrl+click)")}</span>
+                </button>
+                <hr />
                 <span className="menu-label">{t("Move to folder")}</span>
                 {folders.filter((f) => f.id !== current?.id).map((f) => (
                   <button key={f.id} role="menuitem" onClick={() => move(f.id)}>
@@ -1167,6 +1270,39 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           }}
         />
       )}
+      {deletingMany && (
+        <Modal title={t("Delete {n} chats?", { n: selected.length })} onClose={() => setDeletingMany(false)}>
+          <p>{t("These chats and their messages will be deleted from this PC. This can't be undone.")}</p>
+          <ul className="small plain-list">
+            {selected.map((id) => (
+              <li key={id} className="ellipsis">{chats.find((c) => c.id === id)?.title ?? id}</li>
+            ))}
+          </ul>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setDeletingMany(false)}>{t("Cancel")}</button>
+            <button
+              className="btn danger-fill"
+              onClick={async () => {
+                const ids = selected;
+                setDeletingMany(false);
+                setSelected([]);
+                try {
+                  for (const id of ids) await api.deleteChat(id);
+                  if (activeChat && ids.includes(activeChat)) setActiveChat(null);
+                  await refreshChats();
+                  refreshFolders();
+                  toast(t("Deleted {n} chats.", { n: ids.length }), "success");
+                } catch (e) {
+                  toast(errorText(e), "error");
+                }
+              }}
+            >
+              {t("Delete them")}
+            </button>
+          </div>
+        </Modal>
+      )}
+      {sharingMany && <ShareChatsDialog chatIds={selected} onClose={() => setSharingMany(false)} toast={toast} />}
       {confirmDelete && (
         <Modal title={t("Delete this chat?")} onClose={() => setConfirmDelete(null)}>
           <p>
