@@ -945,10 +945,19 @@ async fn run_engine(exe: &Path, files: &[PathBuf], work: &Path, lines: &[String]
     Ok(split_streamed(&out.stdout))
 }
 
+/// Whether any reading came out as sound (not silence all through, nor
+/// samples that aren't numbers).
+fn heard_any(parts: &[Vec<f32>]) -> bool {
+    parts.iter().any(|p| !p.is_empty() && p.iter().all(|s| s.is_finite()) && crate::audio::rms(p) > 0.003)
+}
+
 /// `lines` read in the voice of `reference` (24 kHz) whose words are
 /// `words`. A line that runs on far past its length (the engine lost its
 /// end, as when the words don't match the recording) is read again from the
-/// voice alone, without the words.
+/// voice alone, without the words. Readings that come out silent on the
+/// graphics card (some cards' drivers give silence or broken samples
+/// instead of failing) are read again on the processor; silence there too
+/// is an error, never saved as a reading.
 #[allow(clippy::too_many_arguments)]
 async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str, lines: &[String], language: Option<&str>, device: Option<&str>, cancel: &AtomicBool) -> Result<(Vec<f32>, u32), String> {
     // The recording goes to the engine as a file for the run only.
@@ -970,6 +979,16 @@ async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str
                 }
             }
         }
+        if !heard_any(&parts) && device != Some("CPU") && exe.to_string_lossy().contains("vulkan") {
+            crate::applog::line("media", "The graphics card's voice engine made only silence; reading it again on the processor");
+            parts = run_engine(exe, files, &work, lines, language, !words.trim().is_empty(), Some("CPU"), cancel).await?;
+        }
+        if !heard_any(&parts) {
+            crate::applog::line("media", &format!("The voice engine made only silence for {} line(s)", lines.len()));
+            return Err("The voice engine made only silence. Try again; if it keeps happening, record your voice's lines again in Studio › Your voice.".into());
+        }
+        // Samples that aren't numbers in a line that otherwise worked become silence.
+        parts.iter_mut().flatten().filter(|s| !s.is_finite()).for_each(|s| *s = 0.0);
         let gap = vec![0f32; (TTS_RATE as f32 * 0.35) as usize];
         let mut all = Vec::new();
         for (i, mut p) in parts.into_iter().enumerate().filter(|(_, p)| !p.is_empty()) {
@@ -1109,6 +1128,17 @@ mod tests {
         let parts = split_streamed(&b);
         assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), vec![3, 2]);
         assert!((parts[0][0] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn silent_or_broken_readings_are_caught() {
+        let voice: Vec<f32> = (0..24_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
+        assert!(heard_any(&[vec![0.0; 24_000], voice.clone()]));
+        assert!(!heard_any(&[vec![0.0; 24_000], vec![]]));
+        assert!(!heard_any(&[vec![0.0001; 24_000]]));
+        let mut broken = voice;
+        broken[100] = f32::NAN;
+        assert!(!heard_any(&[broken]));
     }
 
     #[test]
