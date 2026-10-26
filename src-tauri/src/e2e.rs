@@ -976,6 +976,88 @@ async fn e2e_study_sets_and_an_explainer_video() {
     crate::speech::stop(&state).await;
 }
 
+/// A voice from a real podcast episode alone (SULCUSAI_PODCAST, a long
+/// recording of one person talking): what's kept, its words, and new words
+/// read in it compared by voice print with other stretches of the episode.
+/// The reading goes to C:\dev\tools\voice\tests\from-podcast.wav.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_voice_from_a_real_podcast() {
+    use crate::media::{self, own_voice, store, Request};
+    let path = std::path::PathBuf::from(std::env::var("SULCUSAI_PODCAST").expect("SULCUSAI_PODCAST"));
+    let state = media_state();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+    let started = std::time::Instant::now();
+    let (take, words, several) = own_voice::prepare_for_test(&state, &path).await.unwrap();
+    println!("prepared in {:.0} s: kept {:.1} s; others talk: {several}; heard: {words}", started.elapsed().as_secs_f64(), take.len() as f32 / 48_000.0);
+    assert!(!words.is_empty());
+    let voice = own_voice::add_for_test(&state, "Me", &[("added-1", take, &words)]);
+    let started = std::time::Instant::now();
+    let read = media::run(&state, store::new_id(), Request { op: "narrate".into(), prompt: "Hey everyone, welcome back. Today I want to talk about why most penny stocks fall apart, and the three things I always check before I buy one.".into(), voice: Some(format!("own:{voice}")), language: Some("en".into()), ..Default::default() })
+        .await
+        .unwrap()
+        .remove(0);
+    println!("read {:.1} s in {:.0} s", read.seconds, started.elapsed().as_secs_f64());
+    let wav = store::read(&state.paths, &state.work_cipher().unwrap(), &read.id).unwrap();
+    std::fs::write(r"C:\dev\tools\voice\tests\from-podcast.wav", &wav).unwrap();
+    // Voice prints of three other stretches of the episode against the reading.
+    let (pcm, rate, ch) = media::audio_in::decode(&path).unwrap();
+    let mono: Vec<f32> = pcm.chunks(ch.max(1) as usize).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect();
+    drop(pcm);
+    let print = |x: &[f32], r: u32| crate::diarize::embed(&state, &crate::audio::resample(x, r, 16_000)).unwrap();
+    let said = crate::audio::wav_decode(&wav).unwrap();
+    let mine = print(&said.samples, said.rate);
+    let len = mono.len();
+    let sims: Vec<f32> = [0.2, 0.5, 0.8].iter().map(|f| {
+        let at = (len as f64 * f) as usize;
+        crate::diarize::cosine(&mine, &print(&mono[at..(at + rate as usize * 12).min(len)], rate))
+    }).collect();
+    println!("the reading against the episode's own voice: {sims:?}");
+    // And a stranger's voice, for scale.
+    let other = tokio::task::spawn_blocking(|| crate::tts::synthesize("Hey everyone, welcome back to the show today.", Some(crate::tts::WINDOWS_DEFAULT), Some("en"), 1.0)).await.unwrap().unwrap();
+    let stranger = print(&other.samples.iter().map(|x| *x as f32 / 32768.0).collect::<Vec<_>>(), other.rate);
+    println!("a stranger against the episode: {:.2}", crate::diarize::cosine(&stranger, &print(&mono[len / 2..len / 2 + rate as usize * 12], rate)));
+    assert!(sims.iter().sum::<f32>() / 3.0 > 0.45, "the reading sounds like the episode's speaker");
+    crate::speech::stop(&state).await;
+}
+
+/// Code with planted problems reviewed by a small model (SULCUSAI_TEST_GGUF)
+/// for bugs and security: the SQL built from input, the eval of input and
+/// the loop past the end are found where they are.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_code_review_finds_planted_problems() {
+    use crate::review::{self, ReviewRequest};
+    let state = media_state();
+    let dir = std::env::temp_dir().join(format!("sulcusai-review-test-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(dir.join("app")).unwrap();
+    std::fs::write(
+        dir.join("app").join("login.py"),
+        "import sqlite3\n\n\ndef find_user(db, name):\n    cur = db.cursor()\n    cur.execute(f\"SELECT * FROM users WHERE name = '{name}'\")\n    return cur.fetchone()\n\n\ndef check_password(user, given):\n    return user[2] == given\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("app").join("sum.js"),
+        "export function total(items) {\n  let sum = 0;\n  for (let i = 0; i <= items.length; i++) {\n    sum += items[i].price;\n  }\n  return sum;\n}\n\nexport function run(userCode) {\n  return eval(userCode);\n}\n",
+    )
+    .unwrap();
+    let files = review::gather_for_test(&dir);
+    assert_eq!(files.len(), 2);
+    let (_eng, ep, name) = test_model().await;
+    let req = ReviewRequest { source: dir.display().to_string(), checks: vec!["bugs".into(), "security".into()], ..Default::default() };
+    let checks: Vec<&(&str, &str)> = review::CHECKS.iter().filter(|c| c.0 == "bugs" || c.0 == "security").collect();
+    let started = std::time::Instant::now();
+    let report = review::review_files(&state, &req, &checks, &files, 0, &ep, &name).await.unwrap();
+    println!("{} findings ({} dropped) in {:.0} s\n{}", report.findings.len(), report.dropped, started.elapsed().as_secs_f64(), review::markdown(&report));
+    let _ = std::fs::remove_dir_all(&dir);
+    let has = |file: &str, words: &[&str]| report.findings.iter().any(|f| f.file.ends_with(file) && words.iter().any(|w| format!("{} {}", f.title, f.why).to_lowercase().contains(w)));
+    assert!(has("login.py", &["sql", "injection"]), "the SQL injection");
+    assert!(has("sum.js", &["eval"]), "the eval");
+    assert!(has("sum.js", &["<=", "off-by-one", "out of bounds", "bound", "undefined", "past the end", "length"]), "the loop past the end");
+}
+
 /// A song attached to a chat is worked on: "make this longer" calls
 /// create_music on that song, and the result is that much longer. A small
 /// model (SULCUSAI_TEST_GGUF, Qwen3 4B) so the music engine fits beside it.

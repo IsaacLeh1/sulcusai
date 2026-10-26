@@ -2000,12 +2000,32 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .map-branch.depth-1 > .map-node { background: var(--accent-soft); font-weight: 600; border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 .map-more { color: var(--muted); font-size: 11.5px; }
 
+/* Review my code. */
+.review .review-start { margin-bottom: 16px; }
+.review .field-label { display: block; font-weight: 550; font-size: 13px; margin-bottom: 6px; }
+.review .review-checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px 14px; }
+.review .review-counts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+.review-count, .review-sev { font-size: 12px; font-weight: 650; padding: 3px 10px; border-radius: 99px; }
+.sev-high.review-count, .review-sev.sev-high { background: var(--danger-soft); color: var(--danger); }
+.sev-medium.review-count, .review-sev.sev-medium { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+.sev-low.review-count, .review-sev.sev-low { background: var(--panel-2); color: var(--muted); }
+.review .review-findings { display: flex; flex-direction: column; gap: 8px; }
+.review .review-finding { display: flex; flex-direction: column; gap: 6px; border-left: 4px solid var(--border); }
+.review .review-finding.sev-high { border-left-color: var(--danger); }
+.review .review-finding.sev-medium { border-left-color: var(--warn); }
+.review .review-finding p { margin: 0; }
+.review .review-where { color: var(--muted); }
+.review .review-list { display: flex; flex-direction: column; gap: 8px; }
+.review .review-row { align-items: center; gap: 10px; padding: 10px 14px; }
+.review .review-open { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 0; background: none; text-align: left; cursor: pointer; padding: 0; color: inherit; font: inherit; min-width: 0; }
+
 /* One-click add-ons. */
 .addons { display: flex; flex-direction: column; gap: 10px; }
 .addons-group h3 { margin: 6px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11.5px; }
 .addons-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
 .addon { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
 .addon-added { color: var(--success); font-weight: 600; }
+.faint { color: var(--muted); opacity: 0.8; }
 
 /* Check this PC. */
 .pc-check { display: flex; flex-direction: column; gap: 10px; }

@@ -2249,6 +2249,40 @@ export interface LibraryView {
   kinds: string[];
 }
 
+/** A problem a code review found. */
+export interface CodeFinding {
+  check: string;
+  severity: "high" | "medium" | "low";
+  file: string;
+  line: number | null;
+  title: string;
+  why: string;
+  fix: string;
+}
+
+export interface CodeReport {
+  id: string;
+  created_at: number;
+  source: string;
+  checks: string[];
+  model: string;
+  files: number;
+  lines: number;
+  findings: CodeFinding[];
+  /** Findings dropped when checked again. */
+  dropped: number;
+  summary: string;
+  took_ms: number;
+  skipped: number;
+}
+
+export interface ReviewSetup {
+  /** The best installed model for code: [id, name]. */
+  best: [string, string] | null;
+  /** Checks: [id, what it means]. */
+  checks: [string, string][];
+}
+
 /** A one-click add-on (a well-known MCP server). */
 export interface AddonView {
   id: string;
@@ -3262,6 +3296,13 @@ export const api = {
   docsSearch: (query: string, limit?: number) => invoke<DocHit[]>("docs_search", { query, limit: limit ?? null }),
   /** Opens a library file in its app. */
   docsOpen: (id: string) => invoke<void>("docs_open", { id }),
+  // Code reviews ("review:progress" while one runs).
+  reviewSetup: () => invoke<ReviewSetup>("review_setup"),
+  reviews: () => invoke<CodeReport[]>("reviews"),
+  reviewStart: (request: { source: string; checks: string[]; notes: string; model: string | null }) => invoke<CodeReport>("review_start", { request }),
+  reviewStop: () => invoke<void>("review_stop"),
+  reviewDelete: (id: string) => invoke<void>("review_delete", { id }),
+  reviewSave: (id: string, path: string) => invoke<void>("review_save", { id, path }),
   // One-click add-ons ("addons:progress" while one is set up).
   addons: () => invoke<AddonView[]>("addons_list"),
   addonAdd: (id: string, values: Record<string, string>) => invoke<Connector>("addon_add", { id, values }),
@@ -3549,6 +3590,8 @@ export interface ChatEvents {
   "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing" | "getting_speakers" | "speakers" | "hearing" | "getting_words"; n: number; of: number };
   /** The documents library reading and indexing: what it's on. */
   "docs:progress": DocProgress;
+  /** A code review: what it's checking and how far (0 to 1). */
+  "review:progress": { stage: string; fraction: number };
   /** An add-on being set up: what it's doing and how far (0 to 1; -1: unknown). */
   "addons:progress": { stage: string; fraction: number };
   /** Check this PC, after each change. */

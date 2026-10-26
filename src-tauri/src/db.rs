@@ -242,6 +242,11 @@ CREATE TABLE IF NOT EXISTS doc_files (
   data      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS doc_files_by_source ON doc_files(source_id);
+CREATE TABLE IF NOT EXISTS code_reviews (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS study_sets (
   id         TEXT PRIMARY KEY,
   data       TEXT NOT NULL,

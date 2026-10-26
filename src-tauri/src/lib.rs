@@ -12,6 +12,7 @@ mod doclib;
 mod study;
 mod pccheck;
 mod addons;
+mod review;
 mod folders;
 mod backup;
 mod api_server;
@@ -3102,6 +3103,12 @@ pub fn run() {
             pccheck::pc_check_report,
             addons::addons_list,
             addons::addon_add,
+            review::review_setup,
+            review::reviews,
+            review::review_start,
+            review::review_stop,
+            review::review_delete,
+            review::review_save,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,

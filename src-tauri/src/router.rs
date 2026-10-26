@@ -145,6 +145,24 @@ pub fn route(state: &AppState, chat_model: Option<&str>, text: &str) -> Option<P
 /// Words a second a model must write here to be picked for a message.
 const ROUTE_MIN_TPS: f64 = 10.0;
 
+/// The installed model best at `task` that runs well on this PC (for work
+/// the person starts outside a chat, such as a code review): (id, name).
+/// Ties go to the better model overall. None: nothing installed runs well.
+pub fn best_for(state: &AppState, task: Task) -> Option<(String, String)> {
+    let budget = state.budget();
+    let installed = crate::db::installed_models(&state.db.lock().unwrap());
+    installed
+        .iter()
+        .filter_map(|i| {
+            let m = state.catalog.model(&i.model_id)?;
+            let v = m.variant(&i.quant)?;
+            let f = catalog::fit_variant(m, v, crate::TOOL_CTX, &budget);
+            (f.runnable() && f.est_tps >= ROUTE_MIN_TPS).then_some(m)
+        })
+        .max_by_key(|m| (task.rating(m).unwrap_or(m.ratings.overall), m.ratings.overall))
+        .map(|m| (m.id.clone(), m.name.clone()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
