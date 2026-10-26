@@ -4042,6 +4042,13 @@ async fn e2e_own_voice_from_the_start() {
     let voice = own_voice::list(&conn, &c).into_iter().next().expect("a recorded voice");
     let (reference, sung) = own_voice::singing_reference(&real, &c, &voice).unwrap();
     println!("reference: {:.1} s of {}", reference.len() as f32 / svc::RATE as f32, if sung { "singing" } else { "reading" });
+    // The singer as the app picks it from the recording, said in the caption the app's way.
+    let sex = own_voice::sex_of(&real, &c, &voice);
+    println!("their voice reads as {sex:?}");
+    let spec = crate::media::MusicSpec { voice: sex.map(str::to_string), genre: Some("country".into()), instruments: vec!["acoustic guitar".into(), "pedal steel".into()], ..Default::default() };
+    let caption = spec.caption("A modern country song about a fresh start, punchy live drums, warm bass, catchy chorus", false);
+    let caption = caption.as_str();
+    println!("caption: {caption}");
     let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab");
     std::fs::create_dir_all(&out).unwrap();
     // The reference for the music model, written for the run only.
@@ -4050,7 +4057,6 @@ async fn e2e_own_voice_from_the_start() {
     let models = state.paths.models.join("media").join("music");
     let dir = crate::media::music_engine_dir(&state).expect("the music engine is installed");
     let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
-    let caption = "male lead vocals, warm male voice, modern country, acoustic guitar, pedal steel, punchy live drums, warm bass, catchy chorus";
     let wanted = sung_words(lyrics);
     let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
     let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
@@ -4103,12 +4109,17 @@ async fn e2e_own_voice_from_the_start() {
             let (parts, _) = stems::separate(&dll, &sep, &mix, 8, &[3], card, &AtomicBool::new(false)).unwrap();
             stems::unload();
             let vocals = parts[0].mono();
+            // How loud the band is beside the voice (a reference of bare
+            // singing could thin the arrangement out).
+            let whole = mix.mono();
+            let band: Vec<f32> = whole.iter().zip(&vocals).map(|(m, v)| m - v).collect();
+            let band_db = 20.0 * (crate::audio::rms(&band) / crate::audio::rms(&vocals).max(1e-6)).log10();
             let pitch = conv.middle_pitch_of(&vocals).unwrap();
             let before = cos(&print(&mut conv, &vocals), &target);
             let semis = svc::octave_shift(pitch, if sung { person.pitch } else { person.pitch * 1.26 });
             let converted = conv.convert(&person, &vocals, svc::Settings { steps: if card.is_some() { 30 } else { 10 }, semitones: semis, ..Default::default() }, &AtomicBool::new(false), &|_| {}).unwrap();
             let after = cos(&print(&mut conv, &converted), &target);
-            rows.push(format!("{name} seed {seed}: {took:.0} s, {matched} of {} words heard, singer {pitch:.0} Hz, likeness {before:.2} as made, {after:.2} sung again ({semis} semitones)", wanted.len()));
+            rows.push(format!("{name} seed {seed}: {took:.0} s, {matched} of {} words heard, singer {pitch:.0} Hz, band {band_db:+.1} dB against the voice, likeness {before:.2} as made, {after:.2} sung again ({semis} semitones)", wanted.len()));
             println!("{}", rows.last().unwrap());
         }
     }

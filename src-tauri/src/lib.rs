@@ -2856,6 +2856,7 @@ pub fn run() {
             media::media_delete,
             media::media_set_poster,
             media::media_favorite,
+            media::media_set_title,
             media::media_export,
             media::media_import,
             media::music_write_lyrics,

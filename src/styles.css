@@ -843,6 +843,8 @@ a.md-link { cursor: pointer; }
 .viewer-stage { flex: 1; min-width: 0; display: grid; place-items: center; background: var(--code-bg); border-radius: var(--radius); overflow: hidden; padding: 8px; }
 .viewer-stage > img, .viewer-stage > video { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
 .viewer-stage .audio-player { width: 100%; max-width: 640px; }
+.viewer-stage > img.song-art { width: min(320px, 70%); max-height: 45vh; aspect-ratio: 1; object-fit: cover; border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25); }
+.song-title { font-size: 16px; }
 .viewer-side { width: 300px; flex: none; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .viewer-prompt { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .viewer-tools { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 10px; }

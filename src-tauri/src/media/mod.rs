@@ -219,7 +219,7 @@ pub fn feature_of(kind: Kind) -> Feature {
 
 fn op_kind(op: &str) -> Option<Kind> {
     Some(match op {
-        "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" | "coach" => Kind::Image,
+        "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" | "coach" | "cover_art" => Kind::Image,
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
         "video" => Kind::Video,
@@ -235,6 +235,8 @@ fn model_op(req: &Request) -> &str {
         Some("add" | "extract" | "complete") if req.op == "music" => "parts",
         // Making unclear parts again is music made again, by a music model.
         _ if req.op == "remake" => "music",
+        // A song's cover art is a new picture.
+        _ if req.op == "cover_art" => "generate",
         _ => &req.op,
     }
 }
@@ -767,8 +769,14 @@ pub struct MusicSpec {
     /// the lyrics written for it come to.
     pub auto_length: bool,
     /// Sung in a voice the person recorded (`own_voice`, by id): the song is
-    /// made, then its voice is sung again in theirs (kept beside the song).
+    /// made with their singing as its guide, then its voice is sung again in
+    /// theirs (the version before kept out of the gallery, as its original).
     pub own_voice: Option<String>,
+    /// Of the versions made, only the one whose words were heard best is
+    /// kept (`keep_clearest`).
+    pub best_of: bool,
+    /// Each song gets cover art from the picture model, made next (`cover_art`).
+    pub cover_art: bool,
     /// The sound of the recording: "studio", "live", "lo-fi", "acoustic",
     /// "modern" (older songs may say a decade, as `era` does now).
     pub production: Option<String>,
@@ -1475,7 +1483,7 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art") && req.source.is_none() {
         return Err("Pick a song first.".into());
     }
     // A recorded voice: one that's here and has what the job needs.
@@ -1604,7 +1612,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     });
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
-    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach")
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach" | "cover_art")
         || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // A song's parts taken apart and read on an NVIDIA card (CUDA).
         || (req.op == "map" && crate::natural::nvidia_here(state));
@@ -2330,6 +2338,8 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     // Auto length: what's known before the lyrics are written.
     let timed = auto_seconds(req).map(|s| Request { seconds: Some(s), ..req.clone() });
     let req = timed.as_ref().unwrap_or(req);
+    let sexed = with_own_voice_sex(state, req);
+    let req = sexed.as_ref().unwrap_or(req);
     // Lyrics come from the chat model: written before the card is cleared for
     // the music engine, not after (that loaded the chat model again beside it).
     let mut with_lyrics;
@@ -2366,7 +2376,7 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     }
     // Not for upscaling: its model is 64 MB, and stopping a 14 GB chat model
     // for it cost the next message a reload.
-    let paused = if music_on_gpu || recorded_voice(req).is_some() || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach") {
+    let paused = if music_on_gpu || recorded_voice(req).is_some() || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach" | "cover_art") {
         make_room(state, req, model).await
     } else {
         None
@@ -2906,19 +2916,36 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
         "revoice" => revoice_job(&ctx).await,
+        "cover_art" => cover_art(&ctx, model.ok_or("No picture model.")?, &work.0).await,
         "music" | "sound" => {
             let mut items = song(&ctx, model.ok_or("No music model.")?, &work.0).await?;
+            if req.music.as_ref().is_some_and(|m| m.best_of) && items.len() > 1 {
+                items = keep_clearest(&ctx, items).await?;
+            }
             // To be sung in a recorded voice: the first version sung again in
-            // it, kept beside the songs as the music model made them (each
-            // version took as long again; the others can be sung from the
-            // gallery).
+            // it, in its place (each version took as long again; the others
+            // can be sung from the gallery).
             if let Some(voice) = req.music.as_ref().and_then(|m| m.own_voice.clone()).filter(|_| req.op == "music") {
                 let made = items.clone();
-                for item in made.into_iter().filter(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)).take(1) {
+                let c = state.work_cipher()?;
+                for mut item in made.into_iter().filter(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)).take(1) {
+                    let at = items.iter().position(|i| i.id == item.id).unwrap_or(0);
                     match revoice_item(&ctx, &item, &voice).await {
-                        Ok(v) => items.insert(0, v),
+                        // Only the song in their voice is shown: the music
+                        // model's own is kept out of the gallery, reached
+                        // from it as "← The original".
+                        Ok(v) => {
+                            item.hidden = true;
+                            store::update(&state.db.lock().unwrap(), &c, &item)?;
+                            items[at] = v;
+                        }
                         Err(e) if e == download::CANCELLED => return Err(e),
-                        Err(e) => crate::applog::line("media", &format!("The song wasn't sung again in the recorded voice: {e}")),
+                        Err(e) => {
+                            crate::applog::line("media", &format!("The song wasn't sung again in the recorded voice: {e}"));
+                            item.note = Some(format!("This wasn't sung again in your recorded voice: {e}"));
+                            store::update(&state.db.lock().unwrap(), &c, &item)?;
+                            items[at] = item;
+                        }
                     }
                 }
             }
@@ -2930,6 +2957,13 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
                         Ok(mapped) => items[0] = mapped,
                         Err(e) => crate::applog::line("media", &format!("The new version wasn't mapped ({e}); See how it's built maps it")),
                     }
+                }
+            }
+            // Cover art, made next as a job of its own: the picture model
+            // gets the card once the music engine has let it go.
+            if req.op == "music" && req.music.as_ref().is_some_and(|m| m.cover_art) {
+                for item in &items {
+                    queue_cover_art(state, item);
                 }
             }
             Ok(items)
@@ -3489,6 +3523,31 @@ fn auto_seconds(req: &Request) -> Option<f32> {
         .or_else(|| (req.instrumental == Some(true)).then_some(90.0))
 }
 
+/// A new song in a recorded voice with no singer picked or described: sung
+/// by a man or a woman as the recording is (left to itself the music model
+/// often picked the other, and the voice was then changed across sexes).
+fn with_own_voice_sex(state: &AppState, req: &Request) -> Option<Request> {
+    let spec = req.music.as_ref().filter(|m| req.op == "music" && matches!(m.task.as_deref(), None | Some("new")))?;
+    let id = spec.own_voice.as_deref()?;
+    if MusicSpec::some(&spec.voice).is_some() || names_a_singer(&req.prompt) {
+        return None;
+    }
+    let c = state.work_cipher().ok()?;
+    let voice = own_voice::get(&state.db.lock().unwrap(), &c, id)?;
+    let sex = own_voice::sex_of(&state.paths, &c, &voice)?;
+    crate::applog::line("media", &format!("A song in a recorded voice: sung by a {} singer, as the recording is", sex));
+    let mut out = req.clone();
+    out.music.as_mut()?.voice = Some(sex.into());
+    Some(out)
+}
+
+/// Whether a description already says who sings ("a female singer", "a boy
+/// band", "a duet").
+fn names_a_singer(prompt: &str) -> bool {
+    const WHO: &[&str] = &["female", "male", "woman", "women", "man", "men", "girl", "girls", "boy", "boys", "duet", "choir", "baritone", "tenor", "alto", "soprano", "mezzo"];
+    prompt.to_lowercase().split(|c: char| !c.is_alphabetic()).any(|w| WHO.contains(&w))
+}
+
 /// Whether a song job wants lyrics written before it starts: a new song
 /// with vocals and none given, or vocals added to a song the person has.
 fn wants_written_lyrics(req: &Request) -> bool {
@@ -3536,6 +3595,13 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     };
     let reference = match spec.reference.as_deref() {
         Some(id) if !sound => Some(audio_file(id, "reference")?),
+        _ => None,
+    };
+    // A new song in a recorded voice is made with the person's singing as
+    // the music model's reference (it sets the voice's sound and delivery,
+    // not the tune), so it starts out sung more like them.
+    let own_reference = match spec.own_voice.as_deref() {
+        Some(id) if reference.is_none() && task.is_none() && !sound && req.instrumental != Some(true) && m.file("yue").is_none() => own_reference(ctx, id, work),
         _ => None,
     };
     // A new song: as long as asked, up to ten minutes (sound effects 30 s).
@@ -3666,7 +3732,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             region,
             strength: spec.strength,
             source: source.as_ref().map(|s| s.1.as_path()),
-            reference: reference.as_ref().map(|r| r.1.as_path()),
+            reference: reference.as_ref().map(|r| r.1.as_path()).or(own_reference.as_deref()),
             versions,
             ..Default::default()
         },
@@ -3675,6 +3741,9 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     )
     .await?
     };
+    if let Some(r) = &own_reference {
+        let _ = std::fs::remove_file(r);
+    }
     let planned = made[0].lyrics.clone();
     // Vocals were asked for, and the music model planned nothing to sing:
     // say so rather than hand back an instrumental as if it were the song.
@@ -3773,6 +3842,8 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             parent: source.as_ref().map(|s| s.0.id.clone()),
             chat_id: req.chat_id.clone(),
             seed: Some(seed),
+            // A new song is named by its hook; work on a song keeps its name.
+            title: if task.is_none() { (!sound).then(|| lyrics::title_of(&song.lyrics)).flatten() } else { source.as_ref().and_then(|s| s.0.title.clone()) },
             lyrics: (!sound && lyrics::has_singing(&song.lyrics)).then_some(song.lyrics),
             note: note.clone(),
             ..Default::default()
@@ -3780,6 +3851,31 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         items.push(store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &song.mp3, None)?);
     }
     Ok(items)
+}
+
+/// A recorded voice's singing as a file for the music model, in the job's
+/// work folder for the run only. None, said in the log, when there's no
+/// singing (reading as the reference could make the song spoken) or it
+/// can't be read: the song is then made as before.
+fn own_reference(ctx: &RunCtx<'_>, id: &str, work: &std::path::Path) -> Option<PathBuf> {
+    let c = ctx.state.work_cipher().ok()?;
+    let voice = own_voice::get(&ctx.state.db.lock().unwrap(), &c, id)?;
+    match own_voice::singing_reference(&ctx.state.paths, &c, &voice) {
+        Ok((_, false)) => {
+            crate::applog::line("media", "A song in a recorded voice: made without their voice as the reference (no singing recorded)");
+            None
+        }
+        Ok((samples, true)) => {
+            let path = work.join("own-voice.wav");
+            std::fs::write(&path, crate::audio::wav_encode(&samples, svc::RATE)).ok()?;
+            crate::applog::line("media", &format!("A song in a recorded voice: made with {:.0} s of their singing as the reference", samples.len() as f32 / svc::RATE as f32));
+            Some(path)
+        }
+        Err(e) => {
+            crate::applog::line("media", &format!("A song in a recorded voice: made without their voice as the reference ({e})"));
+            None
+        }
+    }
 }
 
 /// ONNX Runtime and a helper model (`MediaCatalog::separator`,
@@ -3848,6 +3944,38 @@ async fn hear(state: &Arc<AppState>, item: &MediaItem, cancel: &AtomicBool) -> R
     let installed = !crate::speech::installed(&state.db.lock().unwrap()).is_empty();
     let heard = if installed { Some(crate::speech::transcribe_song(state, &samples, None).await?) } else { None };
     Ok(listen::review(&lyrics, heard.as_deref(), item.seconds))
+}
+
+/// Of several versions of a sung song, the one whose words were heard best
+/// (the first of equals), with its review; the others are deleted. All are
+/// kept, as made, when there are no words or nothing to listen with.
+async fn keep_clearest(ctx: &RunCtx<'_>, items: Vec<MediaItem>) -> Result<Vec<MediaItem>, String> {
+    if !items.iter().all(|i| i.lyrics.as_deref().is_some_and(lyrics::has_singing)) || crate::speech::installed(&ctx.state.db.lock().unwrap()).is_empty() {
+        crate::applog::line("media", "Kept every version: nothing sung, or no speech model to listen with");
+        return Ok(items);
+    }
+    let c = ctx.state.work_cipher()?;
+    let n = items.len();
+    let mut heard = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        (ctx.progress)(&format!("Listening to version {} of {n}", i + 1), i as f64 / n as f64);
+        heard.push(hear(ctx.state, item, ctx.cancel).await?);
+    }
+    let best = (0..n).fold(0, |b, i| if heard[i].score > heard[b].score { i } else { b });
+    crate::applog::line("media", &format!("Kept version {} of {n}: scores {:?}", best + 1, heard.iter().map(|r| r.score).collect::<Vec<_>>()));
+    let mut kept = None;
+    for (i, (mut item, review)) in items.into_iter().zip(heard).enumerate() {
+        if i == best {
+            let clearest = format!("The clearest of {n} versions: {} of {} words heard.", review.heard, review.words);
+            item.note = Some(item.note.take().map_or(clearest.clone(), |was| format!("{was} {clearest}")));
+            item.review = Some(review);
+            store::update(&ctx.state.db.lock().unwrap(), &c, &item)?;
+            kept = Some(item);
+        } else {
+            store::delete(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &item.id)?;
+        }
+    }
+    Ok(kept.into_iter().collect())
 }
 
 /// Listens to a song (`req.source`) and keeps the review on it.
@@ -4063,6 +4191,7 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
         parent: Some(item.id.clone()),
         chat_id: ctx.req.chat_id.clone().or_else(|| item.chat_id.clone()),
         seed: item.seed,
+        title: item.title.clone(),
         lyrics: item.lyrics.clone(),
         note: Some(format!("Sung in the recorded voice “{}”", voice.name)),
         ..Default::default()
@@ -4535,6 +4664,65 @@ pub fn media_thumb(state: AppStateRef, id: String) -> Result<tauri::ipc::Respons
     Ok(tauri::ipc::Response::new(store::read_thumb(&state.paths, &c, &id)?))
 }
 
+/// A picture kept as a song's cover art (its thumbnail, larger than a
+/// tile's so the song's page can show it big).
+fn set_cover(state: &AppState, c: &crate::crypto::Cipher, song_id: &str, img: &image::DynamicImage) -> Result<MediaItem, String> {
+    let conn = state.db.lock().unwrap();
+    let mut song = store::get(&conn, c, song_id).ok_or("That song is no longer in the gallery.")?;
+    if song.kind != "audio" {
+        return Err("Cover art is for songs.".into());
+    }
+    let side = img.width().min(img.height());
+    let square = img.crop_imm((img.width() - side) / 2, (img.height() - side) / 2, side, side).thumbnail(768, 768).to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 86).encode_image(&square).map_err(|e| e.to_string())?;
+    store::write_thumb(&state.paths, c, song_id, &jpeg)?;
+    song.poster = true;
+    store::update(&conn, c, &song)?;
+    Ok(song)
+}
+
+/// Queues cover art for a song just made, when a picture model is here.
+fn queue_cover_art(state: &Arc<AppState>, song: &MediaItem) {
+    if choose(state, "generate", None, false).is_err() {
+        crate::applog::line("media", "No cover art: no picture model is installed");
+        return;
+    }
+    let req = Request { op: "cover_art".into(), source: Some(song.id.clone()), chat_id: song.chat_id.clone(), ..Default::default() };
+    let (state, id) = (state.clone(), store::new_id());
+    tauri::async_runtime::spawn(async move {
+        let result = run(&state, id.clone(), req).await;
+        job_done(&state, &id, &result);
+    });
+}
+
+/// What a song's cover art is asked to show: the person's words for it,
+/// else the song's own description, with no lettering (picture models
+/// write a title badly).
+fn art_prompt(song: &MediaItem, asked: &str) -> String {
+    let what = if asked.trim().is_empty() { song.prompt.trim().trim_end_matches('.').to_string() } else { asked.trim().trim_end_matches('.').to_string() };
+    format!("Album cover art for a song: {what}. Striking artistic image, bold composition, rich colour. No text, no letters, no words.")
+}
+
+/// Cover art for a song (`req.source`): a square picture made by the
+/// picture model and kept as the song's picture; the picture itself isn't
+/// kept in the gallery.
+async fn cover_art(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let id = ctx.req.source.as_deref().ok_or("Pick a song first.")?;
+    let c = ctx.state.work_cipher()?;
+    let song = store::get(&ctx.state.db.lock().unwrap(), &c, id).ok_or("That song is no longer in the gallery.")?;
+    if song.kind != "audio" {
+        return Err("Cover art is for songs.".into());
+    }
+    let req = Request { op: "generate".into(), model_id: Some(m.id.clone()), prompt: art_prompt(&song, &ctx.req.prompt), shape: Some("square".into()), count: Some(1), ..Default::default() };
+    let step = RunCtx { state: ctx.state, req: &req, cancel: ctx.cancel, progress: ctx.progress, reserved: ctx.reserved };
+    let pic = picture(&step, m, work).await?.into_iter().next().ok_or("The picture model didn't make the cover.")?;
+    let bytes = store::read(&ctx.state.paths, &c, &pic.id)?;
+    let _ = store::delete(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &pic.id);
+    let img = imaging::decode(&bytes)?;
+    Ok(vec![set_cover(ctx.state, &c, &song.id, &img)?])
+}
+
 /// Saves a still frame the window took from a video as its thumbnail
 /// (the window can decode WebM; the core can't).
 #[tauri::command(async)]
@@ -4555,8 +4743,13 @@ pub fn media_set_poster(state: AppStateRef, id: String, data: String) -> Result<
 
 #[tauri::command(async)]
 pub fn media_delete(state: AppStateRef, id: String) -> Result<(), String> {
-    state.cipher()?;
+    let c = state.cipher()?;
     let conn = state.db.lock().unwrap();
+    // A song sung in a recorded voice takes the version it was made from,
+    // kept out of the gallery for it, along.
+    if let Some(parent) = store::get(&conn, &c, &id).and_then(|i| i.parent.zip(Some(i.op))).and_then(|(p, op)| store::get(&conn, &c, &p).filter(|p| p.hidden && p.op == op && p.kind == "audio")) {
+        store::delete(&conn, &state.paths, &parent.id)?;
+    }
     store::delete(&conn, &state.paths, &id)?;
     db::log_action(&conn, "media", "Deleted an item from the gallery");
     Ok(())
@@ -4568,6 +4761,17 @@ pub fn media_favorite(state: AppStateRef, id: String, on: bool) -> Result<MediaI
     let conn = state.db.lock().unwrap();
     let mut item = store::get(&conn, &c, &id).ok_or("That item is no longer in the gallery.")?;
     item.favorite = on;
+    store::update(&conn, &c, &item)?;
+    Ok(item)
+}
+
+/// Names a song (or anything in the gallery); empty goes back to none.
+#[tauri::command(async)]
+pub fn media_set_title(state: AppStateRef, id: String, title: String) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let conn = state.db.lock().unwrap();
+    let mut item = store::get(&conn, &c, &id).ok_or("That item is no longer in the gallery.")?;
+    item.title = Some(title.trim().chars().take(120).collect::<String>()).filter(|t| !t.is_empty());
     store::update(&conn, &c, &item)?;
     Ok(item)
 }
@@ -4792,6 +4996,7 @@ pub fn media_add(
     hidden: Option<bool>,
     seconds: Option<f64>,
     lyrics: Option<String>,
+    note: Option<String>,
 ) -> Result<MediaItem, String> {
     let c = state.cipher()?;
     let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| "That file couldn't be read.".to_string())?;
@@ -4806,7 +5011,9 @@ pub fn media_add(
     };
     let op = if matches!(op.as_str(), "trim" | "paste" | "attach" | "screenshot" | "import") { op } else { "import".into() };
     let mut item = add(&state, &c, bytes, kind, &mime, &op, prompt.as_deref().unwrap_or(""), parent, chat_id, hidden.unwrap_or(false))?;
-    if seconds.is_some() || lyrics.is_some() {
+    // What was done to it in the window ("Faded out over 8 s").
+    item.note = note.map(|n| n.trim().chars().take(200).collect::<String>()).filter(|n| !n.is_empty());
+    if seconds.is_some() || lyrics.is_some() || item.note.is_some() {
         if let Some(s) = seconds {
             item.seconds = s;
         }
@@ -5188,6 +5395,17 @@ mod tests {
         assert_eq!(auto_seconds(&fixed), None);
         let off = Request { op: "music".into(), prompt: "a 90-second jingle".into(), music: Some(MusicSpec::default()), ..Default::default() };
         assert_eq!(auto_seconds(&off), None);
+    }
+
+    /// A song in a recorded voice gets its singer's sex from the recording
+    /// only when the description doesn't already say who sings.
+    #[test]
+    fn a_described_singer_is_kept() {
+        assert!(names_a_singer("A country song with a female singer"));
+        assert!(names_a_singer("boy band pop, 2000s"));
+        assert!(names_a_singer("Duet about the sea"));
+        assert!(!names_a_singer("heavy bass, human connection, a manic beat"));
+        assert!(!names_a_singer("a love song for my wife"));
     }
 
     /// A feeling, and ways of singing on parts of the song: in the

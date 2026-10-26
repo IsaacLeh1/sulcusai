@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, toBase64, type MadeStats, type MediaItem, type MediaJob } from "../api";
+import { cut, fade, resampleSpeed, stretchSpeed, type Channels } from "../audioEdit";
 import { clock } from "../format";
 import { t } from "../i18n";
 import { encodeWav, fileUrl, JOB_LABEL, makeStill, useMediaUrl, waitLabel } from "../media";
@@ -11,7 +12,8 @@ import type { PushToast } from "./Toasts";
 
 /** A gallery tile: the picture, or a card for a clip or sound. */
 export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen: () => void; selected?: boolean }) {
-  const thumb = useMediaUrl(item.kind === "image" || (item.kind === "video" && item.poster) ? item : null, true);
+  // Pictures, and a video's still or a song's cover art.
+  const thumb = useMediaUrl(item.kind === "image" || item.poster ? item : null, true);
   // An older video without a still: take one now.
   const [still, setStill] = useState<string | null>(null);
   useEffect(() => {
@@ -22,14 +24,15 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
       live = false;
     };
   }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const videoStill = item.kind === "video" ? thumb ?? still : null;
+  const videoStill = item.kind === "video" ? thumb ?? still : item.kind === "audio" ? thumb : null;
+  const name = item.title || item.prompt;
   return (
-    <button className={`media-tile ${item.kind} ${selected ? "selected" : ""}`} onClick={onOpen} title={item.prompt || undefined}>
+    <button className={`media-tile ${item.kind} ${selected ? "selected" : ""}`} onClick={onOpen} title={item.title ? `${item.title} · ${item.prompt}` : item.prompt || undefined}>
       {item.kind === "image" ? (
         thumb ? <img src={thumb} alt={item.prompt || t("Picture")} loading="lazy" /> : <span className="media-ph" aria-hidden>{t("Picture")}</span>
       ) : videoStill ? (
         <>
-          <img src={videoStill} alt={item.prompt || t("Video")} loading="lazy" />
+          <img src={videoStill} alt={name || (item.kind === "audio" ? t("Cover art") : t("Video"))} loading="lazy" />
           <span className="media-play" aria-hidden>▶ {clock(item.seconds)}</span>
         </>
       ) : (
@@ -39,7 +42,7 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
         </span>
       )}
       {item.favorite && <span className="media-fav" aria-label={t("Favorite")}>★</span>}
-      {item.prompt && <span className="media-cap ellipsis">{item.prompt}</span>}
+      {name && <span className="media-cap ellipsis">{name}</span>}
     </button>
   );
 }
@@ -308,6 +311,32 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
     }
   };
 
+  // Quick edits, kept as a new song beside this one.
+  const [editing, setEditing] = useState(false);
+  const [fadeIn, setFadeIn] = useState(0);
+  const [fadeOut, setFadeOut] = useState(5);
+  const [speed, setSpeed] = useState(1.1);
+  const [keepPitch, setKeepPitch] = useState(true);
+  const saveEdit = async (edit: (chs: Channels, rate: number) => Channels, note: string, keepWords: boolean) => {
+    if (!buf) return;
+    setBusy(true);
+    try {
+      // Let the button show it's working before the samples are worked on.
+      await new Promise((r) => setTimeout(r, 30));
+      const chs = edit(Array.from({ length: Math.min(2, buf.numberOfChannels) }, (_, c) => buf.getChannelData(c).slice()), buf.sampleRate);
+      const out = new AudioBuffer({ length: chs[0].length, numberOfChannels: chs.length, sampleRate: buf.sampleRate });
+      chs.forEach((d, c) => out.copyToChannel(d, c));
+      const wav = encodeWav(out, 0, out.duration);
+      const saved = await api.mediaAdd({ data: toBase64(wav), mime: "audio/wav", op: "trim", prompt: item.prompt, parent: item.id, seconds: out.duration, lyrics: keepWords ? item.lyrics : null, note });
+      toast(t("The changed song is saved in the gallery, beside this one."), "success");
+      onSaved?.(saved);
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="audio-player">
       {src && <audio ref={audio} src={src} controls controlsList="nodownload" preload="auto" onPlay={() => audio.current && audio.current.currentTime < range[0] && (audio.current.currentTime = range[0])} />}
@@ -335,8 +364,77 @@ export function AudioPlayer({ item, toast, onSaved }: { item: MediaItem; toast: 
                 {t("Save the trimmed part")}
               </button>
             )}
+            {trimmed && (
+              <button
+                className="btn small"
+                disabled={busy || !buf}
+                onClick={() => saveEdit((chs, rate) => cut(chs, rate, range[0], range[1]), t("{from} to {to} taken out", { from: clock(range[0]), to: clock(range[1]) }), true)}
+                title={t("Keep everything except the part marked by Start and End")}
+              >
+                {t("Cut the marked part out")}
+              </button>
+            )}
+            <button className={`btn small ${editing ? "active" : ""}`} disabled={!buf} onClick={() => setEditing(!editing)}>{t("Fade or speed…")}</button>
             <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
           </div>
+          {editing && buf && (
+            <div className="row wrap small">
+              <label className="row">
+                {t("Fade in")}
+                <select value={fadeIn} onChange={(e) => setFadeIn(+e.target.value)}>
+                  {[0, 1, 2, 4, 8].map((s) => (
+                    <option key={s} value={s}>{s ? t("{n} s", { n: s }) : t("None")}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="row">
+                {t("Fade out")}
+                <select value={fadeOut} onChange={(e) => setFadeOut(+e.target.value)}>
+                  {[0, 2, 5, 8, 12].map((s) => (
+                    <option key={s} value={s}>{s ? t("{n} s", { n: s }) : t("None")}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="btn small"
+                disabled={busy || (!fadeIn && !fadeOut)}
+                onClick={() =>
+                  saveEdit(
+                    (chs, rate) => fade(chs, rate, fadeIn, fadeOut),
+                    [fadeIn ? t("Faded in over {n} s", { n: fadeIn }) : "", fadeOut ? t("Faded out over {n} s", { n: fadeOut }) : ""].filter(Boolean).join(". "),
+                    true,
+                  )
+                }
+              >
+                {t("Save with the fades")}
+              </button>
+              <span className="spacer" />
+              <label className="row">
+                {t("Speed")}
+                <select value={speed} onChange={(e) => setSpeed(+e.target.value)}>
+                  {[0.75, 0.85, 0.9, 0.95, 1.05, 1.1, 1.15, 1.25, 1.5].map((s) => (
+                    <option key={s} value={s}>{`${s}×`}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="row" title={t("Off, the pitch moves with the speed, as a record played faster or slower")}>
+                <input type="checkbox" checked={keepPitch} onChange={(e) => setKeepPitch(e.target.checked)} /> {t("Keep the pitch")}
+              </label>
+              <button
+                className="btn small"
+                disabled={busy}
+                onClick={() =>
+                  saveEdit(
+                    (chs, rate) => (keepPitch ? stretchSpeed(chs, rate, speed) : resampleSpeed(chs, speed)),
+                    keepPitch ? t("At {speed}× speed, the pitch kept", { speed }) : t("At {speed}× speed and pitch", { speed }),
+                    true,
+                  )
+                }
+              >
+                {busy ? t("Working…") : t("Save at this speed")}
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>

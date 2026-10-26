@@ -267,6 +267,50 @@ pub fn singing_reference(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<
     Ok((joined(paths, c, voice, &voice.order(LineKind::Speak, SPEAK_ORDER), svc::RATE, svc::MAX_PROMPT_S)?.0, false))
 }
 
+/// Whether a recorded voice is a man's ("male") or a woman's ("female"),
+/// from its middle pitch: reading when there is some (men about 85-155 Hz,
+/// women 165-255), else singing (higher for both). None in between.
+pub fn sex_of(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Option<&'static str> {
+    const RATE: u32 = 16_000;
+    let (samples, man, woman) = match joined(paths, c, voice, &voice.order(LineKind::Speak, SPEAK_ORDER), RATE, 15.0) {
+        Ok((s, _)) if s.len() > RATE as usize * 2 => (s, 160.0, 175.0),
+        _ => (joined(paths, c, voice, &voice.order(LineKind::Sing, SING_ORDER), RATE, 15.0).ok()?.0, 210.0, 250.0),
+    };
+    sex_by_pitch(middle_pitch(&samples, RATE)?, man, woman)
+}
+
+fn sex_by_pitch(hz: f32, man: f32, woman: f32) -> Option<&'static str> {
+    if hz <= man {
+        Some("male")
+    } else if hz >= woman {
+        Some("female")
+    } else {
+        None
+    }
+}
+
+/// The middle pitch of the voiced moments (autocorrelation, 80 to 800 Hz).
+/// None when too little of it is voiced to tell.
+fn middle_pitch(samples: &[f32], rate: u32) -> Option<f32> {
+    let frame = rate as usize / 20;
+    let loudest = samples.chunks(frame).map(crate::audio::rms).fold(0.0f32, f32::max).max(1e-6);
+    let (lo, hi) = (rate as usize / 800, (rate as usize / 80).min(frame - 1));
+    let mut pitches: Vec<f32> = samples
+        .chunks(frame)
+        .filter(|f| f.len() == frame && crate::audio::rms(f) > loudest * 0.2)
+        .filter_map(|f| {
+            let energy: f32 = f.iter().map(|x| x * x).sum::<f32>().max(1e-9);
+            let (lag, peak) = (lo..hi).map(|l| (l, f.iter().zip(&f[l..]).map(|(a, b)| a * b).sum::<f32>() / energy)).fold((0, 0.0f32), |best, x| if x.1 > best.1 { x } else { best });
+            (peak > 0.5 && lag > 0).then(|| rate as f32 / lag as f32)
+        })
+        .collect();
+    if pitches.len() < 10 {
+        return None;
+    }
+    pitches.sort_by(|a, b| a.total_cmp(b));
+    Some(pitches[pitches.len() / 2])
+}
+
 // ---------- recording ----------
 
 struct Recording {
@@ -1021,6 +1065,27 @@ pub fn mix(band: &stems::Stereo, old_voice: &[f32], new_voice: &[f32]) -> stems:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_voice_is_a_mans_or_a_womans_by_its_pitch() {
+        // A voice with overtones, gliding a little, between pauses.
+        let voice = |hz: f32| -> Vec<f32> {
+            (0..16_000 * 4)
+                .map(|i| {
+                    let t = i as f32 / 16_000.0;
+                    let f = hz * (1.0 + 0.03 * (t * 2.0).sin());
+                    let on = if (t * 2.0).fract() < 0.8 { 1.0 } else { 0.0 };
+                    on * (1..5).map(|k| (std::f32::consts::TAU * f * k as f32 * t).sin() / k as f32).sum::<f32>() * 0.2
+                })
+                .collect()
+        };
+        let speaking = |hz: f32| sex_by_pitch(middle_pitch(&voice(hz), 16_000).unwrap(), 160.0, 175.0);
+        assert_eq!(speaking(120.0), Some("male"));
+        assert_eq!(speaking(139.0), Some("male"));
+        assert_eq!(speaking(215.0), Some("female"));
+        assert_eq!(speaking(168.0), None, "in between: left to the description");
+        assert_eq!(middle_pitch(&vec![0.0; 16_000], 16_000), None);
+    }
 
     #[test]
     fn text_goes_in_sentence_lines() {

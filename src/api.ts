@@ -1869,6 +1869,8 @@ export interface MediaItem {
   kind: "image" | "video" | "audio";
   op: string;
   prompt: string;
+  /** A song's name: its hook, or what the person called it. */
+  title?: string | null;
   model_id: string | null;
   mime: string;
   width: number;
@@ -2116,7 +2118,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2246,8 +2248,12 @@ export interface MusicSpec {
   era?: string | null;
   /** The length follows the song: a length named in the description, the lyrics, the sections, or the lyrics written for it. */
   auto_length?: boolean;
-  /** Sung again in a recorded voice (its id), kept beside the song as made. */
+  /** Sung in a recorded voice (its id): made with its singing as the guide, then sung again in it. */
   own_voice?: string | null;
+  /** Of the versions made, keep only the one whose words were heard best. */
+  best_of?: boolean;
+  /** Each song gets cover art from the picture model, made next. */
+  cover_art?: boolean;
   /** A saved artist (id or name): their voice and sound for this song. */
   persona?: string | null;
   /** The singer's voice in words (a saved artist's). */
@@ -2880,7 +2886,8 @@ export const api = {
   mediaSetPoster: (id: string, data: string) => invoke<MediaItem>("media_set_poster", { id, data }),
   mediaDelete: (id: string) => invoke<void>("media_delete", { id }),
   mediaFavorite: (id: string, on: boolean) => invoke<MediaItem>("media_favorite", { id, on }),
-  mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),
+  /** Names a song (or anything in the gallery); empty goes back to none. */
+  mediaSetTitle: (id: string, title: string) => invoke<MediaItem>("media_set_title", { id, title }),  mediaExport: (id: string, path: string) => invoke<void>("media_export", { id, path }),
   mediaImport: (path: string, chatId: string | null = null) => invoke<MediaItem>("media_import", { path, chatId }),
   musicWriteLyrics: (prompt: string, music: MusicSpec | null, seconds: number | null, language: string | null) =>
     invoke<string>("music_write_lyrics", { prompt, music, seconds, language }),
@@ -2906,8 +2913,8 @@ export const api = {
   ownVoiceUpload: (voice: string, paths: string[], singing: boolean) => invoke<OwnVoicesView & { problems: string[] }>("own_voice_upload", { voice, paths, singing }),
   /** A sentence read in the voice, to hear it (WAV, base64); the first time downloads the voice engine. */
   ownVoiceTry: (voice: string, text: string, language: string | null) => invoke<string>("own_voice_try", { voice, text, language }),
-  mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null }) =>
-    invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null, lyrics: input.lyrics ?? null }),
+  mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null; note?: string | null }) =>
+    invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null, lyrics: input.lyrics ?? null, note: input.note ?? null }),
   /** A song's notes as a MIDI file, saved at `path`: `map` as edited, else the song's own. */
   mediaSongMidi: (id: string, path: string, map?: SongMap) => invoke<void>("media_song_midi", { id, path, map: map ?? null }),
   /** Keeps notes edited in the song view with the song. */

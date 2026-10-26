@@ -273,6 +273,58 @@ pub fn sung_lines(lyrics: &str) -> usize {
     lyrics.lines().map(str::trim).filter(|l| !l.is_empty() && !(l.starts_with('[') && l.ends_with(']'))).count()
 }
 
+/// A song's title from its words, as songs are usually named: its hook (the
+/// line sung most often), else the first line of its chorus, else its first
+/// line; a few words at most, in title case. None with no words.
+pub fn title_of(lyrics: &str) -> Option<String> {
+    let mut section = String::new();
+    let mut lines: Vec<(bool, String)> = Vec::new();
+    for l in lyrics.lines().map(str::trim) {
+        if l.starts_with('[') && l.ends_with(']') {
+            section = l.to_lowercase();
+            continue;
+        }
+        // What backing singers echo, in round brackets, isn't the title.
+        let main = l.split('(').next().unwrap_or(l).trim();
+        if !main.is_empty() {
+            lines.push((["chorus", "hook", "refrain"].iter().any(|c| section.contains(c)), main.to_string()));
+        }
+    }
+    let key = |s: &str| s.to_lowercase().split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
+    let count = |k: &str| lines.iter().filter(|(_, l)| key(l) == k).count();
+    let hook = lines.iter().map(|(_, l)| (count(&key(l)), l)).filter(|(n, _)| *n >= 2).fold(None, |best: Option<(usize, &String)>, x| if best.is_none_or(|b| x.0 > b.0) { Some(x) } else { best }).map(|(_, l)| l);
+    let line = hook.or_else(|| lines.iter().find(|(chorus, _)| *chorus).map(|(_, l)| l)).or_else(|| lines.first().map(|(_, l)| l))?;
+    const SMALL: &[&str] = &["a", "an", "the", "of", "in", "on", "to", "and", "but", "or", "for", "at", "by"];
+    // A long line: up to its first comma, else its first five words without
+    // a dangling "who", "the", "my"… at the end.
+    let short = match line.split([',', ';', ':', '—', '!', '?']).next().map(str::trim).filter(|s| s.split_whitespace().count() >= 2) {
+        Some(s) if s.split_whitespace().count() <= 6 => s.to_string(),
+        _ => {
+            const DANGLING: &[&str] = &["who", "that", "which", "when", "where", "my", "your", "our", "their", "i", "we", "you", "is", "are", "with", "from", "so", "as", "like"];
+            let mut w: Vec<&str> = line.split_whitespace().take(5).collect();
+            while w.len() > 2 && w.last().is_some_and(|x| SMALL.contains(&x.to_lowercase().as_str()) || DANGLING.contains(&x.to_lowercase().as_str())) {
+                w.pop();
+            }
+            w.join(" ")
+        }
+    };
+    let words: Vec<String> = short
+        .trim_matches(|c: char| !c.is_alphanumeric() && c != '\'')
+        .split_whitespace()
+        .enumerate()
+        .map(|(i, w)| {
+            let lower = w.to_lowercase();
+            if i > 0 && SMALL.contains(&lower.as_str()) {
+                lower
+            } else {
+                let mut c = w.chars();
+                c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            }
+        })
+        .collect();
+    (!words.is_empty()).then(|| words.join(" "))
+}
+
 /// The music model's plan has words to sing.
 pub fn has_singing(planned: &str) -> bool {
     let t = planned.trim();
@@ -863,6 +915,17 @@ pub async fn write(state: &Arc<AppState>, prompt: &str, seconds: Option<f32>, la
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn songs_are_named_by_their_hook() {
+        let hook = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry (let it carry)\nAll the way back to me";
+        assert_eq!(title_of(hook).as_deref(), Some("Sing It Loud"));
+        let chorus = "[Verse]\nI walked along the river\n\n[Chorus]\nWe are the ones who stay up late tonight\nDancing on the edge";
+        assert_eq!(title_of(chorus).as_deref(), Some("We Are the Ones"));
+        assert_eq!(title_of("[Verse]\nhome is where the heart is\n").as_deref(), Some("Home Is Where the Heart Is"));
+        assert_eq!(title_of("[Verse]\nOh, don't stop me now!\n[Chorus]\nDon't stop me now!\nDon't stop me now!").as_deref(), Some("Don't Stop Me Now"));
+        assert_eq!(title_of("[Instrumental]"), None);
+    }
 
     #[test]
     fn written_lyrics_are_cut_to_what_fits() {

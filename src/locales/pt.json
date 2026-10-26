@@ -4336,7 +4336,7 @@
  "Sung in": "Cantada com",
  "The music model's singer": "A voz do modelo de música",
  "{name} (recorded voice)": "{name} (voz gravada)",
- "The song is made first, then sung again in this voice and kept beside it. It takes a few minutes more.": "Primeiro a música é feita; depois é cantada de novo com esta voz e guardada ao lado. Demora mais uns minutos.",
+ "The song is made with this voice's singing as its guide, then sung again in it. The version before is under ← The original. It takes a few minutes more.": "A música é feita com o canto desta voz como guia e depois cantada de novo com ela. A versão anterior está em ← O original. Demora mais uns minutos.",
  "Sing it in your own voice…": "Cantá-la com a tua própria voz…",
  "Read it in your own voice…": "Lê-lo com a tua própria voz…",
  "Recorded voices": "Vozes gravadas",

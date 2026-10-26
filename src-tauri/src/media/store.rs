@@ -22,6 +22,10 @@ pub struct MediaItem {
     /// trim or paste.
     pub op: String,
     pub prompt: String,
+    /// A song's name: its hook (`lyrics::title_of`), or what the person
+    /// called it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub model_id: Option<String>,
     pub mime: String,
     pub width: u32,
@@ -40,7 +44,7 @@ pub struct MediaItem {
     pub favorite: bool,
     /// Chat attachments and screenshots: not listed in the studio.
     pub hidden: bool,
-    /// Videos: a still frame is saved as the thumbnail.
+    /// Videos: a still frame is saved as the thumbnail. Songs: their cover art is.
     pub poster: bool,
     /// What making it took (made here or in the cloud).
     pub stats: Option<MadeStats>,

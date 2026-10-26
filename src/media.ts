@@ -46,7 +46,17 @@ function trim(kind: keyof typeof KEEP) {
 
 /** Which cached file a view of this item shows. */
 function keyOf(item: Pick<MediaItem, "id" | "kind"> & { poster?: boolean }, thumb: boolean): string {
-  return thumb && (item.kind === "image" || (item.kind === "video" && item.poster)) ? `t:${item.id}` : `f:${item.id}`;
+  return thumb && (item.kind === "image" || item.poster) ? `t:${item.id}` : `f:${item.id}`;
+}
+
+// Bumped when an item's preview is replaced (a song's new cover art), so
+// views showing it load the new one.
+const thumbGen = new Map<string, number>();
+
+/** Lets go of an item's cached preview; views of it load it again. */
+export function forgetThumb(id: string) {
+  drop(`t:${id}`);
+  thumbGen.set(id, (thumbGen.get(id) ?? 0) + 1);
 }
 
 /** Keeps a cached file while it's used; the returned function lets it go. */
@@ -130,7 +140,7 @@ export function useMediaUrl(item: Pick<MediaItem, "id" | "mime" | "kind"> | null
       live = false;
       release();
     };
-  }, [item?.id, thumb]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [item?.id, thumb, item && thumb ? thumbGen.get(item.id) ?? 0 : 0]); // eslint-disable-line react-hooks/exhaustive-deps
   return u;
 }
 
@@ -182,6 +192,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   remake: tx("Making the unclear parts again"),
   map: tx("Seeing how a song is built"),
   revoice: tx("Singing a song in a recorded voice"),
+  cover_art: tx("Making cover art"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

@@ -22,7 +22,7 @@ import {
 } from "../api";
 import { bytes, clock } from "../format";
 import { t, tf, tx } from "../i18n";
-import { forget, OP_LABEL, useMediaUrl, waitLabel } from "../media";
+import { forget, forgetThumb, OP_LABEL, useMediaUrl, waitLabel } from "../media";
 import { AudioPlayer, JobCard, MadeStatsLine, MediaTile, saveAs, SongListener, useMediaJobs } from "../components/MediaBits";
 import { SongView } from "../components/SongView";
 import { ComposeEditor, TIMES } from "../components/ComposeEditor";
@@ -86,6 +86,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
     const sub = on("media:done", (d) => {
       // (A failure's message is shown by the app, whatever page is open.)
       if (d.ok && d.items?.length) {
+        // A song with new cover art: its old picture is let go.
+        d.items.filter((i) => i.kind === "audio" && i.poster).forEach((i) => forgetThumb(i.id));
         setFresh((s) => new Set([...s, ...d.items!.map((i) => i.id)]));
         load();
         // A song listened to or mapped while open: the viewer shows it.
@@ -237,6 +239,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             seed={songToWork}
             onCompose={(composition) => setComposing({ item: null, composition })}
             onYourVoice={() => setTab("voice")}
+            canArt={installedOf("image").some((m) => m.can.includes("generate"))}
           />
         ) : tab === "voice" ? (
           <OwnVoicePanel toast={toast} />
@@ -803,7 +806,7 @@ function SongSource({ song, gallery, onPick, toast }: { song: MediaItem | null; 
         <div className="music-song-list">
           {songs.map((s) => (
             <button key={s.id} className="btn ghost small" onClick={() => { onPick(s); setPicking(false); }}>
-              {s.prompt || t("A song")} {s.seconds > 0 ? `· ${mmss(s.seconds)}` : ""}
+              {s.title || s.prompt || t("A song")} {s.seconds > 0 ? `· ${mmss(s.seconds)}` : ""}
             </button>
           ))}
         </div>
@@ -823,6 +826,7 @@ function MusicComposer({
   seed,
   onCompose,
   onYourVoice,
+  canArt,
 }: {
   models: MediaModelCard[];
   defaultId: string | null;
@@ -837,9 +841,11 @@ function MusicComposer({
   onCompose: (c: Composition) => void;
   /** Opens Your voice, to record one. */
   onYourVoice: () => void;
+  /** A picture model is here to make cover art. */
+  canArt: boolean;
 }) {
   const [mode, setMode] = useState<"song" | "edit" | "sound">("song");
-  // Sung again in a recorded voice (kept beside the song as made).
+  // Sung in a recorded voice (the song as made is under "← The original").
   const ownVoices = (useOwnVoices()?.voices ?? []).filter((v) => v.can_sing);
   const [ownVoice, setOwnVoice] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -883,6 +889,24 @@ function MusicComposer({
   // Vocals come out clearly about three times in four: two versions on the
   // graphics card (seconds each) make one clear one likely. Changed by hand, it stays.
   const [versionsSet, setVersions] = useState<number | null>(null);
+  // Best of 3: three made, each listened to, the one whose words come through clearest kept.
+  const [bestOf, setBestOf] = useState(false);
+  // Cover art for each song, made by the picture model after it (kept on for next time).
+  const [coverArt, setCoverArtState] = useState(() => {
+    try {
+      return localStorage.getItem("sulcusai.songs.coverArt") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const setCoverArt = (on: boolean) => {
+    setCoverArtState(on);
+    try {
+      localStorage.setItem("sulcusai.songs.coverArt", on ? "1" : "0");
+    } catch {
+      /* not kept */
+    }
+  };
   const [more, setMore] = useState(false);
   const [reference, setReference] = useState<MediaItem | null>(null);
   // Saved artists: one picked fills in their sound and voice; settings can be saved as one.
@@ -955,6 +979,8 @@ function MusicComposer({
     era: era || null,
     auto_length: auto,
     own_voice: mode === "song" && singing && ownVoices.some((v) => v.id === ownVoice) ? ownVoice : null,
+    best_of: mode === "song" && singing && bestOf,
+    cover_art: mode === "song" && canArt && coverArt,
     persona: mode === "song" && personaId ? personaId : null,
     voice_detail: mode === "song" && personaId && voiceWords.trim() ? voiceWords.trim() : null,
     emotion: joined(emotion),
@@ -1144,7 +1170,9 @@ function MusicComposer({
   const songSecs = mode === "edit" ? Math.max(song?.seconds ?? 60, 30) : auto ? autoGuess ?? 150 : secs;
   // Singing the first version again in a recorded voice: about twice the song's length.
   const revoicing = mode === "song" && !!spec().own_voice ? 2 * songSecs : 0;
-  const est = m ? (m.fit.est_secs * songSecs * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 + revoicing : 0;
+  // Best of 3: each version listened to (about a quarter of its length).
+  const listening = mode === "song" && bestOf && singing ? versions * songSecs * 0.25 : 0;
+  const est = m ? (m.fit.est_secs * songSecs * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 + revoicing + listening : 0;
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1348,7 +1376,7 @@ function MusicComposer({
                     <option key={v.id} value={v.id}>{t("{name} (recorded voice)", { name: v.name })}</option>
                   ))}
                 </select>
-                {ownVoice && <span className="muted">{t("The song is made first, then sung again in this voice and kept beside it. It takes a few minutes more.")}</span>}
+                {ownVoice && <span className="muted">{t("The song is made with this voice's singing as its guide, then sung again in it. The version before is under ← The original. It takes a few minutes more.")}</span>}
               </label>
             ) : (
               <button className="link small" onClick={onYourVoice}>{t("Sing it in your own voice…")}</button>
@@ -1539,11 +1567,26 @@ function MusicComposer({
           </label>
         )}
         {mode === "song" && (
-          <select value={versions} onChange={(e) => setVersions(+e.target.value)} aria-label={t("Versions")} title={t("Make several versions at once and keep the one you like")}>
+          <select
+            value={bestOf && singing ? "best" : versions}
+            onChange={(e) => {
+              const best = e.target.value === "best";
+              setBestOf(best);
+              setVersions(best ? 3 : +e.target.value);
+            }}
+            aria-label={t("Versions")}
+            title={t("Make several versions at once and keep the one you like")}
+          >
             <option value={1}>{t("1 version")}</option>
             <option value={2}>{t("2 versions")}</option>
             <option value={3}>{t("3 versions")}</option>
+            {singing && <option value="best">{t("Best of 3 (keeps the clearest)")}</option>}
           </select>
+        )}
+        {mode === "song" && canArt && (
+          <label className="row small" title={t("A square picture for each song from the picture model, made right after it")}>
+            <input type="checkbox" checked={coverArt} onChange={(e) => setCoverArt(e.target.checked)} /> {t("Cover art")}
+          </label>
         )}
         <ModelPick models={fit.length ? fit : models} value={m?.id ?? ""} onChange={setModel} onMore={onModels} />
         <DefaultLink id={m?.id} defaultId={defaultId} onSetDefault={onSetDefault} />
@@ -1688,10 +1731,25 @@ function Viewer({
   // Recorded voices a song can be sung again in.
   const singers = (useOwnVoices()?.voices ?? []).filter((v) => v.can_sing);
   const [singer, setSinger] = useState("");
+  // A song's cover art, its name being changed, and words for new art.
+  const art = useMediaUrl(item.kind === "audio" && item.poster ? item : null, true);
+  const [naming, setNaming] = useState<string | null>(null);
+  const [artWords, setArtWords] = useState("");
+  const rename = async () => {
+    if (naming === null) return;
+    try {
+      onChanged(await api.mediaSetTitle(item.id, naming));
+      setNaming(null);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
 
   useEffect(() => {
     setTool(null);
     setText("");
+    setNaming(null);
+    setArtWords("");
     ask.clear();
   }, [item.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -1729,6 +1787,7 @@ function Viewer({
             <img src={src} alt={item.prompt || t("Picture")} className={item.mime === "image/png" ? "checker" : ""} />
           ))}
           {item.kind === "video" && src && <video src={src} controls autoPlay loop playsInline />}
+          {item.kind === "audio" && art && <img src={art} alt={t("Cover art")} className="song-art" />}
           {item.kind === "audio" && <AudioPlayer item={item} toast={toast} onSaved={(i) => { onSaved(); onOpen(i); }} />}
         </div>
         <aside className="viewer-side">
@@ -1738,6 +1797,19 @@ function Viewer({
             <span className="spacer" />
             <button className="icon-btn" aria-label={t("Close")} onClick={onClose}>✕</button>
           </div>
+          {item.kind === "audio" &&
+            (naming !== null ? (
+              <div className="row">
+                <input className="input" value={naming} onChange={(e) => setNaming(e.target.value)} onKeyDown={(e) => e.key === "Enter" && rename()} aria-label={t("Title")} placeholder={t("Title")} autoFocus />
+                <button className="btn small primary" onClick={rename}>{t("Save")}</button>
+                <button className="btn small" onClick={() => setNaming(null)}>{t("Cancel")}</button>
+              </div>
+            ) : (
+              <div className="row">
+                <strong className="song-title">{item.title || t("Untitled")}</strong>
+                <button className="link small" onClick={() => setNaming(item.title ?? "")}>{t("Rename")}</button>
+              </div>
+            ))}
           {item.prompt && <p className="viewer-prompt small">{item.prompt}</p>}
           <p className="small muted">
             {item.kind === "image" ? `${item.width} × ${item.height}` : clock(item.seconds)}
@@ -1809,6 +1881,14 @@ function Viewer({
                   <button key={task} className="chip" onClick={() => onWorkOn(item, task)}>{t(TASKS.find(([id]) => id === task)![1])}</button>
                 ))}
               </div>
+              {can("generate") && (
+                <div className="row wrap small">
+                  <input className="input" value={artWords} onChange={(e) => setArtWords(e.target.value)} placeholder={t("What the cover shows (optional)")} aria-label={t("What the cover shows (optional)")} />
+                  <button className="btn small" onClick={() => run({ op: "cover_art", prompt: artWords })} title={t("A square picture for the song from the picture model, without words in it")}>
+                    {item.poster ? t("New cover art") : t("Make cover art")}
+                  </button>
+                </div>
+              )}
               {item.op !== "narrate" && singers.length > 0 && (
                 <div className="row wrap small">
                   <select value={singer} onChange={(e) => setSinger(e.target.value)} aria-label={t("Recorded voice")}>
