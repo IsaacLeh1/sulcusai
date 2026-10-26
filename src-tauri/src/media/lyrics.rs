@@ -106,6 +106,90 @@ fn section_tag(line: &str) -> Option<String> {
     Some(format!("[{label}]"))
 }
 
+/// Words that say how a section is delivered, as the word that goes after
+/// its name ("[Chorus - anthemic]"): a word of the direction starting with
+/// the first gives the second.
+const DELIVERY: &[(&str, &str)] = &[
+    ("whisper", "whispered"), ("spoken", "spoken"), ("rap", "rapped"), ("falsetto", "falsetto"), ("belt", "belted"), ("anthem", "anthemic"),
+    ("biggest", "anthemic"), ("huge", "anthemic"), ("soaring", "anthemic"), ("powerful", "powerful"), ("soft", "soft"), ("intimate", "intimate"),
+    ("quiet", "soft"), ("gentle", "soft"), ("stripped", "stripped back"), ("build", "building"), ("rising", "building"), ("harmon", "harmonies"),
+    ("gritty", "gritty"), ("rough", "gritty"), ("strained", "gritty"), ("raw", "raw"), ("mournful", "mournful"), ("emotional", "emotional"),
+    ("exhausted", "weary"), ("weary", "weary"), ("female", "female"), ("male", "male"), ("duet", "duet"), ("choir", "choir"), ("acapella", "a cappella"),
+];
+
+/// A line that is only a direction, as ACE-Step's own tag for it.
+const DYNAMIC: &[(&[&str], &str)] = &[
+    (&["build", "rising", "swell", "crescendo"], "[Build]"),
+    (&["breakdown", "falling away", "pull back", "pulls back", "strip", "drops out", "disappear", "fall away"], "[Breakdown]"),
+    (&["drop"], "[Drop]"),
+    (&["instrumental", "solo"], "[Instrumental]"),
+];
+
+/// A bracketed line written the way Suno takes lyrics, with directions in
+/// it ("[Chorus: strong melodic lift, full drums and vocal harmonies]") or
+/// only a direction ("[Very soft intimate clean vocal]", "[Pause]"), in
+/// ACE-Step's form: a section keeps its name and at most two words of
+/// delivery, as longer tags get sung as words; a direction alone becomes
+/// ACE-Step's own tag for a build-up, breakdown or drop, or nothing (None).
+/// The directions themselves go into the description (`directions_of`).
+fn direction_tag(inner: &str) -> Option<String> {
+    let inner = inner.trim();
+    let (head, rest) = match inner.split_once(':').or_else(|| inner.split_once(" - ")).or_else(|| inner.split_once(" — ")) {
+        Some((h, r)) => (h.trim(), r.trim()),
+        None => (inner, ""),
+    };
+    if let Some(tag) = section_tag(head).filter(|_| known_section(head)) {
+        let low = rest.to_lowercase();
+        let words: Vec<&str> = low.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+        let mut picked: Vec<&str> = Vec::new();
+        for (start, word) in DELIVERY {
+            if picked.len() < 2 && !picked.contains(word) && words.iter().any(|w| w.starts_with(start)) {
+                picked.push(word);
+            }
+        }
+        let name = tag.trim_start_matches('[').trim_end_matches(']');
+        return Some(if picked.is_empty() { format!("[{name}]") } else { format!("[{name} - {}]", picked.join(", ")) });
+    }
+    let low = inner.to_lowercase();
+    DYNAMIC.iter().find(|(keys, _)| keys.iter().any(|k| low.contains(k))).map(|(_, tag)| tag.to_string())
+}
+
+/// A section's name ("Verse 2", "Final Chorus", "Pre-Chorus 1").
+fn known_section(head: &str) -> bool {
+    let low = head.trim().trim_matches(|c: char| matches!(c, '[' | ']')).to_lowercase();
+    let name: Vec<&str> = low.split([' ', '-']).filter(|w| !w.is_empty()).collect();
+    SECTIONS.iter().any(|s| {
+        let words: Vec<&str> = s.split([' ', '-']).collect();
+        name.len() >= words.len() && name.iter().zip(&words).all(|(a, b)| a == b) && name[words.len()..].iter().all(|w| w.chars().all(|c| c.is_ascii_digit()))
+    })
+}
+
+/// The directions written in the lyrics' brackets ("dark acoustic
+/// ambience, faint fire crackling"), for the description: each once, the
+/// first 300 characters of them.
+pub fn directions_of(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut total = 0;
+    for line in text.lines().map(str::trim) {
+        let Some(inner) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) else { continue };
+        let rest = match inner.split_once(':') {
+            Some((head, rest)) if known_section(head) => rest.trim(),
+            Some(_) | None if known_section(inner) => continue,
+            _ => inner.trim(),
+        };
+        let d = rest.trim_end_matches('.').trim().to_lowercase();
+        if d.chars().filter(|c| c.is_alphabetic()).count() < 4 || matches!(d.as_str(), "pause" | "end" | "silence") || out.contains(&d) {
+            continue;
+        }
+        if total + d.len() > 300 {
+            break;
+        }
+        total += d.len() + 2;
+        out.push(d);
+    }
+    out
+}
+
 /// "Here are the lyrics:", "Sure! Here's a song about…:", "Title: …".
 fn is_preamble(line: &str) -> bool {
     let low = line.trim().trim_matches(|c: char| matches!(c, '*' | '#' | '_')).trim().to_lowercase();
@@ -128,13 +212,36 @@ pub fn tidy(text: &str) -> String {
             continue;
         }
         if line.is_empty() {
-            if out.last().is_some_and(|l| !l.is_empty()) {
+            // Between sections, not under a tag.
+            if out.last().is_some_and(|l| !l.is_empty() && !(l.starts_with('[') && l.ends_with(']'))) {
                 out.push(String::new());
             }
             continue;
         }
         started = true;
-        if let Some(tag) = section_tag(line) {
+        // A tag with directions, or a direction alone, in ACE-Step's form
+        // (left out when it has no tag for it). A line of only an emoji too.
+        let bracketed = line.starts_with('[') && line.ends_with(']');
+        let inner = line.trim_matches(|c| c == '[' || c == ']').trim();
+        // Suno's directions: a colon, a long tag or a sentence. Short tags
+        // ("[Instrumental Intro]", "[Chorus - female]") stay as written.
+        let directions = inner.contains(':') || inner.chars().count() > 30 || inner.split_whitespace().count() >= 4;
+        // Suno's timing cues, which ACE-Step would take for a section.
+        if bracketed && matches!(inner.to_lowercase().as_str(), "pause" | "silence" | "long pause" | "short pause") {
+            continue;
+        }
+        let tag = if bracketed && directions && !known_section(line) {
+            match direction_tag(&line[1..line.len() - 1]) {
+                Some(t) => Some(t),
+                None => continue,
+            }
+        } else {
+            section_tag(line)
+        };
+        if !line.chars().any(char::is_alphanumeric) {
+            continue;
+        }
+        if let Some(tag) = tag {
             if out.last().is_some_and(|l| !l.is_empty()) {
                 out.push(String::new());
             }
@@ -913,6 +1020,18 @@ mod tests {
         // A first line that only looks like an opener stays.
         assert_eq!(tidy("Here I am, standing tall\nNo one by my side"), "[Verse]\nHere I am, standing tall\nNo one by my side");
         assert_eq!(tidy("## Pre-Chorus\nhold on\nChorus x2\nlet go"), "[Pre-Chorus]\nhold on\n\n[Chorus X2]\nlet go");
+        // Lyrics written for Suno: directions in the tags and on lines of their own.
+        let suno = "[Intro: dark acoustic ambience, faint fire crackling, distant steel guitar]\n\n[Soft low wordless male vocal]\nAhhh…\n\n[Verse 1: low warm male vocal, conversational phrasing]\nI learned the shape of every fracture\n\n[Pre-Chorus 1: melody rising, drums and bass gradually building]\nBut there was heat behind the walls\n\n[Chorus: strong melodic lift, memorable country hook, full drums and vocal harmonies]\nSmoke and fire\n\n[Pull back slightly: clean and mournful]\nAnd now nothing remains\n\n[Pause]\n\n[Band begins falling away]\nBut smoke and fire\n🔥\n\n[Chorus - female]\nOne more";
+        let t = tidy(suno);
+        assert_eq!(
+            t,
+            "[Intro]\nAhhh…\n\n[Verse 1 - male]\nI learned the shape of every fracture\n\n[Pre-Chorus 1 - building]\nBut there was heat behind the walls\n\n[Chorus - harmonies]\nSmoke and fire\n\n[Breakdown]\nAnd now nothing remains\n\n[Breakdown]\nBut smoke and fire\n\n[Chorus - female]\nOne more"
+        );
+        assert_eq!(sung_lines(&t), 7);
+        let d = directions_of(suno);
+        assert_eq!(d[0], "dark acoustic ambience, faint fire crackling, distant steel guitar");
+        assert!(d.contains(&"soft low wordless male vocal".to_string()) && !d.iter().any(|x| x == "pause"), "{d:?}");
+        assert!(directions_of("[Verse]\nla\n[Chorus]\nla").is_empty());
         assert_eq!(sung_lines(&tidy(raw)), 5);
     }
 

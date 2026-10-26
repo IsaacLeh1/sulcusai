@@ -3874,6 +3874,248 @@ async fn e2e_lyrics_fill_the_song() {
     assert!(failed.is_empty(), "{failed:#?}");
 }
 
+/// ACE-Step rendered from noise against the same song planned first by its
+/// planning model (ace-lm, 1.7B and 4B), as ACE-Step 1.5 is meant to run:
+/// the same lyrics, seeds and settings, with the time, the length it came
+/// out and the lyric words Whisper hears. The songs are kept in
+/// C:\dev\tools\music\ab for listening. SULCUSAI_PLAN_DIT picks the
+/// rendering model file (default XL turbo), SULCUSAI_PLANNERS the planners.
+///     cargo test e2e_music_planned_or_not -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_music_planned_or_not() {
+    use crate::media::music;
+    let state = media_state();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab");
+    std::fs::create_dir_all(&out).unwrap();
+    let dit = std::env::var("SULCUSAI_PLAN_DIT").unwrap_or_else(|_| "acestep-v15-xl-turbo-Q8_0.gguf".into());
+    let planners = std::env::var("SULCUSAI_PLANNERS").unwrap_or_else(|_| ",acestep-5Hz-lm-1.7B-Q8_0.gguf,acestep-5Hz-lm-4B-Q8_0.gguf".into());
+    let models = state.paths.models.join("media").join("music");
+    let dir = crate::media::music_engine_dir(&state).expect("the music engine is installed");
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me\n\n[Verse 2]\nOld guitar by the doorway\nStrings still tuned to the past\nEvery chord is a promise\nThat the good days will last\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let caption = "modern country, warm male lead vocal, acoustic guitar, pedal steel, punchy live drums, warm bass, catchy chorus, polished Nashville production";
+    let seconds = 100.0;
+    let wanted = sung_words(lyrics);
+    let mut rows = Vec::new();
+    for planner in planners.split(',') {
+        if !planner.is_empty() && !models.join(planner).is_file() {
+            rows.push(format!("{planner}: not downloaded"));
+            continue;
+        }
+        let name = if planner.is_empty() { "noise".to_string() } else { planner.trim_start_matches("acestep-5Hz-lm-").trim_end_matches("-Q8_0.gguf").to_string() };
+        for seed in [11i64, 22] {
+            let (bpm, key, time) = music::settle(caption, None, None, None, seed);
+            let work = std::env::temp_dir().join(format!("sulcusai-plan-{}", crate::media::store::new_id()));
+            std::fs::create_dir_all(&work).unwrap();
+            let engine = music::Engine { dir: &dir, models: &models, low_priority: false, job: None, logs: &state.paths.logs };
+            let r = music::SongRequest {
+                caption,
+                lyrics,
+                seconds,
+                seed,
+                language: Some("en"),
+                dit_file: &dit,
+                bpm: Some(bpm),
+                key: Some(&key),
+                time_signature: Some(&time),
+                versions: 1,
+                planner,
+                ..Default::default()
+            };
+            let t = std::time::Instant::now();
+            let made = music::make(&engine, &work, &r, &AtomicBool::new(false), &|_, _| {}).await;
+            let took = t.elapsed().as_secs_f64();
+            let _ = std::fs::remove_dir_all(&work);
+            let song = match made {
+                Ok(mut s) => s.remove(0),
+                Err(e) => {
+                    rows.push(format!("{name} seed {seed}: failed ({e})"));
+                    println!("{}", rows.last().unwrap());
+                    continue;
+                }
+            };
+            let file = out.join(format!("{name}-{seed}.mp3"));
+            std::fs::write(&file, &song.mp3).unwrap();
+            let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+            let words = sung_words(&heard);
+            let matched = wanted.iter().filter(|w| words.contains(*w)).count();
+            rows.push(format!("{name} seed {seed}: {took:.0} s, {:.0} s long ({seconds:.0} asked), {matched} of {} lyric words heard", song.seconds, wanted.len()));
+            println!("{}", rows.last().unwrap());
+        }
+    }
+    println!("\n{}\nsongs in {}", rows.join("\n"), out.display());
+}
+
+/// A song from lyrics written Suno's way (directions in the brackets), as
+/// the Studio makes it: on YuE2 (installed from the catalog: its engine from
+/// the engines release) and on ACE-Step 1.5 XL, each kept in
+/// C:\dev\tools\music\ab with the words Whisper hears and its length.
+///     cargo test e2e_suno_style_lyrics -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_suno_style_lyrics() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let lyrics = "[Intro: dark acoustic ambience, faint fire crackling, distant steel guitar]\n\n[Verse 1: low warm male vocal, conversational phrasing, restrained acoustic groove]\nI learned the shape of every fracture\nEvery place we came undone\nKept rebuilding what was breaking\nLike the work could make us one\n\n[Chorus: strong melodic lift, memorable country hook, full drums and vocal harmonies]\nSmoke and fire\nThe flames climbed higher\nBuilt a home on all the ashes\nWhile you kept striking the matches\n\n[Pause]\n\n[Outro: drums disappear, acoustic guitar and pedal steel fade]\nNothing left to save now";
+    let wanted = sung_words(lyrics);
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab");
+    std::fs::create_dir_all(&out).unwrap();
+    for model in ["yue2-3b", "ace-step-1.5-xl"] {
+        let t = std::time::Instant::now();
+        media::install_for_test(&state, model).await.unwrap_or_else(|e| panic!("installing {model}: {e}"));
+        let req = Request {
+            op: "music".into(),
+            model_id: Some(model.into()),
+            prompt: "dark modern country, Southern gothic".into(),
+            lyrics: Some(lyrics.into()),
+            seconds: Some(70.0),
+            seed: Some(11),
+            language: Some("en".into()),
+            music: Some(media::MusicSpec { voice: Some("male".into()), ..Default::default() }),
+            ..Default::default()
+        };
+        let item = media::run(&state, store::new_id(), req).await.unwrap_or_else(|e| panic!("{model}: {e}")).remove(0);
+        let file = out.join(format!("smoke-{model}.mp3"));
+        std::fs::write(&file, store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+        let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+        let matched = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+        let sang_tags = ["melodic", "crackling", "conversational", "disappear"].iter().filter(|w| heard.to_lowercase().contains(*w)).count();
+        println!("{model}: {:.0} s long in {:.0} s, {matched} of {} lyric words heard, {sang_tags} direction words sung", item.seconds, t.elapsed().as_secs_f64(), wanted.len());
+        assert!((item.seconds - 70.0).abs() < 3.0);
+    }
+}
+
+/// The singer's middle pitch in each song in a folder (SULCUSAI_PITCH_DIR,
+/// default C:\dev\tools\music\ab): the voice taken out (HTDemucs) and its
+/// pitch found (RMVPE, from the singing model's pieces). Under ~200 Hz is a
+/// man's range, over ~230 a woman's.
+///     cargo test e2e_singer_pitch -- --ignored --nocapture
+#[cfg(windows)]
+#[test]
+#[ignore]
+fn e2e_singer_pitch() {
+    use crate::media::{stems, svc};
+    let state = media_state();
+    let dir = std::path::PathBuf::from(std::env::var("SULCUSAI_PITCH_DIR").unwrap_or_else(|_| r"C:\dev\tools\music\ab".into()));
+    let real = Paths::new(app_data_dir()).unwrap();
+    let dll = [real.engines.join("onnxruntime-1.30.0-cuda13").join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0 });
+    let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
+    let mut conv = svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
+    let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "mp3")).collect();
+    files.sort();
+    for f in files {
+        let (mono, rate) = decode_mp3(&std::fs::read(&f).unwrap());
+        let mix = stems::Stereo { rate, ch: [mono.clone(), mono] }.resampled(stems::RATE);
+        let (parts, _) = stems::separate(&dll, &sep, &mix, 8, &[3], card, &AtomicBool::new(false)).unwrap();
+        let pitch = conv.middle_pitch_of(&parts[0].mono()).unwrap();
+        println!("{}: singer {pitch:.0} Hz", f.file_name().unwrap().to_string_lossy());
+    }
+    stems::unload();
+}
+
+/// A song sung in the installed app's recorded voice from the start: the
+/// same male song made with no reference and with the person's own singing
+/// as the music model's reference (`--ref-audio`, which sets timbre and
+/// delivery), then each sung again in the voice. Reads the app's data read
+/// only; prints the words heard, the singer's middle pitch and how close
+/// the voice print is to the person's, before and after converting. Songs
+/// in C:\dev\tools\music\ab.
+///     cargo test e2e_own_voice_from_the_start -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_own_voice_from_the_start() {
+    use crate::media::{music, own_voice, stems, svc};
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let c = vault.work_cipher().expect("the app's data key is locked with a password");
+    let voice = own_voice::list(&conn, &c).into_iter().next().expect("a recorded voice");
+    let (reference, sung) = own_voice::singing_reference(&real, &c, &voice).unwrap();
+    println!("reference: {:.1} s of {}", reference.len() as f32 / svc::RATE as f32, if sung { "singing" } else { "reading" });
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab");
+    std::fs::create_dir_all(&out).unwrap();
+    // The reference for the music model, written for the run only.
+    let ref_file = std::env::temp_dir().join(format!("sulcusai-ref-{}.wav", crate::media::store::new_id()));
+    std::fs::write(&ref_file, crate::audio::wav_encode(&reference, svc::RATE)).unwrap();
+    let models = state.paths.models.join("media").join("music");
+    let dir = crate::media::music_engine_dir(&state).expect("the music engine is installed");
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let caption = "male lead vocals, warm male voice, modern country, acoustic guitar, pedal steel, punchy live drums, warm bass, catchy chorus";
+    let wanted = sung_words(lyrics);
+    let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
+    let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0 });
+    let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
+    let svc_dir = state.paths.models.join("media").join("own-voice-sing");
+    let mut conv = svc::Converter::new(&dll, &svc_dir, 8, card).unwrap();
+    let person = conv.voice(&reference).unwrap();
+    let print = |conv: &mut svc::Converter, x: &[f32]| {
+        let w16 = stems::resample(x, svc::RATE, 16_000);
+        let (n, fb) = crate::diarize::fbank_with(&w16, true);
+        let e = conv.run("campplus.onnx", vec![("fbank", vec![1, n as i64, 80], fb)]).unwrap();
+        let norm = e.iter().map(|v| v * v).sum::<f32>().sqrt();
+        e.into_iter().map(|v| v / norm).collect::<Vec<f32>>()
+    };
+    let target = print(&mut conv, &reference);
+    let cos = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+    let mut rows = vec![format!("their voice: middle pitch {:.0} Hz", person.pitch)];
+    for (name, with_ref) in [("no-reference", false), ("their-reference", true)] {
+        for seed in [11i64, 22] {
+            let (bpm, key, time) = music::settle(caption, None, None, None, seed);
+            let work = std::env::temp_dir().join(format!("sulcusai-ref-{}", crate::media::store::new_id()));
+            std::fs::create_dir_all(&work).unwrap();
+            let engine = music::Engine { dir: &dir, models: &models, low_priority: false, job: None, logs: &state.paths.logs };
+            let r = music::SongRequest {
+                caption,
+                lyrics,
+                seconds: 60.0,
+                seed,
+                language: Some("en"),
+                dit_file: "acestep-v15-xl-turbo-Q8_0.gguf",
+                bpm: Some(bpm),
+                key: Some(&key),
+                time_signature: Some(&time),
+                versions: 1,
+                reference: with_ref.then_some(ref_file.as_path()),
+                ..Default::default()
+            };
+            let t = std::time::Instant::now();
+            let song = music::make(&engine, &work, &r, &AtomicBool::new(false), &|_, _| {}).await.unwrap().remove(0);
+            let took = t.elapsed().as_secs_f64();
+            let _ = std::fs::remove_dir_all(&work);
+            let file = out.join(format!("voice-{name}-{seed}.mp3"));
+            std::fs::write(&file, &song.mp3).unwrap();
+            let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+            let matched = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+            // The singer, taken out of the band.
+            let (mono, rate) = decode_mp3(&song.mp3);
+            let mix = stems::Stereo { rate, ch: [mono.clone(), mono] }.resampled(stems::RATE);
+            let (parts, _) = stems::separate(&dll, &sep, &mix, 8, &[3], card, &AtomicBool::new(false)).unwrap();
+            stems::unload();
+            let vocals = parts[0].mono();
+            let pitch = conv.middle_pitch_of(&vocals).unwrap();
+            let before = cos(&print(&mut conv, &vocals), &target);
+            let semis = svc::octave_shift(pitch, if sung { person.pitch } else { person.pitch * 1.26 });
+            let converted = conv.convert(&person, &vocals, svc::Settings { steps: if card.is_some() { 30 } else { 10 }, semitones: semis, ..Default::default() }, &AtomicBool::new(false), &|_| {}).unwrap();
+            let after = cos(&print(&mut conv, &converted), &target);
+            rows.push(format!("{name} seed {seed}: {took:.0} s, {matched} of {} words heard, singer {pitch:.0} Hz, likeness {before:.2} as made, {after:.2} sung again ({semis} semitones)", wanted.len()));
+            println!("{}", rows.last().unwrap());
+        }
+    }
+    let _ = std::fs::remove_file(&ref_file);
+    println!("\n{}", rows.join("\n"));
+}
+
 /// Which music model, and which words, give the most natural voice above
 /// the band: the same lyrics and seeds on each, with the words Whisper hears,
 /// the voice's loudness against the whole song (from the vocals taken out by

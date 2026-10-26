@@ -5586,6 +5586,55 @@
         "weaknesses": [
           "Simpler songs, less clear words"
         ]
+      },
+      {
+        "id": "yue2-3b",
+        "name": "YuE2",
+        "publisher": "M-A-P and HKUST",
+        "source": "https://map-yue2.github.io/",
+        "description": "A different music model (3B) that writes each song's melody and chords before it records it. Its makers' tests put it above Suno v6; here every song came out exactly as long as asked, with the words as clear as ACE-Step XL's.",
+        "license": {
+          "name": "CC BY-NC 4.0",
+          "url": "https://creativecommons.org/licenses/by-nc/4.0/",
+          "commercial": false
+        },
+        "kind": "music",
+        "can": [
+          "music"
+        ],
+        "files": [
+          {
+            "role": "yue",
+            "file": "YuE2-3B-Q8_0.gguf",
+            "url": "https://huggingface.co/ldov/YuE2-GGUF/resolve/8abf4af74100f498781493d7e285a73a32565d6c/YuE2-3B-Q8_0.gguf",
+            "size": 3810232064,
+            "sha256": "41121ce97786d7795a325bcf123ca196956c03bb252c9e75384cfc1f2fc19e6b"
+          },
+          {
+            "role": "yue_vae",
+            "file": "YuE2-Vae-F32.gguf",
+            "url": "https://huggingface.co/ldov/YuE2-GGUF/resolve/8abf4af74100f498781493d7e285a73a32565d6c/YuE2-Vae-F32.gguf",
+            "size": 530497344,
+            "sha256": "93e49dfb1970e89ad64cacb17cf13b5d05f6bb30ef7ed3adae3050bcb728638a"
+          }
+        ],
+        "min_vram_gb": 0,
+        "cpu": true,
+        "secs": 20,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Writes the melody and chords first, for songs with a clear shape",
+          "Ranked above Suno v6 in its makers' tests",
+          "A 100-second song in about a minute on a graphics card"
+        ],
+        "weaknesses": [
+          "New songs only: no covers, parts or sound effects",
+          "Non-commercial license",
+          "4.3 GB download"
+        ]
       }
     ],
     "separator": {
@@ -5761,6 +5810,23 @@
             "sha256": "d1b480fe1262a4f51707b1bc3df013b426fb7c76b18c8546b0a5618f6ae32adb"
           }
         ]
+      }
+    },
+    "yue_engine": {
+      "name": "yue2.cpp",
+      "license": "MIT",
+      "build": "8af0174",
+      "assets": {
+        "cpu-x64": {
+          "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/yue2-8af0174-win-cpu-x64.zip",
+          "size": 6070707,
+          "sha256": "a9d2de331832a66a0a6e69521cf741d44fa8a4f496e5c20c674ccb24f475182e"
+        },
+        "vulkan-x64": {
+          "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/yue2-8af0174-win-vulkan-x64.zip",
+          "size": 18745000,
+          "sha256": "1a241c873d34dc8244163c4156daac8c3f802368fbabc13374162d9e1f8181b6"
+        }
       }
     }
   }

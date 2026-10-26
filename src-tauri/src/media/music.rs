@@ -58,6 +58,16 @@ pub struct SongRequest<'a> {
     pub reference: Option<&'a Path>,
     /// How many versions to make at once (1 to 3), to keep the best.
     pub versions: u32,
+    /// The planning model (ace-lm's GGUF) that writes the song's music as
+    /// audio codes before it's rendered, as ACE-Step 1.5 is meant to run;
+    /// empty renders from noise alone. A new song only.
+    pub planner: &'a str,
+    /// The planner's sampling temperature (default 0.85): higher wanders more.
+    pub lm_temperature: Option<f32>,
+    /// How closely the planner follows the description (its guidance, default 2).
+    pub lm_cfg: Option<f32>,
+    /// What the song shouldn't sound like (the planner's negative prompt).
+    pub negative: Option<&'a str>,
 }
 
 /// Tempo, key and time signature for a new song, from what the person set
@@ -215,7 +225,22 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     if let Some(s) = r.strength {
         v["audio_cover_strength"] = json!(s.clamp(0.0, 1.0));
     }
-    if r.versions > 1 {
+    if planned(r) {
+        // Each version gets a plan of its own (different music, not only
+        // another take of the same), and the description stays as written.
+        v["lm_model"] = json!(r.planner);
+        v["use_cot_caption"] = json!(false);
+        v["lm_batch_size"] = json!(r.versions.clamp(1, 3));
+        if let Some(t) = r.lm_temperature {
+            v["lm_temperature"] = json!(t.clamp(0.1, 2.0));
+        }
+        if let Some(c) = r.lm_cfg {
+            v["lm_cfg_scale"] = json!(c.clamp(1.0, 5.0));
+        }
+        if let Some(n) = r.negative.map(str::trim).filter(|n| !n.is_empty()) {
+            v["lm_negative_prompt"] = json!(n);
+        }
+    } else if r.versions > 1 {
         v["synth_batch_size"] = json!(r.versions.min(3));
     }
     // Words to sing: the lyrics followed more closely (they were heard better
@@ -226,23 +251,64 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     v
 }
 
+/// Whether a song is planned by ace-lm first: a new song with a planner.
+fn planned(r: &SongRequest<'_>) -> bool {
+    !r.planner.is_empty() && r.source.is_none() && (r.task.is_empty() || r.task == "text2music")
+}
+
 pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<Song>, String> {
     let exe = |name: &str| -> Result<PathBuf, String> {
         crate::engine::find_exe(e.dir, name).ok_or_else(|| "The music engine isn't fully installed. Reinstall the music model from the Studio's Models list.".to_string())
     };
     // One run of ace-synth, from the lyrics, the description and the
-    // settings. The planning model (ace-lm) isn't used: on this engine its
-    // music plan ended where it liked (a 40-second song came out at 23
-    // seconds, a 10-second sound at 30) and squeezed the words into it until
-    // speech recognition heard none, and the lyrics it wrote itself were
-    // garbage. Without it, a song is exactly as long as asked and its words
-    // are heard ("Sunrise paints the ridge in gold" came back from Whisper).
+    // settings; with a planner, ace-lm first writes each version's music as
+    // audio codes (everything else given, it only plans the music). Without
+    // one, a song is rendered from noise. The planner was taken out once: on
+    // an earlier engine its plan ended where it liked (40 s asked came out
+    // at 23 s) and squeezed the words until none were heard.
     let request = work.join("song.json");
     std::fs::write(&request, request_json(r).to_string()).map_err(|e| e.to_string())?;
     let mut t = Tracker::new(r.seconds);
     progress(t.label(), t.fraction());
     let mut made_secs: Vec<f64> = Vec::new();
-    let mut args: Vec<std::ffi::OsString> = vec!["--models".into(), e.models.into(), "--request".into(), request.clone().into()];
+    let plans: Vec<PathBuf> = if planned(r) {
+        proc::run(
+            Run {
+                exe: &exe(if cfg!(windows) { "ace-lm.exe" } else { "ace-lm" })?,
+                args: vec!["--models".into(), e.models.into(), "--request".into(), request.clone().into()],
+                cwd: work,
+                log: &e.logs.join("music-plan.log"),
+                low_priority: e.low_priority,
+                job: e.job,
+            },
+            cancel,
+            |l: &str| {
+                if t.line(l) {
+                    progress(t.label(), t.fraction());
+                }
+            },
+        )
+        .await?;
+        // request.json plans into request0.json, request1.json…
+        let plans: Vec<PathBuf> = (0..r.versions.clamp(1, 3)).map(|i| work.join(format!("song{i}.json"))).filter(|p| p.is_file()).collect();
+        if plans.is_empty() {
+            return Err("The music model's planner didn't write a plan.".into());
+        }
+        for p in &plans {
+            if let Some(s) = planned_secs(p) {
+                crate::applog::line("media", &format!("Planned a song of {s:.0} s ({:.0} s asked)", r.seconds));
+            }
+        }
+        plans
+    } else {
+        Vec::new()
+    };
+    let mut args: Vec<std::ffi::OsString> = vec!["--models".into(), e.models.into(), "--request".into()];
+    if plans.is_empty() {
+        args.push(request.clone().into());
+    } else {
+        args.extend(plans.iter().map(|p| p.clone().into_os_string()));
+    }
     if let Some(s) = r.source {
         args.extend(["--src-audio".into(), s.into()]);
     }
@@ -269,10 +335,12 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
         },
     )
     .await?;
-    // Named after the request file: song.json writes song0.mp3, song1.mp3…
+    // Named after the request file: song.json writes song0.mp3, song1.mp3…;
+    // planned, song0.json writes song00.mp3, song1.json song10.mp3.
     let mut songs = Vec::new();
     for i in 0..r.versions.clamp(1, 3) {
-        let Ok(mp3) = std::fs::read(work.join(format!("song{i}.mp3"))) else { continue };
+        let name = if plans.is_empty() { format!("song{i}.mp3") } else { format!("song{i}0.mp3") };
+        let Ok(mp3) = std::fs::read(work.join(name)) else { continue };
         let seconds = made_secs.get(i as usize).copied().unwrap_or(r.seconds as f64);
         songs.push(Song { mp3, seconds, lyrics: r.lyrics.to_string() });
     }
@@ -282,8 +350,16 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     Ok(songs)
 }
 
+/// How long a plan's music is: its audio codes, 5 a second.
+fn planned_secs(plan: &Path) -> Option<f64> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(plan).ok()?).ok()?;
+    let codes = v["audio_codes"].as_str()?;
+    let n = codes.split(',').filter(|c| !c.trim().is_empty()).count();
+    (n > 0).then(|| n as f64 / 5.0)
+}
+
 /// The length the synth says it wrote: "[VAE] Decoded: … (23.44s @ 48kHz)".
-fn decoded_secs(line: &str) -> Option<f64> {
+pub(crate) fn decoded_secs(line: &str) -> Option<f64> {
     if !line.starts_with("[VAE]") {
         return None;
     }

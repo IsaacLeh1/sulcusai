@@ -25,6 +25,7 @@ pub mod look;
 pub(crate) mod lyrics;
 mod audio_in;
 pub(crate) mod music;
+pub(crate) mod yue;
 pub mod own_voice;
 pub(crate) mod proc;
 pub(crate) mod svc;
@@ -85,6 +86,9 @@ pub struct MediaCatalog {
     /// sound set, played in the window).
     #[serde(default)]
     pub instruments: Option<Helper>,
+    /// yue2.cpp, the engine of the YuE2 music model (`yue`).
+    #[serde(default)]
+    pub yue_engine: Option<EngineSpec>,
     /// Narration and songs in the person's own recorded voice (`own_voice`).
     #[serde(default)]
     pub own_voice: Option<own_voice::OwnVoiceCatalog>,
@@ -435,7 +439,17 @@ fn music_dir(c: &MediaCatalog, key: &str) -> String {
 
 /// The installed music engine: the graphics-card build if it's here, else
 /// the processor one.
-fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
+fn yue_dir(e: &EngineSpec, key: &str) -> String {
+    format!("yue2-{}-{key}", e.build)
+}
+
+/// The installed YuE2 engine (the graphics card's build first).
+pub(crate) fn yue_engine_dir(state: &AppState) -> Option<PathBuf> {
+    let e = state.catalog.media.yue_engine.as_ref()?;
+    ["vulkan-x64", engine::cpu_key()].iter().map(|k| state.paths.engines.join(yue_dir(e, k))).find(|d| engine::find_exe(d, yue::EXE).is_some())
+}
+
+pub(crate) fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
     let c = &state.catalog.media;
     ["vulkan-x64", engine::cpu_key()]
         .iter()
@@ -512,6 +526,31 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
     let c = &state.catalog.media;
     emit("engine", 0, 0);
     match spec.kind {
+        // YuE2 has an engine of its own.
+        Kind::Music if spec.file("yue").is_some() => {
+            let e = c.yue_engine.as_ref().ok_or("YuE2 isn't available on this system yet.")?;
+            let gpu = state.budget().vram > 0 && cfg!(windows);
+            let mut done = false;
+            if let Some(asset) = e.assets.get("vulkan-x64").filter(|_| gpu) {
+                let dir = yue_dir(e, "vulkan-x64");
+                if engine::find_exe(&state.paths.engines.join(&dir), yue::EXE).is_none() {
+                    state.log("network", &format!("Downloading the yue2.cpp music engine (graphics card) from {}", crate::host_of(&asset.url)));
+                }
+                match engine::ensure_unpacked(&state.paths, &dir, asset, yue::EXE, cancel, |r, t| emit("engine", r, t)).await {
+                    Ok(_) => done = true,
+                    Err(e) if e == download::CANCELLED => return Err(e),
+                    Err(e) => state.log("media", &format!("The graphics-card YuE2 engine didn't download ({e}); using the processor one")),
+                }
+            }
+            if !done {
+                let asset = e.assets.get(engine::cpu_key()).ok_or("YuE2 isn't available on this system yet.")?;
+                let dir = yue_dir(e, engine::cpu_key());
+                if engine::find_exe(&state.paths.engines.join(&dir), yue::EXE).is_none() {
+                    state.log("network", &format!("Downloading the yue2.cpp music engine from {}", crate::host_of(&asset.url)));
+                }
+                engine::ensure_unpacked(&state.paths, &dir, asset, yue::EXE, cancel, |r, t| emit("engine", r, t)).await?;
+            }
+        }
         Kind::Music => {
             // The graphics-card build is about twice as fast; it also runs on
             // the processor, but it's a bigger download, so only with a card.
@@ -1014,6 +1053,8 @@ impl MusicSpec {
     /// captions put them.
     pub fn caption(&self, words: &str, instrumental: bool) -> String {
         let mut parts: Vec<String> = Vec::new();
+        // Said again last (the singer's sex).
+        let mut tail: Option<String> = None;
         let words = words.trim().trim_end_matches('.');
         if !words.is_empty() {
             parts.push(words.to_string());
@@ -1047,8 +1088,8 @@ impl MusicSpec {
         } else {
             let style = Self::some(&self.vocal_style).map(|s| format!("{s} ")).unwrap_or_default();
             let rap = self.flow(words) == lyrics::Flow::Rap;
-            match some(&self.voice).map(|v| v.to_lowercase()) {
-                Some(v) => parts.push(match v.as_str() {
+            let singer = match some(&self.voice).map(|v| v.to_lowercase()) {
+                Some(v) => Some(match v.as_str() {
                     "female" | "male" if rap => format!("{style}{v} rapper, rap vocals"),
                     "female" | "male" => format!("{style}{v} lead vocals"),
                     "rap" => format!("{style}rap vocals, rapper"),
@@ -1056,9 +1097,20 @@ impl MusicSpec {
                     "duet" => format!("{style}male and female duet vocals"),
                     other => format!("{style}{other} vocals"),
                 }),
-                None if rap => parts.push(format!("{style}rap vocals, rapper")),
-                None if !style.is_empty() => parts.push(format!("{style}vocals")),
-                None => {}
+                None if rap => Some(format!("{style}rap vocals, rapper")),
+                None if !style.is_empty() => Some(format!("{style}vocals")),
+                None => None,
+            };
+            // Who sings goes first after the person's words, and a man or a
+            // woman is said again at the end: placed among the instruments it
+            // was lost (a male voice asked for came out female). ACE-Step's
+            // guide: repeat what matters most.
+            if let Some(s) = singer {
+                parts.insert(usize::from(!words.is_empty()), s);
+                if let Some(v) = some(&self.voice).map(|v| v.to_lowercase()).filter(|v| v == "male" || v == "female") {
+                    let who = if v == "male" { "man" } else { "woman" };
+                    tail = Some(format!("sung by a {who}, {v} voice throughout"));
+                }
             }
             if let Some(d) = some(&self.voice_detail) {
                 parts.push(d.trim_end_matches('.').to_string());
@@ -1113,6 +1165,7 @@ impl MusicSpec {
                 other => other.to_string(),
             });
         }
+        parts.extend(tail);
         parts.join(", ")
     }
 }
@@ -3534,9 +3587,16 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     } else {
         caption_words.clone()
     };
-    // The planning model isn't used (see `music::make`); older installs still have it.
-    let dit = m.file("dit").ok_or("The music model is missing a file.")?;
-    let lm_file = m.file("lm").map(|f| f.file.clone()).unwrap_or_default();
+    // Directions written in the lyrics' brackets, Suno's way, go into the
+    // description; the tags keep only a word or two (`lyrics::tidy`).
+    let caption = match req.lyrics.as_deref().map(lyrics::directions_of).filter(|d| !d.is_empty() && !sound) {
+        Some(d) => format!("{caption}, {}", d.join(", ")),
+        None => caption,
+    };
+    let yue = m.file("yue").zip(m.file("yue_vae"));
+    if yue.is_some() && (task.is_some() || sound) {
+        return Err("YuE2 makes new songs. To work on a song or make a sound effect, pick an ACE-Step model.".into());
+    }
     let seed = req.seed.unwrap_or_else(random_seed);
     // Words to sing and nothing wrote them: said now, not after the whole
     // song (the music model's own lyrics came out as garbage).
@@ -3559,10 +3619,29 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     } else {
         words.for_engine().to_string()
     };
-    let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
     let models = model_dir(&ctx.state.paths, m);
     let versions = if task.is_none() && !sound { req.count.unwrap_or(1).clamp(1, 3) } else { 1 };
-    let made = music::make(
+    let made = if let Some((backbone, vae)) = yue {
+        let engine_dir = yue_engine_dir(ctx.state).ok_or("YuE2's engine isn't installed. Reinstall YuE2 from the Studio's Models list.")?;
+        // YuE2 reads the language among its style tags.
+        let style = match language.as_deref() {
+            Some(l) => format!("{caption}, {}", crate::translate::language_name(l)),
+            None => caption.clone(),
+        };
+        yue::make(
+            &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
+            work,
+            &yue::YueRequest { style: &style, lyrics: &lyrics_text, seconds, seed, versions, backbone: &backbone.file, vae: &vae.file },
+            ctx.cancel,
+            ctx.progress,
+        )
+        .await?
+    } else {
+    // The planning model isn't used (see `music::make`); older installs still have it.
+    let dit = m.file("dit").ok_or("The music model is missing a file.")?;
+    let lm_file = m.file("lm").map(|f| f.file.clone()).unwrap_or_default();
+    let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
+    music::make(
         &music::Engine {
             dir: &engine_dir,
             models: &models,
@@ -3589,11 +3668,13 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             source: source.as_ref().map(|s| s.1.as_path()),
             reference: reference.as_ref().map(|r| r.1.as_path()),
             versions,
+            ..Default::default()
         },
         ctx.cancel,
         ctx.progress,
     )
-    .await?;
+    .await?
+    };
     let planned = made[0].lyrics.clone();
     // Vocals were asked for, and the music model planned nothing to sing:
     // say so rather than hand back an instrumental as if it were the song.
@@ -3623,6 +3704,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             (false, Some(base)) => {
                 let base_dit = base.file("dit").ok_or("ACE-Step 1.5 Base is missing a file.")?;
                 let base_models = model_dir(&ctx.state.paths, &base);
+                let engine_dir = music_engine_dir(ctx.state).ok_or("The music engine isn't installed. Reinstall the music model from the Studio's Models list.")?;
                 for (vi, song) in made.iter_mut().enumerate() {
                     for (li, (part, words)) in layers.iter().enumerate() {
                         (ctx.progress)(if *part == "backing_vocals" { "Layering the harmony vocals" } else { "Layering the harmony instrument" }, 0.0);
@@ -5053,8 +5135,8 @@ mod tests {
         };
         assert_eq!(
             spec.caption("summer love", false),
-            "summer love, pop, electric guitar lead melody and solo, breathy female lead vocals, male backing harmony vocals in close harmony a third above the lead on the choruses, \
-             strings playing a harmony line under the melody on the choruses, soft verses and a big, powerful chorus, 1980s production, fades out at the end"
+            "summer love, breathy female lead vocals, pop, electric guitar lead melody and solo, male backing harmony vocals in close harmony a third above the lead on the choruses, \
+             strings playing a harmony line under the melody on the choruses, soft verses and a big, powerful chorus, 1980s production, fades out at the end, sung by a woman, female voice throughout"
         );
         assert!(!spec.caption("", true).contains("harmony vocals"), "an instrumental has no sung harmonies");
         assert!(spec.caption("", true).contains("strings playing a harmony line"), "but keeps the instrument's");
@@ -5122,8 +5204,8 @@ mod tests {
         };
         assert_eq!(
             spec.caption("losing you", false),
-            "losing you, heartbroken, emotional vocal delivery, male lead vocals, vocals with heavy vibrato throughout, screamed vocals, screamo on the choruses, \
-             whispered vocals on the verses, powerful belted vocals on the final chorus"
+            "losing you, male lead vocals, heartbroken, emotional vocal delivery, vocals with heavy vibrato throughout, screamed vocals, screamo on the choruses, \
+             whispered vocals on the verses, powerful belted vocals on the final chorus, sung by a man, male voice throughout"
         );
         assert_eq!(spec.caption("", true), "heartbroken feeling, instrumental, no vocals", "an instrumental has a feeling but no singing");
         let lyrics = "[Verse]\na\n\n[Chorus]\nb\n\n[Verse 2]\nc\n\n[Chorus]\nb\n\n[Chorus - softer]\nd\n\n[Chorus]\nb";
@@ -5146,7 +5228,7 @@ mod tests {
     #[test]
     fn a_shaped_song_is_described_and_routed() {
         let spec = MusicSpec { genre: Some("Lo-fi hip hop".into()), mood: Some("Calm".into()), instruments: vec!["Piano".into(), "Vinyl crackle".into()], voice: Some("female".into()), beat: Some("Boom bap".into()), ..Default::default() };
-        assert_eq!(spec.caption("rainy evening study session.", false), "rainy evening study session, lo-fi hip hop, calm mood, piano, vinyl crackle, female lead vocals, boom bap beat");
+        assert_eq!(spec.caption("rainy evening study session.", false), "rainy evening study session, female lead vocals, lo-fi hip hop, calm mood, piano, vinyl crackle, boom bap beat, sung by a woman, female voice throughout");
         assert_eq!(spec.caption("", true), "lo-fi hip hop, calm mood, piano, vinyl crackle, instrumental, no vocals, boom bap beat");
         assert!(spec.describes() && !MusicSpec::default().describes());
         let part = |task: &str, track: &str| Request { op: "music".into(), music: Some(MusicSpec { task: Some(task.into()), track: Some(track.into()), audio: Some("a".into()), ..Default::default() }), ..Default::default() };
@@ -5271,6 +5353,8 @@ mod tests {
                 assert!(f.url.starts_with("https://"));
             }
             match m.kind {
+                // YuE2: its backbone and decoder, and its engine in the catalog.
+                Kind::Music if m.file("yue").is_some() => assert!(m.file("yue_vae").is_some() && c.yue_engine.is_some(), "{}", m.id),
                 // Only ace-synth runs: no planning model to download.
                 Kind::Music => assert!(m.file("dit").is_some() && m.file("lm").is_none(), "{}", m.id),
                 // A whole checkpoint (SDXL), or a diffusion model with its decoder.
