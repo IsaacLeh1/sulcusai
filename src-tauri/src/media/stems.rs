@@ -135,6 +135,10 @@ pub const PARTS: [&str; 4] = ["drums", "bass", "other", "vocals"];
 /// Stopping (`cancel`) is checked at each piece.
 pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: &[usize], card: Option<crate::natural::Card>, cancel: &std::sync::atomic::AtomicBool) -> Result<(Vec<Stereo>, bool), String> {
     crate::natural::runtime_ready(dll)?;
+    // Not through DirectML: HTDemucs failed there at once ("not enough
+    // memory resources", with the card's memory barely used), and without
+    // fusing its graph a 7.8 s piece took 8 minutes (RTX 5070).
+    let card = card.filter(|c| !c.dml);
     let mut guard = session().lock().unwrap();
     if guard.as_ref().map(|(p, on, _)| (p.as_path(), *on)) != Some((model, card.is_some())) {
         let (s, on) = crate::natural::session_on(model, threads, card)?;
@@ -173,6 +177,10 @@ pub fn separate(dll: &Path, model: &Path, mix: &Stereo, threads: usize, wanted: 
             match ran {
                 Ok(v) => break v,
                 Err(err) if *on => {
+                    let why = format!("the graphics card failed partway ({})", err.to_string().lines().next().unwrap_or(""));
+                    if !crate::cardfirst::go_on_on_processor("Taking the song apart", &why) {
+                        return Err(crate::download::CANCELLED.into());
+                    }
                     crate::applog::line("media", &format!("The graphics card couldn't take the song apart ({err}); going on on the processor"));
                     let (s, _) = crate::natural::session_on(model, threads, None)?;
                     *guard = Some((model.to_path_buf(), false, s));
@@ -213,6 +221,49 @@ pub fn unload() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One piece of HTDemucs through DirectML with each way of setting it up,
+    /// with the card's memory watched (DirectML ran out on a 12 GB card).
+    ///     SULCUSAI_DML_HOW=fused|unfused|basic cargo test separator_through_directml -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn separator_through_directml() {
+        let engines = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join(r"app.sulcusai.desktop\engines\onnxruntime-1.24.4-cards");
+        crate::natural::runtime_ready(&engines.join("onnxruntime.dll")).unwrap();
+        let model = PathBuf::from(r"D:\SulcusAI models\media\helpers\htdemucs_fp16weights.onnx");
+        let how = std::env::var("SULCUSAI_DML_HOW").unwrap_or_else(|_| "unfused".into());
+        let peak = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let (p2, done) = (peak.clone(), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let d2 = done.clone();
+        let watch = std::thread::spawn(move || {
+            while !d2.load(std::sync::atomic::Ordering::Relaxed) {
+                let o = std::process::Command::new("nvidia-smi").args(["--query-gpu=memory.used", "--format=csv,noheader,nounits"]).output().unwrap();
+                let used: u64 = String::from_utf8_lossy(&o.stdout).trim().parse().unwrap_or(0);
+                p2.fetch_max(used, std::sync::atomic::Ordering::Relaxed);
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        });
+        let dml = ort::ep::DirectML::default().with_device_id(0).build().error_on_failure();
+        let mut b = Session::builder().unwrap().with_memory_pattern(false).unwrap().with_parallel_execution(false).unwrap();
+        if how == "unfused" {
+            b = b.with_config_entry("ep.dml.disable_graph_fusion", "1").unwrap();
+        }
+        if how == "basic" {
+            b = b.with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level1).unwrap();
+        }
+        let t = std::time::Instant::now();
+        let mut s = b.with_execution_providers([dml]).unwrap().commit_from_file(&model).unwrap();
+        let opened = t.elapsed().as_secs_f64();
+        let input: Vec<f32> = (0..2 * SEP_LEN).map(|i| ((i as f32) * 0.01).sin() * 0.3).collect();
+        for round in 0..3 {
+            let t = std::time::Instant::now();
+            let r = s.run(ort::inputs! { "mix" => Tensor::from_array(([1usize, 2, SEP_LEN], input.clone())).unwrap() }).map(|res| res["stems"].try_extract_tensor::<f32>().unwrap().1.len());
+            println!("{how}: piece {round}: {:?} in {:.2} s (opened in {opened:.1} s)", r.as_ref().map_err(|e| e.to_string().chars().take(200).collect::<String>()), t.elapsed().as_secs_f64());
+        }
+        done.store(true, std::sync::atomic::Ordering::Relaxed);
+        watch.join().unwrap();
+        println!("{how}: the card's memory peaked at {} MiB", peak.load(std::sync::atomic::Ordering::Relaxed));
+    }
 
     fn tone(rate: u32, secs: f32, hz: f32) -> Vec<f32> {
         (0..(rate as f32 * secs) as usize).map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / rate as f32).sin() * 0.5).collect()

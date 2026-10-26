@@ -3418,6 +3418,12 @@ export const api = {
   setMainGpu: (name: string | null) => invoke<GpuMenu>("set_main_gpu", { name }),
   setGpuLimit: (percent: number) => invoke<GpuLimit>("set_gpu_limit", { percent }),
   answerMemoryWarning: (id: string, go: boolean) => invoke<void>("answer_memory_warning", { id, go }),
+  cardAsks: () => invoke<CardAsk[]>("card_asks"),
+  cardAskAnswer: (id: string, answer: "processor" | "always" | "free" | "restart" | "stop") => invoke<void>("card_ask_answer", { id, answer }),
+  processorFallback: () => invoke<ProcessorFallback>("processor_fallback"),
+  setProcessorFallback: (value: ProcessorFallback) => invoke<void>("set_processor_fallback", { value }),
+  driverCheck: () => invoke<DriverNote[]>("driver_check"),
+  driverPutOff: (key: string, need: string) => invoke<void>("driver_put_off", { key, need }),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
 };
@@ -3471,6 +3477,33 @@ export interface GpuLimit {
   percent: number;
   has_gpu: boolean;
 }
+
+/** Work meant for the graphics card that can't go there: why, and what's possible. */
+export interface CardAsk {
+  id: string;
+  job: string | null;
+  what: string;
+  why: string;
+  /** A chat model holds the card and nothing uses it: unloading may make room. */
+  free: boolean;
+  /** Starting SulcusAI again lets it use the card. */
+  restart: boolean;
+}
+
+/** A graphics driver that needs updating (checked when SulcusAI starts). */
+export interface DriverNote {
+  card: string;
+  vendor: string;
+  version: string | null;
+  date: string | null;
+  need: "missing" | "too_old" | "old";
+  why: string;
+  link: string;
+  key: string;
+}
+
+/** When the graphics card can't take work: ask, always use the processor, or stop it. */
+export type ProcessorFallback = "ask" | "always" | "never";
 
 /** Before loading a model: the PC is short of memory right now. */
 export interface MemoryWarning {
@@ -3575,6 +3608,8 @@ export interface ChatEvents {
   "offline:changed": { on: boolean };
   "engine:memory": MemoryWarning;
   "engine:memory_done": { id: string };
+  "card:ask": CardAsk;
+  "card:ask_done": { id: string };
   "chat:web": { chat_id: string; web: boolean };
   /** The assistant opened a site in the chat's Preview panel. */
   "chat:preview": { chat_id: string; url: string; site?: string; root?: string; start?: string; port?: number };

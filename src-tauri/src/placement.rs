@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn the_menu_lists_every_card_found() {
         use crate::hardware::Gpu;
-        let gpu = |name: &str, gb: u64, integrated: bool| Gpu { name: name.into(), vendor: "NVIDIA".into(), vram_bytes: gb << 30, integrated, luid: None };
+        let gpu = |name: &str, gb: u64, integrated: bool| Gpu { name: name.into(), vendor: "NVIDIA".into(), vram_bytes: gb << 30, integrated, luid: None, dxgi: None };
         let mut hw = Hardware {
             gpus: vec![gpu("Intel(R) UHD Graphics", 0, true), gpu("NVIDIA GeForce RTX 4060", 8, false), gpu("NVIDIA GeForce RTX 3060", 12, false)],
             broken_cards: vec![BrokenCard { name: "Microsoft Basic Display Adapter".into(), vendor: "AMD".into(), code: 0 }],
@@ -565,7 +565,7 @@ mod tests {
             cpu_threads: 16,
             ram_total: 16 * GIB,
             disk_free: 500 * GIB,
-            gpus: vec![crate::hardware::Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: gb * GIB, integrated: false, luid: None }],
+            gpus: vec![crate::hardware::Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: gb * GIB, integrated: false, luid: None, dxgi: None }],
             ..Default::default()
         };
         let s = PerfSettings::default();

@@ -47,6 +47,9 @@ fn append(name: &str, text: &str) {
 pub fn line(category: &str, message: &str) {
     let when = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let message = message.replace(['\r', '\n'], " ⏎ ");
+    if cfg!(test) {
+        eprintln!("[{category}] {message}");
+    }
     append(APP_LOG, &format!("{when} [{category}] {message}\n"));
 }
 

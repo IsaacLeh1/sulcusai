@@ -434,6 +434,7 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
         format!("whisper-{}-", c.speech.engine.build),
         "whisper-public".to_string(),
         format!("onnxruntime-{}-", c.voices.runtime.build),
+        c.voices.cards.as_ref().map_or_else(|| "onnxruntime-cards".to_string(), |r| format!("onnxruntime-{}-", r.build)),
     ];
     let llama = |n: &str| n.starts_with('b') && n[1..].split('-').next().is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
     children(&state.paths.engines, |n| {
@@ -442,6 +443,8 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
     })
     .into_iter()
     .filter(|p| p.is_dir())
+    // The NVIDIA cards' earlier build, once the cards' build has its CUDA part.
+    .chain(crate::natural::earlier_builds(&state.paths, &c.voices))
     .collect()
 }
 

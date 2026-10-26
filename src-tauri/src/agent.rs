@@ -320,6 +320,40 @@ impl Turn {
         (self.emit)(event, payload);
     }
 
+    /// The window was nearly full at the last step (as Advanced sets it for
+    /// compacting), or messages had to be left out to fit.
+    fn nearly_full(&self) -> bool {
+        let crate::advanced::LongChat::Compact(at) = crate::advanced::get(&self.state).long_chat() else { return false };
+        self.state.contexts.lock().unwrap().get(&self.chat_id).is_some_and(|i| i.used_fraction() >= at || i.dropped_messages > 0)
+    }
+
+    /// Compacts the conversation before the request being worked on (its
+    /// messages and steps stay as they are): the new summary, or None when
+    /// there's nothing before it to compact or it couldn't be written.
+    async fn compact_before_turn(&self) -> Option<(Option<String>, String)> {
+        let all = db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id);
+        let turn = all.iter().position(|m| m.id == self.turn_id)?;
+        let before = all[..turn].to_vec();
+        let (_, old) = compact::after_last(before.clone());
+        let covered = compact::pending(&before);
+        if covered == 0 {
+            return None;
+        }
+        self.emit("chat:status", json!({ "chat_id": self.chat_id, "status": "compacting" }));
+        let summary = match compact::summarize(&self.ep, &self.base, before, &self.cancel).await {
+            Ok(s) => s,
+            Err(e) => {
+                crate::applog::line("chat", &format!("Couldn't compact a long chat partway through a reply: {e}"));
+                return None;
+            }
+        };
+        compact::save_at(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id, &summary, covered, true, all[turn].created_at - 1).ok()?;
+        self.state.contexts.lock().unwrap().remove(&self.chat_id);
+        crate::applog::line("chat", "Compacted a long chat partway through a reply (it was nearly full)");
+        self.emit("chat:compacted", json!({ "chat_id": self.chat_id, "auto": true }));
+        Some((old, summary))
+    }
+
     /// Before each step: wait out the heat guard while the PC is over its
     /// limit, and rest briefly while adaptive cooling has stepped down. A hot
     /// processor while the model runs on it, on a PC with a graphics card,
@@ -369,6 +403,8 @@ impl Turn {
         // in words. Lyrics full of imagery made pictures, "lyrics" made songs,
         // and "make these better" read as a build that wanted a folder.
         let edits_text = chat::edits_text(&request);
+        // Asked to write a song: its words, in the chat (not the song made).
+        let writes_song = if edits_text { None } else { chat::writes_song_in(&request, &recent_asks.iter().skip(1).map(String::as_str).collect::<Vec<_>>()) };
         let build_ask = chat::is_build_ask(&recent_asks.iter().map(String::as_str).collect::<Vec<_>>()) && !chat::wants_a_document(&request) && !edits_text;
         // The home folder is open for searching and reading (the person
         // allowed it); changes stay in the shared folders.
@@ -520,8 +556,9 @@ impl Turn {
                 extra.push("request_web");
             }
         }
-        // Words to edit: nothing to make, save or run, so nothing that would.
-        if edits_text {
+        // Words to edit or write: nothing to make, save or run, so nothing that would.
+        let can_sing = extra.contains(&"create_music");
+        if edits_text || writes_song.is_some() {
             extra.retain(|n| !matches!(*n, "create_image" | "edit_image" | "create_video" | "create_music" | "create_document" | "request_folder" | "open_path" | "run_code"));
             defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_none_or(|n| tools::group(n) != "files" || tools::find(n).is_none_or(|t| t.risk == tools::Risk::Read)));
             media_note.clear();
@@ -618,6 +655,41 @@ impl Turn {
                  keeping their meaning, story and imagery, and say briefly what you changed. Don't make a song, a picture or a file \
                  from them, and don't ask for folders: everything you need is in their message and this chat.",
             );
+        }
+        // A song to write is words in the chat: no tools this turn (a 9B
+        // model saved them to a note, and said it couldn't make songs).
+        if writes_song.is_some() {
+            tools = None;
+        }
+        // Said in their message too: small models went on writing the song
+        // when only the instructions said to ask first.
+        let song_nudge = matches!(writes_song, Some(chat::SongAsk::Unclear)).then_some(can_sing).map(|sing| {
+            if sing {
+                "[Before writing anything, ask me whether I want just the lyrics or the complete song to listen to (you can make the whole song here on this PC), \
+                 and ask about anything you need that I didn't say: what it's about, the style, the mood, who sings. Only ask for now.]"
+            } else {
+                "[Write the song's words here in the chat.]"
+            }
+        });
+        match writes_song {
+            Some(chat::SongAsk::Words) => about.push_str(
+                "\n\nThe user asked you to write a song's words: reply in the chat with them (a title, then each section labelled, \
+                 like [Verse 1] and [Chorus]). Don't make the song itself, a picture or a file. After the words, offer in one short \
+                 sentence to make it into a song they can hear, if they'd like.",
+            ),
+            // Not said whether they want the words or the song: asked first.
+            Some(chat::SongAsk::Unclear) if can_sing => about.push_str(
+                "\n\nThe user asked you to write a song without saying whether they want just the lyrics or the complete song \
+                 to listen to (made here on this PC). Don't write or make it yet: ask them in one short message which they want, \
+                 and in the same message ask for anything else you need that they didn't say (what it's about, the style or \
+                 genre, the mood, who sings). Keep it to a few quick questions.",
+            ),
+            Some(chat::SongAsk::Unclear) => about.push_str(
+                "\n\nThe user asked you to write a song: reply in the chat with its words (a title, then each section labelled, \
+                 like [Verse 1] and [Chorus]); ask first only if what it's about isn't clear. A song they can hear needs a music \
+                 model from Studio › Models, which isn't installed: say so in one short sentence after the words.",
+            ),
+            None => {}
         }
         if let Some(note) = &people_note {
             about.push_str(note);
@@ -742,6 +814,8 @@ impl Turn {
         let mut stubs: Vec<(std::path::PathBuf, String)> = Vec::new();
         // It changed, ran, made or sent something this turn (not only looked).
         let mut did_something = false;
+        // What came before this request was compacted partway through it.
+        let mut compacted_mid = false;
         for step in 0..most_steps {
             if step >= limit {
                 break;
@@ -761,6 +835,16 @@ impl Turn {
                 self.emit("chat:inbox", json!({ "chat_id": self.chat_id, "waiting": crate::inbox::unread(&self.chat_id) }));
             }
             self.rest_if_hot().await;
+            // Nearly full partway through a task: the conversation before
+            // this request is compacted (summarized), keeping the request and
+            // the steps taken for it word for word, so the reply has room to
+            // finish. Once a task.
+            if step > 0 && !compacted_mid && !incognito && self.nearly_full() {
+                compacted_mid = true;
+                if let Some((old, summary)) = self.compact_before_turn().await {
+                    about = compact::with_summary(&about, old.as_deref(), &summary);
+                }
+            }
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
             // The model can't see pictures: the picture reader describes the
             // newest attached ones (once each; the words are kept with the picture).
@@ -856,6 +940,11 @@ impl Turn {
                         if let Some(slot) = messages.get_mut(i + 1) {
                             chat::add_text(slot, note);
                         }
+                    }
+                }
+                if let (0, Some(n)) = (step, song_nudge) {
+                    if let Some(last) = messages.iter_mut().rev().find(|m| m["role"] == "user") {
+                        chat::add_text(last, &format!("\n\n{n}"));
                     }
                 }
                 if let Some((_, f)) = &forced {

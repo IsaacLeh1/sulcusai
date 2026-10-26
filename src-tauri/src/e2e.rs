@@ -1164,6 +1164,118 @@ async fn e2e_lyrics_are_refined_as_text() {
     assert!(bad.is_empty(), "made media instead of refining the words: {bad:?}");
 }
 
+/// "Write me a song" is asked about first (just the lyrics, or the song to
+/// hear?) rather than made outright; told "just the lyrics", every line comes,
+/// even past a small length limit (carried on where it stopped).
+///     SULCUSAI_TEST_GGUF is the model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_song_written_is_asked_about_and_comes_whole() {
+    use crate::media;
+    let (_eng, ep, name) = test_model().await;
+    let state = media_state();
+    let cipher = state.cipher().unwrap();
+    media::install_for_test(&state, "ace-step-1.5").await.unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let made = |state: &std::sync::Arc<crate::AppState>| crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id).iter().flat_map(|m| m.tool_calls.iter().flatten().map(|c| c.name.clone())).filter(|n| n.starts_with("create_")).collect::<Vec<_>>();
+    let first = say(&state, &ep, &cipher, &chat.id, "Write me a song about my dog Max").await;
+    println!("{name} asked:\n{first}\n");
+    assert!(made(&state).is_empty(), "made something instead of asking: {:?}", made(&state));
+    assert!(first.contains('?') && first.to_lowercase().contains("lyric"), "didn't ask lyrics or the song: {first}");
+    // A small limit, so the lyrics run past it and are carried on.
+    let mut short = ep.clone();
+    short.extra["max_tokens"] = serde_json::json!(160);
+    let words = say(&state, &short, &cipher, &chat.id, "Just the lyrics please: upbeat pop, three verses, a chorus and a bridge.").await;
+    println!("{name} wrote:\n{words}");
+    assert!(made(&state).is_empty(), "made something instead of writing: {:?}", made(&state));
+    let lower = words.to_lowercase();
+    assert!(lower.contains("chorus") && lower.contains("bridge"), "the lyrics stopped partway");
+    assert!(words.chars().count() > 160 * 3, "not carried on past the limit ({} characters)", words.chars().count());
+}
+
+/// A chat nearly full when a task starts: partway through it, what came
+/// before the request is compacted, and the task still finishes.
+///     SULCUSAI_TEST_GGUF is the model (run with SULCUSAI_TEST_CTX=6144).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_full_chat_is_compacted_partway_and_finishes() {
+    let (_eng, ep, name) = test_model().await;
+    let state = media_state();
+    let cipher = state.cipher().unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let filler = "We talked about planning a garden: tomatoes along the south fence, basil between them, and a drip line on a timer. ".repeat(12);
+    for i in 0..10 {
+        let role = if i % 2 == 0 { "user" } else { "assistant" };
+        let m = Message { id: uuid::Uuid::new_v4().to_string(), chat_id: chat.id.clone(), role: role.into(), content: format!("{} {filler}", i), created_at: crate::db::now_ms() - 100_000 + i as i64, ..Default::default() };
+        crate::db::add_message(&state.db.lock().unwrap(), &cipher, &m).unwrap();
+    }
+    let reply = say(&state, &ep, &cipher, &chat.id, "Use the calculate tool to work out 17*23, then use it again to add 100 to that result, and tell me both numbers.").await;
+    println!("{name}: {reply}");
+    let msgs = crate::db::messages(&state.db.lock().unwrap(), &cipher, &chat.id);
+    let marker = msgs.iter().position(|m| m.meta.as_ref().is_some_and(|v| v.get("compacted").is_some()));
+    let ask = msgs.iter().position(|m| m.content.starts_with("Use the calculate tool")).unwrap();
+    println!("compacted at {marker:?}, the request at {ask}");
+    assert!(marker.is_some_and(|m| m < ask), "not compacted before the request");
+    assert!(reply.contains("391") && reply.contains("491"), "{reply}");
+}
+
+/// The cards' ONNX Runtime downloaded the way the app does it, into a
+/// scratch engines folder: DirectML's part, then the CUDA part with NVIDIA's
+/// libraries linked from the earlier build (the installed app's, linked in
+/// first). Then a voice piece run on the card through CUDA and through
+/// DirectML, in the same process.
+///     cargo test e2e_cards_runtime -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_cards_runtime_downloads_and_runs_both_ways() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let engines = std::env::temp_dir().join(format!("sulcusai-engines-{}", uuid::Uuid::new_v4()));
+    let earlier = engines.join("onnxruntime-1.30.0-cuda13");
+    std::fs::create_dir_all(&earlier).unwrap();
+    for e in std::fs::read_dir(real.engines.join("onnxruntime-1.30.0-cuda13")).unwrap().flatten() {
+        std::fs::hard_link(e.path(), earlier.join(e.file_name())).unwrap();
+    }
+    let state = temp_state_in(None, Some(engines.clone()));
+    let voices = &state.catalog.voices;
+    println!("to download: {} MB", crate::natural::card_runtime_size(&state.paths, voices, true) >> 20);
+    let started = std::time::Instant::now();
+    let dll = crate::natural::ensure_card_runtime(&state, true, &AtomicBool::new(false), &|_, _| {}).await.unwrap();
+    println!("ready in {:.0} s: {}", started.elapsed().as_secs_f64(), dll.display());
+    for f in ["onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll", "onnxruntime_providers_cuda.dll", "cufft64_12.dll", "cudnn64_9.dll", "cublasLt64_13.dll", "cudart64_13.dll"] {
+        assert!(dll.with_file_name(f).is_file(), "{f} is missing");
+    }
+    assert!(crate::natural::cuda_ready(&state.paths, voices));
+    assert_eq!(crate::natural::earlier_builds(&state.paths, voices), vec![earlier.clone()]);
+    crate::natural::runtime_ready(&dll).unwrap();
+    let picked = crate::natural::pick_card(&state, false).await.unwrap();
+    println!("picked {} through {}", picked.name, if picked.card.dml { "DirectML" } else { "CUDA" });
+    assert!(!picked.card.dml, "an RTX card with a new driver takes CUDA");
+    let dxgi = state.hardware.read().unwrap().best_gpu().and_then(|g| g.dxgi).unwrap();
+    let dir = std::path::PathBuf::from(r"C:\dev\tools\voice\onnx16");
+    for card in [picked.card, crate::natural::Card { device: dxgi as i32, dml: true }] {
+        let mut conv = crate::media::svc::Converter::new(&dll, &dir, 8, Some(card)).unwrap();
+        let wave: Vec<f32> = (0..44_100 * 3).map(|i| (i as f32 * 0.03).sin() * 0.2).collect();
+        let t = std::time::Instant::now();
+        let mel = conv.run("mel44.onnx", vec![("wave", vec![1, wave.len() as i64], wave)]).unwrap();
+        println!("{card:?}: {} values in {:.2} s, on the card: {}", mel.len(), t.elapsed().as_secs_f64(), conv.on_card);
+        assert!(conv.on_card && !mel.is_empty());
+    }
+    std::fs::remove_dir_all(&engines).ok();
+}
+
+/// A reply past a small length limit is carried on to its end.
+///     SULCUSAI_TEST_GGUF is the model.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_reply_past_its_limit_is_carried_on() {
+    let (_eng, mut ep, name) = test_model().await;
+    ep.extra["max_tokens"] = serde_json::json!(60);
+    let msgs = vec![serde_json::json!({ "role": "user", "content": "List the numbers from 1 to 60 as words, one per line, nothing else." })];
+    let done = chat::stream(&ep, msgs, None, &AtomicBool::new(false), |_| {}).await.unwrap();
+    println!("{name}: {} lines, ends: {:?}", done.content.lines().count(), done.content.lines().last());
+    assert!(done.content.to_lowercase().contains("sixty"), "{}", done.content);
+}
+
 /// The owner's task: a page fetched and applied to a folder, without
 /// asking. The page is GitHub's Node .gitignore; applied, it becomes the
 /// folder's .gitignore. See `test_model` for the model.
@@ -3810,13 +3922,20 @@ pub(crate) fn scratch_state() -> std::sync::Arc<crate::AppState> {
 /// App state over the real engines and (unless `models` is given) the real
 /// models folder, with a throwaway database: for tests that only read models.
 pub(crate) fn temp_state(models: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
+    temp_state_in(models, None)
+}
+
+/// `temp_state` with its own engines folder too (`engines`), for tests that
+/// download engines (never into the installed app's).
+pub(crate) fn temp_state_in(models: Option<std::path::PathBuf>, engines: Option<std::path::PathBuf>) -> std::sync::Arc<crate::AppState> {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, RwLock};
     let real = Paths::new(app_data_dir()).unwrap();
     let tmp = std::env::temp_dir().join(format!("sulcusai-media-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(tmp.join("logs")).unwrap();
     let models = models.unwrap_or_else(|| real.models.clone());
-    let paths = Paths { data: tmp.clone(), models, engines: real.engines.clone(), logs: tmp.join("logs"), db: tmp.join("t.db") };
+    let engines = engines.unwrap_or_else(|| real.engines.clone());
+    let paths = Paths { data: tmp.clone(), models, engines, logs: tmp.join("logs"), db: tmp.join("t.db") };
     let conn = crate::db::open(&paths.db).unwrap();
     crate::features::enable_all(&conn);
     let vault = crate::crypto::Vault::open(&tmp.join("keys.json"), Box::new(crate::crypto::dpapi::Dpapi)).unwrap();
@@ -4718,7 +4837,7 @@ fn e2e_singer_pitch() {
     let dir = std::path::PathBuf::from(std::env::var("SULCUSAI_PITCH_DIR").unwrap_or_else(|_| r"C:\dev\tools\music\ab".into()));
     let real = Paths::new(app_data_dir()).unwrap();
     let dll = [real.engines.join("onnxruntime-1.30.0-cuda13").join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
-    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0 });
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
     let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
     let mut conv = svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
     let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "mp3")).collect();
@@ -4772,7 +4891,7 @@ async fn e2e_own_voice_from_the_start() {
     let wanted = sung_words(lyrics);
     let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
     let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
-    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0 });
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
     let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
     let svc_dir = state.paths.models.join("media").join("own-voice-sing");
     let mut conv = svc::Converter::new(&dll, &svc_dir, 8, card).unwrap();

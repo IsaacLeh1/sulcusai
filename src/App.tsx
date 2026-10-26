@@ -41,6 +41,8 @@ import { WebPermission } from "./components/WebPermission";
 import { FolderPermission } from "./components/FolderPermission";
 import { KeyPermission } from "./components/KeyPermission";
 import { MemoryWarningPopup } from "./components/MemoryWarning";
+import { CardAskPopup } from "./components/CardAsk";
+import { DriverNotice } from "./components/DriverNotice";
 import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
@@ -1392,6 +1394,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       <KeyPermission chats={chats} onOpenChat={openChat} />
       <SharePermission chats={chats} onOpenChat={openChat} />
       <MemoryWarningPopup />
+      <CardAskPopup />
+      <DriverNotice />
       <ElsewhereApprovals chats={chats} openChatId={view === "chat" ? activeChat : null} onOpenChat={openChat} />
       <CrashReportPrompt toast={toast} />
       <PeopleRequests enabled={has("people")} onOpenPeople={() => setView("people")} toast={toast} />

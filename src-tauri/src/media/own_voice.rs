@@ -1793,7 +1793,7 @@ mod tests {
         let card = std::env::var_os("SULCUSAI_ONNX_CARD").is_some();
         let rt = local.join("engines").join(if card { "onnxruntime-1.30.0-cuda13" } else { "onnxruntime-1.30.0-cpu-x64" });
         let dll = [rt.join("onnxruntime.dll"), rt.join("onnxruntime-win-x64-1.30.0").join("lib").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
-        let card = card.then_some(crate::natural::Card { device: 0 });
+        let card = card.then_some(crate::natural::Card { device: 0, dml: false });
         let decode = |p: &Path| {
             let (s, rate, ch) = super::super::audio_in::decode(p).unwrap();
             let ch = ch.max(1) as usize;

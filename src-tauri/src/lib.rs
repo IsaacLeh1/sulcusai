@@ -7,8 +7,10 @@
 mod advanced;
 mod agent;
 mod applog;
+mod cardfirst;
 mod cleanup;
 mod doclib;
+mod drivers;
 mod study;
 mod pccheck;
 mod addons;
@@ -2012,7 +2014,7 @@ async fn run_turn_with(
 
     // Nearly full: compact it (summarize the earlier part and keep going
     // here), or continue in a fresh chat, as set in Advanced.
-    let last_context = state.contexts.lock().unwrap().get(&chat_id).cloned();
+    let last_context = state.contexts.lock().unwrap().get(&chat_id).cloned().or_else(|| estimate_context(state, &chat_id));
     let mut chat_id = chat_id;
     let long = advanced::get(state).long_chat();
     if let advanced::LongChat::Compact(at) = long {
@@ -2778,6 +2780,12 @@ pub fn run() {
             offline::set_fully_offline,
             perf::set_gpu_limit,
             memcheck::answer_memory_warning,
+            cardfirst::card_asks,
+            cardfirst::card_ask_answer,
+            cardfirst::processor_fallback,
+            cardfirst::set_processor_fallback,
+            drivers::driver_check,
+            drivers::driver_put_off,
             placement::gpu_menu,
             placement::set_main_gpu,
             security::set_keep_working,

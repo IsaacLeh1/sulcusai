@@ -45,6 +45,16 @@ pub fn prompt_section(summary: &str) -> String {
     )
 }
 
+/// `about` with its section for the `old` summary (if there was one) swapped
+/// for one with `new`.
+pub fn with_summary(about: &str, old: Option<&str>, new: &str) -> String {
+    let kept = match old {
+        Some(o) => about.replacen(&prompt_section(o), "", 1),
+        None => about.to_string(),
+    };
+    format!("{kept}{}", prompt_section(new))
+}
+
 /// The system text the model gets: the base instructions plus `about`.
 fn system(base: &str, about: &str) -> String {
     if about.trim().is_empty() { base.to_string() } else { format!("{base}\n\n{}", about.trim_start()) }
@@ -72,12 +82,18 @@ pub async fn summarize(ep: &Endpoint, base: &str, history: Vec<Message>, cancel:
 
 /// Saves the summary as the chat's marker; `messages` is how many it covers.
 pub fn save(conn: &Connection, c: &Cipher, chat_id: &str, summary: &str, messages: usize, auto: bool) -> Result<Message, String> {
+    save_at(conn, c, chat_id, summary, messages, auto, db::now_ms())
+}
+
+/// `save` with the marker placed at `at` (ms): just before a request being
+/// worked on, when what came before it is compacted partway through it.
+pub fn save_at(conn: &Connection, c: &Cipher, chat_id: &str, summary: &str, messages: usize, auto: bool, at: i64) -> Result<Message, String> {
     let m = Message {
         id: uuid::Uuid::new_v4().to_string(),
         chat_id: chat_id.to_string(),
         role: "assistant".into(),
         content: summary.to_string(),
-        created_at: db::now_ms(),
+        created_at: at,
         meta: Some(json!({ "compacted": true, "messages": messages, "auto": auto })),
         ..Default::default()
     };
@@ -105,6 +121,19 @@ pub fn pending(history: &[Message]) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// Compacted again partway through a reply: the old summary's section
+    /// goes, the new one is added, and the rest of the instructions stay.
+    #[test]
+    fn a_new_summary_takes_the_old_ones_place() {
+        let about = format!("About the user.{}\n\nTools: notes.", super::prompt_section("They planned a trip."));
+        let swapped = super::with_summary(&about, Some("They planned a trip."), "They planned a trip to Rome and booked it.");
+        assert!(!swapped.contains("They planned a trip.\n") && swapped.contains("booked it"));
+        assert!(swapped.starts_with("About the user.") && swapped.contains("Tools: notes."));
+        assert_eq!(swapped.matches("## Earlier in this conversation").count(), 1);
+        let first = super::with_summary("About the user.", None, "Hello.");
+        assert!(first.ends_with(&super::prompt_section("Hello.")));
+    }
+
     use super::*;
 
     fn m(role: &str, content: &str, marker: bool) -> Message {

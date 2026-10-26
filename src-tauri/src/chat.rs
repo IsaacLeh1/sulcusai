@@ -367,7 +367,7 @@ pub fn api_messages(system: &str, history: &[Message]) -> Vec<Value> {
                     .tool_calls
                     .iter()
                     .flatten()
-                    .map(|c| json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.arguments } }))
+                    .map(|c| json!({ "id": c.id, "type": "function", "function": { "name": c.name, "arguments": whole_arguments(&c.arguments) } }))
                     .collect();
                 let mut turn = json!({ "role": "assistant", "content": m.content, "tool_calls": calls });
                 // Its reasoning before the call goes back with it: gpt-oss's
@@ -536,7 +536,7 @@ pub async fn stream(
             .collect();
         return crate::cloud::stream(t, &ep.extra, messages, tools, cancel, on_delta).await;
     }
-    let (mut first, cut_short) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
+    let (mut first, cut_short, at_length) = stream_local(ep, messages.clone(), tools, cancel, &mut on_delta).await?;
     let unanswered = first.content.trim().is_empty() && first.tool_calls.is_empty() && !first.thinking.trim().is_empty() && !first.cancelled;
     // It ended its reply inside its thinking (some models write the whole
     // answer there, then stop): that's the answer. Asked to write it again,
@@ -565,14 +565,139 @@ pub async fn stream(
             Some(last) => add_text(last, &format!("\n{note}")),
             None => messages.push(json!({ "role": "user", "content": note })),
         }
-        let (mut again, _) = stream_local(&quick, messages, tools, cancel, &mut on_delta).await?;
+        let (mut again, _, again_at_length) = stream_local(&quick, messages.clone(), tools, cancel, &mut on_delta).await?;
         again.thinking = format!("{}{}", first.thinking, again.thinking);
         if again.content.trim().is_empty() && again.tool_calls.is_empty() && !again.cancelled {
             return Err(THOUGHT_ONLY.into());
         }
+        if again_at_length {
+            go_on_past_the_limit(&quick, &messages, &mut again, cancel, &mut on_delta).await?;
+        }
         return Ok(again);
     }
+    // A tool call cut off partway (a long file or note): once more with
+    // twice the room, showing only what wasn't shown already; else the call
+    // is dropped, so a broken one isn't run or saved.
+    if at_length && cut_call(&first) {
+        let mut roomier = ep.clone();
+        let limit = ep.extra.get("max_tokens").and_then(Value::as_u64).unwrap_or((ep.ctx / 2).clamp(512, 4096) as u64);
+        roomier.extra["max_tokens"] = json!((limit * 2).min(ep.ctx as u64 * 3 / 4).max(limit));
+        let shown = first.content.len();
+        let mut seen = 0usize;
+        let mut quiet = |d: Delta| {
+            if let Delta::Content(t) = &d {
+                let from = shown.saturating_sub(seen).min(t.len());
+                seen += t.len();
+                if from < t.len() && t.is_char_boundary(from) {
+                    on_delta(Delta::Content(t[from..].to_string()));
+                }
+            }
+        };
+        let (again, _, still) = stream_local(&roomier, messages.clone(), tools, cancel, &mut quiet).await?;
+        crate::applog::line("chat", &format!("A tool call was cut off at the length limit; tried again with more room ({})", if still { "cut again" } else { "whole" }));
+        first = again;
+        first.tool_calls.retain(|c| c.arguments.trim().is_empty() || serde_json::from_str::<Value>(&c.arguments).is_ok());
+        return Ok(first);
+    }
+    if at_length {
+        go_on_past_the_limit(ep, &messages, &mut first, cancel, &mut on_delta).await?;
+    }
     Ok(first)
+}
+
+/// A reply and what it went on with after its length limit, joined where it
+/// really goes on. Models carrying on often go back first: to the line they
+/// were cut in ("…and eyes" then "With your fluffy fur and eyes so deep"), or
+/// to the start of the section ("[Verse 1]" again); that's written once. And
+/// a line cut at its end goes on with the next on its own line.
+pub fn join_continued(done: &str, rest: &str) -> String {
+    let norm = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let lines: Vec<(usize, &str)> = done.split_inclusive('\n').scan(0, |at, l| {
+        let start = *at;
+        *at += l.len();
+        Some((start, l.trim_end_matches(['\n', '\r'])))
+    }).collect();
+    let first = rest.trim_start().lines().next().unwrap_or("");
+    let nf = norm(first);
+    if nf.len() >= 4 && !lines.is_empty() {
+        // The section it was cut in: from its heading or the blank line before it.
+        let heading = |l: &str| {
+            let t = l.trim().trim_matches(['*', '#', ' ']);
+            t.starts_with('[') && t.ends_with(']')
+        };
+        let from = lines.iter().rposition(|(_, l)| l.trim().is_empty() || heading(l)).unwrap_or(0);
+        let last = lines.len() - 1;
+        for (i, (start, l)) in lines.iter().enumerate().skip(from) {
+            let nl = norm(l);
+            if nl.is_empty() {
+                continue;
+            }
+            // The same line again, or the cut one begun again.
+            if nl == nf || (i == last && nf.starts_with(&nl)) {
+                return format!("{}{}", &done[..*start], rest.trim_start());
+            }
+        }
+    }
+    // The end said again word for word (or a bracket cut after: "[" then "[Outro]").
+    for k in (1..=rest.len().min(300)).rev() {
+        if rest.is_char_boundary(k) && done.ends_with(&rest[..k]) && (k >= 4 || !rest[..k].chars().any(char::is_alphanumeric)) {
+            return format!("{done}{}", &rest[k..]);
+        }
+    }
+    // Cut at a line's end: the next line starts on its own (lyrics, lists).
+    let short_lines = lines.len() >= 3 && done.len() / lines.len() < 80;
+    if done.ends_with(|c: char| c.is_alphanumeric() || ",.!?;:'\")".contains(c)) && rest.starts_with(|c: char| c.is_uppercase() || c == '[') && short_lines {
+        return format!("{done}\n{rest}");
+    }
+    format!("{done}{rest}")
+}
+
+/// A saved call's arguments as JSON the engine can read: a call cut off at
+/// the length limit ("{\"text\": \"Lyrics for…") is sent as `{}`, or the
+/// engine refused every later reply in that chat.
+fn whole_arguments(args: &str) -> String {
+    if serde_json::from_str::<Value>(args).is_ok() {
+        args.to_string()
+    } else {
+        "{}".into()
+    }
+}
+
+/// A call cut off partway: its arguments aren't whole JSON.
+fn cut_call(r: &Finished) -> bool {
+    r.tool_calls.iter().any(|c| !c.arguments.trim().is_empty() && serde_json::from_str::<Value>(&c.arguments).is_err())
+}
+
+/// What's said when a reply stopped at its length limit.
+const PAST_LIMIT: &str = "[Your reply above stopped at the length limit, partway through. Go on from exactly where it stopped: no greeting, nothing repeated, just the rest.]";
+
+/// A reply whose answer reached its length limit partway (a song's lyrics
+/// stopped after the second verse): carried on where it stopped, up to three
+/// more times, without thinking again, so the whole answer arrives.
+async fn go_on_past_the_limit<F: FnMut(Delta)>(ep: &Endpoint, messages: &[Value], reply: &mut Finished, cancel: &AtomicBool, on_delta: &mut F) -> Result<(), String> {
+    let mut more = true;
+    let mut times = 0;
+    while more && times < 3 && !reply.content.trim().is_empty() && reply.tool_calls.is_empty() && !reply.cancelled && !cancel.load(Ordering::Relaxed) {
+        let mut quick = ep.clone();
+        quick.extra["chat_template_kwargs"] = json!({ "enable_thinking": false, "reasoning_effort": "low" });
+        quick.extra["reasoning_effort"] = json!("low");
+        let mut asked = messages.to_vec();
+        asked.push(json!({ "role": "assistant", "content": reply.content }));
+        asked.push(json!({ "role": "user", "content": PAST_LIMIT }));
+        let (rest, _, again) = stream_local(&quick, asked, None, cancel, on_delta).await?;
+        reply.content = join_continued(&reply.content, &rest.content);
+        reply.completion_tokens = match (reply.completion_tokens, rest.completion_tokens) {
+            (Some(a), Some(b)) => Some(a + b),
+            (a, b) => a.or(b),
+        };
+        reply.cancelled = rest.cancelled;
+        more = again;
+        times += 1;
+    }
+    if times > 0 {
+        crate::applog::line("chat", &format!("A reply reached its length limit and was carried on {times} time(s)"));
+    }
+    Ok(())
 }
 
 /// Two parts of one reply, a blank line between (either may be empty).
@@ -601,7 +726,7 @@ pub(crate) fn thought_so_far(thinking: &str, ctx: usize) -> String {
 
 /// One reply from the engine on this PC, and whether it was cut short (at
 /// its length limit, or stopped while repeating itself in its thinking).
-async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<(Finished, bool), String> {
+async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut F) -> Result<(Finished, bool, bool), String> {
     // Saved cloud reply blocks are for cloud providers only.
     let messages: Vec<Value> = messages
         .into_iter()
@@ -666,6 +791,8 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
     let mut stream = resp.bytes_stream();
     let offered = offered_names(tools);
     let mut cut_short = false;
+    // Stopped by its length limit (not a loop): the answer may end mid-way.
+    let mut at_length = false;
     'read: while let Some(chunk) = stream.next().await {
         if cancel.load(Ordering::Relaxed) {
             out.cancelled = true;
@@ -685,6 +812,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             if v.pointer("/choices/0/finish_reason").and_then(Value::as_str) == Some("length") {
                 cut_short = true;
+                at_length = true;
             }
             if let Some(delta) = v.pointer("/choices/0/delta") {
                 if let Some(t) = delta.get("reasoning_content").and_then(|t| t.as_str()).filter(|t| !t.is_empty()) {
@@ -742,7 +870,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         }
     }
     out.tool_calls.retain(|c| !c.name.is_empty());
-    Ok((out, cut_short))
+    Ok((out, cut_short, at_length))
 }
 
 /// The last few finished lines are the same line (a small model stuck in a loop).
@@ -1059,6 +1187,46 @@ pub fn edits_text(text: &str) -> bool {
     let pasted = lines.len() >= 3 || text.contains('[') || text.contains('"') || text.contains('\u{201c}');
     pasted || asking.iter().any(|l| WORDS_OBJECT.is_match(l))
 }
+
+// Asked to write a song's words: "write me a song", "can you write a rap
+// about my dog", "write lyrics for a love song".
+static WRITE_SONG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"(?i)\b(write|writing|wright|pen|come up with)\b[^.?!\n]{0,40}\b(songs?|lyrics?|raps?|verses?|chorus(es)?|hooks?|jingles?|ballads?|anthems?|poems?)\b").unwrap()
+});
+
+static ONLY_WORDS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\b(lyrics?|words|poems?|verses?)\b").unwrap());
+
+/// Asked to write a song: just its words ("write lyrics for…"), or not said
+/// whether they want the words or the song to hear ("write me a song").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SongAsk {
+    Words,
+    Unclear,
+}
+
+/// The person asked for a song written. Not the song made (that's "make me
+/// a song", or asking to hear it): asked to write one, the song itself was
+/// made too, which went past what they asked. Words asked for are written;
+/// otherwise they're asked which they want first.
+pub fn writes_song(text: &str) -> Option<SongAsk> {
+    if !WRITE_SONG.is_match(text) || MORE_THAN_WORDS.is_match(text) {
+        return None;
+    }
+    Some(if ONLY_WORDS.is_match(text) { SongAsk::Words } else { SongAsk::Unclear })
+}
+
+/// `writes_song` for a request and the person's asks before it (newest
+/// first): answering "just the lyrics" to the question a song ask brought is
+/// words too.
+pub fn writes_song_in(request: &str, earlier: &[&str]) -> Option<SongAsk> {
+    writes_song(request).or_else(|| {
+        let answered = earlier.iter().take(2).any(|a| writes_song(a) == Some(SongAsk::Unclear));
+        (answered && ONLY_WORDS.is_match(request) && !MORE_THAN_WORDS.is_match(request) && !COMPLETE_SONG.is_match(request)).then_some(SongAsk::Words)
+    })
+}
+
+// "The complete song", "the whole thing", "both": the song made, not only its words.
+static COMPLETE_SONG: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)\b(complete|whole|full|finished|both)\b").unwrap());
 
 /// The reply says it can't make pictures.
 pub fn denies_pictures(reply: &str) -> bool {
@@ -2108,6 +2276,34 @@ mod tests {
         assert!(!edits_text("Rewrite the lyrics in lyrics.txt on my desktop"));
         assert!(!edits_text("Improve this and draw a picture of it:\nA red fox\nin the snow"));
         assert!(!edits_text("Make me a song about the sea"));
+        // A song written is words; a song made is audio.
+        assert_eq!(writes_song("Write me a song about my dog"), Some(SongAsk::Unclear));
+        assert_eq!(writes_song("can you write lyrics for a sad love song?"), Some(SongAsk::Words));
+        assert_eq!(writes_song("write a rap about Monday mornings"), Some(SongAsk::Unclear));
+        assert_eq!(writes_song("Make me a song about the sea"), None);
+        assert_eq!(writes_song("Write me a song and sing it"), None);
+        assert_eq!(writes_song("write a song about rain and make the music for it"), None);
+        assert_eq!(writes_song("Write the lyrics into lyrics.txt"), None);
+        // Carried on past the length limit: the seams Qwen3.5 9B made.
+        let verse = "# Max\n**[Verse 1]**\nThe morning sun comes through the window pane\nYou're already awake, running through the rain\nA happy bark, a wagging tail so high";
+        let joined = join_continued(verse, "\n[Verse 1]\nThe morning sun comes through the window pane\nYou're already awake, running through the rain\nA happy bark, a wagging tail so high\nYou're the sunshine in my sky");
+        assert_eq!(joined.matches("morning sun").count(), 1, "{joined}");
+        assert!(joined.starts_with("# Max\n") && joined.ends_with("You're the sunshine in my sky"), "{joined}");
+        let cut = "[Chorus]\nOh Max, my best friend\nWith your fluffy fur and eyes";
+        assert_eq!(join_continued(cut, "With your fluffy fur and eyes so deep\nYou're the best gift"), "[Chorus]\nOh Max, my best friend\nWith your fluffy fur and eyes so deep\nYou're the best gift");
+        let line_end = "[Chorus]\nOh Max, my best friend, my loyal dog\nWe play all day\nOh Max, my best friend, my loyal dog";
+        assert!(join_continued(line_end, "You make everything feel like a happy song").ends_with("loyal dog\nYou make everything feel like a happy song"));
+        // A new section after a whole one isn't taken for going back.
+        let whole = "[Chorus]\nOh Max\n\n[Verse 2]\nWe chase the leaves\nIn the park\n";
+        assert_eq!(join_continued(whole, "[Chorus]\nOh Max"), format!("{whole}[Chorus]\nOh Max"));
+        assert!(join_continued("[Bridge]\nNo matter where we go\n\n[", "[Outro]\nMy Max").ends_with("\n\n[Outro]\nMy Max"));
+        // Prose cut mid-word goes straight on.
+        assert_eq!(join_continued("The weather today is sun", "ny and warm."), "The weather today is sunny and warm.");
+        // The answer to "just the lyrics, or the whole song?"
+        let asked = ["Write me a song about my dog"];
+        assert_eq!(writes_song_in("Just the lyrics please, upbeat pop", &asked), Some(SongAsk::Words));
+        assert_eq!(writes_song_in("The complete song with lyrics, please", &asked), None);
+        assert_eq!(writes_song_in("the lyrics should be happy", &["Make me a song"]), None);
         assert!(!edits_text("Draw me a cat in a hat"));
         assert!(!edits_text("Build me a stock exchange website"));
         assert_eq!(own_words("Refine these:\n[Verse]\na\nb\nc\nMake them rhyme"), "Refine these:\nMake them rhyme");

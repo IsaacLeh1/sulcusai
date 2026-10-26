@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 use unicode_normalization::UnicodeNormalization;
 
-use crate::catalog::{Asset, EngineSpec, License};
+use crate::catalog::{EngineSpec, License};
 use crate::paths::Paths;
 use crate::tts::Speech;
 use crate::{db, download, engine, net, AppState, AppStateRef};
@@ -33,20 +33,28 @@ const IDLE_UNLOAD: Duration = Duration::from_secs(10 * 60);
 pub struct VoiceCatalog {
     pub runtime: EngineSpec,
     pub runtime_dll: String,
-    /// ONNX Runtime's build for NVIDIA cards, for what runs much faster
-    /// there (a song's parts, `media::stems`).
+    /// ONNX Runtime for graphics cards, for what runs much faster there (a
+    /// song's parts, a voice sung again).
     #[serde(default)]
-    pub gpu_runtime: Option<GpuRuntime>,
+    pub cards: Option<CardRuntime>,
     pub models: Vec<VoicePack>,
 }
 
-/// ONNX Runtime with CUDA: its archive and NVIDIA's libraries (Python
-/// wheels, which are zips), whose DLLs are kept together in one folder.
+/// ONNX Runtime for graphics cards (64-bit Windows): DirectML's build, which
+/// runs on any DirectX 12 card (AMD's, Intel's, NVIDIA's older ones) and on
+/// the processor like the plain build; and for NVIDIA cards CUDA 13 runs
+/// on, the CUDA part of the same version with NVIDIA's libraries beside it,
+/// used first there (a little faster). One build has both, so the CUDA part
+/// can come later without SulcusAI starting again.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GpuRuntime {
+pub struct CardRuntime {
     pub name: String,
     pub license: String,
     pub build: String,
+    /// DirectML's build of ONNX Runtime and DirectML (NuGet packages).
+    pub base: Vec<Part>,
+    /// The CUDA part and NVIDIA's libraries (Python wheels).
+    pub cuda: Vec<Part>,
     /// The oldest NVIDIA driver its CUDA runs on, and the oldest card
     /// (compute capability).
     pub min_driver: f64,
@@ -54,7 +62,24 @@ pub struct GpuRuntime {
     /// Free memory the card needs (MiB): `CARD_ARENA` for the work and the
     /// rest for CUDA itself.
     pub min_free_mib: u64,
-    pub assets: HashMap<String, Vec<Asset>>,
+    /// Folders of earlier builds for NVIDIA cards, whose NVIDIA libraries
+    /// are linked rather than downloaded again.
+    #[serde(default)]
+    pub earlier: Vec<String>,
+}
+
+/// A downloaded archive (zips all) and the DLLs kept from it: those whose
+/// path in it contains one of `keep`, or every one when it's empty.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Part {
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+    #[serde(default)]
+    pub keep: Vec<String>,
+    /// NVIDIA's own library, which an earlier build may already have.
+    #[serde(default)]
+    pub nvidia: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -123,18 +148,24 @@ fn runtime_file(c: &VoiceCatalog) -> String {
     }
 }
 
-/// The downloaded ONNX Runtime library, if present: the one for NVIDIA
+/// The downloaded ONNX Runtime library, if present: the one for graphics
 /// cards when that's here (it runs everything else on the processor just
 /// the same, and a process loads only one).
 pub fn runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
-    gpu_runtime_dll(paths, c).or_else(|| engine::find_exe(&paths.engines.join(runtime_dir(c)), &runtime_file(c)))
+    card_runtime_dll(paths, c).or_else(|| engine::find_exe(&paths.engines.join(runtime_dir(c)), &runtime_file(c)))
 }
 
-/// Downloads and unpacks ONNX Runtime if it isn't there yet.
+/// Downloads and unpacks ONNX Runtime if it isn't there yet: on a PC with a
+/// graphics card, the build for cards (so the first use doesn't load the
+/// processor's, which would keep the card unused until a restart).
 pub async fn ensure_runtime(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<PathBuf, String> {
     let c = &state.catalog.voices;
-    if let Some(dll) = gpu_runtime_dll(&state.paths, c) {
+    if let Some(dll) = card_runtime_dll(&state.paths, c) {
         return Ok(dll);
+    }
+    if card_here(state) && !loaded_for_processor() {
+        state.log("network", "Downloading ONNX Runtime for graphics cards (DirectML)");
+        return ensure_card_runtime(state, false, cancel, &|r, t| emit("engine", r, t)).await;
     }
     let asset = c.runtime.assets.get(engine::cpu_key()).ok_or("Natural voices aren't available on this system yet (no ONNX Runtime build for it).")?;
     let rdir = runtime_dir(c);
@@ -260,10 +291,20 @@ static LOADED: OnceLock<PathBuf> = OnceLock::new();
 pub fn runtime_ready(dll: &Path) -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
-        // The build for NVIDIA cards finds CUDA and cuDNN beside it, and
-        // cuDNN loads its parts by name: its folder goes first on the path.
-        // Cards are numbered as nvidia-smi does (`cuda_card`).
-        if cfg!(windows) && dll.with_file_name(CUDA_PROVIDER).is_file() {
+        // The build for cards finds CUDA and cuDNN beside it (they may come
+        // later, while it runs), and cuDNN loads its parts by name: its
+        // folder goes first on the path. Cards are numbered as nvidia-smi
+        // does (`pick_card`). DirectML comes from beside it too, not the
+        // older one in System32 (a library already loaded is the one used).
+        #[cfg(windows)]
+        if dll.with_file_name(DML_LIB).is_file() {
+            use windows::core::HSTRING;
+            use windows::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_WITH_ALTERED_SEARCH_PATH};
+            if let Err(e) = unsafe { LoadLibraryExW(&HSTRING::from(dll.with_file_name(DML_LIB).as_os_str()), None, LOAD_WITH_ALTERED_SEARCH_PATH) } {
+                crate::applog::line("media", &format!("Couldn't load DirectML ({e}); graphics cards other than NVIDIA's won't be used"));
+            }
+        }
+        if cfg!(windows) && (dll.with_file_name(CUDA_PROVIDER).is_file() || dll.with_file_name(DML_LIB).is_file()) {
             if let Some(dir) = dll.parent() {
                 let path = std::env::var_os("PATH").unwrap_or_default();
                 let dirs = std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&path));
@@ -281,135 +322,328 @@ pub fn runtime_ready(dll: &Path) -> Result<(), String> {
     .clone()
 }
 
-// ---------- on NVIDIA cards ----------
+// ---------- on graphics cards ----------
 
-/// ONNX Runtime's CUDA part, which only its build for NVIDIA cards has.
+/// ONNX Runtime's CUDA part (NVIDIA cards).
 const CUDA_PROVIDER: &str = "onnxruntime_providers_cuda.dll";
-/// Written when every part of the build for NVIDIA cards is in.
-const GPU_DONE: &str = ".complete";
+/// DirectML, beside the build that has it (any DirectX 12 card).
+const DML_LIB: &str = "DirectML.dll";
+/// Written when DirectML's build is in, and when the CUDA part and NVIDIA's
+/// libraries are.
+const BASE_DONE: &str = ".base-complete";
+const CUDA_DONE: &str = ".cuda-complete";
 /// The most a model's work may take on the card: unbounded, HTDemucs took
 /// 7.4 GB; in 3 it ran as fast, leaving room for a chat model (in 2 it
 /// failed).
 const CARD_ARENA: usize = 3 << 30;
 
-fn gpu_runtime_dir(g: &GpuRuntime) -> String {
-    format!("onnxruntime-{}", g.build)
+/// The build for graphics cards, for this system, if there is one.
+fn card_parts(c: &VoiceCatalog) -> Option<&CardRuntime> {
+    c.cards.as_ref().filter(|_| cfg!(all(windows, target_arch = "x86_64")))
 }
 
-/// The downloaded ONNX Runtime for NVIDIA cards, once every part is in.
-pub fn gpu_runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
-    let dir = paths.engines.join(gpu_runtime_dir(c.gpu_runtime.as_ref()?));
-    dir.join(GPU_DONE).is_file().then(|| dir.join(&c.runtime_dll)).filter(|d| d.is_file())
+fn card_dir(paths: &Paths, r: &CardRuntime) -> PathBuf {
+    paths.engines.join(format!("onnxruntime-{}-cards", r.build))
 }
 
-/// The build for NVIDIA cards, for this system, if there is one.
-fn gpu_runtime_parts(c: &VoiceCatalog) -> Option<(&GpuRuntime, &Vec<Asset>)> {
-    let g = c.gpu_runtime.as_ref().filter(|_| cfg!(all(windows, target_arch = "x86_64")))?;
-    Some((g, g.assets.get(engine::cpu_key())?))
+fn part_mark(p: &Part) -> String {
+    format!(".part-{}", &p.sha256[..16])
 }
 
-/// What the build for NVIDIA cards downloads, in bytes.
-pub fn gpu_runtime_size(c: &VoiceCatalog) -> u64 {
-    gpu_runtime_parts(c).map_or(0, |(_, parts)| parts.iter().map(|a| a.size).sum())
+/// The downloaded build for graphics cards, once DirectML's part is in.
+pub fn card_runtime_dll(paths: &Paths, c: &VoiceCatalog) -> Option<PathBuf> {
+    let dir = card_dir(paths, card_parts(c)?);
+    dir.join(BASE_DONE).is_file().then(|| dir.join(&c.runtime_dll)).filter(|d| d.is_file())
 }
 
-/// Downloads ONNX Runtime for NVIDIA cards and NVIDIA's libraries, keeping
-/// their DLLs in one folder. Each part is kept as it's done, so a stopped
-/// download goes on from the next.
-pub async fn ensure_gpu_runtime(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<PathBuf, String> {
-    let c = &state.catalog.voices;
-    if let Some(dll) = gpu_runtime_dll(&state.paths, c) {
-        return Ok(dll);
+/// The CUDA part and NVIDIA's libraries are in too.
+pub fn cuda_ready(paths: &Paths, c: &VoiceCatalog) -> bool {
+    card_parts(c).is_some_and(|r| card_dir(paths, r).join(CUDA_DONE).is_file())
+}
+
+/// A complete earlier build for NVIDIA cards, whose NVIDIA libraries are
+/// linked rather than downloaded again.
+fn earlier_cuda(paths: &Paths, r: &CardRuntime) -> Option<PathBuf> {
+    r.earlier.iter().map(|n| paths.engines.join(n)).find(|d| d.join(".complete").is_file())
+}
+
+/// Earlier builds for NVIDIA cards that aren't needed any more: the cards'
+/// CUDA part is complete, with their libraries linked into it.
+pub fn earlier_builds(paths: &Paths, c: &VoiceCatalog) -> Vec<PathBuf> {
+    match card_parts(c) {
+        Some(r) if cuda_ready(paths, c) => r.earlier.iter().map(|n| paths.engines.join(n)).filter(|d| d.is_dir() && !LOADED.get().is_some_and(|l| l.starts_with(d))).collect(),
+        _ => Vec::new(),
     }
-    let (g, parts) = gpu_runtime_parts(c).ok_or("There's no ONNX Runtime for graphics cards on this system.")?;
-    let name = gpu_runtime_dir(g);
-    let dir = state.paths.engines.join(&name);
+}
+
+/// The parts still to download (with the CUDA part, or not).
+fn missing<'a>(paths: &Paths, r: &'a CardRuntime, cuda: bool) -> Vec<&'a Part> {
+    let dir = card_dir(paths, r);
+    let earlier = cuda && earlier_cuda(paths, r).is_some();
+    let extra: &[Part] = if cuda { &r.cuda } else { &[] };
+    r.base.iter().chain(extra).filter(|p| !dir.join(part_mark(p)).is_file() && !(p.nvidia && earlier)).collect()
+}
+
+/// What's still to download for the cards, in bytes.
+pub fn card_runtime_size(paths: &Paths, c: &VoiceCatalog, cuda: bool) -> u64 {
+    card_parts(c).map_or(0, |r| missing(paths, r, cuda).iter().map(|p| p.size).sum())
+}
+
+/// Downloads the build for graphics cards: DirectML's part, and with `cuda`
+/// the CUDA part and NVIDIA's libraries (linked from an earlier build when
+/// one is here). Each part is kept as it's done, so a stopped download goes
+/// on from the next. Engine downloads are user-started installs, allowed at
+/// every level.
+pub async fn ensure_card_runtime(state: &Arc<AppState>, cuda: bool, cancel: &AtomicBool, progress: &(dyn Fn(u64, u64) + Sync)) -> Result<PathBuf, String> {
+    let c = &state.catalog.voices;
+    let r = card_parts(c).ok_or("There's no ONNX Runtime for graphics cards on this system.")?;
+    let dir = card_dir(&state.paths, r);
+    // One download at a time: a job and the background fetch may both ask.
+    static FETCHING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _one = FETCHING.lock().await;
+    if dir.join(BASE_DONE).is_file() && (!cuda || dir.join(CUDA_DONE).is_file()) {
+        return card_runtime_dll(&state.paths, c).ok_or_else(|| format!("{} is missing from the graphics cards' ONNX Runtime.", c.runtime_dll));
+    }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // Engine downloads are user-started installs, allowed at every level.
+    let earlier = if cuda { earlier_cuda(&state.paths, r) } else { None };
+    if let Some(from) = earlier.clone() {
+        let into = dir.clone();
+        tokio::task::spawn_blocking(move || link_libraries(&from, &into)).await.map_err(|e| e.to_string())??;
+    }
+    let parts = missing(&state.paths, r, cuda);
     let client = net::external_client(net::Connectivity::Offline, net::Purpose::ModelDownload, false)?;
-    let total: u64 = parts.iter().map(|a| a.size).sum();
+    let total: u64 = parts.iter().map(|p| p.size).sum();
     let mut done = 0;
-    for (i, a) in parts.iter().enumerate() {
-        let mark = dir.join(format!(".part-{}", &a.sha256[..16]));
-        if !mark.is_file() {
-            state.log("network", &format!("Downloading {} ({}) from {}", a.url.rsplit('/').next().unwrap_or(""), crate::size_label(a.size), crate::host_of(&a.url)));
-            let archive = state.paths.engines.join(format!("{name}-{i}.zip"));
-            download::fetch_verified(&client, &a.url, &archive, a.size, &a.sha256, cancel, |r, _| progress(done + r, total)).await?;
-            let (from, into) = (archive.clone(), dir.clone());
-            tokio::task::spawn_blocking(move || engine::unzip_libraries(&from, &into)).await.map_err(|e| e.to_string())??;
-            std::fs::remove_file(&archive).ok();
-            std::fs::write(&mark, b"").map_err(|e| e.to_string())?;
-        }
-        done += a.size;
+    for (i, p) in parts.iter().enumerate() {
+        state.log("network", &format!("Downloading {} ({}) from {}", p.url.rsplit('/').next().unwrap_or(""), crate::size_label(p.size), crate::host_of(&p.url)));
+        let archive = state.paths.engines.join(format!("onnxruntime-{}-cards-{i}.zip", r.build));
+        download::fetch_verified(&client, &p.url, &archive, p.size, &p.sha256, cancel, |got, _| progress(done + got, total)).await?;
+        let (from, into, keep) = (archive.clone(), dir.clone(), p.keep.clone());
+        tokio::task::spawn_blocking(move || unzip_kept(&from, &into, &keep)).await.map_err(|e| e.to_string())??;
+        std::fs::remove_file(&archive).ok();
+        std::fs::write(dir.join(part_mark(p)), b"").map_err(|e| e.to_string())?;
+        done += p.size;
         progress(done, total);
     }
-    if !dir.join(CUDA_PROVIDER).is_file() {
-        return Err(format!("The graphics card's ONNX Runtime download didn't contain {CUDA_PROVIDER}."));
+    if !dir.join(DML_LIB).is_file() || !dir.join(&c.runtime_dll).is_file() {
+        return Err(format!("The graphics cards' ONNX Runtime download didn't contain {DML_LIB} and {}.", c.runtime_dll));
     }
-    std::fs::write(dir.join(GPU_DONE), g.build.as_bytes()).map_err(|e| e.to_string())?;
-    gpu_runtime_dll(&state.paths, c).ok_or_else(|| format!("The graphics card's ONNX Runtime download didn't contain {}.", c.runtime_dll))
+    std::fs::write(dir.join(BASE_DONE), r.build.as_bytes()).map_err(|e| e.to_string())?;
+    if cuda {
+        if !dir.join(CUDA_PROVIDER).is_file() {
+            return Err(format!("The graphics cards' ONNX Runtime download didn't contain {CUDA_PROVIDER}."));
+        }
+        // The earlier build's folder goes with the cleanup of old engines
+        // (`earlier_builds`): its libraries are linked here, so little room
+        // is freed, and an older SulcusAI may still be using it.
+        std::fs::write(dir.join(CUDA_DONE), r.build.as_bytes()).map_err(|e| e.to_string())?;
+    }
+    card_runtime_dll(&state.paths, c).ok_or_else(|| format!("{} is missing from the graphics cards' ONNX Runtime.", c.runtime_dll))
 }
 
-/// Whether this process's ONNX Runtime can use NVIDIA cards (it can't
+/// NVIDIA's libraries from an earlier build, linked into `into` (copied
+/// where a link can't be made); not that build's own ONNX Runtime.
+fn link_libraries(from: &Path, into: &Path) -> Result<(), String> {
+    for e in std::fs::read_dir(from).map_err(|e| e.to_string())?.flatten() {
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        if !name.ends_with(".dll") || name.starts_with("onnxruntime") || into.join(e.file_name()).is_file() {
+            continue;
+        }
+        if std::fs::hard_link(e.path(), into.join(e.file_name())).is_err() {
+            std::fs::copy(e.path(), into.join(e.file_name())).map_err(|err| err.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// The DLLs of an archive whose path in it contains one of `keep` (every
+/// DLL when it's empty), side by side in `into`.
+fn unzip_kept(archive: &Path, into: &Path, keep: &[String]) -> Result<(), String> {
+    if keep.is_empty() {
+        return engine::unzip_libraries(archive, into);
+    }
+    let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
+    let mut z = zip::ZipArchive::new(f).map_err(|e| format!("Couldn't unpack {}: {e}", archive.display()))?;
+    for i in 0..z.len() {
+        let mut e = z.by_index(i).map_err(|e| e.to_string())?;
+        let path = e.name().replace('\\', "/");
+        let Some(file) = path.rsplit('/').next().filter(|f| f.to_lowercase().ends_with(".dll")).map(str::to_string) else { continue };
+        if e.is_dir() || !keep.iter().any(|k| path.contains(k.as_str())) {
+            continue;
+        }
+        let mut out = std::fs::File::create(into.join(&file)).map_err(|e| e.to_string())?;
+        std::io::copy(&mut e, &mut out).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Whether this process's ONNX Runtime can use graphics cards (it can't
 /// change until SulcusAI starts again).
 pub fn loaded_for_cards() -> bool {
+    loaded_for_cuda() || loaded_for_dml()
+}
+
+fn loaded_for_cuda() -> bool {
     LOADED.get().is_some_and(|d| d.with_file_name(CUDA_PROVIDER).is_file())
 }
 
-/// This process loaded the processor's ONNX Runtime (before the card's was
-/// downloaded): the card's is used from SulcusAI's next start.
+fn loaded_for_dml() -> bool {
+    LOADED.get().is_some_and(|d| d.with_file_name(DML_LIB).is_file())
+}
+
+/// This process loaded the processor's ONNX Runtime (before the cards' was
+/// downloaded): the cards' is used from SulcusAI's next start.
 pub fn loaded_for_processor() -> bool {
     LOADED.get().is_some() && !loaded_for_cards()
 }
 
-/// The PC's card may run ONNX Runtime's work: it's NVIDIA's and there's a
-/// build for this system (`cuda_card` checks the rest when it's time).
+/// The PC's main card is NVIDIA's (training needs one).
 pub fn nvidia_here(state: &AppState) -> bool {
-    gpu_runtime_parts(&state.catalog.voices).is_some() && state.hardware.read().unwrap().best_gpu().is_some_and(|g| g.vendor == "NVIDIA")
+    state.hardware.read().unwrap().best_gpu().is_some_and(|g| g.vendor == "NVIDIA")
 }
 
-/// An NVIDIA card ONNX Runtime can use: its number as nvidia-smi counts.
+/// The PC has a dedicated card ONNX Runtime's work can go to, and there's a
+/// build for cards on this system (`pick_card` checks the rest when it's time).
+pub fn card_here(state: &AppState) -> bool {
+    card_parts(&state.catalog.voices).is_some() && state.hardware.read().unwrap().best_gpu().is_some()
+}
+
+/// A card ONNX Runtime can use: an NVIDIA card through CUDA (its number as
+/// nvidia-smi counts), or any DirectX 12 card through DirectML (its number
+/// as DXGI counts).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Card {
     pub device: i32,
+    pub dml: bool,
 }
 
-/// The NVIDIA card to run on now, or why not: the build for it is in the
-/// catalog for this system, the card (the one picked, else the first) is
-/// new enough, its driver runs that CUDA, and it has room right now.
-/// SULCUSAI_ONNX_CPU=1 keeps work on the processor (to compare).
-pub async fn cuda_card(state: &AppState) -> Result<Card, String> {
-    if std::env::var_os("SULCUSAI_ONNX_CPU").is_some() {
-        return Err("SULCUSAI_ONNX_CPU is set".into());
-    }
-    let (g, _) = gpu_runtime_parts(&state.catalog.voices).ok_or("no ONNX Runtime for graphics cards on this system")?;
-    let best = state.hardware.read().unwrap().best_gpu().cloned().ok_or("no graphics card")?;
-    if best.vendor != "NVIDIA" {
-        return Err(format!("{} isn't an NVIDIA card", best.name));
-    }
+/// The card picked for ONNX Runtime's work: which, how, and whether it's the
+/// second card.
+#[derive(Debug, Clone)]
+pub struct Picked {
+    pub card: Card,
+    pub name: String,
+    pub second: bool,
+    /// CUDA, whose part isn't downloaded yet (`ensure_card_runtime`).
+    pub needs_cuda: bool,
+}
+
+/// An NVIDIA card as nvidia-smi reports it.
+#[derive(Debug, Clone, Default)]
+pub struct Smi {
+    pub index: i32,
+    pub name: String,
+    pub driver: String,
+    pub compute: f64,
+    pub used_mib: f64,
+    pub total_mib: f64,
+}
+
+/// The NVIDIA cards (empty when nvidia-smi isn't there or doesn't answer).
+pub async fn nvidia_smi() -> Vec<Smi> {
     let mut cmd = tokio::process::Command::new("nvidia-smi");
     cmd.args(["--query-gpu=index,name,driver_version,compute_cap,memory.used,memory.total", "--format=csv,noheader,nounits"]).kill_on_drop(true);
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000);
-    let out = match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
-        Ok(Ok(o)) if o.status.success() => o,
-        _ => return Err("nvidia-smi didn't answer".into()),
-    };
-    let cards: Vec<Vec<String>> = String::from_utf8_lossy(&out.stdout).lines().map(|l| l.split(',').map(|f| f.trim().to_string()).collect()).filter(|f: &Vec<String>| f.len() == 6).collect();
-    let card = cards.iter().find(|f| crate::hardware::same_name(&f[1], &best.name)).or(cards.first()).ok_or("nvidia-smi listed no card")?;
-    let num = |i: usize| card[i].parse::<f64>().unwrap_or(0.0);
-    if num(2) < g.min_driver {
-        return Err(format!("the NVIDIA driver ({}) is older than {} (update it to use the card)", card[2], g.min_driver));
+    let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(5), cmd.output()).await else { return Vec::new() };
+    if !out.status.success() {
+        return Vec::new();
     }
-    if num(3) < g.min_compute {
-        return Err(format!("{} is older than CUDA {} supports", card[1], g.build.rsplit('-').next().unwrap_or("")));
-    }
-    let free = num(5) - num(4);
-    if free < g.min_free_mib as f64 {
-        return Err(format!("{} has {:.1} GB free and this needs {:.1}", card[1], free / 1024.0, g.min_free_mib as f64 / 1024.0));
-    }
-    Ok(Card { device: card[0].parse().unwrap_or(0) })
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect::<Vec<_>>())
+        .filter(|f| f.len() == 6)
+        .map(|f| {
+            let num = |i: usize| f[i].parse::<f64>().unwrap_or(0.0);
+            Smi { index: f[0].parse().unwrap_or(0), name: f[1].clone(), driver: f[2].clone(), compute: num(3), used_mib: num(4), total_mib: num(5) }
+        })
+        .collect()
 }
+
+/// The card for ONNX Runtime's work now, or why none can take it. With
+/// `second`, the second card first (the main one is busy). On an NVIDIA
+/// card CUDA 13 runs on (an RTX 20 or newer, driver 580 or newer), CUDA
+/// (`needs_cuda` when its part is still to download: DirectML ran out of
+/// memory taking a song apart on a 12 GB card where CUDA, capped at 3 GB,
+/// didn't); on every other DirectX 12 card (AMD's, Intel's, NVIDIA's older
+/// ones), DirectML. SULCUSAI_ONNX_CPU=1 keeps work on the processor (to
+/// compare).
+pub async fn pick_card(state: &Arc<AppState>, second: bool) -> Result<Picked, String> {
+    if std::env::var_os("SULCUSAI_ONNX_CPU").is_some() {
+        return Err("SULCUSAI_ONNX_CPU is set (for comparing)".into());
+    }
+    let r = card_parts(&state.catalog.voices).ok_or("there's no ONNX Runtime for graphics cards on this system")?.clone();
+    let (main, other) = {
+        let hw = state.hardware.read().unwrap();
+        (hw.best_gpu().cloned(), hw.second_gpu().cloned())
+    };
+    let Some(main) = main else { return Err(no_card(state)) };
+    let mut order = vec![(main, false)];
+    if let Some(o) = other {
+        if second {
+            order.insert(0, (o, true));
+        } else {
+            order.push((o, true));
+        }
+    }
+    let smi = if order.iter().any(|(g, _)| g.vendor == "NVIDIA") { nvidia_smi().await } else { Vec::new() };
+    let mut why = Vec::new();
+    for (g, is_second) in order {
+        if let Some(s) = smi.iter().find(|s| crate::hardware::same_name(&s.name, &g.name)) {
+            let free = s.total_mib - s.used_mib;
+            if free < r.min_free_mib as f64 {
+                why.push(format!("{} has {:.1} GB of its memory free and this needs {:.1} GB", g.name, free / 1024.0, r.min_free_mib as f64 / 1024.0));
+                continue;
+            }
+            let driver = s.driver.parse::<f64>().unwrap_or(0.0);
+            // SULCUSAI_ONNX_DML=1: DirectML, as on a card CUDA can't use (to compare).
+            if std::env::var_os("SULCUSAI_ONNX_DML").is_some() {
+            } else if driver >= r.min_driver && s.compute >= r.min_compute {
+                let needs_cuda = !cuda_ready(&state.paths, &state.catalog.voices);
+                return Ok(Picked { card: Card { device: s.index, dml: false }, name: g.name.clone(), second: is_second, needs_cuda });
+            } else if driver < r.min_driver {
+                once(&format!("CUDA isn't used on {}: its driver ({}) is older than {} (DirectML runs the work on it instead, a little slower; updating the driver lets CUDA run)", g.name, s.driver, r.min_driver));
+            } else {
+                once(&format!("{} is older than CUDA 13 supports: DirectML runs the work on it instead", g.name));
+            }
+        }
+        match g.dxgi {
+            Some(i) => return Ok(Picked { card: Card { device: i as i32, dml: true }, name: g.name.clone(), second: is_second, needs_cuda: false }),
+            None => why.push(format!("DirectX didn't list {}", g.name)),
+        }
+    }
+    Err(why.join("; "))
+}
+
+/// A line in the app log once per run.
+fn once(line: &str) {
+    static SEEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap();
+    if !seen.iter().any(|s| s == line) {
+        seen.push(line.to_string());
+        crate::applog::line("media", line);
+    }
+}
+
+/// Why there's no card to use: none found, one that isn't working (no
+/// driver, stopped), or only graphics built into the processor.
+pub fn no_card(state: &AppState) -> String {
+    let hw = state.hardware.read().unwrap();
+    if let Some(b) = hw.broken_cards.first() {
+        let what = match b.code {
+            22 => "turned off in Device Manager",
+            28 => "missing its driver",
+            43 => "stopped by Windows after a problem (code 43)",
+            _ => "running on Windows' stand-in driver",
+        };
+        return format!("Windows lists {} but it's {what}: install or update its driver", b.name);
+    }
+    match hw.gpus.iter().find(|g| g.integrated) {
+        Some(g) => format!("this PC has only the graphics built into the processor ({}), which isn't used for this", g.name),
+        None => "no graphics card was found".into(),
+    }
+}
+
 
 /// A model opened on the NVIDIA card (CUDA, with `CARD_ARENA`) when one is
 /// given and this process's ONNX Runtime can use it, else on the processor;
@@ -421,7 +655,20 @@ pub fn session_on(model: &Path, threads: usize, card: Option<Card>) -> Result<(S
 /// `session_on` with another most it may take on the card (bytes).
 pub fn session_within(model: &Path, threads: usize, card: Option<Card>, arena: usize) -> Result<(Session, bool), String> {
     let fail = |err: ort::Error| format!("Couldn't open {}: {err}", model.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()));
-    if let Some(c) = card.filter(|_| loaded_for_cards()) {
+    if let Some(c) = card.filter(|c| c.dml && loaded_for_dml()) {
+        // DirectML wants these two off.
+        let dml = ort::ep::DirectML::default().with_device_id(c.device).build().error_on_failure();
+        let built = Session::builder()
+            .and_then(|b| b.with_memory_pattern(false).map_err(Into::into))
+            .and_then(|b| b.with_parallel_execution(false).map_err(Into::into))
+            .and_then(|b| b.with_execution_providers([dml]).map_err(Into::into))
+            .and_then(|mut b| b.commit_from_file(model));
+        match built {
+            Ok(s) => return Ok((s, true)),
+            Err(err) => crate::applog::line("media", &format!("DirectML couldn't open {} on the card ({err}); using the processor", model.display())),
+        }
+    }
+    if let Some(c) = card.filter(|c| !c.dml && loaded_for_cuda()) {
         let cuda = ort::ep::CUDA::default()
             .with_device_id(c.device)
             .with_conv_algorithm_search(ort::ep::cuda::ConvAlgorithmSearch::Heuristic)

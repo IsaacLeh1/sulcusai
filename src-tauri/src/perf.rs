@@ -1038,7 +1038,7 @@ mod tests {
             cpu_cores: Some(8),
             cpu_threads: 16,
             ram_total: 16 * GIB,
-            gpus: vec![Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: 8 * GIB, integrated: false, luid: None }],
+            gpus: vec![Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: 8 * GIB, integrated: false, luid: None, dxgi: None }],
             ..Default::default()
         }
     }

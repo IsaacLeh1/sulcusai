@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
-import { api, errorText, on, type GpuLimit, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView } from "../api";
+import { api, errorText, on, type GpuLimit, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView, type ProcessorFallback } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
@@ -144,6 +144,7 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
             <option value="0">{t("Never (keep it loaded)")}</option>
           </select>
         </div>
+        <ProcessorFallbackRow toast={toast} />
       </div>
 
       <div className="perf-now small">
@@ -160,6 +161,42 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
         {s.adaptive && <HeatLine heat={v.heat} />}
       </div>
     </section>
+  );
+}
+
+/** What happens when work meant for the graphics card can't go there. */
+function ProcessorFallbackRow({ toast }: { toast: PushToast }) {
+  const [value, setValue] = useState<ProcessorFallback | null>(null);
+  useEffect(() => {
+    api.processorFallback().then(setValue).catch(() => {});
+  }, []);
+  if (!value) return null;
+  return (
+    <div className="toggle-row">
+      <div>
+        <strong>{t("When the graphics card can't do a job")}</strong>
+        <span className="small muted block">
+          {t("Work runs on the graphics card first. When it can't (no card, an old driver, its memory full), the processor and system memory can do it instead: slower, often several times, and warmer. Why is kept in the app log.")}
+        </span>
+      </div>
+      <select
+        value={value}
+        aria-label={t("When the graphics card can't do a job")}
+        onChange={async (e) => {
+          const next = e.target.value as ProcessorFallback;
+          setValue(next);
+          try {
+            await api.setProcessorFallback(next);
+          } catch (err) {
+            toast(errorText(err), "error");
+          }
+        }}
+      >
+        <option value="ask">{t("Ask me first")}</option>
+        <option value="always">{t("Use the processor")}</option>
+        <option value="never">{t("Stop the job")}</option>
+      </select>
+    </div>
   );
 }
 

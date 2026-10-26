@@ -454,6 +454,18 @@ export function MediaInline({ items, onOpen, toast }: { items: MediaItem[]; onOp
               {t("Save…")}
             </button>
           )}
+          {i.kind === "audio" && i.lyrics?.trim() && (
+            // Every word it sings, not just the start.
+            <details className="media-inline-lyrics" open>
+              <summary className="small">{i.title ? t("Lyrics: {title}", { title: i.title }) : t("Lyrics")}</summary>
+              <pre className="small">{i.lyrics.trim()}</pre>
+              {toast && (
+                <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(i.lyrics!.trim()).then(() => toast(t("Copied."), "success"))}>
+                  {t("Copy the lyrics")}
+                </button>
+              )}
+            </details>
+          )}
         </div>
       ))}
     </div>

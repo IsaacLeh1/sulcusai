@@ -818,7 +818,7 @@ mod tests {
         let hw = Hardware {
             ram_total: ram_gb * GIB,
             disk_free: 2_000 * GIB,
-            gpus: if vram_gb > 0 { vec![crate::hardware::Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: vram_gb * GIB, integrated: false, luid: None }] } else { vec![] },
+            gpus: if vram_gb > 0 { vec![crate::hardware::Gpu { name: "GPU".into(), vendor: "NVIDIA".into(), vram_bytes: vram_gb * GIB, integrated: false, luid: None, dxgi: None }] } else { vec![] },
             ..Default::default()
         };
         Budget::from_hardware(&hw)

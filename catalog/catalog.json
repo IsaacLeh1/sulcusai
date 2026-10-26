@@ -3704,37 +3704,60 @@
       }
     },
     "runtime_dll": "onnxruntime.dll",
-    "gpu_runtime": {
-      "name": "ONNX Runtime for NVIDIA graphics cards, with NVIDIA's CUDA runtime, cuBLAS and cuDNN",
-      "license": "MIT (ONNX Runtime); NVIDIA's license for CUDA, cuBLAS and cuDNN",
-      "build": "1.30.0-cuda13",
+    "cards": {
+      "name": "ONNX Runtime for graphics cards: DirectML for any DirectX 12 card, and for NVIDIA cards CUDA 13 with NVIDIA's CUDA runtime, cuBLAS, cuDNN and cuFFT",
+      "license": "MIT (ONNX Runtime, DirectML); NVIDIA's license for CUDA, cuBLAS, cuDNN and cuFFT",
+      "build": "1.24.4",
       "min_driver": 580.0,
       "min_compute": 7.5,
       "min_free_mib": 3584,
-      "assets": {
-        "cpu-x64": [
-          {
-            "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.30.0/onnxruntime-win-x64-gpu_cuda13-1.30.0.zip",
-            "size": 294386823,
-            "sha256": "8fa4b08359af682cd605892cb59077049700b640128bb93fd2c7776cf9f55bdc"
-          },
-          {
-            "url": "https://files.pythonhosted.org/packages/87/6a/e55ff0ac26a5c6e2b21f41c9d04ad096b4ed6da593fba7e25845c61b0532/nvidia_cudnn_cu13-9.27.0.42-py3-none-win_amd64.whl",
-            "size": 436469905,
-            "sha256": "7d96f634adafd55c72231eb0500ca77ab109ec8ebff7b33000b76e081bc4558e"
-          },
-          {
-            "url": "https://files.pythonhosted.org/packages/a3/df/f1246959833e2c437db8be3e5b477f66b87f8817821ed40de6c7561c9a36/nvidia_cublas-13.8.0.4-py3-none-win_amd64.whl",
-            "size": 423266897,
-            "sha256": "8c5494423bb8a46822cb6b0cb95d7fa4be2d7b96a31155dff083839ec8297910"
-          },
-          {
-            "url": "https://files.pythonhosted.org/packages/86/00/d5436004268f049214193659ebc36550b5ef3925c3d13b4cc980e13be6f5/nvidia_cuda_runtime-13.4.92-py3-none-win_amd64.whl",
-            "size": 2778543,
-            "sha256": "08dca5e4aba480c2fd5b55075c0fa71b84ef9dcf0521f2d58baa14a803a7311c"
-          }
-        ]
-      }
+      "earlier": ["onnxruntime-1.30.0-cuda13"],
+      "base": [
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg",
+          "size": 12458649,
+          "sha256": "57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681",
+          "keep": ["runtimes/win-x64/native/"]
+        },
+        {
+          "url": "https://api.nuget.org/v3-flatcontainer/microsoft.ai.directml/1.15.4/microsoft.ai.directml.1.15.4.nupkg",
+          "size": 202292617,
+          "sha256": "4e7cb7ddce8cf837a7a75dc029209b520ca0101470fcdf275c1f49736a3615b9",
+          "keep": ["bin/x64-win/DirectML.dll"]
+        }
+      ],
+      "cuda": [
+        {
+          "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-win-x64-gpu_cuda13-1.24.4.zip",
+          "size": 288420862,
+          "sha256": "971be8cf984950672934a3173669590a8ece10b44746883420da8066ba836707",
+          "keep": ["/lib/onnxruntime_providers_cuda.dll"]
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/7b/cc/be7fe31058127336a66c88414a2ecc6beecf680baf85994a43eaf292b202/nvidia_cufft-12.4.0.43-py3-none-win_amd64.whl",
+          "size": 160953139,
+          "sha256": "4ff7075f2d0b5f69291f70938d37a86ec632cbe5747184c74ba1f50f17accacc",
+          "keep": ["cufft64_"]
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/87/6a/e55ff0ac26a5c6e2b21f41c9d04ad096b4ed6da593fba7e25845c61b0532/nvidia_cudnn_cu13-9.27.0.42-py3-none-win_amd64.whl",
+          "size": 436469905,
+          "sha256": "7d96f634adafd55c72231eb0500ca77ab109ec8ebff7b33000b76e081bc4558e",
+          "nvidia": true
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/a3/df/f1246959833e2c437db8be3e5b477f66b87f8817821ed40de6c7561c9a36/nvidia_cublas-13.8.0.4-py3-none-win_amd64.whl",
+          "size": 423266897,
+          "sha256": "8c5494423bb8a46822cb6b0cb95d7fa4be2d7b96a31155dff083839ec8297910",
+          "nvidia": true
+        },
+        {
+          "url": "https://files.pythonhosted.org/packages/86/00/d5436004268f049214193659ebc36550b5ef3925c3d13b4cc980e13be6f5/nvidia_cuda_runtime-13.4.92-py3-none-win_amd64.whl",
+          "size": 2778543,
+          "sha256": "08dca5e4aba480c2fd5b55075c0fa71b84ef9dcf0521f2d58baa14a803a7311c",
+          "nvidia": true
+        }
+      ]
     },
     "models": [
       {

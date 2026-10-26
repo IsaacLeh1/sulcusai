@@ -1512,6 +1512,28 @@ pub fn any_job() -> bool {
     !jobs().lock().unwrap().is_empty()
 }
 
+tokio::task_local! {
+    /// The job the work belongs to (for questions asked on its behalf).
+    static JOB_ID: String;
+    /// The job runs on the second card (the main one is busy).
+    static SECOND_CARD: bool;
+}
+
+/// What a job does, for the question when the card can't take it.
+fn op_what(op: &str) -> &'static str {
+    match op {
+        "generate" | "edit" | "fill" | "extend" | "restyle" | "cover_art" => "Making the picture",
+        "upscale" => "Making the picture bigger",
+        "video" => "Making the video",
+        "music" | "remake" | "studio_part" => "Making the song",
+        "sound" => "Making the sound",
+        "map" | "stems" | "dry" => "Taking the song apart",
+        "revoice" => "Singing the song in another voice",
+        "tune" | "coach" => "Working on the tune",
+        _ => "This job",
+    }
+}
+
 /// One job at a time: they share the graphics card and memory.
 fn turn() -> &'static tokio::sync::Mutex<()> {
     static T: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -1847,13 +1869,23 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         || (matches!(req.op.as_str(), "music" | "sound" | "studio_part") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // HeartMuLa only runs on a card.
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
-        // A song's parts taken apart and read on an NVIDIA card (CUDA).
-        || (matches!(req.op.as_str(), "map" | "stems" | "dry") && crate::natural::nvidia_here(state));
+        // A song's parts taken apart and read, or its voice sung again, on a
+        // card (CUDA or DirectML).
+        || (matches!(req.op.as_str(), "map" | "stems" | "dry" | "revoice") && crate::natural::card_here(state));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
     };
     let has_card = state.budget().vram > 0 && gpu_name.is_some();
+    // Meant for the card, with none to use: said why, and asked first.
+    if on_cloud.is_none() && card_engine && !has_card {
+        let why = if gpu_name.is_none() { crate::natural::no_card(state) } else { "SulcusAI's limit for the graphics card is set to none (Settings › This PC)".to_string() };
+        let ask_progress = |stage: &str, f: f64| update(state, &id, |i| {
+            i.stage = stage.to_string();
+            i.fraction = f;
+        });
+        crate::cardfirst::processor_ok(state, Some(&id), op_what(&req.op), &why, &cancel, &ask_progress).await?;
+    }
     let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card)));
     let device_now = {
         let (on_processor, gpu_name, cpu_name, cloud) = (on_processor.clone(), gpu_name.clone(), cpu_name.clone(), on_cloud.clone());
@@ -1921,7 +1953,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         // a chat model, a download, an engine that hung) is let go, and the
         // engines it started end with it (a song stuck "making" ignored Stop).
         None => {
-            let work = crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress));
+            let work = JOB_ID.scope(id.clone(), crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)));
             tokio::pin!(work);
             loop {
                 tokio::select! {
@@ -2352,6 +2384,15 @@ impl RunCtx<'_> {
         // which would take hours there.
         if self.cancel.load(Ordering::Relaxed) || !args.iter().any(|a| a == "img_gen") {
             return Err(last);
+        }
+        let why = format!("the graphics card failed three times ({})", last.lines().next().unwrap_or("").trim());
+        let job = JOB_ID.try_with(|j| j.clone()).ok();
+        if crate::cardfirst::processor_ok(self.state, job.as_deref(), "Making the picture", &why, self.cancel, self.progress).await? == crate::cardfirst::Go::Again {
+            // The card was freed: once more on it before the processor.
+            match self.run_sd_once(lighter.clone(), work, None).await {
+                Err(e) if card_trouble(&e) => last = e,
+                other => return other,
+            }
         }
         crate::applog::line("media", &format!("The graphics card failed three times ({}); making the picture on the processor, smaller", last.lines().take(3).collect::<Vec<_>>().join(" | ")));
         (self.progress)(PROCESSOR_STAGE, 0.0);
@@ -4224,8 +4265,10 @@ async fn ensure_helper(state: &Arc<AppState>, h: &Helper, getting: &str, cancel:
 pub(crate) async fn separator(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, PathBuf, Option<crate::natural::Card>), String> {
     let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
     let (dll, model) = ensure_helper(state, &sep, "Getting the part separator (once)", cancel, progress).await?;
-    let ready = crate::natural::nvidia_here(state) && crate::natural::gpu_runtime_dll(&state.paths, &state.catalog.voices).is_some() && !crate::natural::loaded_for_processor();
-    let card = if ready { crate::natural::cuda_card(state).await.ok() } else { None };
+    // Short work: CUDA when its part is here; the processor otherwise (the
+    // separator can't run through DirectML).
+    let ready = crate::natural::card_runtime_dll(&state.paths, &state.catalog.voices).is_some() && !crate::natural::loaded_for_processor();
+    let card = if ready { crate::natural::pick_card(state, false).await.ok().filter(|p| !p.needs_cuda && !p.card.dml).map(|p| p.card) } else { None };
     Ok((dll, model, card))
 }
 
@@ -4281,12 +4324,13 @@ async fn stems_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     (ctx.progress)("Taking the parts apart", 0.1);
     let bytes = store::read(&state.paths, &c, &song.id)?;
     let threads = state.limits().threads;
-    let parts = tokio::task::block_in_place(|| -> Result<Vec<stems::Stereo>, String> {
+    let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
+    let parts = tokio::task::block_in_place(|| crate::cardfirst::asking(ask, || -> Result<Vec<stems::Stereo>, String> {
         let mix = decoded_stereo(&bytes, &song.mime)?;
         let (parts, _) = stems::separate(&dll, &separator, &mix, threads, &[0, 1, 2, 3], card, ctx.cancel)?;
         stems::unload();
         Ok(parts)
-    })?;
+    }))?;
     if ctx.cancel.load(Ordering::Relaxed) {
         return Err(download::CANCELLED.into());
     }
@@ -4334,12 +4378,13 @@ async fn dry_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     let bytes = store::read(&state.paths, &c, &song.id)?;
     let threads = state.limits().threads;
     let started = std::time::Instant::now();
-    let (dry, on_card) = tokio::task::block_in_place(|| {
+    let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
+    let (dry, on_card) = tokio::task::block_in_place(|| crate::cardfirst::asking(ask, || {
         let sound = decoded_stereo(&bytes, &song.mime)?;
         let done = dereverb::dry(&dll, &model, &sound, threads, card, ctx.cancel, &|f| (ctx.progress)("Removing the reverb and echo", 0.05 + 0.9 * f));
         dereverb::unload();
         done
-    })?;
+    }))?;
     let name = song.title.clone().unwrap_or_else(|| song.prompt.chars().take(60).collect());
     let item = MediaItem {
         kind: "audio".into(),
@@ -4983,35 +5028,76 @@ async fn map_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     Ok(vec![map_item(ctx, item).await?])
 }
 
-/// The NVIDIA card a song is taken apart on, its ONNX Runtime downloaded the
-/// first time; None, with why in the log, when there's none to use now.
+/// The graphics card a song's work (its parts, its voice sung again) runs
+/// on, the cards' ONNX Runtime downloaded the first time. When no card can
+/// take it, why is said and the person asked before the processor does it
+/// (`cardfirst`); None then.
 async fn map_card(ctx: &RunCtx<'_>) -> Result<Option<crate::natural::Card>, String> {
     let state = ctx.state;
-    if !crate::natural::nvidia_here(state) {
-        return Ok(None);
-    }
-    let why = match crate::natural::cuda_card(state).await {
-        Ok(card) => {
-            let voices = &state.catalog.voices;
-            let fetched = if crate::natural::gpu_runtime_dll(&state.paths, voices).is_some() {
-                Ok(())
-            } else {
-                let getting = format!("Getting the graphics card's libraries (once, {})", crate::size_label(crate::natural::gpu_runtime_size(voices)));
-                (ctx.progress)(&getting, 0.0);
-                crate::natural::ensure_gpu_runtime(state, ctx.cancel, &|r, t| (ctx.progress)(&getting, r as f64 / t.max(1) as f64)).await.map(|_| ())
-            };
-            match fetched {
-                Ok(()) if crate::natural::loaded_for_processor() => "the processor's ONNX Runtime is loaded; the card's is used from SulcusAI's next start".to_string(),
-                Ok(()) => return Ok(Some(card)),
-                Err(e) if e == download::CANCELLED => return Err(e),
-                Err(e) => format!("couldn't get the card's ONNX Runtime: {e}"),
+    loop {
+        let why = match card_for_onnx(ctx).await {
+            // The rest runs on the card through DirectML; the part separator
+            // can't (`stems::separate`), so it's the processor's, once they say yes.
+            Ok(card) if card.dml => {
+                let job = JOB_ID.try_with(|j| j.clone()).ok();
+                let why = "this graphics card works here through DirectML, which can't run the part separator (the rest of the work stays on the card)";
+                crate::cardfirst::processor_ok(state, job.as_deref(), "Taking the song apart", why, ctx.cancel, ctx.progress).await?;
+                return Ok(Some(card));
+            }
+            Ok(card) => return Ok(Some(card)),
+            Err(e) if e == download::CANCELLED => return Err(e),
+            Err(why) => why,
+        };
+        let job = JOB_ID.try_with(|j| j.clone()).ok();
+        match crate::cardfirst::processor_ok(state, job.as_deref(), "This song's work", &why, ctx.cancel, ctx.progress).await? {
+            crate::cardfirst::Go::Again => continue,
+            crate::cardfirst::Go::Processor => {
+                (ctx.progress)(PROCESSOR_STAGE, 0.0);
+                return Ok(None);
             }
         }
-        Err(why) => why,
-    };
-    crate::applog::line("media", &format!("Taking a song apart on the processor: {why}"));
-    (ctx.progress)(PROCESSOR_STAGE, 0.0);
-    Ok(None)
+    }
+}
+
+/// The card for ONNX Runtime's work now (`natural::pick_card`), or why not.
+async fn card_for_onnx(ctx: &RunCtx<'_>) -> Result<crate::natural::Card, String> {
+    let state = ctx.state;
+    let voices = &state.catalog.voices;
+    if !crate::natural::card_here(state) {
+        return Err(if state.hardware.read().unwrap().best_gpu().is_some() { "there's no ONNX Runtime for graphics cards on this system".into() } else { crate::natural::no_card(state) });
+    }
+    if crate::natural::card_runtime_dll(&state.paths, voices).is_none() {
+        let getting = format!("Getting the graphics card's libraries (once, {})", crate::size_label(crate::natural::card_runtime_size(&state.paths, voices, false)));
+        (ctx.progress)(&getting, 0.0);
+        match crate::natural::ensure_card_runtime(state, false, ctx.cancel, &|r, t| (ctx.progress)(&getting, r as f64 / t.max(1) as f64)).await {
+            Ok(_) => {}
+            Err(e) if e == download::CANCELLED => return Err(e),
+            Err(e) => return Err(format!("the graphics card's libraries couldn't be downloaded ({e})")),
+        }
+    }
+    if crate::natural::loaded_for_processor() {
+        return Err("SulcusAI loaded the processor's libraries before the graphics card's were here, and only one can be loaded until it starts again".into());
+    }
+    let mut p = crate::natural::pick_card(state, SECOND_CARD.try_with(|s| *s).unwrap_or(false)).await?;
+    // CUDA's part, the first time an NVIDIA card it runs on takes work.
+    if p.needs_cuda {
+        let getting = format!("Getting the graphics card's libraries (once, {})", crate::size_label(crate::natural::card_runtime_size(&state.paths, voices, true)));
+        (ctx.progress)(&getting, 0.0);
+        match crate::natural::ensure_card_runtime(state, true, ctx.cancel, &|r, t| (ctx.progress)(&getting, r as f64 / t.max(1) as f64)).await {
+            Ok(_) => {}
+            Err(e) if e == download::CANCELLED => return Err(e),
+            // DirectML on the same card meanwhile.
+            Err(e) => match state.hardware.read().unwrap().gpus.iter().find(|g| g.name == p.name).and_then(|g| g.dxgi) {
+                Some(i) => {
+                    crate::applog::line("media", &format!("Couldn't get CUDA's part ({e}); DirectML runs the work on {} instead", p.name));
+                    p.card = crate::natural::Card { device: i as i32, dml: true };
+                }
+                None => return Err(format!("the graphics card's libraries couldn't be downloaded ({e})")),
+            },
+        }
+    }
+    crate::applog::line("media", &format!("On {}{} ({})", p.name, if p.second { ", the second card" } else { "" }, if p.card.dml { "DirectML" } else { "CUDA" }));
+    Ok(p.card)
 }
 
 /// `map_job` for one song, which is kept with its map.
@@ -5034,7 +5120,8 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
     let bytes = store::read(&state.paths, &c, &item.id)?;
     let threads = state.limits().threads;
     let mime = item.mime.clone();
-    let (parts, on_card, times) = tokio::task::spawn_blocking(move || -> Result<(Vec<songmap::Part>, bool, [f64; 2]), String> {
+    let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
+    let (parts, on_card, times) = tokio::task::spawn_blocking(move || crate::cardfirst::asking(ask, || -> Result<(Vec<songmap::Part>, bool, [f64; 2]), String> {
         let song = decoded_stereo(&bytes, &mime)?;
         let started = Instant::now();
         let (stems, on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, &AtomicBool::new(false))?;
@@ -5059,7 +5146,7 @@ async fn map_item(ctx: &RunCtx<'_>, mut item: MediaItem) -> Result<MediaItem, St
         }
         notes::unload();
         Ok((parts, on_card, [apart, started.elapsed().as_secs_f64() - apart]))
-    })
+    }))
     .await
     .map_err(|e| e.to_string())??;
     crate::applog::line(
@@ -5110,7 +5197,8 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
     let singing = format!("Singing it in the recorded voice “{}”", voice.name);
     // Long work that reports as it goes and can be stopped: it borrows the
     // job's progress and cancel, so it runs here rather than on its own thread.
-    let (out, on_card, secs) = tokio::task::block_in_place(|| -> Result<(stems::Stereo, bool, f64), String> {
+    let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
+    let (out, on_card, secs) = tokio::task::block_in_place(|| crate::cardfirst::asking(ask, || -> Result<(stems::Stereo, (bool, bool), f64), String> {
         let started = Instant::now();
         let song = decoded_stereo(&bytes, &item.mime)?;
         let (parts, apart_on_card) = stems::separate(&dll, &separator, &song, threads, &[0, 1, 2, 3], card, ctx.cancel)?;
@@ -5134,12 +5222,13 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
         // 30 s of song, so fewer.
         let steps = if conv.on_card { 30 } else { 10 };
         let new_voice = conv.convert(&v, &sung_part, svc::Settings { steps, semitones, ..Default::default() }, ctx.cancel, &|f| (ctx.progress)(&singing, 0.25 + 0.7 * f))?;
-        let on_card = conv.on_card && apart_on_card;
+        let on_card = (apart_on_card, conv.on_card);
         drop(conv);
         crate::applog::line("media", &format!("Sang a song again in a recorded voice: {semitones} semitones, {steps} steps"));
         Ok((own_voice::mix(&band, &sung_part, &new_voice), on_card, started.elapsed().as_secs_f64()))
-    })?;
-    crate::applog::line("media", &format!("Sang a {:.0} s song in a recorded voice in {secs:.0} s on the {}", out.len() as f64 / out.rate as f64, if on_card { "graphics card" } else { "processor" }));
+    }))?;
+    let on = |card: bool| if card { "graphics card" } else { "processor" };
+    crate::applog::line("media", &format!("Sang a {:.0} s song in a recorded voice in {secs:.0} s: taken apart on the {}, sung on the {}", out.len() as f64 / out.rate as f64, on(on_card.0), on(on_card.1)));
     let wav = own_voice::wav_stereo(&out.ch[0], &out.ch[1], out.rate);
     let new = MediaItem {
         kind: "audio".into(),

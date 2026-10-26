@@ -16,6 +16,9 @@ pub struct Gpu {
     /// Windows' id for the card (DXGI adapter LUID), to read its usage and temperature.
     #[serde(skip)]
     pub luid: Option<i64>,
+    /// Its number in DirectX's list of adapters (DirectML's device id).
+    #[serde(skip)]
+    pub dxgi: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -101,6 +104,12 @@ pub fn model_cards<'a>(gpus: &'a [Gpu], chosen: Option<&str>) -> Vec<&'a Gpu> {
     }
 }
 
+/// The biggest dedicated card besides `main`, with 3 GB or more.
+pub fn second_of<'a>(gpus: &'a [Gpu], main: Option<&Gpu>) -> Option<&'a Gpu> {
+    let main = main?;
+    gpus.iter().filter(|g| !g.integrated && g.vram_bytes >= 3 << 30 && !(g.name == main.name && g.luid == main.luid && g.vram_bytes == main.vram_bytes)).max_by_key(|g| g.vram_bytes)
+}
+
 /// A graphics card that's there but not working.
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
 pub struct BrokenCard {
@@ -176,6 +185,12 @@ impl Hardware {
     /// most memory. Its memory is what models are fitted to.
     pub fn best_gpu(&self) -> Option<&Gpu> {
         main_of(&self.gpus, self.main.as_deref())
+    }
+
+    /// A second dedicated card (3 GB or more), the biggest besides the main
+    /// one: work of its own goes there while the main card is busy.
+    pub fn second_gpu(&self) -> Option<&Gpu> {
+        second_of(&self.gpus, self.best_gpu())
     }
 
     /// Every card chat models are spread over (`model_cards`).
@@ -365,6 +380,7 @@ fn adapters(_ram: u64) -> (Vec<Gpu>, Vec<AdapterInfo>) {
                 vram_bytes: vram,
                 name,
                 luid: Some(((desc.AdapterLuid.HighPart as i64) << 32) | desc.AdapterLuid.LowPart as i64),
+                dxgi: Some(i - 1),
             });
         }
     }
@@ -380,7 +396,7 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
         for line in String::from_utf8_lossy(&o.stdout).lines() {
             if let Some((name, mib)) = line.rsplit_once(',') {
                 if let Ok(mib) = mib.trim().parse::<u64>() {
-                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false, luid: None });
+                    out.push(Gpu { name: name.trim().to_string(), vendor: "NVIDIA".into(), vram_bytes: mib * 1024 * 1024, integrated: false, luid: None, dxgi: None });
                 }
             }
         }
@@ -404,9 +420,10 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
                     integrated: vram < crate::catalog::GIB,
                     vram_bytes: vram,
                     luid: None,
+                    dxgi: None,
                 });
             }
-            0x8086 => out.push(Gpu { name: "Intel graphics".into(), vendor: "Intel".into(), vram_bytes: 0, integrated: true, luid: None }),
+            0x8086 => out.push(Gpu { name: "Intel graphics".into(), vendor: "Intel".into(), vram_bytes: 0, integrated: true, luid: None, dxgi: None }),
             _ => {}
         }
     }
@@ -418,7 +435,7 @@ fn gpus(_ram: u64) -> Vec<Gpu> {
 #[cfg(target_os = "macos")]
 fn gpus(ram: u64) -> Vec<Gpu> {
     if cfg!(target_arch = "aarch64") {
-        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false, luid: None }]
+        vec![Gpu { name: "Apple GPU".into(), vendor: "Apple".into(), vram_bytes: ram / 3 * 2, integrated: false, luid: None, dxgi: None }]
     } else {
         Vec::new()
     }

@@ -412,6 +412,14 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 if items.len() > 1 { format!("{} versions", items.len()) } else { what.to_string() },
                 summary(&items)
             );
+            // The words it sings are shown in full under the song; the model
+            // has them too, to give when asked (only part were given before).
+            if let Some(words) = items.iter().find_map(|i| i.lyrics.as_deref().filter(|l| i.kind == "audio" && !l.trim().is_empty())) {
+                text.push_str(&format!(
+                    " Its full lyrics are shown under the song in the chat, so don't repeat them unless the user asks; when they ask, give every line:\n{}",
+                    words.trim()
+                ));
+            }
             // The check found things missing: said plainly, not passed off as done.
             let missing: Vec<&str> = items.iter().flat_map(|i| i.missing.iter().map(String::as_str)).collect();
             if !missing.is_empty() {

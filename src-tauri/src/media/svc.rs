@@ -138,6 +138,9 @@ impl Converter {
         match once(s, inputs.clone()) {
             Ok(v) => Ok(v),
             Err(err) => {
+                if !crate::cardfirst::go_on_on_processor("Singing it in the voice", &format!("the graphics card failed partway ({})", err.lines().next().unwrap_or(""))) {
+                    return Err(crate::download::CANCELLED.into());
+                }
                 crate::applog::line("media", &format!("The graphics card couldn't run {piece} ({err}); going on on the processor"));
                 let (s, _) = crate::natural::session_within(&self.dir.join(piece), self.threads, None, arena_of(piece))?;
                 self.open.insert(piece, (s, false));
@@ -283,41 +286,55 @@ impl Converter {
         // Only the transformer and the vocoder are needed from here.
         self.close(&["whisper_mel.onnx", "whisper.onnx", "rmvpe.onnx", "campplus.onnx", "mel44.onnx", "regulator.onnx"]);
         progress(0.1);
+        // Only where there's singing: the quiet stretches (an intro, a break
+        // for the instruments) stay quiet without being worked on.
+        let sung_at = singing(sung, frames);
+        let work: usize = sung_at.iter().map(|(a, b)| b - a).sum::<usize>().max(1);
         let room = WINDOW.saturating_sub(voice.frames).max(OVERLAP * 4);
         let mut rng = Noise::new(s.seed);
-        let mut out: Vec<f32> = Vec::with_capacity(frames * HOP);
-        let mut previous: Option<Vec<f32>> = None;
-        let mut done = 0usize;
+        let mut out = vec![0f32; frames.max(1) * HOP];
         let overlap = OVERLAP * HOP;
-        while done < frames {
-            if cancel.load(Ordering::Relaxed) {
-                return Err(crate::download::CANCELLED.into());
-            }
-            let end = (done + room).min(frames);
-            let last = done + room >= frames;
-            let noise: Vec<f32> = (0..MELS * (voice.frames + end - done)).map(|_| rng.normal()).collect();
-            let mel = self.sample(voice, &cond[done * WIDTH..end * WIDTH], end - done, s, noise, cancel, &|f| progress(0.1 + 0.85 * (done as f64 + f * (end - done) as f64) / frames as f64))?;
-            let wave = self.run("bigvgan.onnx", vec![("mel", vec![1, MELS as i64, (end - done) as i64], mel)])?;
-            match previous.take() {
-                None if last => out.extend_from_slice(&wave),
-                None => {
-                    out.extend_from_slice(&wave[..wave.len() - overlap]);
-                    previous = Some(wave[wave.len() - overlap..].to_vec());
+        let mut before = 0usize;
+        for &(from, to) in &sung_at {
+            let mut piece_out: Vec<f32> = Vec::with_capacity((to - from) * HOP);
+            let mut previous: Option<Vec<f32>> = None;
+            let mut done = from;
+            while done < to {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(crate::download::CANCELLED.into());
                 }
-                Some(prev) => {
-                    let keep = if last { wave.len() } else { wave.len() - overlap };
-                    let mut piece = wave[..keep].to_vec();
-                    crossfade(&prev, &mut piece);
-                    out.extend_from_slice(&piece);
-                    if !last {
+                let end = (done + room).min(to);
+                let last = done + room >= to;
+                let noise: Vec<f32> = (0..MELS * (voice.frames + end - done)).map(|_| rng.normal()).collect();
+                let at = before + done - from;
+                let mel = self.sample(voice, &cond[done * WIDTH..end * WIDTH], end - done, s, noise, cancel, &|f| progress(0.1 + 0.85 * (at as f64 + f * (end - done) as f64) / work as f64))?;
+                let wave = self.run("bigvgan.onnx", vec![("mel", vec![1, MELS as i64, (end - done) as i64], mel)])?;
+                match previous.take() {
+                    None if last => piece_out.extend_from_slice(&wave),
+                    None => {
+                        piece_out.extend_from_slice(&wave[..wave.len() - overlap]);
                         previous = Some(wave[wave.len() - overlap..].to_vec());
                     }
+                    Some(prev) => {
+                        let keep = if last { wave.len() } else { wave.len() - overlap };
+                        let mut piece = wave[..keep].to_vec();
+                        crossfade(&prev, &mut piece);
+                        piece_out.extend_from_slice(&piece);
+                        if !last {
+                            previous = Some(wave[wave.len() - overlap..].to_vec());
+                        }
+                    }
                 }
+                if last {
+                    break;
+                }
+                done += (end - done) - OVERLAP;
             }
-            if last {
-                break;
-            }
-            done += (end - done) - OVERLAP;
+            fade_ends(&mut piece_out);
+            let start = from * HOP;
+            let n = piece_out.len().min(out.len().saturating_sub(start));
+            out[start..start + n].copy_from_slice(&piece_out[..n]);
+            before += to - from;
         }
         progress(1.0);
         out.resize(sung.len(), 0.0);
@@ -372,6 +389,45 @@ impl Converter {
             mel.extend_from_slice(&x[m * total + p..(m + 1) * total]);
         }
         Ok(mel)
+    }
+}
+
+/// The stretches of a sung part (in mel frames, `frames` of them) with
+/// singing in them: frames louder than 45 dB under the loudest, with gaps
+/// under 2 s joined and half a second kept either side, so a breath or a
+/// held note's tail isn't cut. A part that's sung throughout is one stretch.
+fn singing(sung: &[f32], frames: usize) -> Vec<(usize, usize)> {
+    let loud: Vec<f32> = (0..frames)
+        .map(|f| {
+            let a = &sung[(f * HOP).min(sung.len())..((f + 1) * HOP).min(sung.len())];
+            (a.iter().map(|v| v * v).sum::<f32>() / a.len().max(1) as f32).sqrt()
+        })
+        .collect();
+    let peak = loud.iter().copied().fold(0f32, f32::max);
+    if peak <= 0.0 {
+        return Vec::new();
+    }
+    let floor = peak * 10f32.powf(-45.0 / 20.0);
+    let (gap, pad) = (2 * RATE as usize / HOP, RATE as usize / HOP / 2);
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for (f, _) in loud.iter().enumerate().filter(|(_, l)| **l > floor) {
+        let (a, b) = (f.saturating_sub(pad), (f + 1 + pad).min(frames));
+        match out.last_mut() {
+            Some(last) if a <= last.1 + gap => last.1 = last.1.max(b),
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// A short fade in and out (10 ms), so a stretch starts and ends without a click.
+fn fade_ends(wave: &mut [f32]) {
+    let n = (RATE as usize / 100).min(wave.len() / 2);
+    for i in 0..n {
+        let g = i as f32 / n as f32;
+        wave[i] *= g;
+        let j = wave.len() - 1 - i;
+        wave[j] *= g;
     }
 }
 
@@ -520,8 +576,15 @@ mod tests {
     }
 
     /// The ONNX Runtime the installed app downloaded (the graphics card's
-    /// when SULCUSAI_ONNX_CARD is set), and a card if asked for.
+    /// when SULCUSAI_ONNX_CARD is set), and a card if asked for; or the one
+    /// SULCUSAI_ONNX_DLL names, on the card through DirectML when
+    /// SULCUSAI_ONNX_DML is set.
     fn runtime() -> (PathBuf, Option<crate::natural::Card>) {
+        let dml = std::env::var_os("SULCUSAI_ONNX_DML").is_some();
+        if let Some(dll) = std::env::var_os("SULCUSAI_ONNX_DLL") {
+            let card = dml || std::env::var_os("SULCUSAI_ONNX_CARD").is_some();
+            return (dll.into(), card.then_some(crate::natural::Card { device: 0, dml }));
+        }
         let engines = PathBuf::from(std::env::var("LOCALAPPDATA").unwrap()).join("app.sulcusai.desktop").join("engines");
         let card = std::env::var_os("SULCUSAI_ONNX_CARD").is_some();
         let dir = engines.join(if card { "onnxruntime-1.30.0-cuda13" } else { "onnxruntime-1.30.0-cpu-x64" });
@@ -529,7 +592,7 @@ mod tests {
             .into_iter()
             .find(|p| p.is_file())
             .expect("no ONNX Runtime in the installed app's engines");
-        (dll, card.then_some(crate::natural::Card { device: 0 }))
+        (dll, card.then_some(crate::natural::Card { device: 0, dml: false }))
     }
 
     /// Stop, pressed while a song is being sung again, ends it within a step
@@ -631,6 +694,24 @@ mod tests {
         assert!(compare("sampled mel", &mel, &want_src) < 0.05);
         let wave = conv.run("bigvgan.onnx", vec![("mel", vec![1, MELS as i64, frames_src as i64], mel)]).unwrap();
         assert!(compare("sound", &wave, &r("wave")) < 0.1);
+    }
+
+    /// Singing found with silence around it: a long break splits it, a short
+    /// one doesn't, and half a second is kept either side.
+    #[test]
+    fn only_the_sung_stretches_are_worked_on() {
+        let tone = |s: f32| (0..(s * RATE as f32) as usize).map(|i| (i as f32 * 0.05).sin() * 0.3).collect::<Vec<f32>>();
+        let quiet = |s: f32| vec![0f32; (s * RATE as f32) as usize];
+        let parts = [quiet(2.0), tone(3.0), quiet(5.0), tone(2.0), quiet(1.0), tone(1.0), quiet(3.0)];
+        let sung: Vec<f32> = parts.concat();
+        let frames = sung.len() / HOP + 1;
+        let secs = |f: usize| f as f32 * HOP as f32 / RATE as f32;
+        let found: Vec<(f32, f32)> = singing(&sung, frames).into_iter().map(|(a, b)| (secs(a), secs(b))).collect();
+        println!("{found:?}");
+        assert_eq!(found.len(), 2);
+        assert!((found[0].0 - 1.5).abs() < 0.05 && (found[0].1 - 5.5).abs() < 0.05);
+        assert!((found[1].0 - 9.5).abs() < 0.05 && (found[1].1 - 14.5).abs() < 0.05);
+        assert!(singing(&quiet(3.0), 3 * RATE as usize / HOP).is_empty());
     }
 
     #[test]
