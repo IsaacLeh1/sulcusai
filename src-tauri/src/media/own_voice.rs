@@ -14,6 +14,7 @@
 //! encrypted in the settings, each recording sealed in its own file. The
 //! person says first that the voice is theirs, or that its owner agreed.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -42,6 +43,19 @@ const TTS_EXE: &str = if cfg!(windows) { "qwen-tts.exe" } else { "qwen-tts" };
 pub struct OwnVoiceCatalog {
     pub speak: SpeakSpec,
     pub sing: SingSpec,
+    /// Voices made from a description.
+    #[serde(default)]
+    pub design: Option<DesignSpec>,
+}
+
+/// A voice made from words ("a warm older woman, low and slow"): Qwen3-TTS
+/// VoiceDesign, 1.7B only, on the narration engine.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DesignSpec {
+    pub name: String,
+    pub source: String,
+    pub license: crate::catalog::License,
+    pub files: Vec<MediaFile>,
 }
 
 /// Narration in the person's voice: the engine, the model for a graphics
@@ -152,6 +166,9 @@ pub struct OwnVoice {
     pub created_at: i64,
     /// When the person said the voice is theirs or its owner agreed.
     pub agreed_at: i64,
+    /// A voice made from a description: the description (its one take is
+    /// the reading that was kept).
+    pub designed: Option<String>,
 }
 
 impl OwnVoice {
@@ -159,9 +176,11 @@ impl OwnVoice {
         self.takes.iter().filter(move |t| t.kind() == Some(kind))
     }
 
-    /// Narration needs three lines read, or an added reading of 8 s or more.
+    /// Narration needs three lines read, or an added reading of 8 s or more
+    /// (a made voice: its reading).
     pub fn can_speak(&self) -> bool {
-        self.takes_of(LineKind::Speak).count() >= 3 || self.takes_of(LineKind::Speak).any(|t| t.added() && t.seconds >= ENOUGH_SPEECH_S)
+        self.takes_of(LineKind::Speak).count() >= 3
+            || self.takes_of(LineKind::Speak).any(|t| t.added() && (t.seconds >= ENOUGH_SPEECH_S || self.designed.is_some()))
     }
 
     /// The order to use takes of `kind` in: added files clearest first, then
@@ -250,12 +269,37 @@ fn joined(paths: &Paths, c: &Cipher, voice: &OwnVoice, order: &[String], rate: u
     Ok((stems::resample(&out, REC_RATE, rate), if all_words { words.join(" ") } else { String::new() }))
 }
 
-/// What narration clones from: up to 15 s of reading at 24 kHz, and its words.
+/// What narration clones from: up to 15 s of reading at 24 kHz, and its
+/// words. Takes whose words are known come first, and only those when
+/// they're enough (6 s): with the words, the engine copies the way the person
+/// speaks; without them, only roughly how they sound.
 pub fn speech_reference(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<(Vec<f32>, String), String> {
     if !voice.can_speak() {
         return Err("Read at least three lines in Studio › Your voice first.".into());
     }
-    joined(paths, c, voice, &voice.order(LineKind::Speak, SPEAK_ORDER), TTS_RATE, 15.0)
+    let order = voice.order(LineKind::Speak, SPEAK_ORDER);
+    let worded: Vec<String> = order.iter().filter(|id| voice.takes.iter().any(|t| t.line == **id && !t.words.trim().is_empty())).cloned().collect();
+    let worded_s: f32 = voice.takes.iter().filter(|t| worded.contains(&t.line)).map(|t| t.seconds).sum();
+    joined(paths, c, voice, if worded_s >= 6.0 { &worded } else { &order }, TTS_RATE, 15.0)
+}
+
+/// Hears the words of a voice's readings that were kept without them (added
+/// before speech recognition was here), so narration copies the voice
+/// closely from then on.
+async fn hear_missing_words(state: &Arc<AppState>, c: &Cipher, voice_id: &str, say: &(dyn Fn(&str) + Sync)) {
+    let Some(voice) = get(&state.db.lock().unwrap(), c, voice_id) else { return };
+    let missing: Vec<String> = voice.takes.iter().filter(|t| t.kind() == Some(LineKind::Speak) && t.words.trim().is_empty()).map(|t| t.line.clone()).collect();
+    for line in missing {
+        let Ok(take) = read_take(&state.paths, c, voice_id, &line) else { continue };
+        let Some(words) = words_of(state, &take, say).await else { return };
+        let conn = state.db.lock().unwrap();
+        let mut all = list(&conn, c);
+        if let Some(t) = all.iter_mut().find(|v| v.id == voice_id).and_then(|v| v.takes.iter_mut().find(|t| t.line == line)) {
+            t.words = words;
+        }
+        let _ = store(&conn, c, &all);
+        crate::applog::line("media", "Heard the words of a voice's reading kept without them");
+    }
 }
 
 /// What songs are sung like: their singing (else their reading), at 44.1
@@ -389,6 +433,13 @@ pub struct OwnVoicesView {
     /// What narration and singing download the first time (bytes).
     speak_size: u64,
     sing_size: u64,
+    /// What making voices from words downloads the first time (0: it can't
+    /// here).
+    design_size: u64,
+    /// Seconds of clear speech a voice from recordings needs, and that make
+    /// it sound most like the person.
+    speech_enough: f32,
+    speech_best: f32,
 }
 
 #[derive(Serialize)]
@@ -407,7 +458,8 @@ fn view(state: &AppState) -> Result<OwnVoicesView, String> {
     let gpu = state.budget().vram > 0;
     let speak_size = cat.map_or(0, |c| (if gpu { &c.speak.files } else { &c.speak.processor_files }).iter().map(|f| f.size).sum::<u64>());
     let sing_size = cat.map_or(0, |c| c.sing.files.iter().map(|f| f.size).sum());
-    Ok(OwnVoicesView { voices, lines, speak_size, sing_size })
+    let design_size = cat.and_then(|c| c.design.as_ref()).map_or(0, |d| d.files.iter().map(|f| f.size).sum());
+    Ok(OwnVoicesView { voices, lines, speak_size, sing_size, design_size, speech_enough: SPEECH_ENOUGH, speech_best: SPEECH_BEST })
 }
 
 #[tauri::command]
@@ -431,7 +483,7 @@ pub fn own_voice_create(state: AppStateRef<'_>, name: String, agreed: bool) -> R
     let conn = state.db.lock().unwrap();
     let mut all = list(&conn, &c);
     let now = db::now_ms();
-    all.push(OwnVoice { id: super::store::new_id(), name, takes: Vec::new(), created_at: now, agreed_at: now });
+    all.push(OwnVoice { id: super::store::new_id(), name, takes: Vec::new(), created_at: now, agreed_at: now, designed: None });
     store(&conn, &c, &all)?;
     drop(conn);
     state.log("media", "Added a voice to record");
@@ -557,12 +609,14 @@ pub async fn own_voice_stop(state: AppStateRef<'_>, words: String) -> Result<Own
 pub fn add_for_test(state: &AppState, name: &str, takes: &[(&str, Vec<f32>, &str)]) -> String {
     let c = state.work_cipher().unwrap();
     let id = super::store::new_id();
-    let mut voice = OwnVoice { id: id.clone(), name: name.into(), created_at: db::now_ms(), agreed_at: db::now_ms(), takes: Vec::new() };
+    let mut voice = OwnVoice { id: id.clone(), name: name.into(), created_at: db::now_ms(), agreed_at: db::now_ms(), takes: Vec::new(), designed: None };
     for (line, samples, words) in takes {
         let path = take_path(&state.paths, &id, line).unwrap();
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, c.seal_bytes(&crate::audio::wav_encode(samples, REC_RATE))).unwrap();
-        voice.takes.push(Take { line: line.to_string(), seconds: samples.len() as f32 / REC_RATE as f32, words: words.to_string(), at: db::now_ms(), ..Default::default() });
+        // An added recording is a reading (`keep_for_test` and the podcast test).
+        let kind = line.starts_with(ADDED).then_some(LineKind::Speak);
+        voice.takes.push(Take { line: line.to_string(), seconds: samples.len() as f32 / REC_RATE as f32, words: words.to_string(), at: db::now_ms(), kind, score: 1.0, ..Default::default() });
     }
     let conn = state.db.lock().unwrap();
     let mut all = list(&conn, &c);
@@ -640,10 +694,60 @@ fn clearest(samples: &[f32], rate: u32, len_s: f32) -> (usize, usize, f32) {
     (best_start * frame, ((best_start + w) * frame).min(samples.len()), best.0 as f32 / w as f32)
 }
 
-/// One file added to a voice: decoded, the voice taken out of the music
-/// when it's a song (an a cappella stays as sung), its clearest 15 s kept,
-/// levelled and sealed as a new take. The script's lines stay as they are.
+/// One file added to a voice: prepared (`prepare_one`), then sealed as a
+/// new take. The script's lines stay as they are.
 async fn add_one(state: &Arc<AppState>, c: &Cipher, voice_id: &str, path: &Path, kind: LineKind, say: &(dyn Fn(&str) + Sync)) -> Result<(), String> {
+    let p = prepare_one(state, path, kind, say).await?;
+    store_one(state, c, voice_id, p)
+}
+
+/// A recording made ready to keep: its clearest stretch, levelled, what was
+/// said in it, and how good it is.
+#[derive(Clone)]
+struct Prepared {
+    take: Vec<f32>,
+    words: String,
+    notes: Vec<String>,
+    score: f32,
+    kind: LineKind,
+    file: String,
+    /// Others talk in the recording too (only whoever talks most was kept).
+    several: bool,
+}
+
+impl Prepared {
+    fn seconds(&self) -> f32 {
+        self.take.len() as f32 / REC_RATE as f32
+    }
+
+    /// How well it can stand for the voice (0 to 1): how much of it is
+    /// voice, less for each problem (quiet, distorted, noisy), less when
+    /// it's short.
+    fn quality(&self) -> f32 {
+        let length = (self.seconds() / 12.0).min(1.0);
+        (self.score - 0.15 * self.notes.len() as f32).clamp(0.0, 1.0) * (0.4 + 0.6 * length)
+    }
+}
+
+/// Seals a prepared recording as a new take of a voice.
+fn store_one(state: &AppState, c: &Cipher, voice_id: &str, p: Prepared) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, c);
+    let v = all.iter_mut().find(|v| v.id == voice_id).ok_or("That voice is no longer here.")?;
+    let n = v.takes.iter().filter_map(|t| t.line.strip_prefix(ADDED)?.parse::<u32>().ok()).max().map_or(1, |n| n + 1);
+    let line = format!("{ADDED}{n}");
+    let dest = take_path(&state.paths, voice_id, &line)?;
+    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&dest, c.seal_bytes(&crate::audio::wav_encode(&p.take, REC_RATE))).map_err(|e| e.to_string())?;
+    let seconds = p.seconds();
+    v.takes.push(Take { line, seconds, words: p.words.trim().to_string(), notes: p.notes, at: db::now_ms(), kind: Some(p.kind), file: p.file, score: p.score });
+    store(&conn, c, &all)
+}
+
+/// A file decoded, the voice taken out of the music when it's a song (an a
+/// cappella stays as sung), its clearest 15 s kept and levelled, and what
+/// was said in it heard.
+async fn prepare_one(state: &Arc<AppState>, path: &Path, kind: LineKind, say: &(dyn Fn(&str) + Sync)) -> Result<Prepared, String> {
     say("reading");
     let file = path.to_path_buf();
     let (samples, rate, channels) = tokio::task::spawn_blocking(move || super::audio_in::decode(&file)).await.map_err(|e| e.to_string())??;
@@ -652,8 +756,15 @@ async fn add_one(state: &Arc<AppState>, c: &Cipher, voice_id: &str, path: &Path,
     if seconds < 3.0 {
         return Err("It's shorter than 3 seconds.".into());
     }
-    if seconds > 20.0 * 60.0 {
-        return Err("It's longer than 20 minutes.".into());
+    // Talking can be a whole podcast episode; a song is shorter.
+    let longest = if kind == LineKind::Speak { 90.0 } else { 20.0 };
+    if seconds > longest * 60.0 {
+        return Err(format!("It's longer than {longest:.0} minutes."));
+    }
+    if kind == LineKind::Speak {
+        let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect();
+        drop(samples);
+        return prepare_speech(state, mono, rate, say, path).await;
     }
     let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
     let right: Vec<f32> = samples.chunks(ch).map(|f| f[if ch > 1 { 1 } else { 0 }]).collect();
@@ -694,17 +805,248 @@ async fn add_one(state: &Arc<AppState>, c: &Cipher, voice_id: &str, path: &Path,
         LineKind::Speak => heard(state, &take).await.unwrap_or_default(),
         LineKind::Sing => String::new(),
     };
-    let conn = state.db.lock().unwrap();
-    let mut all = list(&conn, c);
-    let v = all.iter_mut().find(|v| v.id == voice_id).ok_or("That voice is no longer here.")?;
-    let n = v.takes.iter().filter_map(|t| t.line.strip_prefix(ADDED)?.parse::<u32>().ok()).max().map_or(1, |n| n + 1);
-    let line = format!("{ADDED}{n}");
-    let dest = take_path(&state.paths, voice_id, &line)?;
-    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
-    std::fs::write(&dest, c.seal_bytes(&crate::audio::wav_encode(&take, REC_RATE))).map_err(|e| e.to_string())?;
     let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-    v.takes.push(Take { line, seconds: take.len() as f32 / REC_RATE as f32, words: words.trim().to_string(), notes, at: db::now_ms(), kind: Some(kind), file, score });
-    store(&conn, c, &all)
+    Ok(Prepared { take, words, notes, score, kind, file, several: false })
+}
+
+/// A recording of the person talking, made ready: in a long one (a
+/// podcast), only whoever talks most (by voice prints: not the guest, not
+/// the intro music); its clearest 15 s, with any music under it taken out;
+/// and its words heard, which narration needs to sound like the person and
+/// not only roughly like them.
+async fn prepare_speech(state: &Arc<AppState>, mono: Vec<f32>, rate: u32, say: &(dyn Fn(&str) + Sync), path: &Path) -> Result<Prepared, String> {
+    let mut several = false;
+    let mut voice = mono;
+    if voice.len() as f32 / rate as f32 > 30.0 {
+        match main_speaker(state, &voice, rate, say).await {
+            Some((kept, more)) => {
+                voice = kept;
+                several = more;
+            }
+            None => crate::applog::line("media", "Couldn't tell the speakers apart in an added recording; using all of it"),
+        }
+    }
+    say("choosing");
+    let at48 = stems::resample(&voice, rate, REC_RATE);
+    drop(voice);
+    let (a, b, score) = clearest(&at48, REC_RATE, ADDED_S);
+    if score < 0.25 {
+        return Err("There's too little voice in it.".into());
+    }
+    let take = without_music(state, &at48[a..b], say).await;
+    let (take, notes) = clean(&take, 3.0)?;
+    say("hearing");
+    let words = words_of(state, &take, say).await.unwrap_or_default();
+    let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    Ok(Prepared { take, words, notes, score, kind: LineKind::Speak, file, several })
+}
+
+/// Whoever talks most in a long recording: 3-second stretches with voice
+/// in them, up to 160 across it, grouped by voice print; the biggest group's
+/// stretches joined in order. Also whether others talk in it. None when it
+/// can't tell (the speaker model can't be had, or there's too little voice).
+async fn main_speaker(state: &Arc<AppState>, mono: &[f32], rate: u32, say: &(dyn Fn(&str) + Sync)) -> Option<(Vec<f32>, bool)> {
+    if !crate::diarize::available(state) {
+        say("getting_speakers");
+        crate::diarize::install(state, &AtomicBool::new(false), &|_, _, _| {}).await.map_err(|e| crate::applog::line("media", &format!("The speaker model didn't install: {e}"))).ok()?;
+    }
+    say("speakers");
+    const WIN: usize = 16_000 * 3;
+    let at16 = stems::resample(mono, rate, 16_000);
+    let loud = at16.chunks(WIN).map(crate::audio::rms).fold(0f32, f32::max);
+    let mut starts: Vec<usize> = (0..at16.len().saturating_sub(WIN)).step_by(WIN).filter(|&s| crate::audio::rms(&at16[s..s + WIN]) > (loud * 0.15).max(0.01)).collect();
+    if starts.len() > 160 {
+        let step = starts.len() as f32 / 160.0;
+        starts = (0..160).map(|i| starts[(i as f32 * step) as usize]).collect();
+    }
+    if starts.len() < 4 {
+        return None;
+    }
+    let st = state.clone();
+    let at = starts.clone();
+    let prints: Vec<(usize, Vec<f32>)> = tokio::task::spawn_blocking(move || at.iter().filter_map(|&s| crate::diarize::embed(&st, &at16[s..s + WIN]).ok().map(|p| (s, p))).collect()).await.ok()?;
+    crate::diarize::unload();
+    if prints.len() < 4 {
+        return None;
+    }
+    let labels = crate::diarize::regroup(&prints.iter().map(|p| p.1.clone()).collect::<Vec<_>>());
+    let mut count: HashMap<u32, usize> = HashMap::new();
+    for l in &labels {
+        *count.entry(*l).or_default() += 1;
+    }
+    let (main, n) = count.iter().max_by_key(|(_, n)| **n).map(|(l, n)| (*l, *n))?;
+    // Others talk when they have a real share of it, not a stray stretch or two.
+    let several = count.iter().any(|(l, c)| *l != main && *c as f32 >= (prints.len() as f32 * 0.1).max(2.0));
+    let scale = rate as f64 / 16_000.0;
+    let mut kept = Vec::new();
+    for ((s, _), l) in prints.iter().zip(&labels) {
+        if *l == main {
+            let from = (*s as f64 * scale) as usize;
+            let to = (((*s + WIN) as f64) * scale) as usize;
+            kept.extend_from_slice(&mono[from.min(mono.len())..to.min(mono.len())]);
+        }
+    }
+    crate::applog::line("media", &format!("An added recording: {} of {} stretches are its main speaker{}", n, prints.len(), if several { "; others talk in it too" } else { "" }));
+    Some((kept, several))
+}
+
+/// Any music under the voice taken out (the part separator, on these few
+/// seconds only); as it was when there's none, or no separator.
+async fn without_music(state: &Arc<AppState>, take: &[f32], say: &(dyn Fn(&str) + Sync)) -> Vec<f32> {
+    let never = AtomicBool::new(false);
+    let Ok((dll, model, card)) = super::separator(state, &never, &|_, _| {}).await else { return take.to_vec() };
+    say("separating");
+    let mono = stems::resample(take, REC_RATE, stems::RATE);
+    let stereo = stems::Stereo { rate: stems::RATE, ch: [mono.clone(), mono.clone()] };
+    let threads = state.limits().threads;
+    let vocals = tokio::task::spawn_blocking(move || {
+        let r = stems::separate(&dll, &model, &stereo, threads, &[3], card, &AtomicBool::new(false)).map(|(parts, _)| parts[0].mono());
+        stems::unload();
+        r
+    })
+    .await;
+    match vocals {
+        // Mostly voice already: kept as it was (taking it out leaves traces).
+        Ok(Ok(v)) if crate::audio::rms(&v) < 0.9 * crate::audio::rms(&mono) => {
+            crate::applog::line("media", "Took music out from under an added recording's voice");
+            stems::resample(&v, stems::RATE, REC_RATE)
+        }
+        _ => take.to_vec(),
+    }
+}
+
+/// The words said in a reading, heard by speech recognition: a small model
+/// is fetched the first time when none is installed (without them, a voice
+/// is copied only roughly).
+async fn words_of(state: &Arc<AppState>, take: &[f32], say: &(dyn Fn(&str) + Sync)) -> Option<String> {
+    if crate::speech::installed(&state.db.lock().unwrap()).is_empty() {
+        let spec = state.catalog.speech.models.iter().find(|m| m.id == "whisper-base").or_else(|| state.catalog.speech.models.first())?.clone();
+        say("getting_words");
+        if let Err(e) = crate::speech::install(state, &spec, &AtomicBool::new(false), &|_, _, _| {}).await {
+            crate::applog::line("media", &format!("Speech recognition didn't install for a voice ({e}); it's copied from the sound alone"));
+            return None;
+        }
+    }
+    heard(state, take).await
+}
+
+// ---------- a voice from recordings alone ----------
+
+/// Recordings checked for a new voice, waiting for "Create voice": by the
+/// token the window got for each.
+static CHECKED: Mutex<Vec<(String, Prepared)>> = Mutex::new(Vec::new());
+
+/// What a check found in one recording.
+#[derive(Serialize)]
+pub struct Checked {
+    /// To keep it with `own_voice_create_from` (None: it can't be used).
+    token: Option<String>,
+    file: String,
+    kind: LineKind,
+    /// Seconds kept: its clearest stretch, up to 15.
+    seconds: f32,
+    /// How much of what's kept is voice (0 to 1).
+    clear: f32,
+    /// How well it can stand for the voice (0 to 1).
+    quality: f32,
+    /// "quiet", "loud" (it distorted), "noisy".
+    notes: Vec<String>,
+    /// What speech recognition heard (speaking only).
+    words: String,
+    /// Why it can't be used.
+    problem: Option<String>,
+    /// Others talk in it too: only whoever talks most was kept.
+    several: bool,
+}
+
+/// Seconds of clear speech that make a voice good enough for narration, and
+/// that make it sound most like the person (narration clones from up to 15 s).
+pub const SPEECH_ENOUGH: f32 = ENOUGH_SPEECH_S;
+pub const SPEECH_BEST: f32 = 15.0;
+
+/// Reads recordings the person has, for a voice made from them alone: each
+/// gets a rating, and nothing is kept until they create the voice.
+/// "own_voice:adding" events say which file it's on.
+#[tauri::command]
+pub async fn own_voice_check(app: AppHandle, state: AppStateRef<'_>, paths: Vec<String>, singing: bool) -> Result<Vec<Checked>, String> {
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    let state = state.inner().clone();
+    let kind = if singing { LineKind::Sing } else { LineKind::Speak };
+    let mut out = Vec::new();
+    for (i, path) in paths.iter().take(MAX_ADDED).enumerate() {
+        let name = Path::new(path.as_str()).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| path.to_string());
+        let say = |step: &str| {
+            let _ = app.emit("own_voice:adding", json!({ "voice": "", "file": name, "step": step, "n": i + 1, "of": paths.len().min(MAX_ADDED) }));
+        };
+        match prepare_one(&state, Path::new(path.as_str()), kind, &say).await {
+            Ok(p) => {
+                let token = uuid::Uuid::new_v4().simple().to_string();
+                out.push(Checked { token: Some(token.clone()), file: p.file.clone(), kind, seconds: p.seconds(), clear: p.score, quality: p.quality(), notes: p.notes.clone(), words: p.words.clone(), problem: None, several: p.several });
+                let mut held = CHECKED.lock().unwrap();
+                held.push((token, p));
+                // Only the latest few dozen wait.
+                let extra = held.len().saturating_sub(48);
+                held.drain(..extra);
+            }
+            Err(e) => out.push(Checked { token: None, file: name.clone(), kind, seconds: 0.0, clear: 0.0, quality: 0.0, notes: Vec::new(), words: String::new(), problem: Some(e), several: false }),
+        }
+    }
+    Ok(out)
+}
+
+/// A recording of the person talking made ready, as a check would (for
+/// tests): what was kept (48 kHz), its words, and whether others talk in it.
+#[cfg(test)]
+pub async fn prepare_for_test(state: &Arc<AppState>, path: &Path) -> Result<(Vec<f32>, String, bool), String> {
+    let p = prepare_one(state, path, LineKind::Speak, &|step| println!("  {step}")).await?;
+    Ok((p.take, p.words, p.several))
+}
+
+/// What was kept of a checked recording, to listen to: WAV, base64.
+#[tauri::command]
+pub fn own_voice_checked_take(token: String) -> Result<String, String> {
+    use base64::Engine as _;
+    let held = CHECKED.lock().unwrap();
+    let p = held.iter().find(|(k, _)| *k == token).map(|(_, p)| p).ok_or("Check the recording again.")?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(crate::audio::wav_encode(&p.take, REC_RATE)))
+}
+
+/// A new voice from recordings checked with `own_voice_check` (their
+/// tokens). `agreed`: it's the person's own voice, or its owner said yes.
+#[tauri::command]
+pub fn own_voice_create_from(state: AppStateRef<'_>, name: String, agreed: bool, tokens: Vec<String>) -> Result<OwnVoicesView, String> {
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    if !agreed {
+        return Err("Only use your own voice, or someone who has said yes.".into());
+    }
+    let name = name.trim().chars().take(60).collect::<String>();
+    if name.is_empty() {
+        return Err("Give the voice a name.".into());
+    }
+    let picked: Vec<Prepared> = {
+        let held = CHECKED.lock().unwrap();
+        tokens.iter().filter_map(|t| held.iter().find(|(k, _)| k == t).map(|(_, p)| p.clone())).collect()
+    };
+    let speech: f32 = picked.iter().filter(|p| p.kind == LineKind::Speak).map(|p| p.seconds() * p.score).sum();
+    let singing = picked.iter().any(|p| p.kind == LineKind::Sing);
+    if speech < SPEECH_ENOUGH && !singing {
+        return Err(format!("There's about {speech:.0} s of clear speech: add recordings until there's at least {SPEECH_ENOUGH:.0} s."));
+    }
+    let c = state.work_cipher()?;
+    let id = super::store::new_id();
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all = list(&conn, &c);
+        let now = db::now_ms();
+        all.push(OwnVoice { id: id.clone(), name, takes: Vec::new(), created_at: now, agreed_at: now, designed: None });
+        store(&conn, &c, &all)?;
+    }
+    for p in picked {
+        store_one(&state, &c, &id, p)?;
+    }
+    CHECKED.lock().unwrap().retain(|(k, _)| !tokens.contains(k));
+    state.log("media", "Made a voice from recordings the person added");
+    view(&state)
 }
 
 #[derive(Serialize)]
@@ -810,32 +1152,41 @@ fn split_streamed(bytes: &[u8]) -> Vec<Vec<f32>> {
         .collect()
 }
 
-/// The narration engine and model, downloaded the first time: the
-/// graphics-card build and the bigger model where there's a card.
-async fn speak_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, Vec<PathBuf>), String> {
+/// The narration engine, downloaded the first time: the graphics-card build
+/// where there's a card.
+async fn voice_engine(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<PathBuf, String> {
     let spec = state.catalog.media.own_voice.as_ref().map(|c| c.speak.clone()).ok_or("Speaking in your voice isn't available on this system yet.")?;
     let gpu = state.budget().vram > 0 && cfg!(all(windows, target_arch = "x86_64"));
     let getting = "Getting the voice engine (once)";
-    let mut exe = None;
     if let Some(asset) = spec.engine.assets.get("vulkan-x64").filter(|_| gpu) {
         let dir = format!("qwentts-{}-vulkan-x64", spec.engine.build);
         match engine::ensure_unpacked(&state.paths, &dir, asset, TTS_EXE, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await {
-            Ok(p) => exe = Some(p),
+            Ok(p) => return Ok(p),
             Err(e) if e == download::CANCELLED => return Err(e),
             Err(e) => state.log("media", &format!("The graphics-card voice engine didn't download ({e}); using the processor one")),
         }
     }
-    let exe = match exe {
-        Some(e) => e,
-        None => {
-            let asset = spec.engine.assets.get(engine::cpu_key()).ok_or("Speaking in your voice isn't available on this system yet.")?;
-            let dir = format!("qwentts-{}-{}", spec.engine.build, engine::cpu_key());
-            engine::ensure_unpacked(&state.paths, &dir, asset, TTS_EXE, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await?
-        }
-    };
+    let asset = spec.engine.assets.get(engine::cpu_key()).ok_or("Speaking in your voice isn't available on this system yet.")?;
+    let dir = format!("qwentts-{}-{}", spec.engine.build, engine::cpu_key());
+    engine::ensure_unpacked(&state.paths, &dir, asset, TTS_EXE, cancel, |r, t| progress(getting, r as f64 / t.max(1) as f64)).await
+}
+
+/// The narration engine and model, downloaded the first time: the
+/// graphics-card build and the bigger model where there's a card.
+async fn speak_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let spec = state.catalog.media.own_voice.as_ref().map(|c| c.speak.clone()).ok_or("Speaking in your voice isn't available on this system yet.")?;
+    let exe = voice_engine(state, cancel, progress).await?;
     let on_card = exe.to_string_lossy().contains("vulkan");
     let files = if on_card { &spec.files } else { &spec.processor_files };
     Ok((exe, fetch_all(state, files, "own-voice", "Getting the voice model (once", cancel, progress).await?))
+}
+
+/// The engine and the model that makes voices from words, downloaded the
+/// first time.
+async fn design_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let spec = state.catalog.media.own_voice.as_ref().and_then(|c| c.design.clone()).ok_or("Making a voice from words isn't available on this system yet.")?;
+    let exe = voice_engine(state, cancel, progress).await?;
+    Ok((exe, fetch_all(state, &spec.files, "own-voice", "Getting the voice maker (once", cancel, progress).await?))
 }
 
 /// Model files into models/media/<dir>, downloaded the first time.
@@ -862,6 +1213,7 @@ async fn fetch_all(state: &Arc<AppState>, files: &[MediaFile], dir: &str, gettin
 /// Reads `text` aloud in a recorded voice: 24 kHz samples.
 pub async fn speak(state: &Arc<AppState>, voice_id: &str, text: &str, language: Option<&str>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(Vec<f32>, u32), String> {
     let c = state.work_cipher()?;
+    hear_missing_words(state, &c, voice_id, &|_| progress("Hearing the words of your recordings (once)", 0.05)).await;
     let voice = get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That voice is no longer here.")?;
     let (reference, words) = speech_reference(&state.paths, &c, &voice)?;
     let lines = lines_of(text);
@@ -895,18 +1247,33 @@ fn longest_s(line: &str) -> f32 {
     line.chars().count() as f32 / 8.0 + 3.0
 }
 
-/// The engine making `lines` in the voice of the reference in `work`
-/// (`ref.wav`; with `with_words`, also `ref.txt`, its words: in-context
-/// cloning, which keeps the way the person speaks): one reading per line.
-/// Each is capped near its line's length (the engine's own cap is ~170 s).
-#[allow(clippy::too_many_arguments)]
-async fn run_engine(exe: &Path, files: &[PathBuf], work: &Path, lines: &[String], language: Option<&str>, with_words: bool, device: Option<&str>, cancel: &AtomicBool) -> Result<Vec<Vec<f32>>, String> {
+/// Whose voice the engine reads in.
+#[derive(Clone, Copy)]
+enum How<'a> {
+    /// The reference in `work` (`ref.wav`; with `with_words`, also `ref.txt`,
+    /// its words: in-context cloning, which keeps the way the person speaks).
+    Clone { work: &'a Path, with_words: bool },
+    /// A voice made from this description (the VoiceDesign model).
+    Design(&'a str),
+}
+
+/// The engine making `lines` in a voice: one reading per line. Each is
+/// capped near its line's length (the engine's own cap is ~170 s).
+async fn run_engine(exe: &Path, files: &[PathBuf], how: How<'_>, lines: &[String], language: Option<&str>, device: Option<&str>, cancel: &AtomicBool) -> Result<Vec<Vec<f32>>, String> {
     // Qwen3-TTS makes 12.5 frames a second.
     let max_new = lines.iter().map(|l| longest_s(l)).fold(0f32, f32::max) * 12.5;
     let mut cmd = tokio::process::Command::new(exe);
-    cmd.current_dir(exe.parent().unwrap_or(Path::new("."))).arg("--model").arg(&files[0]).arg("--codec").arg(&files[1]).arg("--ref-wav").arg(work.join("ref.wav"));
-    if with_words {
-        cmd.arg("--ref-text").arg(work.join("ref.txt"));
+    cmd.current_dir(exe.parent().unwrap_or(Path::new("."))).arg("--model").arg(&files[0]).arg("--codec").arg(&files[1]);
+    match how {
+        How::Clone { work, with_words } => {
+            cmd.arg("--ref-wav").arg(work.join("ref.wav"));
+            if with_words {
+                cmd.arg("--ref-text").arg(work.join("ref.txt"));
+            }
+        }
+        How::Design(description) => {
+            cmd.arg("--instruct").arg(description);
+        }
     }
     if let Some(d) = device {
         cmd.args(["--device", d]);
@@ -960,19 +1327,40 @@ fn heard_any(parts: &[Vec<f32>]) -> bool {
 /// is an error, never saved as a reading.
 #[allow(clippy::too_many_arguments)]
 async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str, lines: &[String], language: Option<&str>, device: Option<&str>, cancel: &AtomicBool) -> Result<(Vec<f32>, u32), String> {
+    let parts = read_lines(exe, files, reference, words, lines, language, device, cancel).await?;
+    let gap = vec![0f32; (TTS_RATE as f32 * 0.35) as usize];
+    let mut all = Vec::new();
+    for p in parts.into_iter().filter(|p| !p.is_empty()) {
+        if !all.is_empty() {
+            all.extend_from_slice(&gap);
+        }
+        all.extend(p);
+    }
+    if all.is_empty() {
+        return Err("The voice engine made no sound.".into());
+    }
+    Ok((all, TTS_RATE))
+}
+
+/// Each of `lines` read in the voice of `reference` (24 kHz), checked as
+/// `read_with` says: one reading per line (empty where the engine made
+/// none), each kept to its line's length.
+#[allow(clippy::too_many_arguments)]
+async fn read_lines(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str, lines: &[String], language: Option<&str>, device: Option<&str>, cancel: &AtomicBool) -> Result<Vec<Vec<f32>>, String> {
     // The recording goes to the engine as a file for the run only.
     let work = std::env::temp_dir().join(format!("sulcusai-voice-{}", super::store::new_id()));
     std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
     let result = async {
         std::fs::write(work.join("ref.wav"), crate::audio::wav_encode(reference, TTS_RATE)).map_err(|e| e.to_string())?;
         std::fs::write(work.join("ref.txt"), words).map_err(|e| e.to_string())?;
-        let mut parts = run_engine(exe, files, &work, lines, language, !words.trim().is_empty(), device, cancel).await?;
+        let cloned = How::Clone { work: &work, with_words: !words.trim().is_empty() };
+        let mut parts = run_engine(exe, files, cloned, lines, language, device, cancel).await?;
         let ran_on = |line: &str, p: &[f32]| p.len() as f32 / TTS_RATE as f32 > longest_s(line) - 0.5;
         let again: Vec<usize> = (0..lines.len().min(parts.len())).filter(|i| ran_on(&lines[*i], &parts[*i])).collect();
         if !again.is_empty() {
             crate::applog::line("media", &format!("{} of {} lines ran on in the recorded voice; reading them again from the voice alone", again.len(), lines.len()));
             let retry: Vec<String> = again.iter().map(|i| lines[*i].clone()).collect();
-            let redone = run_engine(exe, files, &work, &retry, language, false, device, cancel).await?;
+            let redone = run_engine(exe, files, How::Clone { work: &work, with_words: false }, &retry, language, device, cancel).await?;
             for (i, p) in again.iter().zip(redone) {
                 if !ran_on(&lines[*i], &p) || p.len() < parts[*i].len() {
                     parts[*i] = p;
@@ -981,7 +1369,7 @@ async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str
         }
         if !heard_any(&parts) && device != Some("CPU") && exe.to_string_lossy().contains("vulkan") {
             crate::applog::line("media", "The graphics card's voice engine made only silence; reading it again on the processor");
-            parts = run_engine(exe, files, &work, lines, language, !words.trim().is_empty(), Some("CPU"), cancel).await?;
+            parts = run_engine(exe, files, cloned, lines, language, Some("CPU"), cancel).await?;
         }
         if !heard_any(&parts) {
             crate::applog::line("media", &format!("The voice engine made only silence for {} line(s)", lines.len()));
@@ -989,36 +1377,223 @@ async fn read_with(exe: &Path, files: &[PathBuf], reference: &[f32], words: &str
         }
         // Samples that aren't numbers in a line that otherwise worked become silence.
         parts.iter_mut().flatten().filter(|s| !s.is_finite()).for_each(|s| *s = 0.0);
-        let gap = vec![0f32; (TTS_RATE as f32 * 0.35) as usize];
-        let mut all = Vec::new();
-        for (i, mut p) in parts.into_iter().enumerate().filter(|(_, p)| !p.is_empty()) {
+        parts.resize(lines.len(), Vec::new());
+        for (p, line) in parts.iter_mut().zip(lines) {
             // Still running on: kept to its line's length.
-            if let Some(line) = lines.get(i) {
-                p.truncate((longest_s(line) * TTS_RATE as f32) as usize);
-            }
-            if !all.is_empty() {
-                all.extend_from_slice(&gap);
-            }
-            all.extend(p);
+            p.truncate((longest_s(line) * TTS_RATE as f32) as usize);
         }
-        if all.is_empty() {
-            return Err("The voice engine made no sound.".into());
-        }
-        Ok((all, TTS_RATE))
+        Ok(parts)
     }
     .await;
     let _ = std::fs::remove_dir_all(&work);
     result
 }
 
-/// Hears a sentence in a voice, to check it: WAV, base64.
+/// Several passages read in a recorded (or made) voice in one go, so the
+/// model loads once: one reading per passage at 24 kHz, its sentences a
+/// short pause apart. For podcasts and readings with several voices.
+pub async fn speak_each(state: &Arc<AppState>, voice_id: &str, passages: &[String], language: Option<&str>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(Vec<Vec<f32>>, u32), String> {
+    let c = state.work_cipher()?;
+    hear_missing_words(state, &c, voice_id, &|_| progress("Hearing the words of your recordings (once)", 0.05)).await;
+    let voice = get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That voice is no longer here.")?;
+    let (reference, words) = speech_reference(&state.paths, &c, &voice)?;
+    // Every passage's sentences in one list, and which passage each is from.
+    let mut lines = Vec::new();
+    let mut owner = Vec::new();
+    for (i, p) in passages.iter().enumerate() {
+        for l in lines_of(p) {
+            lines.push(l);
+            owner.push(i);
+        }
+    }
+    if lines.is_empty() {
+        return Ok((vec![Vec::new(); passages.len()], TTS_RATE));
+    }
+    let (exe, files) = speak_parts(state, cancel, progress).await?;
+    let free = card_free_now(state);
+    let device = (exe.to_string_lossy().contains("vulkan") && free.is_some_and(|f| f < 3_500 << 20)).then_some("CPU");
+    let parts = read_lines(&exe, &files, &reference, &words, &lines, language, device, cancel).await?;
+    let gap = vec![0f32; (TTS_RATE as f32 * 0.3) as usize];
+    let mut out = vec![Vec::new(); passages.len()];
+    for (p, i) in parts.into_iter().zip(owner) {
+        if p.is_empty() {
+            continue;
+        }
+        if !out[i].is_empty() {
+            out[i].extend_from_slice(&gap);
+        }
+        out[i].extend(p);
+    }
+    Ok((out, TTS_RATE))
+}
+
+// ---------- voices made from a description ----------
+
+/// What a made voice reads for its sample (~12 s, kept as its reference):
+/// language code and words.
+const SAMPLES: &[(&str, &str)] = &[
+    ("en", "Hello, and thank you for listening. Today I want to tell you about a small town by the sea, where the mornings are quiet, the bread is always warm, and everybody knows your name."),
+    ("de", "Hallo und danke fürs Zuhören. Heute erzähle ich Ihnen von einer kleinen Stadt am Meer, wo die Morgen ruhig sind, das Brot immer warm ist und jeder Ihren Namen kennt."),
+    ("es", "Hola, y gracias por escuchar. Hoy quiero hablarles de un pequeño pueblo junto al mar, donde las mañanas son tranquilas, el pan siempre está caliente y todos conocen tu nombre."),
+    ("fr", "Bonjour, et merci de votre écoute. Aujourd'hui, je veux vous parler d'une petite ville au bord de la mer, où les matins sont calmes, le pain toujours chaud, et où tout le monde connaît votre nom."),
+    ("it", "Ciao, e grazie per l'ascolto. Oggi voglio parlarvi di una piccola città sul mare, dove le mattine sono tranquille, il pane è sempre caldo e tutti conoscono il tuo nome."),
+    ("pt", "Olá, e obrigado por ouvir. Hoje quero falar de uma pequena cidade à beira-mar, onde as manhãs são tranquilas, o pão está sempre quente e todos sabem o seu nome."),
+    ("ru", "Здравствуйте и спасибо, что слушаете. Сегодня я расскажу вам о маленьком городке у моря, где утро всегда тихое, хлеб всегда тёплый, а все знают ваше имя."),
+    ("ja", "こんにちは、聞いてくださってありがとうございます。今日は、海辺の小さな町のお話をします。朝は静かで、パンはいつも温かく、みんながあなたの名前を知っています。"),
+    ("ko", "안녕하세요, 들어 주셔서 감사합니다. 오늘은 바닷가의 작은 마을 이야기를 들려 드릴게요. 아침은 조용하고, 빵은 늘 따뜻하며, 모두가 당신의 이름을 알고 있어요."),
+    ("zh", "你好，谢谢你的收听。今天我想给你讲一个海边小镇的故事。那里的早晨很安静，面包总是热的，每个人都知道你的名字。"),
+];
+
+/// The sample's words in `language` (English when it isn't one of them).
+fn sample_words(language: Option<&str>) -> &'static str {
+    let code = language.map(|c| c.split(['-', '_']).next().unwrap_or("").to_lowercase()).unwrap_or_default();
+    SAMPLES.iter().find(|(c, _)| *c == code).unwrap_or(&SAMPLES[0]).1
+}
+
+/// Readings made from the last description, waiting to be kept.
+struct Made {
+    description: String,
+    language: Option<String>,
+    takes: Vec<Vec<f32>>,
+}
+
+static MADE: Mutex<Option<Made>> = Mutex::new(None);
+static DESIGN_CANCEL: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize)]
+pub struct MadeSample {
+    /// WAV, base64.
+    wav: String,
+    seconds: f32,
+}
+
+/// Makes three voices from a description, each reading the same sample, to
+/// choose from. "own_voice:designing" events say what it's doing.
 #[tauri::command]
-pub async fn own_voice_try(state: AppStateRef<'_>, voice: String, text: String, language: Option<String>) -> Result<String, String> {
+pub async fn own_voice_design(app: AppHandle, state: AppStateRef<'_>, description: String, language: Option<String>) -> Result<Vec<MadeSample>, String> {
+    use base64::Engine as _;
+    crate::features::require(&state, crate::features::Feature::Music)?;
+    let description = description.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(400).collect::<String>();
+    if description.chars().count() < 4 {
+        return Err("Describe the voice: who it sounds like (age, man or woman), its pitch, pace and mood.".into());
+    }
+    let state = state.inner().clone();
+    DESIGN_CANCEL.store(false, Ordering::Relaxed);
+    let say = |stage: &str, fraction: f64| {
+        let _ = app.emit("own_voice:designing", json!({ "stage": stage, "fraction": fraction }));
+    };
+    let takes = design(&state, &description, language.as_deref(), &DESIGN_CANCEL, &say).await?;
+    let out = takes
+        .iter()
+        .map(|t| MadeSample { wav: base64::engine::general_purpose::STANDARD.encode(crate::audio::wav_encode(t, TTS_RATE)), seconds: t.len() as f32 / TTS_RATE as f32 })
+        .collect();
+    *MADE.lock().unwrap() = Some(Made { description, language, takes });
+    state.log("media", "Made voices from a description");
+    Ok(out)
+}
+
+/// Three readings of the sample in voices made from `description` (24 kHz).
+pub async fn design(state: &Arc<AppState>, description: &str, language: Option<&str>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<Vec<f32>>, String> {
+    let (exe, files) = design_parts(state, cancel, progress).await?;
+    progress("Making the voices", 0.0);
+    let words = sample_words(language).to_string();
+    let lines = vec![words.clone(), words.clone(), words];
+    let mut takes = run_engine(&exe, &files, How::Design(description), &lines, language, None, cancel).await?;
+    if !heard_any(&takes) && exe.to_string_lossy().contains("vulkan") {
+        crate::applog::line("media", "The graphics card's voice maker made only silence; making it again on the processor");
+        takes = run_engine(&exe, &files, How::Design(description), &lines, language, Some("CPU"), cancel).await?;
+    }
+    takes.retain(|t| !t.is_empty() && t.iter().all(|s| s.is_finite()) && crate::audio::rms(t) > 0.003);
+    if takes.is_empty() {
+        return Err("The voice maker made only silence. Try again, or describe the voice another way.".into());
+    }
+    for t in &mut takes {
+        t.truncate((longest_s(&lines[0]) * TTS_RATE as f32) as usize);
+    }
+    Ok(takes)
+}
+
+/// Keeps a made reading as a voice (for tests: the command keeps one of the
+/// last made).
+#[cfg(test)]
+pub fn keep_for_test(state: &AppState, name: &str, description: &str, sample: &[f32]) -> String {
+    *MADE.lock().unwrap() = Some(Made { description: description.into(), language: Some("en".into()), takes: vec![sample.to_vec()] });
+    let at48 = stems::resample(sample, TTS_RATE, REC_RATE);
+    let id = add_for_test(state, name, &[(&format!("{ADDED}1"), at48, sample_words(Some("en")))]);
+    let c = state.work_cipher().unwrap();
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    if let Some(v) = all.iter_mut().find(|v| v.id == id) {
+        v.designed = Some(description.into());
+        for t in &mut v.takes {
+            t.kind = Some(LineKind::Speak);
+            t.score = 1.0;
+        }
+    }
+    store(&conn, &c, &all).unwrap();
+    id
+}
+
+#[tauri::command]
+pub fn own_voice_design_cancel() {
+    DESIGN_CANCEL.store(true, Ordering::Relaxed);
+}
+
+/// Keeps one of the voices just made (`pick`, from 0) under `name`: its
+/// reading becomes the voice's reference, so it sounds the same every time.
+#[tauri::command]
+pub fn own_voice_design_keep(state: AppStateRef<'_>, name: String, pick: usize) -> Result<OwnVoicesView, String> {
+    let name = name.trim().chars().take(60).collect::<String>();
+    if name.is_empty() {
+        return Err("Give the voice a name.".into());
+    }
+    let made = MADE.lock().unwrap().take().ok_or("Make the voices again first.")?;
+    if pick >= made.takes.len() {
+        *MADE.lock().unwrap() = Some(made);
+        return Err("That voice isn't one of the ones made.".into());
+    }
+    let at48 = stems::resample(&made.takes[pick], TTS_RATE, REC_RATE);
+    let c = state.work_cipher()?;
+    let id = super::store::new_id();
+    let line = format!("{ADDED}1");
+    let path = take_path(&state.paths, &id, &line)?;
+    std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, c.seal_bytes(&crate::audio::wav_encode(&at48, REC_RATE))).map_err(|e| e.to_string())?;
+    let now = db::now_ms();
+    let take = Take {
+        line,
+        seconds: at48.len() as f32 / REC_RATE as f32,
+        words: sample_words(made.language.as_deref()).to_string(),
+        at: now,
+        kind: Some(LineKind::Speak),
+        score: 1.0,
+        ..Default::default()
+    };
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all = list(&conn, &c);
+        all.push(OwnVoice { id, name, takes: vec![take], created_at: now, agreed_at: now, designed: Some(made.description) });
+        store(&conn, &c, &all)?;
+    }
+    state.log("media", "Kept a voice made from a description");
+    view(&state)
+}
+
+/// Hears a sentence in a voice, to check it: WAV, base64. "own_voice:trying"
+/// events say what it's doing: downloading the engine or model the first
+/// time (with how far), then reading.
+#[tauri::command]
+pub async fn own_voice_try(app: AppHandle, state: AppStateRef<'_>, voice: String, text: String, language: Option<String>) -> Result<String, String> {
     use base64::Engine as _;
     crate::features::require(&state, crate::features::Feature::Music)?;
     let state = state.inner().clone();
     let never = AtomicBool::new(false);
-    let (samples, rate) = speak(&state, &voice, &text, language.as_deref(), &never, &|_, _| {}).await?;
+    let say = |stage: &str, fraction: f64| {
+        // While it reads there's no telling how far it is (-1).
+        let downloading = stage.contains("(once");
+        let _ = app.emit("own_voice:trying", json!({ "stage": stage, "fraction": if downloading { fraction } else { -1.0 }, "downloading": downloading }));
+    };
+    let (samples, rate) = speak(&state, &voice, &text, language.as_deref(), &never, &say).await?;
     Ok(base64::engine::general_purpose::STANDARD.encode(crate::audio::wav_encode(&samples, rate)))
 }
 

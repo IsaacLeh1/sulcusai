@@ -228,6 +228,32 @@ CREATE TABLE IF NOT EXISTS people_asks (
   done_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS people_asks_by_contact ON people_asks(contact_id, at);
+-- The documents library (doclib.rs): folders and files added, the files
+-- found in them, and their passages with the numbers that say what each
+-- means. Everything but the ids is encrypted.
+CREATE TABLE IF NOT EXISTS doc_sources (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS doc_files (
+  id        TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  data      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS doc_files_by_source ON doc_files(source_id);
+CREATE TABLE IF NOT EXISTS study_sets (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS doc_passages (
+  file_id TEXT NOT NULL,
+  ord     INTEGER NOT NULL,
+  data    TEXT NOT NULL,
+  vec     BLOB,
+  PRIMARY KEY (file_id, ord)
+);
 ";
 
 /// Columns added after the first release, created on older databases.

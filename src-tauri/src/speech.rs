@@ -544,6 +544,7 @@ pub fn start_idle_unloader(state: Arc<AppState>) {
                 stop(&state).await;
             }
             crate::natural::unload_if_idle();
+            crate::doclib::unload_if_idle().await;
             if idle && state.speech.users.load(Ordering::SeqCst) == 0 {
                 crate::diarize::unload();
             }

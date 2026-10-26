@@ -25,6 +25,19 @@ const COMPONENTS: Components = {
       >
         {children}
       </a>
+    ) : href && /^doc:[0-9a-f]+$/i.test(href) ? (
+      // A source in the documents library: opens the file.
+      <a
+        className="md-link doc-link"
+        href={href}
+        title={t("Open this document")}
+        onClick={(e) => {
+          e.preventDefault();
+          api.docsOpen(href.slice(4)).catch(() => {});
+        }}
+      >
+        {children}
+      </a>
     ) : (
       <span className="md-link" title={href}>
         {children}

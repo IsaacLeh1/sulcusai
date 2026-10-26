@@ -582,6 +582,9 @@ pub struct Tuning {
     /// Spread over every card models use (`catalog::fits_biggest_card`
     /// says it doesn't fit the biggest alone); else on the main card.
     pub spread: bool,
+    /// An embedding model (the documents library's): it turns text into
+    /// numbers (`/v1/embeddings`, last-token pooling) instead of chatting.
+    pub embedding: bool,
 }
 
 /// Said at the end of thinking that ran out of its budget.
@@ -844,13 +847,15 @@ impl Engine {
             .args(layers)
             // One conversation at a time gets the whole context window.
             .args(["-np", "1", "--jinja", "--no-webui"])
+            // A passage is read in one batch, so it can't be longer than one.
+            .args(if tuning.embedding { vec!["--embedding", "--pooling", "last", "-ub", "4096", "-b", "4096"] } else { vec![] })
             // Guessing ahead from text already in the conversation (n-gram
             // lookup, no extra model): a reply that repeats it (code edited,
             // text quoted or revised) comes faster, the rest as fast as before.
             // Measured on a code edit: Qwen3 4B 162 to 203 tokens/s, Qwen3.5 9B
             // 88 to 105, gpt-oss 20B 29 to 47; open writing unchanged. The
             // "cache" kind made both slower, "mod" helped less.
-            .args(["--spec-type", "ngram-simple"])
+            .args(if tuning.embedding { vec![] } else { vec!["--spec-type", "ngram-simple"] })
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })

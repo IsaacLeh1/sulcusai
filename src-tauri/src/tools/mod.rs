@@ -7,6 +7,7 @@ pub mod chats;
 pub mod comms;
 mod compute;
 mod documents;
+mod library;
 pub(crate) mod fs;
 pub(crate) mod guard;
 mod lookup;
@@ -170,6 +171,7 @@ pub static SPARE: std::sync::LazyLock<Vec<(&'static [&'static str], regex::Regex
         (&["research"], g(r"research|compare|comparison|in.depth|report|pros and cons|\b(best|better|worse)\b|which (one )?(is|should)|\bvs\.?\b|versus")),
         (&["market_quote"], g(r"stock|shares?\b|price|crypto|bitcoin|ethereum|currenc|exchange rate|\bmarkets?\b|\bindex\b|nasdaq|s&p|\bdow\b|\bgold\b|silver|\boil\b|forex")),
         (&["create_document", "read_document"], g(r"document|\bword\b|docx|pdf|excel|xlsx|spreadsheet|powerpoint|pptx|slides?\b|resume|letter")),
+        (&["search_documents"], g(r"document|\bfiles?\b|pdf|report|contract|lease|policy|manual|notes|library|according to|\bin (my|our|the) \w+")),
         (&["run_code"], g(r"chart|graph|plot|csv|json|\bdata\b|analy|\bcode\b|script|javascript|\bsort|\bcount|statistic|average|median")),
         (&["app_status", "open_page", "connect_account"], g(r"sulcus|settings|connect|account|install|\bmodels?\b|feature")),
         (&["move_path", "make_folder", "delete_path", "command_output", "stop_command", "find_files", "search_files"], g(r"\bmove|rename|folder|delete|remove|\bfind|search|files?\b|server|running")),
@@ -198,6 +200,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
         "create_document" | "read_document" => "documents",
+        "search_documents" => "library",
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
@@ -311,6 +314,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Press a key in the browser's page: Escape to close a pop-up, Tab to move to the next field, arrows in a list or menu, PageDown to read on. Returns the page again." },
     ToolDef { name: "create_document", risk: Risk::Write, params: documents::create_document_params,
         description: "Make a Word (.docx), PDF, Markdown, Excel (.xlsx, with working formulas and charts) or PowerPoint (.pptx) file in a shared folder. Give markdown for documents, sheets for spreadsheets, slides for decks." },
+    ToolDef { name: "search_documents", risk: Risk::Read, params: library::search_params,
+        description: "Search the user's documents library (the folders and files they added: PDFs, Word, PowerPoint, Excel, notes) for passages that answer a question. Use it for questions about their own documents. Answer only from what it finds, and cite each fact with the source link it gives." },
     ToolDef { name: "read_document", risk: Risk::Read, params: documents::read_document_params,
         description: "Read the text of a Word, Excel, PowerPoint, PDF, CSV or text file in a shared folder (spreadsheets come back as tables with their formulas)." },
     ToolDef { name: "email_search", risk: Risk::Read, params: comms::email_search_params,
@@ -460,7 +465,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -625,6 +630,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         }
         "calculate" | "run_code" => compute::run(name, args, ctx).await,
         "schedule_task" => scheduled::run(args, ctx),
+        "search_documents" => library::search(args, ctx).await,
         "create_document" | "read_document" => {
             let name = name.to_string();
             let args = args.clone();
@@ -664,6 +670,7 @@ pub fn failed_title(name: &str, args: &Value) -> String {
         "create_note" | "search_notes" | "read_note" | "update_note" => return "Couldn't use the notes".into(),
         "create_task" | "list_tasks" | "complete_task" => return "Couldn't use the task list".into(),
         "web_search" => return "Couldn't search the web".into(),
+        "search_documents" => return "Couldn't search your documents".into(),
         "fetch_page" => return "Couldn't open a web page".into(),
         "weather" => return "Couldn't check the weather".into(),
         "wikipedia" => return "Couldn't look it up on Wikipedia".into(),
@@ -755,7 +762,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 56);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 57);
     }
 
     #[test]

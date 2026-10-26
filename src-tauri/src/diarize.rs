@@ -272,7 +272,7 @@ pub fn regroup(prints: &[Vec<f32>]) -> Vec<u32> {
 
 // ---------- install ----------
 
-async fn install(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<(), String> {
+pub(crate) async fn install(state: &Arc<AppState>, cancel: &AtomicBool, emit: &(dyn Fn(&str, u64, u64) + Sync)) -> Result<(), String> {
     emit("engine", 0, 0);
     crate::natural::ensure_runtime(state, cancel, emit).await?;
     let m = &state.catalog.diarization;

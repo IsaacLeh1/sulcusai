@@ -8,6 +8,8 @@ mod advanced;
 mod agent;
 mod applog;
 mod cleanup;
+mod doclib;
+mod study;
 mod folders;
 mod backup;
 mod api_server;
@@ -1033,7 +1035,7 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     };
     let est = spec.variant(quant).map_or(0.0, |v| catalog::fit_variant(spec, v, ctx, &budget.with_limits(&limits)).est_tps);
     let think_budget = think_budget(state, spec, est);
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget, spread }, budget: budget.with_limits(&limits) }
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget, spread, embedding: false }, budget: budget.with_limits(&limits) }
 }
 
 /// Seconds a reply may think before it's told to answer. Qwen3.6 27B, a
@@ -2554,6 +2556,20 @@ pub(crate) async fn background_endpoint(state: &Arc<AppState>) -> Result<(engine
     Ok((ep, spec, hold))
 }
 
+/// The chat model for work the person started outside a chat (a podcast's
+/// script, a code review): the one they picked, loaded and held, else the
+/// one already loaded or the default (`background_endpoint`).
+pub(crate) async fn endpoint_for(state: &Arc<AppState>, model_id: Option<&str>) -> Result<(engine::Endpoint, ModelSpec, engine::Hold), String> {
+    match model_id.filter(|m| !m.is_empty()) {
+        None => background_endpoint(state).await,
+        Some(id) => {
+            let (ep, spec, _) = llm_endpoint(state, Some(id.to_string()), false, |_| {}).await?;
+            let hold = engine::Hold::new(&ep.key);
+            Ok((ep, spec, hold))
+        }
+    }
+}
+
 // ---------- engine ----------
 
 #[tauri::command]
@@ -2786,6 +2802,12 @@ pub fn run() {
             media::own_voice::own_voice_take_delete,
             media::own_voice::own_voice_upload,
             media::own_voice::own_voice_try,
+            media::own_voice::own_voice_design,
+            media::own_voice::own_voice_design_cancel,
+            media::own_voice::own_voice_design_keep,
+            media::own_voice::own_voice_check,
+            media::own_voice::own_voice_create_from,
+            media::own_voice::own_voice_checked_take,
             docs::open_document,
             docs::show_in_folder,
             quick::quick_clipboard,
@@ -3059,6 +3081,20 @@ pub fn run() {
             outgoing::privacy_sent,
             outgoing::privacy_sent_clear,
             outgoing::privacy_sent_delete,
+            doclib::docs_library,
+            doclib::docs_add,
+            doclib::docs_remove,
+            doclib::docs_update,
+            doclib::docs_stop,
+            doclib::docs_files,
+            doclib::docs_search,
+            doclib::docs_open,
+            study::study_sets,
+            study::study_make,
+            study::study_delete,
+            study::study_rename,
+            study::study_card,
+            study::study_quiz_done,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,

@@ -37,7 +37,7 @@ export function MediaTile({ item, onOpen, selected }: { item: MediaItem; onOpen:
         </>
       ) : (
         <span className="media-ph" aria-hidden>
-          {item.kind === "video" ? t("Video") : item.op === "narrate" ? t("Narration") : item.op === "sound" ? t("Sound effect") : t("Music")}
+          {item.kind === "video" ? t("Video") : item.op === "narrate" ? t("Narration") : item.op === "podcast" ? t("Podcast") : item.op === "dialogue" ? t("Reading") : item.op === "sound" ? t("Sound effect") : t("Music")}
           <span className="small">{clock(item.seconds)}</span>
         </span>
       )}

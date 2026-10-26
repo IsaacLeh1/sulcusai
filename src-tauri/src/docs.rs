@@ -1118,6 +1118,24 @@ fn col_name(c: u16) -> String {
 
 /// A document's text, for reading or summarizing.
 pub fn read_text(path: &Path) -> Result<String, String> {
+    let text = read_all(path)?;
+    let cut: String = text.chars().take(MAX_READ).collect();
+    Ok(if text.chars().count() > MAX_READ { format!("{cut}\n[The document goes on.]") } else { cut })
+}
+
+/// A PDF's text, page by page (the documents library says which page an
+/// answer came from).
+pub fn pdf_pages(path: &Path) -> Result<Vec<String>, String> {
+    let p = path.to_path_buf();
+    std::panic::catch_unwind(move || pdf_extract::extract_text_by_pages(&p))
+        .map_err(|_| "Couldn't read this PDF.".to_string())?
+        .map_err(|e| format!("Couldn't read this PDF: {e}"))
+}
+
+/// A document's whole text (`read_text` keeps the first 40,000 characters):
+/// Word headings as "#", PowerPoint slides as "## Slide n", spreadsheets as
+/// "## Sheet: name"; web pages as their text.
+pub fn read_all(path: &Path) -> Result<String, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let text = match ext.as_str() {
         "docx" => office_text(&zip_part(path, "word/document.xml")?),
@@ -1142,14 +1160,16 @@ pub fn read_text(path: &Path) -> Result<String, String> {
                 .map_err(|_| "Couldn't read this PDF.".to_string())?
                 .map_err(|e| format!("Couldn't read this PDF: {e}"))?
         }
-        "txt" | "md" | "markdown" | "csv" | "tsv" | "json" | "log" | "html" | "htm" | "xml" | "rtf" => {
+        "txt" | "md" | "markdown" | "csv" | "tsv" | "json" | "log" | "xml" | "rtf" => {
             String::from_utf8_lossy(&std::fs::read(path).map_err(|e| e.to_string())?).to_string()
+        }
+        "html" | "htm" => {
+            let raw = std::fs::read(path).map_err(|e| e.to_string())?;
+            html2text::from_read(&raw[..], 120).unwrap_or_else(|_| String::from_utf8_lossy(&raw).to_string())
         }
         other => return Err(format!("I can't read .{other} files as documents.")),
     };
-    let text = text.replace("\r\n", "\n");
-    let cut: String = text.chars().take(MAX_READ).collect();
-    Ok(if text.chars().count() > MAX_READ { format!("{cut}\n[The document goes on.]") } else { cut })
+    Ok(text.replace("\r\n", "\n"))
 }
 
 #[cfg(test)]

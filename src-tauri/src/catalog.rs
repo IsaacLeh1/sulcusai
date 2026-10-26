@@ -40,6 +40,9 @@ pub struct Catalog {
     pub voices: crate::natural::VoiceCatalog,
     pub diarization: crate::diarize::SpeakerModel,
     pub media: crate::media::MediaCatalog,
+    /// The documents library's embedding model (Qwen3-Embedding 0.6B).
+    #[serde(default)]
+    pub embedding: Option<crate::media::MediaFile>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

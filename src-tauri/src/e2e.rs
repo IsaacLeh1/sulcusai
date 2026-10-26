@@ -759,6 +759,157 @@ async fn e2e_own_voice_reads_and_sings() {
     std::fs::write(out.join("e2e-sung.wav"), store::read(&state.paths, &cipher, &sung.id).unwrap()).unwrap();
 }
 
+/// A voice made from words (VoiceDesign, downloaded the first time), then a
+/// short podcast written by a small model (SULCUSAI_TEST_GGUF) and read by
+/// two people: the made voice and a natural voice picked for the other.
+/// Whisper hears the made voice's sample and the podcast's opening; the
+/// files go to C:\dev\tools\voice\tests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_voice_from_words_and_a_podcast() {
+    use crate::media::{self, own_voice, podcast, store, Request};
+    let state = media_state();
+    let cipher = state.work_cipher().unwrap();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests");
+    std::fs::create_dir_all(&out).unwrap();
+    crate::natural::install_for_test(&state).await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+
+    let started = std::time::Instant::now();
+    let description = "A warm older woman with a low, calm voice, speaking slowly and kindly";
+    let made = own_voice::design(&state, description, Some("en"), &never, &|s, f| println!("  {s} {:.0}%", f * 100.0)).await.unwrap();
+    println!("made {} voices in {:.0} s: {:?} s long", made.len(), started.elapsed().as_secs_f64(), made.iter().map(|m| (m.len() as f32 / 24_000.0 * 10.0).round() / 10.0).collect::<Vec<_>>());
+    assert!(made.len() >= 2, "three were asked for");
+    for (i, m) in made.iter().enumerate() {
+        std::fs::write(out.join(format!("e2e-made-{}.wav", i + 1)), crate::audio::wav_encode(m, 24_000)).unwrap();
+    }
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    let heard = crate::speech::transcribe(&ep, &crate::audio::resample(&made[0], 24_000, crate::audio::RATE), &crate::speech::Options { language: Some("en".into()), ..Default::default() }).await.unwrap();
+    println!("the made voice said: {}", heard.text);
+    assert!(heard.text.to_lowercase().contains("sea"), "{}", heard.text);
+    let voice = own_voice::keep_for_test(&state, "Rose", description, &made[0]);
+
+    // The script, from the test model; then the card is let go for the voices.
+    let (eng, llm, name) = test_model().await;
+    let talk = podcast::Spec {
+        speakers: vec![
+            podcast::Speaker { name: "Rose".into(), voice: Some(format!("own:{voice}")), about: Some("the host".into()) },
+            podcast::Speaker { name: "Ben".into(), voice: None, about: Some("a baker who loves sourdough".into()) },
+        ],
+        minutes: Some(1.5),
+        style: Some("interview".into()),
+        ..Default::default()
+    };
+    let req = Request { op: "podcast".into(), prompt: "How sourdough bread rises, and how to keep a starter alive".into(), language: Some("en".into()), talk: Some(talk), ..Default::default() };
+    let started = std::time::Instant::now();
+    let script = podcast::write_with(&state, &req, &llm, &name, &never, &|s, _| println!("  {s}")).await.unwrap();
+    println!("written by {name} in {:.0} s:\n{script}\n", started.elapsed().as_secs_f64());
+    drop(eng);
+    let (_, turns) = podcast::parse(&script, &req.talk.as_ref().unwrap().speakers);
+    assert!(turns.len() >= 6, "a conversation: {} turns", turns.len());
+    assert!(turns.iter().any(|t| t.speaker == 0) && turns.iter().any(|t| t.speaker == 1), "both talk");
+
+    let started = std::time::Instant::now();
+    let item = media::run(&state, store::new_id(), Request { lyrics: Some(script), ..req }).await.unwrap().remove(0);
+    println!("podcast “{}”: {:.0} s, read in {:.0} s", item.title.clone().unwrap_or_default(), item.seconds, started.elapsed().as_secs_f64());
+    assert!(item.seconds > 30.0, "{}", item.seconds);
+    assert!(item.lyrics.as_deref().is_some_and(|l| l.contains("Rose:") && l.contains("Ben:")));
+    let path = out.join(if item.mime == "audio/mpeg" { "e2e-podcast.mp3" } else { "e2e-podcast.wav" });
+    std::fs::write(&path, store::read(&state.paths, &cipher, &item.id).unwrap()).unwrap();
+    let (pcm, rate, channels) = media::audio_in::decode(&path).unwrap();
+    let mono: Vec<f32> = pcm.chunks(channels.max(1) as usize).map(|f| f.iter().sum::<f32>() / f.len() as f32).take(rate as usize * 40).collect();
+    let heard = crate::speech::transcribe(&ep, &crate::audio::resample(&mono, rate, crate::audio::RATE), &crate::speech::Options { language: Some("en".into()), ..Default::default() }).await.unwrap();
+    println!("the podcast's first 40 s: {}", heard.text);
+    let low = heard.text.to_lowercase();
+    assert!(["sourdough", "bread", "starter", "welcome"].iter().any(|w| low.contains(w)), "{}", heard.text);
+    crate::speech::stop(&state).await;
+}
+
+/// A voice from a podcast episode alone: intro music, a host who talks
+/// most and a guest (two natural voices), with music under the host's first
+/// lines. The voice made from it keeps the host, hears the words, and reads
+/// new words sounding like the host, not the guest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_voice_from_a_podcast_recording() {
+    use crate::media::{self, own_voice, stems, store, Request};
+    let state = media_state();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    crate::natural::install_for_test(&state).await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+    const RATE: u32 = 44_100;
+    let say = |text: &str, voice: &str| {
+        let s = crate::tts::synthesize(text, Some(voice), Some("en"), 1.0).unwrap();
+        stems::resample(&s.samples.iter().map(|x| *x as f32 / 32768.0).collect::<Vec<_>>(), s.rate, RATE)
+    };
+    let (host, guest) = ("supertonic:M2", "supertonic:F3");
+    let host_lines = [
+        "Welcome back to the show, everybody. Today we are talking about how small towns can keep their main streets alive.",
+        "I grew up in a place where every shop closed by six, and on Sundays you could hear a pin drop on the sidewalk.",
+        "So the first question I always ask is simple. Who actually walks down main street on a normal Tuesday morning?",
+        "That is a great point, and it connects to something the mayor told me last spring about parking and benches.",
+        "Let me push back a little, because rent is the real problem for most of the owners I have talked to.",
+        "Before we wrap up, tell our listeners where they can find your work and the map you made of the empty storefronts.",
+        "Thanks again for coming on. That is it for this week, and remember to say hello to your neighbors.",
+    ];
+    let guest_lines = ["Mostly retired folks and parents with strollers, which is exactly who the shops should be designing for.", "Rent matters, sure, but the town owns half of those buildings, so it has more power than people think."];
+    let song = media::audio_in::decode(std::path::Path::new(r"C:\dev\tools\compose-merge\own-words-real-0.375.mp3")).unwrap();
+    let music: Vec<f32> = song.0.chunks(song.2 as usize).map(|f| f.iter().sum::<f32>() / f.len() as f32).collect::<Vec<_>>();
+    let music = stems::resample(&music[..(song.1 as usize * 12).min(music.len())], song.1, RATE);
+    let mut ep: Vec<f32> = music.iter().map(|x| x * 0.8).collect();
+    let gap = vec![0f32; (RATE as f32 * 0.4) as usize];
+    let mut host_clean = Vec::new();
+    for (i, line) in host_lines.iter().enumerate() {
+        let mut v = say(line, host);
+        host_clean.extend_from_slice(&v);
+        // Music under the host's first line.
+        if i == 0 {
+            for (k, x) in v.iter_mut().enumerate() {
+                *x += music.get(music.len() / 2 + k).copied().unwrap_or(0.0) * 0.25;
+            }
+        }
+        ep.extend(&gap);
+        ep.extend(v);
+        if let Some(g) = guest_lines.get(i % 3).filter(|_| i % 3 < 2 && i > 0) {
+            ep.extend(&gap);
+            ep.extend(say(g, guest));
+        }
+    }
+    let guest_clean: Vec<f32> = guest_lines.iter().flat_map(|g| say(g, guest)).collect();
+    let path = std::env::temp_dir().join(format!("sulcusai-podcast-{}.wav", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&path, crate::audio::wav_encode(&ep, RATE)).unwrap();
+    println!("episode: {:.0} s", ep.len() as f32 / RATE as f32);
+
+    let (take, words, several) = own_voice::prepare_for_test(&state, &path).await.unwrap();
+    let _ = std::fs::remove_file(&path);
+    println!("kept {:.1} s; several: {several}; heard: {words}", take.len() as f32 / 48_000.0);
+    assert!(several, "the guest was noticed");
+    assert!(!words.is_empty(), "its words were heard");
+    let print = |x: &[f32], rate: u32| crate::diarize::embed(&state, &crate::audio::resample(x, rate, 16_000)).unwrap();
+    let (h, g) = (print(&host_clean, RATE), print(&guest_clean, RATE));
+    let kept = print(&take, 48_000);
+    println!("kept is like the host {:.2}, the guest {:.2}", crate::diarize::cosine(&kept, &h), crate::diarize::cosine(&kept, &g));
+    assert!(crate::diarize::cosine(&kept, &h) > crate::diarize::cosine(&kept, &g) + 0.2, "the host was kept");
+
+    // A voice from it alone, reading new words: like the host.
+    let voice = own_voice::add_for_test(&state, "Host", &[("added-1", take, &words)]);
+    let read = media::run(&state, store::new_id(), Request { op: "narrate".into(), prompt: "The farmers market moves to the old train station next month, and the bakery will finally have a real oven.".into(), voice: Some(format!("own:{voice}")), language: Some("en".into()), ..Default::default() })
+        .await
+        .unwrap()
+        .remove(0);
+    let wav = store::read(&state.paths, &state.work_cipher().unwrap(), &read.id).unwrap();
+    let pcm = crate::audio::wav_decode(&wav).unwrap();
+    std::fs::write(r"C:\dev\tools\voice\tests\e2e-from-podcast.wav", &wav).unwrap();
+    let said = print(&pcm.samples, pcm.rate);
+    let (to_host, to_guest) = (crate::diarize::cosine(&said, &h), crate::diarize::cosine(&said, &g));
+    println!("narration is like the host {to_host:.2}, the guest {to_guest:.2}");
+    assert!(to_host > to_guest + 0.15, "it reads like the host");
+    crate::speech::stop(&state).await;
+}
+
 /// A song attached to a chat is worked on: "make this longer" calls
 /// create_music on that song, and the result is that much longer. A small
 /// model (SULCUSAI_TEST_GGUF, Qwen3 4B) so the music engine fits beside it.

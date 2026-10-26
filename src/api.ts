@@ -1037,6 +1037,8 @@ export interface ToolMeta {
   detail?: string | null;
   /** Charts to show with the result. */
   charts?: ChartSpec[];
+  /** Where it came from: web pages, or library files ("doc:<id>"). */
+  sources?: { title: string; url: string; snippet?: string }[];
   tool?: string;
   /** On the note in a chat that continued elsewhere. */
   handoff_to?: string;
@@ -2131,7 +2133,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2165,6 +2167,8 @@ export interface OwnVoice {
   created_at: number;
   can_speak: boolean;
   can_sing: boolean;
+  /** A voice made from a description: the description. */
+  designed?: string | null;
 }
 
 export interface OwnVoicesView {
@@ -2173,6 +2177,108 @@ export interface OwnVoicesView {
   /** What narration and singing download the first time (bytes). */
   speak_size: number;
   sing_size: number;
+  /** What making voices from words downloads the first time (0: not here). */
+  design_size: number;
+  /** Seconds of clear speech a voice from recordings needs, and that make it sound most like the person. */
+  speech_enough: number;
+  speech_best: number;
+}
+
+/** A recording checked for a voice made from recordings alone. */
+export interface CheckedRecording {
+  /** To keep it when creating the voice (null: it can't be used). */
+  token: string | null;
+  file: string;
+  kind: "speak" | "sing";
+  /** Seconds kept: its clearest stretch, up to 15. */
+  seconds: number;
+  /** How much of what's kept is voice (0 to 1). */
+  clear: number;
+  /** How well it can stand for the voice (0 to 1). */
+  quality: number;
+  notes: string[];
+  words: string;
+  problem: string | null;
+  /** Others talk in it too: only whoever talks most was kept. */
+  several: boolean;
+}
+
+/** A folder or file in the documents library. */
+export interface DocSource {
+  id: string;
+  path: string;
+  folder: boolean;
+  added_at: number;
+  scanned_at: number | null;
+  name: string;
+  files: number;
+  passages: number;
+  problems: number;
+  /** Files found by their words only (read before the library's model was here). */
+  words_only: number;
+}
+
+/** A file in the library and what happened when it was read. */
+export interface DocFile {
+  id: string;
+  source_id: string;
+  path: string;
+  name: string;
+  passages: number;
+  embedded: boolean;
+  indexed_at: number;
+  error: string | null;
+}
+
+export interface DocProgress {
+  running: boolean;
+  stage: string;
+  done: number;
+  total: number;
+  file: string | null;
+}
+
+export interface LibraryView {
+  sources: DocSource[];
+  files: number;
+  passages: number;
+  progress: DocProgress | null;
+  model_ready: boolean;
+  model_size: number;
+  /** File kinds it reads. */
+  kinds: string[];
+}
+
+/** A passage found for a question. */
+export interface DocHit {
+  file_id: string;
+  name: string;
+  path: string;
+  place: string | null;
+  text: string;
+  score: number;
+}
+
+/** Someone talking in a podcast or a reading with several voices. */
+export interface TalkSpeaker {
+  name: string;
+  /** "own:<id>", a natural or Windows voice id; null: one is picked for them. */
+  voice?: string | null;
+  /** Who they are in it ("the host"). */
+  about?: string | null;
+}
+
+/** A podcast ("podcast") or a reading with several voices ("dialogue"). */
+export interface TalkSpec {
+  speakers: TalkSpeaker[];
+  minutes?: number | null;
+  style?: "conversation" | "interview" | "debate" | "lesson" | "story" | null;
+  /** Look the topic up on the web first. */
+  research?: boolean;
+  /** Files to talk about. */
+  files?: string[];
+  /** The chat model that writes it (null: the default). */
+  writer?: string | null;
 }
 
 export interface DevModeView {
@@ -2413,6 +2519,8 @@ export interface MediaRequest {
   voice?: string | null;
   language?: string | null;
   chat_id?: string | null;
+  /** A podcast or a reading with several voices: who talks, and what to write about. */
+  talk?: TalkSpec | null;
   /** New pictures: a look from the Studio's list ("auto" by default). */
   style?: string | null;
   /** Example pictures (gallery ids, at most 4) the new one should follow. */
@@ -3056,6 +3164,27 @@ export const api = {
   ownVoiceUpload: (voice: string, paths: string[], singing: boolean) => invoke<OwnVoicesView & { problems: string[] }>("own_voice_upload", { voice, paths, singing }),
   /** A sentence read in the voice, to hear it (WAV, base64); the first time downloads the voice engine. */
   ownVoiceTry: (voice: string, text: string, language: string | null) => invoke<string>("own_voice_try", { voice, text, language }),
+  /** Three voices made from a description, each reading the same sample (WAV, base64). */
+  ownVoiceDesign: (description: string, language: string | null) => invoke<{ wav: string; seconds: number }[]>("own_voice_design", { description, language }),
+  ownVoiceDesignCancel: () => invoke<void>("own_voice_design_cancel"),
+  /** Rates recordings for a voice made from them alone ("own_voice:adding" while it reads them); nothing is kept yet. */
+  ownVoiceCheck: (paths: string[], singing: boolean) => invoke<CheckedRecording[]>("own_voice_check", { paths, singing }),
+  /** A new voice from checked recordings (their tokens). */
+  /** What was kept of a checked recording (WAV, base64). */
+  ownVoiceCheckedTake: (token: string) => invoke<string>("own_voice_checked_take", { token }),
+  ownVoiceCreateFrom: (name: string, agreed: boolean, tokens: string[]) => invoke<OwnVoicesView>("own_voice_create_from", { name, agreed, tokens }),
+  // The documents library.
+  docsLibrary: () => invoke<LibraryView>("docs_library"),
+  docsAdd: (paths: string[]) => invoke<LibraryView>("docs_add", { paths }),
+  docsRemove: (id: string) => invoke<LibraryView>("docs_remove", { id }),
+  docsUpdate: () => invoke<LibraryView>("docs_update"),
+  docsStop: () => invoke<void>("docs_stop"),
+  docsFiles: (source: string) => invoke<DocFile[]>("docs_files", { source }),
+  docsSearch: (query: string, limit?: number) => invoke<DocHit[]>("docs_search", { query, limit: limit ?? null }),
+  /** Opens a library file in its app. */
+  docsOpen: (id: string) => invoke<void>("docs_open", { id }),
+  /** Keeps one of the voices just made (`pick` from 0) under `name`. */
+  ownVoiceDesignKeep: (name: string, pick: number) => invoke<OwnVoicesView>("own_voice_design_keep", { name, pick }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null; note?: string | null }) =>
     invoke<MediaItem>("media_add", { data: input.data, mime: input.mime, op: input.op, prompt: input.prompt ?? null, parent: input.parent ?? null, chatId: input.chatId ?? null, hidden: input.hidden ?? null, seconds: input.seconds ?? null, lyrics: input.lyrics ?? null, note: input.note ?? null }),
   /** A song's notes as a MIDI file, saved at `path`: `map` as edited, else the song's own. */
@@ -3323,7 +3452,15 @@ export interface ChatEvents {
   /** The line reached its longest, and recording should stop. */
   "own_voice:full": { voice: string; line: string };
   /** Adding recordings: which file (n of `of`) and what it's doing. */
-  "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing"; n: number; of: number };
+  "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing" | "getting_speakers" | "speakers" | "hearing" | "getting_words"; n: number; of: number };
+  /** The documents library reading and indexing: what it's on. */
+  "docs:progress": DocProgress;
+  /** The library changed (indexing finished). */
+  "docs:changed": Record<string, never>;
+  /** Hearing a sentence in a voice: downloading the engine or model the first time (fraction 0 to 1), then reading (fraction -1). */
+  "own_voice:trying": { stage: string; fraction: number; downloading: boolean };
+  /** Making voices from a description: what it's doing and how far (0 to 1). */
+  "own_voice:designing": { stage: string; fraction: number };
   "people:shared": { contact_id: string };
   "people:ask": { contact_id: string; id: string };
   /** Linking, step by step: find, reach, check, save. */

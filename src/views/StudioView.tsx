@@ -38,6 +38,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
+import { LanguageSelect, namesIn, PodcastComposer, ScriptVoices, talkLanguage, VoiceSelect } from "../components/Podcast";
 import { AddToPlaylist, Playlists } from "../components/Library";
 import { CustomModelField } from "../components/CustomModels";
 import { NewWindowIcon } from "../components/Icons";
@@ -46,10 +47,10 @@ import { projectForSong } from "../studio/open";
 import { StudioProjects } from "../components/StudioProjects";
 import type { Project } from "../studio/model";
 
-type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "voice";
+type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "podcast" | "voice";
 type Shape = NonNullable<MediaRequest["shape"]>;
 
-const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music", voice: "music" };
+const TAB_FEATURE: Record<Tab, FeatureId> = { pictures: "images", video: "video", wallpaper: "images", music: "music", narrate: "music", podcast: "music", voice: "music" };
 const TAB_KIND: Partial<Record<Tab, MediaKind>> = { pictures: "image", video: "video", wallpaper: "image", music: "music" };
 const ALL_KINDS: MediaKind[] = ["image", "upscale", "background", "video", "music"];
 
@@ -65,7 +66,7 @@ interface Props {
 }
 
 export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }: Props) {
-  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "voice"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
+  const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "podcast", "voice"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   // A song written as notes, open in Compose's editor (item: where it's kept).
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
@@ -210,7 +211,7 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
       <div className="mode-switch studio-tabs" role="tablist">
         {tabs.map((tb) => (
           <button key={tb} role="tab" aria-selected={tab === tb} className={`mode ${tab === tb ? "active" : ""}`} onClick={() => setTab(tb)}>
-            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration"), voice: t("Your voice") }[tb]}
+            {{ pictures: t("Pictures"), video: t("Video"), wallpaper: t("Wallpapers"), music: t("Music and sound"), narrate: t("Narration"), podcast: t("Podcast"), voice: t("Your voice") }[tb]}
           </button>
         ))}
       </div>
@@ -274,6 +275,8 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
           />
         ) : tab === "voice" ? (
           <OwnVoicePanel toast={toast} />
+        ) : tab === "podcast" ? (
+          <PodcastComposer onStart={start} onYourVoice={() => setTab("voice")} />
         ) : (
           <NarrateComposer cloud={(view?.cloud ?? []).filter((c) => c.kind === "speech")} onStart={start} onYourVoice={() => setTab("voice")} />
         )}
@@ -1858,7 +1861,11 @@ function NarrateComposer({ cloud, onStart, onYourVoice }: { cloud: CloudMediaCho
   const [voice, setVoice] = useState("");
   const [engine, setEngine] = useState("");
   const [cloudVoice, setCloudVoice] = useState("alloy");
-  // Recorded voices that can read ("own:<id>").
+  const [lang, setLang] = useState(talkLanguage());
+  // A script read in several voices: each name's voice.
+  const [several, setSeveral] = useState(false);
+  const [picks, setPicks] = useState<Record<string, string | null>>({});
+  // Recorded and made voices that can read ("own:<id>").
   const own = useOwnVoices();
   const ownVoices = (own?.voices ?? []).filter((v) => v.can_speak);
   useEffect(() => {
@@ -1868,14 +1875,32 @@ function NarrateComposer({ cloud, onStart, onYourVoice }: { cloud: CloudMediaCho
     }).catch(() => {});
   }, []);
   const go = async () => {
-    const req: MediaRequest = engine ? { op: "narrate", prompt: text, voice: cloudVoice, model_id: engine } : { op: "narrate", prompt: text, voice: voice || null };
+    const req: MediaRequest = several
+      ? { op: "dialogue", prompt: text, language: lang, talk: { speakers: namesIn(text).map((name) => ({ name, voice: picks[name] ?? null })) } }
+      : engine
+        ? { op: "narrate", prompt: text, voice: cloudVoice, model_id: engine }
+        : { op: "narrate", prompt: text, voice: voice || null, language: lang };
     if (await onStart(req)) setText("");
   };
+  const usesOwn = several ? Object.values(picks).some((v) => v?.startsWith("own:")) : !engine && voice.startsWith("own:");
   return (
     <div className="form">
-      <textarea className="input" rows={6} value={text} placeholder={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} aria-label={t("The text to read aloud. It's saved as a sound you can play, trim and save.")} onChange={(e) => setText(e.target.value)} autoFocus />
+      <div className="filters tight">
+        <button className={`chip ${!several ? "active" : ""}`} onClick={() => setSeveral(false)}>{t("One voice")}</button>
+        <button className={`chip ${several ? "active" : ""}`} onClick={() => setSeveral(true)}>{t("Several voices")}</button>
+      </div>
+      <textarea
+        className="input"
+        rows={6}
+        value={text}
+        placeholder={several ? t("Ana: Welcome back to the show!\nBen: Thanks, it's good to be here.\nAna: So, where do we start?") : t("The text to read aloud. It's saved as a sound you can play, trim and save.")}
+        aria-label={several ? t("The script: one line for each turn, “Name: what they say”") : t("The text to read aloud. It's saved as a sound you can play, trim and save.")}
+        onChange={(e) => setText(e.target.value)}
+        autoFocus
+      />
+      {several && <ScriptVoices script={text} picks={picks} onPick={(n, v) => setPicks((p) => ({ ...p, [n]: v }))} voices={voices} own={ownVoices} />}
       <div className="row wrap">
-        {cloud.length > 0 && (
+        {cloud.length > 0 && !several && (
           <select value={engine} onChange={(e) => setEngine(e.target.value)} title={t("Voices from")}>
             <option value="">{t("This PC's voices")}</option>
             {cloud.map((c) => (
@@ -1883,33 +1908,21 @@ function NarrateComposer({ cloud, onStart, onYourVoice }: { cloud: CloudMediaCho
             ))}
           </select>
         )}
-        {engine ? (
+        {several ? null : engine ? (
           <select value={cloudVoice} onChange={(e) => setCloudVoice(e.target.value)} title={t("Voice")}>
             {CLOUD_VOICES.map((v) => (
               <option key={v} value={v}>{v[0].toUpperCase() + v.slice(1)}</option>
             ))}
           </select>
         ) : (
-          <select value={voice} onChange={(e) => setVoice(e.target.value)} title={t("Voice")}>
-            {ownVoices.length > 0 && (
-              <optgroup label={t("Recorded voices")}>
-                {ownVoices.map((v) => (
-                  <option key={v.id} value={`own:${v.id}`}>{v.name}</option>
-                ))}
-              </optgroup>
-            )}
-            <optgroup label={t("Voices on this PC")}>
-              {voices.map((v) => (
-                <option key={v.id} value={v.id}>{v.name}</option>
-              ))}
-            </optgroup>
-          </select>
+          <VoiceSelect value={voice || null} onChange={(v) => setVoice(v ?? "")} voices={voices} own={ownVoices} label={t("Voice")} />
         )}
+        {!engine && <LanguageSelect value={lang} onChange={setLang} />}
         {ownVoices.length === 0 && !engine && <button className="link small" onClick={onYourVoice}>{t("Read it in your own voice…")}</button>}
         <span className="spacer" />
-        <button className="btn primary" disabled={!text.trim()} onClick={go}>{t("Read aloud")}</button>
+        <button className="btn primary" disabled={!text.trim() || (several && namesIn(text).length === 0)} onClick={go}>{t("Read aloud")}</button>
       </div>
-      {!engine && voice.startsWith("own:") && (own?.speak_size ?? 0) > 0 && (
+      {usesOwn && (own?.speak_size ?? 0) > 0 && (
         <p className="small muted">{t("Read in your recorded voice. The first time, the voice engine and its model download ({size}).", { size: bytes(own!.speak_size) })}</p>
       )}
     </div>

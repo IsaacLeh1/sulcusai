@@ -423,6 +423,20 @@ impl Turn {
         if self.use_tools && features.contains(&Feature::Tasks) {
             extra.extend(["create_task", "list_tasks", "complete_task"]);
         }
+        // The documents library, when it holds something.
+        let library_note = (self.use_tools && features.contains(&Feature::Documents) && crate::doclib::has_documents(&self.state))
+            .then(|| crate::doclib::summary(&self.state))
+            .flatten()
+            .map(|held| {
+                format!(
+                    "\n\nThe user's documents library holds {held}. For questions about their own documents, reports, contracts or notes, \
+                     search it with search_documents first and answer from what it finds; if it finds nothing, say so. After each fact, put \
+                     its source link exactly as the search gives it, like [Lease.pdf, page 3](doc:…), so they can open the file."
+                )
+            });
+        if library_note.is_some() {
+            extra.push("search_documents");
+        }
         if self.use_tools && features.contains(&Feature::Meetings) && crate::meeting::count(&self.state.db.lock().unwrap()) > 0 {
             extra.extend(["search_meetings", "read_meeting"]);
         }
@@ -532,6 +546,7 @@ impl Turn {
         }
         let people_note = people_note.filter(|_| !lean);
         let chats_note = chats_note && !lean;
+        let library_note = library_note.filter(|_| !lean);
         {
             for name in extra {
                 if let Some(d) = tools::find(name) {
@@ -607,6 +622,10 @@ impl Turn {
         if let Some(note) = &people_note {
             about.push_str(note);
             notes.push((&["ask_person", "work_with_person"], note.clone()));
+        }
+        if let Some(note) = &library_note {
+            about.push_str(note);
+            notes.push((&["search_documents"], note.clone()));
         }
         if chats_note {
             let text = if tools::chats::is_asked(&self.chat_id) {

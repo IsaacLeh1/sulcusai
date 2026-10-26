@@ -106,6 +106,15 @@ export function ToolCard({
           ))}
         </div>
       )}
+      {meta?.sources && meta.sources.some((x) => x.url.startsWith("doc:")) && status === "ok" && (
+        <div className="tool-actions tool-sources">
+          {meta.sources.map((x, i) => (
+            <button key={i} className="chip small" title={x.snippet || x.title} onClick={() => api.docsOpen(x.url.slice(4)).catch((e) => toast?.(errorText(e), "error"))}>
+              {x.title}
+            </button>
+          ))}
+        </div>
+      )}
       {meta?.file && status === "ok" && (
         <div className="tool-actions">
           <button className="btn small" onClick={() => api.openDocument(meta.file!)}>{t("Open")}</button>

@@ -25,13 +25,14 @@ pub mod hub;
 pub mod learn;
 pub mod look;
 pub(crate) mod lyrics;
-mod audio_in;
+pub(crate) mod audio_in;
 pub(crate) mod music;
 pub(crate) mod yue;
 pub(crate) mod heartmula;
 pub(crate) mod train;
 pub(crate) mod studio;
 pub mod own_voice;
+pub mod podcast;
 pub(crate) mod proc;
 pub(crate) mod svc;
 pub mod prompts;
@@ -261,7 +262,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
+        "narrate" | "podcast" | "dialogue" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -1322,6 +1323,9 @@ pub struct Request {
     pub voice: Option<String>,
     pub language: Option<String>,
     pub chat_id: Option<String>,
+    /// A podcast or a reading with several voices: who talks, and what to
+    /// write about.
+    pub talk: Option<podcast::Spec>,
     /// How a new picture looks (see `STYLES`); none or "auto": a realistic
     /// photo, unless the description itself names a look.
     pub style: Option<String>,
@@ -1577,8 +1581,14 @@ fn recorded_voice(req: &Request) -> Option<&str> {
         "revoice" => req.voice.as_deref(),
         "narrate" => req.voice.as_deref().and_then(|v| v.strip_prefix("own:")),
         "music" => req.music.as_ref().and_then(|m| m.own_voice.as_deref()),
+        "podcast" | "dialogue" => req.talk.as_ref().and_then(|t| t.speakers.iter().find_map(|s| s.voice.as_deref().and_then(|v| v.strip_prefix("own:")))),
         _ => None,
     }
+}
+
+/// Jobs that need no media model: speech, and work on songs already made.
+fn no_model(op: &str) -> bool {
+    matches!(op, "narrate" | "podcast" | "dialogue" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -1615,8 +1625,12 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train") {
+    } else if !no_model(&req.op) {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
+    }
+    // Podcasts and readings check their speakers and voices themselves.
+    if matches!(req.op.as_str(), "podcast" | "dialogue") {
+        return podcast::check(state, req);
     }
     if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "studio_part") && req.source.is_none() {
         return Err("Pick a song first.".into());
@@ -1684,7 +1698,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if no_model(&req.op) || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
         files_here(state, m)?;
     }
@@ -1692,6 +1706,9 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
         _ if req.op == "train" => train_estimate(state, &req),
+        // Writing, then reading about as fast as it plays.
+        _ if req.op == "podcast" => 60.0 + 50.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(5.0) as f64,
+        _ if req.op == "dialogue" => 10.0 + req.prompt.len() as f64 / 40.0,
         (None, Some(_)) => 20.0,
         _ => 10.0,
     };
@@ -1827,7 +1844,30 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
             }
         }
         // Stop reaches the helper models too (planning, checking, writing).
-        None => crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)).await,
+        // And Stop always stops: whatever the job is waiting on (lyrics from
+        // a chat model, a download, an engine that hung) is let go, and the
+        // engines it started end with it (a song stuck "making" ignored Stop).
+        None => {
+            let work = crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress));
+            tokio::pin!(work);
+            loop {
+                tokio::select! {
+                    r = &mut work => break r,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {
+                        if cancel.load(Ordering::Relaxed) {
+                            // A moment to stop by itself first (it keeps what it can).
+                            match tokio::time::timeout(std::time::Duration::from_secs(3), &mut work).await {
+                                Ok(r) => break r,
+                                Err(_) => {
+                                    crate::applog::line("media", &format!("Stopped a job that didn't stop by itself ({})", req.op));
+                                    break Err(download::CANCELLED.into());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     };
     if let (Ok(items), Some(m)) = (&result, &model) {
         if !items.is_empty() {
@@ -1852,6 +1892,8 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         "music" => "a song",
         "sound" => "a sound",
         "narrate" => "a narration",
+        "podcast" => "a podcast",
+        "dialogue" => "a reading",
         _ => "a picture",
     };
     watching.store(false, Ordering::Relaxed);
@@ -2514,6 +2556,16 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     } else {
         req
     };
+    // A podcast's script is written by the chat model, also before the card
+    // is cleared for a recorded voice.
+    let with_script;
+    let req = if req.op == "podcast" && req.lyrics.is_none() {
+        let script = podcast::write(state, req, cancel, progress).await?;
+        with_script = Request { lyrics: Some(script), ..req.clone() };
+        &with_script
+    } else {
+        req
+    };
     if cancel.load(Ordering::Relaxed) {
         return Err(download::CANCELLED.into());
     }
@@ -3112,6 +3164,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             Ok(items)
         }
         "narrate" => narrate(&ctx).await,
+        "podcast" | "dialogue" => podcast::read(&ctx, &work.0).await,
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
         "stems" => stems_job(&ctx).await,

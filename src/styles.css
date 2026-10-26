@@ -1926,6 +1926,55 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .own-voice-added { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .own-voice-added-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; background: var(--panel); }
 .own-voice-added-row .ellipsis { max-width: 40ch; }
+.own-voice-design { max-width: 640px; }
+.own-voice-made { display: flex; flex-direction: column; gap: 6px; }
+.form label.own-voice-made-row { flex-direction: row; align-items: center; font-weight: 400; border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 10px; background: var(--panel); gap: 10px; cursor: pointer; }
+.own-voice-made-row.picked { border-color: var(--accent); }
+.own-voice-made-row audio { height: 32px; flex: 1; min-width: 180px; }
+.own-voice-designed { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Podcasts and readings with several voices: a row per person. */
+.talk-people { display: flex; flex-direction: column; gap: 6px; }
+.talk-person { gap: 8px; align-items: center; }
+.talk-person .talk-name { width: 9em; flex: none; }
+.talk-person select { max-width: 16em; }
+.podcast h3 { margin: 6px 0 0; }
+.podcast > .link, .podcast > label.check, .talk-people > .btn { align-self: flex-start; }
+
+/* Joined buttons: one choice of a few, their edges touching, the ends rounded. */
+.seg { display: inline-flex; align-self: flex-start; background: var(--panel-2); border: 1px solid var(--border); border-radius: 14px; padding: 3px; gap: 0; }
+.seg > button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 550; padding: 6px 14px; border-radius: 11px; cursor: pointer; transition: background 0.15s, color 0.15s, box-shadow 0.15s; }
+.seg > button:hover:not(.active) { color: var(--text); background: var(--hover); }
+.seg > button.active { background: var(--panel); color: var(--accent); box-shadow: 0 1px 3px rgba(23, 21, 31, 0.14), 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
+.seg > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.own-voice-ways { margin-bottom: 4px; }
+.own-voice-from { max-width: 720px; }
+.own-voice-checked { display: flex; flex-direction: column; gap: 6px; }
+.form label.own-voice-checked-row { flex-direction: row; align-items: center; gap: 10px; font-weight: 400; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; background: var(--panel); }
+.own-voice-checked-row.unusable { opacity: 0.75; }
+.own-voice-checked-row .grow { display: flex; flex-wrap: wrap; gap: 0 6px; align-items: baseline; min-width: 0; }
+.quality { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.quality-bar { width: 70px; height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; }
+.quality-bar span { display: block; height: 100%; border-radius: 99px; }
+.quality.q-good .quality-bar span { background: var(--success); }
+.quality.q-ok .quality-bar span { background: var(--accent); }
+.quality.q-poor .quality-bar span { background: var(--warn); }
+.own-voice-readiness { display: flex; flex-direction: column; gap: 4px; }
+.own-voice-trying { display: flex; flex-direction: column; gap: 4px; max-width: 560px; }
+
+/* The documents library. */
+.documents .docs-sources { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.documents .docs-source { display: flex; flex-direction: column; gap: 6px; }
+.documents .docs-source .grow { min-width: 0; }
+.documents .docs-progress { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.documents .docs-files { list-style: none; margin: 4px 0 0; padding: 8px 0 0; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow: auto; }
+.documents .docs-files .link { max-width: 60%; text-align: left; }
+.documents .docs-try { display: flex; flex-direction: column; gap: 8px; }
+.documents .docs-hits { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+.documents .docs-hits p { margin: 2px 0 0; color: var(--text); }
+.documents .empty-state { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.md-link.doc-link { text-decoration: underline dotted; cursor: pointer; }
+.tool-sources { flex-wrap: wrap; gap: 6px; }
 
 .plain-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 
