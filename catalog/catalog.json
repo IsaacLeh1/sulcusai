@@ -5695,6 +5695,22 @@
         "sha256": "d05c269d0178d2a72ad484b10b11dd370193fc923201c3b27a99f848745db70a"
       }
     },
+    "dereverb": {
+      "name": "De-reverb Mel-Band RoFormer (anvuew)",
+      "source": "https://huggingface.co/anvuew/dereverb_mel_band_roformer",
+      "license": {
+        "name": "GPL-3.0",
+        "url": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "commercial": true
+      },
+      "file": {
+        "role": "dereverb",
+        "file": "dereverb-mel-band-roformer-anvuew-20.4029.fp16.onnx",
+        "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/dereverb-mel-band-roformer-anvuew-20.4029.fp16.onnx",
+        "size": 464014193,
+        "sha256": "c7820673e94d2c10dd2bb80c1f5ededfaf442a0e031941f4639fa3afe5726b82"
+      }
+    },
     "note_reader": {
       "name": "Basic Pitch",
       "source": "https://github.com/spotify/basic-pitch",

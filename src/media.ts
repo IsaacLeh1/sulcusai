@@ -171,6 +171,7 @@ export const OP_LABEL: Record<string, string> = {
   screenshot: tx("Screenshot"),
   trim: tx("Trimmed"),
   stem: tx("A part of a song"),
+  dry: tx("Effects removed"),
   song_video: tx("Song video"),
   paste: tx("Pasted"),
   attach: tx("Attached"),
@@ -196,6 +197,8 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   revoice: tx("Singing a song in a recorded voice"),
   cover_art: tx("Making cover art"),
   stems: tx("Taking a song apart"),
+  dry: tx("Removing reverb and echo"),
+  studio_part: tx("Making a part for the song studio"),
   song_video: tx("Making a song video"),
   train: tx("Training a custom model on your songs"),
 };

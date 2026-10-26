@@ -15,6 +15,7 @@ pub(crate) mod library;
 pub mod coach;
 mod cutout;
 pub(crate) mod stems;
+mod dereverb;
 pub(crate) mod listen;
 pub(crate) mod notes;
 pub(crate) mod songmap;
@@ -84,6 +85,10 @@ pub struct MediaCatalog {
     /// HTDemucs, which takes a song's parts apart for the song view (`stems`).
     #[serde(default)]
     pub separator: Option<Helper>,
+    /// anvuew's de-reverb Mel-Band RoFormer, which takes a sound's reverb
+    /// and echo out (the Studio's Remove FX, `dereverb`).
+    #[serde(default)]
+    pub dereverb: Option<Helper>,
     /// Basic Pitch, which reads the notes of a song's parts (`notes`).
     #[serde(default)]
     pub note_reader: Option<Helper>,
@@ -256,7 +261,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
+        "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -1610,10 +1615,10 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train") {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video" | "studio_part") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "studio_part") && req.source.is_none() {
         return Err("Pick a song first.".into());
     }
     // A recorded voice: one that's here and has what the job needs.
@@ -1679,7 +1684,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
         files_here(state, m)?;
     }
@@ -1753,7 +1758,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         // HeartMuLa only runs on a card.
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
         // A song's parts taken apart and read on an NVIDIA card (CUDA).
-        || (matches!(req.op.as_str(), "map" | "stems") && crate::natural::nvidia_here(state));
+        || (matches!(req.op.as_str(), "map" | "stems" | "dry") && crate::natural::nvidia_here(state));
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
@@ -3110,6 +3115,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
         "stems" => stems_job(&ctx).await,
+        "dry" => dry_job(&ctx).await,
         "studio_part" => studio_part(&ctx, model.ok_or("Making a part needs ACE-Step 1.5 Base (Models).")?, &work.0).await,
         #[cfg(windows)]
         "train" => train_job(&ctx, &work.0).await,
@@ -4178,6 +4184,49 @@ async fn stems_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     Ok(out)
 }
 
+/// Remove FX (Suno Studio's): a sound's reverb and echo taken out
+/// (`dereverb`), as a new sound kept out of the gallery: the Studio puts it
+/// in as a take of the clip it came from.
+async fn dry_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    let id = ctx.req.source.as_deref().ok_or("Pick a sound first.")?;
+    let song = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That sound is no longer in the gallery.")?;
+    if song.kind != "audio" {
+        return Err("Only a sound can have its effects removed.".into());
+    }
+    let helper = state.catalog.media.dereverb.clone().ok_or("Removing effects isn't available.")?;
+    let card = map_card(ctx).await?;
+    let (dll, model) = ensure_helper(state, &helper, "Getting the effects remover (once)", ctx.cancel, ctx.progress).await?;
+    (ctx.progress)("Removing the reverb and echo", 0.05);
+    let bytes = store::read(&state.paths, &c, &song.id)?;
+    let threads = state.limits().threads;
+    let started = std::time::Instant::now();
+    let (dry, on_card) = tokio::task::block_in_place(|| {
+        let sound = decoded_stereo(&bytes, &song.mime)?;
+        let done = dereverb::dry(&dll, &model, &sound, threads, card, ctx.cancel, &|f| (ctx.progress)("Removing the reverb and echo", 0.05 + 0.9 * f));
+        dereverb::unload();
+        done
+    })?;
+    let name = song.title.clone().unwrap_or_else(|| song.prompt.chars().take(60).collect());
+    let item = MediaItem {
+        kind: "audio".into(),
+        op: "dry".into(),
+        prompt: song.prompt.clone(),
+        title: Some(format!("{name} (dry)")),
+        mime: "audio/wav".into(),
+        seconds: dry.len() as f64 / dereverb::RATE as f64,
+        parent: Some(song.id.clone()),
+        chat_id: ctx.req.chat_id.clone().or_else(|| song.chat_id.clone()),
+        lyrics: song.lyrics.clone(),
+        hidden: true,
+        ..Default::default()
+    };
+    let saved = store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &own_voice::wav_stereo(&dry.ch[0], &dry.ch[1], dereverb::RATE), None)?;
+    crate::applog::line("media", &format!("Removed the effects from {:.0} s of sound in {:.1} s ({})", saved.seconds, started.elapsed().as_secs_f64(), if on_card { "graphics card" } else { "processor" }));
+    Ok(vec![saved])
+}
+
 /// A new part for the Studio (Suno Studio's generated stems): the mix so
 /// far (`req.source`, rendered by the window) with the part added by
 /// ACE-Step Base, then that part taken out alone; `count` takes (2 by
@@ -4295,6 +4344,41 @@ pub fn studio_read_midi(state: AppStateRef, path: String) -> Result<String, Stri
         return Err("That isn't a MIDI file.".into());
     }
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// A sound file the person picked in the song studio, for the wavetable
+/// synth to make a wavetable from (the window decodes it).
+#[tauri::command(async)]
+pub fn studio_read_sound(state: AppStateRef, path: String) -> Result<String, String> {
+    state.cipher()?;
+    let lower = path.to_lowercase();
+    if ![".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"].iter().any(|e| lower.ends_with(e)) {
+        return Err("Pick a sound file (WAV, MP3, FLAC, OGG, M4A or AAC).".into());
+    }
+    let meta = std::fs::metadata(&path).map_err(|e| format!("Couldn't read it: {e}"))?;
+    if meta.len() > 50_000_000 {
+        return Err("That file is too big for a wavetable (50 MB at most).".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read it: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command(async)]
+pub fn studio_synth_presets(state: AppStateRef) -> Result<Vec<serde_json::Value>, String> {
+    let c = state.cipher()?;
+    Ok(studio::presets(&state.db.lock().unwrap(), &c))
+}
+
+#[tauri::command(async)]
+pub fn studio_synth_preset_save(state: AppStateRef, preset: serde_json::Value) -> Result<(), String> {
+    let c = state.cipher()?;
+    studio::save_preset(&state.db.lock().unwrap(), &c, preset)
+}
+
+#[tauri::command(async)]
+pub fn studio_synth_preset_delete(state: AppStateRef, name: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    studio::remove_preset(&state.db.lock().unwrap(), &c, &name)
 }
 
 /// The song studio's chat bar: a request turned into actions on the

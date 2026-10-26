@@ -2122,7 +2122,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video" | "train" | "studio_part";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -3005,6 +3005,12 @@ export const api = {
   studioAsk: (request: string, summary: string) => invoke<StudioAction[]>("studio_ask", { request, summary }),
   /** A MIDI file the person picked, as base64. */
   studioReadMidi: (path: string) => invoke<string>("studio_read_midi", { path }),
+  /** A sound file the person picked (for a wavetable), as base64. */
+  studioReadSound: (path: string) => invoke<string>("studio_read_sound", { path }),
+  /** The wavetable synth's saved sounds. */
+  studioSynthPresets: () => invoke<unknown[]>("studio_synth_presets"),
+  studioSynthPresetSave: (preset: unknown) => invoke<void>("studio_synth_preset_save", { preset }),
+  studioSynthPresetDelete: (name: string) => invoke<void>("studio_synth_preset_delete", { name }),
   /** A MIDI file the window wrote, saved where the person picked (a .mid path). */
   studioSaveMidi: (path: string, data: string) => invoke<void>("studio_save_midi", { path, data }),
   /** A sound's notes (Basic Pitch), or with `drums` its kick, snare and hat hits. */

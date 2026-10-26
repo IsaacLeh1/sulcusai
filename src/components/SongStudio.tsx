@@ -18,6 +18,9 @@ import {
   addTrack,
   audioClip,
   beatSecs,
+  compGroup,
+  compTake,
+  compWhole,
   deleteTime,
   duplicateTime,
   duplicateTrack,
@@ -29,23 +32,38 @@ import {
   moveClips,
   moveTrack,
   newEffect,
+  newId,
   newTrack,
   pasteClips,
+  quantizeWarp,
+  recordedClips,
   removeClips,
+  removeTake,
   removeTrack,
   snap,
+  soundAt,
   sourceOf,
   splitClip,
+  startIn,
+  stretchClip,
+
+  tidyWarp,
+  timeOfSound,
   trimClip,
   updateClip,
   updateTrack,
+  warped,
   type AutoPoint,
   type Clip,
   type EffectKind,
   type Note,
   type Project,
   type Track,
+  type WarpMarker,
 } from "../studio/model";
+import { onsets } from "../studio/onsets";
+import { encodeFrames, framesFromSound, initPatch, LiveWave, PRESETS, withSettings, type SynthPatch } from "../studio/synth";
+import { SynthPanel } from "./SynthPanel";
 import { PianoRoll } from "./PianoRoll";
 import type { PushToast } from "./Toasts";
 
@@ -66,12 +84,14 @@ const TYPING: Record<string, number> = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 
 
 let clipboard: { trackId: string; clip: Clip }[] = [];
 
-type Dock = "clip" | "effects" | "automation" | "notes" | "make";
+type Dock = "clip" | "takes" | "effects" | "automation" | "notes" | "synth" | "make";
 
-/** A clip's sound drawn as its peaks. */
-function Wave({ clip, width, height }: { clip: Clip; width: number; height: number }) {
+/** A clip's sound drawn as its peaks (following its warp markers). */
+function Wave({ clip, width, height, color = "rgba(255,255,255,0.75)" }: { clip: Clip; width: number; height: number; color?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const src = sourceOf(clip);
+  const ahead = startIn(clip) - clip.offset;
+  const warpKey = warped(clip) ? JSON.stringify(clip.warp) : "";
   useEffect(() => {
     let live = true;
     if (!src || width < 2) return;
@@ -83,14 +103,13 @@ function Wave({ clip, width, height }: { clip: Clip; width: number; height: numb
         const h = (c.height = height);
         const g = c.getContext("2d")!;
         const data = buf.getChannelData(0);
-        const from = clip.offset * buf.sampleRate;
-        const span = clip.length * clip.speed * buf.sampleRate;
+        const at = (x: number) => (ahead + soundAt(clip, (x / w) * clip.length)) * buf.sampleRate;
         g.clearRect(0, 0, w, h);
-        g.fillStyle = "rgba(255,255,255,0.75)";
+        g.fillStyle = color;
         for (let x = 0; x < w; x++) {
           let peak = 0;
-          const a = Math.floor(from + (x / w) * span);
-          const b = Math.min(data.length, Math.floor(from + ((x + 1) / w) * span));
+          const a = Math.max(0, Math.floor(at(x)));
+          const b = Math.min(data.length, Math.floor(at(x + 1)));
           for (let i = a; i < b; i += 8) peak = Math.max(peak, Math.abs(data[i] ?? 0));
           const bar = Math.max(1, peak * h * 0.9);
           g.fillRect(clip.reverse ? w - 1 - x : x, (h - bar) / 2, 1, bar);
@@ -100,7 +119,7 @@ function Wave({ clip, width, height }: { clip: Clip; width: number; height: numb
     return () => {
       live = false;
     };
-  }, [src, clip.offset, clip.length, clip.speed, clip.reverse, width, height]);
+  }, [src, ahead, clip.offset, clip.length, clip.speed, clip.reverse, warpKey, width, height, color]); // eslint-disable-line react-hooks/exhaustive-deps
   return <canvas ref={ref} className="clip-wave" />;
 }
 
@@ -191,6 +210,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
   // Made when first needed (and again after closing: React mounts twice while developing).
   const eng = () => (engine.current ??= new StudioEngine());
   const synth = useRef<LiveSynth | null>(null);
+  const wave = useRef<LiveWave | null>(null);
   const [p, setP] = useState<Project>(initial);
   const [past, setPast] = useState<Project[]>([]);
   const [future, setFuture] = useState<Project[]>([]);
@@ -214,13 +234,19 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     engine.current?.setMaster(master);
   }, [master]);
   const [waiting, setWaiting] = useState(0);
-  const drag = useRef<{ kind: "move" | "start" | "end" | "fadeIn" | "fadeOut" | "range" | "ruler"; x: number; y: number; base: Project; clip?: string; t0: number } | null>(null);
+  const drag = useRef<{ kind: "move" | "start" | "end" | "stretch" | "fadeIn" | "fadeOut" | "range" | "ruler"; x: number; y: number; base: Project; clip?: string; t0: number } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
 
   const len = projectLength(p);
   const width = len * pps + 200;
   const x = (s: number) => s * pps;
   const focusTrack = p.tracks.find((tr) => tr.id === focus) ?? null;
+  // The synth's track stays the last MIDI track picked (picking a clip to make a wavetable from moves the focus).
+  const [synthTrackId, setSynthTrackId] = useState<string | null>(null);
+  useEffect(() => {
+    if (focusTrack?.kind === "midi") setSynthTrackId(focusTrack.id);
+  }, [focusTrack?.id, focusTrack?.kind]);
+  const synthTrack = focusTrack?.kind === "midi" ? focusTrack : p.tracks.find((tr) => tr.id === synthTrackId && tr.kind === "midi") ?? null;
   const selected = sel.size === 1 ? findClip(p, [...sel][0]) : null;
 
   // ---------- history and keeping ----------
@@ -291,6 +317,8 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       engine.current = null;
       synth.current?.close();
       synth.current = null;
+      wave.current?.close();
+      wave.current = null;
       if (rec) api.studioRecordCancel().catch(() => {});
     },
     [], // eslint-disable-line react-hooks/exhaustive-deps
@@ -301,10 +329,11 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     engine.current?.stop();
     setPlaying(false);
   }, []);
-  const play = async (from = pos) => {
+  /** Plays from `from`: the project, or another version of it (a take auditioned), after a count-in if asked. */
+  const play = async (from = pos, what: Project = p, countIn = 0) => {
     try {
       setBusy(t("Getting the sounds ready…"));
-      await eng().play(p, from, click);
+      await eng().play(what, from, click, countIn);
       eng().setMaster(master);
       setPlaying(true);
     } catch (e) {
@@ -313,16 +342,11 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       setBusy(null);
     }
   };
-  // The playhead, and going round a loop (a timer: it keeps time with the window hidden too).
+  // The playhead (a timer: it keeps time with the window hidden too; the engine goes round a loop).
   useEffect(() => {
     if (!playing) return;
     const id = setInterval(() => {
       const now = eng().position();
-      if (p.loop && now >= p.loop[1]) {
-        clearInterval(id);
-        play(p.loop[0]);
-        return;
-      }
       setPos(now);
       // The timeline follows the playhead.
       const el = scroll.current;
@@ -331,14 +355,14 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       if (now >= len + 1 && !rec) stop();
     }, 50);
     return () => clearInterval(id);
-  }, [playing, p.loop, len, rec, pps]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playing, len, rec, pps]); // eslint-disable-line react-hooks/exhaustive-deps
   // Edits while playing: the mix's settings at once, anything else from where it is.
   const lastPlayed = useRef(p);
   useEffect(() => {
     const before = lastPlayed.current;
     lastPlayed.current = p;
     if (!playing) return;
-    const mixOnly = before.tracks.length === p.tracks.length && p.tracks.every((tr, i) => tr.clips === before.tracks[i].clips && tr.effects.length === before.tracks[i].effects.length && tr.effects.every((e, j) => e.kind === before.tracks[i].effects[j].kind && e.bypass === before.tracks[i].effects[j].bypass) && tr.automation === before.tracks[i].automation);
+    const mixOnly = before.loop === p.loop && before.bpm === p.bpm && before.tracks.length === p.tracks.length && p.tracks.every((tr, i) => tr.clips === before.tracks[i].clips && tr.program === before.tracks[i].program && !!tr.synth === !!before.tracks[i].synth && tr.effects.length === before.tracks[i].effects.length && tr.effects.every((e, j) => e.kind === before.tracks[i].effects[j].kind && e.bypass === before.tracks[i].effects[j].bypass) && tr.automation === before.tracks[i].automation);
     if (mixOnly) {
       for (const tr of p.tracks) eng().updateTrack(p, tr);
       return;
@@ -354,12 +378,24 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       sub.then((u) => u());
     };
   }, []);
+  const [countIn, setCountIn] = useState(0);
+  // When the recording began and when the music was first heard (performance.now()), to line them up.
+  const recTimes = useRef<{ began: number; heard: number | null; loop: [number, number] | null }>({ began: 0, heard: null, loop: null });
   const record = async () => {
     if (rec) {
       stop();
       try {
         const item = await api.studioRecordStop();
-        commit((cur) => addClip(cur, rec.track, audioClip(item.id, t("Recording"), rec.at, item.seconds)));
+        const { began, heard, loop } = recTimes.current;
+        // The music started this far into the recording: that's where the clip's sound begins.
+        const lead = heard === null ? 0 : Math.max(0, Math.min(item.seconds - 0.1, (heard - began) / 1000));
+        const clips = recordedClips(item.id, t("Recording"), item.seconds, rec.at, lead, loop, (n) => t("Pass {n}", { n }));
+        commit((cur) => clips.reduce((acc, c) => addClip(acc, rec.track, c), cur));
+        if (clips.length && clips[clips.length - 1].takes.length > 1) {
+          setSel(new Set([clips[clips.length - 1].id]));
+          setDock("takes");
+          toast(t("Each pass round the loop is a take: pick the best, or the best parts of each, under Takes."), "success");
+        }
       } catch (e) {
         toast(errorText(e), "error");
       }
@@ -375,8 +411,10 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     }
     try {
       await api.studioRecordStart();
+      recTimes.current = { began: performance.now(), heard: null, loop: p.loop && pos < p.loop[1] ? p.loop : null };
       setRec({ track: target, at: pos, level: 0, secs: 0 });
-      await play(pos);
+      await play(pos, p, countIn * bar);
+      recTimes.current.heard = eng().heardAt();
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -416,6 +454,79 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     setFocus(tr.id);
   };
 
+  // ---------- the instruments played live ----------
+  /** A note played now on the focused MIDI track's instrument: its synth, or its sampled instrument. */
+  const liveOn = (pitch: number, velocity = 100) => {
+    const tr = focusTrack?.kind === "midi" ? focusTrack : null;
+    if (tr?.synth) {
+      wave.current ??= new LiveWave();
+      wave.current.on(tr.synth, pitch, velocity, p.tables).catch((e) => toast(errorText(e), "error"));
+      return;
+    }
+    synth.current ??= new LiveSynth();
+    synth.current.on(tr?.program ?? 0, pitch, velocity).catch(() => {});
+  };
+  /** Let go on both (the focus may have moved while it was held). */
+  const liveOff = (pitch: number) => {
+    wave.current?.off(pitch);
+    synth.current?.off(focusTrack?.kind === "midi" ? focusTrack.program ?? 0 : 0, pitch);
+  };
+  // A synth's sound changing as a slider moves is one step to undo, from where it started.
+  const synthFrom = useRef<Project | null>(null);
+  const setSynth = (trackId: string, synthPatch: SynthPatch | undefined, done: boolean) => {
+    if (!done) {
+      synthFrom.current ??= p;
+      setP((cur) => updateTrack(cur, trackId, { synth: synthPatch }));
+      return;
+    }
+    const base = synthFrom.current;
+    synthFrom.current = null;
+    if (!base) return commit((cur) => updateTrack(cur, trackId, { synth: synthPatch }));
+    setP((cur) => updateTrack(cur, trackId, { synth: synthPatch }));
+    setPast((h) => [...h.slice(-(HISTORY - 1)), base]);
+    setFuture([]);
+    setSaved(false);
+  };
+  /** A wavetable made from a sound file, or from the selected audio clip's first seconds; kept with the project. */
+  const makeTable = async (from: "file" | "clip"): Promise<string | null> => {
+    try {
+      let buf: AudioBuffer;
+      let name: string;
+      if (from === "file") {
+        const { open: openFiles } = await import("@tauri-apps/plugin-dialog");
+        const got = await openFiles({ multiple: false, filters: [{ name: t("Sounds"), extensions: ["wav", "mp3", "flac", "ogg", "m4a", "aac"] }] });
+        const path = Array.isArray(got) ? got[0] : got;
+        if (!path) return null;
+        const data = fromBase64(await api.studioReadSound(path));
+        const ctx = new OfflineAudioContext(1, 1, 48000);
+        buf = await ctx.decodeAudioData(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
+        name = (path.split(/[\\/]/).pop() ?? "").replace(/\.[^.]+$/, "") || t("Wavetable");
+      } else {
+        const src = selected && selected.track.kind === "audio" ? sourceOf(selected.clip) : null;
+        if (!selected || !src) return null;
+        const whole = await sourceBuffer(src);
+        const a = Math.max(0, Math.floor(startIn(selected.clip) * whole.sampleRate));
+        const n = Math.min(whole.length - a, Math.floor(Math.min(4, selected.clip.length * selected.clip.speed) * whole.sampleRate));
+        buf = new AudioBuffer({ length: Math.max(1, n), numberOfChannels: whole.numberOfChannels, sampleRate: whole.sampleRate });
+        for (let c = 0; c < whole.numberOfChannels; c++) buf.copyToChannel(whole.getChannelData(c).slice(a, a + n), c);
+        name = selected.clip.name;
+      }
+      const mono = new Float32Array(buf.length);
+      for (let c = 0; c < buf.numberOfChannels; c++) {
+        const d = buf.getChannelData(c);
+        for (let i = 0; i < mono.length; i++) mono[i] += d[i] / buf.numberOfChannels;
+      }
+      const frames = framesFromSound(mono, buf.sampleRate);
+      const id = newId("wt");
+      commit((cur) => ({ ...cur, tables: { ...(cur.tables ?? {}), [id]: { name: name.slice(0, 40), frames: encodeFrames(frames) } }, updated_at: Date.now() }));
+      toast(t("A wavetable of {n} frames made from {name}.", { n: frames.length, name }), "success");
+      return id;
+    } catch (e) {
+      toast(errorText(e), "error");
+      return null;
+    }
+  };
+
   // ---------- keys ----------
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -427,9 +538,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
         e.preventDefault();
         if (e.repeat) return;
         const pitch = 60 + TYPING[k];
-        const prog = focusTrack?.kind === "midi" ? focusTrack.program ?? 0 : 0;
-        synth.current ??= new LiveSynth();
-        synth.current.on(prog, pitch).catch(() => {});
+        liveOn(pitch);
         if (typed.current) typed.current.held.set(pitch, eng().position());
         return;
       }
@@ -461,6 +570,8 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
         const c = findClip(acc, id)?.clip;
         return c ? updateClip(acc, id, c.fadeIn || c.fadeOut ? { fadeIn: 0, fadeOut: 0 } : { fadeIn: 0.5, fadeOut: 0.5 }) : acc;
       }, cur));
+      else if (e.shiftKey && k === "q" && sel.size) commit((cur) => [...sel].reduce((acc, id) => quantizeWarp(acc, id, grid), cur));
+      else if (!mod && !e.shiftKey && e.key === "3") setDock("takes");
       else if (e.key === "0" && sel.size) commit((cur) => [...sel].reduce((acc, id) => {
         const c = findClip(acc, id)?.clip;
         return c ? updateClip(acc, id, { disabled: !c.disabled }) : acc;
@@ -471,8 +582,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       const k = e.key.toLowerCase();
       if (!typing || TYPING[k] === undefined) return;
       const pitch = 60 + TYPING[k];
-      const prog = focusTrack?.kind === "midi" ? focusTrack.program ?? 0 : 0;
-      synth.current?.off(prog, pitch);
+      liveOff(pitch);
       const tp = typed.current;
       const began = tp?.held.get(pitch);
       if (tp && began !== undefined) {
@@ -491,14 +601,12 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
   // A MIDI keyboard plays like musical typing (and is kept the same way while playing).
   const midiNote = useRef<(on: boolean, pitch: number, velocity: number) => void>(() => {});
   midiNote.current = (onOff, pitch, velocity) => {
-    const prog = focusTrack?.kind === "midi" ? focusTrack.program ?? 0 : 0;
-    synth.current ??= new LiveSynth();
     if (onOff) {
-      synth.current.on(prog, pitch, velocity).catch(() => {});
+      liveOn(pitch, velocity);
       if (typed.current) typed.current.held.set(pitch, eng().position());
       return;
     }
-    synth.current.off(prog, pitch);
+    liveOff(pitch);
     const tp = typed.current;
     const began = tp?.held.get(pitch);
     if (tp && began !== undefined) {
@@ -516,6 +624,9 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       const kind = d[0] & 0xf0;
       if (kind === 0x90 && d[2] > 0) midiNote.current(true, d[1], d[2]);
       else if (kind === 0x80 || (kind === 0x90 && d[2] === 0)) midiNote.current(false, d[1], 100);
+      // The mod wheel and pitch bend reach the synth.
+      else if (kind === 0xb0 && d[1] === 1) wave.current?.control("mod", d[2] / 127);
+      else if (kind === 0xe0) wave.current?.control("bend", (((d[2] << 7) | d[1]) - 8192) / 8192);
     };
     nav
       .requestMIDIAccess()
@@ -576,6 +687,8 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
         setP(moveClips(d.base, ids, snapped, ids.size === 1 ? to : undefined));
       } else if (d.kind === "start" || d.kind === "end") {
         setP(trimClip(d.base, c.id, d.kind, snap(d.base, (d.kind === "start" ? c.start : end(c)) + dt, grid), sourceSecs(c)));
+      } else if (d.kind === "stretch") {
+        setP(stretchClip(d.base, c.id, snap(d.base, end(c) + dt, grid) - c.start));
       } else if (d.kind === "fadeIn") {
         setP(updateClip(d.base, c.id, { fadeIn: Math.max(0, Math.min(c.length / 2, c.fadeIn + dt)) }));
       } else if (d.kind === "fadeOut") {
@@ -620,7 +733,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     const fromLeft = e.clientX - r.left;
     const fromRight = r.right - e.clientX;
     const top = e.clientY - r.top < 14;
-    const kind = top && fromLeft < 14 + c.fadeIn * pps ? "fadeIn" : top && fromRight < 14 + c.fadeOut * pps ? "fadeOut" : fromLeft < 6 ? "start" : fromRight < 6 ? "end" : "move";
+    const kind = top && fromLeft < 14 + c.fadeIn * pps ? "fadeIn" : top && fromRight < 14 + c.fadeOut * pps ? "fadeOut" : fromLeft < 6 ? "start" : fromRight < 6 ? (e.shiftKey && tr.kind === "audio" ? "stretch" : "end") : "move";
     setSel((s) => (e.shiftKey ? new Set(s).add(c.id) : s.has(c.id) ? s : new Set([c.id])));
     drag.current = { kind, x: e.clientX, y: e.clientY, base: p, clip: c.id, t0: timeAt(e.clientX) };
   };
@@ -683,6 +796,17 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       { op: "music", prompt: p.name, music: { task: "extend", audio: src, extend_by: longer } },
       { kind: "longer", project: p.id, clip: f.clip.id, label: t("{n} s longer", { n: longer }) },
       t("Making it longer: it arrives as a new take of the clip, {n} seconds longer.", { n: longer }),
+    );
+  };
+  /** Remove FX (Suno Studio's): the selected clip's reverb and echo taken out, as a new take of it. */
+  const removeFx = async () => {
+    if (!selected || selected.track.kind !== "audio") return;
+    const src = sourceOf(selected.clip);
+    if (!src) return;
+    await start(
+      { op: "dry", prompt: "", source: src },
+      { kind: "replace", project: p.id, clip: selected.clip.id, label: t("Effects removed") },
+      t("Taking the reverb and echo out: it arrives as a new take of the clip."),
     );
   };
   const playAs = async () => {
@@ -757,7 +881,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     const head = `Tempo ${p.bpm} bpm, ${p.beats} beats a bar. Length ${clock(len)}. Playhead ${clock(pos)}.${range ? ` Marked ${Math.round(range[0])} s to ${Math.round(range[1])} s.` : ""}${p.loop ? ` Looping ${Math.round(p.loop[0])} s to ${Math.round(p.loop[1])} s.` : ""}`;
     const tracks = p.tracks.map(
       (tr, i) =>
-        `${i + 1}. "${tr.name}" (${tr.kind}${tr.kind === "midi" ? `, instrument ${tr.program ?? 0}` : ""}) volume ${tr.volume} dB, pan ${tr.pan}${tr.mute ? ", muted" : ""}${tr.solo ? ", solo" : ""}, effects: ${tr.effects.map((e) => e.kind).join(", ") || "none"}; clips: ${tr.clips.map((c) => `${Math.round(c.start)}-${Math.round(end(c))} s`).join(", ") || "none"}`,
+        `${i + 1}. "${tr.name}" (${tr.kind}${tr.kind === "midi" ? (tr.synth ? `, wavetable synth sound "${tr.synth.name}"` : `, instrument ${tr.program ?? 0}`) : ""}) volume ${tr.volume} dB, pan ${tr.pan}${tr.mute ? ", muted" : ""}${tr.solo ? ", solo" : ""}, effects: ${tr.effects.map((e) => e.kind).join(", ") || "none"}; clips: ${tr.clips.map((c) => `${Math.round(c.start)}-${Math.round(end(c))} s`).join(", ") || "none"}`,
     );
     return [head, "Tracks:", ...tracks].join("\n");
   };
@@ -768,6 +892,11 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
       const n = String(name ?? "").toLowerCase().trim();
       if (!n) return undefined;
       return cur.tracks.find((x) => x.name.toLowerCase() === n) ?? cur.tracks.find((x) => x.name.toLowerCase().includes(n) || n.includes(x.name.toLowerCase()));
+    };
+    // A synth sound from a factory sound's name and/or settings.
+    const synthFor = (a: StudioAction, current: SynthPatch | undefined) => {
+      const named = PRESETS.find((x) => x.name.toLowerCase() === String(a.preset ?? "").toLowerCase().trim());
+      return withSettings(named ?? current ?? initPatch(), (a.settings ?? {}) as Record<string, unknown>);
     };
     const notes: string[] = [];
     const parts: StudioAction[] = [];
@@ -781,6 +910,7 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
         case "add_track": {
           const nt = newTrack(String(a.name || (a.kind === "midi" ? t("Keys") : t("Audio"))), a.kind === "midi" ? "midi" : "audio", next.tracks.length);
           if (nt.kind === "midi") nt.program = clamp(a.instrument, 0, 128, programFor(nt.name));
+          if (nt.kind === "midi" && (a.instrument === "synth" || a.preset)) nt.synth = synthFor(a, undefined);
           next = addTrack(next, nt);
           notes.push(t("added {name}", { name: nt.name }));
           break;
@@ -838,6 +968,13 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           if (tr) {
             next = updateTrack(next, tr.id, { effects: [] });
             notes.push(t("no effects on {name}", { name: tr.name }));
+          }
+          break;
+        case "synth":
+          if (tr?.kind === "midi") {
+            const patch = synthFor(a, tr.synth);
+            next = updateTrack(next, tr.id, { synth: patch });
+            notes.push(t("{name} on the synth: {sound}", { name: tr.name, sound: patch.name }));
           }
           break;
         case "instrument":
@@ -919,7 +1056,8 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     const a = Math.max(c.start, range[0]);
     const b = Math.min(end(c), range[1]);
     if (b - a < 1) return toast(t("Mark a stretch of the selected clip first (drag on the ruler)."), "error");
-    const region: [number, number] = [c.offset + (a - c.start) * c.speed, c.offset + (b - c.start) * c.speed];
+    const ahead = startIn(c) - c.offset;
+    const region: [number, number] = [ahead + soundAt(c, a - c.start), ahead + soundAt(c, b - c.start)];
     await start(
       { op: "music", prompt: replaceWords.trim() || p.name, music: { task: "repaint", audio: src, region } },
       { kind: "replace", project: p.id, clip: c.id, label: t("{from} to {to} made again", { from: clock(a), to: clock(b) }) },
@@ -962,9 +1100,11 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
     setBusy(t("Reading the notes…"));
     try {
       const found = await api.studioMidi(src, drums);
-      const from = c.offset;
-      const to = c.offset + c.length * c.speed;
-      const notes = found.filter((n) => n.end > from && n.start < to).map((n) => ({ ...n, start: (Math.max(n.start, from) - from) / c.speed, end: (Math.min(n.end, to) - from) / c.speed }));
+      const ahead = startIn(c) - c.offset;
+      const from = startIn(c);
+      const to = ahead + soundAt(c, c.length);
+      const at = (s: number) => timeOfSound(c, s - ahead);
+      const notes = found.filter((n) => n.end > from && n.start < to).map((n) => ({ ...n, start: at(Math.max(n.start, from)), end: at(Math.min(n.end, to)) }));
       const m = newTrack(`${tr.name} (MIDI)`, "midi", p.tracks.length);
       m.program = drums ? DRUMS : programFor(tr.name);
       m.clips = [midiClip(m.name, c.start, c.length, notes)];
@@ -1061,6 +1201,12 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
             {rec ? t("Stop recording ({secs} s)", { secs: Math.round(rec.secs) }) : t("Record")}
           </button>
           {rec && <span className="rec-level" style={{ width: `${Math.round(rec.level * 60)}px` }} />}
+          <select value={countIn} onChange={(e) => setCountIn(+e.target.value)} aria-label={t("Count-in")} title={t("Clicks before recording starts")}>
+            <option value={0}>{t("No count-in")}</option>
+            {[1, 2, 4].map((n) => (
+              <option key={n} value={n}>{n === 1 ? t("1 bar count-in") : t("{n} bars count-in", { n })}</option>
+            ))}
+          </select>
           <span className="mono small">{clock(pos)}</span>
           <button className={`chip ${p.loop ? "active" : ""}`} onClick={() => commit((cur) => ({ ...cur, loop: cur.loop ? null : range ?? [pos, pos + bar * 4] }))} title={t("Loop the marked stretch (Ctrl+L)")}>{t("Loop")}</button>
           <button className={`chip ${click ? "active" : ""}`} onClick={() => setClick((c) => !c)} title={t("Metronome (Shift+C)")}>{t("Click")}</button>
@@ -1166,7 +1312,20 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
                     <button className="link small" onClick={() => { setFocus(tr.id); setDock("effects"); }}>{t("FX {n}", { n: tr.effects.length })}</button>
                   </div>
                   {tr.kind === "midi" && (
-                    <select className="mini-select wide" value={tr.program ?? 0} onChange={(e) => setTrack(tr.id, { program: +e.target.value })} aria-label={t("Instrument")}>
+                    <select
+                      className="mini-select wide"
+                      value={tr.synth ? -1 : tr.program ?? 0}
+                      onChange={(e) => {
+                        const v = +e.target.value;
+                        if (v === -1) {
+                          setTrack(tr.id, { synth: tr.synth ?? initPatch() });
+                          setFocus(tr.id);
+                          setDock("synth");
+                        } else setTrack(tr.id, { program: v, synth: undefined });
+                      }}
+                      aria-label={t("Instrument")}
+                    >
+                      <option value={-1}>{t("Wavetable synth")}{tr.synth ? `: ${tr.synth.name}` : ""}</option>
                       {GM.map((n, j) => (
                         <option key={j} value={j}>{n}</option>
                       ))}
@@ -1201,9 +1360,9 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
 
         <div className="studio-dock">
           <div className="filters tight">
-            {(["clip", "effects", "automation", "notes", "make"] as Dock[]).map((d) => (
+            {(["clip", "takes", "effects", "automation", "notes", "synth", "make"] as Dock[]).map((d) => (
               <button key={d} className={`chip ${dock === d ? "active" : ""}`} onClick={() => setDock(d)}>
-                {{ clip: t("Clip"), effects: t("Effects"), automation: t("Automation"), notes: t("Notes"), make: t("Make with the music model") }[d]}
+                {{ clip: t("Clip"), takes: t("Takes"), effects: t("Effects"), automation: t("Automation"), notes: t("Notes"), synth: t("Synth"), make: t("Make with the music model") }[d]}
               </button>
             ))}
             <span className="spacer" />
@@ -1211,9 +1370,26 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
           </div>
 
           {dock === "clip" && (selected ? (
-            <ClipPanel clip={selected.clip} track={selected.track} onChange={(patch) => setClip(selected.clip.id, patch)} onCommitTake={(take) => setClip(selected.clip.id, { take })} />
+            <ClipPanel clip={selected.clip} track={selected.track} p={p} grid={grid} onChange={(patch) => setClip(selected.clip.id, patch)} onCommitTake={(take) => setClip(selected.clip.id, { take })} onRemoveFx={removeFx} />
           ) : (
-            <p className="small muted">{t("Select a clip to change its level, fades, speed, key or takes.")}</p>
+            <p className="small muted">{t("Select a clip to change its level, fades, speed, key, stretch or takes.")}</p>
+          ))}
+
+          {dock === "takes" && (selected?.track.kind === "audio" ? (
+            <TakesPanel
+              p={p}
+              clipId={selected.clip.id}
+              grid={grid}
+              onChange={(next, at) => {
+                commit(next);
+                // Comping cuts and joins pieces: keep a piece of it selected.
+                const c = next.tracks.find((x) => x.id === selected.track.id)?.clips.find((x) => x.start <= at + 0.001 && end(x) > at);
+                if (c) setSel(new Set([c.id]));
+              }}
+              onHear={(preview, from) => play(from, preview)}
+            />
+          ) : (
+            <p className="small muted">{t("Select an audio clip to see its takes.")}</p>
           ))}
 
           {dock === "effects" && (focusTrack ? (
@@ -1237,12 +1413,38 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
               grid={(grid || 0.25) * beatSecs(p)}
               onChange={(notes) => setClip(selected.clip.id, { notes })}
               onTap={(pitch) => {
+                if (selected.track.synth) {
+                  wave.current ??= new LiveWave();
+                  wave.current.tap(selected.track.synth, pitch, p.tables).catch(() => {});
+                  return;
+                }
                 synth.current ??= new LiveSynth();
                 synth.current.tap(selected.track.program ?? 0, pitch).catch(() => {});
               }}
             />
           ) : (
             <p className="small muted">{t("Select a MIDI clip to edit its notes (double-click an empty spot on a MIDI track to make one).")}</p>
+          ))}
+
+          {dock === "synth" && (synthTrack ? (
+            synthTrack.synth ? (
+              <SynthPanel
+                track={synthTrack.name}
+                patch={synthTrack.synth}
+                made={p.tables ?? {}}
+                onPatch={(patch, done) => setSynth(synthTrack.id, patch, done)}
+                onMakeTable={makeTable}
+                canCapture={selected?.track.kind === "audio"}
+                toast={toast}
+              />
+            ) : (
+              <div className="row wrap">
+                <span className="small muted">{t("{track} plays a sampled instrument.", { track: synthTrack.name })}</span>
+                <button className="btn small" onClick={() => setTrack(synthTrack.id, { synth: initPatch() })}>{t("Play it on the wavetable synth")}</button>
+              </div>
+            )
+          ) : (
+            <p className="small muted">{t("Pick a MIDI track to play it on the wavetable synth.")}</p>
           ))}
 
           {dock === "make" && (
@@ -1321,9 +1523,14 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
   );
 }
 
-function ClipPanel({ clip, track, onChange, onCommitTake }: { clip: Clip; track: Track; onChange: (patch: Partial<Clip>) => void; onCommitTake: (take: string) => void }) {
+function ClipPanel({ clip, track, p, grid, onChange, onCommitTake, onRemoveFx }: { clip: Clip; track: Track; p: Project; grid: number; onChange: (patch: Partial<Clip>) => void; onCommitTake: (take: string) => void; onRemoveFx: () => void }) {
+  const setSpeed = (v: number) => {
+    const speed = Math.max(0.25, Math.min(4, v || 1));
+    onChange({ speed, length: (clip.length * clip.speed) / speed, warp: clip.warp?.map((m) => ({ ...m, t: (m.t * clip.speed) / speed })) });
+  };
   return (
     <div className="studio-clip-panel row wrap">
+      {track.kind === "audio" && <WarpEditor clip={clip} p={p} grid={grid} onChange={onChange} />}
       <input className="input" value={clip.name} onChange={(e) => onChange({ name: e.target.value })} aria-label={t("Clip name")} />
       <label className="row small">
         {t("Level")}
@@ -1340,13 +1547,11 @@ function ClipPanel({ clip, track, onChange, onCommitTake }: { clip: Clip; track:
       </label>
       {track.kind === "audio" && (
         <>
-          <label className="row small">
+          <label className="row small" title={t("Shift-drag a clip's right edge to stretch it to fit")}>
             {t("Speed")}
-            <select value={clip.speed} onChange={(e) => onChange({ speed: +e.target.value, length: (clip.length * clip.speed) / +e.target.value })}>
-              {[0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2].map((s) => (
-                <option key={s} value={s}>{s}×</option>
-              ))}
-            </select>
+            <input className="input tiny" type="number" min={0.25} max={4} step={0.01} value={Math.round(clip.speed * 1000) / 1000} onChange={(e) => setSpeed(+e.target.value)} />×
+            <button className="btn ghost small" onClick={() => setSpeed(clip.speed / 2)} title={t("Half as fast")}>½×</button>
+            <button className="btn ghost small" onClick={() => setSpeed(clip.speed * 2)} title={t("Twice as fast")}>2×</button>
           </label>
           <label className="row small">
             <input type="checkbox" checked={clip.keepPitch} onChange={(e) => onChange({ keepPitch: e.target.checked })} /> {t("Keep the pitch")}
@@ -1364,6 +1569,11 @@ function ClipPanel({ clip, track, onChange, onCommitTake }: { clip: Clip; track:
       <label className="row small">
         <input type="checkbox" checked={clip.disabled} onChange={(e) => onChange({ disabled: e.target.checked })} /> {t("Off")}
       </label>
+      {track.kind === "audio" && (
+        <button className="btn small" onClick={onRemoveFx} title={t("Takes the reverb and echo out with a model trained on single voices: best on a vocal (split a song into stems first). Arrives as a new take.")}>
+          {t("Remove FX")}
+        </button>
+      )}
       {clip.takes.length > 1 && (
         <div className="row wrap small studio-takes">
           <span className="muted">{t("Takes:")}</span>
@@ -1374,6 +1584,197 @@ function ClipPanel({ clip, track, onChange, onCommitTake }: { clip: Clip; track:
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** A clip's sound with its warp markers (Suno's Stretch): double-click to put
+ * one down, drag one to stretch the sound either side of it, right-click one
+ * to take it away; or put them on the hits or the beats, then line them up
+ * with the grid. */
+function WarpEditor({ clip, p, grid, onChange }: { clip: Clip; p: Project; grid: number; onChange: (patch: Partial<Clip>) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [moving, setMoving] = useState<WarpMarker[] | null>(null);
+  const drag = useRef<number | null>(null);
+  const [note, setNote] = useState("");
+  const on = { ...clip, warpOff: false };
+  const shown: Clip = moving ? { ...on, warp: moving } : clip;
+  const marks = [...(shown.warp ?? [])].sort((a, b) => a.t - b.t);
+  const step = grid || 1;
+  const tAt = (clientX: number) => {
+    const r = ref.current!.getBoundingClientRect();
+    return Math.max(0, Math.min(clip.length, ((clientX - r.left) / r.width) * clip.length));
+  };
+  const pct = (s: number) => `${(s / clip.length) * 100}%`;
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const i = drag.current;
+      if (i === null || !moving) return;
+      const lo = i > 0 ? moving[i - 1].t + 0.02 : 0.02;
+      const hi = i < moving.length - 1 ? moving[i + 1].t - 0.02 : clip.length - 0.02;
+      let tt = tAt(e.clientX);
+      if (grid > 0 && !e.altKey) tt = snap(p, clip.start + tt, grid) - clip.start;
+      setMoving(moving.map((m, j) => (j === i ? { ...m, t: Math.max(lo, Math.min(hi, tt)) } : m)));
+    };
+    const up = () => {
+      if (drag.current === null) return;
+      drag.current = null;
+      if (moving) onChange({ warp: tidyWarp(moving, on), warpOff: false });
+      setMoving(null);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  });
+  const setMarks = (list: WarpMarker[]) => onChange({ warp: list.length ? tidyWarp(list, on) : undefined, warpOff: false });
+  const onHits = async () => {
+    const src = sourceOf(clip);
+    if (!src) return;
+    setNote(t("Listening for the hits…"));
+    try {
+      const buf = await sourceBuffer(src);
+      const ahead = startIn(clip) - clip.offset;
+      const hits = onsets(buf, startIn(clip), ahead + soundAt(on, clip.length));
+      const list = hits.map((o) => ({ s: o - ahead, t: timeOfSound(on, o - ahead) })).filter((m) => m.t > 0.02 && m.t < clip.length - 0.02);
+      setMarks(list);
+      setNote(t("{n} hits marked. Line them up with the grid to put them on the beat.", { n: list.length }));
+    } catch (e) {
+      setNote(errorText(e));
+    }
+  };
+  const lines: { t: number; bar: boolean }[] = [];
+  const beat = beatSecs(p) * step;
+  for (let k = Math.ceil(clip.start / beat); k * beat < end(clip) && lines.length < 400; k++) {
+    const tt = k * beat - clip.start;
+    if (tt > 0.001) lines.push({ t: tt, bar: Math.abs((k * step) % p.beats) < 1e-6 });
+  }
+  return (
+    <div className="warp-panel">
+      <div className="row wrap small">
+        <strong>{t("Stretch")}</strong>
+        <label className="row small">
+          <input type="checkbox" checked={!clip.warpOff} onChange={(e) => onChange({ warpOff: !e.target.checked })} /> {t("On")}
+        </label>
+        <button className="btn ghost small" onClick={onHits}>{t("Markers on the hits")}</button>
+        <button className="btn ghost small" onClick={() => setMarks(lines.map((l) => ({ t: l.t, s: soundAt(on, l.t) })))}>{t("Markers on the beats")}</button>
+        <button className="btn ghost small" disabled={!marks.length} onClick={() => setMarks(marks.map((m) => ({ ...m, t: snap(p, clip.start + m.t, step) - clip.start })))} title={t("Each marker to the nearest grid line (Shift+Q)")}>{t("Line up with the grid")}</button>
+        <button className="btn ghost small" disabled={!marks.length} onClick={() => setMarks([])}>{t("Clear")}</button>
+        <span className="muted">{note || t("Double-click to add a marker, drag it to stretch, right-click to remove.")}</span>
+      </div>
+      <div
+        ref={ref}
+        className="warp-editor"
+        onDoubleClick={(e) => {
+          const tt = tAt(e.clientX);
+          setMarks([...marks, { t: tt, s: soundAt(on, tt) }]);
+        }}
+      >
+        <Wave clip={shown} width={1200} height={84} color="rgba(128,128,128,0.85)" />
+        {lines.map((l) => (
+          <span key={l.t} className={`warp-beat ${l.bar ? "bar" : ""}`} style={{ left: pct(l.t) }} />
+        ))}
+        {marks.map((m, i) => (
+          <span
+            key={`${i}-${m.s}`}
+            className="warp-marker"
+            style={{ left: pct(m.t) }}
+            title={t("{at}: drag to stretch, right-click to remove", { at: clock(clip.start + m.t) })}
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation();
+              setMoving(marks);
+              drag.current = i;
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMarks(marks.filter((_, j) => j !== i));
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A clip's takes, a lane each across its whole comp (Suno's take lanes):
+ * click a lane to hear that take from there in the mix, drag across a lane to
+ * play that stretch from it (comping), or use one for all of it. */
+function TakesPanel({ p, clipId, grid, onChange, onHear }: { p: Project; clipId: string; grid: number; onChange: (next: Project, at: number) => void; onHear: (preview: Project, from: number) => void }) {
+  const g = compGroup(p, clipId);
+  const [pick, setPick] = useState<{ take: string; a: number; b: number } | null>(null);
+  const picked = useRef<typeof pick>(null);
+  const drag = useRef<{ take: string; t0: number; el: HTMLElement } | null>(null);
+  const lo = g?.clips[0].start ?? 0;
+  const hi = g ? end(g.clips[g.clips.length - 1]) : 1;
+  const span = Math.max(0.01, hi - lo);
+  const tAt = (el: HTMLElement, clientX: number) => {
+    const r = el.getBoundingClientRect();
+    return lo + Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * span;
+  };
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = drag.current;
+      if (!d) return;
+      const now = tAt(d.el, e.clientX);
+      const [a, b] = [Math.min(d.t0, now), Math.max(d.t0, now)].map((x) => Math.max(lo, Math.min(hi, grid > 0 && !e.altKey ? snap(p, x, grid) : x)));
+      picked.current = { take: d.take, a, b };
+      setPick(picked.current);
+    };
+    const up = () => {
+      const d = drag.current;
+      drag.current = null;
+      if (!d) return;
+      const cur = picked.current;
+      picked.current = null;
+      setPick(null);
+      if (cur && cur.b - cur.a > 0.05) onChange(compTake(p, clipId, cur.take, cur.a, cur.b), cur.a);
+      else onHear(compTake(p, clipId, d.take, lo, hi), d.t0);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  });
+  if (!g || g.clips[0].takes.length < 2) {
+    return <p className="small muted">{t("This clip has one take. Takes come from recording round a loop, new parts, and making a stretch again, longer or dry.")}</p>;
+  }
+  const whole = compWhole(g.clips);
+  const pct = (s: number) => `${(s / span) * 100}%`;
+  return (
+    <div className="take-lanes">
+      <span className="small muted">{t("Click a take to hear it from there in the mix. Drag across a take to use that stretch of it; the highlighted parts are what plays.")}</span>
+      {g.clips[0].takes.map((k, i) => (
+        <div className="take-lane" key={k.id}>
+          <div className="take-lane-head">
+            <strong>{t("Take {n}", { n: i + 1 })}</strong>
+            <span className="muted ellipsis" title={k.label}>{k.label}</span>
+            <div className="row">
+              <button className="btn ghost small" onClick={() => onChange(compTake(p, clipId, k.id, lo, hi), lo)}>{t("Use for all")}</button>
+              <button className="btn ghost small" onClick={() => onChange(removeTake(p, clipId, k.id), lo)}>{t("Remove")}</button>
+            </div>
+          </div>
+          <div
+            className="take-wave"
+            onMouseDown={(e) => {
+              if (e.button !== 0) return;
+              const el = e.currentTarget as HTMLElement;
+              drag.current = { take: k.id, t0: tAt(el, e.clientX), el };
+            }}
+          >
+            <Wave clip={{ ...whole, take: k.id }} width={1200} height={48} color="rgba(128,128,128,0.85)" />
+            {g.clips.filter((c) => (c.take ?? c.takes[0]?.id) === k.id).map((c) => (
+              <span key={c.id} className="take-used" style={{ left: pct(c.start - lo), width: pct(c.length) }} />
+            ))}
+            {pick?.take === k.id && <span className="take-pick" style={{ left: pct(pick.a - lo), width: pct(pick.b - pick.a) }} />}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

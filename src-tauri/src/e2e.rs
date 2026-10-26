@@ -4098,6 +4098,38 @@ async fn e2e_suno_features() {
     }
 }
 
+/// Remove FX through the app's own job: a dry voice with a room's reverb
+/// (and with an echo too) made dry again, on the NVIDIA card when there is
+/// one. The test sounds are C:\dev\tools\music\dereverb\test (scripts/wet.py
+/// makes and scores them); the cleaned ones are written beside them. The
+/// model is copied from the export there when it isn't in the models
+/// folder yet (it's the file on the engines release).
+///     cargo test e2e_remove_fx -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_remove_fx() {
+    use crate::media::{self, store, MediaItem, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let dir = std::path::PathBuf::from(r"C:\dev\tools\music\dereverb");
+    let h = state.catalog.media.dereverb.clone().unwrap();
+    let dest = state.paths.models.join("media").join("helpers").join(&h.file.file);
+    if !dest.metadata().is_ok_and(|m| m.len() == h.file.size) {
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::copy(dir.join("out").join(&h.file.file), &dest).unwrap();
+    }
+    for name in ["reverb", "reverb-echo"] {
+        let bytes = std::fs::read(dir.join("test").join(format!("{name}.wav"))).unwrap();
+        let item = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "audio".into(), op: "import".into(), mime: "audio/wav".into(), seconds: 14.8, ..Default::default() }, &bytes, None).unwrap();
+        let t = std::time::Instant::now();
+        let got = media::run(&state, store::new_id(), Request { op: "dry".into(), source: Some(item.id.clone()), ..Default::default() }).await.unwrap();
+        println!("{name}: dry in {:.1} s, {:.1} s long, hidden {}", t.elapsed().as_secs_f64(), got[0].seconds, got[0].hidden);
+        assert!(got[0].hidden && (got[0].seconds - 14.8).abs() < 0.2);
+        std::fs::write(dir.join("test").join(format!("{name}-dry.wav")), store::read(&state.paths, &c, &got[0].id).unwrap()).unwrap();
+    }
+}
+
 /// The song studio's chat bar with a real chat model: a few requests on a
 /// two-track project, and the actions it turns them into.
 ///     cargo test e2e_studio_ask -- --ignored --nocapture
@@ -4114,6 +4146,7 @@ async fn e2e_studio_ask() {
         ("mute the song track and turn the keys down 6 dB", &["mute", "volume"][..]),
         ("make a funky bass part for the first minute", &["make_part"][..]),
         ("loop from 30 to 45 seconds", &["loop"][..]),
+        ("put the keys on the synth as a gritty reese bass with a slow wobble", &["synth"][..]),
     ];
     for (ask, want) in asks {
         let t = std::time::Instant::now();
@@ -4124,7 +4157,7 @@ async fn e2e_studio_ask() {
         println!("{ask:?} in {:.1} s -> {:?} {}", t.elapsed().as_secs_f64(), got.map(|a| serde_json::to_string(&a).unwrap()), if hit { "ok" } else { "MISSED" });
     }
     println!("{ok} of {} understood", asks.len());
-    assert!(ok >= 3);
+    assert!(ok >= 4);
 }
 
 /// The song studio's new part: a guitar added to the synth-pop song from
