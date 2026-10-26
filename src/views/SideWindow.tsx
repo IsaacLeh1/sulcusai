@@ -15,6 +15,7 @@ import { SharePermission } from "../components/SharePermission";
 import { SongStudio } from "../components/SongStudio";
 import { Toasts, useToasts, type PushToast } from "../components/Toasts";
 import { WebPermission } from "../components/WebPermission";
+import { WorkBar } from "../components/WorkBar";
 import { t } from "../i18n";
 import type { Project as StudioProject } from "../studio/model";
 import { ChatView } from "./ChatView";
@@ -231,7 +232,12 @@ export default function SideWindow({ label }: { label: string }) {
   }
   return (
     <>
-      {body}
+      <div className="side-body">{body}</div>
+      {security && !security.locked && (
+        <footer className="statusbar side-status">
+          <WorkBar onOpen={(page) => api.showMainPage(page).catch(() => {})} />
+        </footer>
+      )}
       <Toasts toasts={toasts.list} onDismiss={toasts.dismiss} />
     </>
   );

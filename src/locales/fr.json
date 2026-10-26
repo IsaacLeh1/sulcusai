@@ -4891,5 +4891,17 @@
  "Pick a project first.": "Choisissez d'abord un projet.",
  "Shift+click: a new chat in a window of its own": "Maj+clic : une nouvelle discussion dans sa propre fenêtre",
  "Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.": "Maj+clic : le Studio dans sa propre fenêtre. Faites glisser pour ordonner le menu à votre goût.",
- "That project is no longer here.": "Ce projet n'est plus là."
+ "That project is no longer here.": "Ce projet n'est plus là.",
+ "+{n} more": "+{n} autres",
+ "Checking {name}": "Vérification de {name}",
+ "Downloading the picture reader for {name}": "Téléchargement du lecteur d'images pour {name}",
+ "Downloading {name}": "Téléchargement de {name}",
+ "Getting the AI engine": "Téléchargement du moteur d'IA",
+ "No work": "Aucune tâche",
+ "Nothing is downloading or being made": "Rien n'est en cours de téléchargement ou de création",
+ "Optimizing {name}": "Optimisation de {name}",
+ "Setting up the engine for {name}": "Préparation du moteur pour {name}",
+ "Testing {name}": "Test de {name}",
+ "{name} is waiting its turn": "{name} attend son tour",
+ "{what} (waiting)": "{what} (en attente)"
 }

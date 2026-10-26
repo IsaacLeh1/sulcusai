@@ -131,17 +131,3 @@ export function Downloads({ progress, models, onRefresh, toast }: { progress: Re
     </section>
   );
 }
-
-/** Status bar: the download in progress; opens the Models page. */
-export function DownloadsPill({ progress, models, onOpen }: { progress: Record<string, InstallProgress>; models: ModelCard[]; onOpen: () => void }) {
-  const first = Object.entries(progress)[0];
-  if (!first) return null;
-  const [id, p] = first;
-  const name = models.find((m) => m.id === id)?.name ?? id;
-  const pct = p.total > 0 ? percent(p.received, p.total) : null;
-  return (
-    <button className="status-item link-btn" onClick={onOpen} title={t("Downloads")}>
-      {name} · {pct !== null ? t("Downloading · {n}%", { n: Math.round(pct) }) : t("Downloading…")}
-    </button>
-  );
-}

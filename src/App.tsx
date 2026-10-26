@@ -44,7 +44,7 @@ import { MemoryWarningPopup } from "./components/MemoryWarning";
 import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
-import { DownloadsPill } from "./components/Downloads";
+import { WorkBar } from "./components/WorkBar";
 import { IncognitoIcon } from "./components/IncognitoIcon";
 import { BookIcon, GlobeIcon, LockIcon, MenuIcon, PcIcon, PeopleIcon, SidebarIcon, ViewerIcon } from "./components/Icons";
 import { onPhone } from "./phone/env";
@@ -1340,7 +1340,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         )}
         <PerfPill onOpen={() => setView("settings")} />
         <GpuPill onOpen={() => setView("settings")} />
-        <DownloadsPill progress={progress} models={catalog?.models ?? []} onOpen={() => setView("models")} />
+        <WorkBar onOpen={(page) => setView(page)} />
         <UpdatePill toast={toast} />
         <PrivacyPill onOpen={() => setView("settings")} />
         <span className="spacer" />

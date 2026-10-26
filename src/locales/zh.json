@@ -4891,5 +4891,17 @@
  "Pick a project first.": "请先选择一个项目。",
  "Shift+click: a new chat in a window of its own": "Shift+点击：在单独的窗口中新建聊天",
  "Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.": "Shift+点击：在单独的窗口中打开工作室。拖动可按你喜欢的顺序排列菜单。",
- "That project is no longer here.": "该项目已不存在。"
+ "That project is no longer here.": "该项目已不存在。",
+ "+{n} more": "另有 {n} 项",
+ "Checking {name}": "正在检查 {name}",
+ "Downloading the picture reader for {name}": "正在下载 {name} 的图片读取器",
+ "Downloading {name}": "正在下载 {name}",
+ "Getting the AI engine": "正在获取 AI 引擎",
+ "No work": "无任务",
+ "Nothing is downloading or being made": "没有正在下载或制作的内容",
+ "Optimizing {name}": "正在优化 {name}",
+ "Setting up the engine for {name}": "正在为 {name} 准备引擎",
+ "Testing {name}": "正在测试 {name}",
+ "{name} is waiting its turn": "{name} 正在排队等候",
+ "{what} (waiting)": "{what}（等待中）"
 }

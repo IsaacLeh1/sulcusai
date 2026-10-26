@@ -4891,5 +4891,17 @@
  "Pick a project first.": "先にプロジェクトを選んでください。",
  "Shift+click: a new chat in a window of its own": "Shift+クリック：新しいチャットを専用のウィンドウで",
  "Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.": "Shift+クリック：スタジオを専用のウィンドウで。ドラッグでメニューを好きな順に並べ替えられます。",
- "That project is no longer here.": "そのプロジェクトはもうありません。"
+ "That project is no longer here.": "そのプロジェクトはもうありません。",
+ "+{n} more": "ほか {n} 件",
+ "Checking {name}": "{name} を確認中",
+ "Downloading the picture reader for {name}": "{name} 用の画像リーダーをダウンロード中",
+ "Downloading {name}": "{name} をダウンロード中",
+ "Getting the AI engine": "AI エンジンを取得中",
+ "No work": "作業なし",
+ "Nothing is downloading or being made": "ダウンロード中・作成中のものはありません",
+ "Optimizing {name}": "{name} を最適化中",
+ "Setting up the engine for {name}": "{name} 用のエンジンを準備中",
+ "Testing {name}": "{name} をテスト中",
+ "{name} is waiting its turn": "{name} は順番待ちです",
+ "{what} (waiting)": "{what}（待機中）"
 }

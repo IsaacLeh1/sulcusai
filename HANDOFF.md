@@ -1550,6 +1550,14 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## 0.9.39 (2026-10-26): the work bar
+
+Ask: "show a downloading progress bar at the top or the bottom of sulcus and if there is no download, just have it say No work". Notes: `C:\dev	ools
+otes-0939.md`.
+- `components/WorkBar.tsx` replaces the status bar's DownloadsPill (removed): it follows `install:progress`/`install:finished` (every kind of model, named from the chat, media and speech catalogs, looked up once), `engine:download`, and `media:progress`/`media:done` (pictures, video, songs, training, studio parts). Downloads first; the first item's label, a 110 px bar and percent, "+N more", all of them in the tooltip; "No work" when there's none. Clicking opens Models or the Studio (`show_main_page` from a side window). Side windows (`SideWindow.tsx`) have it in a 28 px footer.
+- Also: update notes cleaned of comparisons with other products (Suno) on his ask, in the app's notes, the notes files and the GitHub releases back to 0.7.0; helpful references (Ollama, LM Studio, Chrome/Edge, cloud providers) kept.
+- Checked in the UI mock: a download over a picture job, "No work" after both finished, the footer in a chat window. Window tests 77.
+
 ## 0.9.38 (2026-10-26): chats, the Studio and song studio projects in windows of their own
 
 Ask: "open different model sessions in different windows and open the entire studio itself in another window... everything for pictures, video and music". Notes: `C:\dev\tools\notes-0938.md`.
