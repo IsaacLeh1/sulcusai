@@ -4502,5 +4502,8 @@
  "Only a song can be made into a video.": "只有歌曲才能生成视频。",
  "Song video": "歌曲视频",
  "The sound must be at 44.1 or 48 kHz.": "声音必须是 44.1 或 48 kHz。",
- "This video has no sound track.": "此视频没有音轨。"
+ "This video has no sound track.": "此视频没有音轨。",
+ "Mash up with another song": "与另一首歌混搭",
+ "Mash up with…": "混搭…",
+ "This song's tune and words in another song's sound: a cover that follows it": "用另一首歌的声音演绎这首歌的旋律和歌词：一首跟随它的翻唱"
 }

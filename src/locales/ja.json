@@ -4502,5 +4502,8 @@
  "Only a song can be made into a video.": "動画にできるのは曲だけです。",
  "Song video": "曲の動画",
  "The sound must be at 44.1 or 48 kHz.": "音声は 44.1 kHz か 48 kHz である必要があります。",
- "This video has no sound track.": "この動画には音声トラックがありません。"
+ "This video has no sound track.": "この動画には音声トラックがありません。",
+ "Mash up with another song": "別の曲とマッシュアップ",
+ "Mash up with…": "マッシュアップ…",
+ "This song's tune and words in another song's sound: a cover that follows it": "この曲のメロディーと歌詞を、別の曲のサウンドで：それに沿ったカバー"
 }

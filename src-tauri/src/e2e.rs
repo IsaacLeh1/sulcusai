@@ -4098,6 +4098,66 @@ async fn e2e_suno_features() {
     }
 }
 
+/// Remaster and mashup as ACE-Step covers of the synth-pop song from
+/// e2e_suno_features: the song re-rendered close to itself (strength 0.6,
+/// 0.8), and its tune and words in the dark-country song's sound (that song
+/// as the reference). The words Whisper hears in each, against the
+/// original's. Songs in C:\dev\tools\music\ab\cover.
+///     cargo test e2e_remaster_and_mashup -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_remaster_and_mashup() {
+    use crate::media::music;
+    let state = media_state();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab\cover");
+    std::fs::create_dir_all(&out).unwrap();
+    let source = std::path::PathBuf::from(r"C:\dev\tools\music\ab\features\song.mp3");
+    let other = std::path::PathBuf::from(r"C:\dev\tools\music\ab\smoke-ace-step-1.5-xl.mp3");
+    let lyrics = "[Verse 1]\nWindows down on the coast road\nRadio loud and the night is young\n\n[Chorus]\nSummer nights, we were golden\nDancing under the neon sun\nSummer nights, we were golden\nNever wanted the night to be done";
+    let wanted = sung_words(lyrics);
+    let words_in = |file: &std::path::Path| {
+        let (heard, _) = heard_words(&whisper_hears(&state, file, Some("en")));
+        wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count()
+    };
+    println!("original: {} of {} words heard", words_in(&source), wanted.len());
+    let models = state.paths.models.join("media").join("music");
+    let dir = crate::media::music_engine_dir(&state).expect("the music engine is installed");
+    let runs: [(&str, &str, f32, bool); 4] = [
+        ("remaster-0.6", "upbeat 80s-inspired synth pop about a summer drive, female lead vocals, polished modern production", 0.6, false),
+        ("remaster-0.8", "upbeat 80s-inspired synth pop about a summer drive, female lead vocals, polished modern production", 0.8, false),
+        ("mashup-0.5", "dark modern country, Southern gothic, acoustic guitar, pedal steel, female lead vocals", 0.5, true),
+        ("mashup-0.7", "dark modern country, Southern gothic, acoustic guitar, pedal steel, female lead vocals", 0.7, true),
+    ];
+    for (name, caption, strength, with_other) in runs {
+        let work = std::env::temp_dir().join(format!("sulcusai-cover-{}", crate::media::store::new_id()));
+        std::fs::create_dir_all(&work).unwrap();
+        let engine = music::Engine { dir: &dir, models: &models, low_priority: false, job: None, logs: &state.paths.logs };
+        let r = music::SongRequest {
+            caption,
+            lyrics,
+            seconds: 45.0,
+            seed: 7,
+            language: Some("en"),
+            dit_file: "acestep-v15-xl-turbo-Q8_0.gguf",
+            task: "cover",
+            strength: Some(strength),
+            source: Some(&source),
+            reference: with_other.then_some(other.as_path()),
+            versions: 1,
+            ..Default::default()
+        };
+        let t = std::time::Instant::now();
+        let song = music::make(&engine, &work, &r, &AtomicBool::new(false), &|_, _| {}).await.unwrap().remove(0);
+        let _ = std::fs::remove_dir_all(&work);
+        let file = out.join(format!("{name}.mp3"));
+        std::fs::write(&file, &song.mp3).unwrap();
+        println!("{name}: {:.0} s, {:.0} s long, {} of {} words heard", t.elapsed().as_secs_f64(), song.seconds, words_in(&file), wanted.len());
+    }
+}
+
 /// Cover art for a few kinds of song, kept in C:\dev\tools\music\ab\art to
 /// look at (no lettering should be in them), and a song video of the first.
 ///     cargo test e2e_cover_art -- --ignored --nocapture

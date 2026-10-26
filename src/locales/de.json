@@ -4502,5 +4502,8 @@
  "Only a song can be made into a video.": "Nur aus einem Song kann ein Video werden.",
  "Song video": "Songvideo",
  "The sound must be at 44.1 or 48 kHz.": "Der Ton muss 44,1 oder 48 kHz haben.",
- "This video has no sound track.": "Dieses Video hat keine Tonspur."
+ "This video has no sound track.": "Dieses Video hat keine Tonspur.",
+ "Mash up with another song": "Mit einem anderen Song mischen",
+ "Mash up with…": "Mischen mit…",
+ "This song's tune and words in another song's sound: a cover that follows it": "Melodie und Text dieses Songs im Klang eines anderen Songs: ein Cover, das sich daran hält"
 }

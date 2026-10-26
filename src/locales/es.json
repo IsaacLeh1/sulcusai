@@ -4502,5 +4502,8 @@
  "Only a song can be made into a video.": "Solo una canción puede convertirse en vídeo.",
  "Song video": "Vídeo de la canción",
  "The sound must be at 44.1 or 48 kHz.": "El sonido debe estar a 44,1 o 48 kHz.",
- "This video has no sound track.": "Este vídeo no tiene pista de sonido."
+ "This video has no sound track.": "Este vídeo no tiene pista de sonido.",
+ "Mash up with another song": "Mezclar con otra canción",
+ "Mash up with…": "Mezclar con…",
+ "This song's tune and words in another song's sound: a cover that follows it": "La melodía y la letra de esta canción con el sonido de otra: una versión que la sigue"
 }

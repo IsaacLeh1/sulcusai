@@ -62,7 +62,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
   const [tab, setTab] = useState<Tab>(tabs[0] ?? "pictures");
   // A song picked in the viewer to work on in the music tab.
-  const [songToWork, setSongToWork] = useState<{ item: MediaItem; task: SongTask } | null>(null);
+  const [songToWork, setSongToWork] = useState<{ item: MediaItem; task: SongTask; reference?: MediaItem } | null>(null);
   // A song whose settings fill the song form again (Reuse these settings).
   const [songToReuse, setSongToReuse] = useState<MediaItem | null>(null);
   // A playlist's songs, whose shared sound fills the song form.
@@ -328,6 +328,12 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           }}
           onReuse={(i) => {
             setSongToReuse({ ...i });
+            setTab("music");
+            setViewing(null);
+          }}
+          songs={items.filter((x) => x.kind === "audio" && x.id !== viewing.id && x.op !== "stem")}
+          onMashup={(a, b) => {
+            setSongToWork({ item: a, task: "cover", reference: b });
             setTab("music");
             setViewing(null);
           }}
@@ -860,7 +866,7 @@ function MusicComposer({
   gallery: MediaItem[];
   toast: PushToast;
   /** A song picked in the viewer to work on. */
-  seed?: { item: MediaItem; task: SongTask } | null;
+  seed?: { item: MediaItem; task: SongTask; reference?: MediaItem } | null;
   /** Written as notes first: opens in Compose's editor. */
   onCompose: (c: Composition) => void;
   /** Opens Your voice, to record one. */
@@ -966,6 +972,12 @@ function MusicComposer({
     setMode("edit");
     setSong(seed.item);
     setTask(seed.task);
+    // A mashup: this song's tune and words in the other's sound.
+    if (seed.reference) {
+      setReference(seed.reference);
+      setMore(true);
+      setStrength(0.7);
+    }
     if (seed.item.seconds) {
       setFrom(0);
       setTo(Math.min(30, Math.round(seed.item.seconds)));
@@ -1857,6 +1869,8 @@ function Viewer({
   onAnimate,
   onWorkOn,
   onReuse,
+  songs,
+  onMashup,
   onCompose,
   onChanged,
   onDeleted,
@@ -1873,6 +1887,10 @@ function Viewer({
   onWorkOn: (i: MediaItem, task: SongTask) => void;
   /** A song's settings back in the song form. */
   onReuse: (i: MediaItem) => void;
+  /** Other songs in the gallery, to mash this one up with. */
+  songs: MediaItem[];
+  /** A mashup: the first song's tune and words in the second's sound (a cover). */
+  onMashup: (a: MediaItem, b: MediaItem) => void;
   /** A composition: opened in Compose's editor. */
   onCompose: (i: MediaItem) => void;
   onChanged: (i: MediaItem) => void;
@@ -2053,6 +2071,23 @@ function Viewer({
                   <button className="chip" onClick={() => onReuse(item)} title={t("Its description, sound, words and choices back in the song form, for another take or a change")}>
                     {t("Reuse these settings")}
                   </button>
+                )}
+                {item.op === "music" && songs.length > 0 && (
+                  <select
+                    className="chip"
+                    value=""
+                    aria-label={t("Mash up with another song")}
+                    title={t("This song's tune and words in another song's sound: a cover that follows it")}
+                    onChange={(e) => {
+                      const other = songs.find((x) => x.id === e.target.value);
+                      if (other) onMashup(item, other);
+                    }}
+                  >
+                    <option value="">{t("Mash up with…")}</option>
+                    {songs.map((x) => (
+                      <option key={x.id} value={x.id}>{x.title || x.prompt || t("A song")}</option>
+                    ))}
+                  </select>
                 )}
                 {item.op !== "stem" && item.op !== "narrate" && (
                   <button className="chip" onClick={() => run({ op: "song_video", prompt: "" })} title={t("An MP4 of the song with its cover art, title and words as they're sung, to share")}>
