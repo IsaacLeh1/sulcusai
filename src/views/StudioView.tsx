@@ -1762,7 +1762,7 @@ function MusicComposer({
           </select>
         )}
         {mode === "song" && canArt && (
-          <label className="row small" title={t("A square picture for each song from the picture model, made right after it")}>
+          <label className="check small" title={t("A square picture for each song from the picture model, made right after it")}>
             <input type="checkbox" checked={coverArt} onChange={(e) => setCoverArt(e.target.checked)} /> {t("Cover art")}
           </label>
         )}
@@ -2211,15 +2211,8 @@ function Viewer({
             </div>
           )}
           <span className="spacer" />
-          <div className="row">
-            <button
-              className="btn small"
-              onClick={() => api.mediaFavorite(item.id, !item.favorite).then(onChanged).catch((e) => toast(errorText(e), "error"))}
-              aria-pressed={item.favorite}
-            >
-              {item.favorite ? t("★ Favorite") : t("☆ Favorite")}
-            </button>
-            {item.kind === "audio" && (
+          {item.kind === "audio" && (
+            <div className="row wrap">
               <button
                 className={`btn small ${item.disliked ? "active" : ""}`}
                 onClick={() => api.mediaDislike(item.id, !item.disliked).then(onChanged).catch((e) => toast(errorText(e), "error"))}
@@ -2228,8 +2221,17 @@ function Viewer({
               >
                 {item.disliked ? t("Not for me (marked)") : t("Not for me")}
               </button>
-            )}
-            {item.kind === "audio" && <AddToPlaylist item={item} toast={toast} />}
+              <AddToPlaylist item={item} toast={toast} />
+            </div>
+          )}
+          <div className="row">
+            <button
+              className="btn small"
+              onClick={() => api.mediaFavorite(item.id, !item.favorite).then(onChanged).catch((e) => toast(errorText(e), "error"))}
+              aria-pressed={item.favorite}
+            >
+              {item.favorite ? t("★ Favorite") : t("☆ Favorite")}
+            </button>
             <button className="btn small" onClick={() => saveAs(item, toast)}>{t("Save as…")}</button>
             <span className="spacer" />
             <button className="btn ghost danger small" onClick={() => setConfirm(true)}>{t("Delete")}</button>

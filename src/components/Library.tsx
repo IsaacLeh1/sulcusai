@@ -149,7 +149,7 @@ export function Playlists({ toast, onOpen, onInspire }: { toast: PushToast; onOp
             ) : (
               <>
                 <strong>{open.name}</strong>
-                <span className="small muted">{t("{n} songs · {time}", { n: songs.length, time: clock(total) })}</span>
+                <span className="small muted">{songs.length === 1 ? t("1 song · {time}", { time: clock(total) }) : t("{n} songs · {time}", { n: songs.length, time: clock(total) })}</span>
                 <button className="link small" onClick={() => setRenaming(open.name)}>{t("Rename")}</button>
               </>
             )}
