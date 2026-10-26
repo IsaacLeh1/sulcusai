@@ -2136,7 +2136,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2558,6 +2558,8 @@ export interface TrainSpec {
   files: string[];
   /** Songs from the gallery. */
   songs: string[];
+  /** A recorded voice whose singing is learned too. */
+  voice?: string | null;
 }
 
 /** A model trained on the person's songs. */
@@ -2582,6 +2584,8 @@ export interface CustomModelsView {
   setup_bytes: number;
   /** ACE-Step 1.5 Base, which custom models play on, is installed. */
   base_installed: boolean;
+  /** Recorded voices (Your voice) and how many singing takes each has. */
+  voices?: { id: string; name: string; sung: number }[];
 }
 
 /** What the person likes in songs (My taste), from their own. */
@@ -3426,6 +3430,7 @@ export const api = {
   processorFallback: () => invoke<ProcessorFallback>("processor_fallback"),
   setProcessorFallback: (value: ProcessorFallback) => invoke<void>("set_processor_fallback", { value }),
   driverCheck: () => invoke<DriverNote[]>("driver_check"),
+  mediaSetCover: (id: string, path: string) => invoke<MediaItem>("media_set_cover", { id, path }),
   lineupList: () => invoke<LineupEntry[]>("lineup_list"),
   lineupMove: (id: string, to: number) => invoke<void>("lineup_move", { id, to }),
   lineupStartNowOptions: (id: string) => invoke<StartNow>("lineup_start_now_options", { id }),

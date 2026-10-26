@@ -430,6 +430,16 @@ select, .input {
 
 /* ---------- activity ---------- */
 .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+/* Choices in a group are rounded buttons joined edge to edge (they were
+   thin separate ovals): the group's ends are round, the picked one filled. */
+.filters:has(> .chip) { gap: 0; row-gap: 6px; }
+.filters > .chip { border-radius: 0; margin-left: -1px; padding: 6px 14px; font-size: 13px; line-height: 1.25; background: var(--panel); position: relative; transition: background 0.12s, color 0.12s; }
+.filters > .chip:first-child, .filters > :not(.chip) + .chip { margin-left: 0; border-top-left-radius: 12px; border-bottom-left-radius: 12px; }
+.filters > .chip:last-child, .filters > .chip:has(+ :not(.chip)) { border-top-right-radius: 12px; border-bottom-right-radius: 12px; }
+.filters > .chip:hover:not(.active) { background: var(--accent-soft); z-index: 1; }
+.filters > .chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text, #fff); z-index: 2; }
+.filters > :not(.chip) { margin-left: 8px; }
+.filters > :first-child:not(.chip) { margin-left: 0; }
 .chip { border: 1px solid var(--border); background: var(--panel); border-radius: 99px; padding: 4px 12px; cursor: pointer; font-size: 12.5px; }
 .chip.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .input.search { width: auto; flex: 1; min-width: 160px; padding: 5px 10px; }
@@ -2172,3 +2182,18 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .lineup-row .grow > strong { display: block; }
 .lineup-place { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; font-weight: 600; flex: none; }
 .lineup-choices { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+/* The "i" beside a setting, and its note. */
+.info-tip { position: relative; display: inline-flex; vertical-align: middle; margin-left: 4px; }
+.info-tip-btn { width: 17px; height: 17px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); font: italic 600 11px/1 Georgia, "Times New Roman", serif; display: grid; place-items: center; cursor: help; padding: 0; }
+.info-tip-btn:hover, .info-tip-btn:focus-visible, .info-tip-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.info-tip-pop { position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-50%); width: max-content; max-width: 300px; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 8px 10px; font-size: 12.5px; font-style: normal; font-weight: 400; line-height: 1.4; z-index: 40; white-space: normal; text-align: left; }
+.info-tip-pop.right { left: auto; right: -6px; transform: none; }
+.info-tip-pop.left { left: -6px; transform: none; }
+/* A group of settings that folds away. */
+.fold { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; border: 1px solid var(--border); border-radius: 12px; padding: 4px 10px; background: var(--panel); min-width: 0; }
+.fold-body > * { min-width: 0; }
+.fold-head { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: 0; padding: 6px 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.fold-chevron { display: inline-block; transition: transform 0.15s; color: var(--muted); font-size: 16px; line-height: 1; }
+.fold.open .fold-chevron { transform: rotate(90deg); }
+.fold-summary { flex: 1; min-width: 0; }
+.fold-body { flex-basis: 100%; display: grid; gap: 12px; padding: 4px 0 10px; }

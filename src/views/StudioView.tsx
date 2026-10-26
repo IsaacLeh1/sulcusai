@@ -41,6 +41,7 @@ import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
 import { LanguageSelect, namesIn, PodcastComposer, ScriptVoices, talkLanguage, VoiceSelect } from "../components/Podcast";
 import { AddToPlaylist, Playlists } from "../components/Library";
 import { CustomModelField } from "../components/CustomModels";
+import { Fold, InfoTip } from "../components/InfoTip";
 import { NewWindowIcon } from "../components/Icons";
 import { SongStudio } from "../components/SongStudio";
 import { projectForSong } from "../studio/open";
@@ -1359,6 +1360,32 @@ function MusicComposer({
   // Best of 3: each version listened to (about a quarter of its length).
   const listening = mode === "song" && bestOf && singing ? versions * songSecs * 0.25 : 0;
   const est = m ? (m.fit.est_secs * songSecs * (mode === "song" ? versions : 1) * (1 + 2 * layers)) / 30 + revoicing + listening : 0;
+  const keyTime = (
+    <div className="music-field">
+      <span className="music-label">{t("Key and time")}</span>
+      <div className="row wrap">
+        <select value={keyNote} onChange={(e) => setKeyNote(e.target.value)} aria-label={t("Key")}>
+          <option value="">{t("Any key")}</option>
+          {NOTES.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+        {keyNote && (
+          <div className="filters tight" role="group" aria-label={t("Major or minor")}>
+            <button className={`chip ${keyMode === "major" ? "active" : ""}`} onClick={() => setKeyMode("major")}>{t("Major")}</button>
+            <button className={`chip ${keyMode === "minor" ? "active" : ""}`} onClick={() => setKeyMode("minor")}>{t("Minor")}</button>
+          </div>
+        )}
+        <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
+          <option value="">{t("Any time signature")}</option>
+          {TIMES.map(([b, u]) => `${b}/${u}`).map((x) => (
+            <option key={x} value={x}>{x}</option>
+          ))}
+        </select>
+      </div>
+      {keyNote && <p className="small muted">{keyMode === "major" ? t("Major keys sound bright and settled.") : t("Minor keys sound darker or more emotional.")}</p>}
+    </div>
+  );
   return (
     <div className="form music-composer">
       <div className="mode-switch">
@@ -1373,7 +1400,7 @@ function MusicComposer({
 
       {mode === "song" && (
         <div className="music-field">
-          <span className="music-label">{t("Artist")}</span>
+          <span className="music-label">{t("Artist")}<InfoTip label={t("Artist")} text={t("Your saved artists: the same voice, seed and sound go into each of their songs, so new songs sound like the same singer. Save one from settings you like.")} /></span>
           <div className="row wrap">
             <select value={personaId} onFocus={loadPersonas} onChange={(e) => pickArtist(e.target.value)} aria-label={t("Artist")}>
               <option value="">{t("No saved artist")}</option>
@@ -1485,7 +1512,7 @@ function MusicComposer({
 
       {styled && (
         <div className="music-field">
-          <span className="music-label">{t("Sound like an artist")}</span>
+          <span className="music-label">{t("Sound like an artist")}<InfoTip label={t("Sound like an artist")} text={t("Type a singer or band you like. Their style is read, and the song is written and arranged their way, sung by a voice of the same kind (not their real voice).")} /></span>
           <div className="row wrap">
             <input
               className="input grow"
@@ -1517,9 +1544,11 @@ function MusicComposer({
       {styled && (
         <>
           <PickMany label={t("Style")} options={GENRES} value={genre} onChange={setGenre} other={t("Add another style (Enter)")} />
-          <PickMany label={t("Mood of the music")} options={MOODS} value={mood} onChange={setMood} other={t("Add another mood (Enter)")} />
-          {(mode !== "song" || vocals !== "none") && <PickMany label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Add another feeling (Enter)")} />}
-          <PickMany label={t("Instruments")} options={INSTRUMENTS} value={instruments} onChange={setInstruments} other={t("Add another (Enter)")} />
+          <Fold title={t("Mood, feeling and instruments")} summary={[...mood, ...emotion, ...instruments].map((x) => t(x)).join(", ") || t("As the song suits")}>
+            <PickMany label={t("Mood of the music")} options={MOODS} value={mood} onChange={setMood} other={t("Add another mood (Enter)")} />
+            {(mode !== "song" || vocals !== "none") && <PickMany label={t("Emotion in the words and voice")} options={EMOTIONS} value={emotion} onChange={setEmotion} other={t("Add another feeling (Enter)")} />}
+            <PickMany label={t("Instruments")} options={INSTRUMENTS} value={instruments} onChange={setInstruments} other={t("Add another (Enter)")} />
+          </Fold>
         </>
       )}
 
@@ -1534,7 +1563,7 @@ function MusicComposer({
       )}
       {mode === "song" && (
         <div className="music-field">
-          <span className="music-label">{t("Vocals")}</span>
+          <span className="music-label">{t("Vocals")}<InfoTip label={t("Vocals")} text={t("Lyrics written for me: words written from your description. My own lyrics: type or paste your words. Instrumental: no singing.")} /></span>
           <div className="row wrap">
             <div className="filters tight">
               {(["write", "mine", "none"] as const).map((v) => (
@@ -1571,10 +1600,11 @@ function MusicComposer({
             (ownVoices.length > 0 ? (
               <label className="small row wrap">
                 {t("Sung in")}
+                <InfoTip label={t("Sung in")} text={t("Pick one of your voices from Your voice. The song is made with that voice's singing as a guide, then sung again in it, so it sounds like you. For songs that start out in your voice, train a custom model on your voice (Custom model, Train one).")} />
                 <select value={ownVoice} onChange={(e) => setOwnVoice(e.target.value)} aria-label={t("Sung in")}>
                   <option value="">{t("The music model's singer")}</option>
                   {ownVoices.map((v) => (
-                    <option key={v.id} value={v.id}>{t("{name} (recorded voice)", { name: v.name })}</option>
+                    <option key={v.id} value={v.id}>{v.designed ? t("{name} (made voice)", { name: v.name }) : t("{name} (recorded voice)", { name: v.name })}</option>
                   ))}
                 </select>
                 {ownVoice && <span className="muted">{t("The song is made with this voice's singing as its guide, then sung again in it. The version before is under ← The original. It takes a few minutes more.")}</span>}
@@ -1584,20 +1614,6 @@ function MusicComposer({
             ))}
         </div>
       )}
-
-      {mode === "song" && vocals !== "none" && <VocalEffects value={vocalEffects} onChange={setVocalEffects} />}
-
-      {mode === "song" && (
-        <SongSections
-          value={sections}
-          onChange={(v) => {
-            setSections(v);
-            // The length follows the structure (it can still be changed after).
-            if (v.length) setSeconds(structureSeconds(v));
-          }}
-        />
-      )}
-      {mode === "song" && vocals !== "none" && <Chips label={t("Rhyme")} options={RHYMES} value={rhyme} onChange={setRhyme} />}
 
       {sings && (mode === "edit" || vocals !== "none") && (
         <div className="music-field">
@@ -1641,106 +1657,101 @@ function MusicComposer({
       )}
 
       {mode === "song" && (
-        <div className="music-field">
-          <span className="music-label">{t("Harmonies")}</span>
-          {vocals !== "none" && (
-            <div className="filters tight wrap" role="group" aria-label={t("Harmony singers")}>
-              <span className="small muted">{t("Singers:")}</span>
-              {HARMONY_VOICES.map(([v, n]) => (
-                <button key={v || "none"} className={`chip ${harmonyVoice === v ? "active" : ""}`} onClick={() => setHarmonyVoice(v)}>{t(n)}</button>
-              ))}
+        <Fold title={t("Voice details")} summary={[vocalEffects.length ? t("{n} vocal effects", { n: vocalEffects.length }) : "", rhyme ? t(rhyme) : "", harmonyVoice ? t("harmonies") : "", harmonyInstrument ? t(harmonyInstrument) : ""].filter(Boolean).join(", ") || t("As the song suits")} info={t("How the singing sounds: effects like vibrato or falsetto on parts of the song, how the lines rhyme, and backing harmonies.")}>
+          {mode === "song" && vocals !== "none" && <VocalEffects value={vocalEffects} onChange={setVocalEffects} />}
+          {mode === "song" && vocals !== "none" && <Chips label={t("Rhyme")} options={RHYMES} value={rhyme} onChange={setRhyme} />}
+          {mode === "song" && (
+            <div className="music-field">
+              <span className="music-label">{t("Harmonies")}</span>
+              {vocals !== "none" && (
+                <div className="filters tight wrap" role="group" aria-label={t("Harmony singers")}>
+                  <span className="small muted">{t("Singers:")}</span>
+                  {HARMONY_VOICES.map(([v, n]) => (
+                    <button key={v || "none"} className={`chip ${harmonyVoice === v ? "active" : ""}`} onClick={() => setHarmonyVoice(v)}>{t(n)}</button>
+                  ))}
+                </div>
+              )}
+              {vocals !== "none" && harmonyVoice && (
+                <div className="filters tight wrap" role="group" aria-label={t("How the harmonies are sung")}>
+                  <span className="small muted">{t("Sung:")}</span>
+                  {HARMONY_STYLES.map(([v, n, why]) => (
+                    <button key={v} className={`chip ${harmonyStyle === v ? "active" : ""}`} onClick={() => setHarmonyStyle(v)} title={t(why)}>{t(n)}</button>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-          {vocals !== "none" && harmonyVoice && (
-            <div className="filters tight wrap" role="group" aria-label={t("How the harmonies are sung")}>
-              <span className="small muted">{t("Sung:")}</span>
-              {HARMONY_STYLES.map(([v, n, why]) => (
-                <button key={v} className={`chip ${harmonyStyle === v ? "active" : ""}`} onClick={() => setHarmonyStyle(v)} title={t(why)}>{t(n)}</button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      {mode === "song" && <PickOne label={t("Harmony instrument")} options={HARMONY_INSTRUMENTS} value={harmonyInstrument} onChange={setHarmonyInstrument} other={t("Other instrument")} />}
-      {mode === "song" && harmonized && (
-        <div className="music-field">
-          <div className="filters tight wrap" role="group" aria-label={t("Where the harmonies come in")}>
-            <span className="small muted">{t("Where:")}</span>
-            {HARMONY_WHERE.map(([v, n]) => (
-              <button key={v} className={`chip ${harmonyWhere === v ? "active" : ""}`} onClick={() => setHarmonyWhere(v)}>{t(n)}</button>
-            ))}
-          </div>
-          <label className="check small">
-            <input type="checkbox" checked={harmonyLayer && canLayer} disabled={!canLayer} onChange={(e) => setHarmonyLayer(e.target.checked)} />
-            {t("Layer them on afterwards, for fuller harmonies (takes longer)")}
-          </label>
-          {!canLayer && (
-            <p className="small muted">
-              {t("Layering needs ACE-Step 1.5 Base.")} <button className="link" onClick={onModels}>{t("Get it")}</button>
-            </p>
-          )}
-          {vocals === "mine" && harmonyVoice && <p className="small muted">{t("In your lyrics, put what the harmony singers sing in round brackets, e.g. We'll find our way (find our way).")}</p>}
-        </div>
-      )}
-
-      {mode === "song" && (
-        <div className="music-field">
-          <span className="music-label">{t("Tempo")}</span>
-          <div className="row wrap">
-            <div className="filters tight">
-              <button className={`chip ${bpm === null ? "active" : ""}`} onClick={() => setBpm(null)}>{t("Auto")}</button>
-              {PACES.map(([label, b]) => (
-                <button key={label} className={`chip ${bpm === b ? "active" : ""}`} onClick={() => setBpm(b)}>{t(label)}</button>
-              ))}
-            </div>
-            {bpm !== null && (
-              <label className="small music-length">
-                <input type="range" min={50} max={200} value={bpm} onChange={(e) => setBpm(+e.target.value)} aria-label={t("Beats a minute")} />
-                {t("{n} beats a minute", { n: bpm })}
-              </label>
-            )}
-          </div>
-        </div>
-      )}
-
-      {mode === "song" && <PickOne label={t("Beat")} options={BEATS} value={beat} onChange={setBeat} other={t("Other beat")} />}
-
-      {mode !== "sound" && (
-        <div className="music-field">
-          <span className="music-label">{t("Key and time")}</span>
-          <div className="row wrap">
-            <select value={keyNote} onChange={(e) => setKeyNote(e.target.value)} aria-label={t("Key")}>
-              <option value="">{t("Any key")}</option>
-              {NOTES.map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-            {keyNote && (
-              <div className="filters tight" role="group" aria-label={t("Major or minor")}>
-                <button className={`chip ${keyMode === "major" ? "active" : ""}`} onClick={() => setKeyMode("major")}>{t("Major")}</button>
-                <button className={`chip ${keyMode === "minor" ? "active" : ""}`} onClick={() => setKeyMode("minor")}>{t("Minor")}</button>
+          {mode === "song" && <PickOne label={t("Harmony instrument")} options={HARMONY_INSTRUMENTS} value={harmonyInstrument} onChange={setHarmonyInstrument} other={t("Other instrument")} />}
+          {mode === "song" && harmonized && (
+            <div className="music-field">
+              <div className="filters tight wrap" role="group" aria-label={t("Where the harmonies come in")}>
+                <span className="small muted">{t("Where:")}</span>
+                {HARMONY_WHERE.map(([v, n]) => (
+                  <button key={v} className={`chip ${harmonyWhere === v ? "active" : ""}`} onClick={() => setHarmonyWhere(v)}>{t(n)}</button>
+                ))}
               </div>
-            )}
-            <select value={meter} onChange={(e) => setMeter(e.target.value)} aria-label={t("Time signature")}>
-              <option value="">{t("Any time signature")}</option>
-              {TIMES.map(([b, u]) => `${b}/${u}`).map((x) => (
-                <option key={x} value={x}>{x}</option>
-              ))}
-            </select>
-          </div>
-          {keyNote && <p className="small muted">{keyMode === "major" ? t("Major keys sound bright and settled.") : t("Minor keys sound darker or more emotional.")}</p>}
-        </div>
+              <label className="check small">
+                <input type="checkbox" checked={harmonyLayer && canLayer} disabled={!canLayer} onChange={(e) => setHarmonyLayer(e.target.checked)} />
+                {t("Layer them on afterwards, for fuller harmonies (takes longer)")}
+              </label>
+              {!canLayer && (
+                <p className="small muted">
+                  {t("Layering needs ACE-Step 1.5 Base.")} <button className="link" onClick={onModels}>{t("Get it")}</button>
+                </p>
+              )}
+              {vocals === "mine" && harmonyVoice && <p className="small muted">{t("In your lyrics, put what the harmony singers sing in round brackets, e.g. We'll find our way (find our way).")}</p>}
+            </div>
+          )}
+        </Fold>
       )}
-
       {mode === "song" && (
-        <>
-          <PickOne label={t("Lead instrument")} options={LEAD_INSTRUMENTS} value={leadInstrument} onChange={setLeadInstrument} other={t("Other instrument")} />
-          <Chips label={t("Energy")} options={ENERGIES} value={energy} onChange={setEnergy} />
-          <Chips label={t("Ending")} options={ENDINGS} value={ending} onChange={setEnding} />
-          <Chips label={t("Era")} options={ERAS} value={era} onChange={setEra} />
-          <Chips label={t("Production")} options={PRODUCTIONS} value={production} onChange={setProduction} />
-        </>
+        <Fold title={t("Structure, tempo and key")} summary={[sections.length ? t("{n} sections", { n: sections.length }) : "", bpm !== null ? t("{n} beats a minute", { n: bpm }) : "", beat ? t(beat) : "", keyNote ? `${keyNote} ${keyMode === "major" ? t("Major") : t("Minor")}` : "", meter, leadInstrument ? t(leadInstrument) : "", energy ? t(energy) : "", ending ? t(ending) : "", era ? t(era) : "", production ? t(production) : ""].filter(Boolean).join(", ") || t("As the song suits")} info={t("The song's sections in order, its speed, beat, key and time signature, lead instrument, energy, ending, era and production. Left as they are, the song decides.")}>
+          {mode === "song" && (
+            <SongSections
+              value={sections}
+              onChange={(v) => {
+                setSections(v);
+                // The length follows the structure (it can still be changed after).
+                if (v.length) setSeconds(structureSeconds(v));
+              }}
+            />
+          )}
+          {mode === "song" && (
+            <div className="music-field">
+              <span className="music-label">{t("Tempo")}</span>
+              <div className="row wrap">
+                <div className="filters tight">
+                  <button className={`chip ${bpm === null ? "active" : ""}`} onClick={() => setBpm(null)}>{t("Auto")}</button>
+                  {PACES.map(([label, b]) => (
+                    <button key={label} className={`chip ${bpm === b ? "active" : ""}`} onClick={() => setBpm(b)}>{t(label)}</button>
+                  ))}
+                </div>
+                {bpm !== null && (
+                  <label className="small music-length">
+                    <input type="range" min={50} max={200} value={bpm} onChange={(e) => setBpm(+e.target.value)} aria-label={t("Beats a minute")} />
+                    {t("{n} beats a minute", { n: bpm })}
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
+
+          {mode === "song" && <PickOne label={t("Beat")} options={BEATS} value={beat} onChange={setBeat} other={t("Other beat")} />}
+
+          {keyTime}
+
+          {mode === "song" && (
+            <>
+              <PickOne label={t("Lead instrument")} options={LEAD_INSTRUMENTS} value={leadInstrument} onChange={setLeadInstrument} other={t("Other instrument")} />
+              <Chips label={t("Energy")} options={ENERGIES} value={energy} onChange={setEnergy} />
+              <Chips label={t("Ending")} options={ENDINGS} value={ending} onChange={setEnding} />
+              <Chips label={t("Era")} options={ERAS} value={era} onChange={setEra} />
+              <Chips label={t("Production")} options={PRODUCTIONS} value={production} onChange={setProduction} />
+            </>
+          )}
+        </Fold>
       )}
+      {mode === "edit" && keyTime}
 
       {mode !== "sound" && (
         <button className="link small music-more" onClick={() => setMore((x) => !x)} aria-expanded={more}>
@@ -1752,12 +1763,14 @@ function MusicComposer({
           {mode === "song" && (
             <label className="row music-length" title={t("How far from the usual: surprising sounds, words and structure at the top, by the book at the bottom")}>
               {t("Weirdness")}
+              <InfoTip label={t("Weirdness")} text={t("How far the song strays from what's usual for its style. Low keeps to familiar chords, structure and words; high tries surprising sounds, harmonies and turns. Auto picks for the style.")} />
               <input type="range" min={0} max={100} step={5} value={weird ?? 50} onChange={(e) => setWeird(+e.target.value)} />
               {weird == null ? t("Auto") : `${weird}%`}
             </label>
           )}
           <label className="row music-length" title={t("How closely the music model follows the description and style: loosely at the bottom, strictly at the top")}>
             {t("Style influence")}
+            <InfoTip label={t("Style influence")} text={t("How closely the song follows your description and the styles you picked. Low takes them as a loose hint, so the music model adds its own ideas; high sticks to them closely, which can sound stiffer.")} />
             <input type="range" min={0} max={100} step={5} value={influence ?? 50} onChange={(e) => setInfluence(+e.target.value)} />
             {influence == null ? t("Auto") : `${influence}%`}
           </label>
@@ -2186,14 +2199,30 @@ function Viewer({
                   </>
                 )}
               </div>
-              {can("generate") && (
-                <div className="row wrap small">
-                  <input className="input" value={artWords} onChange={(e) => setArtWords(e.target.value)} placeholder={t("What the cover shows (optional)")} aria-label={t("What the cover shows (optional)")} />
-                  <button className="btn small" onClick={() => run({ op: "cover_art", prompt: artWords })} title={t("A square picture for the song from the picture model, without words in it")}>
-                    {item.poster ? t("New cover art") : t("Make cover art")}
-                  </button>
-                </div>
-              )}
+              <div className="row wrap small">
+                {can("generate") && (
+                  <>
+                    <input className="input" value={artWords} onChange={(e) => setArtWords(e.target.value)} placeholder={t("What the cover shows (optional)")} aria-label={t("What the cover shows (optional)")} />
+                    <button className="btn small" onClick={() => run({ op: "cover_art", prompt: artWords })} title={t("A square picture for the song from the picture model, without words in it")}>
+                      {item.poster ? t("New cover art") : t("Make cover art")}
+                    </button>
+                  </>
+                )}
+                <button
+                  className="btn small ghost"
+                  title={t("A picture of your own as the song's cover (cut to a square)")}
+                  onClick={async () => {
+                    try {
+                      const p = await openFile({ multiple: false, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }] });
+                      if (typeof p === "string") onChanged(await api.mediaSetCover(item.id, p));
+                    } catch (e) {
+                      toast(errorText(e), "error");
+                    }
+                  }}
+                >
+                  {t("Use my own picture…")}
+                </button>
+              </div>
               {item.op !== "narrate" && singers.length > 0 && (
                 <div className="row wrap small">
                   <select value={singer} onChange={(e) => setSinger(e.target.value)} aria-label={t("Recorded voice")}>

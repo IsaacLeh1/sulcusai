@@ -1554,6 +1554,8 @@ fn op_what(op: &str) -> &'static str {
         "map" | "stems" | "dry" => "Taking the song apart",
         "revoice" => "Singing the song in another voice",
         "tune" | "coach" => "Working on the tune",
+        "train" => "Training a custom model",
+        "trainer" => "Getting the trainer",
         _ => "This job",
     }
 }
@@ -1685,7 +1687,7 @@ fn recorded_voice(req: &Request) -> Option<&str> {
 
 /// Jobs that need no media model: speech, and work on songs already made.
 fn no_model(op: &str) -> bool {
-    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train")
+    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -1700,13 +1702,13 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     if req.op == "studio_part" && req.music.as_ref().and_then(|m| m.track.as_deref()).is_none_or(|t| !music::PARTS.contains(&t)) {
         return Err(format!("Pick the part to make ({}).", music::PARTS.join(", ").replace('_', " ")));
     }
-    if req.op == "train" {
-        let t = req.train.as_ref().ok_or("Pick your songs first.")?;
-        if t.name.trim().is_empty() {
+    if req.op == "train" || req.op == "trainer" {
+        let t = req.train.clone().unwrap_or_default();
+        if req.op == "train" && t.name.trim().is_empty() {
             return Err("Give the custom model a name.".into());
         }
-        if t.files.len() + t.songs.len() < 3 {
-            return Err("Pick at least 3 of your songs (10 or more teach it better).".into());
+        if req.op == "train" && t.files.len() + t.songs.len() == 0 && t.voice.as_deref().is_none_or(str::is_empty) {
+            return Err("Pick at least one of your songs, or a voice with singing (3 or more songs teach its sound, 10 or more teach it best).".into());
         }
         if state.catalog.media.trainer.is_none() || !cfg!(windows) {
             return Err("Training isn't available on this system yet.".into());
@@ -1821,6 +1823,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
         _ if req.op == "train" => train_estimate(state, &req),
+        _ if req.op == "trainer" => 900.0,
         // Writing, then reading about as fast as it plays.
         _ if req.op == "podcast" => 60.0 + 50.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(5.0) as f64,
         _ if req.op == "dialogue" => 10.0 + req.prompt.len() as f64 / 40.0,
@@ -3344,6 +3347,14 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "studio_part" => studio_part(&ctx, model.ok_or("Making a part needs ACE-Step 1.5 Base (Models).")?, &work.0).await,
         #[cfg(windows)]
         "train" => train_job(&ctx, &work.0).await,
+        // The trainer and its files only, ahead of training.
+        #[cfg(windows)]
+        "trainer" => {
+            let t = state.catalog.media.trainer.clone().ok_or("Training isn't available on this system yet.")?;
+            ensure_trainer(&ctx, &t).await?;
+            emit(state, "media:trained", json!({}));
+            Ok(Vec::new())
+        }
         #[cfg(windows)]
         "song_video" => song_video_job(&ctx, &work.0).await,
         "remake" => remake_job(&ctx, model.ok_or("No music model.")?, &work.0).await,
@@ -4700,10 +4711,10 @@ async fn ensure_trainer(ctx: &RunCtx<'_>, t: &train::TrainerCatalog) -> Result<P
     let state = ctx.state;
     let paths = &state.paths;
     (ctx.progress)("Getting the trainer (once)", 0.01);
-    let uv = engine::ensure_unpacked(paths, "trainer-uv-bin", &t.uv, "uv.exe", ctx.cancel, |_, _| {}).await?;
+    let uv = engine::ensure_unpacked(paths, "trainer-uv-bin", &t.uv, "uv.exe", ctx.cancel, |r, all| (ctx.progress)("Getting the trainer (once)", 0.01 * r as f64 / all.max(1) as f64)).await?;
     let source = train::source_dir(paths, t);
     let dir_name = source.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    engine::ensure_unpacked(paths, &dir_name, &t.source, "train.py", ctx.cancel, |_, _| {}).await?;
+    engine::ensure_unpacked(paths, &dir_name, &t.source, "train.py", ctx.cancel, |r, all| (ctx.progress)("Getting the trainer (once)", 0.01 + 0.01 * r as f64 / all.max(1) as f64)).await?;
     if !source.join(".venv").join("Scripts").join("python.exe").is_file() {
         // Its Python and packages (PyTorch for NVIDIA cards and the rest), as locked.
         state.log("network", "Downloading the music trainer's Python packages from pypi.org and download.pytorch.org");
@@ -4771,6 +4782,19 @@ async fn train_job(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<Media
         let to = audio.join(format!("{:02}.{ext}", copies.len() + 1));
         std::fs::copy(&from, &to).map_err(|e| format!("Couldn't read {}: {e}", from.display()))?;
         copies.push(to);
+    }
+    // A recorded voice's singing, take by take (short ones teach little).
+    if let Some(vid) = spec.voice.as_deref().filter(|v| !v.is_empty()) {
+        let voice = own_voice::get(&state.db.lock().unwrap(), &c, vid).ok_or("That recorded voice is no longer here.")?;
+        let takes: Vec<Vec<f32>> = own_voice::sung_takes(&state.paths, &c, &voice)?.into_iter().filter(|t| t.len() >= 48_000 * 4).collect();
+        if takes.is_empty() {
+            return Err(format!("“{}” has no singing recorded yet (4 seconds or more): sing the singing lines in Your voice, or add songs where you sing.", voice.name));
+        }
+        for take in takes {
+            let to = audio.join(format!("{:02}.wav", copies.len() + 1));
+            std::fs::write(&to, crate::audio::wav_encode(&take, 48_000)).map_err(|e| e.to_string())?;
+            copies.push(to);
+        }
     }
     for id in &spec.songs {
         let item = store::get(&state.db.lock().unwrap(), &c, id).ok_or("A song picked is no longer in the gallery.")?;
@@ -4874,6 +4898,8 @@ pub fn music_custom_models(state: AppStateRef) -> Result<serde_json::Value, Stri
     Ok(json!({
         "models": models,
         "available": t.is_some() && cfg!(windows),
+        // Recorded voices and how much singing each has, to train on.
+        "voices": own_voice::list(&state.db.lock().unwrap(), &c).iter().map(|v| json!({ "id": v.id, "name": v.name, "sung": own_voice::sung_count(v) })).collect::<Vec<_>>(),
         "nvidia": crate::natural::nvidia_here(&state),
         "ready": t.is_some_and(|t| train::ready(&state.paths, t)),
         "setup_bytes": t.map_or(0, train::setup_bytes),
@@ -5851,6 +5877,15 @@ async fn cover_art(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> 
     let _ = store::delete(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &pic.id);
     let img = imaging::decode(&bytes)?;
     Ok(vec![set_cover(ctx.state, &c, &song.id, &img)?])
+}
+
+/// A picture of the person's own, chosen in the window, as a song's cover.
+#[tauri::command(async)]
+pub fn media_set_cover(state: AppStateRef, id: String, path: String) -> Result<MediaItem, String> {
+    let c = state.work_cipher()?;
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read that picture: {e}"))?;
+    let img = imaging::decode(&bytes).map_err(|_| "That file isn't a picture SulcusAI can read (PNG, JPEG, WebP, GIF or BMP).".to_string())?;
+    set_cover(&state, &c, &id, &img)
 }
 
 /// Saves a still frame the window took from a video as its thumbnail

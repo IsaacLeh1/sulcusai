@@ -207,6 +207,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   studio_part: tx("Making a part for the song studio"),
   song_video: tx("Making a song video"),
   train: tx("Training a custom model on your songs"),
+  trainer: tx("Getting the trainer"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

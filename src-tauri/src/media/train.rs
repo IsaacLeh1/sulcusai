@@ -64,6 +64,9 @@ pub struct TrainSpec {
     pub files: Vec<String>,
     /// Songs from the gallery.
     pub songs: Vec<String>,
+    /// A recorded voice (Your voice) whose singing is learned too.
+    #[serde(default)]
+    pub voice: Option<String>,
 }
 
 /// A trained model.

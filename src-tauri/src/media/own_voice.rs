@@ -302,6 +302,17 @@ async fn hear_missing_words(state: &Arc<AppState>, c: &Cipher, voice_id: &str, s
     }
 }
 
+/// How many takes of singing a voice has (what training on the voice learns from).
+pub fn sung_count(voice: &OwnVoice) -> usize {
+    voice.takes_of(LineKind::Sing).count()
+}
+
+/// A voice's singing, take by take (48 kHz mono), clearest added files
+/// first: what a custom model learns the voice from.
+pub fn sung_takes(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<Vec<Vec<f32>>, String> {
+    voice.order(LineKind::Sing, SING_ORDER).iter().filter(|l| voice.takes.iter().any(|t| &t.line == *l)).map(|l| read_take(paths, c, &voice.id, l)).collect()
+}
+
 /// What songs are sung like: their singing (else their reading), at 44.1
 /// kHz; and whether it was singing.
 pub fn singing_reference(paths: &Paths, c: &Cipher, voice: &OwnVoice) -> Result<(Vec<f32>, bool), String> {

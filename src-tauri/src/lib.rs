@@ -2933,6 +2933,7 @@ pub fn run() {
             media::media_thumb,
             media::media_delete,
             media::media_set_poster,
+            media::media_set_cover,
             media::media_favorite,
             media::media_set_title,
             media::media_dislike,
