@@ -43,6 +43,7 @@ import { AddToPlaylist, Playlists } from "../components/Library";
 import { CustomModelField } from "../components/CustomModels";
 import { Fold, InfoTip } from "../components/InfoTip";
 import { LoraField } from "../components/LoraField";
+import { VideoEditor } from "../components/VideoEditor";
 import { NewWindowIcon } from "../components/Icons";
 import { SongStudio } from "../components/SongStudio";
 import { projectForSong } from "../studio/open";
@@ -2346,6 +2347,7 @@ function Viewer({
               <SetWallpaperButton item={item} toast={toast} />
             </div>
           )}
+          {item.kind === "video" && features.has("video") && <VideoEditor item={item} run={run} video={() => document.querySelector<HTMLVideoElement>(".viewer video")} />}
           <span className="spacer" />
           {item.kind === "audio" && (
             <div className="row wrap">

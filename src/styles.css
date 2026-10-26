@@ -2208,3 +2208,9 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 /* The picture form's LoRAs. */
 .lora-pick { gap: 6px; }
 .lora-edit { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-top: 6px; }
+/* A video's edits. */
+.video-editor { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.video-editor select { max-width: 100%; min-width: 0; }
+.video-editor .ve-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.video-editor .ve-bound { display: inline-flex; align-items: center; gap: 6px; }
+.video-editor .input.num { width: 76px; }

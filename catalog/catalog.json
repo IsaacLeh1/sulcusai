@@ -5721,6 +5721,18 @@
         ]
       }
     ],
+    "ffmpeg": {
+      "name": "FFmpeg (essentials build by gyan.dev)",
+      "license": "GPL-3.0",
+      "build": "9.0.2",
+      "assets": {
+        "cpu-x64": {
+          "url": "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip",
+          "size": 114768076,
+          "sha256": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
+        }
+      }
+    },
     "separator": {
       "name": "HTDemucs",
       "source": "https://github.com/facebookresearch/demucs",

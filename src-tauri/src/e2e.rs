@@ -1367,6 +1367,130 @@ async fn e2e_a_pose_from_a_picture() {
     println!("pictures in {}", out.display());
 }
 
+/// Videos edited with FFmpeg (downloaded the first time): a clip cut to a
+/// stretch, joined with itself, given a song as its sound, the song mixed
+/// in, and its sound taken off; each checked by what FFprobe finds in it.
+///     cargo test e2e_videos_are_edited -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_videos_are_edited() {
+    use crate::media::{self, store, MediaItem, Request, VideoEdit};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
+    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "an explainer".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
+    let song = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "audio".into(), mime: "audio/mpeg".into(), op: "import".into(), prompt: "a song".into(), seconds: 100.0, ..Default::default() }, &std::fs::read(r"C:\dev\tools\compose-merge\own-words-real-0.375.mp3").unwrap(), None).unwrap();
+    let edit = |e: VideoEdit| Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(e), ..Default::default() };
+    let probe = |item: &MediaItem| {
+        let p = std::env::temp_dir().join(format!("{}.mp4", item.id));
+        std::fs::write(&p, store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+        p
+    };
+    let cut = media::run(&state, store::new_id(), edit(VideoEdit { trim: Some([2.0, 7.0]), ..Default::default() })).await.unwrap().remove(0);
+    let joined = media::run(&state, store::new_id(), edit(VideoEdit { trim: Some([0.0, 4.0]), join: vec![cut.id.clone()], ..Default::default() })).await.unwrap().remove(0);
+    let sung = media::run(&state, store::new_id(), edit(VideoEdit { trim: Some([0.0, 6.0]), audio: Some(song.id.clone()), ..Default::default() })).await.unwrap().remove(0);
+    let mixed = media::run(&state, store::new_id(), edit(VideoEdit { trim: Some([0.0, 6.0]), audio: Some(song.id.clone()), audio_mode: Some("mix".into()), volume: Some(0.5), ..Default::default() })).await.unwrap().remove(0);
+    let quiet = media::run(&state, store::new_id(), edit(VideoEdit { trim: Some([0.0, 3.0]), mute: true, ..Default::default() })).await.unwrap().remove(0);
+    let engines = Paths::new(app_data_dir()).unwrap().engines;
+    let ffprobe = walkdir_find(&engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    for (name, item, secs, sound) in [("cut", &cut, 5.0, true), ("joined", &joined, 9.0, true), ("sung", &sung, 6.0, true), ("mixed", &mixed, 6.0, true), ("quiet", &quiet, 3.0, false)] {
+        let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &probe(item)).await;
+        println!("{name}: {:.2} s, {}x{}, sound: {}, still: {}", p.seconds, p.width, p.height, p.audio, item.poster);
+        assert!((p.seconds - secs).abs() < 0.6, "{name} is {:.2} s, not {secs}", p.seconds);
+        assert_eq!(p.audio, sound, "{name}'s sound");
+        assert!(item.poster, "{name} has a still");
+    }
+    std::fs::write(r"C:\dev\tools\voice\tests\e2e-video-sung.mp4", store::read(&state.paths, &c, &sung.id).unwrap()).unwrap();
+}
+
+/// The explainer's first 20 s dubbed into Spanish: whisper hears it, Qwen3
+/// 4B (installed) translates, a natural voice says it; whisper then hears
+/// Spanish in the dubbed video, as long as the clip. Written to
+/// C:\dev\tools\voice\tests\e2e-video-dubbed.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_video_is_dubbed() {
+    use crate::media::{self, store, MediaItem, Request, VideoEdit};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    crate::natural::install_for_test(&state).await.unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+    // The chat model that translates, loaded as the app would.
+    let real = Paths::new(app_data_dir()).unwrap();
+    let spec = state.catalog.model("qwen3-4b-2507").unwrap().clone();
+    let budget = Budget::from_hardware(&state.hardware.read().unwrap());
+    let exe = engine::installed_server(&real, &state.catalog.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let file = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
+    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None).await.unwrap();
+
+    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
+    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "an explainer".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
+    let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, 20.0]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
+    let started = std::time::Instant::now();
+    let dubbed = media::run(&state, store::new_id(), Request { op: "dub".into(), source: Some(part.id.clone()), language: Some("es".into()), ..Default::default() }).await.unwrap().remove(0);
+    println!("dubbed in {:.0} s", started.elapsed().as_secs_f64());
+    state.engine.lock().await.stop().await;
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-video-dubbed.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &dubbed.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&real.engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("dubbed: {:.2} s, {}x{}, sound: {}", p.seconds, p.width, p.height, p.audio);
+    assert!((p.seconds - 20.0).abs() < 0.6 && p.audio && dubbed.poster);
+    let ffmpeg = ffprobe.with_file_name("ffmpeg.exe");
+    let wav = std::env::temp_dir().join(format!("dubbed-{}.wav", dubbed.id));
+    let ok = std::process::Command::new(&ffmpeg).args(["-y", "-v", "error", "-i"]).arg(&out).args(["-ac", "1", "-ar", "16000"]).arg(&wav).status().unwrap();
+    assert!(ok.success());
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    let (samples, _, _) = crate::media::audio_in::decode(&wav).unwrap();
+    let heard = crate::speech::transcribe(&ep, &samples, &crate::speech::Options { language: Some("auto".into()), ..Default::default() }).await.unwrap();
+    println!("heard ({:?}): {}", heard.language, heard.text);
+    assert!(heard.language.as_deref().is_some_and(|l| l == "es" || l.eq_ignore_ascii_case("spanish")), "Spanish is heard");
+}
+
+/// Sound made for an 8 s clip by the music model (ACE-Step 1.5) and mixed
+/// with its own: the result is as long as the clip, with a sound kept in
+/// the gallery for it. Written to C:\dev\tools\voice\tests\e2e-video-sound.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_video_gets_sound() {
+    use crate::media::{self, store, MediaItem, Request, VideoEdit};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    media::install_for_test(&state, "ace-step-1.5").await.unwrap();
+    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
+    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "a leaf in the sun".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
+    let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, 8.0]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
+    let started = std::time::Instant::now();
+    let made = media::run(&state, store::new_id(), Request { op: "video_sound".into(), source: Some(part.id.clone()), prompt: "soft piano and birdsong".into(), ..Default::default() }).await.unwrap();
+    println!("made in {:.0} s: {:?}", started.elapsed().as_secs_f64(), made.iter().map(|m| (&m.kind, &m.op)).collect::<Vec<_>>());
+    let with = made.iter().find(|m| m.kind == "video").expect("a video");
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-video-sound.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &with.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&Paths::new(app_data_dir()).unwrap().engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("with sound: {:.2} s, sound: {}", p.seconds, p.audio);
+    assert!((p.seconds - 8.0).abs() < 0.6 && p.audio && with.op == "video_sound");
+    let sounds = store::list(&state.db.lock().unwrap(), &c, Some("audio"), 10, None);
+    assert!(!sounds.is_empty(), "the sound made is in the gallery too");
+}
+
+fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    for e in std::fs::read_dir(root).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if let Some(f) = walkdir_find(&p, name) {
+                return Some(f);
+            }
+        } else if p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)) {
+            return Some(p);
+        }
+    }
+    None
+}
+
 /// A reply past a small length limit is carried on to its end.
 ///     SULCUSAI_TEST_GGUF is the model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

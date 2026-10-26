@@ -2138,7 +2138,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2675,6 +2675,8 @@ export interface MediaRequest {
   loras?: [string, number][];
   /** A picture (gallery id) whose people's pose the new one takes. */
   pose?: string | null;
+  /** What to do to a video (video_edit). */
+  edit?: VideoEdit | null;
   /** The prompt writer rewrites the description for this model. */
   write_prompt?: boolean;
   /** The picture reader checks the result and it's made again if things are missing. */
@@ -3543,6 +3545,17 @@ export interface LineupEntry {
 export interface StartNow {
   processor: boolean;
   in_the_way: LineupEntry[];
+}
+
+/** A video's edits (media/mod.rs `VideoEdit`). */
+export interface VideoEdit {
+  trim?: [number, number] | null;
+  join?: string[];
+  audio?: string | null;
+  audio_file?: string | null;
+  audio_mode?: "replace" | "mix";
+  volume?: number;
+  mute?: boolean;
 }
 
 /** One of the person's own LoRAs for pictures (media/loras.rs). */
