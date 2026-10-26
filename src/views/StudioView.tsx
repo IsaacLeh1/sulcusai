@@ -42,6 +42,7 @@ import { LanguageSelect, namesIn, PodcastComposer, ScriptVoices, talkLanguage, V
 import { AddToPlaylist, Playlists } from "../components/Library";
 import { CustomModelField } from "../components/CustomModels";
 import { Fold, InfoTip } from "../components/InfoTip";
+import { LoraField } from "../components/LoraField";
 import { NewWindowIcon } from "../components/Icons";
 import { SongStudio } from "../components/SongStudio";
 import { projectForSong } from "../studio/open";
@@ -628,11 +629,22 @@ function PictureComposer({
   const canEdit = models.some((x) => x.can.includes("edit"));
   const [examples, setExamples] = useState<MediaItem[]>([]);
   const [use, setUse] = useState<ExampleUse>("style");
+  const [loras, setLoras] = useState<[string, number][]>([]);
+  useEffect(() => {
+    const same = (e: Event) => {
+      const item = (e as CustomEvent<MediaItem>).detail;
+      setExamples([item]);
+      setUse("subject");
+      document.querySelector(".picture-composer")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    window.addEventListener("studio:same-character", same);
+    return () => window.removeEventListener("studio:same-character", same);
+  }, []);
   const help = usePromptHelp(m?.id);
   const ask = useAskFirst();
   const local = !!m && !m.id.startsWith("cloud:");
   const make = async (description: string) => {
-    const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check } : {};
+    const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check, loras } : {};
     if (await onStart({ op: "generate", prompt: description, shape, count, style, model_id: m?.id, ...extra })) {
       setPrompt("");
       setExamples([]);
@@ -645,7 +657,7 @@ function PictureComposer({
     await make(prompt);
   };
   return (
-    <div className="form">
+    <div className="form picture-composer">
       {ask.questions && <PictureQuestions key={ask.questions.join("\n")} questions={ask.questions} prompt={prompt} onMake={make} />}
       <textarea
         className="input"
@@ -686,6 +698,7 @@ function PictureComposer({
         <button className="btn primary" disabled={!prompt.trim() || ask.asking} onClick={go}>{ask.asking ? t("Checking…") : t("Create")}</button>
       </div>
       {local && <ExamplePicker value={examples} onChange={setExamples} use={use} onUse={setUse} gallery={gallery} toast={toast} canRead={!!help.status?.reader} />}
+      {local && m && <LoraField modelId={m.id} value={loras} onChange={setLoras} toast={toast} />}
       <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} canAsk />
       {lifelike && (style === "auto" || style === "photo" || style === "phone_photo") && (
         <p className="small callout">
@@ -2243,6 +2256,16 @@ function Viewer({
                 {can("fill") && <button className={`chip ${tool === "fill" ? "active" : ""}`} onClick={() => setTool(tool === "fill" ? null : "fill")}>{t("Paint to fill in")}</button>}
                 {can("extend") && <button className={`chip ${tool === "extend" ? "active" : ""}`} onClick={() => setTool(tool === "extend" ? null : "extend")}>{t("Extend")}</button>}
                 {can("restyle") && <button className={`chip ${tool === "restyle" ? "active" : ""}`} onClick={() => setTool(tool === "restyle" ? null : "restyle")}>{t("Restyle")}</button>}
+                <button
+                  className="chip"
+                  title={t("A new picture with the same character or subject as this one, in a scene you describe")}
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent("studio:same-character", { detail: item }));
+                    onClose();
+                  }}
+                >
+                  {t("Same character, new picture")}
+                </button>
               </div>
               {tool === "edit" && (
                 <div className="form">

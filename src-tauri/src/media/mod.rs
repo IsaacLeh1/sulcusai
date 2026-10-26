@@ -22,6 +22,7 @@ pub(crate) mod songmap;
 pub(crate) mod imaging;
 mod cloud;
 pub mod hub;
+pub mod loras;
 pub mod learn;
 pub mod look;
 pub(crate) mod lyrics;
@@ -1336,6 +1337,8 @@ pub struct Request {
     pub examples: Vec<String>,
     /// What to take from them: "style", "subject" or "layout".
     pub example_use: Option<String>,
+    /// The person's own LoRAs for this picture, with how strongly each is used.
+    pub loras: Vec<(String, f32)>,
     /// The prompt writer turns the description into the one this model
     /// follows best (None: only for models that need a special form, or
     /// with example pictures).
@@ -1541,6 +1544,13 @@ fn card_need(state: &AppState, req: &Request, model: Option<&MediaModel>) -> u64
 /// music, which would take hours there.
 fn on_the_processor_too(op: &str) -> bool {
     matches!(op, "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "cover_art" | "map" | "stems" | "dry" | "revoice" | "narrate")
+}
+
+/// A negative prompt without the words that rule out a look (drawings,
+/// cartoons, renders), keeping those against flaws.
+fn without_style_words(negative: &str) -> String {
+    const LOOKS: [&str; 10] = ["cartoon", "anime", "illustration", "painting", "drawing", "3d render", "cgi", "sketch", "pixel", "stylized"];
+    negative.split(',').map(str::trim).filter(|w| !w.is_empty() && !LOOKS.iter().any(|l| w.to_lowercase().contains(l))).collect::<Vec<_>>().join(", ")
 }
 
 /// What a job does, for the question when the card can't take it.
@@ -1804,6 +1814,12 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 
 /// Queues a job and runs it when it's its turn. Returns what it made.
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
+    // Built on the heap: the job's future is large, and awaited on a 2 MB
+    // worker thread (or a test's) it overflowed the stack.
+    Box::pin(run_job_now(state, id, req)).await
+}
+
+async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
     if crate::sync::compute::media_here(state, &req) {
         return on_compute(state, id, req).await;
     }
@@ -2000,7 +2016,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         // a chat model, a download, an engine that hung) is let go, and the
         // engines it started end with it (a song stuck "making" ignored Stop).
         None => {
-            let work = JOB_ID.scope(id.clone(), SECOND_CARD.scope(second_card, ON_PROCESSOR.scope(forced_processor, crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)))));
+            let work = JOB_ID.scope(id.clone(), SECOND_CARD.scope(second_card, ON_PROCESSOR.scope(forced_processor, crate::vision::JOB_STOP.scope(cancel.clone(), Box::pin(run_job(state, &id, &req, model.as_ref(), &cancel, &progress))))));
             tokio::pin!(work);
             loop {
                 tokio::select! {
@@ -2751,12 +2767,12 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
         None
     };
     let result = match model.filter(|m| m.kind != Kind::Upscale) {
-        Some(m) if matches!(req.op.as_str(), "generate" | "video") => made_well(state, id, req, m, cancel, progress).await,
+        Some(m) if matches!(req.op.as_str(), "generate" | "video") => Box::pin(made_well(state, id, req, m, cancel, progress)).await,
         // Edits are planned and checked unless that's turned off, when something here reads pictures.
         Some(m) if req.op == "edit" && req.check != Some(false) && (crate::vision::can_read(state, None) || installed_file(state, m, "llm_vision").is_some()) => {
-            edited_well(state, id, req, m, cancel, progress).await
+            Box::pin(edited_well(state, id, req, m, cancel, progress)).await
         }
-        _ => run_kind(state, id, req, model, cancel, progress).await,
+        _ => Box::pin(run_kind(state, id, req, model, cancel, progress)).await,
     };
     if let Some(p) = paused {
         give_back(state, p).await;
@@ -3451,7 +3467,16 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
                     init = Some(p);
                 }
             }
-            let mut prompt = styled(&req.prompt, req.style.as_deref());
+            // With their own LoRAs and the look left to Auto, the LoRA sets the
+            // look: Auto's photo words turned a pixel-art LoRA back into a photo.
+            let look = if !req.loras.is_empty() && matches!(req.style.as_deref(), None | Some("auto")) { Some("as_written") } else { req.style.as_deref() };
+            let mut prompt = styled(&req.prompt, look);
+            // The same character as the example: said plainly to a model that
+            // gets it as a reference (the prompt writer says it its own way).
+            if req.example_use.as_deref() == Some("subject") && !refs.is_empty() && req.write_prompt != Some(true) {
+                let which = if refs.len() == 1 { "image 1".to_string() } else { format!("images 1 to {}", refs.len()) };
+                prompt = format!("{}. The same character as in {which}: keep the face, hair, body, clothes and colors exactly the same.", prompt.trim_end_matches('.'));
+            }
             if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.style.as_deref() != Some("as_written")) {
                 prompt.push_str(wallpaper::plain_words(spec));
             }
@@ -3542,8 +3567,17 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         .map(|n| fit_negative(n, req.style.as_deref(), &prompt))
         // A wallpaper is the scene alone, never a picture of a desktop.
         .map(|n| if req.wallpaper.is_some() { format!("{n}, user interface, taskbar, desktop icons, window frame, text") } else { n })
+        // With their own LoRAs, the model's usual "no drawings" words go: they
+        // fought a pixel-art LoRA into a photo.
+        .map(|n| if req.loras.is_empty() { n } else { without_style_words(&n) })
         .filter(|n| !n.is_empty());
-    let args = sd::picture_args(
+    // Their own LoRAs: named in the prompt, loaded from their folder.
+    let loras = loras::for_job(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &m.id, &req.loras);
+    let prompt = match &loras {
+        Some((words, _)) => format!("{prompt}, {words}"),
+        None => prompt,
+    };
+    let mut args = sd::picture_args(
         &ctx.files(m),
         d,
         &sd::Picture {
@@ -3567,6 +3601,9 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
         },
         &ctx.limits(),
     );
+    if let Some((_, folder)) = &loras {
+        args.extend(["--lora-model-dir".into(), folder.clone().into_os_string()]);
+    }
     ctx.run_sd(args, work).await?;
     let mut made: Vec<PathBuf> = std::fs::read_dir(work)
         .map_err(|e| e.to_string())?

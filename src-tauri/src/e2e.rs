@@ -1297,6 +1297,54 @@ async fn e2e_jobs_take_turns_on_the_card() {
     assert!(done.len() == 2 && done.iter().all(|l| l.contains("on the graphics card")));
 }
 
+/// The person's own LoRA on a picture model of its family (a pixel-art
+/// LoRA on RealVisXL): the same picture, same seed, with it and without it,
+/// the engine loading it; then a new picture of the same character, from
+/// the first as an example, on FLUX.2 [klein] 4B. The pictures go to
+/// C:\dev\tools\lora-test for a look.
+///     cargo test e2e_pictures_with_a_lora -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_pictures_with_a_lora_and_the_same_character() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    let c = state.work_cipher().unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\lora-test");
+    media::install_for_test(&state, "realvisxl-v5-lightning").await.unwrap();
+    let lora = media::loras::add(&state, &out.join("pixel-art-xl.safetensors")).unwrap();
+    println!("added {} as {:?}", lora.name, lora.family);
+    assert_eq!(lora.family, "sdxl");
+    // Its trigger words, as its page gives them.
+    {
+        let conn = state.db.lock().unwrap();
+        let mut all = media::loras::list(&conn);
+        all.iter_mut().for_each(|l| l.trigger = "pixel art".into());
+        media::loras::store(&conn, &all).unwrap();
+    }
+    let pic = |loras: Vec<(String, f32)>| Request { op: "generate".into(), prompt: "a red fox sitting on a mossy rock in a forest".into(), model_id: Some("realvisxl-v5-lightning".into()), shape: Some("square".into()), seed: Some(11), write_prompt: Some(false), check: Some(false), loras, ..Default::default() };
+    let plain = media::run(&state, store::new_id(), pic(vec![])).await.unwrap().remove(0);
+    let with = media::run(&state, store::new_id(), pic(vec![(lora.id.clone(), 1.0)])).await.unwrap().remove(0);
+    let (a, b) = (store::read(&state.paths, &c, &plain.id).unwrap(), store::read(&state.paths, &c, &with.id).unwrap());
+    std::fs::write(out.join("fox-plain.png"), &a).unwrap();
+    std::fs::write(out.join("fox-pixel-lora.png"), &b).unwrap();
+    let (ia, ib) = (crate::media::imaging::decode(&a).unwrap().to_rgb8(), crate::media::imaging::decode(&b).unwrap().to_rgb8());
+    let diff = ia.pixels().zip(ib.pixels()).map(|(p, q)| p.0.iter().zip(q.0.iter()).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs()).sum::<u32>() as f64).sum::<f64>() / (ia.width() * ia.height() * 3) as f64;
+    println!("mean change with the LoRA: {diff:.1} of 255");
+    assert!(diff > 12.0, "the LoRA changed little ({diff:.1})");
+    let log = std::fs::read_to_string(state.paths.logs.join("app.log")).unwrap_or_default();
+    assert!(!log.contains("lora") || !log.to_lowercase().contains("failed to load lora"), "the engine didn't load it");
+    // The same character, in a new scene.
+    media::install_for_test(&state, "flux2-klein-4b").await.unwrap();
+    let hero = media::run(&state, store::new_id(), Request { op: "generate".into(), prompt: "a young woman with short silver hair, round glasses and a yellow raincoat, standing in a park".into(), model_id: Some("flux2-klein-4b".into()), shape: Some("square".into()), seed: Some(5), write_prompt: Some(false), check: Some(false), ..Default::default() }).await.unwrap().remove(0);
+    let again = media::run(&state, store::new_id(), Request { op: "generate".into(), prompt: "she is reading a book in a cozy library".into(), model_id: Some("flux2-klein-4b".into()), shape: Some("square".into()), seed: Some(6), examples: vec![hero.id.clone()], example_use: Some("subject".into()), write_prompt: Some(false), check: Some(false), ..Default::default() }).await.unwrap().remove(0);
+    std::fs::write(out.join("hero.png"), store::read(&state.paths, &c, &hero.id).unwrap()).unwrap();
+    std::fs::write(out.join("hero-again.png"), store::read(&state.paths, &c, &again.id).unwrap()).unwrap();
+    println!("pictures in {}", out.display());
+    // The test's LoRA out of the models folder it shares with the app.
+    std::fs::remove_file(media::loras::dir(&state.paths).join(format!("{}.safetensors", lora.id))).ok();
+}
+
 /// A reply past a small length limit is carried on to its end.
 ///     SULCUSAI_TEST_GGUF is the model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

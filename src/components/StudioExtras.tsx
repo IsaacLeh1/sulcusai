@@ -91,7 +91,7 @@ export function ExamplePicker({
       {value.length > 0 && (
         <select value={use} onChange={(e) => onUse(e.target.value as ExampleUse)} title={t("What to take from the examples")}>
           <option value="style">{t("Follow their style")}</option>
-          <option value="subject">{t("Use their subject")}</option>
+          <option value="subject">{t("The same character or subject")}</option>
           <option value="layout">{t("Keep their layout and colors")}</option>
         </select>
       )}

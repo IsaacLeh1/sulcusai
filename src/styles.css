@@ -2205,3 +2205,6 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .select-box.on { background: var(--accent); border-color: var(--accent); }
 .select-box.on::after { content: ""; width: 7px; height: 4px; border-left: 2px solid var(--accent-text); border-bottom: 2px solid var(--accent-text); transform: rotate(-45deg) translate(1px, -1px); }
 .chat-item.selected { background: var(--accent-soft); }
+/* The picture form's LoRAs. */
+.lora-pick { gap: 6px; }
+.lora-edit { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-top: 6px; }

@@ -2671,6 +2671,8 @@ export interface MediaRequest {
   examples?: string[];
   /** What to take from them. */
   example_use?: "style" | "subject" | "layout";
+  /** The person's own LoRAs, with how strongly each is used. */
+  loras?: [string, number][];
   /** The prompt writer rewrites the description for this model. */
   write_prompt?: boolean;
   /** The picture reader checks the result and it's made again if things are missing. */
@@ -3432,6 +3434,10 @@ export const api = {
   processorFallback: () => invoke<ProcessorFallback>("processor_fallback"),
   setProcessorFallback: (value: ProcessorFallback) => invoke<void>("set_processor_fallback", { value }),
   driverCheck: () => invoke<DriverNote[]>("driver_check"),
+  loras: () => invoke<{ loras: Lora[]; families: [string, string][] }>("loras"),
+  loraAdd: (path: string) => invoke<Lora>("lora_add", { path }),
+  loraSave: (lora: Lora) => invoke<Lora[]>("lora_save", { lora }),
+  loraDelete: (id: string) => invoke<Lora[]>("lora_delete", { id }),
   modelIdle: () => invoke<{ busy: boolean; idle_secs: number; unloads_in: number | null }>("model_idle"),
   goBackTo: (version: string) => invoke<void>("go_back_to", { version }),
   draftsKeep: () => invoke<boolean>("drafts_keep"),
@@ -3535,6 +3541,16 @@ export interface LineupEntry {
 export interface StartNow {
   processor: boolean;
   in_the_way: LineupEntry[];
+}
+
+/** One of the person's own LoRAs for pictures (media/loras.rs). */
+export interface Lora {
+  id: string;
+  name: string;
+  family: string;
+  trigger: string;
+  weight: number;
+  size: number;
 }
 
 /** A graphics driver that needs updating (checked when SulcusAI starts). */

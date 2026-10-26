@@ -165,13 +165,18 @@ impl Ask {
         if !self.examples.is_empty() {
             let list = self.examples.iter().enumerate().map(|(i, e)| format!("{}) {e}", i + 1)).collect::<Vec<_>>().join(" ");
             let use_for = match self.example_use.as_str() {
-                "subject" => "the subject only: put it into the scene asked for",
+                "subject" => "the same character or subject: keep its face, hair, body, clothes and colors exactly as in them, put into the scene asked for",
                 "layout" => "the layout and composition only",
                 _ => "the style and look only (medium, colors, light, mood); what's in the picture comes from the request, not from them",
             };
             s.push_str(&format!("\nExample pictures: {list} (use them for: {use_for})"));
             if self.refs_to_model > 0 {
                 s.push_str(&format!("\nThe picture model also gets the example pictures themselves as image 1 to image {}.", self.refs_to_model));
+                // It copies the character from them: described anew, its
+                // clothes came out different (a raincoat became a cardigan).
+                if self.example_use == "subject" {
+                    s.push_str("\nDon't describe how the character looks or what they wear: say \"the same person as in image 1\" and describe only the scene, their pose and what they're doing.");
+                }
             }
         }
         if !self.notes.is_empty() {
@@ -855,7 +860,11 @@ fn shape_words(req: &super::Request) -> String {
 pub async fn prepare(state: &Arc<AppState>, req: &super::Request, m: &MediaModel, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Option<Prepared>, String> {
     let fam = family(m);
     let picture = req.op == "generate";
-    let write_it = req.write_prompt.unwrap_or(false) || !req.examples.is_empty() || matches!(fam, "sd15" | "sdxl");
+    // The same character, to a model that gets the example itself: the
+    // request goes as it is (with "keep the same character"); written anew,
+    // the character's clothes and age came out different.
+    let same_character = picture && req.example_use.as_deref() == Some("subject") && m.can("edit");
+    let write_it = req.write_prompt.unwrap_or(false) || (!req.examples.is_empty() && !same_character) || matches!(fam, "sd15" | "sdxl");
     // Checking needs something that sees pictures.
     let check_it = picture && req.check.unwrap_or(false) && (crate::vision::can_read(state, None) || (super::installed_file(state, m, "llm_vision").is_some()));
     if !write_it && !check_it {
@@ -1159,7 +1168,8 @@ mod tests {
         let r = ask.render();
         assert!(r.contains("What they want: my dog as a knight"));
         assert!(r.contains("Look: oil painting (oil painting on canvas"));
-        assert!(r.contains("1) a golden retriever on grass (use them for: the subject only"));
+        assert!(r.contains("1) a golden retriever on grass (use them for: the same character or subject"));
+        assert!(r.contains("Don't describe how the character looks"), "the picture model copies it from image 1");
         let style = Ask { example_use: "style".into(), ..ask.clone() }.render();
         assert!(style.contains("not from them"), "a style example lends its look, not its content");
         assert!(r.contains("image 1 to image 1"));
