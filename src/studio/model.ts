@@ -4,6 +4,7 @@
 // fades, gain, speed and pitch; tracks with volume, pan, mute, solo,
 // effects and automation. Pure functions on plain data, so every edit is a
 // new project (undo keeps the old one).
+import { tx } from "../i18n";
 
 export type EffectKind = "eq" | "compressor" | "reverb" | "delay" | "distortion" | "gate";
 
@@ -100,12 +101,12 @@ export const COLORS = ["#6d5dfc", "#e0565b", "#2fa36b", "#e19b2d", "#2f8fd8", "#
 
 export const EFFECTS: Record<EffectKind, { label: string; params: Record<string, [number, number, number]> }> = {
   // [min, max, default]
-  eq: { label: "EQ", params: { low: [-15, 15, 0], mid: [-15, 15, 0], high: [-15, 15, 0], midFreq: [200, 5000, 1000] } },
-  compressor: { label: "Compressor", params: { threshold: [-60, 0, -18], ratio: [1, 20, 4], attack: [0, 0.5, 0.01], release: [0.02, 1, 0.25], makeup: [0, 24, 3] } },
-  reverb: { label: "Reverb", params: { size: [0.3, 6, 2], mix: [0, 1, 0.25] } },
-  delay: { label: "Delay", params: { time: [0.02, 1.5, 0.375], feedback: [0, 0.9, 0.35], mix: [0, 1, 0.25] } },
-  distortion: { label: "Distortion", params: { drive: [0, 1, 0.3], mix: [0, 1, 1] } },
-  gate: { label: "Gate", params: { threshold: [-80, 0, -45] } },
+  eq: { label: tx("EQ"), params: { low: [-15, 15, 0], mid: [-15, 15, 0], high: [-15, 15, 0], midFreq: [200, 5000, 1000] } },
+  compressor: { label: tx("Compressor"), params: { threshold: [-60, 0, -18], ratio: [1, 20, 4], attack: [0, 0.5, 0.01], release: [0.02, 1, 0.25], makeup: [0, 24, 3] } },
+  reverb: { label: tx("Reverb"), params: { size: [0.3, 6, 2], mix: [0, 1, 0.25] } },
+  delay: { label: tx("Delay"), params: { time: [0.02, 1.5, 0.375], feedback: [0, 0.9, 0.35], mix: [0, 1, 0.25] } },
+  distortion: { label: tx("Distortion"), params: { drive: [0, 1, 0.3], mix: [0, 1, 1] } },
+  gate: { label: tx("Gate"), params: { threshold: [-80, 0, -45] } },
 };
 
 let counter = 0;

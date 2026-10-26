@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errorText, on, toBase64, type MediaRequest } from "../api";
 import { clock } from "../format";
-import { t } from "../i18n";
+import { t, tx } from "../i18n";
 import { encodeWav } from "../media";
 import { render, sourceBuffer, StudioEngine } from "../studio/engine";
 import { DRUM_KIT, GM, programFor } from "../studio/gm";
@@ -54,13 +54,13 @@ const HEAD = 230;
 const HISTORY = 100;
 const PARTS = ["vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard", "percussion", "strings", "synth", "fx", "brass", "woodwinds"];
 const PART_NAMES: Record<string, string> = {
-  vocals: "Vocals", backing_vocals: "Backing vocals", drums: "Drums", bass: "Bass", guitar: "Guitar", keyboard: "Keys", percussion: "Percussion", strings: "Strings", synth: "Synth", fx: "Effects", brass: "Brass", woodwinds: "Woodwinds",
+  vocals: tx("Vocals"), backing_vocals: tx("Backing vocals"), drums: tx("Drums"), bass: tx("Bass"), guitar: tx("Guitar"), keyboard: tx("Keys"), percussion: tx("Percussion"), strings: tx("Strings"), synth: tx("Synth"), fx: tx("Effects"), brass: tx("Brass"), woodwinds: tx("Woodwinds"),
 };
 // An effect setting's name, in words.
 const PARAM_NAMES: Record<string, string> = {
-  low: "Low", mid: "Middle", high: "High", midFreq: "Middle at (Hz)", threshold: "Threshold (dB)", ratio: "Ratio", attack: "Attack (s)", release: "Release (s)", makeup: "Make-up (dB)", size: "Room size (s)", mix: "Mix", time: "Time (s)", feedback: "Repeats", drive: "Drive",
+  low: tx("Low"), mid: tx("Middle"), high: tx("High"), midFreq: tx("Middle at (Hz)"), threshold: tx("Threshold (dB)"), ratio: tx("Ratio"), attack: tx("Attack (s)"), release: tx("Release (s)"), makeup: tx("Make-up (dB)"), size: tx("Room size (s)"), mix: tx("Mix"), time: tx("Time (s)"), feedback: tx("Repeats"), drive: tx("Drive"),
 };
-const GRIDS: [number, string][] = [[0, "Off"], [0.25, "1/16"], [0.5, "1/8"], [1, "Beat"], [4, "Bar"]];
+const GRIDS: [number, string][] = [[0, tx("Off")], [0.25, "1/16"], [0.5, "1/8"], [1, tx("Beat")], [4, tx("Bar")]];
 // Musical typing: A to ; the white keys, W E T Y U O P the black ones (Suno's).
 const TYPING: Record<string, number> = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12, o: 13, l: 14, p: 15, ";": 16 };
 
