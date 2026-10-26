@@ -2,7 +2,7 @@
  {
   "version": "0.9.39",
   "date": "2026-10-26",
-  "notes": "## Always see what's working\n- The status bar now shows what SulcusAI is working on, with a progress bar: a model downloading (any kind: chat, pictures, video, music, speech), the AI engine being set up, or a picture, video, song or training being made. Downloads show first, with their name, step and percent; anything else waiting shows as \"+1 more\", and hovering lists it all. Click it to go to Models or the Studio.\n- With nothing going on, it says No work.\n- Chat and Studio windows of their own show it at the bottom too."
+  "notes": "## Always see what's working\n- The status bar now shows what SulcusAI is working on, with a progress bar: a model downloading (any kind: chat, pictures, video, music, speech), the AI engine being set up, or a picture, video, song or training being made. Downloads show first, with their name, step and percent; anything else waiting shows as \"+1 more\", and hovering lists it all. Click it to go to Models or the Studio.\n- With nothing going on, it says No work.\n- Chat and Studio windows of their own show it at the bottom too.\n\n## Fixed\n- Settings: its title and search box now stay right at the top while you scroll, with nothing showing above them. An open email's buttons do the same."
  },
  {
   "version": "0.9.38",
