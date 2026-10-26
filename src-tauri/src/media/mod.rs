@@ -5536,9 +5536,9 @@ fn view(state: &AppState, all: bool) -> MediaView {
 }
 
 #[tauri::command(async)]
-pub fn install_media_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
+pub fn install_media_model(app: AppHandle, state: AppStateRef, model_id: String, anyway: Option<bool>) -> Result<(), String> {
     let spec = models(&state).into_iter().find(|m| m.id == model_id).ok_or("Unknown model")?;
-    start_install(app, state.inner().clone(), spec, None)
+    start_install_as(app, state.inner().clone(), spec, None, anyway.unwrap_or(false))
 }
 
 /// The Studio's Hugging Face search: picture, video or music models built
@@ -5550,10 +5550,10 @@ pub async fn media_hub_search(state: AppStateRef<'_>, kind: String, query: Strin
 
 /// Installs one file of a Hugging Face repository like a catalog model.
 #[tauri::command]
-pub async fn media_hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String) -> Result<String, String> {
+pub async fn media_hub_install(app: AppHandle, state: AppStateRef<'_>, repo: String, file: String, anyway: Option<bool>) -> Result<String, String> {
     let spec = hub::prepare(state.inner(), &repo, &file).await?;
     let id = spec.id.clone();
-    if let Err(e) = start_install(app, state.inner().clone(), spec, None) {
+    if let Err(e) = start_install_as(app, state.inner().clone(), spec, None, anyway.unwrap_or(false)) {
         hub::forget(&state.db.lock().unwrap(), &id).ok();
         return Err(e);
     }
@@ -5562,10 +5562,20 @@ pub async fn media_hub_install(app: AppHandle, state: AppStateRef<'_>, repo: Str
 
 /// Downloads a model in the background; `then_feature` is turned on after.
 pub(crate) fn start_install(app: AppHandle, state: Arc<AppState>, spec: MediaModel, then_feature: Option<Feature>) -> Result<(), String> {
+    start_install_as(app, state, spec, then_feature, false)
+}
+
+/// `start_install`; with `anyway`, also a model this PC probably can't run
+/// (the person was told and chose to): it's tried when used, with the
+/// memory check and the card's limits as always.
+pub(crate) fn start_install_as(app: AppHandle, state: Arc<AppState>, spec: MediaModel, then_feature: Option<Feature>, anyway: bool) -> Result<(), String> {
     let hw = state.hardware.read().unwrap().clone();
     let f = fit(&spec, &hw, &Budget::from_hardware(&hw), missing_bytes(&state.paths, &spec), None);
-    if !f.runnable {
+    if !f.runnable && !anyway {
         return Err(format!("This PC can't run {}: it {}.", spec.name, f.reason.unwrap_or_else(|| "needs more".into())));
+    }
+    if !f.runnable {
+        crate::applog::line("media", &format!("Installing {} though it probably won't run here ({}), as asked", spec.name, f.reason.clone().unwrap_or_default()));
     }
     if !f.disk_ok {
         return Err("There isn't enough free disk space for this model.".into());

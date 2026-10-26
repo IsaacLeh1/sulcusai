@@ -1765,6 +1765,8 @@ export interface PerfSettings {
   gpu_limit?: number;
   /** Unload an idle chat model after this many minutes (0 = never); null for the mode's own. */
   unload_after_mins?: number | null;
+  /** Free it right after each reply (a few seconds after last use). */
+  unload_right_away?: boolean;
 }
 
 export interface PerfLimits {
@@ -3210,10 +3212,10 @@ export const api = {
   quickScreenshot: () => invoke<MediaItem>("quick_screenshot"),
   /** The Studio's models; with all, also the ones this PC can't run (with why). */
   mediaView: (all = false) => invoke<MediaView>("media_view", { all }),
-  installMedia: (modelId: string) => invoke<void>("install_media_model", { modelId }),
+  installMedia: (modelId: string, anyway?: boolean) => invoke<void>("install_media_model", { modelId, anyway: anyway ?? null }),
   mediaHubSearch: (kind: "image" | "video" | "music", query: string, sort: "downloads" | "trending" | "newest", all = false) =>
     invoke<HubMediaResults>("media_hub_search", { kind, query, sort, all }),
-  mediaHubInstall: (repo: string, file: string) => invoke<string>("media_hub_install", { repo, file }),
+  mediaHubInstall: (repo: string, file: string, anyway?: boolean) => invoke<string>("media_hub_install", { repo, file, anyway: anyway ?? null }),
   mediaSetDefault: (kind: "image" | "video" | "music", modelId: string | null) => invoke<MediaDefaults>("media_set_default", { kind, modelId }),
   removeMedia: (modelId: string) => invoke<number>("remove_media_model", { modelId }),
   mediaStart: (request: MediaRequest) => invoke<string>("media_start", { request }),
@@ -3430,6 +3432,7 @@ export const api = {
   processorFallback: () => invoke<ProcessorFallback>("processor_fallback"),
   setProcessorFallback: (value: ProcessorFallback) => invoke<void>("set_processor_fallback", { value }),
   driverCheck: () => invoke<DriverNote[]>("driver_check"),
+  modelIdle: () => invoke<{ busy: boolean; idle_secs: number; unloads_in: number | null }>("model_idle"),
   goBackTo: (version: string) => invoke<void>("go_back_to", { version }),
   draftsKeep: () => invoke<boolean>("drafts_keep"),
   setDraftsKeep: (on: boolean) => invoke<void>("set_drafts_keep", { on }),

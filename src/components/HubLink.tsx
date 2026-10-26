@@ -102,7 +102,8 @@ export function HubLinkBox({
           }),
         );
         if (!ok) return;
-        await api.mediaHubInstall(m.id, r.file);
+        if (!r.runs && !window.confirm(t("{name} probably won't run on this PC: it needs more memory or a bigger graphics card than it has. It can still be tried, and SulcusAI stops it before the PC runs short. Install it anyway?", { name: m.name }))) return;
+        await api.mediaHubInstall(m.id, r.file, !r.runs);
       }
       onInstalled();
     } catch (e) {
@@ -180,7 +181,7 @@ export function HubLinkBox({
                 ) : isInstalled(r.modelId) ? (
                   <span className="badge subtle">{t("Installed")}</span>
                 ) : (
-                  <button className="btn small" disabled={installing || (found.kind === "media" && !r.runs)} title={installing ? t("One install at a time") : undefined} onClick={() => install(r)}>
+                  <button className="btn small" disabled={installing} title={installing ? t("One install at a time") : undefined} onClick={() => install(r)}>
                     {r.runs || found.kind === "media" ? t("Install") : t("Install anyway")}
                   </button>
                 )}

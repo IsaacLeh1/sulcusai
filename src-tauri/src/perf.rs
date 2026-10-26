@@ -60,11 +60,15 @@ pub struct PerfSettings {
     /// minutes, 0 for never; None for the mode's own (Cool 5, Balanced 10,
     /// Turbo never).
     pub unload_after_mins: Option<u64>,
+    /// Free it right after each reply (a few seconds after it was last
+    /// used, so a reply's steps don't reload it), whatever the minutes say.
+    #[serde(default)]
+    pub unload_right_away: bool,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None }
+        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None, unload_right_away: false }
     }
 }
 
@@ -504,6 +508,26 @@ pub fn working(state: &crate::AppState) -> bool {
         || state.engine_idle() < Duration::from_secs(20)
 }
 
+/// A line in the app log of the memory SulcusAI holds: this process, its
+/// window (WebView2) and the engines it started, by name. Written every 10
+/// minutes, so growth over hours (a leak) shows with numbers.
+fn log_memory() {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+    let ours = our_pids();
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().with_memory());
+    let mut by_name: std::collections::BTreeMap<String, u64> = Default::default();
+    for (pid, p) in sys.processes() {
+        if ours.contains(&pid.as_u32()) {
+            let name = p.name().to_string_lossy().trim_end_matches(".exe").to_string();
+            *by_name.entry(name).or_default() += p.memory();
+        }
+    }
+    let total: u64 = by_name.values().sum();
+    let parts: Vec<String> = by_name.iter().filter(|(_, b)| **b >= 50 << 20).map(|(n, b)| format!("{n} {:.0} MB", *b as f64 / 1048576.0)).collect();
+    crate::applog::line("memory", &format!("SulcusAI and what it started hold {:.1} GB: {}", total as f64 / GIB as f64, parts.join(", ")));
+}
+
 /// SulcusAI's processes: this one and everything it started (its window's
 /// WebView2 processes, the engines), refreshed every 10 seconds.
 fn our_pids() -> std::collections::HashSet<u32> {
@@ -876,8 +900,13 @@ pub fn start_monitor(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         let state = app.state::<std::sync::Arc<crate::AppState>>().inner().clone();
         let mut power = crate::hardware::on_battery();
+        let mut memory_noted = Instant::now();
         loop {
             tokio::time::sleep(WATCH_EVERY).await;
+            if memory_noted.elapsed() >= Duration::from_secs(600) {
+                memory_noted = Instant::now();
+                let _ = tokio::task::spawn_blocking(log_memory).await;
+            }
             // Plugged in or unplugged: some laptops turn their graphics card
             // on or off with the power source, so the PC is checked again.
             let now = crate::hardware::on_battery();
@@ -912,11 +941,13 @@ pub fn start_monitor(app: tauri::AppHandle) {
             }
 
             let idle = state.engine_idle();
-            if loaded && !busy && base.idle_unload_mins > 0 && idle >= Duration::from_secs(base.idle_unload_mins * 60) {
+            let after = if settings.unload_right_away { Some(Duration::from_secs(15)) } else { (base.idle_unload_mins > 0).then(|| Duration::from_secs(base.idle_unload_mins * 60)) };
+            if loaded && !busy && after.is_some_and(|a| idle >= a) {
                 if let Ok(mut e) = state.engine.try_lock() {
                     if e.status().model_id.is_some() {
                         e.stop().await;
-                        db::log_action(&state.db.lock().unwrap(), "performance", &format!("Unloaded the chat model after {} idle minutes", base.idle_unload_mins));
+                        let why = if settings.unload_right_away { "right after its reply".to_string() } else { format!("after {} idle minutes", base.idle_unload_mins) };
+                        db::log_action(&state.db.lock().unwrap(), "performance", &format!("Unloaded the chat model {why}"));
                         app.emit("engine:unloaded", ()).ok();
                     }
                 }
@@ -941,6 +972,25 @@ pub struct PerfView {
     cores: usize,
     ram_total_gb: f64,
     vram_gb: f64,
+}
+
+/// The loaded chat model now: working, or idle for how long, and when it
+/// unloads by itself (None: it stays loaded, as Turbo or the setting says).
+#[derive(Serialize)]
+pub struct ModelIdle {
+    busy: bool,
+    idle_secs: u64,
+    unloads_in: Option<u64>,
+}
+
+#[tauri::command]
+pub fn model_idle(state: AppStateRef) -> ModelIdle {
+    let s = settings(&state.db.lock().unwrap());
+    let base = limits(&s, &state.hardware.read().unwrap(), crate::hardware::on_battery() == Some(true));
+    let idle = state.engine_idle().as_secs();
+    let after = if s.unload_right_away { Some(15) } else { (base.idle_unload_mins > 0).then_some(base.idle_unload_mins * 60) };
+    let busy = !state.generations.lock().unwrap().is_empty() || crate::media::any_job();
+    ModelIdle { busy, idle_secs: if busy { 0 } else { idle }, unloads_in: after.map(|a| a.saturating_sub(idle) + WATCH_EVERY.as_secs()) }
 }
 
 #[tauri::command]
@@ -1031,6 +1081,12 @@ pub fn set_gpu_limit(app: tauri::AppHandle, state: AppStateRef, percent: u8) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The memory note names this process and adds up what it holds.
+    #[test]
+    fn memory_is_noted_by_process() {
+        log_memory();
+    }
     use crate::hardware::Gpu;
 
     fn laptop() -> Hardware {

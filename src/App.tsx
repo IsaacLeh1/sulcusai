@@ -22,6 +22,7 @@ import {
 } from "./api";
 import { APP_NAME } from "./brand";
 import { t, tx } from "./i18n";
+import { clock } from "./format";
 import { ChatView } from "./views/ChatView";
 import { ConnectivityMenu } from "./components/ConnectivityMenu";
 import { GpuPill, PerfPill } from "./components/Performance";
@@ -272,6 +273,20 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
   const [engine, setEngine] = useState<EngineStatus | null>(null);
+  // While a model is loaded: working or idle, and when it unloads by itself,
+  // so nothing sits in memory unnoticed.
+  const [modelNow, setModelNow] = useState<{ busy: boolean; idle_secs: number; unloads_in: number | null } | null>(null);
+  const modelLoaded = !!engine?.model_id;
+  useEffect(() => {
+    if (!modelLoaded) {
+      setModelNow(null);
+      return;
+    }
+    const load = () => !document.hidden && api.modelIdle().then(setModelNow).catch(() => {});
+    load();
+    const timer = window.setInterval(load, 15000);
+    return () => window.clearInterval(timer);
+  }, [modelLoaded]);
   const [progress, setProgress] = useState<Record<string, InstallProgress>>({});
   const [running, setRunning] = useState<string[]>([]);
   const [features, setFeatures] = useState<Set<FeatureId> | null>(null);
@@ -1477,6 +1492,13 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           ) : loadedName ? (
             <>
               <span className="led on" /> {picker(t("{name} loaded", { name: loadedName }))}
+              {modelNow && (
+                <span className="muted" title={t("A loaded model keeps memory until it's unloaded. When it unloads by itself is set in Settings › Performance.")}>
+                  {modelNow.busy
+                    ? t("· working")
+                    : `· ${t("idle {time}", { time: clock(modelNow.idle_secs) })}${modelNow.unloads_in == null ? ` · ${t("stays loaded")}` : ` · ${t("unloads in about {time}", { time: clock(modelNow.unloads_in) })}`}`}
+                </span>
+              )}
               <button className="link" onClick={async () => { await api.unload(); refreshEngine(); }}>
                 {t("Unload")}
               </button>

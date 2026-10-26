@@ -145,14 +145,16 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
   const [searching, setSearching] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [allOf, setAllOf] = useState<string | null>(null);
+  // Also models too big for this PC (they can be tried; SulcusAI's checks stop them before the PC runs short).
+  const [tooBig, setTooBig] = useState(false);
   const busy = Object.keys(progress).length > 0;
   const per = HUB_KINDS.find((k) => k.kind === kind)!;
 
-  const search = async (k = kind, by = sort) => {
+  const search = async (k = kind, by = sort, big = tooBig) => {
     setSearching(true);
     setProblem(null);
     try {
-      setResults(await api.mediaHubSearch(k, query, by));
+      setResults(await api.mediaHubSearch(k, query, by, big));
     } catch (e) {
       setProblem(errorText(e));
     } finally {
@@ -168,8 +170,9 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
       }),
     );
     if (!ok) return;
+    if (!f.runnable && !window.confirm(t("{name} probably won't run on this PC. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name }))) return;
     try {
-      await api.mediaHubInstall(m.id, f.file);
+      await api.mediaHubInstall(m.id, f.file, !f.runnable);
       onChanged();
     } catch (e) {
       toast(errorText(e), "error");
@@ -276,7 +279,11 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
             {results.models.length === 0
               ? t("Nothing found that this PC can run. Try another search.")
               : results.models.length === 1 ? t("1 model with versions this PC can run.") : t("{n} models with versions this PC can run.", { n: results.models.length })}{" "}
-            {results.hidden > 0 && t("{n} more were left out: too big for this PC, add-ons, or in formats SulcusAI can't use.", { n: results.hidden })}
+            {results.hidden > 0 && t("{n} more were left out: too big for this PC, add-ons, or in formats SulcusAI can't use.", { n: results.hidden })}{" "}
+            <label className="check small inline">
+              <input type="checkbox" checked={tooBig} onChange={(e) => { setTooBig(e.target.checked); void search(kind, sort, e.target.checked); }} />
+              {t("Show ones too big for this PC too")}
+            </label>
           </p>
           <div className="hub-list">
             {results.models.map((m) => {
@@ -444,8 +451,27 @@ function MediaModelRow({
           >
             {t("Delete from this PC")}
           </button>
-        ) : !m.fit.runnable || !m.fit.disk_ok ? (
-          <span className="small warn-text">{m.fit.reason ? t("This PC can't run it: it {why}.", { why: m.fit.reason }) : t("Not enough free disk space for it.")}</span>
+        ) : !m.fit.disk_ok ? (
+          <span className="small warn-text">{t("Not enough free disk space for it.")}</span>
+        ) : !m.fit.runnable ? (
+          // It probably won't run, but it can be tried: SulcusAI's checks
+          // still stop it before the PC runs short.
+          <span className="row wrap small">
+            <span className="warn-text">{t("This PC probably can't run it: it {why}.", { why: m.fit.reason ?? t("needs more") })}</span>
+            {!progress && (
+              <button
+                className="btn ghost small"
+                disabled={busy}
+                onClick={() =>
+                  window.confirm(t("{name} probably won't run here. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name })) &&
+                  licenseOk(m) &&
+                  api.installMedia(m.id, true).catch((e) => toast(errorText(e), "error"))
+                }
+              >
+                {t("Install anyway")}
+              </button>
+            )}
+          </span>
         ) : (
           !progress && (
             <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={() => licenseOk(m) && api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>

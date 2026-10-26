@@ -131,10 +131,15 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
             </span>
           </div>
           <select
-            value={s.unload_after_mins == null ? "mode" : String(s.unload_after_mins)}
+            value={s.unload_right_away ? "now" : s.unload_after_mins == null ? "mode" : String(s.unload_after_mins)}
             aria-label={t("Free the graphics card when idle")}
-            onChange={(e) => save({ ...s, unload_after_mins: e.target.value === "mode" ? null : Number(e.target.value) })}
+            onChange={(e) =>
+              e.target.value === "now"
+                ? save({ ...s, unload_right_away: true })
+                : save({ ...s, unload_right_away: false, unload_after_mins: e.target.value === "mode" ? null : Number(e.target.value) })
+            }
           >
+            <option value="now">{t("Right after each reply (the next one loads it again, a few seconds)")}</option>
             <option value="mode">{t("As the mode sets it ({n})", { n: MODE_UNLOAD[s.mode] === 0 ? t("never") : t("after {n} min", { n: MODE_UNLOAD[s.mode] }) })}</option>
             {[1, 2, 5, 10, 30].map((m) => (
               <option key={m} value={m}>

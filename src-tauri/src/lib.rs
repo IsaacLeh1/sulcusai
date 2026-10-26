@@ -201,7 +201,7 @@ impl AppState {
         }
     }
 
-    fn engine_idle(&self) -> std::time::Duration {
+    pub(crate) fn engine_idle(&self) -> std::time::Duration {
         self.engine_used.lock().unwrap().elapsed()
     }
 
@@ -2792,6 +2792,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             perf::perf_view,
+            perf::model_idle,
             perf::gpu_now,
             perf::gpu_limit,
             crash::crash_reports_view,
