@@ -33,6 +33,7 @@ pub(crate) mod train;
 pub(crate) mod studio;
 pub mod own_voice;
 pub mod podcast;
+pub mod explainer;
 pub(crate) mod proc;
 pub(crate) mod svc;
 pub mod prompts;
@@ -263,6 +264,8 @@ fn model_op(req: &Request) -> &str {
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
         "narrate" | "podcast" | "dialogue" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
+        // Study material.
+        "explainer" => Some(Feature::Documents),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -1581,14 +1584,14 @@ fn recorded_voice(req: &Request) -> Option<&str> {
         "revoice" => req.voice.as_deref(),
         "narrate" => req.voice.as_deref().and_then(|v| v.strip_prefix("own:")),
         "music" => req.music.as_ref().and_then(|m| m.own_voice.as_deref()),
-        "podcast" | "dialogue" => req.talk.as_ref().and_then(|t| t.speakers.iter().find_map(|s| s.voice.as_deref().and_then(|v| v.strip_prefix("own:")))),
+        "podcast" | "dialogue" | "explainer" => req.talk.as_ref().and_then(|t| t.speakers.iter().find_map(|s| s.voice.as_deref().and_then(|v| v.strip_prefix("own:")))),
         _ => None,
     }
 }
 
 /// Jobs that need no media model: speech, and work on songs already made.
 fn no_model(op: &str) -> bool {
-    matches!(op, "narrate" | "podcast" | "dialogue" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train")
+    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -1631,6 +1634,21 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     // Podcasts and readings check their speakers and voices themselves.
     if matches!(req.op.as_str(), "podcast" | "dialogue") {
         return podcast::check(state, req);
+    }
+    if req.op == "explainer" {
+        if !cfg!(windows) {
+            return Err("Explainer videos aren't available on this system yet.".into());
+        }
+        if req.prompt.trim().is_empty() && req.talk.as_ref().is_none_or(|t| t.files.is_empty()) {
+            return Err("Say what the video explains, or add files.".into());
+        }
+        if let Some(id) = recorded_voice(req) {
+            let v = own_voice::get(&state.db.lock().unwrap(), &state.work_cipher()?, id).ok_or("That recorded voice is no longer here.")?;
+            if !v.can_speak() {
+                return Err(format!("Read at least three lines for {} in Studio › Your voice first.", v.name));
+            }
+        }
+        return Ok(());
     }
     if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "studio_part") && req.source.is_none() {
         return Err("Pick a song first.".into());
@@ -1709,6 +1727,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         // Writing, then reading about as fast as it plays.
         _ if req.op == "podcast" => 60.0 + 50.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(5.0) as f64,
         _ if req.op == "dialogue" => 10.0 + req.prompt.len() as f64 / 40.0,
+        _ if req.op == "explainer" => 60.0 + 40.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(3.0) as f64,
         (None, Some(_)) => 20.0,
         _ => 10.0,
     };
@@ -1894,6 +1913,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         "narrate" => "a narration",
         "podcast" => "a podcast",
         "dialogue" => "a reading",
+        "explainer" => "an explainer video",
         _ => "a picture",
     };
     watching.store(false, Ordering::Relaxed);
@@ -2563,6 +2583,10 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
         let script = podcast::write(state, req, cancel, progress).await?;
         with_script = Request { lyrics: Some(script), ..req.clone() };
         &with_script
+    } else if req.op == "explainer" && req.lyrics.is_none() {
+        let slides = explainer::write(state, req, cancel, progress).await?;
+        with_script = Request { lyrics: Some(slides), ..req.clone() };
+        &with_script
     } else {
         req
     };
@@ -3165,6 +3189,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         }
         "narrate" => narrate(&ctx).await,
         "podcast" | "dialogue" => podcast::read(&ctx, &work.0).await,
+        "explainer" => explainer::make(&ctx, &work.0).await,
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
         "stems" => stems_job(&ctx).await,

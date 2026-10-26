@@ -2133,7 +2133,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "studio_part";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2247,6 +2247,73 @@ export interface LibraryView {
   model_size: number;
   /** File kinds it reads. */
   kinds: string[];
+}
+
+/** A step of Check this PC. */
+export interface PcCheckStep {
+  id: string;
+  title: string;
+  status: "waiting" | "running" | "ok" | "warn" | "failed" | "skipped";
+  /** What it found, or why it failed or was skipped. */
+  detail: string;
+  /** What it's doing now, while it runs. */
+  doing: string;
+  ms: number;
+}
+
+export interface PcCheckReport {
+  running: boolean;
+  started_at: number | null;
+  took_ms: number;
+  steps: PcCheckStep[];
+}
+
+/** A flashcard, with its spaced-repetition box and when it's next due (ms). */
+export interface StudyCard {
+  front: string;
+  back: string;
+  box: number;
+  due: number;
+}
+
+export interface StudyQuestion {
+  question: string;
+  choices: string[];
+  /** The right choice, from 0. */
+  answer: number;
+  why: string;
+}
+
+export interface MapNode {
+  label: string;
+  children: MapNode[];
+}
+
+/** Flashcards, a quiz or a mind map made from what the person is learning. */
+export interface StudySet {
+  id: string;
+  title: string;
+  kind: "cards" | "quiz" | "map";
+  created_at: number;
+  /** What it was made from ("Biology notes.pdf and 2 more"). */
+  from: string;
+  cards: StudyCard[];
+  quiz: StudyQuestion[];
+  map: MapNode | null;
+  /** A quiz's best score (0 to 1) and how often it was taken. */
+  best: number | null;
+  taken: number;
+}
+
+export interface StudyRequest {
+  kind: "cards" | "quiz" | "map";
+  text: string;
+  files: string[];
+  /** Library file ids. */
+  docs: string[];
+  count?: number | null;
+  language?: string | null;
+  writer?: string | null;
 }
 
 /** A passage found for a question. */
@@ -3183,6 +3250,18 @@ export const api = {
   docsSearch: (query: string, limit?: number) => invoke<DocHit[]>("docs_search", { query, limit: limit ?? null }),
   /** Opens a library file in its app. */
   docsOpen: (id: string) => invoke<void>("docs_open", { id }),
+  // Check this PC ("pccheck:step" as it goes).
+  pcCheckStart: () => invoke<PcCheckReport>("pc_check_start"),
+  pcCheckStop: () => invoke<void>("pc_check_stop"),
+  pcCheckReport: () => invoke<PcCheckReport | null>("pc_check_report"),
+  // Study sets ("study:progress" while one is made).
+  studySets: () => invoke<StudySet[]>("study_sets"),
+  studyMake: (request: StudyRequest) => invoke<StudySet>("study_make", { request }),
+  studyDelete: (id: string) => invoke<void>("study_delete", { id }),
+  studyRename: (id: string, title: string) => invoke<StudySet>("study_rename", { id, title }),
+  /** A flashcard answered: knew it, or not. */
+  studyCard: (id: string, card: number, knew: boolean) => invoke<StudySet>("study_card", { id, card, knew }),
+  studyQuizDone: (id: string, score: number) => invoke<StudySet>("study_quiz_done", { id, score }),
   /** Keeps one of the voices just made (`pick` from 0) under `name`. */
   ownVoiceDesignKeep: (name: string, pick: number) => invoke<OwnVoicesView>("own_voice_design_keep", { name, pick }),
   mediaAdd: (input: { data: string; mime: string; op: string; prompt?: string | null; parent?: string | null; chatId?: string | null; hidden?: boolean; seconds?: number | null; lyrics?: string | null; note?: string | null }) =>
@@ -3455,6 +3534,10 @@ export interface ChatEvents {
   "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing" | "getting_speakers" | "speakers" | "hearing" | "getting_words"; n: number; of: number };
   /** The documents library reading and indexing: what it's on. */
   "docs:progress": DocProgress;
+  /** Check this PC, after each change. */
+  "pccheck:step": PcCheckReport;
+  /** A study set being made: what it's doing and how far (0 to 1). */
+  "study:progress": { stage: string; fraction: number };
   /** The library changed (indexing finished). */
   "docs:changed": Record<string, never>;
   /** Hearing a sentence in a voice: downloading the engine or model the first time (fraction 0 to 1), then reading (fraction -1). */

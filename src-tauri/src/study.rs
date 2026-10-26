@@ -264,17 +264,23 @@ fn say(state: &AppState, stage: &str, fraction: f64) {
 
 /// Makes a set: flashcards, a quiz or a mind map.
 pub async fn make(state: &Arc<AppState>, req: &MakeRequest) -> Result<StudySet, String> {
-    let kind = req.kind.ok_or("Pick what to make.")?;
-    let (text, from) = material(state, req).await?;
+    req.kind.ok_or("Pick what to make.")?;
     say(state, "Getting the writer ready", 0.02);
     let (ep, model, _hold) = crate::endpoint_for(state, req.writer.as_deref()).await?;
     if ep.cloud.is_some() {
         if let Ok(c) = state.cipher() {
             let me = crate::outgoing::context(state, &c).me;
-            let r = crate::outgoing::review_cloud(&model.name, &text.chars().take(600).collect::<String>(), "", "", "", &[], 0, false, &me);
+            let r = crate::outgoing::review_cloud(&model.name, &req.text.chars().take(600).collect::<String>(), "", "", "", &[], 0, false, &me);
             crate::outgoing::record(state, &c, "", "cloud_chat", &r, true);
         }
     }
+    make_with(state, req, &ep, &model.name).await
+}
+
+/// `make` with the model at `ep` (`name`, for messages).
+pub(crate) async fn make_with(state: &Arc<AppState>, req: &MakeRequest, ep: &crate::engine::Endpoint, name: &str) -> Result<StudySet, String> {
+    let kind = req.kind.ok_or("Pick what to make.")?;
+    let (text, from) = material(state, req).await?;
     // A part fits with the instructions and the reply (about 3 characters a token).
     let room = ((ep.ctx as usize).saturating_sub(3_000) * 3 / 2).clamp(3_000, 40_000);
     let parts = parts_of(&text, room);
@@ -300,7 +306,7 @@ pub async fn make(state: &Arc<AppState>, req: &MakeRequest) -> Result<StudySet, 
                     )
                 };
                 let msgs = vec![json!({"role": "system", "content": "You write study material from a person's own notes. Use only what the material says."}), json!({"role": "user", "content": ask})];
-                let reply = crate::chat::complete(&ep, msgs, json!({"temperature": 0.4}), (want as u32 * 120 + 400).min(8_000)).await?;
+                let reply = crate::chat::complete(ep, msgs, json!({"temperature": 0.4}), (want as u32 * 120 + 400).min(8_000)).await?;
                 if kind == Kind::Cards {
                     set.cards.extend(cards_from(&reply));
                 } else {
@@ -312,7 +318,7 @@ pub async fn make(state: &Arc<AppState>, req: &MakeRequest) -> Result<StudySet, 
             set.cards.retain(|c| seen.insert(c.front.to_lowercase()));
             set.quiz.retain(|q| seen.insert(q.question.to_lowercase()));
             if set.cards.is_empty() && set.quiz.is_empty() {
-                return Err(format!("{} didn't write any. Try again, or pick another model to write them.", model.name));
+                return Err(format!("{name} didn't write any. Try again, or pick another model to write them."));
             }
         }
         Kind::Map => {
@@ -325,15 +331,15 @@ pub async fn make(state: &Arc<AppState>, req: &MakeRequest) -> Result<StudySet, 
                 }
                 say(state, &format!("Reading part {} of {n}", i + 1), 0.05 + 0.6 * i as f64 / n as f64);
                 let msgs = vec![json!({"role": "user", "content": format!("List the main ideas of this material as a short outline (headings and sub-points, a few words each).{lang}\n\n{part}")})];
-                outlines.push(crate::chat::complete(&ep, msgs, json!({"temperature": 0.2}), 800).await?);
+                outlines.push(crate::chat::complete(ep, msgs, json!({"temperature": 0.2}), 800).await?);
             }
             say(state, "Drawing the map", 0.7);
             let ask = format!(
                 "Make a mind map of the material below: one central topic, 3 to 7 main branches, each with a few short sub-points (a few words each, up to 3 levels deep). Reply with only JSON: {{\"label\": \"the central topic\", \"children\": [{{\"label\": \"…\", \"children\": [...]}}]}}.{lang}\n\n{}",
                 clip(&outlines.join("\n\n"), room)
             );
-            let reply = crate::chat::complete(&ep, vec![json!({"role": "user", "content": ask})], json!({"temperature": 0.3}), 2_000).await?;
-            set.map = Some(map_from(&reply).ok_or_else(|| format!("{} didn't draw a map. Try again, or pick another model.", model.name))?);
+            let reply = crate::chat::complete(ep, vec![json!({"role": "user", "content": ask})], json!({"temperature": 0.3}), 2_000).await?;
+            set.map = Some(map_from(&reply).ok_or_else(|| format!("{name} didn't draw a map. Try again, or pick another model."))?);
         }
     }
     set.title = match kind {
@@ -341,7 +347,7 @@ pub async fn make(state: &Arc<AppState>, req: &MakeRequest) -> Result<StudySet, 
         _ => set.from.clone(),
     };
     say(state, "Done", 1.0);
-    state.log("study", &format!("Made {} from {} part(s) with {}", match kind { Kind::Cards => format!("{} flashcards", set.cards.len()), Kind::Quiz => format!("a {}-question quiz", set.quiz.len()), Kind::Map => "a mind map".into() }, n, model.name));
+    state.log("study", &format!("Made {} from {} part(s) with {}", match kind { Kind::Cards => format!("{} flashcards", set.cards.len()), Kind::Quiz => format!("a {}-question quiz", set.quiz.len()), Kind::Map => "a mind map".into() }, n, name));
     Ok(set)
 }
 

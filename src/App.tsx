@@ -64,6 +64,7 @@ const TranslateView = lazy(() => import("./views/TranslateView").then((m) => ({ 
 const FeaturesView = lazy(() => import("./views/FeaturesView").then((m) => ({ default: m.FeaturesView })));
 const NotesView = lazy(() => import("./views/NotesView").then((m) => ({ default: m.NotesView })));
 const DocumentsView = lazy(() => import("./views/DocumentsView").then((m) => ({ default: m.DocumentsView })));
+const StudyView = lazy(() => import("./views/StudyView").then((m) => ({ default: m.StudyView })));
 const TasksView = lazy(() => import("./views/TasksView").then((m) => ({ default: m.TasksView })));
 const MailView = lazy(() => import("./views/MailView").then((m) => ({ default: m.MailView })));
 const CalendarView = lazy(() => import("./views/CalendarView").then((m) => ({ default: m.CalendarView })));
@@ -73,7 +74,7 @@ const SharedChatView = lazy(() => import("./views/PeopleView").then((m) => ({ de
 const Onboarding = lazy(() => import("./views/Onboarding").then((m) => ({ default: m.Onboarding })));
 const PcView = lazy(() => import("./views/PcView").then((m) => ({ default: m.PcView })));
 
-export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "documents" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
+export type View = "chat" | "models" | "features" | "studio" | "meetings" | "translate" | "notes" | "documents" | "study" | "tasks" | "mail" | "calendar" | "memory" | "scheduled" | "connectors" | "people" | "shared" | "project" | "activity" | "settings" | "pc" | "web";
 
 /** Pages that belong to a feature, hidden while it's off. */
 const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
@@ -81,6 +82,7 @@ const VIEW_FEATURE: Partial<Record<View, FeatureId>> = {
   translate: "translate",
   notes: "notes",
   documents: "documents",
+  study: "documents",
   tasks: "tasks",
   mail: "email",
   calendar: "calendar",
@@ -770,6 +772,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
               { id: "meetings", show: has("meetings") || liveMeeting, label: <>{t("Meetings")}{liveMeeting && <span className="dot rec" aria-label={t("Recording")} />}</> },
               { id: "notes", show: has("notes"), label: t("Notes") },
               { id: "documents", show: has("documents"), label: t("Documents") },
+              { id: "study", show: has("documents"), label: t("Study") },
               { id: "tasks", show: has("tasks"), label: t("Tasks") },
               { id: "mail", show: has("email"), label: t("Mail") },
               { id: "calendar", show: has("calendar"), label: t("Calendar") },
@@ -1234,6 +1237,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         {view === "studio" && <StudioView features={features ?? new Set()} progress={progress} toast={toast} onGoFeatures={() => setView("features")} onPopOut={phone ? undefined : studioWindow} />}
         {view === "notes" && <NotesView toast={toast} />}
         {view === "documents" && <DocumentsView toast={toast} />}
+        {view === "study" && <StudyView toast={toast} onOpenStudio={() => setView("studio")} />}
         {view === "tasks" && <TasksView onOpenChat={openChat} toast={toast} />}
         {view === "mail" && <MailView toast={toast} />}
         {view === "calendar" && <CalendarView toast={toast} />}

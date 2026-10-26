@@ -10,6 +10,7 @@ mod applog;
 mod cleanup;
 mod doclib;
 mod study;
+mod pccheck;
 mod folders;
 mod backup;
 mod api_server;
@@ -3095,6 +3096,9 @@ pub fn run() {
             study::study_rename,
             study::study_card,
             study::study_quiz_done,
+            pccheck::pc_check_start,
+            pccheck::pc_check_stop,
+            pccheck::pc_check_report,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,

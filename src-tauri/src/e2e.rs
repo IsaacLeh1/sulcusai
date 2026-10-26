@@ -910,6 +910,72 @@ async fn e2e_voice_from_a_podcast_recording() {
     crate::speech::stop(&state).await;
 }
 
+/// Study material from a page of notes with a small model
+/// (SULCUSAI_TEST_GGUF): flashcards, a quiz whose answers are among its
+/// choices, a mind map; then an explainer video read by a natural voice,
+/// whose sound speech recognition hears.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_study_sets_and_an_explainer_video() {
+    use crate::media::{self, explainer, podcast, store, Request};
+    use crate::study::{self, Kind, MakeRequest};
+    let state = media_state();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let notes = "Photosynthesis is how plants make their own food. In the chloroplasts, chlorophyll captures light energy. \
+                 The plant takes in carbon dioxide through small pores in its leaves called stomata, and water through its roots. \
+                 Using the light's energy it turns them into glucose, a sugar it uses for energy and growth, and releases oxygen as a by-product.\n\n\
+                 The light-dependent reactions happen in the thylakoid membranes and make ATP and NADPH. \
+                 The Calvin cycle happens in the stroma and uses that ATP and NADPH to fix carbon dioxide into sugar. \
+                 Things that change the rate of photosynthesis include light intensity, carbon dioxide concentration and temperature.";
+    let (eng, ep, name) = test_model().await;
+    for kind in [Kind::Cards, Kind::Quiz, Kind::Map] {
+        let started = std::time::Instant::now();
+        let set = study::make_with(&state, &MakeRequest { kind: Some(kind), text: notes.into(), count: Some(6), language: Some("en".into()), ..Default::default() }, &ep, &name).await.unwrap();
+        println!("{kind:?} in {:.0} s: {} cards, {} questions, map {:?}", started.elapsed().as_secs_f64(), set.cards.len(), set.quiz.len(), set.map.as_ref().map(|m| (&m.label, m.children.len())));
+        match kind {
+            Kind::Cards => {
+                assert!(set.cards.len() >= 4);
+                println!("  {} → {}", set.cards[0].front, set.cards[0].back);
+            }
+            Kind::Quiz => {
+                assert!(set.quiz.len() >= 3);
+                assert!(set.quiz.iter().all(|q| q.answer < q.choices.len()));
+                println!("  {} [{}]", set.quiz[0].question, set.quiz[0].choices[set.quiz[0].answer]);
+            }
+            Kind::Map => assert!(set.map.as_ref().is_some_and(|m| m.children.len() >= 2)),
+        }
+    }
+    let req = Request {
+        op: "explainer".into(),
+        prompt: notes.into(),
+        language: Some("en".into()),
+        talk: Some(podcast::Spec { speakers: vec![podcast::Speaker { name: "Narrator".into(), voice: Some("supertonic:F1".into()), about: None }], minutes: Some(1.0), ..Default::default() }),
+        ..Default::default()
+    };
+    let deck = explainer::write_with(&state, &req, &ep, &name, &never, &|_, _| {}).await.unwrap();
+    drop(eng);
+    let parsed: explainer::Deck = serde_json::from_str(&deck).unwrap();
+    println!("deck “{}”: {} slides", parsed.title, parsed.slides.len());
+    assert!(parsed.slides.len() >= 3);
+    crate::natural::install_for_test(&state).await.unwrap();
+    let started = std::time::Instant::now();
+    let item = media::run(&state, store::new_id(), Request { lyrics: Some(deck), ..req }).await.unwrap().remove(0);
+    println!("video: {:.0} s, made in {:.0} s", item.seconds, started.elapsed().as_secs_f64());
+    assert_eq!(item.mime, "video/mp4");
+    assert!(item.seconds > 15.0);
+    let path = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-explainer.mp4");
+    std::fs::write(&path, store::read(&state.paths, &state.work_cipher().unwrap(), &item.id).unwrap()).unwrap();
+    let (pcm, rate, ch) = media::audio_in::decode(&path).unwrap();
+    let mono: Vec<f32> = pcm.chunks(ch.max(1) as usize).map(|f| f.iter().sum::<f32>() / f.len() as f32).take(rate as usize * 30).collect();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Accurate).await.unwrap();
+    let heard = crate::speech::transcribe(&ep, &crate::audio::resample(&mono, rate, crate::audio::RATE), &crate::speech::Options { language: Some("en".into()), ..Default::default() }).await.unwrap();
+    println!("the video's first 30 s: {}", heard.text);
+    assert!(heard.text.to_lowercase().contains("photosynth") || heard.text.to_lowercase().contains("plant"), "{}", heard.text);
+    crate::speech::stop(&state).await;
+}
+
 /// A song attached to a chat is worked on: "make this longer" calls
 /// create_music on that song, and the result is that much longer. A small
 /// model (SULCUSAI_TEST_GGUF, Qwen3 4B) so the music engine fits beside it.

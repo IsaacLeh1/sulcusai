@@ -10,6 +10,7 @@ import { FoldersSection } from "../components/AgentCards";
 import { SignInApps } from "../components/SignIn";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
+import { PcCheck } from "../components/PcCheck";
 import { ModelStorage } from "../components/ModelStorage";
 import { CleanupSettings } from "../components/CleanupSettings";
 import type { PushToast } from "../components/Toasts";
@@ -395,6 +396,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-performance" className="settings-anchor" />
       <PerformanceSection toast={toast} />
+
+      <span id="settings-check" className="settings-anchor" />
+      <PcCheck />
 
       <span id="settings-servers" className="settings-anchor" />
       <PortsSettings toast={toast} />

@@ -182,7 +182,7 @@ pub fn speakers_for(spec: &Spec, script: &str) -> Vec<Speaker> {
 /// Gives everyone without a voice one of their own: natural voices that
 /// speak the language first (taking turns between women's and men's), else
 /// Windows' voices; someone already picked isn't picked twice.
-fn fill_voices(speakers: &mut [Speaker], voices: &[crate::tts::Voice], language: Option<&str>) {
+pub(crate) fn fill_voices(speakers: &mut [Speaker], voices: &[crate::tts::Voice], language: Option<&str>) {
     let lang = language.map(|l| l.split(['-', '_']).next().unwrap_or("").to_lowercase()).filter(|l| !l.is_empty()).unwrap_or_else(|| "en".into());
     let speaks = |v: &crate::tts::Voice| v.languages.iter().any(|l| *l == lang) || v.language.to_lowercase().starts_with(&lang);
     let mut free: Vec<&crate::tts::Voice> = voices.iter().filter(|v| v.engine == "natural" && speaks(v)).collect();

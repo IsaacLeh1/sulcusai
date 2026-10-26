@@ -1181,6 +1181,16 @@ async fn speak_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn
     Ok((exe, fetch_all(state, files, "own-voice", "Getting the voice model (once", cancel, progress).await?))
 }
 
+/// Whether reading in a recorded voice can start without downloading
+/// anything (Check this PC tries it only then).
+pub fn ready_here(state: &AppState) -> bool {
+    let Some(spec) = state.catalog.media.own_voice.as_ref().map(|c| &c.speak) else { return false };
+    let base = state.paths.models.join("media").join("own-voice");
+    let has = |files: &[MediaFile]| files.iter().all(|f| base.join(&f.file).metadata().is_ok_and(|m| m.len() == f.size));
+    let engine_here = ["vulkan-x64", engine::cpu_key()].iter().any(|k| state.paths.engines.join(format!("qwentts-{}-{}", spec.engine.build, k)).is_dir());
+    engine_here && (has(&spec.files) || has(&spec.processor_files))
+}
+
 /// The engine and the model that makes voices from words, downloaded the
 /// first time.
 async fn design_parts(state: &Arc<AppState>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(PathBuf, Vec<PathBuf>), String> {
