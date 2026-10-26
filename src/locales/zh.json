@@ -4495,5 +4495,12 @@
  "{name} (in it)": "{name}（已在其中）",
  "{n} line(s) selected": "已选择 {n} 行",
  "{n} songs · {time}": "{n} 首歌 · {time}",
- "{voice} voice": "{voice}声"
+ "{voice} voice": "{voice}声",
+ "An MP4 of the song with its cover art, title and words as they're sung, to share": "带封面、标题和同步歌词的歌曲 MP4，便于分享",
+ "Make a video": "生成视频",
+ "Making a song video": "正在生成歌曲视频",
+ "Only a song can be made into a video.": "只有歌曲才能生成视频。",
+ "Song video": "歌曲视频",
+ "The sound must be at 44.1 or 48 kHz.": "声音必须是 44.1 或 48 kHz。",
+ "This video has no sound track.": "此视频没有音轨。"
 }

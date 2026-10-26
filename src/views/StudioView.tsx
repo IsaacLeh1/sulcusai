@@ -2054,6 +2054,11 @@ function Viewer({
                     {t("Reuse these settings")}
                   </button>
                 )}
+                {item.op !== "stem" && item.op !== "narrate" && (
+                  <button className="chip" onClick={() => run({ op: "song_video", prompt: "" })} title={t("An MP4 of the song with its cover art, title and words as they're sung, to share")}>
+                    {t("Make a video")}
+                  </button>
+                )}
                 {item.op !== "stem" && (
                   <>
                     <button className="chip" onClick={() => run({ op: "stems", prompt: "" })} title={t("The vocals and the instrumental, each saved as a song under this one")}>

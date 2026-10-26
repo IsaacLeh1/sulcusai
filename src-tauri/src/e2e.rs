@@ -4098,6 +4098,38 @@ async fn e2e_suno_features() {
     }
 }
 
+/// Cover art for a few kinds of song, kept in C:\dev\tools\music\ab\art to
+/// look at (no lettering should be in them), and a song video of the first.
+///     cargo test e2e_cover_art -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_cover_art() {
+    use crate::media::{self, store, MediaItem, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    media::install_for_test(&state, "z-image-turbo").await.unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\music\ab\art");
+    std::fs::create_dir_all(&out).unwrap();
+    let song_mp3 = std::fs::read(r"C:\dev\tools\music\ab\features\song.mp3").expect("run e2e_suno_features first");
+    let lyrics = "[Verse 1]\nWindows down on the coast road\nRadio loud and the night is young\n\n[Chorus]\nSummer nights, we were golden\nDancing under the neon sun\nSummer nights, we were golden\nNever wanted the night to be done";
+    for (i, prompt) in ["upbeat 80s-inspired synth pop about a summer drive", "dark modern country, Southern gothic, a house built on ashes", "lo-fi hip hop for studying on a rainy night"].iter().enumerate() {
+        let song = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "audio".into(), op: "music".into(), prompt: prompt.to_string(), title: Some("Summer Nights".into()), mime: "audio/mpeg".into(), seconds: 45.0, lyrics: Some(lyrics.into()), ..Default::default() }, &song_mp3, None).unwrap();
+        let t = std::time::Instant::now();
+        media::run(&state, store::new_id(), Request { op: "cover_art".into(), source: Some(song.id.clone()), seed: Some(3), ..Default::default() }).await.unwrap();
+        std::fs::write(out.join(format!("art-{i}.jpg")), store::read_thumb(&state.paths, &c, &song.id).unwrap()).unwrap();
+        println!("{prompt}: {:.0} s", t.elapsed().as_secs_f64());
+        if i == 0 {
+            let t = std::time::Instant::now();
+            let v = media::run(&state, store::new_id(), Request { op: "song_video".into(), source: Some(song.id.clone()), ..Default::default() }).await.unwrap().remove(0);
+            std::fs::write(out.join("video.mp4"), store::read(&state.paths, &c, &v.id).unwrap()).unwrap();
+            std::fs::write(out.join("video-still.jpg"), store::read_thumb(&state.paths, &c, &v.id).unwrap()).unwrap();
+            println!("video in {:.0} s: {} x {}, {:.0} s, {} bytes", t.elapsed().as_secs_f64(), v.width, v.height, v.seconds, v.size);
+            assert_eq!(v.parent.as_deref(), Some(song.id.as_str()));
+        }
+    }
+}
+
 /// The singer's middle pitch in each song in a folder (SULCUSAI_PITCH_DIR,
 /// default C:\dev\tools\music\ab): the voice taken out (HTDemucs) and its
 /// pitch found (RMVPE, from the singing model's pieces). Under ~200 Hz is a

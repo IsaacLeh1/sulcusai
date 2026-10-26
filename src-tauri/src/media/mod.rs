@@ -38,6 +38,7 @@ pub mod wallpaper;
 mod longclip;
 #[cfg(windows)]
 mod mp4;
+pub(crate) mod songvideo;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -244,7 +245,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" | "revoice" | "stems" => Some(Feature::Music),
+        "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -1544,10 +1545,10 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems") {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video") && req.source.is_none() {
         return Err("Pick a song first.".into());
     }
     // A recorded voice: one that's here and has what the job needs.
@@ -1608,7 +1609,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
         files_here(state, m)?;
     }
@@ -3036,6 +3037,8 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
         "stems" => stems_job(&ctx).await,
+        #[cfg(windows)]
+        "song_video" => song_video_job(&ctx, &work.0).await,
         "remake" => remake_job(&ctx, model.ok_or("No music model.")?, &work.0).await,
         "tune" => {
             let m = model.ok_or("No picture model.")?;
@@ -4058,6 +4061,112 @@ async fn stems_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     Ok(out)
 }
 
+/// A song's video (Suno's Create video, `songvideo`): its cover art, title
+/// and lyrics as they're sung, with the song as the sound, kept in the
+/// gallery under the song. Where the lines are sung comes from the
+/// listener, who listens first when the song hasn't been listened to.
+#[cfg(windows)]
+async fn song_video_job(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    use songvideo::{FPS, SIDE};
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    let id = ctx.req.source.as_deref().ok_or("Pick a song first.")?;
+    let mut song = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That song is no longer in the gallery.")?;
+    if song.kind != "audio" {
+        return Err("Only a song can be made into a video.".into());
+    }
+    let sung = song.lyrics.as_deref().is_some_and(lyrics::has_singing);
+    if sung && song.review.is_none() && !crate::speech::installed(&state.db.lock().unwrap()).is_empty() {
+        (ctx.progress)("Listening for where the words are", 0.05);
+        song.review = Some(hear(state, &song, ctx.cancel).await?);
+        store::update(&state.db.lock().unwrap(), &c, &song)?;
+    }
+    let art = if song.poster { store::read_thumb(&state.paths, &c, &song.id).ok().and_then(|b| image::load_from_memory(&b).ok()).map(|i| i.to_rgba8()) } else { None };
+    let bytes = store::read(&state.paths, &c, &song.id)?;
+    let out = work.join("song.mp4");
+    let name = song.title.clone().unwrap_or_else(|| song.prompt.chars().take(80).collect());
+    let lines: Vec<(String, Option<[f64; 2]>)> = match (&song.review, song.lyrics.as_deref()) {
+        (Some(r), _) if !r.lines.is_empty() => r.lines.iter().map(|l| (l.text.clone(), l.at)).collect(),
+        (_, Some(l)) if sung => l.lines().map(str::trim).filter(|x| !x.is_empty() && !(x.starts_with('[') && x.ends_with(']'))).map(|x| (x.to_string(), None)).collect(),
+        _ => Vec::new(),
+    };
+    let first = tokio::task::block_in_place(|| -> Result<image::RgbaImage, String> {
+        // The sound at 48 kHz (or 44.1), 16-bit stereo.
+        let mix = decoded_stereo(&bytes, &song.mime)?;
+        let rate = if mix.rate == 44_100 { 44_100 } else { 48_000 };
+        let mix = mix.resampled(rate);
+        let seconds = mix.len() as f64 / rate as f64;
+        let pcm: Vec<i16> = (0..mix.len()).flat_map(|i| [mix.ch[0][i], mix.ch[1][i]]).map(|s| (s.clamp(-1.0, 1.0) * 32767.0) as i16).collect();
+        let timed = songvideo::timings(&lines, seconds);
+        let title = songvideo::text_mask(&name, 54, true, SIDE - 120)?;
+        let base = songvideo::backdrop(art.as_ref(), &name, Some(&title));
+        let lyric_y = if art.is_some() { 690 + title.height() + 24 } else { 300 + title.height() + 80 };
+        let mut masks: std::collections::HashMap<(usize, bool), image::GrayImage> = std::collections::HashMap::new();
+        // The picture changes a line at a time: 1.5 Mbps is plenty.
+        let mut writer = mp4::Writer::create_with_sound(&out, SIDE, SIDE, FPS, Some(rate), Some(1_500_000))?;
+        let frames = (seconds * FPS as f64).ceil() as usize;
+        let mut first = None;
+        let mut sent = 0usize;
+        for f in 0..frames {
+            if f % FPS as usize == 0 {
+                if ctx.cancel.load(Ordering::Relaxed) {
+                    return Err(download::CANCELLED.into());
+                }
+                (ctx.progress)("Making the video", 0.1 + 0.85 * f as f64 / frames as f64);
+                // The sound a second ahead of the pictures.
+                let upto = (((f / FPS as usize) + 1) * rate as usize * 2).min(pcm.len());
+                writer.sound(&pcm[sent..upto])?;
+                sent = upto;
+            }
+            let t = f as f64 / FPS as f64;
+            let mut frame = base.clone();
+            let (now, next) = songvideo::showing(&timed, t);
+            let mut y = lyric_y;
+            for (i, big) in [(now, true), (next, false)].into_iter().filter_map(|(i, b)| i.map(|i| (i, b))) {
+                if !masks.contains_key(&(i, big)) {
+                    masks.insert((i, big), songvideo::text_mask(&timed[i].text, if big { 44 } else { 34 }, big, SIDE - 140)?);
+                }
+                let m = &masks[&(i, big)];
+                songvideo::stamp(&mut frame, m, (SIDE - m.width()) / 2, y, [255, 255, 255], if big { 1.0 } else { 0.5 });
+                y += m.height() + 10;
+            }
+            // How far along: a thin bar at the bottom.
+            let done = ((t / seconds.max(0.1)) * SIDE as f64) as u32;
+            for x in 0..done.min(SIDE) {
+                for yy in SIDE - 10..SIDE - 4 {
+                    frame.put_pixel(x, yy, image::Rgba([255, 255, 255, 255]));
+                }
+            }
+            if first.is_none() && (now.is_some() || f as f64 >= seconds * 0.2) {
+                first = Some(frame.clone());
+            }
+            writer.frame(&frame)?;
+        }
+        writer.sound(&pcm[sent..])?;
+        writer.finish()?;
+        Ok(first.unwrap_or(base))
+    })?;
+    let mp4 = std::fs::read(&out).map_err(|e| e.to_string())?;
+    let thumb = imaging::thumbnail(&image::DynamicImage::ImageRgba8(first))?;
+    let item = MediaItem {
+        kind: "video".into(),
+        op: "song_video".into(),
+        prompt: song.prompt.clone(),
+        title: song.title.clone(),
+        mime: "video/mp4".into(),
+        width: SIDE,
+        height: SIDE,
+        seconds: song.seconds,
+        parent: Some(song.id.clone()),
+        chat_id: ctx.req.chat_id.clone().or_else(|| song.chat_id.clone()),
+        lyrics: song.lyrics.clone(),
+        poster: true,
+        ..Default::default()
+    };
+    crate::applog::line("media", &format!("Made a song video: {:.0} s, {} lines", song.seconds, lines.len()));
+    Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &mp4, Some(&thumb))?])
+}
+
 /// What the listener hears in a song from the gallery (`listen`): which of
 /// its words come through and where, from speech recognition. Nothing heard
 /// when no speech model is installed (the review then says so).
@@ -4820,12 +4929,15 @@ fn queue_cover_art(state: &Arc<AppState>, song: &MediaItem) {
 }
 
 /// What a song's cover art is asked to show: the person's words for it,
-/// else the song's own description, with no lettering (picture models
-/// write a title badly).
+/// else the song's own description. Never "album cover": with those words
+/// Z-Image Turbo lettered a title across the top.
 fn art_prompt(song: &MediaItem, asked: &str) -> String {
     let what = if asked.trim().is_empty() { song.prompt.trim().trim_end_matches('.').to_string() } else { asked.trim().trim_end_matches('.').to_string() };
-    format!("Album cover art for a song: {what}. Striking artistic image, bold composition, rich colour. No text, no letters, no words.")
+    format!("A striking square artwork that captures the feeling of this: {what}. Cinematic light, bold composition, rich colour, one clear subject. The image has no text anywhere.")
 }
+
+/// What cover art leaves out, for picture models that take a negative prompt.
+const ART_NEGATIVE: &str = "text, letters, words, title, typography, logo, watermark, signature";
 
 /// Cover art for a song (`req.source`): a square picture made by the
 /// picture model and kept as the song's picture; the picture itself isn't
@@ -4837,7 +4949,16 @@ async fn cover_art(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> 
     if song.kind != "audio" {
         return Err("Cover art is for songs.".into());
     }
-    let req = Request { op: "generate".into(), model_id: Some(m.id.clone()), prompt: art_prompt(&song, &ctx.req.prompt), shape: Some("square".into()), count: Some(1), ..Default::default() };
+    let req = Request {
+        op: "generate".into(),
+        model_id: Some(m.id.clone()),
+        prompt: art_prompt(&song, &ctx.req.prompt),
+        negative: Some(ART_NEGATIVE.into()),
+        shape: Some("square".into()),
+        count: Some(1),
+        seed: ctx.req.seed,
+        ..Default::default()
+    };
     let step = RunCtx { state: ctx.state, req: &req, cancel: ctx.cancel, progress: ctx.progress, reserved: ctx.reserved };
     let pic = picture(&step, m, work).await?.into_iter().next().ok_or("The picture model didn't make the cover.")?;
     let bytes = store::read(&ctx.state.paths, &c, &pic.id)?;

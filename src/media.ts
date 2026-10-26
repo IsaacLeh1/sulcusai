@@ -171,6 +171,7 @@ export const OP_LABEL: Record<string, string> = {
   screenshot: tx("Screenshot"),
   trim: tx("Trimmed"),
   stem: tx("A part of a song"),
+  song_video: tx("Song video"),
   paste: tx("Pasted"),
   attach: tx("Attached"),
 };
@@ -195,6 +196,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   revoice: tx("Singing a song in a recorded voice"),
   cover_art: tx("Making cover art"),
   stems: tx("Taking a song apart"),
+  song_video: tx("Making a song video"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

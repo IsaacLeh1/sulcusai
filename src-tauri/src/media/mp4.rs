@@ -18,6 +18,9 @@ pub struct Writer {
     duration: i64,
     n: i64,
     finished: bool,
+    /// The sound track (AAC, from 16-bit stereo): its stream, sample rate
+    /// and the samples a channel written so far.
+    audio: Option<(u32, u32, i64)>,
 }
 
 /// Picture quality: enough bits per pixel for slow, detailed scenes.
@@ -27,6 +30,13 @@ fn bitrate(w: u32, h: u32, fps: u32) -> u32 {
 
 impl Writer {
     pub fn create(path: &Path, w: u32, h: u32, fps: u32) -> Result<Self, String> {
+        Self::create_with_sound(path, w, h, fps, None, None)
+    }
+
+    /// A video with a stereo sound track at `sound_rate` (44100 or 48000),
+    /// given with `sound` as it goes; `bits` a second for the picture (None:
+    /// enough for moving pictures; far less does for a still one).
+    pub fn create_with_sound(path: &Path, w: u32, h: u32, fps: u32, sound_rate: Option<u32>, bits: Option<u32>) -> Result<Self, String> {
         if w % 2 != 0 || h % 2 != 0 || w == 0 || h == 0 {
             return Err("Video sides must be even.".into());
         }
@@ -46,7 +56,7 @@ impl Writer {
             let out = MFCreateMediaType().map_err(|e| fail("set up the encoder", e))?;
             out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).map_err(|e| fail("set up H.264", e))?;
             out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264).map_err(|e| fail("set up H.264", e))?;
-            out.SetUINT32(&MF_MT_AVG_BITRATE, bitrate(w, h, fps)).map_err(|e| fail("set up H.264", e))?;
+            out.SetUINT32(&MF_MT_AVG_BITRATE, bits.unwrap_or_else(|| bitrate(w, h, fps))).map_err(|e| fail("set up H.264", e))?;
             out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32).map_err(|e| fail("set up H.264", e))?;
             out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32).map_err(|e| fail("set up H.264", e))?;
             out.SetUINT64(&MF_MT_FRAME_SIZE, size).map_err(|e| fail("set up H.264", e))?;
@@ -64,9 +74,61 @@ impl Writer {
             inp.SetUINT64(&MF_MT_FRAME_RATE, rate).map_err(|e| fail("set up the frames", e))?;
             inp.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1u64 << 32) | 1).map_err(|e| fail("set up the frames", e))?;
             sink.SetInputMediaType(stream, &inp, None).map_err(|e| fail("take frames of this size", e))?;
+            let audio = match sound_rate {
+                Some(rate) => {
+                    if rate != 44_100 && rate != 48_000 {
+                        return Err("The sound must be at 44.1 or 48 kHz.".into());
+                    }
+                    let aac = MFCreateMediaType().map_err(|e| fail("set up the sound", e))?;
+                    aac.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(|e| fail("set up AAC", e))?;
+                    aac.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_AAC).map_err(|e| fail("set up AAC", e))?;
+                    aac.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).map_err(|e| fail("set up AAC", e))?;
+                    aac.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate).map_err(|e| fail("set up AAC", e))?;
+                    aac.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(|e| fail("set up AAC", e))?;
+                    // 192 kbps, the most the encoder takes.
+                    aac.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24_000).map_err(|e| fail("set up AAC", e))?;
+                    let astream = sink.AddStream(&aac).map_err(|e| fail("add the sound", e))?;
+                    let pcm = MFCreateMediaType().map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4).map_err(|e| fail("set up the sound", e))?;
+                    pcm.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * 4).map_err(|e| fail("set up the sound", e))?;
+                    sink.SetInputMediaType(astream, &pcm, None).map_err(|e| fail("take this sound", e))?;
+                    Some((astream, rate, 0))
+                }
+                None => None,
+            };
             sink.BeginWriting().map_err(|e| fail("start writing the video", e))?;
-            Ok(Self { sink, stream, w, h, duration: 10_000_000 / fps.max(1) as i64, n: 0, finished: false })
+            Ok(Self { sink, stream, w, h, duration: 10_000_000 / fps.max(1) as i64, n: 0, finished: false, audio })
         }
+    }
+
+    /// The sound's next stretch: 16-bit samples, left and right interleaved.
+    pub fn sound(&mut self, pcm: &[i16]) -> Result<(), String> {
+        let Some((stream, rate, at)) = self.audio.as_mut() else { return Err("This video has no sound track.".into()) };
+        let frames = (pcm.len() / 2) as i64;
+        if frames == 0 {
+            return Ok(());
+        }
+        let bytes: Vec<u8> = pcm[..frames as usize * 2].iter().flat_map(|s| s.to_le_bytes()).collect();
+        unsafe {
+            let buf = MFCreateMemoryBuffer(bytes.len() as u32).map_err(|e| e.to_string())?;
+            let mut p: *mut u8 = std::ptr::null_mut();
+            buf.Lock(&mut p, None, None).map_err(|e| e.to_string())?;
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+            buf.Unlock().map_err(|e| e.to_string())?;
+            buf.SetCurrentLength(bytes.len() as u32).map_err(|e| e.to_string())?;
+            let s = MFCreateSample().map_err(|e| e.to_string())?;
+            s.AddBuffer(&buf).map_err(|e| e.to_string())?;
+            s.SetSampleTime(*at * 10_000_000 / *rate as i64).map_err(|e| e.to_string())?;
+            s.SetSampleDuration(frames * 10_000_000 / *rate as i64).map_err(|e| e.to_string())?;
+            self.sink.WriteSample(*stream, &s).map_err(|e| format!("Windows couldn't encode the sound: {e}"))?;
+        }
+        *at += frames;
+        Ok(())
     }
 
     pub fn frame(&mut self, img: &RgbaImage) -> Result<(), String> {

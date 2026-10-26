@@ -4495,5 +4495,12 @@
  "{name} (in it)": "{name}（追加済み）",
  "{n} line(s) selected": "{n} 行を選択中",
  "{n} songs · {time}": "{n} 曲 · {time}",
- "{voice} voice": "{voice}の声"
+ "{voice} voice": "{voice}の声",
+ "An MP4 of the song with its cover art, title and words as they're sung, to share": "カバーアート・タイトル・歌われている歌詞が入った曲の MP4（共有用）",
+ "Make a video": "動画を作る",
+ "Making a song video": "曲の動画を作成中",
+ "Only a song can be made into a video.": "動画にできるのは曲だけです。",
+ "Song video": "曲の動画",
+ "The sound must be at 44.1 or 48 kHz.": "音声は 44.1 kHz か 48 kHz である必要があります。",
+ "This video has no sound track.": "この動画には音声トラックがありません。"
 }

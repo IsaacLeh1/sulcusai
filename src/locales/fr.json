@@ -4495,5 +4495,12 @@
  "{name} (in it)": "{name} (déjà dedans)",
  "{n} line(s) selected": "{n} ligne(s) sélectionnée(s)",
  "{n} songs · {time}": "{n} chansons · {time}",
- "{voice} voice": "voix {voice}"
+ "{voice} voice": "voix {voice}",
+ "An MP4 of the song with its cover art, title and words as they're sung, to share": "Un MP4 de la chanson avec sa pochette, son titre et les paroles au fil du chant, à partager",
+ "Make a video": "Créer une vidéo",
+ "Making a song video": "Création de la vidéo de la chanson",
+ "Only a song can be made into a video.": "Seule une chanson peut devenir une vidéo.",
+ "Song video": "Vidéo de la chanson",
+ "The sound must be at 44.1 or 48 kHz.": "Le son doit être à 44,1 ou 48 kHz.",
+ "This video has no sound track.": "Cette vidéo n'a pas de piste son."
 }
