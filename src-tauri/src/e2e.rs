@@ -1358,6 +1358,28 @@ async fn e2e_meeting_records_transcribes_and_writes_notes() {
     let _ = std::fs::remove_dir_all(meeting::audio_dir(&state, &m.id));
 }
 
+/// Narration as the Studio's tab starts it, with no voice picked (the
+/// first on the PC) and with a Windows voice: each read and kept as a
+/// sound of about the right length.
+///     cargo test e2e_narration_reads -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_narration_reads() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let text = "Welcome to the studio. This is a short test of reading text aloud, about ten seconds long, to check that narration works.";
+    for voice in [None, Some(crate::tts::WINDOWS_DEFAULT.to_string())] {
+        let t = std::time::Instant::now();
+        let got = media::run(&state, store::new_id(), Request { op: "narrate".into(), prompt: text.into(), voice: voice.clone(), ..Default::default() }).await;
+        match &got {
+            Ok(items) => println!("voice {voice:?}: {:.1} s of speech in {:.1} s", items[0].seconds, t.elapsed().as_secs_f64()),
+            Err(e) => println!("voice {voice:?}: FAILED {e}"),
+        }
+        let items = got.unwrap();
+        assert!(items[0].seconds > 4.0 && items[0].seconds < 30.0, "{}", items[0].seconds);
+    }
+}
+
 /// Lists audio devices without opening any (no recording, no sound).
 #[test]
 #[ignore]
