@@ -1517,6 +1517,25 @@ tokio::task_local! {
     static JOB_ID: String;
     /// The job runs on the second card (the main one is busy).
     static SECOND_CARD: bool;
+    /// Started now on the processor, as the person asked (the card was busy).
+    static ON_PROCESSOR: bool;
+}
+
+/// The graphics memory a job needs, for its place in line: its model's on
+/// the card, the most a song's parts or a sung voice take (`natural`), or 0
+/// when it isn't known (it then runs on its own).
+fn card_need(state: &AppState, req: &Request, model: Option<&MediaModel>) -> u64 {
+    match req.op.as_str() {
+        "map" | "stems" | "dry" | "revoice" => state.catalog.voices.cards.as_ref().map_or(0, |r| r.min_free_mib << 20),
+        _ => model.map_or(0, |m| (m.min_vram_gb * GIB as f64) as u64),
+    }
+}
+
+/// Jobs that can run on the processor when started now that way (slower):
+/// pictures, a song's parts, a sung voice, reading aloud. Not video or
+/// music, which would take hours there.
+fn on_the_processor_too(op: &str) -> bool {
+    matches!(op, "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "cover_art" | "map" | "stems" | "dry" | "revoice" | "narrate")
 }
 
 /// What a job does, for the question when the card can't take it.
@@ -1534,11 +1553,6 @@ fn op_what(op: &str) -> &'static str {
     }
 }
 
-/// One job at a time: they share the graphics card and memory.
-fn turn() -> &'static tokio::sync::Mutex<()> {
-    static T: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    T.get_or_init(Default::default)
-}
 
 fn emit(state: &AppState, event: &str, payload: serde_json::Value) {
     if let Some(app) = state.app.get() {
@@ -1839,21 +1853,29 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     // (after the job shows, as it can take a few seconds after a start).
     crate::engine::learn_devices(state).await;
 
-    // Waiting for the job before it; removing it from the queue ends the wait
-    // (a chat's Stop hung until the job before finished).
-    let _turn = {
-        let lock = turn().lock();
-        tokio::pin!(lock);
-        loop {
-            tokio::select! {
-                g = &mut lock => break g,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                    if cancel.load(Ordering::Relaxed) {
-                        return Err(download::CANCELLED.into());
-                    }
-                }
-            }
-        }
+    // Its turn for the graphics card (`lineup`): after what's ahead of it,
+    // or now when it's part of a chat's reply. Taking it out of the line,
+    // or Stop, ends the wait (a chat's Stop hung until the job before
+    // finished). Cloud jobs don't use the card.
+    let entry = crate::lineup::Entry::studio(&id, if req.prompt.trim().is_empty() { op_what(&req.op) } else { req.prompt.trim() }, op_what(&req.op), card_need(state, &req, model.as_ref()))
+        .second_ok(matches!(req.op.as_str(), "map" | "stems" | "dry" | "revoice"))
+        .processor_ok(on_the_processor_too(&req.op));
+    let turn = match &on_cloud {
+        Some(_) => None,
+        None => match req.chat_id.as_deref().and_then(|c| crate::lineup::inside_reply(state, c, entry.clone())) {
+            Some(t) => Some(t),
+            None => Some(
+                crate::lineup::wait(state, entry, cancel.clone(), |place| {
+                    update(state, &id, |i| i.stage = if place <= 1 { "Next in line for the graphics card".into() } else { format!("Waiting in line for the graphics card ({place} in line)") });
+                })
+                .await?,
+            ),
+        },
+    };
+    let (second_card, forced_processor) = match turn.as_ref().map(|t| t.card) {
+        Some(Some(crate::lineup::Card::Second)) => (true, false),
+        Some(None) => (false, true),
+        _ => (false, false),
     };
     if cancel.load(Ordering::Relaxed) {
         return Err(download::CANCELLED.into());
@@ -1878,7 +1900,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     };
     let has_card = state.budget().vram > 0 && gpu_name.is_some();
     // Meant for the card, with none to use: said why, and asked first.
-    if on_cloud.is_none() && card_engine && !has_card {
+    if on_cloud.is_none() && card_engine && !has_card && !forced_processor {
         let why = if gpu_name.is_none() { crate::natural::no_card(state) } else { "SulcusAI's limit for the graphics card is set to none (Settings › This PC)".to_string() };
         let ask_progress = |stage: &str, f: f64| update(state, &id, |i| {
             i.stage = stage.to_string();
@@ -1886,7 +1908,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         });
         crate::cardfirst::processor_ok(state, Some(&id), op_what(&req.op), &why, &cancel, &ask_progress).await?;
     }
-    let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card)));
+    let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card) || forced_processor));
     let device_now = {
         let (on_processor, gpu_name, cpu_name, cloud) = (on_processor.clone(), gpu_name.clone(), cpu_name.clone(), on_cloud.clone());
         move || -> (String, Option<String>) {
@@ -1953,7 +1975,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         // a chat model, a download, an engine that hung) is let go, and the
         // engines it started end with it (a song stuck "making" ignored Stop).
         None => {
-            let work = JOB_ID.scope(id.clone(), crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)));
+            let work = JOB_ID.scope(id.clone(), SECOND_CARD.scope(second_card, ON_PROCESSOR.scope(forced_processor, crate::vision::JOB_STOP.scope(cancel.clone(), run_job(state, &id, &req, model.as_ref(), &cancel, &progress)))));
             tokio::pin!(work);
             loop {
                 tokio::select! {
@@ -2350,6 +2372,11 @@ impl RunCtx<'_> {
     async fn run_sd(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path) -> Result<(), String> {
         let vram_gib = self.state.budget().vram_card as f64 / GIB as f64;
         let on_card = vram_gib > 0.0;
+        // Started now on the processor while the card is busy: its build, smaller.
+        if on_card && ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
+            let cpu = self.cpu_engine().await?;
+            return self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await;
+        }
         if !on_card {
             return self.run_sd_once(args, work, None).await;
         }
@@ -2690,7 +2717,10 @@ async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&
     }
     // Not for upscaling: its model is 64 MB, and stopping a 14 GB chat model
     // for it cost the next message a reload.
-    let paused = if music_on_gpu || recorded_voice(req).is_some() || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach" | "cover_art") {
+    let forced = ON_PROCESSOR.try_with(|p| *p).unwrap_or(false);
+    let paused = if forced {
+        None
+    } else if music_on_gpu || recorded_voice(req).is_some() || matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "video" | "tune" | "coach" | "cover_art") {
         make_room(state, req, model).await
     } else {
         None
@@ -5034,6 +5064,11 @@ async fn map_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
 /// (`cardfirst`); None then.
 async fn map_card(ctx: &RunCtx<'_>) -> Result<Option<crate::natural::Card>, String> {
     let state = ctx.state;
+    // Started now on the processor, as they asked.
+    if ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
+        (ctx.progress)("On the processor, as you asked (slower)", 0.0);
+        return Ok(None);
+    }
     loop {
         let why = match card_for_onnx(ctx).await {
             // The rest runs on the card through DirectML; the part separator
@@ -5078,7 +5113,10 @@ async fn card_for_onnx(ctx: &RunCtx<'_>) -> Result<crate::natural::Card, String>
     if crate::natural::loaded_for_processor() {
         return Err("SulcusAI loaded the processor's libraries before the graphics card's were here, and only one can be loaded until it starts again".into());
     }
-    let mut p = crate::natural::pick_card(state, SECOND_CARD.try_with(|s| *s).unwrap_or(false)).await?;
+    // The second card: the job's place in line, or handed over to it.
+    let job = JOB_ID.try_with(|j| j.clone()).ok();
+    let second = SECOND_CARD.try_with(|s| *s).unwrap_or(false) || job.as_deref().and_then(crate::lineup::card_of) == Some(crate::lineup::Card::Second);
+    let mut p = crate::natural::pick_card(state, second).await?;
     // CUDA's part, the first time an NVIDIA card it runs on takes work.
     if p.needs_cuda {
         let getting = format!("Getting the graphics card's libraries (once, {})", crate::size_label(crate::natural::card_runtime_size(&state.paths, voices, true)));
@@ -5188,6 +5226,11 @@ async fn revoice_item(ctx: &RunCtx<'_>, item: &MediaItem, voice_id: &str) -> Res
     let voice = own_voice::get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That recorded voice is no longer here.")?;
     let (reference, sung) = own_voice::singing_reference(&state.paths, &c, &voice)?;
     let sep = state.catalog.media.separator.clone().ok_or("The part separator isn't available.")?;
+    // With a second card and something waiting for the main one: sung there,
+    // and the main card goes on to the next in line.
+    if let Some(job) = JOB_ID.try_with(|j| j.clone()).ok() {
+        crate::lineup::hand_over(state, &job);
+    }
     let card = map_card(ctx).await?;
     let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
     let models = own_voice::sing_parts(state, ctx.cancel, ctx.progress).await?;

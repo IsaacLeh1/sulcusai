@@ -2161,3 +2161,13 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .learn-note { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 6px; background: rgba(225, 155, 45, 0.15); }
 .studio-ask .input { flex: 1; min-width: 200px; }
 .studio-ask .ellipsis { max-width: 45%; }
+.lineup { position: relative; display: inline-flex; }
+.lineup-pill.busy { color: var(--accent); font-weight: 600; }
+.lineup-panel { position: fixed; bottom: 40px; right: 16px; width: min(520px, calc(100vw - 32px)); max-height: 60vh; overflow-y: auto; overflow-x: hidden; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; z-index: 57; display: grid; gap: 8px; }
+.lineup-panel h4 { margin: 4px 0 0; }
+.lineup-panel p { margin: 0; }
+.lineup-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: var(--code-bg); }
+.lineup-row .grow { min-width: 0; flex: 1; }
+.lineup-row .grow > strong { display: block; }
+.lineup-place { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 999px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; font-weight: 600; flex: none; }
+.lineup-choices { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }

@@ -3423,6 +3423,11 @@ export const api = {
   processorFallback: () => invoke<ProcessorFallback>("processor_fallback"),
   setProcessorFallback: (value: ProcessorFallback) => invoke<void>("set_processor_fallback", { value }),
   driverCheck: () => invoke<DriverNote[]>("driver_check"),
+  lineupList: () => invoke<LineupEntry[]>("lineup_list"),
+  lineupMove: (id: string, to: number) => invoke<void>("lineup_move", { id, to }),
+  lineupStartNowOptions: (id: string) => invoke<StartNow>("lineup_start_now_options", { id }),
+  lineupStartNow: (id: string, how: "processor" | "stop") => invoke<void>("lineup_start_now", { id, how }),
+  lineupRemove: (id: string) => invoke<void>("lineup_remove", { id }),
   driverPutOff: (key: string, need: string) => invoke<void>("driver_put_off", { key, need }),
   setPerf: (settings: PerfSettings) => invoke<PerfLimits>("set_perf", { settings }),
   setWebSettings: (settings: WebSettings, braveKey: string | null) => invoke<void>("set_web_settings", { settings, braveKey }),
@@ -3490,6 +3495,32 @@ export interface CardAsk {
   restart: boolean;
 }
 
+/** A chat reply or Studio job in the line for the graphics cards (`lineup.rs`). */
+export interface LineupEntry {
+  id: string;
+  kind: "chat" | "studio";
+  title: string;
+  what: string;
+  chat_id: string | null;
+  model: string | null;
+  need: number;
+  second_ok: boolean;
+  processor_ok: boolean;
+  running: boolean;
+  /** Where it runs: a card, or null for the processor (once running). */
+  card: "main" | "second" | null;
+  /** Part of a running reply (a picture or song it makes). */
+  inside: string | null;
+  queued_at: number;
+  started_at: number | null;
+}
+
+/** What starting a waiting entry now would take. */
+export interface StartNow {
+  processor: boolean;
+  in_the_way: LineupEntry[];
+}
+
 /** A graphics driver that needs updating (checked when SulcusAI starts). */
 export interface DriverNote {
   card: string;
@@ -3555,7 +3586,7 @@ export interface InstallFinished {
 
 export interface ChatEvents {
   /** "queued": waiting in line for another model (`place`: 1 is next; `detail`: the model running now). */
-  "chat:status": { chat_id: string; status: "loading" | "queued" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string; place?: number };
+  "chat:status": { chat_id: string; status: "loading" | "queued" | "waiting_card" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string; place?: number };
   /** Auto handed this message to another installed model, better at its task. */
   "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" };
   "chat:compacted": { chat_id: string; auto: boolean };
@@ -3610,6 +3641,7 @@ export interface ChatEvents {
   "engine:memory_done": { id: string };
   "card:ask": CardAsk;
   "card:ask_done": { id: string };
+  "lineup:changed": LineupEntry[];
   "chat:web": { chat_id: string; web: boolean };
   /** The assistant opened a site in the chat's Preview panel. */
   "chat:preview": { chat_id: string; url: string; site?: string; root?: string; start?: string; port?: number };

@@ -43,6 +43,7 @@ import { KeyPermission } from "./components/KeyPermission";
 import { MemoryWarningPopup } from "./components/MemoryWarning";
 import { CardAskPopup } from "./components/CardAsk";
 import { DriverNotice } from "./components/DriverNotice";
+import { LineupBar } from "./components/LineupBar";
 import { ElsewhereApprovals } from "./components/ElsewhereApprovals";
 import { CrashReportPrompt, FeedbackButton } from "./components/Feedback";
 import { PeopleRequests } from "./components/PeopleRequests";
@@ -1381,6 +1382,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
         <PerfPill onOpen={() => setView("settings")} />
         <GpuPill onOpen={() => setView("settings")} />
         <WorkBar onOpen={(page) => setView(page)} />
+        <LineupBar toast={toast} />
         <UpdatePill toast={toast} />
         <PrivacyPill onOpen={() => setView("settings")} />
         <span className="spacer" />

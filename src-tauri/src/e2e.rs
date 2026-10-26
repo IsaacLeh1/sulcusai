@@ -1263,6 +1263,40 @@ async fn e2e_cards_runtime_downloads_and_runs_both_ways() {
     std::fs::remove_dir_all(&engines).ok();
 }
 
+/// Two pictures asked for at once take turns on the card (6 GB each, more
+/// than this 12 GB card holds together): the second waits in line, then
+/// runs on the card too, never on the processor.
+///     cargo test e2e_jobs_take_turns -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_jobs_take_turns_on_the_card() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    crate::applog::init(&state.paths.logs);
+    media::install_for_test(&state, "realvisxl-v5-lightning").await.unwrap();
+    let req = |seed: i64| Request { op: "generate".into(), prompt: "a red bicycle leaning on a blue wall".into(), model_id: Some("realvisxl-v5-lightning".into()), shape: Some("square".into()), seed: Some(seed), ..Default::default() };
+    let (a, b) = (store::new_id(), store::new_id());
+    let (s1, s2, a2, b2) = (state.clone(), state.clone(), a.clone(), b.clone());
+    let first = tokio::spawn(async move { media::run(&s1, a2, req(1)).await });
+    while !crate::lineup::list().iter().any(|e| e.id == a && e.running) {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let second = tokio::spawn(async move { media::run(&s2, b2, req(2)).await });
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let line = crate::lineup::list();
+    for e in &line {
+        println!("{} {} ({}){}", if e.running { "running" } else { "waiting" }, e.what, e.id, e.card.map_or(String::new(), |c| format!(" on {c:?}")));
+    }
+    assert!(line.iter().any(|e| e.id == b && !e.running), "the second waits its turn");
+    let (r1, r2) = (first.await.unwrap(), second.await.unwrap());
+    assert!(r1.is_ok() && r2.is_ok(), "{r1:?} {r2:?}");
+    assert!(crate::lineup::list().is_empty(), "the line is empty when they're done");
+    let log = std::fs::read_to_string(state.paths.logs.join("app.log")).unwrap_or_default();
+    let done: Vec<&str> = log.lines().filter(|l| l.contains("generate with")).collect();
+    println!("{}", done.join("\n"));
+    assert!(done.len() == 2 && done.iter().all(|l| l.contains("on the graphics card")));
+}
+
 /// A reply past a small length limit is carried on to its end.
 ///     SULCUSAI_TEST_GGUF is the model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

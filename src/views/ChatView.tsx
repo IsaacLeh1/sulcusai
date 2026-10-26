@@ -157,7 +157,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
   // Waiting in line for another model: one runs at a time.
-  const [queued, setQueued] = useState<{ place: number; model: string } | null>(null);
+  const [queued, setQueued] = useState<{ place: number; model: string; card?: boolean } | null>(null);
   // Before a picture of something named: checking (or looking up) its look.
   const [lookingUp, setLookingUp] = useState<string | null>(null);
   // The picture reader is describing attached pictures for a model that can't see them.
@@ -297,7 +297,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
     const subs = [
       on("chat:status", mine((p) => {
-        setQueued(p.status === "queued" ? { place: p.place ?? 1, model: p.detail ?? "" } : null);
+        setQueued(p.status === "queued" ? { place: p.place ?? 1, model: p.detail ?? "" } : p.status === "waiting_card" ? { place: p.place ?? 1, model: "", card: true } : null);
         if (p.status === "handoff") setHandingOff(true);
         else if (p.status === "compacting") setCompacting(true);
         else if (p.status === "idle") {
@@ -786,7 +786,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
         {status === "loading" && !streaming && queued && (
           <p className="muted small pad queued">
-            {t("Your message is number {place} in line. {model} is answering in another chat, and one model runs at a time, so this starts when it's done.", { place: queued.place, model: queued.model || t("Another model") })}
+            {queued.card
+              ? t("Your message is number {place} in line for the graphics card. It starts when the work ahead of it is done, so nothing slows down on the processor. The line is at the bottom of the window.", { place: queued.place })
+              : t("Your message is number {place} in line. {model} is answering in another chat, and one model runs at a time, so this starts when it's done.", { place: queued.place, model: queued.model || t("Another model") })}
           </p>
         )}
         {status === "loading" && !streaming && !queued && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}

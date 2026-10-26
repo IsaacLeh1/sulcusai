@@ -11,6 +11,7 @@ mod cardfirst;
 mod cleanup;
 mod doclib;
 mod drivers;
+mod lineup;
 mod study;
 mod pccheck;
 mod addons;
@@ -1990,6 +1991,8 @@ async fn run_turn_with(
     // Pictures in this message or earlier ones: start the model with its image encoder.
     let pictures = !images.is_empty()
         || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some()));
+    // Its turn for the graphics card (`lineup`), held while it replies.
+    let mut _line: Option<lineup::Turn> = None;
     let (ep, use_tools, vision) = match &asking {
         Some(a) => (a.ep.clone(), a.tools, a.vision),
         None => {
@@ -2002,6 +2005,16 @@ async fn run_turn_with(
                 app.emit("chat:routed", json!({ "chat_id": chat_id, "model_id": p.model_id, "name": p.name, "task": p.task.word() })).ok();
             }
             let model_id = routed.map(|p| p.model_id).or_else(|| chat.model_id.clone());
+            let local = model_id.clone().or_else(|| state.settings().default_model).filter(|id| !cloud::is_cloud(id) && !sync::compute::is_compute(id));
+            if let Some(id) = local {
+                let entry = lineup::Entry::chat(&chat_id, &chat.title, &id, chat_card_need(state, &id));
+                _line = Some(
+                    lineup::wait(state, entry, cancel.clone(), |place| {
+                        app.emit("chat:status", json!({ "chat_id": chat_id, "status": "waiting_card", "place": place })).ok();
+                    })
+                    .await?,
+                );
+            }
             let (ep, spec, _) = llm_endpoint(state, model_id, pictures, chat_waiting(app, &chat_id)).await?;
             let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
             (ep, spec.tools, vision)
@@ -2254,6 +2267,17 @@ fn load_failed(state: &AppState, spec: &ModelSpec, quant: &str, ctx: u32, layers
         ),
     );
     format!("{} couldn't load: the engine stopped while loading it. {reason}", spec.name)
+}
+
+/// The graphics memory a reply on this model takes (its weights and its
+/// window, as planned), for its place in the card's line; 0 when unknown.
+fn chat_card_need(state: &AppState, model_id: &str) -> u64 {
+    let id = finetune::parse_ref(model_id).and_then(|a| finetune::adapter(state, a)).map_or(model_id.to_string(), |a| a.base);
+    let Some(spec) = state.model_spec(&id) else { return 0 };
+    let quant = db::installed_model(&state.db.lock().unwrap(), &id).map(|m| m.quant).unwrap_or_else(|| spec.variants[0].quant.clone());
+    let Some(v) = spec.variant(&quant) else { return 0 };
+    let ctx = plan_with(state, &spec, &quant, 0, true).ctx;
+    v.size + catalog::kv_cache_bytes(&spec.arch, ctx) + (700 << 20)
 }
 
 /// A chat's status while its model is on the way: loading, or its place in
@@ -2786,6 +2810,11 @@ pub fn run() {
             cardfirst::set_processor_fallback,
             drivers::driver_check,
             drivers::driver_put_off,
+            lineup::lineup_list,
+            lineup::lineup_move,
+            lineup::lineup_start_now_options,
+            lineup::lineup_start_now,
+            lineup::lineup_remove,
             placement::gpu_menu,
             placement::set_main_gpu,
             security::set_keep_working,
