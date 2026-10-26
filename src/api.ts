@@ -2563,6 +2563,14 @@ export const api = {
   peopleUnread: () => invoke<number>("people_unread"),
   /** People in a window of its own (brought forward if it's open). */
   openPeopleWindow: () => invoke<void>("open_people_window"),
+  /** A chat in a window of its own (brought forward when it's open). */
+  openChatWindow: (chatId: string) => invoke<void>("open_chat_window", { chatId }),
+  /** The Studio in a new window of its own. */
+  openStudioWindow: () => invoke<void>("open_studio_window"),
+  /** A song studio project in a window of its own; with `onlyIfOpen`, only brought forward (true when it was open). */
+  openSongStudioWindow: (projectId: string, onlyIfOpen = false) => invoke<boolean>("open_song_studio_window", { projectId, onlyIfOpen }),
+  /** The main window brought forward on a page. */
+  showMainPage: (page: string) => invoke<void>("show_main_page", { page }),
   setPeopleName: (name: string) => invoke<PeopleView>("set_people_name", { name }),
   /** A new code, good for `max` people. */
   peopleNewCode: (max: number, label: string | null) => invoke<PeopleView>("people_new_code", { max, label }),

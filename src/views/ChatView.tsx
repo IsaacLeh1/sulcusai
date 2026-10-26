@@ -40,7 +40,7 @@ import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation, words } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
-import { GlobeIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
+import { GlobeIcon, NewWindowIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
 import { rememberSent, SmartInput } from "../components/SmartInput";
 
 interface Props {
@@ -60,6 +60,8 @@ interface Props {
   /** This chat's own browser, open beside it (and where it starts), or null. */
   browser?: { url: string | null; at: number } | null;
   onBrowser?: (open: boolean) => void;
+  /** Opens this chat in a window of its own (none when it's in one). */
+  onPopOut?: () => void;
   toast: PushToast;
 }
 
@@ -109,7 +111,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, onPopOut, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreamingNow] = useState<Streaming | null>(null);
   // Tokens arrive dozens a second and the live reply is drawn as Markdown
@@ -673,6 +675,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           <button className={`btn ghost small ${showFiles ? "active" : ""}`} aria-pressed={showFiles} onClick={() => setShowFiles((v) => !v)} title={t("Pictures and files made in this chat")}>
             {t("Files")}
           </button>
+          {onPopOut && !chat.incognito && (
+            <button className="icon-btn" onClick={onPopOut} aria-label={t("Open this chat in a new window")} title={t("Open this chat in a new window, with its own model, beside the others")}>
+              <NewWindowIcon />
+            </button>
+          )}
           {features.has("people") && !chat.incognito && <ShareChat chatId={chat.id} toast={toast} />}
           {!chat.incognito && (
             <>

@@ -4879,5 +4879,17 @@
  "{n} MIDI part(s) brought in.": "{n} MIDI-Part(s) hereingeholt.",
  "{n} beats a bar": "{n} Schläge pro Takt",
  "{n} s longer": "{n} s länger",
- "{n} s more": "{n} s mehr"
+ "{n} s more": "{n} s mehr",
+ "SulcusAI's main window isn't open.": "Das Hauptfenster von SulcusAI ist nicht geöffnet.",
+ "Open in a new window": "In neuem Fenster öffnen",
+ "Open the Studio in a new window": "Studio in neuem Fenster öffnen",
+ "Open the Studio in a new window: pictures, video and music beside your chats (open as many as you like)": "Studio in neuem Fenster öffnen: Bilder, Videos und Musik neben deinen Chats (so viele Fenster, wie du willst)",
+ "Open this chat in a new window": "Diesen Chat in neuem Fenster öffnen",
+ "Open this chat in a new window, with its own model, beside the others": "Diesen Chat in neuem Fenster öffnen, mit eigenem Modell, neben den anderen",
+ "Open this project in a window of its own": "Dieses Projekt in einem eigenen Fenster öffnen",
+ "Pick a chat first.": "Wähle zuerst einen Chat.",
+ "Pick a project first.": "Wähle zuerst ein Projekt.",
+ "Shift+click: a new chat in a window of its own": "Umschalt+Klick: ein neuer Chat in einem eigenen Fenster",
+ "Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.": "Umschalt+Klick: das Studio in einem eigenen Fenster. Ziehen, um das Menü nach Wunsch zu ordnen.",
+ "That project is no longer here.": "Dieses Projekt ist nicht mehr da."
 }

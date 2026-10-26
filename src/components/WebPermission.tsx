@@ -7,8 +7,8 @@ import { Modal } from "./Modal";
 /** The assistant needs the web while it's off: a popup, wherever the person
  * is in the app. A yes turns web on for that chat and the reply carries on;
  * a no (or closing it) lets the reply finish without the web. */
-export function WebPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_web");
+export function WebPermission({ chats, onOpenChat, only }: { chats: Chat[]; onOpenChat: (id: string) => void; /** Only this chat's (a chat in a window of its own). */ only?: string }) {
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_web" && (!only || p.chat_id === only));
   const p = asks[0];
   if (!p) return null;
   const chat = chats.find((c) => c.id === p.chat_id);

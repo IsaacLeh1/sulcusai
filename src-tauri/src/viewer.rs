@@ -12,6 +12,10 @@
 //! A chat's assistant browses in its chat's viewer (tools::browser), so the
 //! person watches it work there and can take over.
 //!
+//! A chat can be open in a window of its own (side_windows): its viewer
+//! lives in the window that last showed it, and moves (reparents) to
+//! whichever window shows it next.
+//!
 //! Safety, as for the assistant's browser: only http and https; never this
 //! PC or the home network, unless the person typed that address themselves;
 //! downloads go through the main browser; new windows open in place.
@@ -25,7 +29,7 @@ use std::sync::{LazyLock, Mutex};
 use serde::Deserialize;
 use serde_json::json;
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl};
+use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Window};
 
 use crate::{AppState, AppStateRef};
 
@@ -49,6 +53,18 @@ static RECENT: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static LAST: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
 /// Hosts on this PC or the home network the person typed in a viewer (by key).
 static TYPED: LazyLock<Mutex<HashMap<String, HashSet<String>>>> = LazyLock::new(Default::default);
+/// The window each viewer was last shown in (by key), where its assistant's opens too.
+static HOSTS: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
+
+/// The window a viewer belongs in: the one given, else where it was last
+/// shown (while that's open), else the main window.
+fn host(app: &AppHandle, key: &str, given: Option<&Window>) -> Result<Window, String> {
+    if let Some(w) = given {
+        return Ok(w.clone());
+    }
+    let last = HOSTS.lock().unwrap().get(key).cloned();
+    last.and_then(|l| app.get_window(&l)).or_else(|| app.get_window("main")).ok_or_else(|| "SulcusAI's window isn't open.".to_string())
+}
 
 /// A viewer's key: its chat's id, or "main" for the Web page.
 pub fn key_of(chat: Option<&str>) -> String {
@@ -115,14 +131,18 @@ fn touch(app: &AppHandle, key: &str) {
 }
 
 /// The viewer for `key`, opened (hidden, out of sight, when there's no
-/// `area` yet) if it isn't already. Returns it, and whether it's new.
-pub fn ensure(app: &AppHandle, state: &AppState, key: &str, url: Option<&str>, area: Option<Area>) -> Result<(Webview, bool), String> {
+/// `area` yet) if it isn't already, in `window` (moved there when it's in
+/// another). Returns it, and whether it's new.
+pub fn ensure(app: &AppHandle, state: &AppState, key: &str, url: Option<&str>, area: Option<Area>, window: Option<&Window>) -> Result<(Webview, bool), String> {
     crate::offline::check(crate::offline::Keep::Web)?;
+    let window = host(app, key, window)?;
     if let Some(w) = webview(app, key) {
+        if w.window().label() != window.label() {
+            w.reparent(&window).map_err(|e| format!("Couldn't move the web viewer: {e}"))?;
+        }
         touch(app, key);
         return Ok((w, false));
     }
-    let window = app.get_window("main").ok_or("SulcusAI's window isn't open.")?;
     let profile = state.paths.data.join("viewer");
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
     let start = url.map(str::to_string).or_else(|| LAST.lock().unwrap().remove(key)).unwrap_or_else(|| HOME.into());
@@ -168,7 +188,7 @@ pub fn ensure(app: &AppHandle, state: &AppState, key: &str, url: Option<&str>, a
 /// the chat is told so it can show it beside the conversation.
 pub fn for_assistant(app: &AppHandle, state: &AppState, chat_id: &str) -> Result<Webview, String> {
     let key = key_of(Some(chat_id));
-    let (w, _) = ensure(app, state, &key, None, None)?;
+    let (w, _) = ensure(app, state, &key, None, None, None)?;
     let _ = app.emit("viewer:dock", json!({ "key": key }));
     Ok(w)
 }
@@ -207,10 +227,11 @@ pub fn address(typed: &str) -> String {
 
 // ---------- commands (`key`: a chat's id, or none for the Web page) ----------
 
-/// Shows a viewer over `area` (at `url` when given), opening it if needed;
-/// any other viewer goes out of sight.
+/// Shows a viewer over `area` of the window asking (at `url` when given),
+/// opening it there or moving it there if needed; any other viewer in that
+/// window goes out of sight.
 #[tauri::command(async)]
-pub fn viewer_show(app: AppHandle, state: AppStateRef<'_>, key: Option<String>, url: Option<String>, area: Area) -> Result<(), String> {
+pub fn viewer_show(app: AppHandle, window: Window, state: AppStateRef<'_>, key: Option<String>, url: Option<String>, area: Area) -> Result<(), String> {
     if !crate::net::allowed(state.settings().connectivity, crate::net::Purpose::Web, false) {
         return Err("The web viewer needs Local AI + Web. Switch to it from the status bar.".into());
     }
@@ -219,12 +240,13 @@ pub fn viewer_show(app: AppHandle, state: AppStateRef<'_>, key: Option<String>, 
     if let Some(u) = &target {
         typed(&key, u);
     }
+    HOSTS.lock().unwrap().insert(key.clone(), window.label().to_string());
     for w in all(&app) {
-        if w.label() != label(&key) {
+        if w.label() != label(&key) && w.window().label() == window.label() {
             let _ = w.hide();
         }
     }
-    let (w, fresh) = ensure(&app, &state, &key, target.as_deref(), Some(area))?;
+    let (w, fresh) = ensure(&app, &state, &key, target.as_deref(), Some(area), Some(&window))?;
     place(&w, area)?;
     w.show().map_err(|e| e.to_string())?;
     if let (Some(u), false) = (target, fresh) {
@@ -243,11 +265,15 @@ pub fn viewer_area(app: AppHandle, key: Option<String>, area: Area) -> Result<()
 }
 
 /// Out of sight (another page, a dialog over it, or minimized), kept as it
-/// was. No key: every viewer.
+/// was. No key: every viewer in the window asking.
 #[tauri::command(async)]
-pub fn viewer_hide(app: AppHandle, key: Option<String>) -> Result<(), String> {
+pub fn viewer_hide(app: AppHandle, window: Window, key: Option<String>) -> Result<(), String> {
     for w in all(&app) {
-        if key.is_none() || w.label() == label(&key_of(key.as_deref())) {
+        let mine = match &key {
+            None => w.window().label() == window.label(),
+            Some(_) => w.label() == label(&key_of(key.as_deref())),
+        };
+        if mine {
             w.hide().map_err(|e| e.to_string())?;
         }
     }
@@ -292,6 +318,7 @@ pub fn viewer_close(app: AppHandle, key: Option<String>) -> Result<(), String> {
     let key = key_of(key.as_deref());
     LAST.lock().unwrap().remove(&key);
     TYPED.lock().unwrap().remove(&key);
+    HOSTS.lock().unwrap().remove(&key);
     RECENT.lock().unwrap().retain(|k| k != &key);
     match webview(&app, &key) {
         Some(w) => w.close().map_err(|e| e.to_string()),

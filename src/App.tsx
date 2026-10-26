@@ -519,6 +519,20 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
     setActiveChat(id);
     setView("chat");
   };
+  // Chats and the Studio in windows of their own (not on a phone, where there's one screen).
+  const chatWindow = (id: string) => api.openChatWindow(id).catch((e) => toast(errorText(e), "error"));
+  const studioWindow = () => api.openStudioWindow().catch((e) => toast(errorText(e), "error"));
+  /** A new chat, in a window of its own: a model session beside this one. */
+  const newChatWindow = async () => {
+    if (installed.length === 0) return newChat();
+    try {
+      const chat = await api.createChatIn(null, false);
+      await refreshChats();
+      chatWindow(chat.id);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
 
   const changeConnectivity = async (level: Connectivity) => {
     setSettings(await api.setConnectivity(level));
@@ -719,7 +733,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           />
         ) : (<>
         <div className="new-chat-row">
-          <button className="btn primary block" onClick={() => newChat()}>
+          <button
+            className="btn primary block"
+            onClick={(e) => (e.shiftKey && !phone ? newChatWindow() : newChat())}
+            title={phone ? undefined : t("Shift+click: a new chat in a window of its own")}
+          >
             {t("+ New chat")}
           </button>
           <button
@@ -753,9 +771,9 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             <button
               key={n.id}
               className={`${view === n.id ? "active" : ""} ${navOver?.id === n.id ? `drop-${navOver.at}` : ""}`}
-              onClick={() => setView(n.id as View)}
+              onClick={(e) => (e.shiftKey && n.id === "studio" && !phone ? studioWindow() : setView(n.id as View))}
               draggable
-              title={t("Drag to put the menu in the order you like (or Alt+Up / Alt+Down)")}
+              title={n.id === "studio" && !phone ? t("Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.") : t("Drag to put the menu in the order you like (or Alt+Up / Alt+Down)")}
               onDragStart={(e) => {
                 e.dataTransfer.setData("application/x-sulcus-nav", n.id);
                 e.dataTransfer.effectAllowed = "move";
@@ -905,6 +923,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
                 )}
                 {!chats.find((c) => c.id === id)?.incognito && (
                   <>
+                    {!phone && (
+                      <button role="menuitem" onClick={() => (done(), chatWindow(id))}>
+                        {t("Open in a new window")}
+                      </button>
+                    )}
                     <button role="menuitem" onClick={() => (done(), setNotesFor(id))}>
                       {t("Notes…")}
                     </button>
@@ -953,6 +976,11 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
       )}
       {navMenu && (
         <FloatingMenu x={navMenu.x} y={navMenu.y} onClose={() => setNavMenu(null)}>
+          {navMenu.id === "studio" && !phone && (
+            <button role="menuitem" onClick={() => (setNavMenu(null), studioWindow())}>
+              {t("Open in a new window")}
+            </button>
+          )}
           {tucked.includes(navMenu.id) ? (
             <button role="menuitem" onClick={() => (setNavMenu(null), saveLayout({ ...layout, collapsed: tucked.filter((x) => x !== navMenu.id) }))}>
               {t("Take out of Collapse")}
@@ -1186,11 +1214,12 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             onGoFeatures={() => setView("features")}
             browser={!phone && current ? browserChats[current.id] ?? null : null}
             onBrowser={(open) => current && (open ? openChatBrowser(current.id, null) : shutChatBrowser(current.id))}
+            onPopOut={!phone && current ? () => chatWindow(current.id) : undefined}
             toast={toast}
           />
         )}
         {view === "features" && <FeaturesView progress={progress} toast={toast} />}
-        {view === "studio" && <StudioView features={features ?? new Set()} progress={progress} toast={toast} onGoFeatures={() => setView("features")} />}
+        {view === "studio" && <StudioView features={features ?? new Set()} progress={progress} toast={toast} onGoFeatures={() => setView("features")} onPopOut={phone ? undefined : studioWindow} />}
         {view === "notes" && <NotesView toast={toast} />}
         {view === "tasks" && <TasksView onOpenChat={openChat} toast={toast} />}
         {view === "mail" && <MailView toast={toast} />}

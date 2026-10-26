@@ -9,11 +9,11 @@ import { Modal } from "./Modal";
  * API key: a popup, wherever the person is in the app, saying what the site
  * would connect to and what it needs. They paste the key (or keep one saved
  * earlier) and connect it, or say no; the reply carries on either way. */
-export function KeyPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
+export function KeyPermission({ chats, onOpenChat, only }: { chats: Chat[]; onOpenChat: (id: string) => void; /** Only this chat's (a chat in a window of its own). */ only?: string }) {
   const [info, setInfo] = useState<Record<string, SiteKeyAsk>>({});
   const [asks, setAsks] = useWaitingApprovals(
     chats,
-    (p) => p.tool === "request_api_key",
+    (p) => p.tool === "request_api_key" && (!only || p.chat_id === only),
     (p) => api.siteKeyAsk(p.call_id).then((a) => setInfo((all) => ({ ...all, [p.call_id]: a }))).catch(() => {}),
   );
   const [key, setKey] = useState("");

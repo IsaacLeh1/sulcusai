@@ -10,8 +10,8 @@ import { Modal } from "./Modal";
 /** The assistant needs a folder it can't reach: a popup, wherever the person
  * is in the app. They can allow the folder it suggests, pick another, or say
  * no (closing it says no too); the reply carries on either way. */
-export function FolderPermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_folder");
+export function FolderPermission({ chats, onOpenChat, only }: { chats: Chat[]; onOpenChat: (id: string) => void; /** Only this chat's (a chat in a window of its own). */ only?: string }) {
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.tool === "request_folder" && (!only || p.chat_id === only));
   // The folder each request will share, once the person picked another.
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);

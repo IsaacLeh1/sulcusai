@@ -11,12 +11,15 @@ import "./styles.css";
 const App = lazy(() => import("./App"));
 const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m.QuickAsk })));
 const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
+const SideWindow = lazy(() => import("./views/SideWindow"));
 
-// The same page runs the quick-ask box, in its own small window, and People
-// in a window of its own.
+// The same page runs the quick-ask box, in its own small window, People in
+// a window of its own, and chats, the Studio and song studio projects in
+// windows of their own.
 const label = getCurrentWindow().label;
 const quick = label === "quick";
 const people = label === "people";
+const side = /^(chat|studio|songstudio)-/.test(label);
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
 
@@ -38,8 +41,8 @@ if (!quick) {
     }
     import("./api").then(({ api }) => api.reportWindowError(String(r?.message ?? r), r?.stack ?? null).catch(() => {}));
   });
-  // The main window's: the People window answering doesn't mean it does.
-  if (!people) {
+  // The main window's: another window answering doesn't mean it does.
+  if (!people && !side) {
     const ping = () => import("./api").then(({ api }) => api.crashPing().catch(() => {}));
     ping();
     setInterval(ping, 30_000);
@@ -50,7 +53,7 @@ if (!quick) {
 // re-render everything below them).
 function Root() {
   useLanguage();
-  return <Suspense fallback={null}>{quick ? <QuickAsk /> : people ? <PeopleWindow /> : <App />}</Suspense>;
+  return <Suspense fallback={null}>{quick ? <QuickAsk /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : <App />}</Suspense>;
 }
 
 initLanguage().then(() =>

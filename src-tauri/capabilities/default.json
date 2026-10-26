@@ -1,15 +1,19 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window, the quick-ask box and the People window: core events, window controls, and the open and save file pickers. All other access goes through the app's own commands. The browser window is in no capability.",
+  "description": "Main window, the quick-ask box, the People window and chats, the Studio and song studio projects in windows of their own: core events, window controls, and the open and save file pickers. All other access goes through the app's own commands. The browser window is in no capability.",
   "windows": [
     "main",
     "quick",
-    "people"
+    "people",
+    "chat-*",
+    "studio-*",
+    "songstudio-*"
   ],
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",
+    "core:window:allow-set-title",
     "dialog:allow-ask",
     "dialog:allow-open",
     "dialog:allow-save"

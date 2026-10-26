@@ -68,6 +68,7 @@ mod oauth;
 mod paths;
 mod pcstatus;
 mod people_window;
+mod side_windows;
 mod perf;
 mod placement;
 mod places;
@@ -1683,9 +1684,12 @@ fn create_chat(state: AppStateRef) -> Result<Chat, String> {
     db::create_chat(&conn, &c, model)
 }
 
+/// Deletes a chat, and tells every window (one may have it open on its own).
 #[tauri::command(async)]
-fn delete_chat(state: AppStateRef, chat_id: String) -> Result<(), String> {
-    delete_chat_now(&state, &chat_id)
+fn delete_chat(app: tauri::AppHandle, state: AppStateRef, chat_id: String) -> Result<(), String> {
+    delete_chat_now(&state, &chat_id)?;
+    app.emit("chat:deleted", serde_json::json!({ "chat_id": chat_id })).ok();
+    Ok(())
 }
 
 /// Deletes a chat: its messages and pasted pictures, its place in a folder,
@@ -2634,6 +2638,7 @@ pub fn run() {
         .on_window_event(|w, e| {
             quick::on_main_event(w, e);
             people_window::on_main_event(w, e);
+            side_windows::on_main_event(w, e);
         })
         .setup(|app| {
             // Local, not roaming: models are gigabytes and must never sync.
@@ -2766,6 +2771,10 @@ pub fn run() {
             viewer::viewer_exists,
             viewer::viewer_close,
             people_window::open_people_window,
+            side_windows::open_chat_window,
+            side_windows::open_studio_window,
+            side_windows::open_song_studio_window,
+            side_windows::show_main_page,
             media::own_voice::own_voices,
             media::own_voice::own_voice_create,
             media::own_voice::own_voice_rename,

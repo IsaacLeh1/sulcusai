@@ -4879,5 +4879,17 @@
  "{n} MIDI part(s) brought in.": "{n} 個の MIDI パートを取り込みました。",
  "{n} beats a bar": "1 小節 {n} 拍",
  "{n} s longer": "{n} 秒長く",
- "{n} s more": "あと {n} 秒"
+ "{n} s more": "あと {n} 秒",
+ "SulcusAI's main window isn't open.": "SulcusAI のメインウィンドウが開いていません。",
+ "Open in a new window": "新しいウィンドウで開く",
+ "Open the Studio in a new window": "スタジオを新しいウィンドウで開く",
+ "Open the Studio in a new window: pictures, video and music beside your chats (open as many as you like)": "スタジオを新しいウィンドウで開きます。チャットの横で画像・動画・音楽を（いくつでも）",
+ "Open this chat in a new window": "このチャットを新しいウィンドウで開く",
+ "Open this chat in a new window, with its own model, beside the others": "このチャットを新しいウィンドウで、独自のモデルのまま他と並べて開きます",
+ "Open this project in a window of its own": "このプロジェクトを専用のウィンドウで開く",
+ "Pick a chat first.": "先にチャットを選んでください。",
+ "Pick a project first.": "先にプロジェクトを選んでください。",
+ "Shift+click: a new chat in a window of its own": "Shift+クリック：新しいチャットを専用のウィンドウで",
+ "Shift+click: the Studio in a window of its own. Drag to put the menu in the order you like.": "Shift+クリック：スタジオを専用のウィンドウで。ドラッグでメニューを好きな順に並べ替えられます。",
+ "That project is no longer here.": "そのプロジェクトはもうありません。"
 }

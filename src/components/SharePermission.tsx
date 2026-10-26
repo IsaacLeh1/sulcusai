@@ -93,8 +93,8 @@ export function LevelBadge({ level }: { level: number }) {
  * what goes, who gets it, what they could do with it and how personal it is
  * (1 to 5). The person shares it, rewords or leaves out parts first, or
  * doesn't share it; the reply carries on either way. */
-export function SharePermission({ chats, onOpenChat }: { chats: Chat[]; onOpenChat: (id: string) => void }) {
-  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.preview.kind === "privacy");
+export function SharePermission({ chats, onOpenChat, only }: { chats: Chat[]; onOpenChat: (id: string) => void; /** Only this chat's (a chat in a window of its own). */ only?: string }) {
+  const [asks, setAsks] = useWaitingApprovals(chats, (p) => p.preview.kind === "privacy" && (!only || p.chat_id === only));
   const [values, setValues] = useState<Record<string, string>>({});
   const [left, setLeft] = useState<Record<string, boolean>>({});
   const [forChat, setForChat] = useState(false);

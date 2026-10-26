@@ -68,6 +68,7 @@ import { applyBinding, LearnContext, learnable, type Learn, type LearnTarget } f
 import { onsets } from "../studio/onsets";
 import { encodeFrames, framesFromSound, initPatch, LiveWave, PRESETS, withSettings, type SynthPatch } from "../studio/synth";
 import { SynthPanel } from "./SynthPanel";
+import { NewWindowIcon } from "./Icons";
 import { PianoRoll } from "./PianoRoll";
 import type { PushToast } from "./Toasts";
 
@@ -210,7 +211,8 @@ function AutoLane({ points, min, max, fallback, length: len, onChange, label }: 
   );
 }
 
-export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { initial: Project; onClose: () => void; toast: PushToast; onSaved?: () => void; songs?: MediaItem[] }) {
+/** `onPopOut` moves it to a window of its own (none when it's in one: `inWindow`). */
+export function SongStudio({ initial, onClose, toast, onSaved, songs = [], onPopOut, inWindow = false }: { initial: Project; onClose: () => void; toast: PushToast; onSaved?: () => void; songs?: MediaItem[]; onPopOut?: () => void; inWindow?: boolean }) {
   const engine = useRef<StudioEngine | null>(null);
   // Made when first needed (and again after closing: React mounts twice while developing).
   const eng = () => (engine.current ??= new StudioEngine());
@@ -1263,9 +1265,9 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
   }, [pps, bar, len]);
 
   return (
-    <div className="modal-backdrop">
+    <div className={inWindow ? "song-studio-window" : "modal-backdrop"}>
       <LearnContext.Provider value={learn}>
-      <div className="modal song-studio" role="dialog" aria-modal="true" aria-label={t("Song studio")}>
+      <div className={`${inWindow ? "" : "modal "}song-studio`} role={inWindow ? undefined : "dialog"} aria-modal={inWindow ? undefined : true} aria-label={t("Song studio")}>
         <div className="row wrap">
           <input className="input studio-name" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} onBlur={() => setSaved(false)} aria-label={t("Project name")} />
           <span className="small muted">{saved ? t("Kept") : t("Keeping…")}</span>
@@ -1287,6 +1289,21 @@ export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { i
             {range && <option value="range">{t("The marked stretch, to the gallery")}</option>}
             <option value="tracks">{t("Each track, to the gallery")}</option>
           </select>
+          {onPopOut && (
+            <button
+              className="icon-btn"
+              aria-label={t("Open in a new window")}
+              title={t("Open this project in a window of its own")}
+              onClick={async () => {
+                stop();
+                // Kept first, so the new window opens it as it is now.
+                await api.studioProjectSave({ ...p, updated_at: Date.now() }).catch(() => {});
+                onPopOut();
+              }}
+            >
+              <NewWindowIcon />
+            </button>
+          )}
           <button className="icon-btn" aria-label={t("Close")} onClick={() => { stop(); onClose(); }}>✕</button>
         </div>
 

@@ -40,6 +40,7 @@ import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpap
 import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
 import { AddToPlaylist, Playlists } from "../components/Library";
 import { CustomModelField } from "../components/CustomModels";
+import { NewWindowIcon } from "../components/Icons";
 import { SongStudio } from "../components/SongStudio";
 import { projectForSong } from "../studio/open";
 import { StudioProjects } from "../components/StudioProjects";
@@ -59,9 +60,11 @@ interface Props {
   progress: Record<string, InstallProgress>;
   toast: PushToast;
   onGoFeatures: () => void;
+  /** Opens the Studio in another window of its own. */
+  onPopOut?: () => void;
 }
 
-export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
+export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }: Props) {
   const tabs: Tab[] = (["pictures", "video", "wallpaper", "music", "narrate", "voice"] as Tab[]).filter((tb) => features.has(TAB_FEATURE[tb]));
   // A song written as notes, open in Compose's editor (item: where it's kept).
   const [composing, setComposing] = useState<{ item: MediaItem | null; composition: Composition } | null>(null);
@@ -83,6 +86,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const [models, setModels] = useState<MediaKind[] | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [source, setSource] = useState<MediaItem | null>(null);
+
+  /** A song studio project opened: brought forward where it's open in a window of its own, else here. */
+  const openProject = (p: Project) => {
+    api
+      .openSongStudioWindow(p.id, true)
+      .then((there) => !there && setStudioProject(p))
+      .catch(() => setStudioProject(p));
+  };
 
   const load = useCallback(async () => {
     const kind = filter === "all" || filter === "favorites" ? null : filter;
@@ -184,6 +195,11 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           <p className="muted">{t("Everything is made on this PC and kept encrypted in your gallery.")}</p>
         </div>
         <div className="row">
+          {onPopOut && (
+            <button className="icon-btn" onClick={onPopOut} aria-label={t("Open the Studio in a new window")} title={t("Open the Studio in a new window: pictures, video and music beside your chats (open as many as you like)")}>
+              <NewWindowIcon />
+            </button>
+          )}
           <button className="btn" onClick={importFile}>{t("Import…")}</button>
           <button className="btn" onClick={() => setModels(null === models ? (kind ? [kind, ...(kind === "image" ? (["upscale", "background"] as MediaKind[]) : [])] : ["image", "video", "music"]) : null)}>
             {t("Models")}
@@ -282,7 +298,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           {view && <span className="small muted">{t("{n} in the gallery", { n: view.gallery })}</span>}
         </div>
         {filter === "projects" ? (
-          <StudioProjects onOpen={setStudioProject} toast={toast} />
+          <StudioProjects onOpen={openProject} toast={toast} />
         ) : filter === "playlists" ? (
           <Playlists
             toast={toast}
@@ -308,7 +324,21 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         )}
       </section>
 
-      {studioProject && <SongStudio initial={studioProject} songs={items.filter((i) => i.kind === "audio")} onClose={() => { setStudioProject(null); load(); }} toast={toast} />}
+      {studioProject && (
+        <SongStudio
+          initial={studioProject}
+          songs={items.filter((i) => i.kind === "audio")}
+          onClose={() => {
+            setStudioProject(null);
+            load();
+          }}
+          onPopOut={() => {
+            api.openSongStudioWindow(studioProject.id).catch((e) => toast(errorText(e), "error"));
+            setStudioProject(null);
+          }}
+          toast={toast}
+        />
+      )}
 
       {viewing && (
         <Viewer
