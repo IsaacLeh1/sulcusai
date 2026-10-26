@@ -71,6 +71,12 @@ pub struct SongRequest<'a> {
     /// How closely the description and lyrics are followed (None: as
     /// `guidance` picks for the model).
     pub guidance: Option<f32>,
+    /// A trained adapter (a custom model, `train`): the folder of adapters,
+    /// the one by name, and how strongly (1 as trained). It must match the
+    /// model's size (2B): the engine merges it in when it loads the model.
+    pub adapters: Option<&'a Path>,
+    pub adapter: Option<&'a str>,
+    pub adapter_scale: Option<f32>,
 }
 
 /// Tempo, key and time signature for a new song, from what the person set
@@ -228,6 +234,10 @@ pub fn request_json(r: &SongRequest<'_>) -> Value {
     if let Some(s) = r.strength {
         v["audio_cover_strength"] = json!(s.clamp(0.0, 1.0));
     }
+    if let Some(a) = r.adapter.filter(|a| !a.is_empty() && r.adapters.is_some()) {
+        v["adapter"] = json!(a);
+        v["adapter_scale"] = json!(r.adapter_scale.unwrap_or(1.0).clamp(0.0, 2.0));
+    }
     if planned(r) {
         // Each version gets a plan of its own (different music, not only
         // another take of the same), and the description stays as written.
@@ -345,6 +355,9 @@ pub async fn make(e: &Engine<'_>, work: &Path, r: &SongRequest<'_>, cancel: &Ato
     }
     if let Some(s) = r.reference {
         args.extend(["--ref-audio".into(), s.into()]);
+    }
+    if let (Some(dir), Some(_)) = (r.adapters, r.adapter) {
+        args.extend(["--adapters".into(), dir.into()]);
     }
     proc::run(
         Run {

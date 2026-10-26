@@ -39,6 +39,11 @@ import type { PushToast } from "../components/Toasts";
 import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
 import { AddToPlaylist, Playlists } from "../components/Library";
+import { CustomModelField } from "../components/CustomModels";
+import { SongStudio } from "../components/SongStudio";
+import { projectForSong } from "../studio/open";
+import { StudioProjects } from "../components/StudioProjects";
+import type { Project } from "../studio/model";
 
 type Tab = "pictures" | "video" | "wallpaper" | "music" | "narrate" | "voice";
 type Shape = NonNullable<MediaRequest["shape"]>;
@@ -71,7 +76,9 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
   const jobs = useMediaJobs();
   const [items, setItems] = useState<MediaItem[]>([]);
   const [more, setMore] = useState(false);
-  const [filter, setFilter] = useState<"all" | "image" | "video" | "audio" | "favorites" | "playlists">("all");
+  const [filter, setFilter] = useState<"all" | "image" | "video" | "audio" | "favorites" | "playlists" | "projects">("all");
+  // A project open in the song studio.
+  const [studioProject, setStudioProject] = useState<Project | null>(null);
   const [viewing, setViewing] = useState<MediaItem | null>(null);
   const [models, setModels] = useState<MediaKind[] | null>(null);
   const [fresh, setFresh] = useState<Set<string>>(new Set());
@@ -266,15 +273,17 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
 
       <section>
         <div className="filters">
-          {(["all", "image", "video", "audio", "favorites", "playlists"] as const).map((f) => (
+          {(["all", "image", "video", "audio", "favorites", "playlists", "projects"] as const).map((f) => (
             <button key={f} className={`chip ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {{ all: t("Everything"), image: t("Pictures"), video: t("Video"), audio: t("Sound"), favorites: t("★ Favorites"), playlists: t("Playlists") }[f]}
+              {{ all: t("Everything"), image: t("Pictures"), video: t("Video"), audio: t("Sound"), favorites: t("★ Favorites"), playlists: t("Playlists"), projects: t("Song studio") }[f]}
             </button>
           ))}
           <span className="spacer" />
           {view && <span className="small muted">{t("{n} in the gallery", { n: view.gallery })}</span>}
         </div>
-        {filter === "playlists" ? (
+        {filter === "projects" ? (
+          <StudioProjects onOpen={setStudioProject} toast={toast} />
+        ) : filter === "playlists" ? (
           <Playlists
             toast={toast}
             onOpen={setViewing}
@@ -298,6 +307,8 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
           </div>
         )}
       </section>
+
+      {studioProject && <SongStudio initial={studioProject} onClose={() => { setStudioProject(null); load(); }} toast={toast} />}
 
       {viewing && (
         <Viewer
@@ -331,6 +342,14 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
             setTab("music");
             setViewing(null);
           }}
+          onOpenStudio={(i) =>
+            projectForSong(i)
+              .then((pr) => {
+                setViewing(null);
+                setStudioProject(pr);
+              })
+              .catch((e) => toast(errorText(e), "error"))
+          }
           songs={items.filter((x) => x.kind === "audio" && x.id !== viewing.id && x.op !== "stem")}
           onMashup={(a, b) => {
             setSongToWork({ item: a, task: "cover", reference: b });
@@ -930,6 +949,9 @@ function MusicComposer({
   const [weird, setWeird] = useState<number | null>(null);
   const [influence, setInfluence] = useState<number | null>(null);
   const [exclude, setExclude] = useState("");
+  // A custom model trained on the person's songs, and how much it's followed.
+  const [customId, setCustomId] = useState("");
+  const [customScale, setCustomScale] = useState(1);
   // Cover art for each song, made by the picture model after it (kept on for next time).
   const [coverArt, setCoverArtState] = useState(() => {
     try {
@@ -1025,6 +1047,8 @@ function MusicComposer({
     auto_length: auto,
     own_voice: mode === "song" && singing && ownVoices.some((v) => v.id === ownVoice) ? ownVoice : null,
     best_of: mode === "song" && singing && bestOf,
+    custom: mode === "song" && customId ? customId : null,
+    custom_scale: mode === "song" && customId && customScale !== 1 ? customScale : null,
     cover_art: mode === "song" && canArt && coverArt,
     title: mode === "song" && title.trim() ? title.trim() : null,
     weirdness: mode !== "edit" && weird != null ? weird / 100 : null,
@@ -1223,6 +1247,8 @@ function MusicComposer({
     setWeird(s.weirdness != null ? Math.round(s.weirdness * 100) : null);
     setInfluence(s.influence != null ? Math.round(s.influence * 100) : null);
     setExclude(s.exclude ?? "");
+    setCustomId(s.custom ?? "");
+    setCustomScale(s.custom_scale ?? 1);
     setReference(s.reference ? gallery.find((g) => g.id === s.reference) ?? null : null);
     if (reuse.lyrics) {
       setLyrics(reuse.lyrics);
@@ -1307,6 +1333,10 @@ function MusicComposer({
         <button className={`mode ${mode === "edit" ? "active" : ""}`} onClick={() => setMode("edit")}>{t("From a song you have")}</button>
         <button className={`mode ${mode === "sound" ? "active" : ""}`} onClick={() => setMode("sound")}>{t("Sound effect")}</button>
       </div>
+
+      {mode === "song" && (
+        <CustomModelField value={customId} scale={customScale} onChange={setCustomId} onScale={setCustomScale} gallery={gallery} onStart={onStart} onModels={onModels} toast={toast} />
+      )}
 
       {mode === "song" && (
         <div className="music-field">
@@ -1869,6 +1899,7 @@ function Viewer({
   onAnimate,
   onWorkOn,
   onReuse,
+  onOpenStudio,
   songs,
   onMashup,
   onCompose,
@@ -1887,6 +1918,8 @@ function Viewer({
   onWorkOn: (i: MediaItem, task: SongTask) => void;
   /** A song's settings back in the song form. */
   onReuse: (i: MediaItem) => void;
+  /** A song opened in the song studio. */
+  onOpenStudio: (i: MediaItem) => void;
   /** Other songs in the gallery, to mash this one up with. */
   songs: MediaItem[];
   /** A mashup: the first song's tune and words in the second's sound (a cover). */
@@ -2088,6 +2121,11 @@ function Viewer({
                       <option key={x.id} value={x.id}>{x.title || x.prompt || t("A song")}</option>
                     ))}
                   </select>
+                )}
+                {item.op !== "narrate" && (
+                  <button className="chip" onClick={() => onOpenStudio(item)} title={t("Its tracks as clips to arrange, mix, record into and add parts to")}>
+                    {t("Open in the song studio")}
+                  </button>
                 )}
                 {item.op !== "stem" && item.op !== "narrate" && (
                   <button className="chip" onClick={() => run({ op: "song_video", prompt: "" })} title={t("An MP4 of the song with its cover art, title and words as they're sung, to share")}>

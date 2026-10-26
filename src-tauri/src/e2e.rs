@@ -4098,6 +4098,60 @@ async fn e2e_suno_features() {
     }
 }
 
+/// A custom model trained the Studio's way on six songs (the test songs in
+/// C:\dev\tools\music\train-test\audio): the trainer set up from the
+/// catalog (uv and its packages; the source from the release zip in
+/// C:\dev\sulcusai-dist\music, unpacked as the app would), the songs'
+/// words heard, SULCUSAI_TRAIN_EPOCHS passes (default 30), then a song made
+/// with it on ACE-Step 1.5 Base. Kept in C:\dev\tools\music\ab\custom.mp3.
+///     cargo test e2e_custom_model -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_custom_model() {
+    use crate::media::{self, store, train, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let t = state.catalog.media.trainer.clone().unwrap();
+    let source = train::source_dir(&state.paths, &t);
+    if !source.join("train.py").is_file() {
+        let zip = std::path::PathBuf::from(r"C:\dev\sulcusai-dist\music").join(format!("ace-step-1.5-trainer-{}.zip", t.build));
+        let mut a = zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap();
+        a.extract(&source).unwrap();
+    }
+    if std::env::var("SULCUSAI_TRAIN_EPOCHS").is_err() {
+        std::env::set_var("SULCUSAI_TRAIN_EPOCHS", "30");
+    }
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    media::install_for_test(&state, train::BASE_MODEL).await.unwrap();
+    let files: Vec<String> = std::fs::read_dir(r"C:\dev\tools\music\train-test\audio").unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+    let t0 = std::time::Instant::now();
+    let req = Request { op: "train".into(), prompt: "Test songs".into(), train: Some(train::TrainSpec { name: "Test songs".into(), description: "modern country, warm male lead vocal, acoustic guitar, pedal steel".into(), files, songs: Vec::new() }), ..Default::default() };
+    media::run(&state, store::new_id(), req).await.unwrap();
+    let models = train::list(&state.db.lock().unwrap(), &c);
+    println!("trained in {:.0} s: {:?}", t0.elapsed().as_secs_f64(), models.iter().map(|m| (&m.name, &m.trigger, m.songs, m.epochs)).collect::<Vec<_>>());
+    let cm = models.first().expect("a custom model").clone();
+    assert!(train::adapters_dir(&state.paths).join(&cm.id).join("adapter_model.safetensors").is_file());
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees";
+    let t1 = std::time::Instant::now();
+    let song = media::run(
+        &state,
+        store::new_id(),
+        Request { op: "music".into(), prompt: "a song about a fresh start".into(), lyrics: Some(lyrics.into()), seconds: Some(40.0), seed: Some(3), language: Some("en".into()), music: Some(MusicSpec { custom: Some(cm.id.clone()), ..Default::default() }), ..Default::default() },
+    )
+    .await
+    .unwrap()
+    .remove(0);
+    let file = std::path::PathBuf::from(r"C:\dev\tools\music\ab\custom.mp3");
+    std::fs::write(&file, store::read(&state.paths, &c, &song.id).unwrap()).unwrap();
+    let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+    let wanted = sung_words(lyrics);
+    println!("song with it in {:.0} s on {:?}: {} of {} words heard", t1.elapsed().as_secs_f64(), song.model_id, wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count(), wanted.len());
+    assert_eq!(song.model_id.as_deref(), Some(train::BASE_MODEL));
+    train::remove(&state.db.lock().unwrap(), &c, &state.paths, &cm.id).unwrap();
+}
+
 /// HeartMuLa installed from the catalog (audio.cpp's Vulkan build from its
 /// release, the model checked against its hash) and a song made the
 /// Studio's way: its length, the words Whisper hears, and the time. Kept in

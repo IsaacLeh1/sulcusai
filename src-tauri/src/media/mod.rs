@@ -28,6 +28,8 @@ mod audio_in;
 pub(crate) mod music;
 pub(crate) mod yue;
 pub(crate) mod heartmula;
+pub(crate) mod train;
+pub(crate) mod studio;
 pub mod own_voice;
 pub(crate) mod proc;
 pub(crate) mod svc;
@@ -95,6 +97,9 @@ pub struct MediaCatalog {
     /// audio.cpp, the engine of the HeartMuLa music model (`heartmula`).
     #[serde(default)]
     pub heartmula_engine: Option<EngineSpec>,
+    /// ACE-Step's trainer, for custom models (`train`).
+    #[serde(default)]
+    pub trainer: Option<train::TrainerCatalog>,
     /// Narration and songs in the person's own recorded voice (`own_voice`).
     #[serde(default)]
     pub own_voice: Option<own_voice::OwnVoiceCatalog>,
@@ -241,6 +246,8 @@ fn model_op(req: &Request) -> &str {
         Some("add" | "extract" | "complete") if req.op == "music" => "parts",
         // Making unclear parts again is music made again, by a music model.
         _ if req.op == "remake" => "music",
+        // A Studio part is added, then taken out alone: ACE-Step Base's work.
+        _ if req.op == "studio_part" => "parts",
         // A song's cover art is a new picture.
         _ if req.op == "cover_art" => "generate",
         _ => &req.op,
@@ -249,7 +256,7 @@ fn model_op(req: &Request) -> &str {
 
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
-        "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" => Some(Feature::Music),
+        "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train" | "studio_part" => Some(Feature::Music),
         _ => op_kind(op).map(feature_of),
     }
 }
@@ -806,6 +813,11 @@ pub struct MusicSpec {
     pub best_of: bool,
     /// Each song gets cover art from the picture model, made next (`cover_art`).
     pub cover_art: bool,
+    /// A custom model trained on the person's songs (`train`, by id): the
+    /// song is made on ACE-Step 1.5 Base with it.
+    pub custom: Option<String>,
+    /// How strongly the custom model is followed (1 as trained).
+    pub custom_scale: Option<f32>,
     /// How closely the description is followed, 0 to 1 (Suno's Style
     /// Influence): the music model's guidance (`music::guidance`). None: its own.
     pub influence: Option<f32>,
@@ -1298,6 +1310,8 @@ pub struct Request {
     pub instrumental: Option<bool>,
     /// A song made from the song view: map the new version too (`map_item`).
     pub then_map: Option<bool>,
+    /// A custom model to train on the person's songs (op "train").
+    pub train: Option<train::TrainSpec>,
     /// Music: how the song is shaped, and work on a song the person has.
     pub music: Option<MusicSpec>,
     pub voice: Option<String>,
@@ -1565,6 +1579,30 @@ fn recorded_voice(req: &Request) -> Option<&str> {
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     let f = op_feature(&req.op).ok_or("Unknown kind of job.")?;
     crate::features::require(state, f)?;
+    if let Some(id) = req.music.as_ref().and_then(|m| m.custom.as_deref()).filter(|c| !c.is_empty() && req.op == "music") {
+        train::get(&state.db.lock().unwrap(), &state.work_cipher()?, id).ok_or("That custom model is no longer here.")?;
+        if !installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == train::BASE_MODEL) {
+            return Err("Custom models play on ACE-Step 1.5 Base: install it from Models first.".into());
+        }
+    }
+    if req.op == "studio_part" && req.music.as_ref().and_then(|m| m.track.as_deref()).is_none_or(|t| !music::PARTS.contains(&t)) {
+        return Err(format!("Pick the part to make ({}).", music::PARTS.join(", ").replace('_', " ")));
+    }
+    if req.op == "train" {
+        let t = req.train.as_ref().ok_or("Pick your songs first.")?;
+        if t.name.trim().is_empty() {
+            return Err("Give the custom model a name.".into());
+        }
+        if t.files.len() + t.songs.len() < 3 {
+            return Err("Pick at least 3 of your songs (10 or more teach it better).".into());
+        }
+        if state.catalog.media.trainer.is_none() || !cfg!(windows) {
+            return Err("Training isn't available on this system yet.".into());
+        }
+        if !crate::natural::nvidia_here(state) {
+            return Err("Training needs an NVIDIA graphics card (8 GB or more).".into());
+        }
+    }
     if let Some(id) = cloud_pick(state, req) {
         let c = crate::cloud::media_choices(&state.db.lock().unwrap()).into_iter().find(|c| c.id == id);
         match c {
@@ -1572,10 +1610,10 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
             None => return Err("That cloud model isn't available: it needs the Cloud level, the provider turned on and its key.".into()),
             _ => {}
         }
-    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video") {
+    } else if !matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train") {
         choose(state, model_op(req), req.model_id.as_deref(), req.source.is_some())?;
     }
-    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video") && req.source.is_none() {
+    if matches!(req.op.as_str(), "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video" | "studio_part") && req.source.is_none() {
         return Err("Pick a song first.".into());
     }
     // A recorded voice: one that's here and has what the job needs.
@@ -1633,16 +1671,22 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
 
 /// Queues a job and runs it when it's its turn. Returns what it made.
 pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<MediaItem>, String> {
+    // A custom model plays on the model it was trained on.
+    let req = match req.music.as_ref().and_then(|m| m.custom.as_deref()).filter(|c| !c.is_empty()) {
+        Some(_) if req.op == "music" => Request { model_id: Some(train::BASE_MODEL.into()), ..req },
+        _ => req,
+    };
     check(state, &req)?;
     let cancel = Arc::new(AtomicBool::new(false));
     let on_cloud = cloud_pick(state, &req);
-    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
+    let model = if matches!(req.op.as_str(), "narrate" | "listen" | "map" | "revoice" | "stems" | "song_video" | "train") || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
         files_here(state, m)?;
     }
     let est = match (&model, &on_cloud) {
         (Some(m), _) => estimate(state, m, &req),
         (None, Some(_)) if req.op == "video" => 180.0,
+        _ if req.op == "train" => train_estimate(state, &req),
         (None, Some(_)) => 20.0,
         _ => 10.0,
     };
@@ -1705,7 +1749,7 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
     let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach" | "cover_art")
-        || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
+        || (matches!(req.op.as_str(), "music" | "sound" | "studio_part") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // HeartMuLa only runs on a card.
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
         // A song's parts taken apart and read on an NVIDIA card (CUDA).
@@ -2422,7 +2466,7 @@ pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paus
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
-    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound" | "remake") && (music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")) || model.is_some_and(|m| m.file("heartmula").is_some()));
+    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound" | "remake" | "studio_part") && (music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")) || model.is_some_and(|m| m.file("heartmula").is_some()));
     // A saved artist's sound and voice, under the song's own choices.
     let as_artist = with_persona(state, req)?;
     let req = as_artist.as_ref().unwrap_or(req);
@@ -3066,6 +3110,9 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "listen" => listen_job(&ctx).await,
         "map" => map_job(&ctx).await,
         "stems" => stems_job(&ctx).await,
+        "studio_part" => studio_part(&ctx, model.ok_or("Making a part needs ACE-Step 1.5 Base (Models).")?, &work.0).await,
+        #[cfg(windows)]
+        "train" => train_job(&ctx, &work.0).await,
         #[cfg(windows)]
         "song_video" => song_video_job(&ctx, &work.0).await,
         "remake" => remake_job(&ctx, model.ok_or("No music model.")?, &work.0).await,
@@ -3756,6 +3803,16 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
         Some(d) => format!("{caption}, {}", d.join(", ")),
         None => caption,
     };
+    // A custom model: its trigger word starts the description, as in training.
+    let custom = match spec.custom.as_deref().filter(|c| !c.is_empty()) {
+        Some(id) => Some(train::get(&ctx.state.db.lock().unwrap(), &c, id).ok_or("That custom model is no longer here.")?),
+        None => None,
+    };
+    let caption = match &custom {
+        Some(cm) => format!("{}, {caption}", cm.trigger),
+        None => caption,
+    };
+    let adapters = train::adapters_dir(&ctx.state.paths);
     let yue = m.file("yue").zip(m.file("yue_vae"));
     if yue.is_some() && (task.is_some() || sound) {
         return Err("YuE2 makes new songs. To work on a song or make a sound effect, pick an ACE-Step model.".into());
@@ -3861,6 +3918,9 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             versions,
             guidance: music::guidance(&dit.file, spec.influence),
             negative: spec.exclude.as_deref(),
+            adapters: custom.as_ref().map(|_| adapters.as_path()),
+            adapter: custom.as_ref().map(|cm| cm.id.as_str()),
+            adapter_scale: spec.custom_scale,
             ..Default::default()
         },
         ctx.cancel,
@@ -4116,6 +4176,351 @@ async fn stems_job(ctx: &RunCtx<'_>) -> Result<Vec<MediaItem>, String> {
     }
     crate::applog::line("media", &format!("Took a song apart into {} parts", out.len()));
     Ok(out)
+}
+
+/// A new part for the Studio (Suno Studio's generated stems): the mix so
+/// far (`req.source`, rendered by the window) with the part added by
+/// ACE-Step Base, then that part taken out alone; `count` takes (2 by
+/// default, as Suno makes). Kept out of the gallery: they're the project's.
+async fn studio_part(ctx: &RunCtx<'_>, model: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let req = ctx.req;
+    let source = req.source.clone().ok_or("Pick a song first.")?;
+    let spec = req.music.clone().unwrap_or_default();
+    let track = spec.track.clone().ok_or("Pick the part to make.")?;
+    let takes = req.count.unwrap_or(2).clamp(1, 3);
+    let seed = req.seed.unwrap_or_else(random_seed);
+    let c = ctx.state.work_cipher()?;
+    let mut out = Vec::new();
+    for v in 0..takes {
+        let share = |stage: u32, f: f64| (v as f64 + (stage as f64 + f) / 2.0) / takes as f64;
+        let ask = |task: &str, audio: &str| Request {
+            op: "music".into(),
+            model_id: Some(model.id.clone()),
+            prompt: req.prompt.clone(),
+            lyrics: req.lyrics.clone(),
+            seed: Some(seed + v as i64),
+            language: req.language.clone(),
+            music: Some(MusicSpec { task: Some(task.into()), audio: Some(audio.into()), track: Some(track.clone()), genre: spec.genre.clone(), mood: spec.mood.clone(), instruments: spec.instruments.clone(), ..Default::default() }),
+            ..Default::default()
+        };
+        // The part added to the mix…
+        let add = ask("add", &source);
+        let p1 = |s: &str, f: f64| (ctx.progress)(&format!("Take {} of {takes}: {}", v + 1, s.to_lowercase()), share(0, f));
+        let step = RunCtx { state: ctx.state, req: &add, cancel: ctx.cancel, progress: &p1, reserved: ctx.reserved };
+        let dir = work.join(format!("part-{v}-add"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let mixed = song(&step, model, &dir).await?.into_iter().next().ok_or("The music model didn't add the part.")?;
+        // …then taken out alone.
+        let take_out = ask("extract", &mixed.id);
+        let p2 = |s: &str, f: f64| (ctx.progress)(&format!("Take {} of {takes}: {}", v + 1, s.to_lowercase()), share(1, f));
+        let step = RunCtx { state: ctx.state, req: &take_out, cancel: ctx.cancel, progress: &p2, reserved: ctx.reserved };
+        let dir = work.join(format!("part-{v}-alone"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let alone = song(&step, model, &dir).await;
+        let _ = store::delete(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &mixed.id);
+        let mut part = alone?.into_iter().next().ok_or("The music model didn't take the part out.")?;
+        part.hidden = true;
+        part.op = "studio_part".into();
+        part.title = Some(format!("{} take {}", track.replace('_', " "), v + 1));
+        store::update(&ctx.state.db.lock().unwrap(), &c, &part)?;
+        out.push(part);
+    }
+    crate::applog::line("media", &format!("Made {} take(s) of a {} part for the Studio", out.len(), track));
+    Ok(out)
+}
+
+#[tauri::command(async)]
+pub fn studio_projects(state: AppStateRef) -> Result<Vec<serde_json::Value>, String> {
+    let c = state.cipher()?;
+    Ok(studio::list(&state.db.lock().unwrap(), &c))
+}
+
+#[tauri::command(async)]
+pub fn studio_project_save(state: AppStateRef, project: serde_json::Value) -> Result<(), String> {
+    let c = state.cipher()?;
+    studio::save(&state.db.lock().unwrap(), &c, project)
+}
+
+#[tauri::command(async)]
+pub fn studio_project_delete(state: AppStateRef, id: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    studio::remove(&state.db.lock().unwrap(), &c, &id)
+}
+
+#[tauri::command(async)]
+pub fn studio_record_start(app: AppHandle, state: AppStateRef) -> Result<(), String> {
+    crate::features::require(&state, Feature::Music)?;
+    state.cipher()?;
+    let mic = crate::speech::voice_settings(&state.db.lock().unwrap()).mic;
+    studio::record_start(app, mic)
+}
+
+/// Stops recording and keeps it (out of the gallery: it's the project's).
+#[tauri::command(async)]
+pub fn studio_record_stop(state: AppStateRef) -> Result<MediaItem, String> {
+    let c = state.cipher()?;
+    let samples = studio::record_stop()?;
+    let mut item = add(&state, &c, studio::recording_wav(&samples), "audio", "audio/wav", "recording", "Recording", None, None, true)?;
+    item.seconds = samples.len() as f64 / 48_000.0;
+    store::update(&state.db.lock().unwrap(), &c, &item)?;
+    Ok(item)
+}
+
+/// A MIDI file the window wrote (a MIDI track's notes), saved where the
+/// person picked in the save dialog: a .mid file only.
+#[tauri::command(async)]
+pub fn studio_save_midi(state: AppStateRef, path: String, data: String) -> Result<(), String> {
+    state.cipher()?;
+    let lower = path.to_lowercase();
+    if !(lower.ends_with(".mid") || lower.ends_with(".midi")) {
+        return Err("A MIDI file's name ends in .mid.".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data.trim()).map_err(|_| "That MIDI couldn't be read.".to_string())?;
+    if bytes.len() > 20_000_000 || !bytes.starts_with(b"MThd") {
+        return Err("That isn't a MIDI file.".into());
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("Couldn't save it there: {e}"))
+}
+
+#[tauri::command(async)]
+pub fn studio_record_cancel() {
+    studio::record_cancel();
+}
+
+/// A track's notes read from its sound (Suno Studio's audio to MIDI):
+/// Basic Pitch's notes, or with `drums` the kick, snare and hat hits.
+#[tauri::command]
+pub async fn studio_midi(state: AppStateRef<'_>, id: String, drums: bool) -> Result<Vec<notes::Note>, String> {
+    let c = state.cipher()?;
+    let state = state.inner().clone();
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That sound is no longer here.")?;
+    let bytes = store::read(&state.paths, &c, &id)?;
+    let threads = state.limits().threads;
+    if drums {
+        return tokio::task::spawn_blocking(move || -> Result<Vec<notes::Note>, String> {
+            let mix = decoded_stereo(&bytes, &item.mime)?;
+            Ok(notes::drum_hits(&mix.mono(), stems::RATE))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    let reader = state.catalog.media.note_reader.clone().ok_or("The note reader isn't available.")?;
+    let never = AtomicBool::new(false);
+    let (dll, model) = ensure_helper(&state, &reader, "Getting the note reader (once)", &never, &|_, _| {}).await?;
+    tokio::task::spawn_blocking(move || -> Result<Vec<notes::Note>, String> {
+        let mix = decoded_stereo(&bytes, &item.mime)?;
+        let found = notes::melodic(&dll, &model, &stems::resample(&mix.mono(), stems::RATE, notes::RATE), threads, None);
+        notes::unload();
+        found
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// About how long a training job takes: labelling each song, turning it
+/// into tensors, and its epochs (about 0.8 s a song an epoch on an RTX 5070
+/// for songs of up to four minutes), plus setting the trainer up the first time.
+fn train_estimate(state: &AppState, req: &Request) -> f64 {
+    let n = req.train.as_ref().map_or(0, |t| t.files.len() + t.songs.len());
+    let setup = match &state.catalog.media.trainer {
+        Some(t) if !train::ready(&state.paths, t) => 900.0,
+        _ => 60.0,
+    };
+    setup + n as f64 * 40.0 + train::epochs_for(n) as f64 * n as f64 * 0.8
+}
+
+/// The trainer, set up the first time (`train`): uv, ACE-Step's source and
+/// its locked Python packages, and the Base model's training files.
+#[cfg(windows)]
+async fn ensure_trainer(ctx: &RunCtx<'_>, t: &train::TrainerCatalog) -> Result<PathBuf, String> {
+    let state = ctx.state;
+    let paths = &state.paths;
+    (ctx.progress)("Getting the trainer (once)", 0.01);
+    let uv = engine::ensure_unpacked(paths, "trainer-uv-bin", &t.uv, "uv.exe", ctx.cancel, |_, _| {}).await?;
+    let source = train::source_dir(paths, t);
+    let dir_name = source.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    engine::ensure_unpacked(paths, &dir_name, &t.source, "train.py", ctx.cancel, |_, _| {}).await?;
+    if !source.join(".venv").join("Scripts").join("python.exe").is_file() {
+        // Its Python and packages (PyTorch for NVIDIA cards and the rest), as locked.
+        state.log("network", "Downloading the music trainer's Python packages from pypi.org and download.pytorch.org");
+        (ctx.progress)("Setting up the trainer (once, about 6 GB)", 0.02);
+        let ran = proc::run_env(
+            proc::Run {
+                exe: &uv,
+                args: ["sync", "--frozen", "--python", "3.12"].map(std::ffi::OsString::from).to_vec(),
+                cwd: &source,
+                log: &paths.logs.join("music-trainer-setup.log"),
+                low_priority: state.limits().low_priority,
+                job: state.job(),
+            },
+            &train::trainer_env(paths),
+            ctx.cancel,
+            |_| {},
+        )
+        .await;
+        if let Err(e) = ran {
+            // A half-made environment would look ready next time.
+            let _ = std::fs::remove_dir_all(source.join(".venv"));
+            return Err(e);
+        }
+    }
+    let ckpt = train::checkpoints_dir(paths);
+    let missing: Vec<&train::TrainerFile> = t.checkpoints.iter().filter(|f| !ckpt.join(&f.file).is_file()).collect();
+    if !missing.is_empty() {
+        state.log("network", "Downloading ACE-Step 1.5 Base's training files from huggingface.co");
+        let client = net::external_client(net::Connectivity::Offline, net::Purpose::ModelDownload, false)?;
+        let total: u64 = missing.iter().map(|f| f.size).sum::<u64>().max(1);
+        let mut done = 0u64;
+        for f in missing {
+            let base = done;
+            download::fetch_verified(&client, &f.url, &ckpt.join(&f.file), f.size, &f.sha256, ctx.cancel, |r, _| {
+                (ctx.progress)("Getting the Base model's training files (once)", 0.03 + 0.05 * (base + r) as f64 / total as f64)
+            })
+            .await?;
+            done += f.size;
+        }
+    }
+    Ok(uv)
+}
+
+/// A custom model trained on the person's songs (`train`): each song's
+/// words heard, the songs turned into the trainer's tensors, then trained;
+/// the adapter is kept with the music models and the model listed.
+#[cfg(windows)]
+async fn train_job(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let spec = ctx.req.train.clone().ok_or("Pick your songs first.")?;
+    let t = state.catalog.media.trainer.clone().ok_or("Training isn't available on this system yet.")?;
+    let started = Instant::now();
+    let uv = ensure_trainer(ctx, &t).await?;
+    let c = state.work_cipher()?;
+    // The songs, copied for the trainer (it reads MP3, WAV, FLAC, OGG, Opus, M4A).
+    let audio = work.join("audio");
+    std::fs::create_dir_all(&audio).map_err(|e| e.to_string())?;
+    let mut copies: Vec<PathBuf> = Vec::new();
+    for f in &spec.files {
+        let from = PathBuf::from(f);
+        let ext = from.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if !matches!(ext.as_str(), "mp3" | "wav" | "flac" | "ogg" | "opus" | "m4a") {
+            return Err(format!("{} isn't a song file the trainer reads (MP3, WAV, FLAC, OGG, Opus or M4A).", from.file_name().unwrap_or_default().to_string_lossy()));
+        }
+        let to = audio.join(format!("{:02}.{ext}", copies.len() + 1));
+        std::fs::copy(&from, &to).map_err(|e| format!("Couldn't read {}: {e}", from.display()))?;
+        copies.push(to);
+    }
+    for id in &spec.songs {
+        let item = store::get(&state.db.lock().unwrap(), &c, id).ok_or("A song picked is no longer in the gallery.")?;
+        let ext = if item.mime.contains("wav") { "wav" } else { "mp3" };
+        let to = audio.join(format!("{:02}.{ext}", copies.len() + 1));
+        std::fs::write(&to, store::read(&state.paths, &c, id)?).map_err(|e| e.to_string())?;
+        copies.push(to);
+    }
+    // Each song's words, heard by speech recognition (none installed: all
+    // are taught as they sound, without words).
+    let listen = !crate::speech::installed(&state.db.lock().unwrap()).is_empty();
+    let mut samples = Vec::new();
+    for (i, file) in copies.iter().enumerate() {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        (ctx.progress)(&format!("Listening to song {} of {}", i + 1, copies.len()), 0.08 + 0.1 * i as f64 / copies.len() as f64);
+        let path = file.clone();
+        let (mono, seconds) = tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, f64), String> {
+            let (samples, rate, channels) = audio_in::decode(&path)?;
+            let ch = channels.max(1) as usize;
+            let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+            let seconds = mono.len() as f64 / rate as f64;
+            Ok((stems::resample(&mono, rate, crate::audio::RATE), seconds))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if seconds < 10.0 {
+            return Err(format!("Song {} is only {seconds:.0} seconds: use whole songs (30 seconds to 4 minutes).", i + 1));
+        }
+        let lyrics = if listen {
+            let heard = crate::speech::transcribe_song(state, &mono, None).await?;
+            train::lyrics_from(&heard.into_iter().map(|s| s.text).collect::<Vec<_>>())
+        } else {
+            None
+        };
+        samples.push(train::Sample { file: file.clone(), lyrics, seconds });
+    }
+    let trigger = train::trigger_of(&spec.name);
+    let description = Some(spec.description.trim()).filter(|d| !d.is_empty()).unwrap_or("song").to_string();
+    std::fs::write(work.join("dataset.json"), train::dataset_json(&samples, &description, &trigger).to_string()).map_err(|e| e.to_string())?;
+    let n = samples.len();
+    // (Tests train briefly.)
+    let short = cfg!(test).then(|| std::env::var("SULCUSAI_TRAIN_EPOCHS").ok()).flatten().and_then(|e| e.parse().ok());
+    let epochs = short.unwrap_or_else(|| train::epochs_for(n));
+    let source = train::source_dir(&state.paths, &t);
+    let ckpt = train::checkpoints_dir(&state.paths);
+    let env = train::trainer_env(&state.paths);
+    let log = state.paths.logs.join("music-trainer.log");
+    let low = state.limits().low_priority;
+    // Turned into tensors (two passes over the songs), then trained.
+    let (mut pass1, mut pass2) = (0u32, 0u32);
+    proc::run_env(
+        proc::Run { exe: &uv, args: train::trainer_args(&source, &ckpt, work, epochs, true), cwd: work, log: &log, low_priority: low, job: state.job() },
+        &env,
+        ctx.cancel,
+        |l| match train::progress_of(l, n) {
+            Some(("pass1", ..)) => {
+                pass1 += 1;
+                (ctx.progress)("Reading your songs", 0.18 + 0.06 * pass1 as f64 / n as f64)
+            }
+            Some(("pass2", ..)) => {
+                pass2 += 1;
+                (ctx.progress)("Reading your songs", 0.24 + 0.06 * pass2 as f64 / n as f64)
+            }
+            _ => {}
+        },
+    )
+    .await?;
+    proc::run_env(
+        proc::Run { exe: &uv, args: train::trainer_args(&source, &ckpt, work, epochs, false), cwd: work, log: &log, low_priority: low, job: state.job() },
+        &env,
+        ctx.cancel,
+        |l| {
+            if let Some(("epoch", done, of)) = train::progress_of(l, n) {
+                (ctx.progress)(&format!("Learning your songs: pass {done} of {of}"), 0.3 + 0.68 * done as f64 / of.max(1) as f64);
+            }
+        },
+    )
+    .await?;
+    let made = work.join("out").join("final");
+    let id = store::new_id();
+    let dest = train::adapters_dir(&state.paths).join(&id);
+    std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+    for f in ["adapter_model.safetensors", "adapter_config.json"] {
+        std::fs::copy(made.join(f), dest.join(f)).map_err(|_| "The trainer didn't write the model. See music-trainer.log in Settings › Logs.".to_string())?;
+    }
+    let minutes = started.elapsed().as_secs_f64() / 60.0;
+    let model = train::CustomModel { id, name: spec.name.trim().chars().take(60).collect(), trigger, description, songs: n, epochs, minutes, created_at: db::now_ms() };
+    train::add(&state.db.lock().unwrap(), &c, model.clone())?;
+    crate::applog::line("media", &format!("Trained a custom model on {n} songs ({epochs} passes) in {minutes:.0} min"));
+    emit(state, "media:trained", json!(model));
+    Ok(Vec::new())
+}
+
+#[tauri::command(async)]
+pub fn music_custom_models(state: AppStateRef) -> Result<serde_json::Value, String> {
+    let c = state.cipher()?;
+    let models = train::list(&state.db.lock().unwrap(), &c);
+    let t = state.catalog.media.trainer.as_ref();
+    Ok(json!({
+        "models": models,
+        "available": t.is_some() && cfg!(windows),
+        "nvidia": crate::natural::nvidia_here(&state),
+        "ready": t.is_some_and(|t| train::ready(&state.paths, t)),
+        "setup_bytes": t.map_or(0, train::setup_bytes),
+        "base_installed": installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == train::BASE_MODEL),
+    }))
+}
+
+#[tauri::command(async)]
+pub fn music_custom_model_delete(state: AppStateRef, id: String) -> Result<(), String> {
+    let c = state.cipher()?;
+    train::remove(&state.db.lock().unwrap(), &c, &state.paths, &id)
 }
 
 /// A song's video (Suno's Create video, `songvideo`): its cover art, title
@@ -5364,7 +5769,7 @@ pub fn media_add(
         Some("audio") => "audio",
         _ => return Err("Only pictures, clips and sounds can be added.".into()),
     };
-    let op = if matches!(op.as_str(), "trim" | "paste" | "attach" | "screenshot" | "import") { op } else { "import".into() };
+    let op = if matches!(op.as_str(), "trim" | "paste" | "attach" | "screenshot" | "import" | "studio" | "recording") { op } else { "import".into() };
     let mut item = add(&state, &c, bytes, kind, &mime, &op, prompt.as_deref().unwrap_or(""), parent, chat_id, hidden.unwrap_or(false))?;
     // What was done to it in the window ("Faded out over 8 s").
     item.note = note.map(|n| n.trim().chars().take(200).collect::<String>()).filter(|n| !n.is_empty());

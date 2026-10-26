@@ -2122,7 +2122,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "song_video" | "train" | "studio_part";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2258,6 +2258,10 @@ export interface MusicSpec {
   best_of?: boolean;
   /** Each song gets cover art from the picture model, made next. */
   cover_art?: boolean;
+  /** A custom model trained on the person's songs (its id): made on ACE-Step 1.5 Base with it. */
+  custom?: string | null;
+  /** How strongly the custom model is followed (1 as trained). */
+  custom_scale?: number | null;
   /** How closely the description is followed, 0 to 1 (Suno's Style influence; null: the model's own). */
   influence?: number | null;
   /** How far from the usual, 0 to 1 (Suno's Weirdness; null: in between). */
@@ -2287,6 +2291,43 @@ export interface VocalEffect {
 }
 
 /** A saved artist (media/persona.rs): the song their voice follows, and their sound. */
+/** A Studio project as the window keeps it (`src/studio/model.ts`). */
+export type StudioProject = import("./studio/model").Project;
+
+/** What a training job is given. */
+export interface TrainSpec {
+  name: string;
+  description: string;
+  /** Song files on this PC. */
+  files: string[];
+  /** Songs from the gallery. */
+  songs: string[];
+}
+
+/** A model trained on the person's songs. */
+export interface CustomModel {
+  id: string;
+  name: string;
+  trigger: string;
+  description: string;
+  songs: number;
+  epochs: number;
+  minutes: number;
+  created_at: number;
+}
+
+export interface CustomModelsView {
+  models: CustomModel[];
+  /** Training can run on this system. */
+  available: boolean;
+  nvidia: boolean;
+  /** The trainer is set up (else its first run downloads `setup_bytes`). */
+  ready: boolean;
+  setup_bytes: number;
+  /** ACE-Step 1.5 Base, which custom models play on, is installed. */
+  base_installed: boolean;
+}
+
 /** What the person likes in songs (My taste), from their own. */
 export interface Taste {
   genres: string[];
@@ -2353,6 +2394,8 @@ export interface MediaRequest {
   instrumental?: boolean;
   /** Made from the song view: the new version's notes and sections are read too. */
   then_map?: boolean | null;
+  /** A custom model to train on the person's songs (op "train"). */
+  train?: TrainSpec | null;
   /** Music: style, instruments, tempo, key, and work on a song. */
   music?: MusicSpec | null;
   voice?: string | null;
@@ -2938,6 +2981,22 @@ export const api = {
   musicPlaylistDelete: (id: string) => invoke<void>("music_playlist_delete", { id }),
   /** What the person likes in songs, from their liked, made and "not for me" songs. */
   musicTaste: (ids?: string[]) => invoke<Taste>("music_taste", { ids: ids ?? null }),
+  musicCustomModels: () => invoke<CustomModelsView>("music_custom_models"),
+  /** The Studio's projects, the last changed first. */
+  studioProjects: () => invoke<StudioProject[]>("studio_projects"),
+  studioProjectSave: (project: StudioProject) => invoke<void>("studio_project_save", { project }),
+  studioProjectDelete: (id: string) => invoke<void>("studio_project_delete", { id }),
+  /** Starts recording from the microphone (its level comes as "studio:level"). */
+  studioRecordStart: () => invoke<void>("studio_record_start"),
+  /** Stops recording: the take, kept out of the gallery. */
+  studioRecordStop: () => invoke<MediaItem>("studio_record_stop"),
+  studioRecordCancel: () => invoke<void>("studio_record_cancel"),
+  /** A MIDI file the window wrote, saved where the person picked (a .mid path). */
+  studioSaveMidi: (path: string, data: string) => invoke<void>("studio_save_midi", { path, data }),
+  /** A sound's notes (Basic Pitch), or with `drums` its kick, snare and hat hits. */
+  studioMidi: (id: string, drums: boolean) => invoke<{ pitch: number; start: number; end: number; velocity: number }[]>("studio_midi", { id, drums }),
+  /** Forgets a custom model and deletes it from this PC. */
+  musicCustomModelDelete: (id: string) => invoke<void>("music_custom_model_delete", { id }),
   /** Saves an artist (a new one when id is empty). */
   musicPersonaSave: (persona: Persona) => invoke<Persona>("music_persona_save", { persona }),
   musicPersonaDelete: (id: string) => invoke<void>("music_persona_delete", { id }),
@@ -3142,6 +3201,8 @@ export interface ChatEvents {
   "compose:getting": { fraction: number };
   "media:tuned": { family: string; baseline: number; score: number; pictures: number; demos: number; new_instructions: boolean };
   "media:coached": { before: number; after: number; examples: number; kept: boolean };
+  "media:trained": CustomModel;
+  "studio:level": { level: number; seconds: number };
   "chat:context": { chat_id: string; context: ContextInfo };
   "chat:start": { chat_id: string; message_id: string };
   "chat:delta": { chat_id: string; message_id: string; content: string | null; thinking: string | null };

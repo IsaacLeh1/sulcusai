@@ -1912,3 +1912,61 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .own-voice-added { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .own-voice-added-row { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; background: var(--panel); }
 .own-voice-added-row .ellipsis { max-width: 40ch; }
+
+.plain-list { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* The song studio */
+.modal.song-studio { width: calc(100vw - 24px); max-width: none; height: calc(100vh - 24px); display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+.song-studio .row { display: flex; align-items: center; gap: 8px; }
+.studio-name { max-width: 280px; font-weight: 600; }
+.studio-transport { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.input.tiny { width: 64px; padding: 2px 6px; }
+.rec-level { display: inline-block; height: 6px; border-radius: 3px; background: #e0565b; min-width: 2px; }
+.studio-timeline { flex: 1; min-height: 160px; overflow: auto; position: relative; border: 1px solid var(--border); border-radius: var(--radius); background: var(--code-bg); user-select: none; }
+.studio-canvas { position: relative; }
+.studio-ruler { position: absolute; top: 0; height: 26px; border-bottom: 1px solid var(--border); background: var(--panel); cursor: text; z-index: 3; }
+.studio-tick { position: absolute; top: 4px; font-size: 11px; color: var(--muted); border-left: 1px solid var(--border); padding-left: 3px; height: 22px; }
+.studio-loop { position: absolute; top: 0; height: 26px; background: var(--accent-soft); border-left: 2px solid var(--accent); border-right: 2px solid var(--accent); pointer-events: none; }
+.studio-range { position: absolute; top: 26px; bottom: 0; background: rgba(109, 93, 252, 0.12); border-left: 1px dashed var(--accent); border-right: 1px dashed var(--accent); pointer-events: none; z-index: 1; }
+.studio-lane { position: absolute; left: 0; border-bottom: 1px solid var(--border); }
+.studio-lane.focused { background: rgba(109, 93, 252, 0.05); }
+.studio-head { position: sticky; left: 0; z-index: 2; height: 100%; background: var(--panel); border-right: 1px solid var(--border); border-left: 4px solid; padding: 3px 6px; display: flex; flex-direction: column; gap: 2px; box-sizing: border-box; }
+.studio-head .row { gap: 4px; }
+.input.tiny-name { flex: 1; min-width: 0; padding: 1px 4px; font-size: 12px; }
+.chip.mini { padding: 0 6px; font-size: 11px; }
+.mini-select { font-size: 11px; padding: 0 2px; max-width: 46px; }
+.mini-select.wide { max-width: 100%; }
+.studio-head input[type="range"] { width: 80px; }
+.studio-head input[type="range"].pan { width: 50px; }
+.studio-clip { position: absolute; top: 3px; height: calc(100% - 6px); border-radius: 6px; overflow: hidden; cursor: grab; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); opacity: 0.92; }
+.studio-clip.selected { box-shadow: inset 0 0 0 2px #fff, 0 0 0 2px var(--accent); opacity: 1; }
+.studio-clip.disabled { opacity: 0.35; filter: grayscale(1); }
+.studio-clip .clip-wave, .studio-clip .clip-notes { position: absolute; left: 0; top: 18px; width: 100%; height: calc(100% - 18px); }
+.clip-notes rect { fill: rgba(255, 255, 255, 0.85); }
+.clip-name { position: absolute; left: 6px; top: 2px; font-size: 11px; color: #fff; white-space: nowrap; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
+.clip-fade { position: absolute; top: 0; height: 100%; background: rgba(0, 0, 0, 0.28); pointer-events: none; }
+.clip-fade.in { left: 0; clip-path: polygon(0 0, 0 100%, 100% 0); }
+.clip-fade.out { right: 0; clip-path: polygon(0 0, 100% 100%, 100% 0); }
+.studio-playhead { position: absolute; top: 0; width: 2px; background: #e0565b; pointer-events: none; z-index: 4; }
+.studio-dock { border-top: 1px solid var(--border); padding-top: 6px; max-height: 42vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.studio-clip-panel { gap: 12px; }
+.studio-effects { display: flex; flex-direction: column; gap: 6px; }
+.studio-effect { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; }
+.studio-make { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.auto-lane { display: flex; flex-direction: column; gap: 2px; }
+.auto-svg { width: 100%; height: 70px; background: var(--code-bg); border-radius: 6px; cursor: crosshair; }
+.auto-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.auto-point { fill: var(--accent); cursor: grab; }
+.piano-roll { display: flex; flex-direction: column; gap: 4px; outline: none; }
+.piano-roll-body { display: flex; max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.piano-keys { position: relative; width: 44px; flex: none; }
+.piano-key { position: absolute; left: 0; width: 44px; border: 0; border-bottom: 1px solid var(--border); background: #fafafa; font-size: 9px; text-align: right; padding: 0 3px; cursor: pointer; color: #555; }
+.piano-key.black { background: #333; color: #ddd; }
+.piano-scroll { overflow-x: auto; flex: 1; }
+.piano-grid { display: block; cursor: crosshair; }
+.pr-row { fill: var(--panel); }
+.pr-row.black { fill: var(--code-bg); }
+.pr-line { stroke: var(--border); stroke-width: 1; }
+.pr-end { stroke: var(--accent); stroke-width: 2; }
+.pr-note { fill: var(--accent); stroke: rgba(0, 0, 0, 0.3); cursor: grab; }
+.pr-note.selected { fill: #e0565b; }

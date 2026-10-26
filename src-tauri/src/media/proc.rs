@@ -57,8 +57,24 @@ pub async fn run(r: Run<'_>, cancel: &AtomicBool, mut on_line: impl FnMut(&str))
 /// quarter second while the program is quiet (`None`), with the program's
 /// process id. When it gives a reason, the program is stopped and the run
 /// fails with that reason.
-pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>, u32) -> Option<String>) -> Result<(), String> {
+pub async fn run_watched(r: Run<'_>, cancel: &AtomicBool, watch: impl FnMut(Option<&str>, u32) -> Option<String>) -> Result<(), String> {
+    run_watched_env(r, &[], cancel, watch).await
+}
+
+/// `run`, with these environment variables set for the program.
+pub async fn run_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBool, mut on_line: impl FnMut(&str)) -> Result<(), String> {
+    run_watched_env(r, env, cancel, |line, _| {
+        if let Some(l) = line {
+            on_line(l);
+        }
+        None
+    })
+    .await
+}
+
+async fn run_watched_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>, u32) -> Option<String>) -> Result<(), String> {
     let mut cmd = Command::new(r.exe);
+    cmd.envs(env.iter().map(|(k, v)| (*k, v)));
     cmd.args(&r.args).current_dir(r.cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     #[cfg(windows)]
     {
