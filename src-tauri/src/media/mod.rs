@@ -1339,6 +1339,8 @@ pub struct Request {
     pub example_use: Option<String>,
     /// The person's own LoRAs for this picture, with how strongly each is used.
     pub loras: Vec<(String, f32)>,
+    /// A picture (gallery id) whose people's pose the new one takes.
+    pub pose: Option<String>,
     /// The prompt writer turns the description into the one this model
     /// follows best (None: only for models that need a special form, or
     /// with example pictures).
@@ -1544,6 +1546,32 @@ fn card_need(state: &AppState, req: &Request, model: Option<&MediaModel>) -> u64
 /// music, which would take hours there.
 fn on_the_processor_too(op: &str) -> bool {
     matches!(op, "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "cover_art" | "map" | "stems" | "dry" | "revoice" | "narrate")
+}
+
+/// A pose picture with only its pose left: the people as plain gray shapes
+/// on white (with the background remover installed), else blurred and gray,
+/// so the shape of the body shows but not who it is.
+async fn pose_only(ctx: &RunCtx<'_>, img: image::DynamicImage) -> image::DynamicImage {
+    let state = ctx.state;
+    let remover = choose(state, "remove_background", None, false).ok();
+    let dll = crate::natural::runtime_dll(&state.paths, &state.catalog.voices);
+    if let (Some(m), Some(dll)) = (remover, dll) {
+        if let Some(f) = m.file("onnx") {
+            let (model, threads, src) = (file_path(&state.paths, &m, f), state.limits().threads.max(2), img.clone());
+            let shape = tokio::task::spawn_blocking(move || cutout::matte(&dll, &model, &src, threads)).await.ok().and_then(Result::ok);
+            if let Some(matte) = shape {
+                let mut out = image::RgbImage::from_pixel(img.width(), img.height(), image::Rgb([255, 255, 255]));
+                for (x, y, a) in matte.enumerate_pixels() {
+                    if a.0[0] > 128 {
+                        out.put_pixel(x, y, image::Rgb([120, 120, 120]));
+                    }
+                }
+                return image::DynamicImage::ImageRgb8(out);
+            }
+        }
+    }
+    let side = img.width().max(img.height()) as f32;
+    image::DynamicImage::ImageRgba8(image::imageops::blur(&img.grayscale().to_rgba8(), side / 60.0))
 }
 
 /// A negative prompt without the words that rule out a look (drawings,
@@ -3467,15 +3495,37 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
                     init = Some(p);
                 }
             }
+            // A pose from a picture: given to a model that reads pictures as
+            // the last image, with only its pose to be taken.
+            let mut pose_at = None;
+            if let Some(pid) = req.pose.as_deref().filter(|p| !p.is_empty()) {
+                if !m.can("edit") {
+                    return Err("Taking a pose from a picture needs a picture model that reads pictures: FLUX.2 [klein] or Qwen-Image (Studio › Models).".into());
+                }
+                let c = ctx.state.work_cipher()?;
+                let img = store::read(&ctx.state.paths, &c, pid).and_then(|b| imaging::decode(&b)).map_err(|_| "The pose picture is no longer in the gallery.".to_string())?;
+                // Its pose only: given as it was, the model copied the face too.
+                let img = pose_only(ctx, img).await;
+                let (pw, ph) = imaging::work_size(img.width(), img.height(), w * h);
+                let p = work.join("pose.png");
+                std::fs::write(&p, imaging::png(&img.resize_exact(pw, ph, image::imageops::FilterType::Lanczos3))?).map_err(|e| e.to_string())?;
+                init = None;
+                refs.push(p);
+                pose_at = Some(refs.len());
+            }
             // With their own LoRAs and the look left to Auto, the LoRA sets the
             // look: Auto's photo words turned a pixel-art LoRA back into a photo.
             let look = if !req.loras.is_empty() && matches!(req.style.as_deref(), None | Some("auto")) { Some("as_written") } else { req.style.as_deref() };
             let mut prompt = styled(&req.prompt, look);
             // The same character as the example: said plainly to a model that
             // gets it as a reference (the prompt writer says it its own way).
-            if req.example_use.as_deref() == Some("subject") && !refs.is_empty() && req.write_prompt != Some(true) {
-                let which = if refs.len() == 1 { "image 1".to_string() } else { format!("images 1 to {}", refs.len()) };
+            let examples_given = pose_at.map_or(refs.len(), |k| k - 1);
+            if req.example_use.as_deref() == Some("subject") && examples_given > 0 && req.write_prompt != Some(true) {
+                let which = if examples_given == 1 { "image 1".to_string() } else { format!("images 1 to {examples_given}") };
                 prompt = format!("{}. The same character as in {which}: keep the face, hair, body, clothes and colors exactly the same.", prompt.trim_end_matches('.'));
+            }
+            if let Some(k) = pose_at {
+                prompt = format!("{}. The body pose exactly as the figure in image {k}: the same position of the head, arms and legs. Image {k} only shows the pose.", prompt.trim_end_matches('.'));
             }
             if let Some(spec) = req.wallpaper.as_ref().filter(|_| req.style.as_deref() != Some("as_written")) {
                 prompt.push_str(wallpaper::plain_words(spec));

@@ -1345,6 +1345,28 @@ async fn e2e_pictures_with_a_lora_and_the_same_character() {
     std::fs::remove_file(media::loras::dir(&state.paths).join(format!("{}.safetensors", lora.id))).ok();
 }
 
+/// A pose taken from a picture: someone in a clear pose first, then a
+/// different person in a different place in that pose, on FLUX.2 [klein]
+/// 4B. The pictures go to C:\dev\tools\lora-test for a look.
+///     cargo test e2e_a_pose_from_a_picture -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_pose_from_a_picture() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\lora-test");
+    media::install_for_test(&state, "flux2-klein-4b").await.unwrap();
+    // The background remover, for the pose as a plain figure.
+    media::install_for_test(&state, "birefnet-lite").await.unwrap();
+    let pic = |prompt: &str, seed: i64, pose: Option<String>| Request { op: "generate".into(), prompt: prompt.into(), model_id: Some("flux2-klein-4b".into()), shape: Some("square".into()), seed: Some(seed), write_prompt: Some(false), check: Some(false), pose, ..Default::default() };
+    let source = media::run(&state, store::new_id(), pic("a man in a grey t-shirt standing on one leg with both arms raised straight up, full body, plain studio background", 21, None)).await.unwrap().remove(0);
+    let posed = media::run(&state, store::new_id(), pic("a knight in shining armor in a castle hall, full body", 22, Some(source.id.clone()))).await.unwrap().remove(0);
+    std::fs::write(out.join("pose-source.png"), store::read(&state.paths, &c, &source.id).unwrap()).unwrap();
+    std::fs::write(out.join("pose-knight.png"), store::read(&state.paths, &c, &posed.id).unwrap()).unwrap();
+    println!("pictures in {}", out.display());
+}
+
 /// A reply past a small length limit is carried on to its end.
 ///     SULCUSAI_TEST_GGUF is the model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

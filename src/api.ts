@@ -2673,6 +2673,8 @@ export interface MediaRequest {
   example_use?: "style" | "subject" | "layout";
   /** The person's own LoRAs, with how strongly each is used. */
   loras?: [string, number][];
+  /** A picture (gallery id) whose people's pose the new one takes. */
+  pose?: string | null;
   /** The prompt writer rewrites the description for this model. */
   write_prompt?: boolean;
   /** The picture reader checks the result and it's made again if things are missing. */

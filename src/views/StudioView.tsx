@@ -36,7 +36,7 @@ import { MediaModels, useMediaView } from "../components/MediaModels";
 import { MaskPainter, type MaskHandle } from "../components/MaskPainter";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
-import { asksFirst, ExamplePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
+import { asksFirst, ExamplePicker, PosePicker, PictureQuestions, PromptHelpPanel, SetWallpaperButton, useAskFirst, usePromptHelp, WallpaperComposer, type ExampleUse } from "../components/StudioExtras";
 import { OwnVoicePanel, useOwnVoices } from "../components/OwnVoice";
 import { LanguageSelect, namesIn, PodcastComposer, ScriptVoices, talkLanguage, VoiceSelect } from "../components/Podcast";
 import { AddToPlaylist, Playlists } from "../components/Library";
@@ -630,6 +630,7 @@ function PictureComposer({
   const [examples, setExamples] = useState<MediaItem[]>([]);
   const [use, setUse] = useState<ExampleUse>("style");
   const [loras, setLoras] = useState<[string, number][]>([]);
+  const [pose, setPose] = useState<MediaItem | null>(null);
   useEffect(() => {
     const same = (e: Event) => {
       const item = (e as CustomEvent<MediaItem>).detail;
@@ -644,10 +645,11 @@ function PictureComposer({
   const ask = useAskFirst();
   const local = !!m && !m.id.startsWith("cloud:");
   const make = async (description: string) => {
-    const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check, loras } : {};
+    const extra: Partial<MediaRequest> = local ? { examples: examples.map((e) => e.id), example_use: use, write_prompt: help.write, check: help.check, loras, pose: pose?.id ?? null } : {};
     if (await onStart({ op: "generate", prompt: description, shape, count, style, model_id: m?.id, ...extra })) {
       setPrompt("");
       setExamples([]);
+      setPose(null);
       ask.clear();
     }
   };
@@ -698,6 +700,7 @@ function PictureComposer({
         <button className="btn primary" disabled={!prompt.trim() || ask.asking} onClick={go}>{ask.asking ? t("Checking…") : t("Create")}</button>
       </div>
       {local && <ExamplePicker value={examples} onChange={setExamples} use={use} onUse={setUse} gallery={gallery} toast={toast} canRead={!!help.status?.reader} />}
+      {local && m?.can.includes("edit") && <PosePicker value={pose} onChange={setPose} gallery={gallery} toast={toast} />}
       {local && m && <LoraField modelId={m.id} value={loras} onChange={setLoras} toast={toast} />}
       <PromptHelpPanel model={m} help={help} onStart={onStart} toast={toast} canAsk />
       {lifelike && (style === "auto" || style === "photo" || style === "phone_photo") && (

@@ -693,3 +693,49 @@ export function SetWallpaperButton({ item, toast }: { item: MediaItem; toast: Pu
     </>
   );
 }
+
+/** A picture whose people's pose the new one takes (models that read
+ * pictures get it as a reference, its pose only). */
+export function PosePicker({ value, onChange, gallery, toast }: { value: MediaItem | null; onChange: (v: MediaItem | null) => void; gallery: MediaItem[]; toast: PushToast }) {
+  const [picking, setPicking] = useState(false);
+  const fromFile = async () => {
+    const picked = await openFile({ multiple: false, filters: [{ name: t("Pictures"), extensions: ["png", "jpg", "jpeg", "webp"] }] });
+    if (typeof picked !== "string") return;
+    try {
+      onChange(await api.mediaImport(picked));
+      setPicking(false);
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  return (
+    <div className="row wrap">
+      {value ? (
+        <>
+          <span className="small">{t("Pose from:")}</span>
+          <ExampleChip item={value} onRemove={() => onChange(null)} />
+        </>
+      ) : (
+        <button className="btn small" onClick={() => setPicking(true)} title={t("A picture of someone in the pose the new picture should have: only the pose is taken, not the person or the background")}>
+          {t("＋ Pose from a picture…")}
+        </button>
+      )}
+      {picking && (
+        <Modal title={t("Pose from a picture")} onClose={() => setPicking(false)}>
+          <p className="small muted">{t("Pick a picture of someone in the pose you want. Only the pose is taken: the person, clothes and background come from your description and examples.")}</p>
+          <p className="small muted">{t("With BiRefNet Lite installed (Studio › Models, 213 MB), the pose is passed on as a plain figure and taken most exactly.")}</p>
+          <div className="row">
+            <button className="btn small" onClick={fromFile}>{t("From a file…")}</button>
+          </div>
+          <div className="media-grid small-grid">
+            {gallery
+              .filter((i) => i.kind === "image")
+              .map((i) => (
+                <MediaTile key={i.id} item={i} selected={value?.id === i.id} onOpen={() => (onChange(i), setPicking(false))} />
+              ))}
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
