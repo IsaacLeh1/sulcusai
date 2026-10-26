@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Connector, type Plugin, type PluginPreview, type ToolMode } from "../api";
 import { Modal } from "../components/Modal";
+import { Addons } from "../components/Addons";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 
@@ -52,8 +53,10 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
           </div>
         </header>
         <p className="callout small">
-          {t("Connectors are programs that run on this PC with your permissions. SulcusAI decides when the assistant may use their tools, but not what a connector does by itself, so only add ones you trust. Internet-based connectors arrive with the web features.")}
+          {t("Connectors are programs that run on this PC with your permissions. SulcusAI decides when the assistant may use their tools, but not what a connector does by itself, so only add ones you trust.")}
         </p>
+
+        <Addons toast={toast} onAdded={load} />
 
         <section className="card">
           <div className="section-head">

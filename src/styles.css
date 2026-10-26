@@ -2000,6 +2000,13 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .map-branch.depth-1 > .map-node { background: var(--accent-soft); font-weight: 600; border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 .map-more { color: var(--muted); font-size: 11.5px; }
 
+/* One-click add-ons. */
+.addons { display: flex; flex-direction: column; gap: 10px; }
+.addons-group h3 { margin: 6px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11.5px; }
+.addons-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.addon { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
+.addon-added { color: var(--success); font-weight: 600; }
+
 /* Check this PC. */
 .pc-check { display: flex; flex-direction: column; gap: 10px; }
 .pc-check-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

@@ -368,17 +368,23 @@ pub fn list_connectors(state: AppStateRef) -> Result<Vec<Connector>, String> {
 
 #[tauri::command]
 pub async fn save_connector(state: AppStateRef<'_>, input: ConnectorInput) -> Result<Connector, String> {
+    save(&state, &input.id, &input.name, ServerSpec { command: input.command.trim().to_string(), args: input.args, env: input.env, cwd: None }).await
+}
+
+/// Adds or changes a connector (`id`: its id, or "" for a new one), and
+/// connects once so its tools are known (or what went wrong is said).
+pub(crate) async fn save(state: &AppState, id: &str, name: &str, spec: ServerSpec) -> Result<Connector, String> {
     let c = state.cipher()?;
-    let name = input.name.trim();
-    if name.is_empty() || input.command.trim().is_empty() {
+    let name = name.trim();
+    if name.is_empty() || spec.command.trim().is_empty() {
         return Err("A connector needs a name and a command.".into());
     }
     let existing = connectors(&state.db.lock().unwrap(), &c);
-    if existing.iter().any(|x| x.name.eq_ignore_ascii_case(name) && x.id != input.id) {
+    if existing.iter().any(|x| x.name.eq_ignore_ascii_case(name) && x.id != id) {
         return Err("Another connector already has that name.".into());
     }
-    let mut conn = existing.into_iter().find(|x| x.id == input.id).unwrap_or(Connector {
-        id: uuid::Uuid::new_v4().to_string(),
+    let mut conn = existing.into_iter().find(|x| x.id == id).unwrap_or(Connector {
+        id: if id.is_empty() { uuid::Uuid::new_v4().to_string() } else { id.to_string() },
         name: String::new(),
         spec: ServerSpec::default(),
         enabled: true,
@@ -387,10 +393,10 @@ pub async fn save_connector(state: AppStateRef<'_>, input: ConnectorInput) -> Re
         tool_modes: HashMap::new(),
     });
     conn.name = name.to_string();
-    conn.spec = ServerSpec { command: input.command.trim().to_string(), args: input.args, env: input.env, cwd: conn.spec.cwd.clone() };
-    stop(&state, &conn.id).await;
+    conn.spec = ServerSpec { cwd: spec.cwd.clone().or_else(|| conn.spec.cwd.clone()), ..spec };
+    stop(state, &conn.id).await;
     // Connect once now so the user sees its tools (or what went wrong).
-    conn.tools = ensure_running(&state, &conn).await?;
+    conn.tools = ensure_running(state, &conn).await?;
     let db_conn = state.db.lock().unwrap();
     store(&db_conn, &c, "connectors", &conn.id, &conn)?;
     db::log_action(&db_conn, "privacy", "Added or changed a local connector (it runs a program on this PC)");

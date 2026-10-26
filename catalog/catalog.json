@@ -3935,6 +3935,18 @@
       }
     ]
   },
+  "addons": {
+    "node": {
+      "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-x64.zip",
+      "size": 37748064,
+      "sha256": "d2046d28c2c3dcd211ac5145c0bf30e2047ef9dfb306693c8c6e2eccd8b95fa5"
+    },
+    "uv": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip",
+      "size": 15264056,
+      "sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
+    }
+  },
   "embedding": {
     "role": "embedding",
     "file": "Qwen3-Embedding-0.6B-Q8_0.gguf",

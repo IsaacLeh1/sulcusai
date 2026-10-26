@@ -42,7 +42,9 @@ pub struct Catalog {
     pub media: crate::media::MediaCatalog,
     /// The documents library's embedding model (Qwen3-Embedding 0.6B).
     #[serde(default)]
-    pub embedding: Option<crate::media::MediaFile>,
+    pub embedding: Option<crate::media::MediaFile>,    /// What one-click add-ons run on (Node.js, uv).
+    #[serde(default)]
+    pub addons: Option<crate::addons::Runtimes>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

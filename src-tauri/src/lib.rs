@@ -11,6 +11,7 @@ mod cleanup;
 mod doclib;
 mod study;
 mod pccheck;
+mod addons;
 mod folders;
 mod backup;
 mod api_server;
@@ -3099,6 +3100,8 @@ pub fn run() {
             pccheck::pc_check_start,
             pccheck::pc_check_stop,
             pccheck::pc_check_report,
+            addons::addons_list,
+            addons::addon_add,
             typing::typing_vocabulary,
             typing::typing_fix,
             typing::typing_can_correct,

@@ -2249,6 +2249,18 @@ export interface LibraryView {
   kinds: string[];
 }
 
+/** A one-click add-on (a well-known MCP server). */
+export interface AddonView {
+  id: string;
+  name: string;
+  by: string;
+  category: string;
+  about: string;
+  inputs: { id: string; label: string; kind: "folder" | "file" | "secret" | "text"; help: string }[];
+  link: string;
+  added: boolean;
+}
+
 /** A step of Check this PC. */
 export interface PcCheckStep {
   id: string;
@@ -3250,6 +3262,9 @@ export const api = {
   docsSearch: (query: string, limit?: number) => invoke<DocHit[]>("docs_search", { query, limit: limit ?? null }),
   /** Opens a library file in its app. */
   docsOpen: (id: string) => invoke<void>("docs_open", { id }),
+  // One-click add-ons ("addons:progress" while one is set up).
+  addons: () => invoke<AddonView[]>("addons_list"),
+  addonAdd: (id: string, values: Record<string, string>) => invoke<Connector>("addon_add", { id, values }),
   // Check this PC ("pccheck:step" as it goes).
   pcCheckStart: () => invoke<PcCheckReport>("pc_check_start"),
   pcCheckStop: () => invoke<void>("pc_check_stop"),
@@ -3534,6 +3549,8 @@ export interface ChatEvents {
   "own_voice:adding": { voice: string; file: string; step: "reading" | "separating" | "choosing" | "getting_speakers" | "speakers" | "hearing" | "getting_words"; n: number; of: number };
   /** The documents library reading and indexing: what it's on. */
   "docs:progress": DocProgress;
+  /** An add-on being set up: what it's doing and how far (0 to 1; -1: unknown). */
+  "addons:progress": { stage: string; fraction: number };
   /** Check this PC, after each change. */
   "pccheck:step": PcCheckReport;
   /** A study set being made: what it's doing and how far (0 to 1). */
