@@ -5635,6 +5635,48 @@
           "Non-commercial license",
           "4.3 GB download"
         ]
+      },
+      {
+        "id": "heartmula-3b",
+        "name": "HeartMuLa",
+        "publisher": "HeartMuLa team (Peking University, MuLa Labs)",
+        "source": "https://github.com/HeartMuLa/heartlib",
+        "description": "A music model (3B) whose makers' tests put its words clearer than Suno v5's. Here a 144-second country song took 86 seconds on a graphics card, with 30 of its 31 lyric words heard; songs end when their lyrics do.",
+        "license": {
+          "name": "Apache 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "music",
+        "can": [
+          "music"
+        ],
+        "files": [
+          {
+            "role": "heartmula",
+            "file": "heartmula-q8_0.gguf",
+            "url": "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/462b4cec041e06ffb3d8fcf0d8c655051b1cd9f5/HeartMuLa-GGUF/heartmula-q8_0.gguf",
+            "size": 7659762592,
+            "sha256": "5c3e42171ec012ba7420e3841e2a36e68e36177863b5e76793393afecd10cfbd"
+          }
+        ],
+        "min_vram_gb": 10,
+        "cpu": false,
+        "secs": 20,
+        "quality": 9,
+        "defaults": {
+          "seconds": 30
+        },
+        "strengths": [
+          "Very clear words: its makers measured fewer lyric errors than Suno v5",
+          "Free for any use (Apache 2.0)",
+          "A full song in about half its length on a graphics card"
+        ],
+        "weaknesses": [
+          "New songs only: no covers, parts or sound effects",
+          "Needs a graphics card with 10 GB or more",
+          "7.7 GB download"
+        ]
       }
     ],
     "separator": {
@@ -5826,6 +5868,18 @@
           "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/yue2-8af0174-win-vulkan-x64.zip",
           "size": 18745000,
           "sha256": "1a241c873d34dc8244163c4156daac8c3f802368fbabc13374162d9e1f8181b6"
+        }
+      }
+    },
+    "heartmula_engine": {
+      "name": "audio.cpp",
+      "license": "Apache-2.0",
+      "build": "50749561",
+      "assets": {
+        "vulkan-x64": {
+          "url": "https://github.com/0xShug0/audio.cpp/releases/download/v0.9.2-drama3-base-small/audio-v0.9.2-drama3-base-small-bin-windows-x64-vulkan.zip",
+          "size": 63369491,
+          "sha256": "7d002f9989357ff4196c275d06d10932b7683d0a485c37b39e0b7a69c7eb42f6"
         }
       }
     }

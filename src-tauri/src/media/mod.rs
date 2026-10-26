@@ -27,6 +27,7 @@ pub(crate) mod lyrics;
 mod audio_in;
 pub(crate) mod music;
 pub(crate) mod yue;
+pub(crate) mod heartmula;
 pub mod own_voice;
 pub(crate) mod proc;
 pub(crate) mod svc;
@@ -91,6 +92,9 @@ pub struct MediaCatalog {
     /// yue2.cpp, the engine of the YuE2 music model (`yue`).
     #[serde(default)]
     pub yue_engine: Option<EngineSpec>,
+    /// audio.cpp, the engine of the HeartMuLa music model (`heartmula`).
+    #[serde(default)]
+    pub heartmula_engine: Option<EngineSpec>,
     /// Narration and songs in the person's own recorded voice (`own_voice`).
     #[serde(default)]
     pub own_voice: Option<own_voice::OwnVoiceCatalog>,
@@ -453,6 +457,16 @@ pub(crate) fn yue_engine_dir(state: &AppState) -> Option<PathBuf> {
     ["vulkan-x64", engine::cpu_key()].iter().map(|k| state.paths.engines.join(yue_dir(e, k))).find(|d| engine::find_exe(d, yue::EXE).is_some())
 }
 
+fn heartmula_dir(e: &EngineSpec) -> String {
+    format!("audiocpp-{}-vulkan-x64", e.build)
+}
+
+/// The installed HeartMuLa engine (audio.cpp's Vulkan build).
+pub(crate) fn heartmula_engine_dir(state: &AppState) -> Option<PathBuf> {
+    let e = state.catalog.media.heartmula_engine.as_ref()?;
+    Some(state.paths.engines.join(heartmula_dir(e))).filter(|d| engine::find_exe(d, heartmula::EXE).is_some())
+}
+
 pub(crate) fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
     let c = &state.catalog.media;
     ["vulkan-x64", engine::cpu_key()]
@@ -530,6 +544,19 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
     let c = &state.catalog.media;
     emit("engine", 0, 0);
     match spec.kind {
+        // HeartMuLa runs on audio.cpp's Vulkan build: on a graphics card only.
+        Kind::Music if spec.file("heartmula").is_some() => {
+            let e = c.heartmula_engine.as_ref().ok_or("HeartMuLa isn't available on this system yet.")?;
+            let asset = e.assets.get("vulkan-x64").filter(|_| cfg!(windows)).ok_or("HeartMuLa isn't available on this system yet.")?;
+            if state.budget().vram == 0 {
+                return Err("HeartMuLa needs a graphics card with 10 GB of memory or more.".into());
+            }
+            let dir = heartmula_dir(e);
+            if engine::find_exe(&state.paths.engines.join(&dir), heartmula::EXE).is_none() {
+                state.log("network", &format!("Downloading the audio.cpp music engine (graphics card) from {}", crate::host_of(&asset.url)));
+            }
+            engine::ensure_unpacked(&state.paths, &dir, asset, heartmula::EXE, cancel, |r, t| emit("engine", r, t)).await?;
+        }
         // YuE2 has an engine of its own.
         Kind::Music if spec.file("yue").is_some() => {
             let e = c.yue_engine.as_ref().ok_or("YuE2 isn't available on this system yet.")?;
@@ -1679,6 +1706,8 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
     // with the card's music engine), else the processor, or a cloud model.
     let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach" | "cover_art")
         || (matches!(req.op.as_str(), "music" | "sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
+        // HeartMuLa only runs on a card.
+        || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
         // A song's parts taken apart and read on an NVIDIA card (CUDA).
         || (matches!(req.op.as_str(), "map" | "stems") && crate::natural::nvidia_here(state));
     let (gpu_name, cpu_name) = {
@@ -2393,7 +2422,7 @@ pub(crate) async fn give_back(state: &Arc<AppState>, paused: crate::engine::Paus
 }
 
 async fn run_job(state: &Arc<AppState>, id: &str, req: &Request, model: Option<&MediaModel>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<Vec<MediaItem>, String> {
-    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound" | "remake") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan"));
+    let music_on_gpu = matches!(req.op.as_str(), "music" | "sound" | "remake") && (music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")) || model.is_some_and(|m| m.file("heartmula").is_some()));
     // A saved artist's sound and voice, under the song's own choices.
     let as_artist = with_persona(state, req)?;
     let req = as_artist.as_ref().unwrap_or(req);
@@ -3669,7 +3698,7 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     // the music model's reference (it sets the voice's sound and delivery,
     // not the tune), so it starts out sung more like them.
     let own_reference = match spec.own_voice.as_deref() {
-        Some(id) if reference.is_none() && task.is_none() && !sound && req.instrumental != Some(true) && m.file("yue").is_none() => own_reference(ctx, id, work),
+        Some(id) if reference.is_none() && task.is_none() && !sound && req.instrumental != Some(true) && m.file("yue").is_none() && m.file("heartmula").is_none() => own_reference(ctx, id, work),
         _ => None,
     };
     // A new song: as long as asked, up to ten minutes (sound effects 30 s).
@@ -3731,6 +3760,10 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
     if yue.is_some() && (task.is_some() || sound) {
         return Err("YuE2 makes new songs. To work on a song or make a sound effect, pick an ACE-Step model.".into());
     }
+    let heart = m.file("heartmula");
+    if heart.is_some() && (task.is_some() || sound) {
+        return Err("HeartMuLa makes new songs. To work on a song or make a sound effect, pick an ACE-Step model.".into());
+    }
     let seed = req.seed.unwrap_or_else(random_seed);
     // Words to sing and nothing wrote them: said now, not after the whole
     // song (the music model's own lyrics came out as garbage).
@@ -3770,6 +3803,30 @@ async fn song(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resul
             ctx.progress,
         )
         .await?
+    } else if let Some(file) = heart {
+        let engine_dir = heartmula_engine_dir(ctx.state).ok_or("HeartMuLa's engine isn't installed. Reinstall HeartMuLa from the Studio's Models list.")?;
+        let mut made = heartmula::make(
+            &music::Engine { dir: &engine_dir, models: &models, low_priority: ctx.state.limits().low_priority, job: ctx.state.job(), logs: &ctx.state.paths.logs },
+            work,
+            &heartmula::HeartRequest {
+                caption: &caption,
+                lyrics: &heartmula::lyrics_for(&lyrics_text),
+                seconds,
+                seed,
+                versions,
+                model: &file.file,
+                // Weirdness and Style influence, their own at the middle.
+                temperature: spec.weirdness.map(|w| 0.7 + 0.6 * w.clamp(0.0, 1.0)),
+                guidance: spec.influence.map(|x| 1.0 + x.clamp(0.0, 1.0)),
+            },
+            ctx.cancel,
+            ctx.progress,
+        )
+        .await?;
+        for song in &mut made {
+            song.lyrics = lyrics_text.clone();
+        }
+        made
     } else {
     // The planning model isn't used (see `music::make`); older installs still have it.
     let dit = m.file("dit").ok_or("The music model is missing a file.")?;
@@ -5901,6 +5958,8 @@ mod tests {
             match m.kind {
                 // YuE2: its backbone and decoder, and its engine in the catalog.
                 Kind::Music if m.file("yue").is_some() => assert!(m.file("yue_vae").is_some() && c.yue_engine.is_some(), "{}", m.id),
+                // HeartMuLa: one file, and audio.cpp in the catalog.
+                Kind::Music if m.file("heartmula").is_some() => assert!(m.files.len() == 1 && c.heartmula_engine.is_some(), "{}", m.id),
                 // Only ace-synth runs: no planning model to download.
                 Kind::Music => assert!(m.file("dit").is_some() && m.file("lm").is_none(), "{}", m.id),
                 // A whole checkpoint (SDXL), or a diffusion model with its decoder.

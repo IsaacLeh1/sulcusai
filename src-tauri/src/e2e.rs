@@ -4098,6 +4098,47 @@ async fn e2e_suno_features() {
     }
 }
 
+/// HeartMuLa installed from the catalog (audio.cpp's Vulkan build from its
+/// release, the model checked against its hash) and a song made the
+/// Studio's way: its length, the words Whisper hears, and the time. Kept in
+/// C:\dev\tools\music\ab\heartmula\app.mp3.
+///     cargo test e2e_heartmula -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_heartmula() {
+    use crate::media::{self, store, MusicSpec, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &AtomicBool::new(false)).await.unwrap();
+    let t = std::time::Instant::now();
+    media::install_for_test(&state, "heartmula-3b").await.unwrap();
+    println!("installed in {:.0} s", t.elapsed().as_secs_f64());
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let wanted = sung_words(lyrics);
+    let t = std::time::Instant::now();
+    let req = Request {
+        op: "music".into(),
+        model_id: Some("heartmula-3b".into()),
+        prompt: "warm modern country about a fresh start".into(),
+        lyrics: Some(lyrics.into()),
+        seconds: Some(120.0),
+        seed: Some(7),
+        language: Some("en".into()),
+        music: Some(MusicSpec { voice: Some("male".into()), instruments: vec!["acoustic guitar".into(), "pedal steel".into()], ..Default::default() }),
+        ..Default::default()
+    };
+    let song = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
+    let file = std::path::PathBuf::from(r"C:\dev\tools\music\ab\heartmula\app.mp3");
+    std::fs::write(&file, store::read(&state.paths, &c, &song.id).unwrap()).unwrap();
+    let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+    let matched = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+    println!("{:.0} s long in {:.0} s, {matched} of {} words heard, mime {}, title {:?}", song.seconds, t.elapsed().as_secs_f64(), wanted.len(), song.mime, song.title);
+    assert_eq!(song.mime, "audio/mpeg");
+    assert!(song.seconds > 30.0 && matched * 3 >= wanted.len() * 2);
+}
+
 /// Remaster and mashup as ACE-Step covers of the synth-pop song from
 /// e2e_suno_features: the song re-rendered close to itself (strength 0.6,
 /// 0.8), and its tune and words in the dark-country song's sound (that song

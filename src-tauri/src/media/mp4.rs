@@ -163,6 +163,61 @@ impl Writer {
     }
 }
 
+/// A song as a 320 kbps MP3 through Windows' own encoder: 16-bit stereo
+/// samples, left and right interleaved, at 44.1 or 48 kHz.
+pub fn mp3(path: &Path, pcm: &[i16], rate: u32) -> Result<(), String> {
+    if rate != 44_100 && rate != 48_000 {
+        return Err("The sound must be at 44.1 or 48 kHz.".into());
+    }
+    let fail = |what: &str, e: windows::core::Error| format!("Windows couldn't {what}: {e}");
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET).map_err(|e| fail("start its MP3 encoder", e))?;
+        let result = (|| -> Result<(), String> {
+            let _ = std::fs::remove_file(path);
+            let sink = MFCreateSinkWriterFromURL(&HSTRING::from(path.as_os_str()), None, None).map_err(|e| fail("create the MP3 file", e))?;
+            let out = MFCreateMediaType().map_err(|e| fail("set up MP3", e))?;
+            out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(|e| fail("set up MP3", e))?;
+            out.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_MP3).map_err(|e| fail("set up MP3", e))?;
+            out.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate).map_err(|e| fail("set up MP3", e))?;
+            out.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(|e| fail("set up MP3", e))?;
+            out.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 40_000).map_err(|e| fail("set up MP3", e))?;
+            let stream = sink.AddStream(&out).map_err(|e| fail("add the sound", e))?;
+            let inp = MFCreateMediaType().map_err(|e| fail("set up the sound", e))?;
+            inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio).map_err(|e| fail("set up the sound", e))?;
+            inp.SetGUID(&MF_MT_SUBTYPE, &MFAudioFormat_PCM).map_err(|e| fail("set up the sound", e))?;
+            inp.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16).map_err(|e| fail("set up the sound", e))?;
+            inp.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, rate).map_err(|e| fail("set up the sound", e))?;
+            inp.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2).map_err(|e| fail("set up the sound", e))?;
+            inp.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4).map_err(|e| fail("set up the sound", e))?;
+            inp.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * 4).map_err(|e| fail("set up the sound", e))?;
+            sink.SetInputMediaType(stream, &inp, None).map_err(|e| fail("take this sound", e))?;
+            sink.BeginWriting().map_err(|e| fail("start writing the MP3", e))?;
+            // A second at a time.
+            let mut at = 0i64;
+            for piece in pcm.chunks(rate as usize * 2) {
+                let bytes: Vec<u8> = piece.iter().flat_map(|s| s.to_le_bytes()).collect();
+                let frames = (piece.len() / 2) as i64;
+                let buf = MFCreateMemoryBuffer(bytes.len() as u32).map_err(|e| e.to_string())?;
+                let mut p: *mut u8 = std::ptr::null_mut();
+                buf.Lock(&mut p, None, None).map_err(|e| e.to_string())?;
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
+                buf.Unlock().map_err(|e| e.to_string())?;
+                buf.SetCurrentLength(bytes.len() as u32).map_err(|e| e.to_string())?;
+                let s = MFCreateSample().map_err(|e| e.to_string())?;
+                s.AddBuffer(&buf).map_err(|e| e.to_string())?;
+                s.SetSampleTime(at * 10_000_000 / rate as i64).map_err(|e| e.to_string())?;
+                s.SetSampleDuration(frames * 10_000_000 / rate as i64).map_err(|e| e.to_string())?;
+                sink.WriteSample(stream, &s).map_err(|e| format!("Windows couldn't encode the MP3: {e}"))?;
+                at += frames;
+            }
+            sink.Finalize().map_err(|e| format!("Windows couldn't finish the MP3: {e}"))
+        })();
+        let _ = MFShutdown();
+        result
+    }
+}
+
 impl Drop for Writer {
     fn drop(&mut self) {
         if !self.finished {
