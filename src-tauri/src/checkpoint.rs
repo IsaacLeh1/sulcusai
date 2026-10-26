@@ -164,8 +164,18 @@ pub fn forget_chat(conn: &Connection, chat_id: &str) {
 }
 
 /// Moves a file or folder to the Recycle Bin, so deletes can be recovered.
-#[cfg(windows)]
+/// Tests remove their own temporary files outright instead: each test run
+/// used to leave a "new.txt" in the Recycle Bin of the PC building the app.
 pub fn recycle(path: &Path) -> Result<(), String> {
+    if cfg!(test) && path.starts_with(std::env::temp_dir()) {
+        let gone = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+        return gone.map_err(|e| e.to_string());
+    }
+    to_bin(path)
+}
+
+#[cfg(windows)]
+fn to_bin(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::core::PCWSTR;
     use windows::Win32::UI::Shell::{
@@ -189,9 +199,8 @@ pub fn recycle(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Moves a file or folder to the Trash, so deletes can be recovered.
 #[cfg(not(windows))]
-pub fn recycle(path: &Path) -> Result<(), String> {
+fn to_bin(path: &Path) -> Result<(), String> {
     trash::delete(path).map_err(|e| format!("Couldn't move {} to the Trash: {e}", path.display()))
 }
 
@@ -246,10 +255,10 @@ mod tests {
         assert_eq!(std::fs::read_to_string(w.join("gone.txt")).unwrap(), "precious");
         assert_eq!(std::fs::read_to_string(w.join("old-name.txt")).unwrap(), "moved");
         assert!(!w.join("new-name.txt").exists());
-        if cfg!(windows) {
-            assert!(!w.join("new.txt").exists(), "created file went to the Recycle Bin");
-        }
+        assert!(!w.join("new.txt").exists(), "the created file is gone");
         // A second undo has nothing left to do.
         assert!(db::turn_checkpoints(&conn.lock().unwrap(), &cipher, "t1").is_empty());
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
