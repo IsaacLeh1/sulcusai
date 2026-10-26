@@ -4699,7 +4699,7 @@ async fn e2e_custom_model() {
     media::install_for_test(&state, train::BASE_MODEL).await.unwrap();
     let files: Vec<String> = std::fs::read_dir(r"C:\dev\tools\music\train-test\audio").unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
     let t0 = std::time::Instant::now();
-    let req = Request { op: "train".into(), prompt: "Test songs".into(), train: Some(train::TrainSpec { name: "Test songs".into(), description: "modern country, warm male lead vocal, acoustic guitar, pedal steel".into(), files, songs: Vec::new() }), ..Default::default() };
+    let req = Request { op: "train".into(), prompt: "Test songs".into(), train: Some(train::TrainSpec { name: "Test songs".into(), description: "modern country, warm male lead vocal, acoustic guitar, pedal steel".into(), files, songs: Vec::new(), voice: None }), ..Default::default() };
     media::run(&state, store::new_id(), req).await.unwrap();
     let models = train::list(&state.db.lock().unwrap(), &c);
     println!("trained in {:.0} s: {:?}", t0.elapsed().as_secs_f64(), models.iter().map(|m| (&m.name, &m.trigger, m.songs, m.epochs)).collect::<Vec<_>>());
