@@ -4282,6 +4282,39 @@ pub fn studio_save_midi(state: AppStateRef, path: String, data: String) -> Resul
     std::fs::write(&path, bytes).map_err(|e| format!("Couldn't save it there: {e}"))
 }
 
+/// A MIDI file the person picked in the open dialog, as base64.
+#[tauri::command(async)]
+pub fn studio_read_midi(state: AppStateRef, path: String) -> Result<String, String> {
+    state.cipher()?;
+    let lower = path.to_lowercase();
+    if !(lower.ends_with(".mid") || lower.ends_with(".midi")) {
+        return Err("Pick a MIDI file (.mid).".into());
+    }
+    let bytes = std::fs::read(&path).map_err(|e| format!("Couldn't read it: {e}"))?;
+    if bytes.len() > 20_000_000 || !bytes.starts_with(b"MThd") {
+        return Err("That isn't a MIDI file.".into());
+    }
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// The song studio's chat bar: a request turned into actions on the
+/// project (`studio::ask_messages`) by the chat model; the window does them.
+#[tauri::command]
+pub async fn studio_ask(state: AppStateRef<'_>, request: String, summary: String) -> Result<Vec<serde_json::Value>, String> {
+    state.cipher()?;
+    ask_studio(state.inner(), &request, &summary).await
+}
+
+pub(crate) async fn ask_studio(state: &Arc<AppState>, request: &str, summary: &str) -> Result<Vec<serde_json::Value>, String> {
+    let (ep, _, _hold) = crate::background_endpoint(state).await.map_err(|_| "The chat bar needs a chat model. Install one from Models.".to_string())?;
+    let answer = crate::chat::complete(&ep, studio::ask_messages(request.trim(), summary), json!({ "temperature": 0.2 }), 800).await?;
+    let actions = studio::actions_of(&answer);
+    if actions.is_empty() {
+        return Err("The chat model didn't say what to do. Try saying it another way.".into());
+    }
+    Ok(actions)
+}
+
 #[tauri::command(async)]
 pub fn studio_record_cancel() {
     studio::record_cancel();

@@ -5,14 +5,14 @@
 // mute, solo, effects and automation; MIDI tracks play notes on sampled
 // instruments; new parts come in takes to pick from. Kept as the window edits.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, errorText, on, toBase64, type MediaRequest } from "../api";
+import { api, errorText, fromBase64, on, toBase64, type MediaItem, type MediaRequest, type StudioAction } from "../api";
 import { clock } from "../format";
 import { t, tx } from "../i18n";
 import { encodeWav } from "../media";
 import { render, sourceBuffer, StudioEngine } from "../studio/engine";
 import { DRUM_KIT, GM, programFor } from "../studio/gm";
 import { expect, setOpen, waitingFor } from "../studio/jobs";
-import { DRUMS, LiveSynth, midiFile } from "../studio/midi";
+import { DRUMS, LiveSynth, midiFile, readMidiFile } from "../studio/midi";
 import {
   addClip,
   addTrack,
@@ -186,7 +186,7 @@ function AutoLane({ points, min, max, fallback, length: len, onChange, label }: 
   );
 }
 
-export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Project; onClose: () => void; toast: PushToast; onSaved?: () => void }) {
+export function SongStudio({ initial, onClose, toast, onSaved, songs = [] }: { initial: Project; onClose: () => void; toast: PushToast; onSaved?: () => void; songs?: MediaItem[] }) {
   const engine = useRef<StudioEngine | null>(null);
   // Made when first needed (and again after closing: React mounts twice while developing).
   const eng = () => (engine.current ??= new StudioEngine());
@@ -209,6 +209,10 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
   const [typing, setTyping] = useState(false);
   const typed = useRef<{ start: number; notes: Note[]; held: Map<number, number> } | null>(null);
   const [secs, setSecs] = useState<Record<string, number>>({});
+  const [master, setMaster] = useState(0);
+  useEffect(() => {
+    engine.current?.setMaster(master);
+  }, [master]);
   const [waiting, setWaiting] = useState(0);
   const drag = useRef<{ kind: "move" | "start" | "end" | "fadeIn" | "fadeOut" | "range" | "ruler"; x: number; y: number; base: Project; clip?: string; t0: number } | null>(null);
   const scroll = useRef<HTMLDivElement>(null);
@@ -301,6 +305,7 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
     try {
       setBusy(t("Getting the sounds ready…"));
       await eng().play(p, from, click);
+      eng().setMaster(master);
       setPlaying(true);
     } catch (e) {
       toast(errorText(e), "error");
@@ -319,10 +324,14 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
         return;
       }
       setPos(now);
+      // The timeline follows the playhead.
+      const el = scroll.current;
+      const px = HEAD + now * pps;
+      if (el && (px > el.scrollLeft + el.clientWidth - 40 || px < el.scrollLeft + HEAD)) el.scrollLeft = Math.max(0, px - HEAD - 40);
       if (now >= len + 1 && !rec) stop();
     }, 50);
     return () => clearInterval(id);
-  }, [playing, p.loop, len, rec]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [playing, p.loop, len, rec, pps]); // eslint-disable-line react-hooks/exhaustive-deps
   // Edits while playing: the mix's settings at once, anything else from where it is.
   const lastPlayed = useRef(p);
   useEffect(() => {
@@ -479,6 +488,48 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
     };
   });
 
+  // A MIDI keyboard plays like musical typing (and is kept the same way while playing).
+  const midiNote = useRef<(on: boolean, pitch: number, velocity: number) => void>(() => {});
+  midiNote.current = (onOff, pitch, velocity) => {
+    const prog = focusTrack?.kind === "midi" ? focusTrack.program ?? 0 : 0;
+    synth.current ??= new LiveSynth();
+    if (onOff) {
+      synth.current.on(prog, pitch, velocity).catch(() => {});
+      if (typed.current) typed.current.held.set(pitch, eng().position());
+      return;
+    }
+    synth.current.off(prog, pitch);
+    const tp = typed.current;
+    const began = tp?.held.get(pitch);
+    if (tp && began !== undefined) {
+      tp.held.delete(pitch);
+      tp.notes.push({ pitch, start: began - tp.start, end: eng().position() - tp.start, velocity });
+    }
+  };
+  useEffect(() => {
+    const nav = navigator as Navigator & { requestMIDIAccess?: () => Promise<MIDIAccess> };
+    if (!nav.requestMIDIAccess) return;
+    let access: MIDIAccess | null = null;
+    const listen = (e: MIDIMessageEvent) => {
+      const d = e.data;
+      if (!d || d.length < 3) return;
+      const kind = d[0] & 0xf0;
+      if (kind === 0x90 && d[2] > 0) midiNote.current(true, d[1], d[2]);
+      else if (kind === 0x80 || (kind === 0x90 && d[2] === 0)) midiNote.current(false, d[1], 100);
+    };
+    nav
+      .requestMIDIAccess()
+      .then((a) => {
+        access = a;
+        a.inputs.forEach((i) => (i.onmidimessage = listen));
+        a.onstatechange = () => a.inputs.forEach((i) => (i.onmidimessage = listen));
+      })
+      .catch(() => {});
+    return () => {
+      access?.inputs.forEach((i) => (i.onmidimessage = null));
+    };
+  }, []);
+
   // Musical typing into a MIDI track while playing: the notes become a clip when it stops.
   useEffect(() => {
     if (playing && typing && focusTrack?.kind === "midi") {
@@ -597,20 +648,267 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
     const wav = encodeWav(buf, 0, buf.duration);
     return api.mediaAdd({ data: toBase64(wav), mime: "audio/wav", op: "studio", prompt: title ?? p.name, hidden: !title, seconds: buf.duration, note: title ? t("Made in the song studio") : null });
   };
-  const addPart = async () => {
+  /** A new part made to fit the mix, for a stretch (else the whole song), in takes. */
+  const requestPart = async (kind: string, words: string, lyrics: string | null, stretch: [number, number] | null, takes: number) => {
     setBusy(t("Mixing what's there…"));
     try {
       const mix = await renderToItem(0, len);
-      const [a, b] = range ?? [0, len];
+      const [a, b] = stretch ?? [0, len];
       await start(
-        { op: "studio_part", prompt: partWords.trim() || p.name, source: mix.id, count: partTakes, lyrics: partKind.includes("vocals") && partLyrics.trim() ? partLyrics : null, music: { track: partKind } },
-        { kind: "part", project: p.id, name: t(PART_NAMES[partKind] ?? partKind), at: a, length: b - a },
-        t("Making the part: it arrives as a new track with {n} takes to pick from.", { n: partTakes }),
+        { op: "studio_part", prompt: words.trim() || p.name, source: mix.id, count: takes, lyrics: kind.includes("vocals") && lyrics?.trim() ? lyrics : null, music: { track: kind } },
+        { kind: "part", project: p.id, name: t(PART_NAMES[kind] ?? kind), at: a, length: b - a },
+        t("Making the part: it arrives as a new track with {n} takes to pick from.", { n: takes }),
       );
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
       setBusy(null);
+    }
+  };
+  const addPart = () => requestPart(partKind, partWords, partLyrics, range, partTakes);
+  const [longer, setLonger] = useState(30);
+  const [asWords, setAsWords] = useState("");
+  /** The selected audio clip, else the last clip on the first audio track with any. */
+  const songClip = () => {
+    if (selected?.track.kind === "audio") return selected;
+    const tr = p.tracks.find((x) => x.kind === "audio" && x.clips.length);
+    const c = tr ? [...tr.clips].sort((a, b) => end(b) - end(a))[0] : null;
+    return tr && c ? { track: tr, clip: c } : null;
+  };
+  const makeLonger = async () => {
+    const f = songClip();
+    const src = f && sourceOf(f.clip);
+    if (!f || !src) return;
+    await start(
+      { op: "music", prompt: p.name, music: { task: "extend", audio: src, extend_by: longer } },
+      { kind: "longer", project: p.id, clip: f.clip.id, label: t("{n} s longer", { n: longer }) },
+      t("Making it longer: it arrives as a new take of the clip, {n} seconds longer.", { n: longer }),
+    );
+  };
+  const playAs = async () => {
+    if (!selected || selected.track.kind !== "audio" || !asWords.trim()) return;
+    const src = sourceOf(selected.clip);
+    if (!src) return;
+    await start(
+      { op: "music", prompt: asWords.trim(), music: { task: "cover", audio: src, strength: 0.6 } },
+      { kind: "replace", project: p.id, clip: selected.clip.id, label: t("Played as {words}", { words: asWords.trim() }) },
+      t("Playing it again that way: it arrives as a new take of the clip."),
+    );
+  };
+
+  // ---------- bringing things in ----------
+  const bringSong = (id: string, name: string, seconds: number) => {
+    const target = focusTrack?.kind === "audio" ? focusTrack.id : null;
+    const clip = audioClip(id, name, pos, Math.max(1, seconds || 30));
+    if (target) {
+      commit((cur) => addClip(cur, target, clip));
+      return;
+    }
+    const tr = newTrack(name, "audio", p.tracks.length);
+    tr.clips = [clip];
+    commit((cur) => addTrack(cur, tr));
+    setFocus(tr.id);
+  };
+  const bringMidi = (bytes: ArrayBuffer, name: string) => {
+    const found = readMidiFile(bytes);
+    if (!found.length) {
+      toast(t("That MIDI file has no notes."), "error");
+      return;
+    }
+    const base = name.replace(/\.midi?$/i, "");
+    commit((cur) =>
+      found.reduce((acc, part) => {
+        const tr = newTrack(part.program === DRUMS ? DRUM_KIT : `${base} ${part.channel + 1}`, "midi", acc.tracks.length);
+        tr.program = part.program;
+        const last = Math.max(...part.notes.map((n) => n.end));
+        tr.clips = [midiClip(tr.name, pos, last + 0.5, part.notes)];
+        return addTrack(acc, tr);
+      }, cur),
+    );
+    toast(t("{n} MIDI part(s) brought in.", { n: found.length }), "success");
+  };
+  const bringFile = async () => {
+    try {
+      const { open: openFiles } = await import("@tauri-apps/plugin-dialog");
+      const got = await openFiles({ multiple: false, filters: [{ name: t("Sounds"), extensions: ["mp3", "wav", "m4a", "aac", "flac", "ogg", "wma", "mid", "midi"] }] });
+      const path = Array.isArray(got) ? got[0] : got;
+      if (!path) return;
+      setBusy(t("Bringing it in…"));
+      if (/\.midi?$/i.test(path)) {
+        const data = fromBase64(await api.studioReadMidi(path));
+        bringMidi(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer, path.split(/[\\/]/).pop() ?? "MIDI");
+        return;
+      }
+      const item = await api.mediaImport(path);
+      bringSong(item.id, item.title || item.prompt || t("Sound"), item.seconds);
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // ---------- the chat bar ----------
+  const [asking, setAsking] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
+  const [said, setSaid] = useState("");
+  /** The project in words, for the chat model. */
+  const summary = () => {
+    const head = `Tempo ${p.bpm} bpm, ${p.beats} beats a bar. Length ${clock(len)}. Playhead ${clock(pos)}.${range ? ` Marked ${Math.round(range[0])} s to ${Math.round(range[1])} s.` : ""}${p.loop ? ` Looping ${Math.round(p.loop[0])} s to ${Math.round(p.loop[1])} s.` : ""}`;
+    const tracks = p.tracks.map(
+      (tr, i) =>
+        `${i + 1}. "${tr.name}" (${tr.kind}${tr.kind === "midi" ? `, instrument ${tr.program ?? 0}` : ""}) volume ${tr.volume} dB, pan ${tr.pan}${tr.mute ? ", muted" : ""}${tr.solo ? ", solo" : ""}, effects: ${tr.effects.map((e) => e.kind).join(", ") || "none"}; clips: ${tr.clips.map((c) => `${Math.round(c.start)}-${Math.round(end(c))} s`).join(", ") || "none"}`,
+    );
+    return [head, "Tracks:", ...tracks].join("\n");
+  };
+  /** What the chat model asked for, done as one step to undo; new parts are made after. */
+  const doActions = async (actions: StudioAction[]) => {
+    const clamp = (v: unknown, lo: number, hi: number, d: number) => (v !== undefined && v !== null && Number.isFinite(Number(v)) ? Math.max(lo, Math.min(hi, Number(v))) : d);
+    const named = (cur: Project, name: unknown) => {
+      const n = String(name ?? "").toLowerCase().trim();
+      if (!n) return undefined;
+      return cur.tracks.find((x) => x.name.toLowerCase() === n) ?? cur.tracks.find((x) => x.name.toLowerCase().includes(n) || n.includes(x.name.toLowerCase()));
+    };
+    const notes: string[] = [];
+    const parts: StudioAction[] = [];
+    let next = p;
+    const allClips = (trackId: string, f: (c: Clip) => Clip) => {
+      next = { ...next, tracks: next.tracks.map((x) => (x.id === trackId ? { ...x, clips: x.clips.map(f) } : x)) };
+    };
+    for (const a of actions) {
+      const tr = named(next, a.track);
+      switch (a.do) {
+        case "add_track": {
+          const nt = newTrack(String(a.name || (a.kind === "midi" ? t("Keys") : t("Audio"))), a.kind === "midi" ? "midi" : "audio", next.tracks.length);
+          if (nt.kind === "midi") nt.program = clamp(a.instrument, 0, 128, programFor(nt.name));
+          next = addTrack(next, nt);
+          notes.push(t("added {name}", { name: nt.name }));
+          break;
+        }
+        case "delete_track":
+          if (tr) {
+            next = removeTrack(next, tr.id);
+            notes.push(t("deleted {name}", { name: tr.name }));
+          }
+          break;
+        case "rename_track":
+          if (tr && a.name) {
+            next = updateTrack(next, tr.id, { name: String(a.name) });
+            notes.push(t("renamed {name}", { name: tr.name }));
+          }
+          break;
+        case "mute":
+        case "unmute":
+          if (tr) {
+            next = updateTrack(next, tr.id, { mute: a.do === "mute" });
+            notes.push(a.do === "mute" ? t("muted {name}", { name: tr.name }) : t("unmuted {name}", { name: tr.name }));
+          }
+          break;
+        case "solo":
+        case "unsolo":
+          if (tr) {
+            next = updateTrack(next, tr.id, { solo: a.do === "solo" });
+            notes.push(a.do === "solo" ? t("soloed {name}", { name: tr.name }) : t("unsoloed {name}", { name: tr.name }));
+          }
+          break;
+        case "volume":
+          if (tr) {
+            const db = clamp(a.db, -40, 6, tr.volume);
+            next = updateTrack(next, tr.id, { volume: db });
+            notes.push(t("{name} at {db} dB", { name: tr.name, db }));
+          }
+          break;
+        case "pan":
+          if (tr) {
+            next = updateTrack(next, tr.id, { pan: clamp(a.value, -1, 1, tr.pan) });
+            notes.push(t("panned {name}", { name: tr.name }));
+          }
+          break;
+        case "add_effect": {
+          const kind = String(a.effect) as EffectKind;
+          if (!tr || !EFFECTS[kind]) break;
+          const e = newEffect(kind);
+          const set = (a.settings ?? {}) as Record<string, unknown>;
+          for (const [k, [lo, hi]] of Object.entries(EFFECTS[kind].params)) e.params[k] = clamp(set[k], lo, hi, e.params[k]);
+          next = updateTrack(next, tr.id, { effects: [...tr.effects, e] });
+          notes.push(t("{effect} on {name}", { effect: t(EFFECTS[kind].label), name: tr.name }));
+          break;
+        }
+        case "clear_effects":
+          if (tr) {
+            next = updateTrack(next, tr.id, { effects: [] });
+            notes.push(t("no effects on {name}", { name: tr.name }));
+          }
+          break;
+        case "instrument":
+          if (tr?.kind === "midi") {
+            next = updateTrack(next, tr.id, { program: clamp(a.instrument, 0, 128, 0) });
+            notes.push(t("new instrument on {name}", { name: tr.name }));
+          }
+          break;
+        case "transpose":
+          if (tr) {
+            const n = clamp(a.semitones, -12, 12, 0);
+            allClips(tr.id, (c) => ({ ...c, semitones: n }));
+            notes.push(t("{name} moved {n} semitones", { name: tr.name, n }));
+          }
+          break;
+        case "fade":
+          if (tr) {
+            allClips(tr.id, (c) => ({ ...c, fadeIn: clamp(a.in, 0, c.length / 2, c.fadeIn), fadeOut: clamp(a.out, 0, c.length / 2, c.fadeOut) }));
+            notes.push(t("fades on {name}", { name: tr.name }));
+          }
+          break;
+        case "tempo": {
+          const bpm = clamp(a.bpm, 30, 300, next.bpm);
+          next = { ...next, bpm };
+          notes.push(t("tempo {bpm}", { bpm }));
+          break;
+        }
+        case "time_signature": {
+          const beats = clamp(a.beats, 1, 16, next.beats);
+          next = { ...next, beats };
+          notes.push(t("{n} beats a bar", { n: beats }));
+          break;
+        }
+        case "loop": {
+          const from = clamp(a.from, 0, len, 0);
+          const to = clamp(a.to, from + 0.5, len + 60, from + bar * 4);
+          next = { ...next, loop: [from, to] };
+          notes.push(t("looping {from} to {to}", { from: clock(from), to: clock(to) }));
+          break;
+        }
+        case "loop_off":
+          next = { ...next, loop: null };
+          notes.push(t("no loop"));
+          break;
+        case "make_part":
+          if (PARTS.includes(String(a.part))) parts.push(a);
+          break;
+        case "say":
+          notes.push(String(a.text ?? ""));
+          break;
+      }
+    }
+    if (next !== p) commit({ ...next, updated_at: Date.now() });
+    for (const a of parts) {
+      const from = a.from === undefined || a.from === null ? null : clamp(a.from, 0, len, 0);
+      const to = a.to === undefined || a.to === null ? null : clamp(a.to, (from ?? 0) + 1, len, len);
+      await requestPart(String(a.part), String(a.description ?? ""), a.lyrics ? String(a.lyrics) : null, from !== null || to !== null ? [from ?? 0, to ?? len] : null, clamp(a.takes, 1, 3, 2));
+      notes.push(t("making a {part} part", { part: t(PART_NAMES[String(a.part)] ?? String(a.part)) }));
+    }
+    setSaid(notes.filter(Boolean).join(" · ") || t("Nothing to change."));
+  };
+  const ask = async () => {
+    if (!asking.trim() || askBusy) return;
+    setAskBusy(true);
+    try {
+      await doActions(await api.studioAsk(asking, summary()));
+      setAsking("");
+    } catch (e) {
+      setSaid(errorText(e));
+    } finally {
+      setAskBusy(false);
     }
   };
   const replaceSection = async () => {
@@ -745,6 +1043,18 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
           <button className="icon-btn" aria-label={t("Close")} onClick={() => { stop(); onClose(); }}>✕</button>
         </div>
 
+        <div className="row studio-ask">
+          <input
+            className="input"
+            value={asking}
+            onChange={(e) => setAsking(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && ask()}
+            placeholder={t("Ask the studio, e.g. add reverb to the vocals, 95 bpm, a bass part for the chorus")}
+            aria-label={t("Ask the studio")}
+          />
+          <button className="btn small" onClick={ask} disabled={askBusy || !asking.trim()}>{askBusy ? t("Thinking…") : t("Ask")}</button>
+          {said && <span className="small muted ellipsis">{said}</span>}
+        </div>
         <div className="row wrap studio-transport">
           <button className="btn small primary" onClick={() => (playing ? stop() : play())} title={t("Play or stop (Space)")}>{playing ? t("Stop") : t("Play")}</button>
           <button className={`btn small ${rec ? "danger-fill" : ""}`} onClick={record} title={t("Record from the microphone into the selected audio track (Shift+R)")}>
@@ -770,6 +1080,10 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
                 <option key={g} value={g}>{t(n)}</option>
               ))}
             </select>
+          </label>
+          <label className="row small" title={t("The whole mix's volume")}>
+            {t("Master")}
+            <input type="range" min={-30} max={6} step={0.5} value={master} onChange={(e) => setMaster(+e.target.value)} onDoubleClick={() => setMaster(0)} aria-label={t("Master volume")} />
           </label>
           <span className="spacer" />
           <button className="btn small" onClick={() => addEmptyTrack("audio")} title={t("Add an audio track (Shift+T)")}>{t("+ Audio track")}</button>
@@ -956,6 +1270,43 @@ export function SongStudio({ initial, onClose, toast, onSaved }: { initial: Proj
                 <strong>{t("Make a stretch again")}</strong>
                 <input className="input" value={replaceWords} onChange={(e) => setReplaceWords(e.target.value)} placeholder={t("How it should go (optional)")} aria-label={t("How it should go")} />
                 <button className="btn small" onClick={replaceSection} disabled={!selected || selected.track.kind !== "audio" || !range}>{t("Make the marked stretch of the selected clip again")}</button>
+              </div>
+              <div className="form">
+                <strong>{t("Make the song longer")}</strong>
+                <div className="row wrap">
+                  <select value={longer} onChange={(e) => setLonger(+e.target.value)} aria-label={t("How much longer")}>
+                    {[15, 30, 60, 90].map((n) => (
+                      <option key={n} value={n}>{t("{n} s more", { n })}</option>
+                    ))}
+                  </select>
+                  <button className="btn small" onClick={makeLonger} disabled={!songClip()}>{t("Make it longer")}</button>
+                </div>
+                <span className="small muted">{t("The selected clip (else the last one on the song's track) goes on past its end, as a new take.")}</span>
+              </div>
+              <div className="form">
+                <strong>{t("Play a clip another way")}</strong>
+                <input className="input" value={asWords} onChange={(e) => setAsWords(e.target.value)} placeholder={t("e.g. on a violin, as jazz piano, sung by a choir")} aria-label={t("How to play it")} />
+                <button className="btn small" onClick={playAs} disabled={!selected || selected.track.kind !== "audio" || !asWords.trim()}>{t("Play the selected clip that way")}</button>
+              </div>
+              <div className="form">
+                <strong>{t("Bring in")}</strong>
+                <button className="btn small" onClick={bringFile} disabled={!!busy}>{t("A sound or MIDI file…")}</button>
+                {songs.length > 0 && (
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const s = songs.find((x) => x.id === e.target.value);
+                      if (s) bringSong(s.id, s.title || s.prompt || t("Song"), s.seconds);
+                    }}
+                    aria-label={t("A song from the gallery")}
+                  >
+                    <option value="">{t("A song from the gallery…")}</option>
+                    {songs.map((s) => (
+                      <option key={s.id} value={s.id}>{s.title || s.prompt || t("A song")}</option>
+                    ))}
+                  </select>
+                )}
+                <span className="small muted">{t("At the playhead, on the selected audio track (else a new one).")}</span>
               </div>
               <div className="form">
                 <strong>{t("Notes to sound")}</strong>

@@ -308,7 +308,7 @@ export function StudioView({ features, progress, toast, onGoFeatures }: Props) {
         )}
       </section>
 
-      {studioProject && <SongStudio initial={studioProject} onClose={() => { setStudioProject(null); load(); }} toast={toast} />}
+      {studioProject && <SongStudio initial={studioProject} songs={items.filter((i) => i.kind === "audio")} onClose={() => { setStudioProject(null); load(); }} toast={toast} />}
 
       {viewing && (
         <Viewer

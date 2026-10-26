@@ -2291,6 +2291,9 @@ export interface VocalEffect {
 }
 
 /** A saved artist (media/persona.rs): the song their voice follows, and their sound. */
+/** One thing the chat bar asks the song studio to do (`studio::ask_messages`). */
+export type StudioAction = { do: string } & Record<string, unknown>;
+
 /** A Studio project as the window keeps it (`src/studio/model.ts`). */
 export type StudioProject = import("./studio/model").Project;
 
@@ -2496,6 +2499,13 @@ export function toBase64(bytes: Uint8Array): string {
   let s = "";
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
+}
+
+export function fromBase64(text: string): Uint8Array {
+  const s = atob(text);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
 }
 
 /** The core's error text while app lock is engaged. */
@@ -2991,6 +3001,10 @@ export const api = {
   /** Stops recording: the take, kept out of the gallery. */
   studioRecordStop: () => invoke<MediaItem>("studio_record_stop"),
   studioRecordCancel: () => invoke<void>("studio_record_cancel"),
+  /** The song studio's chat bar: a request turned into actions by the chat model. */
+  studioAsk: (request: string, summary: string) => invoke<StudioAction[]>("studio_ask", { request, summary }),
+  /** A MIDI file the person picked, as base64. */
+  studioReadMidi: (path: string) => invoke<string>("studio_read_midi", { path }),
   /** A MIDI file the window wrote, saved where the person picked (a .mid path). */
   studioSaveMidi: (path: string, data: string) => invoke<void>("studio_save_midi", { path, data }),
   /** A sound's notes (Basic Pitch), or with `drums` its kick, snare and hat hits. */

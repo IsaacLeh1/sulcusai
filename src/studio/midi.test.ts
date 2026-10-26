@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from "vitest";
 import { BasicMIDI } from "spessasynth_core";
-import { DRUMS, midiFile } from "./midi";
+import { DRUMS, midiFile, readMidiFile } from "./midi";
 
 describe("studio MIDI", () => {
   it("writes notes a MIDI reader reads back at the same times", () => {
@@ -10,6 +10,16 @@ describe("studio MIDI", () => {
     expect(midi.duration).toBeCloseTo(2.25, 1);
     const ons = midi.tracks[0].events.filter((e) => (e.statusByte & 0xf0) === 0x90);
     expect(ons.map((e) => e.data[0])).toEqual([60, 64]);
+  });
+
+  it("reads a MIDI file's parts back with their instrument", () => {
+    const bytes = midiFile([{ pitch: 48, start: 0.25, end: 1, velocity: 80 }], 33, "Bass");
+    const parts = readMidiFile(bytes.buffer as ArrayBuffer);
+    expect(parts.length).toBe(1);
+    expect(parts[0].program).toBe(33);
+    expect(parts[0].notes[0].pitch).toBe(48);
+    expect(parts[0].notes[0].start).toBeCloseTo(0.25, 2);
+    expect(parts[0].notes[0].end).toBeCloseTo(1, 2);
   });
 
   it("puts drums on channel 10 without a program", () => {

@@ -2872,6 +2872,8 @@ pub fn run() {
             media::studio_record_cancel,
             media::studio_midi,
             media::studio_save_midi,
+            media::studio_ask,
+            media::studio_read_midi,
             media::media_export,
             media::media_import,
             media::music_write_lyrics,

@@ -51,6 +51,26 @@ export function midiFile(notes: Note[], program: number, name = "Track"): Uint8A
   return new Uint8Array([...head, 0x4d, 0x54, 0x72, 0x6b, (len >> 24) & 0xff, (len >> 16) & 0xff, (len >> 8) & 0xff, len & 0xff, ...track]);
 }
 
+/** A MIDI file's parts: each channel with notes, its instrument (drums on channel 10) and notes in seconds. */
+export function readMidiFile(bytes: ArrayBuffer): { channel: number; program: number; notes: Note[] }[] {
+  const midi = BasicMIDI.fromArrayBuffer(bytes);
+  const programs = new Map<number, number>();
+  for (const track of midi.tracks) {
+    for (const e of track.events) {
+      const ch = e.statusByte & 0x0f;
+      if ((e.statusByte & 0xf0) === 0xc0 && !programs.has(ch)) programs.set(ch, e.data[0]);
+    }
+  }
+  return midi
+    .getNoteTimes(0.05)
+    .map((list, channel) => ({
+      channel,
+      program: channel === 9 ? DRUMS : programs.get(channel) ?? 0,
+      notes: list.map((n) => ({ pitch: n.midiNote, start: n.start, end: n.start + Math.max(0.03, n.length), velocity: n.velocity })),
+    }))
+    .filter((c) => c.notes.length > 0);
+}
+
 /** Notes played now (musical typing, a note added in the piano roll), on any instrument. */
 export class LiveSynth {
   private ctx = new AudioContext();

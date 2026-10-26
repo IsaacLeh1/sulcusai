@@ -4,13 +4,15 @@
 // comes: applied to the open project, or to the kept one when the Studio was
 // closed meanwhile.
 import { api, on, type MediaItem } from "../api";
-import { addTake, addTrack, audioClip, findClip, newTrack, type Project } from "./model";
+import { addTake, addTrack, audioClip, findClip, newTrack, updateClip, type Project } from "./model";
 
 export type Pending =
   /** Takes of a new part, as a new track from `at`. */
   | { kind: "part"; project: string; name: string; at: number; length: number }
   /** A stretch of a clip made again: a take of it. */
   | { kind: "replace"; project: string; clip: string; label: string }
+  /** A clip's song made longer: a take of it, the clip as long as the new song. */
+  | { kind: "longer"; project: string; clip: string; label: string }
   /** Notes made real, or a song's parts: new tracks from `at`. */
   | { kind: "tracks"; project: string; at: number; offset: number; length: number; mute?: string };
 
@@ -48,6 +50,12 @@ function applyResult(p: Project, what: Pending, items: MediaItem[]): Project {
     case "replace": {
       if (!items.length || !findClip(p, what.clip)) return p;
       return addTake(p, what.clip, items[0].id, what.label);
+    }
+    case "longer": {
+      const found = findClip(p, what.clip);
+      if (!items.length || !found) return p;
+      const c = found.clip;
+      return updateClip(addTake(p, what.clip, items[0].id, what.label), what.clip, { length: Math.max(c.length, (items[0].seconds - c.offset) / c.speed) });
     }
     case "tracks": {
       let out = p;

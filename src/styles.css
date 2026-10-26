@@ -1970,3 +1970,5 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .pr-end { stroke: var(--accent); stroke-width: 2; }
 .pr-note { fill: var(--accent); stroke: rgba(0, 0, 0, 0.3); cursor: grab; }
 .pr-note.selected { fill: #e0565b; }
+.studio-ask .input { flex: 1; min-width: 200px; }
+.studio-ask .ellipsis { max-width: 45%; }

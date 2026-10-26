@@ -4098,6 +4098,35 @@ async fn e2e_suno_features() {
     }
 }
 
+/// The song studio's chat bar with a real chat model: a few requests on a
+/// two-track project, and the actions it turns them into.
+///     cargo test e2e_studio_ask -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_studio_ask() {
+    let state = media_state();
+    lyrics_model(&state);
+    let summary = "Tempo 120 bpm, 4 beats a bar. Length 3:00. Playhead 0:00.\nTracks:\n1. \"Song\" (audio) volume 0 dB, pan 0, effects: none; clips: 0-180 s\n2. \"Keys\" (midi, instrument 0) volume 0 dB, pan 0, effects: none; clips: 10-40 s";
+    let mut ok = 0;
+    let asks = [
+        ("add some reverb to the keys and make the song 95 bpm", &["add_effect", "tempo"][..]),
+        ("mute the song track and turn the keys down 6 dB", &["mute", "volume"][..]),
+        ("make a funky bass part for the first minute", &["make_part"][..]),
+        ("loop from 30 to 45 seconds", &["loop"][..]),
+    ];
+    for (ask, want) in asks {
+        let t = std::time::Instant::now();
+        let got = crate::media::ask_studio(&state, ask, summary).await;
+        let kinds: Vec<String> = got.as_ref().map(|a| a.iter().map(|x| x["do"].as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
+        let hit = want.iter().all(|w| kinds.iter().any(|k| k == w));
+        ok += hit as usize;
+        println!("{ask:?} in {:.1} s -> {:?} {}", t.elapsed().as_secs_f64(), got.map(|a| serde_json::to_string(&a).unwrap()), if hit { "ok" } else { "MISSED" });
+    }
+    println!("{ok} of {} understood", asks.len());
+    assert!(ok >= 3);
+}
+
 /// The song studio's new part: a guitar added to the synth-pop song from
 /// e2e_suno_features by ACE-Step Base and taken out alone (one take), its
 /// length and loudness against the mix; then its notes read (Basic Pitch).
