@@ -2060,6 +2060,9 @@ export interface MediaJob {
   gpu_temp: number | null;
   /** The processor now: percent busy. */
   cpu_usage: number | null;
+  /** Memory in use now, percent: the PC's, and the graphics card's. */
+  ram_usage?: number | null;
+  gpu_mem?: number | null;
 }
 
 export type CloudMediaKind = "image" | "video" | "speech";

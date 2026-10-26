@@ -1619,6 +1619,7 @@ button.ctx:hover { background: var(--hover); }
 .testing-note { margin: 6px 0 0; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .testing-time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
 .spinner { display: inline-block; width: 11px; height: 11px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: none; }
+.spinner.small { width: 9px; height: 9px; margin-right: 6px; vertical-align: -1px; }
 /* Model cards: nothing spills out, however narrow the card, long the name or large the text. */
 .card.model { min-width: 0; overflow-wrap: anywhere; }
 .model-head > div { min-width: 0; }

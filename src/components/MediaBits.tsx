@@ -54,6 +54,7 @@ export function JobCard({ job }: { job: MediaJob }) {
     <div className="job-card">
       <div className="progress-label">
         <span className="ellipsis">
+          {job.status === "running" && <span className="spinner small" aria-hidden />}
           <strong>{JOB_LABEL[job.op] ? t(JOB_LABEL[job.op]) : t("Working")}</strong>
           {job.prompt && <span className="muted"> · {job.prompt}</span>}
         </span>
@@ -64,7 +65,7 @@ export function JobCard({ job }: { job: MediaJob }) {
       </div>
       <span className="small muted">
         {job.status === "queued"
-          ? t("Waiting for the job before it · takes {time}", { time: waitLabel(job.est_secs) })
+          ? `${job.stage && job.stage !== "Waiting for the job before it" ? job.stage : t("Waiting for the job before it")} · ${t("takes {time}", { time: waitLabel(job.est_secs) })}`
           : `${job.stage}${job.eta_secs != null ? ` · ${t("{time} left", { time: waitLabel(job.eta_secs) })}` : ""}`}
       </span>
       {job.status === "running" && <JobDevice job={job} />}
@@ -86,17 +87,22 @@ function JobDevice({ job }: { job: MediaJob }) {
       {job.on === "processor" ? (
         <>
           <UseBar label={t("Processor")} usage={job.cpu_usage} temp={null} />
+          {job.ram_usage != null && <UseBar label={t("Memory (RAM)")} usage={job.ram_usage} temp={null} unit="used" />}
           {card && <UseBar label={t("Graphics card")} usage={job.gpu_usage} temp={job.gpu_temp} />}
         </>
       ) : (
-        <UseBar label={t("Graphics card")} usage={job.gpu_usage} temp={job.gpu_temp} />
+        <>
+          <UseBar label={t("Graphics card")} usage={job.gpu_usage} temp={job.gpu_temp} />
+          {job.gpu_mem != null && <UseBar label={t("Graphics memory")} usage={job.gpu_mem} temp={null} unit="used" />}
+          {job.ram_usage != null && <UseBar label={t("Memory (RAM)")} usage={job.ram_usage} temp={null} unit="used" />}
+        </>
       )}
     </div>
   );
 }
 
 /** How busy a card or processor is, and how warm, while a job runs. */
-export function UseBar({ label, usage, temp }: { label: string; usage: number | null; temp: number | null }) {
+export function UseBar({ label, usage, temp, unit }: { label: string; usage: number | null; temp: number | null; unit?: "busy" | "used" }) {
   // Under 70 °C is fine, to 83 warm, above that hot (most cards slow down near 85-90).
   const heat = temp == null ? "" : temp >= 83 ? "hot" : temp >= 70 ? "warm" : "cool";
   return (
@@ -105,7 +111,7 @@ export function UseBar({ label, usage, temp }: { label: string; usage: number | 
       <div className="gpu-meter" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage ?? 0)}>
         <span style={{ width: `${Math.min(100, Math.max(2, usage ?? 0))}%` }} />
       </div>
-      <span className="small">{usage != null ? t("{n}% busy", { n: Math.round(usage) }) : "—"}</span>
+      <span className="small">{usage != null ? (unit === "used" ? t("{n}% in use", { n: Math.round(usage) }) : t("{n}% busy", { n: Math.round(usage) })) : "—"}</span>
       {temp != null && <span className={`small gpu-temp ${heat}`}>{Math.round(temp)} °C</span>}
     </div>
   );

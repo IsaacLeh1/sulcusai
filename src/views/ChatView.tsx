@@ -782,18 +782,20 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   : t("Auto: {name} is answering this.", { name: routed.name })}
           </p>
         )}
-        {handingOff && <p className="muted small pad">{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
-        {compacting && <p className="muted small pad">{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
+        {handingOff && <p className="muted small pad"><span className="spinner small" aria-hidden />{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
+        {compacting && <p className="muted small pad"><span className="spinner small" aria-hidden />{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
         {status === "loading" && !streaming && queued && (
           <p className="muted small pad queued">
+            <span className="spinner small" aria-hidden />
             {queued.card
               ? t("Your message is number {place} in line for the graphics card. It starts when the work ahead of it is done, so nothing slows down on the processor. The line is at the bottom of the window.", { place: queued.place })
               : t("Your message is number {place} in line. {model} is answering in another chat, and one model runs at a time, so this starts when it's done.", { place: queued.place, model: queued.model || t("Another model") })}
           </p>
         )}
-        {status === "loading" && !streaming && !queued && <p className="muted small pad">{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
+        {status === "loading" && !streaming && !queued && <p className="muted small pad"><span className="spinner small" aria-hidden />{cloud ? t("Connecting to {provider}…", { provider: cloud.provider }) : t("Loading {name} into memory… (the first time on a PC it also gets the AI engine, which can take a minute)", { name: model?.name ?? t("the model") })}</p>}
         {status === "working" && !streaming && pending.length === 0 && (
           <p className="muted small pad">
+            <span className="spinner small" aria-hidden />
             {cooling
               ? t("Letting the PC cool down before the next step ({what})…", { what: cooling })
               : readingPictures

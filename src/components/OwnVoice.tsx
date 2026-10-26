@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errorText, on, type CheckedRecording, type OwnVoice, type OwnVoiceLine, type OwnVoicesView, type OwnVoiceTake } from "../api";
 import { bytes } from "../format";
 import { language, t, tx } from "../i18n";
+import { Busy } from "./Busy";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import { saveAs } from "./MediaBits";
 import type { PushToast } from "./Toasts";
@@ -704,13 +705,12 @@ export function OwnVoicePanel({ toast }: { toast: PushToast }) {
                   </div>
                   {trying && tryStage && (
                     <div className="own-voice-trying">
-                      <div className="row">
-                        <span className="small">{tryStage.downloading && tryStage.fraction >= 0 ? `${tryStage.stage}: ${Math.round(tryStage.fraction * 100)}%` : tryStage.stage}</span>
-                        <span className="spacer" />
-                        <span className="small muted">{t("{s} s so far", { s: Math.round((Date.now() - tryStage.since) / 1000) })}</span>
-                      </div>
-                      <div className={`progress ${tryStage.downloading ? "" : "indeterminate"}`}><span style={tryStage.downloading ? { width: `${Math.round(Math.max(0, tryStage.fraction) * 100)}%` } : undefined} /></div>
-                      {!tryStage.downloading && <span className="small muted">{t("Working: the first reading loads the voice model, which can take a minute. Nothing else is needed from you.")}</span>}
+                      <Busy
+                        stage={tryStage.stage}
+                        fraction={tryStage.downloading && tryStage.fraction >= 0 ? tryStage.fraction : null}
+                        since={tryStage.since}
+                        hint={tryStage.downloading ? undefined : t("Working: the first reading loads the voice model, which can take a minute. Nothing else is needed from you.")}
+                      />
                     </div>
                   )}
                   {tryError && !trying && <p className="small warn-text" role="alert">{tryError}</p>}

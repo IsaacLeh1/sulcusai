@@ -1495,6 +1495,11 @@ pub struct JobInfo {
     pub gpu_temp: Option<f32>,
     /// The processor now: percent busy.
     pub cpu_usage: Option<f32>,
+    /// Memory in use now, percent: the PC's, and the graphics card's.
+    #[serde(default)]
+    pub ram_usage: Option<f32>,
+    #[serde(default)]
+    pub gpu_mem: Option<f32>,
 }
 
 struct Job {
@@ -1591,6 +1596,8 @@ async fn on_compute(state: &Arc<AppState>, id: String, req: Request) -> Result<V
         gpu_usage: None,
         gpu_temp: None,
         cpu_usage: None,
+        ram_usage: None,
+        gpu_mem: None,
     };
     jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
     emit(state, "media:progress", json!(info));
@@ -1838,6 +1845,8 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
             gpu_usage: None,
             gpu_temp: None,
             cpu_usage: None,
+            ram_usage: None,
+            gpu_mem: None,
         };
         jobs().lock().unwrap().push(Job { info: info.clone(), cancel: cancel.clone() });
         emit(state, "media:progress", json!(info));
@@ -1893,7 +1902,9 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
         // A song's parts taken apart and read, or its voice sung again, on a
         // card (CUDA or DirectML).
-        || (matches!(req.op.as_str(), "map" | "stems" | "dry" | "revoice") && crate::natural::card_here(state));
+        || (matches!(req.op.as_str(), "map" | "stems" | "dry" | "revoice") && crate::natural::card_here(state))
+        // Read in a recorded or made voice: its engine's card build.
+        || (matches!(req.op.as_str(), "narrate" | "podcast" | "dialogue" | "explainer") && recorded_voice(&req).is_some());
     let (gpu_name, cpu_name) = {
         let hw = state.hardware.read().unwrap();
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
@@ -1950,12 +1961,23 @@ pub async fn run(state: &Arc<AppState>, id: String, req: Request) -> Result<Vec<
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 let g = if has_card { crate::perf::gpu_reading(&st).await } else { Default::default() };
                 let cpu = tokio::task::spawn_blocking(crate::perf::cpu_usage).await.ok();
+                let ram = {
+                    let mut sys = sysinfo::System::new();
+                    sys.refresh_memory();
+                    (sys.total_memory() > 0).then(|| sys.used_memory() as f32 * 100.0 / sys.total_memory() as f32)
+                };
+                let gpu_mem = match (g.mem_used, g.mem_total) {
+                    (Some(u), Some(t)) if t > 0 => Some(u as f32 * 100.0 / t as f32),
+                    _ => None,
+                };
                 let (on, device) = device_now();
                 r.lock().unwrap().push(Reading { gpu_usage: g.usage, gpu_temp: g.temp, cpu_usage: cpu, on_card: on == "graphics card" });
                 update(&st, &id2, |i| {
                     i.gpu_usage = g.usage;
                     i.gpu_temp = g.temp;
                     i.cpu_usage = cpu;
+                    i.ram_usage = ram;
+                    i.gpu_mem = gpu_mem;
                     i.on = Some(on);
                     i.device = device;
                 });

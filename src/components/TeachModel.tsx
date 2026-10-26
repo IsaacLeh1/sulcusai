@@ -5,6 +5,7 @@ import { api, errorText, on, type Chat, type FinetuneJob, type FinetuneView, typ
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { Busy, useSince } from "./Busy";
 
 type SourceKind = "chats" | "file" | "practice";
 
@@ -91,9 +92,10 @@ export function TeachModel({ toast }: { toast: PushToast }) {
       sub.then((un) => un());
     };
   }, [load]);
+  const running = job && !["done", "failed", "cancelled", "not_better"].includes(job.status);
+  const since = useSince(!!running);
   if (!v) return null;
 
-  const running = job && !["done", "failed", "cancelled", "not_better"].includes(job.status);
   const supported = v.bases.filter((b) => b.supported);
   const practising = form.kind === "practice";
   const base = v.bases.find((b) => b.id === form.base);
@@ -188,11 +190,7 @@ export function TeachModel({ toast }: { toast: PushToast }) {
               </button>
             )}
           </div>
-          {running && (
-            <div className="progress">
-              <span style={{ width: `${Math.round(job.fraction * 100)}%` }} />
-            </div>
-          )}
+          {running && <Busy stage={t("Teaching the model")} fraction={job.fraction} since={since} where={t("on the graphics card")} />}
           {running && job.low_memory && (
             <p className="small warn-text">
               {t("The graphics card is short of free memory for training. Closing other apps that use it, such as games, browsers and video players, helps.")}

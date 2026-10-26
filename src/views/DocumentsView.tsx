@@ -8,6 +8,7 @@ import { api, errorText, on, type DocFile, type DocHit, type LibraryView } from 
 import { bytes } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "../components/Toasts";
+import { Busy, useSince } from "../components/Busy";
 
 export function DocumentsView({ toast }: { toast: PushToast }) {
   const [view, setView] = useState<LibraryView | null>(null);
@@ -16,6 +17,7 @@ export function DocumentsView({ toast }: { toast: PushToast }) {
   const [removing, setRemoving] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<DocHit[] | null>(null);
+  const since = useSince(!!view?.progress);
   const [searching, setSearching] = useState(false);
 
   const load = useCallback(() => api.docsLibrary().then(setView).catch((e) => toast(errorText(e), "error")), [toast]);
@@ -77,14 +79,13 @@ export function DocumentsView({ toast }: { toast: PushToast }) {
 
       {progress ? (
         <section className="card docs-progress">
-          <div className="row">
-            <strong className="small">{progress.stage}</strong>
-            {progress.file && <span className="small muted ellipsis">{progress.file}</span>}
-            <span className="spacer" />
-            {progress.total > 0 && <span className="small muted">{t("{done} of {total}", { done: progress.done, total: progress.total })}</span>}
-            <button className="btn ghost small" onClick={() => api.docsStop().catch(() => {})}>{t("Stop")}</button>
-          </div>
-          <div className="progress"><span style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 5}%` }} /></div>
+          <Busy
+            stage={`${progress.stage}${progress.total > 0 ? ` (${t("{done} of {total}", { done: progress.done, total: progress.total })})` : ""}`}
+            fraction={progress.total ? progress.done / progress.total : null}
+            since={since}
+            hint={progress.file || undefined}
+            onStop={() => api.docsStop().catch(() => {})}
+          />
         </section>
       ) : (
         view.sources.length > 0 && (

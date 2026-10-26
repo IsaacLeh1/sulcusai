@@ -7,7 +7,7 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 import { api, errorText, on, type CodeReport, type ReviewSetup } from "../api";
 import { clock } from "../format";
 import { t } from "../i18n";
-import { Busy, useSince } from "../components/Busy";
+import { Busy, useModelPlace, useSince } from "../components/Busy";
 import { ModelSelect } from "../components/ModelChoices";
 import type { PushToast } from "../components/Toasts";
 
@@ -32,6 +32,7 @@ export function ReviewView({ toast }: { toast: PushToast }) {
   const [model, setModel] = useState<string | null>(null);
   const [busy, setBusy] = useState<{ stage: string; fraction: number } | null>(null);
   const since = useSince(!!busy);
+  const place = useModelPlace(!!busy);
 
   const load = useCallback(() => api.reviews().then(setReports).catch(() => {}), []);
   useEffect(() => {
@@ -153,7 +154,7 @@ export function ReviewView({ toast }: { toast: PushToast }) {
           <span className="small muted">{t("Each check reads the code separately, so more checks take longer. A bigger model finds more.")}</span>
         </label>
         {busy ? (
-          <Busy stage={busy.stage} fraction={busy.fraction > 0 && busy.fraction < 1 ? busy.fraction : null} since={since} onStop={() => api.reviewStop().catch(() => {})} />
+          <Busy stage={busy.stage} fraction={busy.fraction > 0 && busy.fraction < 1 ? busy.fraction : null} since={since} where={place} onStop={() => api.reviewStop().catch(() => {})} />
         ) : (
           <div className="row">
             <span className="spacer" />

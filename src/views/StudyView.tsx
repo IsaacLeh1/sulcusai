@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type DocFile, type MapNode, type MediaRequest, type StudySet, type TalkSpeaker } from "../api";
 import { t, tx } from "../i18n";
-import { Busy, useSince } from "../components/Busy";
+import { Busy, useModelPlace, useSince } from "../components/Busy";
 import { ModelSelect } from "../components/ModelChoices";
 import { LanguageSelect, talkLanguage, useVoices, VoiceSelect } from "../components/Podcast";
 import { useOwnVoices } from "../components/OwnVoice";
@@ -94,6 +94,7 @@ function MakeCard({ toast, onMade, onOpenStudio }: { toast: PushToast; onMade: (
   const [voice, setVoice] = useState<string | null>(null);
   const [busy, setBusy] = useState<{ stage: string; fraction: number } | null>(null);
   const since = useSince(!!busy);
+  const place = useModelPlace(!!busy);
   const voices = useVoices();
   const own = (useOwnVoices()?.voices ?? []).filter((v) => v.can_speak);
 
@@ -219,7 +220,7 @@ function MakeCard({ toast, onMade, onOpenStudio }: { toast: PushToast; onMade: (
         </label>
       </div>
       {busy ? (
-        <Busy stage={busy.stage} fraction={busy.fraction > 0 && busy.fraction < 1 ? busy.fraction : null} since={since} hint={t("Long material is read in parts; each part adds its share.")} />
+        <Busy stage={busy.stage} fraction={busy.fraction > 0 && busy.fraction < 1 ? busy.fraction : null} since={since} where={place} hint={t("Long material is read in parts; each part adds its share.")} />
       ) : (
         <div className="row">
           <span className="small muted">
