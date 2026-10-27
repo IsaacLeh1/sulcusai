@@ -149,6 +149,12 @@ export function PerformanceSection({ toast }: { toast: PushToast }) {
             <option value="0">{t("Never (keep it loaded)")}</option>
           </select>
         </div>
+        <Toggle
+          label={t("Keep the model used before loaded too")}
+          detail={t("Switching models, the one used before stays loaded while the graphics card has room for both, so switching back needs no loading. Anything that needs the card (pictures, video, a game) frees both.")}
+          checked={s.keep_two ?? true}
+          onChange={(keep_two) => save({ ...s, keep_two })}
+        />
         <ProcessorFallbackRow toast={toast} />
       </div>
 

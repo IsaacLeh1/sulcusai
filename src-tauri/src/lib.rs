@@ -30,6 +30,7 @@ mod chat;
 mod chatnotes;
 mod chatsearch;
 mod compact;
+mod compare;
 mod cloud;
 mod checkpoint;
 mod connectors;
@@ -2661,8 +2662,14 @@ pub(crate) async fn llm_endpoint(
         });
         drop(engine);
         let want = memcheck::need(&spec, &installed.quant, plan.ctx, plan.gpu_layers, encoder_size, plan.tuning.kv_q8);
-        memcheck::before_loading(state, &spec, want, replacing).await?;
+        // Room on the card for it beside the model loaded now: that one
+        // stays loaded, so going back to it needs no loading.
+        let keep = replacing.is_some() && perf::settings(&state.db.lock().unwrap()).keep_two && memcheck::room_beside(want).await;
+        if !keep {
+            memcheck::before_loading(state, &spec, want, replacing).await?;
+        }
         let mut engine = state.engine.lock().await;
+        engine.keep_next(keep);
         // Another model was loaded, or a reply started, meanwhile (the
         // question can wait minutes): look again before stopping it.
         let now = engine.current().map(|(_, ep)| ep.key);
@@ -3437,6 +3444,8 @@ pub fn run() {
             prompts::saved_prompts,
             prompts::save_prompt,
             prompts::delete_prompt,
+            compare::compare_models,
+            compare::compare_stop,
             engine_status,
             unload_model,
             security::security_status,

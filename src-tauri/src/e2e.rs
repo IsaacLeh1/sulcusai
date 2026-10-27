@@ -1921,6 +1921,43 @@ async fn e2e_the_local_api_speaks_claudes_shape() {
     server.abort();
 }
 
+/// Switching between two models the card holds together: the one used
+/// before stays loaded, and going back to it answers without loading
+/// (Qwen3 4B and Qwen3 VL 4B on the 12 GB card).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_two_models_stay_loaded() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf")).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-vl-4b").join("Qwen3-VL-4B-Instruct-Q4_K_M.gguf")).unwrap();
+    let ids: Vec<String> = crate::db::installed_models(&state.db.lock().unwrap()).into_iter().map(|m| m.model_id).collect();
+    let (a, b) = (ids[0].clone(), ids[1].clone());
+    // An 8K window each (about 4 GB): at 32K each needs 7.3 GB and two don't fit.
+    let small = crate::presets::ModelPreset { ctx: Some(8192), ..Default::default() };
+    crate::db::set(&state.db.lock().unwrap(), "model_presets", &std::collections::HashMap::from([(a.clone(), small.clone()), (b.clone(), small)])).unwrap();
+    let ask = |ep: crate::engine::Endpoint| async move {
+        chat::complete(&ep, vec![serde_json::json!({ "role": "user", "content": "Reply with just the word blue." })], serde_json::json!({ "temperature": 0 }), 60).await.unwrap()
+    };
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(a.clone()), false, |_| {}).await.unwrap();
+    println!("a: {}", ask(ep).await);
+    let started = std::time::Instant::now();
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(b.clone()), false, |_| {}).await.unwrap();
+    println!("b loaded in {:.1} s: {}", started.elapsed().as_secs_f64(), ask(ep).await);
+    let st = state.engine.lock().await.status();
+    println!("running {:?}, kept {:?}", st.model_id, st.kept);
+    assert_eq!(st.model_id.as_deref(), Some(b.as_str()));
+    assert_eq!(st.kept.as_deref(), Some(a.as_str()), "the first model stayed loaded");
+    let started = std::time::Instant::now();
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(a.clone()), false, |_| {}).await.unwrap();
+    let back = started.elapsed().as_secs_f64();
+    println!("back to a in {back:.2} s: {}", ask(ep).await);
+    assert!(back < 2.0, "no loading");
+    assert_eq!(state.engine.lock().await.status().kept.as_deref(), Some(b.as_str()));
+    state.engine.lock().await.stop().await;
+    assert_eq!(state.engine.lock().await.status().kept, None, "stopping frees both");
+}
+
 /// A model's own settings reach the engine and its replies: the small q4
 /// cache with flash attention on (llama.cpp takes both), its temperature,
 /// and instructions added for it (Qwen3 4B, answering in French).

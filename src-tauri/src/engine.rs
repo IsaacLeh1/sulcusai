@@ -679,6 +679,8 @@ pub struct EngineStatus {
     pub layers_on_card: Option<u32>,
     pub layers_total: Option<u32>,
     pub device: Option<String>,
+    /// The model used before, still loaded beside it.
+    pub kept: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -701,6 +703,12 @@ impl Endpoint {
 #[derive(Default)]
 pub struct Engine {
     running: Option<Running>,
+    /// The model used before, kept loaded beside it while the card has room
+    /// for both (`keep_next`): asked for again, it answers at once.
+    kept: Option<Running>,
+    /// The next model started may leave the one running now loaded: set by
+    /// the caller once it has checked the card has room for both.
+    keep_next: bool,
     /// A model paused to give a picture the graphics card: its address, so
     /// it comes back where the chat that asked for the picture expects it.
     paused: Option<Paused>,
@@ -732,6 +740,7 @@ impl Engine {
         if !self.alive() {
             self.running = None;
         }
+        let kept = self.kept_model();
         let r = self.running.as_ref();
         EngineStatus {
             model_id: r.map(|r| r.model_id.clone()),
@@ -741,6 +750,7 @@ impl Engine {
             layers_on_card: r.and_then(|r| r.placed.on_card()),
             layers_total: r.and_then(|r| r.placed.total()),
             device: r.and_then(|r| r.placed.device()),
+            kept,
         }
     }
 
@@ -861,11 +871,35 @@ impl Engine {
         if self.matches_tuned(&spec, tuning) {
             return Ok(self.running.as_ref().unwrap().endpoint());
         }
+        let keep = std::mem::take(&mut self.keep_next);
+        // The model kept from before, as launched: the two change places.
+        let kept_alive = self.kept.as_mut().is_some_and(|r| matches!(r.child.try_wait(), Ok(None)));
+        if kept_alive {
+            std::mem::swap(&mut self.running, &mut self.kept);
+            if self.matches_tuned(&spec, tuning) {
+                crate::applog::line("engine", &format!("{} was still loaded: answering at once", spec.model_id));
+                return Ok(self.running.as_ref().unwrap().endpoint());
+            }
+            std::mem::swap(&mut self.running, &mut self.kept);
+        } else {
+            self.kept = None;
+        }
+        // Another model, with room on the card for both: the one running now
+        // stays loaded (the one kept before it goes).
+        let other = self.running.as_ref().is_some_and(|r| r.model_id != spec.model_id || r.lora.as_deref() != spec.lora || r.steer.as_ref() != spec.steer);
+        if keep && other && self.alive() {
+            self.drop_kept().await;
+            self.kept = self.running.take();
+            crate::applog::line("engine", "Keeping the model used before loaded beside the new one (the card has room for both)");
+        } else {
+            // No room for three: the one kept from before goes first.
+            self.drop_kept().await;
+        }
         // The same model with other limits (mode, heat, its picture reader)
         // keeps its address and key, so a reply holding them carries on.
         let same = |model: &str, lora: Option<&Path>, steer: Option<&crate::steer::Steer>| model == spec.model_id && lora == spec.lora && steer == spec.steer;
         let relaunch = self.running.as_ref().filter(|r| same(&r.model_id, r.lora.as_deref(), r.steer.as_ref())).map(|r| (r.port, r.key.clone()));
-        self.stop().await;
+        self.stop_running().await;
 
         // Coming back from a pause: the same address too, if it's still free.
         let back = self.paused.take().filter(|p| same(&p.base, p.lora.as_deref(), p.steer.as_ref())).map(|p| (p.port, p.key));
@@ -1036,10 +1070,39 @@ impl Engine {
     }
 
     pub async fn stop(&mut self) {
+        for mut r in [self.running.take(), self.kept.take()].into_iter().flatten() {
+            r.child.start_kill().ok();
+            let _ = tokio::time::timeout(Duration::from_secs(5), r.child.wait()).await;
+        }
+    }
+
+    /// Stops the running model only (one kept from before stays).
+    async fn stop_running(&mut self) {
         if let Some(mut r) = self.running.take() {
             r.child.start_kill().ok();
             let _ = tokio::time::timeout(Duration::from_secs(5), r.child.wait()).await;
         }
+    }
+
+    /// Stops the model kept from before, if any (its memory is wanted).
+    pub async fn drop_kept(&mut self) {
+        if let Some(mut r) = self.kept.take() {
+            r.child.start_kill().ok();
+            let _ = tokio::time::timeout(Duration::from_secs(5), r.child.wait()).await;
+        }
+    }
+
+    /// The model kept loaded from before: its id, if it's still running.
+    pub fn kept_model(&mut self) -> Option<String> {
+        if self.kept.as_mut().is_some_and(|r| !matches!(r.child.try_wait(), Ok(None))) {
+            self.kept = None;
+        }
+        self.kept.as_ref().map(|r| r.model_id.clone())
+    }
+
+    /// Whether the next model started may leave the running one loaded.
+    pub fn keep_next(&mut self, keep: bool) {
+        self.keep_next = keep;
     }
 
     /// Stops the model for a while (a picture needs the graphics card), keeping

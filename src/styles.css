@@ -2351,3 +2351,10 @@ html.working-window, html.working-window body { background: transparent; overflo
 .saved-prompts { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .saved-prompts li { display: flex; align-items: center; gap: 6px; }
 .saved-prompts li > div { flex: 1; min-width: 0; }
+.compare { display: flex; flex-direction: column; gap: 10px; }
+.compare-blind { align-self: flex-end; }
+.compare-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 760px) { .compare-sides { grid-template-columns: 1fr; } }
+.compare-side { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.compare-side.chosen { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.compare-head { display: flex; flex-direction: column; gap: 2px; }

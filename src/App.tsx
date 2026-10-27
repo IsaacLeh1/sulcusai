@@ -656,6 +656,8 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   }
 
   const loadedName = catalog?.models.find((m) => m.id === engine?.model_id)?.name;
+  // The model used before, still loaded beside it (Settings › Performance).
+  const keptName = engine?.kept ? (catalog?.models.find((m) => m.id === engine.kept)?.name ?? engine.kept) : null;
   const defaultName = catalog?.models.find((m) => m.installed && m.id === settings?.default_model)?.name ?? installed[0]?.name;
   // Picking a model in the status bar makes it the default for new chats.
   const pickDefault = async (id: string) => {
@@ -1509,7 +1511,16 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
 
       <footer className="statusbar">
         <ConnectivityMenu level={settings.connectivity} onChange={changeConnectivity} onRefresh={() => api.settings().then(setSettings).catch(() => {})} />
-        <span className="status-item" title={loadedName ? t("The model in memory") : t("Models load when you send a message and unload after a while idle, to free memory")}>
+        <span
+          className="status-item"
+          title={
+            loadedName
+              ? keptName
+                ? t("The model in memory, with {other} still loaded beside it (switching back needs no loading)", { other: keptName })
+                : t("The model in memory")
+              : t("Models load when you send a message and unload after a while idle, to free memory")
+          }
+        >
           {engineDl ? (
             <>
               <span className="led busy" /> {t("Getting the AI engine (first time only)")}{engineDl.total ? ` · ${Math.round((engineDl.received / engineDl.total) * 100)}%` : "…"}
@@ -1517,6 +1528,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
           ) : loadedName ? (
             <>
               <span className="led on" /> {picker(t("{name} loaded", { name: loadedName }))}
+              {keptName && <span className="muted"> {t("+ {name}", { name: keptName })}</span>}
               {modelNow && (
                 <span className="muted" title={t("A loaded model keeps memory until it's unloaded. When it unloads by itself is set in Settings › Performance.")}>
                   {modelNow.busy

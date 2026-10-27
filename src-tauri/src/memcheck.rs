@@ -51,6 +51,20 @@ pub fn need(spec: &ModelSpec, quant: &str, ctx: u32, layers: u32, extra: u64, q8
     }
 }
 
+/// Whether `want` fits beside everything loaded now with room to spare, so
+/// the model loaded now can stay loaded too. Read from the card itself
+/// (NVIDIA); elsewhere it isn't known, so no.
+pub async fn room_beside(want: Need) -> bool {
+    if want.vram == 0 {
+        return false;
+    }
+    let Some(g) = crate::perf::nvidia_now().await else { return false };
+    let (Some(total), Some(used)) = (g.mem_total, g.mem_used) else { return false };
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    total.saturating_sub(used) >= want.vram + 3 * GIB / 2 && sys.available_memory() >= want.ram + KEEP_RAM
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct App {
     name: String,

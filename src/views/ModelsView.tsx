@@ -16,6 +16,7 @@ import { CancelInstall } from "../components/CancelInstall";
 import { Downloads } from "../components/Downloads";
 import { LockIcon } from "../components/Icons";
 import { ModelSettings } from "../components/ModelSettings";
+import { CompareModels } from "../components/CompareModels";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
 
@@ -31,7 +32,7 @@ interface Props {
 export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSettings, toast }: Props) {
   const [checking, setChecking] = useState(false);
   const tunings = useTunings();
-  const [tab, setTab] = useState<"chat" | "speech" | "create" | "lens">("chat");
+  const [tab, setTab] = useState<"chat" | "speech" | "create" | "lens" | "compare">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
   // "Show models this PC can't run": every model, fetched when switched on
@@ -111,6 +112,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>{t("Speech")}</button>
           <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>{t("Pictures, video, music")}</button>
           <button role="tab" aria-selected={tab === "lens"} className={`mode ${tab === "lens" ? "active" : ""}`} onClick={() => setTab("lens")}>{t("Look inside")}</button>
+          <button role="tab" aria-selected={tab === "compare"} className={`mode ${tab === "compare" ? "active" : ""}`} onClick={() => setTab("compare")}>{t("Compare")}</button>
         </div>
       </header>
 
@@ -151,6 +153,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
       {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
       {tab === "create" && <MediaModels progress={progress} toast={toast} />}
       {tab === "lens" && <Lens models={installed} defaultModel={defaultModel} toast={toast} />}
+      {tab === "compare" && <CompareModels installed={installed} defaultModel={defaultModel ?? null} toast={toast} />}
 
       {tab === "chat" && (
         <div className="model-filters">

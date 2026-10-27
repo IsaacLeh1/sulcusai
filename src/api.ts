@@ -1329,6 +1329,8 @@ export interface EngineStatus {
   layers_on_card: number | null;
   layers_total: number | null;
   device: string | null;
+  /** The model used before, still loaded beside it. */
+  kept?: string | null;
 }
 
 /** Why some or all of the model runs on the processor (placement.rs `reasons`). */
@@ -1871,6 +1873,8 @@ export interface PerfSettings {
   unload_after_mins?: number | null;
   /** Free it right after each reply (a few seconds after last use). */
   unload_right_away?: boolean;
+  /** Switching models, the one used before stays loaded while the card has room for both. */
+  keep_two?: boolean;
 }
 
 export interface PerfLimits {
@@ -3131,6 +3135,8 @@ export const api = {
   savePrompt: (id: string, name: string, text: string) => invoke<SavedPrompt[]>("save_prompt", { id, name, text }),
   deletePrompt: (id: string) => invoke<SavedPrompt[]>("delete_prompt", { id }),
   modelPreset: (modelId: string) => invoke<ModelPreset>("model_preset", { modelId }),
+  compareModels: (run: string, models: string[], prompt: string) => invoke<void>("compare_models", { run, models, prompt }),
+  compareStop: (run: string) => invoke<void>("compare_stop", { run }),
   setModelPreset: (modelId: string, preset: ModelPreset) => invoke<void>("set_model_preset", { modelId, preset }),
   /** Saves a chat as .md (written by the core) or .html (`html`, the page the window made). */
   exportChat: (chatId: string, path: string, html?: string) => invoke<void>("export_chat", { chatId, path, html: html ?? null }),
@@ -3956,6 +3962,10 @@ export interface ChatEvents {
   dictation: DictationEvent;
   voice: VoiceEvent;
   meeting: MeetingEvent;
+  /** Comparing models: one of them started, wrote more, or finished. */
+  "compare:start": { run: string; index: number };
+  "compare:delta": { run: string; index: number; content?: string; thinking?: string };
+  "compare:done": { run: string; index: number; loading?: number; answering?: number; tps?: number | null; tokens?: number | null; error?: string };
 }
 
 export function on<K extends keyof ChatEvents>(name: K, handler: (payload: ChatEvents[K]) => void): Promise<UnlistenFn> {

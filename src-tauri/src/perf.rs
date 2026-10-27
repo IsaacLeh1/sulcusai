@@ -64,11 +64,14 @@ pub struct PerfSettings {
     /// used, so a reply's steps don't reload it), whatever the minutes say.
     #[serde(default)]
     pub unload_right_away: bool,
+    /// Switching models, the one used before stays loaded while the card
+    /// has room for both (going back to it needs no loading).
+    pub keep_two: bool,
 }
 
 impl Default for PerfSettings {
     fn default() -> Self {
-        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None, unload_right_away: false }
+        PerfSettings { mode: Mode::Balanced, turbo: None, cool_on_battery: true, heat_guard: true, adaptive: true, gpu_limit: 100, unload_after_mins: None, unload_right_away: false, keep_two: true }
     }
 }
 
