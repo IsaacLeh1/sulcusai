@@ -163,6 +163,72 @@ pub fn stop_dictation(id: String) {
     signal(&format!("dictation:{id}"));
 }
 
+/// Dictation into whatever app has the cursor (the working strip says it's listening).
+pub const ANYWHERE: &str = "dictation:anywhere";
+
+pub fn stop_anywhere() {
+    signal(ANYWHERE);
+}
+
+/// The hotkey for dictating anywhere: starts listening, or stops. Each
+/// phrase is typed where the cursor is, in whatever app that is.
+pub fn toggle_anywhere(app: &AppHandle) {
+    use tauri::Manager;
+    if sessions().lock().unwrap().contains_key(ANYWHERE) {
+        signal(ANYWHERE);
+        return;
+    }
+    let state = app.state::<Arc<AppState>>().inner().clone();
+    if crate::features::require(&state, crate::features::Feature::Dictation).is_err() {
+        return;
+    }
+    let Ok(stop) = begin(ANYWHERE) else { return };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let strip = |what: &str| crate::tools::programs::banner(Some(&app), ANYWHERE, what);
+        // The strip goes after 20 s without news: said again while listening.
+        let last = Mutex::new(Instant::now());
+        strip("Getting ready to listen…");
+        let result: Result<(), String> = async {
+            let _hold = speech::hold(&state);
+            let ep = speech::endpoint(&state, speech::Use::Live).await?;
+            let (tx, rx) = mpsc::unbounded_channel();
+            let capture = Capture::start(mic(&state), tx)?;
+            let listening = "Listening: what you say is typed where your cursor is. Ctrl+Alt+D stops.";
+            strip(listening);
+            state.log("voice", "Dictating into another app");
+            let level = || capture.level();
+            let emit = |kind: &str, v: Value| {
+                match kind {
+                    "text" => {
+                        if let Some(t) = v.get("text").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()) {
+                            crate::programs::type_now(&format!("{t} "), false);
+                        }
+                    }
+                    "hearing" => strip("Hearing you…"),
+                    _ => {}
+                }
+                let mut l = last.lock().unwrap();
+                if kind != "hearing" && l.elapsed() >= Duration::from_secs(10) {
+                    *l = Instant::now();
+                    strip(listening);
+                }
+            };
+            let r = dictate(&ep, rx, &stop, &level, &emit).await;
+            let device_error = capture.error();
+            drop(capture);
+            r?;
+            device_error.map_or(Ok(()), Err)
+        }
+        .await;
+        end(ANYWHERE);
+        match result {
+            Ok(()) => crate::tools::programs::hide(&app),
+            Err(e) => strip(&format!("Dictation stopped: {e}")),
+        }
+    });
+}
+
 // ---------- speaking ----------
 
 /// Language code from whisper's language name, for picking a voice.

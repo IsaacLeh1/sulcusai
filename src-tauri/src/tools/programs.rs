@@ -245,6 +245,10 @@ pub fn programs_banner() -> Value {
 #[tauri::command]
 pub fn programs_banner_stop(app: AppHandle, state: tauri::State<'_, Arc<crate::AppState>>) {
     let chat = shown().lock().unwrap().get("chat_id").and_then(Value::as_str).map(str::to_string);
+    // Dictating into another app: its Stop stops listening.
+    if chat.as_deref() == Some(crate::voice::ANYWHERE) {
+        crate::voice::stop_anywhere();
+    }
     if let Some(flag) = chat.and_then(|c| state.generations.lock().unwrap().get(&c).cloned()) {
         flag.store(true, Ordering::Relaxed);
     }

@@ -60,21 +60,50 @@ pub fn enabled(app: &AppHandle) -> bool {
     crate::features::is_on(&conn, Feature::QuickAsk)
 }
 
-/// The global-shortcut plugin, calling `toggle` on the hotkey.
+/// Dictation into any app: this starts listening, and again stops.
+pub const DICTATE_HOTKEY: &str = "ctrl+alt+KeyD";
+const DICTATE_KEY: &str = "dictate_anywhere";
+
+fn dictate_shortcut() -> Option<tauri_plugin_global_shortcut::Shortcut> {
+    DICTATE_HOTKEY.parse().ok()
+}
+
+/// Dictating into any app is turned on (it needs the Dictation feature).
+fn dictate_on(app: &AppHandle) -> bool {
+    let state = app.state::<Arc<AppState>>();
+    let conn = state.db.lock().unwrap();
+    crate::features::is_on(&conn, Feature::Dictation) && crate::db::get::<bool>(&conn, DICTATE_KEY).unwrap_or(false)
+}
+
+/// The global-shortcut plugin: Quick ask's hotkey opens the box, the
+/// dictation one starts or stops dictating.
 pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app, _shortcut, event| {
+        .with_handler(|app, shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                toggle(app);
+                if dictate_shortcut().is_some_and(|d| d.id() == shortcut.id()) {
+                    crate::voice::toggle_anywhere(app);
+                } else {
+                    toggle(app);
+                }
             }
         })
         .build()
 }
 
-/// Turns the hotkey and tray icon on or off to match the feature.
+/// Turns the hotkeys and tray icon on or off to match the features.
 pub fn apply(app: &AppHandle) {
     let on = enabled(app);
     let gs = app.global_shortcut();
+    if let Some(d) = dictate_shortcut() {
+        if dictate_on(app) {
+            if !gs.is_registered(d) && gs.register(d).is_err() {
+                app.emit("quick:hotkey_taken", json!({ "hotkey": shown(DICTATE_HOTKEY) })).ok();
+            }
+        } else {
+            let _ = gs.unregister(d);
+        }
+    }
     let key = hotkey(app);
     if on {
         if !gs.is_registered(key.as_str()) {
@@ -151,7 +180,11 @@ pub fn toggle(app: &AppHandle) {
         Some(w) if w.is_visible().unwrap_or(false) => {
             let _ = w.hide();
         }
-        _ => show(app),
+        _ => {
+            // The selection in the app in front, read before the box takes the focus.
+            *SELECTED.lock().unwrap() = crate::programs::selection_now();
+            show(app)
+        }
     }
 }
 
@@ -203,7 +236,7 @@ pub fn show(app: &AppHandle) {
 
 /// Text on the clipboard, if any (for "use what I copied").
 #[cfg(windows)]
-fn clipboard_text() -> Option<String> {
+pub(crate) fn clipboard_text() -> Option<String> {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard};
     use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
@@ -234,15 +267,68 @@ fn clipboard_text() -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn clipboard_text() -> Option<String> {
+pub(crate) fn clipboard_text() -> Option<String> {
     None
 }
+
+/// Puts text on the clipboard (an answer pasted back, then what was there).
+#[cfg(windows)]
+pub(crate) fn set_clipboard_text(text: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: the memory is allocated, filled while locked, then handed to
+    // the clipboard, which owns it from then on.
+    unsafe {
+        OpenClipboard(None).map_err(|e| format!("The clipboard is busy: {e}"))?;
+        let done = (|| {
+            EmptyClipboard().map_err(|e| e.to_string())?;
+            let g = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).map_err(|e| e.to_string())?;
+            let p = GlobalLock(g) as *mut u16;
+            if p.is_null() {
+                return Err("Couldn't use the clipboard.".to_string());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+            let _ = GlobalUnlock(g);
+            SetClipboardData(CF_UNICODETEXT, HANDLE(g.0)).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        let _ = CloseClipboard();
+        done
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_clipboard_text(_text: &str) -> Result<(), String> {
+    Err("Not on this system.".into())
+}
+
+/// What was selected in the app in front when the box opened.
+static SELECTED: std::sync::Mutex<Option<crate::programs::Selection>> = std::sync::Mutex::new(None);
 
 // ---------- commands ----------
 
 #[tauri::command(async)]
 pub fn quick_clipboard() -> Option<String> {
     clipboard_text().map(|t| t.trim().chars().take(20_000).collect::<String>()).filter(|t| !t.is_empty())
+}
+
+/// The text selected in the app in front when the box opened.
+#[tauri::command(async)]
+pub fn quick_selection() -> Option<crate::programs::Selection> {
+    SELECTED.lock().unwrap().clone()
+}
+
+/// Puts `text` in place of that selection, back in its app.
+#[tauri::command]
+pub async fn quick_replace(app: AppHandle, text: String) -> Result<(), String> {
+    let window = SELECTED.lock().unwrap().as_ref().filter(|s| s.editable).map(|s| s.window).ok_or("There's no selected text to put it in place of.")?;
+    quick_hide(app);
+    tauri::async_runtime::spawn_blocking(move || crate::programs::paste_into(window, &text)).await.map_err(|e| e.to_string())??;
+    *SELECTED.lock().unwrap() = None;
+    Ok(())
 }
 
 /// The box starts small and grows to fit an answer.
@@ -302,12 +388,31 @@ pub struct QuickSettings {
     shown: String,
     /// The model its chats use (None: the default model).
     model: Option<String>,
+    /// Dictating into any app with its own hotkey.
+    dictate_anywhere: bool,
+    dictate_hotkey: String,
 }
 
 #[tauri::command(async)]
 pub fn quick_settings(app: AppHandle, state: AppStateRef) -> QuickSettings {
     let key = hotkey(&app);
-    QuickSettings { shown: shown(&key), hotkey: key, model: crate::db::get(&state.db.lock().unwrap(), MODEL_KEY) }
+    let conn = state.db.lock().unwrap();
+    QuickSettings {
+        shown: shown(&key),
+        hotkey: key,
+        model: crate::db::get(&conn, MODEL_KEY),
+        dictate_anywhere: crate::db::get::<bool>(&conn, DICTATE_KEY).unwrap_or(false),
+        dictate_hotkey: shown(DICTATE_HOTKEY),
+    }
+}
+
+/// Turns dictating into any app on or off.
+#[tauri::command(async)]
+pub fn set_dictate_anywhere(app: AppHandle, state: AppStateRef, on: bool) -> Result<QuickSettings, String> {
+    crate::db::set(&state.db.lock().unwrap(), DICTATE_KEY, &on)?;
+    apply(&app);
+    state.log("settings", if on { "Dictating into any app is on (Ctrl+Alt+D)" } else { "Dictating into any app is off" });
+    Ok(quick_settings(app, state))
 }
 
 /// A new hotkey ("ctrl+alt+KeyK", as the settings page records it): it needs

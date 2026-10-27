@@ -6,7 +6,7 @@ import { bytes, percent } from "../format";
 import type { PushToast } from "../components/Toasts";
 import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { CancelInstall } from "../components/CancelInstall";
-import { QuickAskSetup } from "../components/QuickAskSetup";
+import { DictateAnywhere, QuickAskSetup } from "../components/QuickAskSetup";
 import { t, tx } from "../i18n";
 
 interface Info {
@@ -177,6 +177,7 @@ export function FeaturesView({ progress, toast }: { progress: Record<string, Ins
                       )}
                       {f.enabled && id === "browser_control" && <ExtensionSetup toast={toast} />}
                       {f.enabled && id === "quick_ask" && <QuickAskSetup toast={toast} />}
+                      {f.enabled && id === "dictation" && <DictateAnywhere toast={toast} />}
                       {f.enabled && id === "meetings" && speakers && !speakers.installed && (
                         <AddOn
                           label={t("Add speaker labels ({size})", { size: bytes(speakers.download) })}

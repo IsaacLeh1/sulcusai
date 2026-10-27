@@ -1086,6 +1086,17 @@ export interface QuickSettings {
   shown: string;
   /** The model its chats use (null: the default model). */
   model: string | null;
+  /** Dictating into any app with its own hotkey. */
+  dictate_anywhere?: boolean;
+  dictate_hotkey?: string;
+}
+
+/** Text selected in the app in front when Quick ask opened. */
+export interface QuickSelection {
+  text: string;
+  /** The answer can be pasted in its place (not in a terminal). */
+  editable: boolean;
+  app: string;
 }
 
 export interface ToolCall {
@@ -3245,6 +3256,9 @@ export const api = {
   quickSettings: () => invoke<QuickSettings>("quick_settings"),
   setQuickHotkey: (hotkey: string) => invoke<QuickSettings>("set_quick_hotkey", { hotkey }),
   setQuickModel: (modelId: string | null) => invoke<void>("set_quick_model", { modelId }),
+  setDictateAnywhere: (on: boolean) => invoke<QuickSettings>("set_dictate_anywhere", { on }),
+  quickSelection: () => invoke<QuickSelection | null>("quick_selection"),
+  quickReplace: (text: string) => invoke<void>("quick_replace", { text }),
   /** A new chat for the Quick ask box, on its model. */
   quickChat: () => invoke<Chat>("quick_chat"),
   deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),

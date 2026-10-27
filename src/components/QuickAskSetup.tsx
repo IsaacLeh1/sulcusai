@@ -12,6 +12,34 @@ function combo(e: KeyboardEvent): string | null {
   return [...mods, e.code].join("+");
 }
 
+/** Dictating into any app: a hotkey starts listening, and stops it. */
+export function DictateAnywhere({ toast }: { toast: PushToast }) {
+  const [s, setS] = useState<QuickSettings | null>(null);
+  useEffect(() => {
+    api.quickSettings().then(setS).catch(() => {});
+  }, []);
+  if (!s) return null;
+  return (
+    <label className="check small quick-setup">
+      <input
+        type="checkbox"
+        checked={!!s.dictate_anywhere}
+        onChange={async (e) => {
+          try {
+            setS(await api.setDictateAnywhere(e.target.checked));
+          } catch (err) {
+            toast(errorText(err), "error");
+          }
+        }}
+      />
+      <span>
+        {t("Dictate into any app with {keys}", { keys: s.dictate_hotkey ?? "Ctrl+Alt+D" })}
+        <span className="muted block">{t("Press it in any program, speak, and what you say is typed where the cursor is. Press it again to stop. A strip at the top of the screen shows while it listens.")}</span>
+      </span>
+    </label>
+  );
+}
+
 /** Quick ask's hotkey (pressed, not typed) and the model its chats use. */
 export function QuickAskSetup({ toast }: { toast: PushToast }) {
   const [s, setS] = useState<QuickSettings | null>(null);

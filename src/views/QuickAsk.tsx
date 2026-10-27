@@ -2,7 +2,7 @@
 // Quick ask: the small box Ctrl+Alt+Space opens from anywhere. Ask
 // something, or act on what you copied; continue in the app if you like.
 import { useEffect, useRef, useState } from "react";
-import { api, errorText, on, type MediaItem } from "../api";
+import { api, errorText, on, type MediaItem, type QuickSelection } from "../api";
 import { Markdown } from "../components/Markdown";
 import { rememberSent, SmartInput, useTypingHelpers } from "../components/SmartInput";
 import { useMediaUrl } from "../media";
@@ -22,6 +22,10 @@ type Phase = "idle" | "thinking" | "writing" | "done";
 export function QuickAsk() {
   const [text, setText] = useState("");
   const [clip, setClip] = useState<string | null>(null);
+  /** What was selected in the app in front when the box opened (read, not copied). */
+  const [selected, setSelected] = useState<QuickSelection | null>(null);
+  /** The answer is for the selection, so it can go back in its place. */
+  const [forSelection, setForSelection] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [answer, setAnswer] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
@@ -37,7 +41,9 @@ export function QuickAsk() {
   chatRef.current = chatId;
 
   const refresh = () => {
-    api.security().then((s) => setLocked(s.locked)).catch(() => {});    api.quickClipboard().then(setClip).catch(() => setClip(null));
+    api.security().then((s) => setLocked(s.locked)).catch(() => {});
+    api.quickClipboard().then(setClip).catch(() => setClip(null));
+    api.quickSelection().then(setSelected).catch(() => setSelected(null));
     setTimeout(() => input.current?.focus(), 30);
   };
 
@@ -73,8 +79,8 @@ export function QuickAsk() {
   // Small while you type; room for the answer once one comes.
   const answering = phase !== "idle" || !!error;
   useEffect(() => {
-    api.quickResize(answering ? 460 : (clip && !chatId) || shot ? 150 : 76).catch(() => {});
-  }, [answering, clip, chatId, shot]);
+    api.quickResize(answering ? 460 : ((clip || selected) && !chatId) || shot ? 150 : 76).catch(() => {});
+  }, [answering, clip, selected, chatId, shot]);
 
   const takeShot = async () => {
     setShooting(true);
@@ -111,6 +117,7 @@ export function QuickAsk() {
   };
 
   const reset = () => {
+    setForSelection(false);
     setChatId(null);
     setAnswer("");
     setPhase("idle");
@@ -161,7 +168,26 @@ export function QuickAsk() {
           </span>
         </div>
       )}
-      {clip && phase === "idle" && !chatId && (
+      {selected && phase === "idle" && !chatId && (
+        <div className="quick-clip">
+          <span className="small muted ellipsis">{t("Selected: “{text}”", { text: selected.text.slice(0, 90) + (selected.text.length > 90 ? "…" : "") })}</span>
+          <div className="chips">
+            {ACTIONS.map((a) => (
+              <button
+                key={a.label}
+                className="chip"
+                onClick={() => {
+                  setForSelection(selected.editable);
+                  ask(a.prompt(selected.text));
+                }}
+              >
+                {t(a.label)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {clip && !selected && phase === "idle" && !chatId && (
         <div className="quick-clip">
           <span className="small muted ellipsis">{t("Copied: “{text}”", { text: clip.slice(0, 90) + (clip.length > 90 ? "…" : "") })}</span>
           <div className="chips">
@@ -180,6 +206,15 @@ export function QuickAsk() {
       )}
       {phase === "done" && (
         <div className="quick-foot">
+          {forSelection && answer && (
+            <button
+              className="btn primary small"
+              title={t("Pastes the answer over the text you selected, in its app")}
+              onClick={() => api.quickReplace(answer.trim()).catch((e) => setError(errorText(e)))}
+            >
+              {t("Put it in place of the selection")}
+            </button>
+          )}
           <button className="btn small" onClick={() => navigator.clipboard.writeText(answer).catch(() => {})} disabled={!answer}>{t("Copy")}</button>
           <button className="btn small" onClick={() => api.quickOpenInApp(chatId)}>{t("Continue in SulcusAI")}</button>
           <span className="spacer" />
