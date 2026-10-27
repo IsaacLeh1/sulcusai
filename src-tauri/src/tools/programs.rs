@@ -44,6 +44,10 @@ pub fn program_key_params() -> Value {
     json!({ "type": "object", "required": ["keys"], "properties": { "keys": { "type": "string", "description": "Keys to press together in the window used last, e.g. ctrl+s, enter, escape, tab, alt+f, f5, pagedown." } } })
 }
 
+pub fn use_screen_params() -> Value {
+    json!({ "type": "object", "required": ["task"], "properties": { "task": { "type": "string", "description": "The whole task in words, as the user would put it, e.g. \"In the game's menu, turn the music volume down to half.\"" } } })
+}
+
 pub fn program_scroll_params() -> Value {
     json!({ "type": "object", "properties": {
         "ref": { "type": "integer", "description": "Scroll this element (or what holds it); leave out for the window." },
@@ -186,7 +190,7 @@ static LAST: AtomicU64 = AtomicU64::new(0);
 
 /// Shows the strip at the top of the screen (on top of everything, left out
 /// of screenshots) saying what the assistant is doing.
-fn banner(app: Option<&AppHandle>, chat_id: &str, what: &str) {
+pub(crate) fn banner(app: Option<&AppHandle>, chat_id: &str, what: &str) {
     let Some(app) = app else { return };
     let payload = json!({ "chat_id": chat_id, "what": what });
     *shown().lock().unwrap() = payload.clone();
@@ -224,7 +228,7 @@ fn banner(app: Option<&AppHandle>, chat_id: &str, what: &str) {
     });
 }
 
-fn hide(app: &AppHandle) {
+pub(crate) fn hide(app: &AppHandle) {
     *shown().lock().unwrap() = Value::Null;
     if let Some(w) = app.get_webview_window(BANNER) {
         let _ = w.hide();

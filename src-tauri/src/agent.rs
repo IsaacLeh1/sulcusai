@@ -514,6 +514,11 @@ impl Turn {
         let programs_offered = self.use_tools && features.contains(&Feature::Programs) && cfg!(windows);
         if programs_offered {
             extra.extend(["programs_list", "program_open", "program_read", "program_click", "program_type", "program_key", "program_scroll"]);
+            // Using the screen itself needs a model that sees pictures.
+            let chat_model = crate::db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).and_then(|c| c.model_id);
+            if crate::vision::can_read(&self.state, chat_model.as_deref()) {
+                extra.push("use_screen");
+            }
         }
         // Asking (and working with) the assistants of people linked in People.
         let people_note = if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::People) {
@@ -1812,6 +1817,11 @@ impl Turn {
                 Ok(task) => self.run_helper(&call.id, task, &ctx).await,
                 Err(e) => Outcome::error(tools::failed_title(&call.name, &args), e),
             }
+        } else if call.name == "use_screen" {
+            match tools::arg_str(&args, "task") {
+                Ok(task) => self.use_screen(call, task).await,
+                Err(e) => Outcome::error(tools::failed_title(&call.name, &args), e),
+            }
         } else {
             tools::run(&call.name, &args, &ctx).await
         };
@@ -2562,6 +2572,28 @@ impl Turn {
                 })
             }
             Decision::Allow | Decision::AllowForChat => Ok(crate::outgoing::take_edits(&call.id)),
+        }
+    }
+
+    /// use_screen: the screen agent's loop (`screen_agent`), each step shown
+    /// in the chat as it's done, and a step that sends, buys or deletes put
+    /// to the person on a card of its own.
+    async fn use_screen(&self, call: &ToolCall, task: &str) -> Outcome {
+        let chat_model = db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).and_then(|c| c.model_id);
+        let n = std::sync::atomic::AtomicU32::new(0);
+        let ask = |title: String, detail: String| {
+            let k = n.fetch_add(1, Ordering::Relaxed);
+            let step_call = ToolCall { id: format!("{}-step{k}", call.id), name: call.name.clone(), arguments: call.arguments.clone() };
+            async move {
+                let note = Some("Asking because this step could send, buy, delete or close something.".to_string());
+                matches!(self.ask(&step_call, Risk::Submit, Preview { title, kind: "text", detail: Some(detail), note }).await, Decision::Allow | Decision::AllowForChat)
+            }
+        };
+        let step = |line: &str| self.emit("agent:helper", json!({ "chat_id": self.chat_id, "call_id": call.id, "step": line }));
+        let title = format!("Used the screen: {}", task.chars().take(60).collect::<String>());
+        match crate::screen_agent::run(&self.state, &self.chat_id, chat_model.as_deref(), task, &self.cancel, ask, step).await {
+            Ok(text) => Outcome::ok(text, title, "text", None),
+            Err(e) => Outcome::error("Couldn't use the screen", e),
         }
     }
 

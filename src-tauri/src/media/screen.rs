@@ -5,6 +5,13 @@ use image::RgbaImage;
 
 #[cfg(windows)]
 pub fn capture() -> Result<RgbaImage, String> {
+    capture_at().map(|(img, _)| img)
+}
+
+/// The monitor the mouse is on, and where its top-left corner is on the
+/// desktop (to turn a point in the picture into one on the screen).
+#[cfg(windows)]
+pub fn capture_at() -> Result<(RgbaImage, (i32, i32)), String> {
     use windows::Win32::Foundation::{HWND, POINT};
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits, GetMonitorInfoW, MonitorFromPoint, ReleaseDC, SelectObject,
@@ -58,8 +65,13 @@ pub fn capture() -> Result<RgbaImage, String> {
             px.swap(0, 2);
             px[3] = 255;
         }
-        RgbaImage::from_raw(w as u32, h as u32, buf).ok_or_else(|| fail("buffer"))
+        RgbaImage::from_raw(w as u32, h as u32, buf).ok_or_else(|| fail("buffer")).map(|img| (img, (r.left, r.top)))
     }
+}
+
+#[cfg(not(windows))]
+pub fn capture_at() -> Result<(RgbaImage, (i32, i32)), String> {
+    capture().map(|img| (img, (0, 0)))
 }
 
 /// macOS: the system's `screencapture` (macOS asks once for Screen

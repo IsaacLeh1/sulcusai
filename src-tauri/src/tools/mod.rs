@@ -202,7 +202,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
-        n if n.starts_with("program_") || n == "programs_list" => "programs",
+        n if n.starts_with("program_") || n == "programs_list" || n == "use_screen" => "programs",
         "create_document" | "read_document" => "documents",
         "search_documents" => "library",
         n if n.starts_with("email_") => "email",
@@ -330,6 +330,8 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Press keys in the program's window used last, e.g. ctrl+s to save, escape to close a menu, alt+f for the File menu, tab, enter." },
     ToolDef { name: "program_scroll", risk: Risk::Programs, params: programs::program_scroll_params,
         description: "Scroll the program's window, or a list or document in it by its number, down or up to see more." },
+    ToolDef { name: "use_screen", risk: Risk::Programs, params: programs::use_screen_params,
+        description: "Do a task on the user's screen by looking at it and using the mouse and keyboard like a person, step by step: for what program_read can't read (games, remote desktops, windows drawn as pictures). Slower than the program_* tools, so try those first. Give the whole task; it returns what it did and what the screen shows at the end." },
     ToolDef { name: "create_document", risk: Risk::Write, params: documents::create_document_params,
         description: "Make a Word (.docx), PDF, Markdown, Excel (.xlsx, with working formulas and charts) or PowerPoint (.pptx) file in a shared folder. Give markdown for documents, sheets for spreadsheets, slides for decks." },
     ToolDef { name: "search_documents", risk: Risk::Read, params: library::search_params,
@@ -578,6 +580,12 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         "ask_person" | "work_with_person" | "message_person" => Ok(people_preview(name, args)),
+        "use_screen" => Ok(Preview {
+            title: format!("Use the screen: {}", args.get("task").and_then(Value::as_str).unwrap_or("a task").chars().take(80).collect::<String>()),
+            kind: "text",
+            detail: None,
+            note: Some("Lets the assistant look at the screen and use the mouse and keyboard, step by step, in this chat. SulcusAI's windows step aside while it works; it asks again before anything that sends, buys or deletes, and never types passwords. A strip at the top of the screen shows each step, with Stop.".into()),
+        }),
         n if n.starts_with("program_") || n == "programs_list" => Ok(Preview {
             title: match n {
                 "programs_list" => "See which programs are open".into(),
@@ -798,7 +806,7 @@ mod tests {
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
         // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 64);
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 65);
     }
 
     #[test]

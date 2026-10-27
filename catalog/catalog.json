@@ -6357,5 +6357,13 @@
         }
       ]
     }
+  },
+  "lens": {
+    "build": "b11450",
+    "cvector": {
+      "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/lens-tools-b11450-win-x64.zip",
+      "size": 16919095,
+      "sha256": "d96cc5309306fd410ab473807b84f6f277efefe8a3d6f8ba43b69bc96dd4b536"
+    }
   }
 }

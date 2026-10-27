@@ -258,7 +258,7 @@ fn gguf_of(state: &AppState, id: &str) -> Option<PathBuf> {
 }
 
 /// The model the Lens looks at: the one asked for, else the default.
-fn model_for(state: &AppState, model_id: Option<&str>) -> Result<(String, PathBuf), String> {
+pub(crate) fn model_for(state: &AppState, model_id: Option<&str>) -> Result<(String, PathBuf), String> {
     let id = model_id.filter(|m| !m.is_empty()).map(str::to_string).or_else(|| db::settings(&state.db.lock().unwrap()).default_model).ok_or("Pick a model on this PC first.")?;
     let path = gguf_of(state, &id).ok_or("The Lens looks inside models on this PC; that one isn't (or its file is missing).")?;
     Ok((id, path))

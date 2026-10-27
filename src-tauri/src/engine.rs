@@ -236,7 +236,7 @@ fn main_card() -> Option<String> {
 /// The device(s) for `exe`: with `spread`, every card models are spread
 /// over when there are several (`hardware::model_cards`; llama.cpp splits
 /// the layers by their free memory), else `pick_devices`.
-async fn dedicated_devices(exe: &Path, spread: bool) -> Vec<(String, String)> {
+pub(crate) async fn dedicated_devices(exe: &Path, spread: bool) -> Vec<(String, String)> {
     let devices = list_devices(exe).await;
     let cards = crate::hardware::cards();
     let several = crate::hardware::model_cards(&cards, crate::hardware::main_choice().as_deref());
@@ -569,6 +569,8 @@ pub struct LaunchSpec<'a> {
     pub batch: u32,
     /// A taught adapter (LoRA) loaded on top of the model.
     pub lora: Option<&'a Path>,
+    /// A direction from the Lens added to its layers while it answers.
+    pub steer: Option<&'a crate::steer::Steer>,
 }
 
 /// Launch settings beyond `LaunchSpec`, from the fit plan.
@@ -640,6 +642,7 @@ struct Running {
     vision: bool,
     batch: u32,
     lora: Option<PathBuf>,
+    steer: Option<crate::steer::Steer>,
     cpu_moe: Option<u32>,
     kv_q8: bool,
     think_budget: Option<u32>,
@@ -705,6 +708,7 @@ pub struct Paused {
     pub vision: bool,
     base: String,
     lora: Option<PathBuf>,
+    steer: Option<crate::steer::Steer>,
     port: u16,
     key: String,
 }
@@ -756,12 +760,14 @@ impl Engine {
     /// The running endpoint, if it is already serving this model with this
     /// taught adapter (or none): the base model doesn't answer for a taught
     /// one, nor the other way round.
-    pub fn endpoint_for(&mut self, model_id: &str, lora: Option<&Path>) -> Option<Endpoint> {
+    /// Steered by this direction (or none) too: a steered model and the
+    /// plain one answer differently.
+    pub fn endpoint_steered(&mut self, model_id: &str, lora: Option<&Path>, steer: Option<&crate::steer::Steer>) -> Option<Endpoint> {
         if !self.alive() {
             return None;
         }
         let r = self.running.as_ref()?;
-        (r.model_id == model_id && r.lora.as_deref() == lora).then(|| r.endpoint())
+        (r.model_id == model_id && r.lora.as_deref() == lora && r.steer.as_ref() == steer).then(|| r.endpoint())
     }
 
     /// The model running now, whatever it is: its id and endpoint.
@@ -808,6 +814,7 @@ impl Engine {
                     && r.vision == spec.mmproj.is_some()
                     && r.batch == spec.batch
                     && r.lora.as_deref() == spec.lora
+                    && r.steer.as_ref() == spec.steer
                     && r.cpu_moe == tuning.cpu_moe
                     && r.kv_q8 == tuning.kv_q8
                     && r.think_budget == tuning.think_budget
@@ -847,12 +854,12 @@ impl Engine {
         }
         // The same model with other limits (mode, heat, its picture reader)
         // keeps its address and key, so a reply holding them carries on.
-        let same = |model: &str, lora: Option<&Path>| model == spec.model_id && lora == spec.lora;
-        let relaunch = self.running.as_ref().filter(|r| same(&r.model_id, r.lora.as_deref())).map(|r| (r.port, r.key.clone()));
+        let same = |model: &str, lora: Option<&Path>, steer: Option<&crate::steer::Steer>| model == spec.model_id && lora == spec.lora && steer == spec.steer;
+        let relaunch = self.running.as_ref().filter(|r| same(&r.model_id, r.lora.as_deref(), r.steer.as_ref())).map(|r| (r.port, r.key.clone()));
         self.stop().await;
 
         // Coming back from a pause: the same address too, if it's still free.
-        let back = self.paused.take().filter(|p| same(&p.base, p.lora.as_deref())).map(|p| (p.port, p.key));
+        let back = self.paused.take().filter(|p| same(&p.base, p.lora.as_deref(), p.steer.as_ref())).map(|p| (p.port, p.key));
         let (port, key) = match relaunch.or(back).filter(|(port, _)| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok()) {
             Some(p) => p,
             None => (free_port()?, uuid::Uuid::new_v4().simple().to_string()),
@@ -910,6 +917,7 @@ impl Engine {
             // nothing. Memory is for what the card can't hold.
             .args(if spec.gpu_layers > 0 { vec!["--load-mode", "none"] } else { vec![] })
             .args(spec.lora.map(|p| vec![std::ffi::OsString::from("--lora"), p.into()]).unwrap_or_default())
+            .args(spec.steer.map(crate::steer::Steer::args).unwrap_or_default())
             .args(spec.mmproj.map(|p| vec![std::ffi::OsString::from("--mmproj"), p.into()]).unwrap_or_default())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
@@ -944,6 +952,7 @@ impl Engine {
             vision: spec.mmproj.is_some(),
             batch: spec.batch,
             lora: spec.lora.map(Path::to_path_buf),
+            steer: spec.steer.cloned(),
             cpu_moe: tuning.cpu_moe,
             kv_q8: tuning.kv_q8,
             think_budget: tuning.think_budget,
@@ -1018,7 +1027,7 @@ impl Engine {
             return None;
         }
         let r = self.running.as_ref()?;
-        let p = Paused { model_id: r.asked.clone(), vision: r.vision, base: r.model_id.clone(), lora: r.lora.clone(), port: r.port, key: r.key.clone() };
+        let p = Paused { model_id: r.asked.clone(), vision: r.vision, base: r.model_id.clone(), lora: r.lora.clone(), steer: r.steer.clone(), port: r.port, key: r.key.clone() };
         self.stop().await;
         self.paused = Some(p.clone());
         Some(p)
@@ -1431,6 +1440,7 @@ I load_tensors:   CPU_Mapped model buffer size =  2500.00 MiB
                     mmproj: None,
                     batch: 0,
                     lora: None,
+                    steer: None,
                 },
                 None,
             )

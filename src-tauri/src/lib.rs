@@ -104,6 +104,8 @@ mod triage;
 mod tts;
 mod programs;
 mod lens;
+mod steer;
+mod screen_agent;
 mod import;
 mod typing;
 mod updates;
@@ -873,6 +875,7 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                             mmproj: mmproj.as_deref(),
                             batch: plan.batch,
                             lora: None,
+                            steer: None,
                         },
                         plan.tuning,
                         state.job(),
@@ -1703,6 +1706,8 @@ pub(crate) fn model_known(conn: &rusqlite::Connection, model_id: &str) -> bool {
         cloud::resolve(conn, model_id).is_some()
     } else if let Some(aid) = finetune::parse_ref(model_id) {
         db::get::<Vec<finetune::Adapter>>(conn, "adapters").unwrap_or_default().iter().any(|a| a.id == aid)
+    } else if let Some(sid) = steer::parse_ref(model_id) {
+        steer::exists(conn, sid)
     } else {
         db::installed_model(conn, model_id).is_some()
     }
@@ -2389,7 +2394,7 @@ pub(crate) async fn llm_endpoint(
         let conn = state.db.lock().unwrap();
         let default = db::settings(&conn).default_model;
         // A chat whose model was removed (by hand or by the cleanup) uses the default.
-        let gone = |id: &String| !cloud::is_cloud(id) && !sync::compute::is_compute(id) && finetune::parse_ref(id).is_none() && db::installed_model(&conn, id).is_none();
+        let gone = |id: &String| !cloud::is_cloud(id) && !sync::compute::is_compute(id) && finetune::parse_ref(id).is_none() && steer::parse_ref(id).is_none() && db::installed_model(&conn, id).is_none();
         let chosen = match model_id {
             Some(id) if gone(&id) && default.as_ref().is_some_and(|d| !gone(d)) => default.clone(),
             other => other,
@@ -2416,12 +2421,21 @@ pub(crate) async fn llm_endpoint(
         Some(aid) => Some(finetune::adapter(state, aid).ok_or("That taught model was removed. Pick another one.")?),
         None => None,
     };
-    let base_id = taught.as_ref().map_or(id.clone(), |a| a.base.clone());
+    // A steered model: its model with a direction from the Lens added.
+    let direction = match steer::parse_ref(&id) {
+        Some(sid) => Some(steer::get(&state.db.lock().unwrap(), &state.work_cipher()?, sid).ok_or("That steering direction was removed. Pick another model.")?),
+        None => None,
+    };
+    let steering = direction.as_ref().map(|d| d.steer(&state.paths));
+    let base_id = taught.as_ref().map_or_else(|| direction.as_ref().map_or(id.clone(), |d| d.model_id.clone()), |a| a.base.clone());
     let installed = db::installed_model(&state.db.lock().unwrap(), &base_id).ok_or("This chat's model isn't installed anymore. Pick another one.")?;
     cleanup::touch_model(state, &installed.model_id);
     let mut spec = state.model_spec(&installed.model_id).ok_or("This model is no longer available. Pick another one.")?;
     if let Some(a) = &taught {
         spec.name = format!("{} + {}", spec.name, a.name);
+    }
+    if let Some(d) = &direction {
+        spec.name = format!("{}, steered: {} ({:+.1})", spec.name, d.name, d.strength);
     }
     let lora = taught.as_ref().map(|a| std::path::PathBuf::from(&a.path));
     recheck_if_card_missing(state).await;
@@ -2468,7 +2482,7 @@ pub(crate) async fn llm_endpoint(
     let mut ep = loop {
         let mut engine = state.engine.lock().await;
         // Keep the image encoder once it's loaded, so chats don't flip it on and off.
-        let keep = engine.endpoint_for(&installed.model_id, lora.as_deref()).is_some() && engine.sees();
+        let keep = engine.endpoint_steered(&installed.model_id, lora.as_deref(), steering.as_ref()).is_some() && engine.sees();
         let mmproj = encoder.as_deref().filter(|_| pictures || keep);
         let encoder_size = mmproj.and_then(|p| std::fs::metadata(p).ok()).map_or(0, |m| m.len());
         let plan = launch_plan(state, &spec, &installed.quant, encoder_size);
@@ -2485,6 +2499,7 @@ pub(crate) async fn llm_endpoint(
             mmproj,
             batch: plan.batch,
             lora: lora.as_deref(),
+            steer: steering.as_ref(),
         };
         // Other replies still using the model loaded now: it isn't stopped
         // under them (they'd be cut off mid-reply).
@@ -2492,7 +2507,7 @@ pub(crate) async fn llm_endpoint(
         let held = loaded.as_ref().map_or(0, |(_, ep)| engine::held(&ep.key));
         let busy = held + loaded.as_ref().map_or(0, |(_, ep)| engine::USERS.lock().unwrap().others(&replies(state), &before, &ep.key, task));
         let was = loaded.as_ref().map(|(_, ep)| ep.key.clone());
-        if let Some(ep) = engine.endpoint_for(&installed.model_id, lora.as_deref()) {
+        if let Some(ep) = engine.endpoint_steered(&installed.model_id, lora.as_deref(), steering.as_ref()) {
             // Same model: new limits (mode, heat) apply between replies.
             if busy > 0 || engine.matches_tuned(&launch, plan.tuning) {
                 break ep;
@@ -3274,6 +3289,10 @@ pub fn run() {
             import::import_memories,
             lens::lens_layers,
             lens::lens_edit,
+            steer::lens_directions,
+            steer::lens_make_direction,
+            steer::lens_set_direction,
+            steer::lens_delete_direction,
             chat_live,
             send_message,
             engine_status,

@@ -3042,6 +3042,10 @@ export const api = {
   lensWords: (modelId: string, prompt: string, given: string) => invoke<LensWords>("lens_words", { modelId, prompt, given, top: 5, most: 300 }),
   lensLayers: (modelId: string, text: string) => invoke<LensLayers>("lens_layers", { modelId, text }),
   lensEdit: (modelId: string, edits: LensEdit[]) => invoke<string>("lens_edit", { modelId, edits }),
+  lensDirections: () => invoke<LensDirection[]>("lens_directions"),
+  lensMakeDirection: (modelId: string, name: string, toward: string, away: string) => invoke<LensDirection>("lens_make_direction", { modelId, name, toward, away }),
+  lensSetDirection: (id: string, strength: number, from?: number, to?: number) => invoke<LensDirection>("lens_set_direction", { id, strength, from: from ?? null, to: to ?? null }),
+  lensDeleteDirection: (id: string) => invoke<void>("lens_delete_direction", { id }),
   // The reply a chat is in the middle of (it keeps going while the user is elsewhere).
   live: (chatId: string) => invoke<LiveReply | null>("chat_live", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
@@ -3591,6 +3595,23 @@ export interface StartNow {
   in_the_way: LineupEntry[];
 }
 
+/** A steering direction made in the Lens (steer.rs): added to the model's
+ * layers while it answers; "steer:<id>" in a chat's model menu. */
+export interface LensDirection {
+  id: string;
+  name: string;
+  model_id: string;
+  toward: string;
+  away: string;
+  /** Negative: the other way. */
+  strength: number;
+  from: number;
+  to: number;
+  layers: number;
+  pairs: number;
+  created_at: number;
+}
+
 /** The Lens (lens.rs): a model on this PC seen from inside. */
 export interface LensAlt { text: string; prob: number }
 export interface LensPiece { text: string; prob: number; alts: LensAlt[] }
@@ -3749,6 +3770,8 @@ export interface ChatEvents {
   "mail:triaged": Record<string, never>;
   "schedule:ran": { id: string; name: string; chat_id?: string; error?: string };
   "install:progress": InstallProgress;
+  /** The Lens finding a steering direction (steer.rs). */
+  "lens:steer": { stage: string; fraction: number };
   "install:finished": InstallFinished;
   "downloads:changed": Record<string, never>;
   "security:locked": null;

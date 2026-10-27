@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { Fragment, useState } from "react";
-import { api, errorText, type LensEdit, type LensLayers, type LensWords, type ModelCard } from "../api";
+import { Fragment, useEffect, useState } from "react";
+import { api, errorText, on, type LensDirection, type LensEdit, type LensLayers, type LensWords, type ModelCard } from "../api";
 import { t, tx } from "../i18n";
 import { InfoTip } from "./InfoTip";
 import type { PushToast } from "./Toasts";
@@ -18,6 +18,15 @@ const SCALES: [number, string][] = [
   [0.5, tx("Half")],
   [2, tx("Double")],
   [3, tx("Triple")],
+];
+
+/** Ready-made pairs of opposites to steer with. */
+const OPPOSITES: [string, string][] = [
+  [tx("cheerful"), tx("gloomy")],
+  [tx("formal"), tx("casual")],
+  [tx("brief"), tx("long-winded")],
+  [tx("confident"), tx("unsure")],
+  [tx("kind and gentle"), tx("blunt and harsh")],
 ];
 
 const pct = (p: number) => (p > 0 && p < 0.005 ? "<1%" : `${Math.round(p * 100)}%`);
@@ -267,6 +276,156 @@ export function Lens({ models, defaultModel, toast }: { models: ModelCard[]; def
           )}
         </section>
       )}
+      <Steering model={model} modelName={models.find((m) => m.id === model)?.name ?? model} prompt={prompt} toast={toast} />
     </div>
+  );
+}
+
+/** Steering: a direction found from pairs of opposite instructions, added
+ * to the model's layers while it answers (steer.rs). */
+function Steering({ model, modelName, prompt, toast }: { model: string; modelName: string; prompt: string; toast: PushToast }) {
+  const [list, setList] = useState<LensDirection[]>([]);
+  const [toward, setToward] = useState("");
+  const [away, setAway] = useState("");
+  const [name, setName] = useState("");
+  const [making, setMaking] = useState<{ stage: string; fraction: number } | null>(null);
+  const [comparing, setComparing] = useState<string | null>(null);
+  const [compared, setCompared] = useState<{ id: string; plain: string; steered: string } | null>(null);
+  useEffect(() => {
+    api.lensDirections().then(setList).catch(() => {});
+    const sub = on("lens:steer", (p: { stage: string; fraction: number }) => setMaking(p));
+    return () => {
+      sub.then((un) => un());
+    };
+  }, []);
+  const mine = list.filter((d) => d.model_id === model);
+  const make = async () => {
+    setMaking({ stage: t("Starting"), fraction: 0 });
+    try {
+      const d = await api.lensMakeDirection(model, name, toward, away);
+      setList((l) => [d, ...l]);
+      setToward("");
+      setAway("");
+      setName("");
+      toast(t("Found the direction. Try it below, or pick “{name}” in a chat's model menu.", { name: `${modelName}, ${d.name}` }), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setMaking(null);
+    }
+  };
+  const save = async (d: LensDirection, strength: number) => {
+    try {
+      const fresh = await api.lensSetDirection(d.id, strength);
+      setList((l) => l.map((x) => (x.id === d.id ? fresh : x)));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+  const tryIt = async (d: LensDirection) => {
+    setComparing(d.id);
+    setCompared(null);
+    try {
+      const a = await api.lensWords(model, prompt, "");
+      const b = await api.lensWords(`steer:${d.id}`, prompt, "");
+      setCompared({ id: d.id, plain: a.pieces.map((p) => p.text).join(""), steered: b.pieces.map((p) => p.text).join("") });
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setComparing(null);
+    }
+  };
+  return (
+    <section className="lens-steer">
+      <h3>
+        {t("Steer it")}
+        <InfoTip text={t("SulcusAI asks the model the same everyday questions under two opposite instructions and finds the direction inside it where the answers differ, layer by layer. While it answers, that direction is added to its middle layers: a positive strength leans toward the first side, a negative one toward the second. The model's file is never changed.")} />
+      </h3>
+      <p className="small muted">{t("Lean the model toward one way of answering and away from its opposite, then use it in chats.")}</p>
+      <div className="row wrap small">
+        {OPPOSITES.map(([a, b]) => (
+          <button
+            key={a}
+            type="button"
+            className="chip"
+            onClick={() => {
+              setToward(t(a));
+              setAway(t(b));
+            }}
+          >
+            {t(a)} / {t(b)}
+          </button>
+        ))}
+      </div>
+      <div className="row wrap">
+        <input className="input" value={toward} onChange={(e) => setToward(e.target.value)} placeholder={t("Toward, e.g. cheerful")} aria-label={t("Toward")} />
+        <input className="input" value={away} onChange={(e) => setAway(e.target.value)} placeholder={t("Away from, e.g. gloomy")} aria-label={t("Away from")} />
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("Name (optional)")} aria-label={t("Name")} maxLength={40} />
+        <button className="btn primary" disabled={!toward.trim() || !away.trim() || !!making} onClick={make}>
+          {making ? t("Finding it…") : t("Find this direction")}
+        </button>
+      </div>
+      {making && (
+        <p className="small muted" role="status">
+          {t(making.stage)} · {Math.round(making.fraction * 100)}%
+        </p>
+      )}
+      {!making && <p className="small muted">{t("It takes a minute or two: the chat model leaves the graphics card while the direction is found. The first time, the direction maker downloads (about 17 MB).")}</p>}
+      {mine.map((d) => (
+        <div key={d.id} className="lens-direction">
+          <div className="row wrap">
+            <strong>{d.name}</strong>
+            <span className="small muted">
+              {t("toward “{a}”, away from “{b}”", { a: d.toward, b: d.away })} · {t("layers {from} to {to} of {n}", { from: d.from, to: d.to, n: d.layers })}
+            </span>
+            <span className="spacer" />
+            <button className="btn small" disabled={!prompt.trim() || !!comparing} onClick={() => tryIt(d)} title={prompt.trim() ? undefined : t("Type a prompt above first")}>
+              {comparing === d.id ? t("Asking both…") : t("Compare with the prompt")}
+            </button>
+            <button
+              className="btn ghost small danger"
+              onClick={async () => {
+                await api.lensDeleteDirection(d.id).catch((e) => toast(errorText(e), "error"));
+                setList((l) => l.filter((x) => x.id !== d.id));
+              }}
+            >
+              {t("Delete")}
+            </button>
+          </div>
+          <label className="row small">
+            {t("Strength")}
+            <input
+              type="range"
+              min={-2}
+              max={2}
+              step={0.1}
+              defaultValue={d.strength}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setList((l) => l.map((x) => (x.id === d.id ? { ...x, strength: v } : x)));
+              }}
+              onPointerUp={(e) => save(d, Number((e.target as HTMLInputElement).value))}
+              onKeyUp={(e) => save(d, Number((e.target as HTMLInputElement).value))}
+              aria-label={t("Strength")}
+            />
+            <span className="num">{d.strength > 0 ? "+" : ""}{d.strength.toFixed(1)}</span>
+            <span className="muted">{d.strength >= 0 ? t("toward “{a}”", { a: d.toward }) : t("toward “{b}”", { b: d.away })}</span>
+          </label>
+          {compared?.id === d.id && (
+            <div className="lens-compare">
+              <div>
+                <h4>{t("As it is")}</h4>
+                <p className="lens-text">{compared.plain}</p>
+              </div>
+              <div>
+                <h4>{t("Steered ({s})", { s: `${d.strength > 0 ? "+" : ""}${d.strength.toFixed(1)}` })}</h4>
+                <p className="lens-text">{compared.steered}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      {mine.length > 0 && <p className="small muted">{t("Each one is in a chat's model menu, under Steered in the Lens. Changing the strength applies from the next reply.")}</p>}
+    </section>
   );
 }

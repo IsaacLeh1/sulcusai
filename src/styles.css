@@ -2258,6 +2258,11 @@ html.working-window, html.working-window body { background: transparent; overflo
 .lens-neuron { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; }
 .lens-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .lens-compare h4 { margin: 0 0 4px; }
+.lens-steer { margin-top: 18px; display: flex; flex-direction: column; gap: 8px; }
+.lens-steer .input { flex: 1 1 160px; min-width: 0; }
+.lens-direction { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.lens-direction input[type=range] { flex: 1 1 160px; }
+.lens-direction .num { font-variant-numeric: tabular-nums; min-width: 3em; text-align: right; }
 
 /* Choices look the same everywhere, like the music tab's: rounded buttons
    joined edge to edge (the group's ends round, the picked one filled), and

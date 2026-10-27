@@ -208,6 +208,7 @@ impl Helper {
                     mmproj,
                     batch: 0,
                     lora,
+                    steer: None,
                 },
                 state.job(),
             ))

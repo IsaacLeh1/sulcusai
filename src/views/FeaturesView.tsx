@@ -52,7 +52,7 @@ export const FEATURES: Record<FeatureId, Info> = {
   },
   programs: {
     name: tx("Work other programs"),
-    detail: tx("Lets the assistant open and use the programs on this PC (Notepad, Excel, Settings and others): it reads a window's buttons, fields and text, and presses, types and picks in it, mostly without moving your mouse. It asks before it first does so in a chat, and every time before anything that sends, buys or deletes; it never types passwords. A strip at the top of the screen shows while it works, with Stop. Windows only for now."),
+    detail: tx("Lets the assistant open and use the programs on this PC (Notepad, Excel, Settings and others): it reads a window's buttons, fields and text, and presses, types and picks in it, mostly without moving your mouse. Where a window can't be read (games, remote desktops), a model that sees pictures can work from screenshots instead, using the mouse and keyboard step by step while SulcusAI steps aside. It asks before it first does so in a chat, and every time before anything that sends, buys or deletes; it never types passwords. A strip at the top of the screen shows while it works, with Stop. Windows only for now."),
   },
   images: {
     name: tx("Pictures"),

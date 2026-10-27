@@ -170,6 +170,7 @@ async fn e2e_install_load_and_chat() {
                 mmproj: None,
                 batch: 0,
                 lora: None,
+                steer: None,
             },
             None,
         )
@@ -234,7 +235,7 @@ async fn e2e_tool_call_probe() {
     let dest = paths.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: fit.ctx, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
     let body = serde_json::json!({
@@ -304,7 +305,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
 
@@ -441,7 +442,7 @@ async fn agent_harness_on(model_file: Option<(std::path::PathBuf, u32, u32)>, ru
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
     (state, ep, cipher)
@@ -468,7 +469,7 @@ pub(crate) async fn test_model() -> (engine::Engine, engine::Endpoint, String) {
     let name = gguf.file_name().unwrap().to_string_lossy().into_owned();
     let log = std::env::temp_dir().join(format!("sulcusai-e2e-engine-{}.log", uuid::Uuid::new_v4().simple()));
     let mut eng = engine::Engine::default();
-    let launch = engine::LaunchSpec { exe: &exe, model_path: &gguf, model_id: "test-agent", quant: "Q4_K_M", ctx, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
+    let launch = engine::LaunchSpec { exe: &exe, model_path: &gguf, model_id: "test-agent", quant: "Q4_K_M", ctx, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None, steer: None };
     let mut ep = eng.ensure_tuned(launch, engine::Tuning { cpu_moe: (cpu_moe > 0).then_some(cpu_moe), ..Default::default() }, None).await.unwrap();
     if name.to_lowercase().contains("gpt-oss") {
         let effort = crate::advanced::DEFAULT_REASONING;
@@ -499,7 +500,7 @@ async fn e2e_thinking_stops_at_its_budget() {
     let mut thought = Vec::new();
     for think in [Some(256), None] {
         let mut eng = engine::Engine::default();
-        let launch = engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None };
+        let launch = engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 999, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora: None, steer: None };
         let ep = eng.ensure_tuned(launch, engine::Tuning { think_budget: think, ..Default::default() }, None).await.unwrap();
         let t = std::time::Instant::now();
         let v: serde_json::Value = crate::net::local_client().post(ep.url("/v1/chat/completions")).bearer_auth(&ep.key).json(&ask).send().await.unwrap().json().await.unwrap();
@@ -1452,7 +1453,7 @@ async fn dubbed_for_test(clip: &[u8], secs: f64, keep: f64, voice: Option<&str>,
     let exe = engine::installed_server(&real, &state.catalog.engine, engine::backend_for(&budget).unwrap()).unwrap();
     let file = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
-    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None).await.unwrap();
+    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None).await.unwrap();
 
     let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "a clip".into(), seconds: secs, ..Default::default() }, clip, None).unwrap();
     let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, keep]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
@@ -1502,6 +1503,30 @@ async fn e2e_a_video_gets_sound() {
     assert!((p.seconds - 8.0).abs() < 0.6 && p.audio && with.op == "video_sound");
     let sounds = store::list(&state.db.lock().unwrap(), &c, Some("audio"), 10, None);
     assert!(!sounds.is_empty(), "the sound made is in the gallery too");
+}
+
+/// A clip with its sound made together (LTX-2.3, installed by the test,
+/// about 26 GB): 5 s from a description with speech and a crowd in it.
+/// It comes out as an MP4 with sound, as long as asked. Written to
+/// C:\dev\tools\voice\tests\e2e-video-with-sound.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_video_comes_with_its_sound() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    media::install_for_test(&state, "ltx-2.3-distilled").await.unwrap();
+    let started = std::time::Instant::now();
+    let prompt = "A man in a blue jacket stands at a microphone on a small outdoor stage and says \"Good evening, everybody!\" The crowd in front of him cheers and claps.";
+    let made = media::run(&state, store::new_id(), Request { op: "video".into(), model_id: Some("ltx-2.3-distilled".into()), prompt: prompt.into(), seconds: Some(5.0), ..Default::default() }).await.unwrap().remove(0);
+    println!("made in {:.0} s", started.elapsed().as_secs_f64());
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-video-with-sound.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&Paths::new(app_data_dir()).unwrap().engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("with sound: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
+    assert!(p.audio && made.mime == "video/mp4", "the clip has its sound");
+    assert!((p.seconds - 5.0).abs() < 0.4, "{} s", p.seconds);
 }
 
 /// A portrait made to talk (Wan 2.2 S2V, installed by the test, about
@@ -1645,6 +1670,95 @@ async fn e2e_the_lens_sees_and_edits() {
     assert!(copy_path.starts_with(&state.paths.models) || copy_path.exists());
     let _ = std::fs::remove_file(&copy_path);
     assert!(!e.pieces.is_empty());
+}
+
+/// Steering, on Qwen3 4B 2507: a direction found from "cheerful" against
+/// "gloomy" (llama.cpp's control-vector maker, on the card), then the same
+/// question asked as the model is and steered each way. Until the maker's
+/// zip is on the `engines` release, SULCUSAI_LENS_ZIP points at it. The
+/// direction is deleted afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_model_is_steered() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let file = real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+    crate::local::import(&state, &file).unwrap();
+    let id = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.local.as_ref().is_some_and(|l| std::path::Path::new(&l.path) == file)).unwrap().id;
+    if let (Some(zip), Some(t)) = (std::env::var_os("SULCUSAI_LENS_ZIP"), state.catalog.lens.as_ref()) {
+        let dir = state.paths.engines.join(format!("lens-tools-{}", t.build));
+        if !dir.join("llama-cvector-generator.exe").is_file() {
+            crate::engine::unzip_for_test(std::path::Path::new(&zip), &dir).unwrap();
+        }
+    }
+    let started = std::time::Instant::now();
+    let d = crate::steer::make(&state, Some(&id), "Cheerful", "cheerful", "gloomy", |s, f| println!("  {s} {:.0}%", f * 100.0)).await.unwrap();
+    println!("direction in {:.0} s: {} pairs, layers {}-{} of {}", started.elapsed().as_secs_f64(), d.pairs, d.from, d.to, d.layers);
+    let prompt = "Describe your morning in two sentences.";
+    let say = |w: crate::lens::Words| w.pieces.iter().map(|p| p.text.as_str()).collect::<String>();
+    let plain = say(crate::lens::words(&state, Some(&id), prompt, "", 5, 60).await.unwrap());
+    let c = state.work_cipher().unwrap();
+    let mut toward = Vec::new();
+    for s in [1.0f32, -1.0] {
+        {
+            let conn = state.db.lock().unwrap();
+            let mut all = crate::steer::list(&conn, &c);
+            all.iter_mut().for_each(|x| x.strength = s);
+            crate::db::set(&conn, "lens_directions", &c.encrypt(&serde_json::to_string(&all).unwrap())).unwrap();
+        }
+        let steered = say(crate::lens::words(&state, Some(&format!("steer:{}", d.id)), prompt, "", 5, 60).await.unwrap());
+        println!("{s:+}: {steered:?}");
+        toward.push(steered);
+    }
+    println!("as it is: {plain:?}");
+    state.engine.lock().await.stop().await;
+    assert!(toward.iter().all(|s| !s.trim().is_empty()));
+    assert!(toward[0] != plain && toward[1] != plain && toward[0] != toward[1], "steering changes the reply");
+    {
+        let conn = state.db.lock().unwrap();
+        assert!(crate::steer::exists(&conn, &d.id));
+    }
+    let file = state.paths.models.join("lens-steer").join(format!("{}.gguf", d.id));
+    assert!(file.is_file());
+    let _ = std::fs::remove_file(file);
+}
+
+/// The screen agent's eyes, on a made-up desktop (C:\dev\tools\screen-test\
+/// save-box.png: Notepad's "Do you want to save changes" box, drawn by
+/// scripts in the scratchpad, buttons Save 690-860, Don't save 880-1050,
+/// Cancel 1070-1240 across, 560-610 down, on 1920x1080): it points at the
+/// right button for two tasks. Nothing on the real screen is touched.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_the_screen_agent_points_at_the_right_button() {
+    let state = media_state();
+    for reader in ["qwen3-vl-4b", "qwen3.5-9b"] {
+        let dir = state.paths.models.join(reader);
+        let Some(file) = std::fs::read_dir(&dir).ok().into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.ends_with(".gguf") && !n.starts_with("mmproj")) else { continue };
+        let size = std::fs::metadata(dir.join(&file)).unwrap().len();
+        crate::db::save_installed(&state.db.lock().unwrap(), &crate::db::InstalledModel { model_id: reader.into(), quant: "Q4_K_M".into(), path: file, size, installed_at: 0, tps: None, prompt_tps: None }).unwrap();
+    }
+    assert!(crate::vision::can_read(&state, None), "a picture reader is here");
+    let screen = image::open(r"C:\dev\tools\screen-test\save-box.png").unwrap().to_rgba8();
+    let inside = |s: &crate::screen_agent::Step, (x0, x1): (f64, f64)| match s.act {
+        crate::screen_agent::Act::Click { x, y, .. } => {
+            let (px, py) = (x / 1000.0 * 1920.0, y / 1000.0 * 1080.0);
+            println!("  clicks at ({px:.0}, {py:.0}) for: {}", s.why);
+            px >= x0 && px <= x1 && (560.0..=610.0).contains(&py)
+        }
+        _ => {
+            println!("  not a click: {:?}", s.act);
+            false
+        }
+    };
+    let started = std::time::Instant::now();
+    let (name, s) = crate::screen_agent::decide(&state, None, "Close this box without saving the file.", screen.clone()).await.unwrap();
+    println!("{name}, {:.0} s:", started.elapsed().as_secs_f64());
+    let right_one = inside(&s, (880.0, 1050.0));
+    let (_, c) = crate::screen_agent::decide(&state, None, "Press Cancel.", screen).await.unwrap();
+    let cancel = inside(&c, (1070.0, 1240.0));
+    state.engine.lock().await.stop().await;
+    assert!(right_one && cancel, "it pointed at Don't save and at Cancel");
 }
 
 /// Programs, live (drives the mouse and keyboard; his go-ahead 2026-10-26):
@@ -1806,7 +1920,7 @@ async fn e2e_a_video_gets_captions() {
     let exe = engine::installed_server(&real, &state.catalog.engine, engine::backend_for(&budget).unwrap()).unwrap();
     let file = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
-    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None).await.unwrap();
+    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None).await.unwrap();
     let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
     let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "an explainer".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
     let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, 20.0]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
@@ -2949,7 +3063,7 @@ async fn e2e_perf_limits_reach_the_engine() {
     let cool = perf::limits(&PerfSettings { mode: Mode::Cool, ..Default::default() }, &hw, false);
     let (ctx, layers) = catalog::launch_within(&spec, "Q4_K_M", &full, &cool);
     println!("cool: {} threads, ctx {ctx}, {layers} layers, low priority {}", cool.threads, cool.low_priority);
-    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None, batch: 0, lora: None };
+    let launch = |ctx, layers, l: &perf::Limits| engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: l.threads, low_priority: l.low_priority, log: &log, mmproj: None, batch: 0, lora: None, steer: None };
     let ep = eng.ensure(launch(ctx, layers, &cool), None).await.unwrap();
     let text = std::fs::read_to_string(&log).unwrap();
     let line = text.lines().find(|l| l.contains("n_threads")).unwrap_or("");
@@ -6191,7 +6305,7 @@ async fn e2e_vision() {
     let mut eng = engine::Engine::default();
     let ep = eng
         .ensure(
-            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj), batch: 0, lora: None },
+            engine::LaunchSpec { exe: &exe, model_path: &dest, model_id: &spec.id, quant: "Q4_K_M", ctx: 8192, gpu_layers: 99, threads: 0, low_priority: false, log: &paths.engine_log(), mmproj: Some(&mmproj), batch: 0, lora: None, steer: None },
             None,
         )
         .await
@@ -6254,7 +6368,7 @@ async fn e2e_chat_makes_pictures() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some(spec.id.clone())).unwrap();
@@ -6305,7 +6419,7 @@ async fn e2e_chat_real_photo_and_uploaded_edit() {
         .engine
         .lock()
         .await
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: "test-chat", quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: "test-chat", quant: "Q4_K_M", ctx: 16384, gpu_layers: 99, threads: 0, low_priority: false, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
     let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
@@ -6439,7 +6553,7 @@ async fn e2e_local_models() {
     let path = std::path::PathBuf::from(&small.local.as_ref().unwrap().path);
     let mut eng = engine::Engine::default();
     let ep = eng
-        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None }, None)
+        .ensure(engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &small.id, quant: &small.variants[0].quant, ctx: 2048, gpu_layers: 0, threads: 4, low_priority: true, log: &state.paths.engine_log(), mmproj: None, batch: 0, lora: None, steer: None }, None)
         .await
         .unwrap();
     let tps = engine::measure(&ep).await.unwrap().tps;
@@ -6650,7 +6764,7 @@ async fn e2e_cloud_openai() {
     let path = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
     let log = std::env::temp_dir().join("sulcusai-cloud-e2e.log");
     let mut eng = engine::Engine::default();
-    let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None };
+    let launch = engine::LaunchSpec { exe: &exe, model_path: &path, model_id: &spec.id, quant: "Q4_K_M", ctx: 4096, gpu_layers: 0, threads: 4, low_priority: true, log: &log, mmproj: None, batch: 0, lora: None, steer: None };
     let local = eng.ensure(launch, None).await.unwrap();
     let model = crate::cloud::CloudModel { id: "qwen3-1.7b".into(), name: "Stand-in".into(), ctx: 4096, max_output: 512, vision: false, price_in: Some(1.0), price_out: Some(2.0) };
     let state = cloud_state(crate::cloud::Provider { id: "custom-test".into(), name: "Test provider".into(), kind: crate::cloud::Kind::Openai, base_url: local.url("/v1"), enabled: true, key: local.key.clone(), models: vec![model], media: Vec::new(), cookies: String::new(), share_pcs: false, share_people: vec![], proxy: String::new() });
@@ -6754,7 +6868,7 @@ async fn e2e_lora_adapter() {
     let path = std::path::PathBuf::from(&adapter);
     for lora in [None, Some(path.as_path())] {
         let ep = eng
-            .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 2048, gpu_layers: 99, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora }, None)
+            .ensure(engine::LaunchSpec { exe: &exe, model_path: &model, model_id: &spec.id, quant: "Q4_K_M", ctx: 2048, gpu_layers: 99, threads: 0, low_priority: false, log: &log, mmproj: None, batch: 0, lora, steer: None }, None)
             .await
             .unwrap();
         let reply = ask(ep).await;

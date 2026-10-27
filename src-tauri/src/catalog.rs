@@ -45,6 +45,9 @@ pub struct Catalog {
     pub embedding: Option<crate::media::MediaFile>,    /// What one-click add-ons run on (Node.js, uv).
     #[serde(default)]
     pub addons: Option<crate::addons::Runtimes>,
+    /// The Lens's control-vector maker (steering).
+    #[serde(default)]
+    pub lens: Option<crate::steer::LensTools>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -18,7 +18,7 @@ import {
   type QueueItem,
   type RunMode,
   type CloudChoice,
-  type TaughtAdapter,
+  type LensDirection, type TaughtAdapter,
 } from "../api";
 import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
@@ -237,10 +237,18 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     api.finetuneView().then((v) => setTaught(v.adapters)).catch(() => {});
   }, []);
   const teach = taught.find((a) => `adapter:${a.id}` === modelId) ?? null;
+  // Models steered in the Lens (a model plus a direction).
+  const [steered, setSteered] = useState<LensDirection[]>([]);
+  useEffect(() => {
+    api.lensDirections().then(setSteered).catch(() => {});
+  }, []);
+  const steering = steered.find((d) => `steer:${d.id}` === modelId) ?? null;
+  const steerBase = steering ? installed.find((m) => m.id === steering.model_id) ?? null : null;
+  const steerLabel = (d: LensDirection) => `${installed.find((m) => m.id === d.model_id)?.name ?? d.model_id}, ${t("steered")}: ${d.name} (${d.strength > 0 ? "+" : ""}${d.strength.toFixed(1)})`;
   const cloudId = modelId?.startsWith("cloud:") ? modelId : null;
   const teachBase = teach ? installed.find((m) => m.id === teach.base) ?? null : null;
-  const modelName = model?.name ?? (teach ? `${teach.base_name} + ${teach.name}` : null) ?? cloud?.name ?? (computeModel ? t("{name} on {pc}", { name: computeModel.name, pc: compute.pc }) : null);
-  const canTools = model ? model.tools : teachBase ? teachBase.tools : computeModel ? computeModel.tools : !!cloud;
+  const modelName = model?.name ?? (teach ? `${teach.base_name} + ${teach.name}` : null) ?? (steering ? steerLabel(steering) : null) ?? cloud?.name ?? (computeModel ? t("{name} on {pc}", { name: computeModel.name, pc: compute.pc }) : null);
+  const canTools = model ? model.tools : teachBase ? teachBase.tools : steerBase ? steerBase.tools : computeModel ? computeModel.tools : !!cloud;
   const canSee = model ? !!model.vision : computeModel ? computeModel.vision : !!cloud?.vision;
   const webOn = connectivity !== "offline" || chat.web;
   // The Web search feature: search and reading pages in every chat, even Offline.
@@ -897,7 +905,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
             <select value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
-              {cloudChoices.length > 0 || cloudId || taught.length > 0 || compute.models.length > 0 ? (
+              {cloudChoices.length > 0 || cloudId || taught.length > 0 || steered.length > 0 || compute.models.length > 0 ? (
                 <optgroup label={t("On this PC")}>
                   {installed.map((m) => (
                     <option key={m.id} value={m.id}>
@@ -919,6 +927,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                       {a.base_name} + {a.name}
                     </option>
                   ))}
+                </optgroup>
+              )}
+              {steered.some((d) => installed.some((m) => m.id === d.model_id)) && (
+                <optgroup label={t("Steered in the Lens")}>
+                  {steered
+                    .filter((d) => installed.some((m) => m.id === d.model_id))
+                    .map((d) => (
+                      <option key={d.id} value={`steer:${d.id}`}>
+                        {steerLabel(d)}
+                      </option>
+                    ))}
                 </optgroup>
               )}
               {compute.models.length > 0 && (

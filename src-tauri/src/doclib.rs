@@ -344,6 +344,7 @@ async fn embedder(state: &Arc<AppState>) -> Result<engine::Endpoint, String> {
         mmproj: None,
         batch: 0,
         lora: None,
+        steer: None,
     };
     let ep = eng.ensure_tuned(spec, engine::Tuning { embedding: true, ..Default::default() }, state.job()).await?;
     crate::applog::line("library", &format!("Started the library's model on the {}", if on_card { "graphics card" } else { "processor" }));

@@ -511,6 +511,7 @@ async fn load(state: &Arc<AppState>, engine: &mut engine::Engine, installed: &db
         mmproj: None,
         batch: plan.batch,
         lora,
+        steer: None,
     };
     engine.ensure_tuned(launch, plan.tuning, state.job()).await
 }
