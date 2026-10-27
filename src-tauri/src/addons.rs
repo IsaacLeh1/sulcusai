@@ -174,7 +174,7 @@ pub fn spec_for(addon: &Addon, values: &HashMap<String, String>, node: Option<&s
             }
         }
     }
-    Ok(ServerSpec { command, args, env, cwd: None })
+    Ok(ServerSpec { command, args, env, cwd: None, ..Default::default() })
 }
 
 /// Fetches an add-on's package before it first starts, so starting it
@@ -257,7 +257,7 @@ pub async fn tools_for_test(state: &Arc<AppState>, id: &str, values: &HashMap<St
     let bin = node_exe.as_deref().or(uvx_exe.as_deref()).and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_default();
     let spec = spec_for(addon, values, node_exe.as_deref(), uvx_exe.as_deref(), env_for(state, &bin))?;
     warm(addon, &spec).await?;
-    let mut client = crate::mcp::Client::start(&spec, None).await?;
+    let mut client = crate::mcp::Client::start(&spec, None, state.settings().connectivity).await?;
     let tools = client.list_tools().await?;
     client.stop().await;
     Ok(tools.into_iter().map(|t| t.name).collect())

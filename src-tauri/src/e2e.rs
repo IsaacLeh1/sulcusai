@@ -2282,6 +2282,7 @@ async fn e2e_connector_and_skill() {
             name: "haiku-writer".into(),
             description: "Write any answer as a haiku".into(),
             body: "Answer as a single haiku (three lines: 5, 7 and 5 syllables). Put the word SKILL-OK on a fourth line.".into(),
+            ..Default::default()
         }],
         connectors: vec![],
     };

@@ -1028,7 +1028,7 @@ export interface McpTool {
 export interface Connector {
   id: string;
   name: string;
-  spec: { command: string; args: string[]; env: Record<string, string>; cwd: string | null };
+  spec: { command: string; args: string[]; env: Record<string, string>; cwd: string | null; url?: string; headers?: Record<string, string> };
   enabled: boolean;
   plugin: string | null;
   tools: McpTool[];
@@ -3229,7 +3229,7 @@ export const api = {
   deleteSchedule: (id: string) => invoke<void>("delete_schedule", { id }),
   runScheduleNow: (id: string) => invoke<string>("run_schedule_now", { id }),
   connectors: () => invoke<Connector[]>("list_connectors"),
-  saveConnector: (input: { id: string; name: string; command: string; args: string[]; env: Record<string, string> }) =>
+  saveConnector: (input: { id: string; name: string; command: string; args: string[]; env: Record<string, string>; url?: string; headers?: Record<string, string> }) =>
     invoke<Connector>("save_connector", { input }),
   deleteConnector: (id: string) => invoke<void>("delete_connector", { id }),
   setConnectorEnabled: (id: string, enabled: boolean) => invoke<void>("set_connector_enabled", { id, enabled }),

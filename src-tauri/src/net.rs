@@ -102,6 +102,17 @@ pub fn external_client(level: Connectivity, purpose: Purpose, chat_web: bool) ->
 /// The same, through `proxy` when given (a cloud provider reached only
 /// through a VPN's local proxy): only these requests take it.
 pub fn external_client_via(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>) -> Result<reqwest::Client, String> {
+    build(level, purpose, chat_web, proxy, purpose == Purpose::Cloud)
+}
+
+/// Client for a web service the person connected with a key in its
+/// headers (a remote connector): web rules, and like cloud providers never
+/// followed to another host or down to plain http.
+pub fn service_client(level: Connectivity) -> Result<reqwest::Client, String> {
+    build(level, Purpose::Web, false, None, true)
+}
+
+fn build(level: Connectivity, purpose: Purpose, chat_web: bool, proxy: Option<&str>, keyed: bool) -> Result<reqwest::Client, String> {
     match purpose {
         Purpose::ModelDownload => crate::offline::check(crate::offline::Keep::Downloads)?,
         Purpose::Search | Purpose::Web => crate::offline::check(crate::offline::Keep::Web)?,
@@ -121,7 +132,7 @@ pub fn external_client_via(level: Connectivity, purpose: Purpose, chat_web: bool
     }
     // Cloud providers and relays get keys: never follow them to another
     // host, or down to plain http (a key header would go along).
-    if purpose == Purpose::Cloud {
+    if keyed {
         b = b.redirect(reqwest::redirect::Policy::custom(|a| {
             let same_host = a.previous().last().is_some_and(|p| p.host_str() == a.url().host_str());
             if a.previous().len() < 5 && same_host && private_ok(a.url().as_str()) {

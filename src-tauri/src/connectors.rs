@@ -48,11 +48,38 @@ impl Connector {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Skill {
     pub name: String,
     pub description: String,
     pub body: String,
+    /// A skill in a folder of its own (SKILL.md): the folder, and its other
+    /// files (references, scripts), read with load_skill's `file`.
+    #[serde(default)]
+    pub dir: Option<String>,
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+impl Skill {
+    /// One of the skill's own files, as text: only inside its folder.
+    pub fn read_file(&self, rel: &str) -> Result<String, String> {
+        let dir = self.dir.as_deref().ok_or_else(|| format!("The {} skill has no other files.", self.name))?;
+        let rel = rel.trim().trim_start_matches(['/', '\\']).replace('\\', "/");
+        if !self.files.iter().any(|f| *f == rel) {
+            return Err(format!("The {} skill has no file {rel}. Its files: {}", self.name, self.files.join(", ")));
+        }
+        let path = Path::new(dir).join(&rel);
+        let canon = dunce::canonicalize(&path).map_err(|_| format!("{rel} is missing."))?;
+        if !canon.starts_with(dunce::canonicalize(dir).map_err(err)?) {
+            return Err(format!("{rel} is outside the skill's folder."));
+        }
+        let bytes = std::fs::read(&canon).map_err(err)?;
+        if bytes.len() > 300_000 {
+            return Err(format!("{rel} is too big to read here ({} KB).", bytes.len() / 1000));
+        }
+        String::from_utf8(bytes).map_err(|_| format!("{rel} isn't text."))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +161,7 @@ pub fn skills_prompt(skills: &[Skill]) -> String {
     let (inline, on_demand) = split_skills(skills);
     let mut s = String::from("\n\n## Skills\nWhen the user's request matches one of these skills, or names it, follow that skill's instructions exactly.");
     for k in &inline {
-        s.push_str(&format!("\n\n### Skill: {}\n{}\nInstructions:\n{}", k.name, k.description, k.body));
+        s.push_str(&format!("\n\n### Skill: {}\n{}\nInstructions:\n{}{}", k.name, k.description, k.body, files_note(k)));
     }
     if !on_demand.is_empty() {
         s.push_str("\n\nThese longer skills are summarized here; call load_skill with the name to read the full instructions before using one:");
@@ -143,6 +170,19 @@ pub fn skills_prompt(skills: &[Skill]) -> String {
         }
     }
     s
+}
+
+/// The skill's other files, for its instructions that point to them.
+fn files_note(k: &Skill) -> String {
+    if k.files.is_empty() {
+        return String::new();
+    }
+    format!("\n(This skill's files: {}. Read one with load_skill, giving its name and the file.)", k.files.join(", "))
+}
+
+/// A skill's instructions as load_skill gives them, with its files named.
+pub fn skill_text(k: &Skill) -> String {
+    format!("{}{}", k.body, files_note(k))
 }
 
 /// A connector tool the model can call this turn.
@@ -208,7 +248,7 @@ pub async fn ensure_running(state: &AppState, conn: &Connector) -> Result<Vec<Mc
         }
         clients.remove(&conn.id);
     }
-    let mut client = mcp::Client::start(&conn.spec, state.job()).await?;
+    let mut client = mcp::Client::start(&conn.spec, state.job(), state.settings().connectivity).await?;
     let tools = client.list_tools().await?;
     clients.insert(conn.id.clone(), client);
     Ok(tools)
@@ -279,16 +319,110 @@ fn parse_skill(text: &str, fallback: &str) -> Skill {
     if description.is_empty() {
         description = body.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')).unwrap_or("").chars().take(160).collect();
     }
-    Skill { name, description, body: body.trim().to_string() }
+    Skill { name, description, body: body.trim().to_string(), dir: None, files: Vec::new() }
 }
 
-fn read_manifest(dir: &Path) -> Result<Manifest, String> {
-    let text = std::fs::read_to_string(dir.join("plugin.json")).map_err(|_| "That folder has no plugin.json.".to_string())?;
-    let m: Manifest = serde_json::from_str(&text).map_err(|e| format!("plugin.json isn't valid: {e}"))?;
-    if m.name.trim().is_empty() {
-        return Err("plugin.json needs a name.".into());
+/// Skill folders (a SKILL.md each) in `dir`: the folder itself, folders in
+/// it, or folders in its skills folder (Claude's layout). Relative paths.
+fn skill_folders(dir: &Path) -> Vec<String> {
+    if dir.join("SKILL.md").is_file() {
+        return vec!["SKILL.md".into()];
     }
-    Ok(m)
+    let mut out = Vec::new();
+    for base in ["", "skills"] {
+        let Ok(entries) = std::fs::read_dir(dir.join(base)) else { continue };
+        for e in entries.flatten() {
+            if e.path().join("SKILL.md").is_file() {
+                let name = e.file_name().to_string_lossy().to_string();
+                out.push(if base.is_empty() { format!("{name}/SKILL.md") } else { format!("{base}/{name}/SKILL.md") });
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// A skill folder's other files (up to 60, three folders deep), relative
+/// with forward slashes.
+fn skill_extras(dir: &Path) -> Vec<String> {
+    fn walk(root: &Path, at: &Path, depth: u32, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(at) else { return };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let name = e.file_name().to_string_lossy().to_string();
+            if out.len() >= 60 || name.starts_with('.') || name == "node_modules" || name == "__pycache__" {
+                continue;
+            }
+            let p = e.path();
+            if p.is_dir() && depth < 3 {
+                walk(root, &p, depth + 1, out);
+            } else if p.is_file() && !(depth == 0 && name == "SKILL.md") {
+                if let Ok(rel) = p.strip_prefix(root) {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, 0, &mut out);
+    out
+}
+
+/// A folder's plugin: plugin.json; or a Claude Code plugin
+/// (.claude-plugin/plugin.json, skills in skills/, servers in .mcp.json);
+/// or just skill folders (Anthropic's SKILL.md format).
+fn read_manifest(dir: &Path) -> Result<Manifest, String> {
+    if let Ok(text) = std::fs::read_to_string(dir.join("plugin.json")) {
+        let m: Manifest = serde_json::from_str(&text).map_err(|e| format!("plugin.json isn't valid: {e}"))?;
+        if m.name.trim().is_empty() {
+            return Err("plugin.json needs a name.".into());
+        }
+        return Ok(m);
+    }
+    let skills = skill_folders(dir);
+    if let Ok(text) = std::fs::read_to_string(dir.join(".claude-plugin").join("plugin.json")) {
+        let v: Value = serde_json::from_str(&text).map_err(|e| format!(".claude-plugin/plugin.json isn't valid: {e}"))?;
+        let field = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let mcp_servers = std::fs::read_to_string(dir.join(".mcp.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| serde_json::from_value(v.get("mcpServers").cloned().unwrap_or(v)).ok())
+            .unwrap_or_default();
+        let name = field("name");
+        if name.trim().is_empty() {
+            return Err(".claude-plugin/plugin.json needs a name.".into());
+        }
+        return Ok(Manifest { name, version: field("version"), description: field("description"), skills, mcp_servers });
+    }
+    if skills.is_empty() {
+        return Err("That folder has no plugin.json, and no SKILL.md in it or in its folders.".into());
+    }
+    // Skills alone: named after the one skill, or the folder.
+    let first = parse_skill(&std::fs::read_to_string(dir.join(&skills[0])).unwrap_or_default(), "");
+    let folder = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let (name, description) = if skills.len() == 1 && !first.name.is_empty() { (first.name, first.description) } else { (folder, String::new()) };
+    Ok(Manifest { name, version: String::new(), description, skills, mcp_servers: HashMap::new() })
+}
+
+/// The skills in an installed plugin's folder; a SKILL.md brings its folder's
+/// other files.
+fn load_skills(dest: &Path, m: &Manifest) -> Result<Vec<Skill>, String> {
+    Ok(skill_files(dest, m)?
+        .iter()
+        .map(|f| {
+            let own_folder = f.file_name().is_some_and(|n| n == "SKILL.md");
+            let fallback = if own_folder { f.parent().and_then(|p| p.file_name()) } else { f.file_stem() }.map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let mut skill = parse_skill(&std::fs::read_to_string(f).unwrap_or_default(), &fallback);
+            if own_folder {
+                if let Some(d) = f.parent() {
+                    skill.files = skill_extras(d);
+                    skill.dir = Some(d.display().to_string());
+                }
+            }
+            skill
+        })
+        .collect())
 }
 
 fn plugin_id(name: &str) -> String {
@@ -304,6 +438,8 @@ fn expand(spec: &ServerSpec, dir: &Path) -> ServerSpec {
         args: spec.args.iter().map(x).collect(),
         env: spec.env.iter().map(|(k, v)| (k.clone(), x(v))).collect(),
         cwd: Some(spec.cwd.as_ref().map(x).unwrap_or_else(|| d.clone())),
+        url: x(&spec.url),
+        headers: spec.headers.iter().map(|(k, v)| (k.clone(), x(v))).collect(),
     }
 }
 
@@ -358,6 +494,11 @@ pub struct ConnectorInput {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// A server at an address instead of a program, with its headers.
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
 }
 
 #[tauri::command(async)]
@@ -368,7 +509,8 @@ pub fn list_connectors(state: AppStateRef) -> Result<Vec<Connector>, String> {
 
 #[tauri::command]
 pub async fn save_connector(state: AppStateRef<'_>, input: ConnectorInput) -> Result<Connector, String> {
-    save(&state, &input.id, &input.name, ServerSpec { command: input.command.trim().to_string(), args: input.args, env: input.env, cwd: None }).await
+    let spec = ServerSpec { command: input.command.trim().to_string(), args: input.args, env: input.env, cwd: None, url: input.url.trim().to_string(), headers: input.headers };
+    save(&state, &input.id, &input.name, spec).await
 }
 
 /// Adds or changes a connector (`id`: its id, or "" for a new one), and
@@ -376,8 +518,8 @@ pub async fn save_connector(state: AppStateRef<'_>, input: ConnectorInput) -> Re
 pub(crate) async fn save(state: &AppState, id: &str, name: &str, spec: ServerSpec) -> Result<Connector, String> {
     let c = state.cipher()?;
     let name = name.trim();
-    if name.is_empty() || spec.command.trim().is_empty() {
-        return Err("A connector needs a name and a command.".into());
+    if name.is_empty() || (spec.command.trim().is_empty() && !spec.remote()) {
+        return Err("A connector needs a name, and a command or an address.".into());
     }
     let existing = connectors(&state.db.lock().unwrap(), &c);
     if existing.iter().any(|x| x.name.eq_ignore_ascii_case(name) && x.id != id) {
@@ -399,7 +541,12 @@ pub(crate) async fn save(state: &AppState, id: &str, name: &str, spec: ServerSpe
     conn.tools = ensure_running(state, &conn).await?;
     let db_conn = state.db.lock().unwrap();
     store(&db_conn, &c, "connectors", &conn.id, &conn)?;
-    db::log_action(&db_conn, "privacy", "Added or changed a local connector (it runs a program on this PC)");
+    let what = if conn.spec.remote() {
+        format!("Added or changed a connector at {} (its tools send requests there)", crate::host_of(&conn.spec.url))
+    } else {
+        "Added or changed a local connector (it runs a program on this PC)".to_string()
+    };
+    db::log_action(&db_conn, "privacy", &what);
     Ok(conn)
 }
 
@@ -451,6 +598,9 @@ pub fn inspect_plugin(state: AppStateRef, path: String) -> Result<PluginPreview,
         .iter()
         .map(|(n, s)| {
             let s = expand(s, &dir);
+            if s.remote() {
+                return format!("{n}: {}", s.url);
+            }
             format!("{n}: {} {}", s.command, s.args.join(" ")).trim_end().to_string()
         })
         .collect();
@@ -474,13 +624,7 @@ pub async fn install_plugin(state: AppStateRef<'_>, path: String) -> Result<Plug
     let mut budget = 50 * 1024 * 1024;
     copy_dir(&src, &dest, &mut budget)?;
 
-    let skills = skill_files(&dest, &m)?
-        .iter()
-        .map(|f| {
-            let fallback = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            parse_skill(&std::fs::read_to_string(f).unwrap_or_default(), &fallback)
-        })
-        .collect();
+    let skills = load_skills(&dest, &m)?;
     let mut connector_ids = Vec::new();
     for (name, spec) in &m.mcp_servers {
         let conn = Connector {
@@ -563,14 +707,51 @@ mod tests {
 
     #[test]
     fn short_skills_are_inlined_and_long_ones_loaded_on_demand() {
-        let short = Skill { name: "short".into(), description: "d".into(), body: "Do X.".into() };
-        let long = Skill { name: "long".into(), description: "d".into(), body: "y".repeat(INLINE_SKILL_CHARS + 1) };
+        let short = Skill { name: "short".into(), description: "d".into(), body: "Do X.".into(), dir: None, files: Vec::new() };
+        let long = Skill { name: "long".into(), description: "d".into(), body: "y".repeat(INLINE_SKILL_CHARS + 1), dir: None, files: Vec::new() };
         let both = [short.clone(), long.clone()];
         let (inline, later) = split_skills(&both);
         assert_eq!(inline.len(), 1);
         assert_eq!(later[0].name, "long");
         let p = skills_prompt(&[short, long]);
         assert!(p.contains("Do X.") && p.contains("load_skill") && !p.contains(&"y".repeat(50)));
+    }
+
+    /// Anthropic's skill folders install as they are: one SKILL.md, a folder
+    /// of skill folders, or a Claude Code plugin (its skills/ and .mcp.json).
+    /// A skill's own files can be read, and nothing outside its folder.
+    #[test]
+    fn skill_folders_and_claude_plugins_install_as_they_are() {
+        let root = std::env::temp_dir().join(format!("sulcusai-skills-{}", uuid::Uuid::new_v4()));
+        let one = root.join("pdf");
+        std::fs::create_dir_all(one.join("references")).unwrap();
+        std::fs::write(one.join("SKILL.md"), "---\nname: pdf\ndescription: Fill and read PDF forms\n---\nRead references/forms.md first.").unwrap();
+        std::fs::write(one.join("references").join("forms.md"), "Forms: use the fields.").unwrap();
+        std::fs::write(root.join("secret.txt"), "no").unwrap();
+        let m = read_manifest(&one).unwrap();
+        assert_eq!((m.name.as_str(), m.description.as_str(), m.skills.clone()), ("pdf", "Fill and read PDF forms", vec!["SKILL.md".to_string()]));
+        let skills = load_skills(&one, &m).unwrap();
+        assert_eq!(skills[0].files, ["references/forms.md"]);
+        assert_eq!(skills[0].read_file("references/forms.md").unwrap(), "Forms: use the fields.");
+        assert!(skills[0].read_file("../secret.txt").is_err());
+        assert!(skill_text(&skills[0]).contains("references/forms.md"));
+
+        let plugin = root.join("kit");
+        std::fs::create_dir_all(plugin.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(plugin.join("skills").join("notes")).unwrap();
+        std::fs::write(plugin.join(".claude-plugin").join("plugin.json"), r#"{"name": "kit", "version": "1.2.0"}"#).unwrap();
+        std::fs::write(plugin.join("skills").join("notes").join("SKILL.md"), "---\nname: notes\ndescription: Tidy notes\n---\nTidy.").unwrap();
+        std::fs::write(plugin.join(".mcp.json"), r#"{"mcpServers": {"web": {"type": "http", "url": "https://example.com/mcp"}}}"#).unwrap();
+        let m = read_manifest(&plugin).unwrap();
+        assert_eq!((m.name.as_str(), m.version.as_str()), ("kit", "1.2.0"));
+        assert_eq!(m.skills, ["skills/notes/SKILL.md"]);
+        assert_eq!(m.mcp_servers["web"].url, "https://example.com/mcp");
+        assert_eq!(load_skills(&plugin, &m).unwrap()[0].name, "notes");
+
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(read_manifest(&empty).is_err());
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

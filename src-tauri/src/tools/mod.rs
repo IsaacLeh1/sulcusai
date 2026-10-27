@@ -359,7 +359,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "create_music", risk: Risk::Memory, params: media::create_music_params,
         description: "Make a song on this PC (with lyrics and vocals, or instrumental, up to 10 minutes) or a sound effect: its style, mood, instruments, voice, tempo, key and beat can be set. Also works on a song already made: a cover in another style, a part made again, more after its end, a part added or taken out." },
     ToolDef { name: "load_skill", risk: Risk::Read, params: load_skill_params,
-        description: "Read the instructions for one of your skills, by name." },
+        description: "Read the instructions for one of your skills, by name, or one of the skill's own files." },
     ToolDef { name: "ask_person", risk: Risk::Submit, params: crate::sync::people::ask::ask_params,
         description: "Ask the assistant of someone the user is linked with in People. It answers on their PC, with their model and only what they allow, and they may need to approve first. Use it for what only they would know, like details from chats they share or their plans. The question goes to them, so include only what's needed. Waits up to 3 minutes." },
     ToolDef { name: "work_with_person", risk: Risk::Submit, params: crate::sync::people::together::work_params,
@@ -385,7 +385,9 @@ pub const TOOLS: &[ToolDef] = &[
 ];
 
 fn load_skill_params() -> Value {
-    json!({ "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } })
+    json!({ "type": "object", "required": ["name"], "properties": {
+        "name": { "type": "string" },
+        "file": { "type": "string", "description": "One of the skill's own files to read instead (as its instructions name it, e.g. references/forms.md)." } } })
 }
 
 fn delegate_params() -> Value {

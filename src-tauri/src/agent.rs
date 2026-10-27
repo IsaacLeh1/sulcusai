@@ -429,7 +429,8 @@ impl Turn {
             extras.mcp = mcp_map;
             extras.problems = problems;
             extras.skills = connectors::active_skills(&self.state.db.lock().unwrap(), &self.cipher);
-            if !connectors::split_skills(&extras.skills).1.is_empty() {
+            // Longer skills are loaded when used; skills with files of their own read them with it too.
+            if !connectors::split_skills(&extras.skills).1.is_empty() || extras.skills.iter().any(|s| !s.files.is_empty()) {
                 if let Some(d) = tools::find("load_skill") {
                     defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
                 }
@@ -1606,9 +1607,14 @@ impl Turn {
         if call.name == "load_skill" {
             let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
             let wanted = args.get("name").and_then(Value::as_str).unwrap_or("");
-            return match extras.skills.iter().find(|s| s.name.eq_ignore_ascii_case(wanted)) {
-                Some(s) => Outcome::ok(s.body.clone(), format!("Loaded the {} skill", s.name), "text", None),
-                None => Outcome::error("Couldn't load a skill", format!("There's no skill called {wanted}.")),
+            let file = args.get("file").and_then(Value::as_str).filter(|f| !f.trim().is_empty());
+            return match (extras.skills.iter().find(|s| s.name.eq_ignore_ascii_case(wanted)), file) {
+                (Some(s), None) => Outcome::ok(connectors::skill_text(s), format!("Loaded the {} skill", s.name), "text", None),
+                (Some(s), Some(f)) => match s.read_file(f) {
+                    Ok(text) => Outcome::ok(text, format!("Read {f} from the {} skill", s.name), "text", None),
+                    Err(e) => Outcome::error(format!("Couldn't read {f}"), e),
+                },
+                (None, _) => Outcome::error("Couldn't load a skill", format!("There's no skill called {wanted}.")),
             };
         }
         let Some(def) = tools::find(&call.name) else {

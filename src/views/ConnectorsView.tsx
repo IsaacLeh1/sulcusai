@@ -31,7 +31,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const choosePlugin = async () => {
-    const path = await open({ directory: true, multiple: false, title: t("Choose a plugin folder (it contains plugin.json)") });
+    const path = await open({ directory: true, multiple: false, title: t("Choose a plugin or skill folder (with plugin.json or SKILL.md)") });
     if (typeof path !== "string") return;
     try {
       setPreview({ path, info: await api.inspectPlugin(path) });
@@ -83,6 +83,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
             <button className="btn small" onClick={choosePlugin}>{t("+ Install from folder…")}</button>
           </div>
           {plugins.length === 0 && <p className="muted small">{t("None installed.")}</p>}
+          <p className="muted small">{t("Skills made for Claude (a folder with SKILL.md, or a folder of them) and Claude Code plugins install as they are: their skills, the files those skills use, and their connectors.")}</p>
           {plugins.map((p) => (
             <div key={p.id} className="plugin">
               <div className="setting-row first">
@@ -187,7 +188,7 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
           <span>
             <strong>{c.name}</strong>
             <span className="small muted block">
-              {c.tools.length === 1 ? t("1 tool") : t("{n} tools", { n: c.tools.length })} · <code>{c.spec.command} {c.spec.args.join(" ")}</code>
+              {c.tools.length === 1 ? t("1 tool") : t("{n} tools", { n: c.tools.length })} · <code>{c.spec.url ? c.spec.url : `${c.spec.command} ${c.spec.args.join(" ")}`}</code>
             </span>
           </span>
           <span className="chev" aria-hidden>{open ? "▾" : "▸"}</span>
@@ -260,23 +261,30 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
   const [command, setCommand] = useState(initial?.spec.command ?? "");
   const [args, setArgs] = useState((initial?.spec.args ?? []).join("\n"));
   const [env, setEnv] = useState(Object.entries(initial?.spec.env ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"));
+  // A program on this PC, or a server at an address.
+  const [remote, setRemote] = useState(!!initial?.spec.url);
+  const [url, setUrl] = useState(initial?.spec.url ?? "");
+  const [headers, setHeaders] = useState(Object.entries(initial?.spec.headers ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n"));
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
     setSaving(true);
     try {
+      const headerMap: Record<string, string> = {};
+      for (const line of headers.split("\n").map((l) => l.trim()).filter(Boolean)) {
+        const i = line.indexOf(":");
+        if (i > 0) headerMap[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
       const envMap: Record<string, string> = {};
       for (const line of env.split("\n").map((l) => l.trim()).filter(Boolean)) {
         const i = line.indexOf("=");
         if (i > 0) envMap[line.slice(0, i).trim()] = line.slice(i + 1);
       }
-      const c = await api.saveConnector({
-        id: initial?.id ?? "",
-        name,
-        command,
-        args: args.split("\n").map((a) => a.trim()).filter(Boolean),
-        env: envMap,
-      });
+      const c = await api.saveConnector(
+        remote
+          ? { id: initial?.id ?? "", name, command: "", args: [], env: {}, url: url.trim(), headers: headerMap }
+          : { id: initial?.id ?? "", name, command, args: args.split("\n").map((a) => a.trim()).filter(Boolean), env: envMap },
+      );
       onSaved(c);
     } catch (e) {
       toast(errorText(e), "error");
@@ -286,7 +294,7 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
   };
 
   return (
-    <Modal title={initial ? t("Edit {name}", { name: initial.name }) : t("Add a local connector")} onClose={onClose}>
+    <Modal title={initial ? t("Edit {name}", { name: initial.name }) : t("Add a connector")} onClose={onClose}>
       <form
         className="form"
         onSubmit={(e) => {
@@ -298,22 +306,46 @@ function ConnectorEditor({ initial, onClose, onSaved, toast }: { initial: Connec
           {t("Name")}
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("files, calendar, notes…")} aria-label={t("files, calendar, notes…")} maxLength={40} autoFocus />
         </label>
-        <label>
-          {t("Command")}
-          <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t("npx, uvx, python, or a program path")} aria-label={t("npx, uvx, python, or a program path")} />
-        </label>
-        <label>
-          {t("Arguments")} <span className="muted small">{t("(one per line)")}</span>
-          <textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} placeholder={"-y\n@modelcontextprotocol/server-everything"} />
-        </label>
-        <label>
-          {t("Environment variables")} <span className="muted small">{t("(KEY=value per line; stored encrypted)")}</span>
-          <textarea className="input mono" rows={2} value={env} onChange={(e) => setEnv(e.target.value)} />
-        </label>
-        <p className="muted small">{t("Saving starts the program once to check that it works and to list its tools.")}</p>
+        <div className="filters" role="radiogroup" aria-label={t("Where the connector is")}>
+          <button type="button" role="radio" aria-checked={!remote} className={`chip ${!remote ? "active" : ""}`} onClick={() => setRemote(false)}>
+            {t("A program on this PC")}
+          </button>
+          <button type="button" role="radio" aria-checked={remote} className={`chip ${remote ? "active" : ""}`} onClick={() => setRemote(true)}>
+            {t("A server at an address")}
+          </button>
+        </div>
+        {remote ? (
+          <>
+            <label>
+              {t("Address")}
+              <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/mcp" aria-label={t("Address")} />
+            </label>
+            <label>
+              {t("Headers")} <span className="muted small">{t("(Name: value per line, such as a key; stored encrypted)")}</span>
+              <textarea className="input mono" rows={2} value={headers} onChange={(e) => setHeaders(e.target.value)} placeholder="Authorization: Bearer …" />
+            </label>
+            <p className="muted small">{t("Saving connects once to list its tools. Its tools send what the assistant gives them to that address, so it needs web access (Local AI + Web or Cloud). Plain http works only for servers on this PC.")}</p>
+          </>
+        ) : (
+          <>
+            <label>
+              {t("Command")}
+              <input className="input" value={command} onChange={(e) => setCommand(e.target.value)} placeholder={t("npx, uvx, python, or a program path")} aria-label={t("npx, uvx, python, or a program path")} />
+            </label>
+            <label>
+              {t("Arguments")} <span className="muted small">{t("(one per line)")}</span>
+              <textarea className="input mono" rows={3} value={args} onChange={(e) => setArgs(e.target.value)} placeholder={"-y\n@modelcontextprotocol/server-everything"} />
+            </label>
+            <label>
+              {t("Environment variables")} <span className="muted small">{t("(KEY=value per line; stored encrypted)")}</span>
+              <textarea className="input mono" rows={2} value={env} onChange={(e) => setEnv(e.target.value)} />
+            </label>
+            <p className="muted small">{t("Saving starts the program once to check that it works and to list its tools.")}</p>
+          </>
+        )}
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !command.trim()}>
+          <button type="submit" className="btn primary" disabled={saving || !name.trim() || (remote ? !url.trim() : !command.trim())}>
             {saving ? t("Connecting…") : t("Save and connect")}
           </button>
         </div>
