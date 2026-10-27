@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! schedule_task: sets up a scheduled task when the user asks for something
-//! to happen by itself at set times ("every morning at 8, give me the news"),
+//! to happen by itself at set times ("every morning at 8, give me the news")
+//! or when something happens ("when mail from Dana comes in, sum it up"),
 //! the way ChatGPT's Tasks work. The user approves it first, and it runs
 //! read-only, like the tasks made under Scheduled.
 
@@ -14,7 +15,14 @@ pub fn schedule_task_params() -> Value {
     json!({ "type": "object", "required": ["name", "prompt", "repeat"], "properties": {
         "name": { "type": "string", "description": "A short name, e.g. \"Morning news\"." },
         "prompt": { "type": "string", "description": "What to do each time, written as the user's request, e.g. \"Give me today's top 5 news stories, a few lines each.\"" },
-        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly", "days", "dates"] },
+        "repeat": { "type": "string", "enum": ["once", "hourly", "daily", "weekdays", "weekly", "days", "dates", "on_mail", "on_event", "on_file", "on_start"],
+            "description": "When it runs: at set times, or when something happens: on_mail (new mail arrives), on_event (a calendar event is about to start), on_file (a file appears in a folder), on_start (SulcusAI starts)." },
+        "from": { "type": "string", "description": "For on_mail: only mail from this person (part of their name or address)." },
+        "subject": { "type": "string", "description": "For on_mail: only mail with these words in the subject." },
+        "minutes": { "type": "integer", "description": "For on_event: how many minutes before the event starts (default 15)." },
+        "title": { "type": "string", "description": "For on_event: only events with these words in their title." },
+        "folder": { "type": "string", "description": "For on_file: the folder to watch, a full path like C:\\Users\\me\\Downloads." },
+        "pattern": { "type": "string", "description": "For on_file: only files with this in their name, e.g. \".pdf\" or \"invoice\"." },
         "time": { "type": "string", "description": "The time of day, e.g. \"08:00\" or \"6:30 pm\" (for once, daily, weekdays and weekly)." },
         "times": { "type": "array", "items": { "type": "string" }, "description": "For days and dates: every time of day it runs, e.g. [\"08:00\", \"18:00\"]." },
         "date": { "type": "string", "description": "For once: the day, e.g. \"2026-10-20\" (today if left out)." },
@@ -120,7 +128,11 @@ pub fn cadence_of(args: &Value) -> Result<Cadence, String> {
             }
             Cadence::Dates { dates, times: times(args)? }
         }
-        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly, days, dates.")),
+        "on_mail" => Cadence::OnMail { from: text("from").unwrap_or_default().into(), subject: text("subject").unwrap_or_default().into() },
+        "on_event" => Cadence::OnEvent { minutes: args.get("minutes").and_then(Value::as_u64).unwrap_or(15).min(1440) as u32, title: text("title").unwrap_or_default().into() },
+        "on_file" => Cadence::OnFile { folder: text("folder").ok_or("Say which folder to watch (folder), as a full path.")?.into(), name: text("pattern").unwrap_or_default().into() },
+        "on_start" => Cadence::OnStart,
+        other => return Err(format!("repeat {other:?} isn't one of once, hourly, daily, weekdays, weekly, days, dates, on_mail, on_event, on_file, on_start.")),
     })
 }
 
@@ -155,6 +167,7 @@ fn name_and_prompt(args: &Value) -> Result<(String, String), String> {
 pub fn preview(args: &Value) -> Result<Preview, String> {
     let (name, prompt) = name_and_prompt(args)?;
     let cadence = cadence_of(args)?;
+    schedule::check_trigger(&cadence)?;
     let actions = actions_of(args)?;
     let once = matches!(cadence, Cadence::Once { .. });
     let note = if actions.is_empty() {
@@ -183,10 +196,14 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         Err(e) => return Outcome::error(format!("Schedule “{name}”"), e),
     };
     let next = match schedule::next_run(&cadence, Local::now()) {
-        Ok(Some(t)) => t,
+        Ok(Some(t)) => Some(t),
+        Ok(None) if schedule::is_trigger(&cadence) => None,
         Ok(None) => return Outcome::error(format!("Schedule “{name}”"), "That time has already passed. Pick a later one."),
         Err(e) => return Outcome::error(format!("Schedule “{name}”"), e),
     };
+    if let Err(e) = schedule::check_trigger(&cadence) {
+        return Outcome::error(format!("Schedule “{name}”"), e);
+    }
     let conn = ctx.memory.db.lock().unwrap();
     let chat = crate::db::chat(&conn, ctx.memory.cipher, ctx.memory.chat_id);
     let s = Schedule {
@@ -200,19 +217,24 @@ pub fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
         actions: actions.clone(),
         enabled: true,
         last_run: None,
-        next_run: Some(next.timestamp_millis()),
+        next_run: next.map(|t| t.timestamp_millis()),
         last_chat: None,
+        armed: schedule::is_trigger(&cadence).then(crate::db::now_ms),
+        handled: Vec::new(),
     };
     if let Err(e) = schedule::save(&conn, ctx.memory.cipher, &s) {
         return Outcome::error(format!("Couldn't schedule “{name}”"), e);
     }
     crate::db::log_action(&conn, "agent", "Saved a scheduled task (the assistant asked)");
     let when = schedule::describe(&cadence);
-    let first = next.format("%A, %B %-d at %-I:%M %p");
+    let first = match next {
+        Some(t) => format!(", first on {}", t.format("%A, %B %-d at %-I:%M %p")),
+        None => String::new(),
+    };
     let place = if matches!(cadence, Cadence::Once { .. }) { "Tasks (it's done once it runs)" } else { "Scheduled" };
     let may = if actions.is_empty() { String::new() } else { format!(" When it runs it will {} by itself, as approved.", said(&actions)) };
     Outcome::ok(
-        format!("Scheduled “{name}”: {when}, first on {first}.{may} It runs while SulcusAI is open, and each run is saved as a chat; the user can see, change or cancel it under {place}. Tell them that in a sentence."),
+        format!("Scheduled “{name}”: {when}{first}.{may} It runs while SulcusAI is open, and each run is saved as a chat; the user can see, change or cancel it under {place}. Tell them that in a sentence."),
         format!("Scheduled “{name}”: {when}"),
         "text",
         None,
@@ -236,6 +258,10 @@ mod tests {
         assert_eq!(cadence_of(&json!({ "repeat": "weekly", "weekday": "friday", "time": "5pm" })).unwrap(), Cadence::Weekly { weekday: 4, time: "17:00".into() });
         assert_eq!(cadence_of(&json!({ "repeat": "hourly", "minute": 15 })).unwrap(), Cadence::Hourly { minute: 15 });
         assert!(cadence_of(&json!({ "repeat": "daily" })).is_err(), "a time is needed");
+        assert_eq!(cadence_of(&json!({ "repeat": "on_mail", "from": "Dana" })).unwrap(), Cadence::OnMail { from: "Dana".into(), subject: String::new() });
+        assert_eq!(cadence_of(&json!({ "repeat": "on_event" })).unwrap(), Cadence::OnEvent { minutes: 15, title: String::new() });
+        assert!(cadence_of(&json!({ "repeat": "on_file" })).is_err(), "a folder is needed");
+        assert!(preview(&json!({ "name": "Watch", "prompt": "Sum it up", "repeat": "on_file", "folder": r"C:\no\such\folder" })).is_err());
         let p = preview(&json!({ "name": "Morning news", "prompt": "Top news", "repeat": "weekdays", "time": "08:00" })).unwrap();
         assert!(p.title.contains("Morning news"), "{}", p.title);
     }

@@ -930,7 +930,15 @@ export type Cadence =
   /** The chosen days of the week (0 = Monday), at each of the times ("08:00"). */
   | { kind: "days"; weekdays: number[]; times: string[] }
   /** The chosen dates ("2026-10-24"), at each of the times. */
-  | { kind: "dates"; dates: string[]; times: string[] };
+  | { kind: "dates"; dates: string[]; times: string[] }
+  /** New mail, from someone (part of a name or address) and with words in the subject, when given. */
+  | { kind: "on_mail"; from: string; subject: string }
+  /** A calendar event about to start, this many minutes before; only titles with these words, when given. */
+  | { kind: "on_event"; minutes: number; title: string }
+  /** A file appearing in a folder; only names with this in them, when given. */
+  | { kind: "on_file"; folder: string; name: string }
+  /** Each time SulcusAI starts. */
+  | { kind: "on_start" };
 
 export interface Schedule {
   id: string;
@@ -946,6 +954,10 @@ export interface Schedule {
   last_run: number | null;
   next_run: number | null;
   last_chat: string | null;
+  /** When a trigger was set up (only what happens after counts). */
+  armed?: number | null;
+  /** What a trigger already ran for. */
+  handled?: string[];
 }
 
 export interface ScheduleView extends Schedule {

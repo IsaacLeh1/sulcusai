@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { api, errorText, on, type Cadence, type ModelCard, type Project, type Schedule, type ScheduleView } from "../api";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
@@ -10,6 +11,18 @@ const DAYS = [tx("Monday"), tx("Tuesday"), tx("Wednesday"), tx("Thursday"), tx("
 function when(ms: number | null) {
   return ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
 }
+
+/** Runs when something happens, not at set times. */
+export const isTrigger = (c: Cadence) => c.kind.startsWith("on_");
+
+/** The ready-made morning brief: today's calendar, the mail that matters
+ * and the weather, every day at a time the person picks. */
+export const MORNING_BRIEF = {
+  name: tx("Morning brief"),
+  prompt: tx(
+    "Give me my morning brief for today, short and under three headings. Calendar: today's events in order, each with its time and place. Mail: the messages since yesterday morning that matter (from people, needing a reply or bringing news; not newsletters, ads or receipts), a line each saying who it's from and what it's about. Weather: today's weather where I am, with the high, the low and any rain or snow.",
+  ),
+};
 
 interface Props {
   installed: ModelCard[];
@@ -57,7 +70,17 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
             <h1>{t("Scheduled")}</h1>
             <p className="muted">{t("Tasks that run on their own while SulcusAI is open, such as a morning summary of a notes folder. Each run is saved as a chat.")}</p>
           </div>
-          <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
+          <div className="row">
+            <button
+              className="btn"
+              onClick={() => setEditing({ ...blank(), name: t(MORNING_BRIEF.name), prompt: t(MORNING_BRIEF.prompt), cadence: { kind: "days", weekdays: [0, 1, 2, 3, 4, 5, 6], times: ["07:30"] } })}
+              disabled={installed.length === 0}
+              title={t("Today's calendar, the mail that matters and the weather, at a time you pick")}
+            >
+              {t("+ Morning brief")}
+            </button>
+            <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
+          </div>
         </header>
         <details className="card how-it-runs">
           <summary>{t("How tasks run without a model always loaded")}</summary>
@@ -65,6 +88,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
             <li>{t("SulcusAI looks at the list every 30 seconds while it's open, in a window or as the tray icon. That takes almost nothing: no model is loaded for it.")}</li>
             <li>{t("When a task is due, the model it uses loads, does the task and saves what it wrote as a chat, and you get a note. The model unloads again once it has been idle for a while (you set how long in Settings, Performance).")}</li>
             <li>{t("If the PC was off or SulcusAI was closed when a task was due, it runs once when SulcusAI starts again. A task waits while a chat is answering, then runs.")}</li>
+            <li>{t("Tasks can also run when something happens: new mail (seen when mail is next fetched, every 10 minutes), a calendar event about to start, a file appearing in a folder, or SulcusAI starting. What set it off is told to the task as information, never as instructions.")}</li>
             <li>{t("While SulcusAI is locked, tasks run only if “Keep working while locked” is on (Settings, Privacy & security).")}</li>
           </ul>
         </details>
@@ -78,7 +102,7 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
                 <strong>{s.name}</strong>
                 {s.allow_changes && <span className="tag warn">{t("May change files")}</span>}
                 <span className="small muted block">
-                  {s.when} · {s.enabled ? t("next {time}", { time: when(s.next_run) }) : t("next paused")}
+                  {s.when} · {isTrigger(s.cadence) ? (s.enabled ? t("watching") : t("paused")) : s.enabled ? t("next {time}", { time: when(s.next_run) }) : t("next paused")}
                   {s.last_run ? ` · ${t("last {time}", { time: when(s.last_run) })}` : ""}
                 </span>
               </div>
@@ -214,6 +238,10 @@ function ScheduleEditor({
                 const k = e.target.value as Cadence["kind"];
                 if (k === "once") setCadence({ kind: "once", at: Date.now() + 3_600_000 });
                 else if (k === "hourly") setCadence({ kind: "hourly", minute: 0 });
+                else if (k === "on_mail") setCadence({ kind: "on_mail", from: "", subject: "" });
+                else if (k === "on_event") setCadence({ kind: "on_event", minutes: 15, title: "" });
+                else if (k === "on_file") setCadence({ kind: "on_file", folder: "", name: "" });
+                else if (k === "on_start") setCadence({ kind: "on_start" });
                 else if (k === "dates") setCadence({ kind: "dates", dates: [], times });
                 else setCadence({ kind: "days", weekdays: [0, 1, 2, 3, 4], times });
               }}
@@ -222,6 +250,12 @@ function ScheduleEditor({
               <option value="dates">{t("On dates I pick")}</option>
               <option value="hourly">{t("Every hour")}</option>
               <option value="once">{t("Once")}</option>
+              <optgroup label={t("When something happens")}>
+                <option value="on_mail">{t("When new mail arrives")}</option>
+                <option value="on_event">{t("Before a calendar event")}</option>
+                <option value="on_file">{t("When a file appears in a folder")}</option>
+                <option value="on_start">{t("When SulcusAI starts")}</option>
+              </optgroup>
             </select>
           </label>
           {c.kind === "hourly" && (
@@ -229,6 +263,54 @@ function ScheduleEditor({
               {t("Minute")}
               <input className="input" type="number" min={0} max={59} value={c.minute} onChange={(e) => setCadence({ kind: "hourly", minute: Number(e.target.value) })} />
             </label>
+          )}
+          {c.kind === "on_mail" && (
+            <>
+              <label>
+                {t("From (optional)")}
+                <input className="input" value={c.from} onChange={(e) => setCadence({ ...c, from: e.target.value })} placeholder={t("A name or address")} />
+              </label>
+              <label>
+                {t("Words in the subject (optional)")}
+                <input className="input" value={c.subject} onChange={(e) => setCadence({ ...c, subject: e.target.value })} placeholder={t("invoice")} />
+              </label>
+            </>
+          )}
+          {c.kind === "on_event" && (
+            <>
+              <label>
+                {t("Minutes before")}
+                <input className="input narrow-num" type="number" min={0} max={1440} value={c.minutes} onChange={(e) => setCadence({ ...c, minutes: Math.max(0, Math.min(1440, Number(e.target.value) || 0)) })} />
+              </label>
+              <label>
+                {t("Words in the title (optional)")}
+                <input className="input" value={c.title} onChange={(e) => setCadence({ ...c, title: e.target.value })} placeholder={t("standup")} />
+              </label>
+            </>
+          )}
+          {c.kind === "on_file" && (
+            <>
+              <label>
+                {t("Folder")}
+                <span className="row">
+                  <input className="input" value={c.folder} onChange={(e) => setCadence({ ...c, folder: e.target.value })} placeholder={t("Pick a folder")} />
+                  <button
+                    type="button"
+                    className="btn small"
+                    onClick={async () => {
+                      const p = await openDialog({ directory: true, multiple: false });
+                      if (typeof p === "string") setCadence({ ...c, folder: p });
+                    }}
+                  >
+                    {t("Pick…")}
+                  </button>
+                </span>
+              </label>
+              <label>
+                {t("Only names with (optional)")}
+                <input className="input" value={c.name} onChange={(e) => setCadence({ ...c, name: e.target.value })} placeholder={t(".pdf")} />
+              </label>
+            </>
           )}
           {c.kind === "once" && (
             <label>
@@ -410,6 +492,21 @@ export function whenItRuns(c: Cadence): string {
       return t("Runs every hour at :{minute}.", { minute: String(c.minute).padStart(2, "0") });
     case "once":
       return t("Runs once, then stops.");
+    case "on_mail": {
+      const who = c.from.trim() ? t("from {who}", { who: c.from.trim() }) : t("from anyone");
+      return c.subject.trim()
+        ? t("Runs when new mail arrives {who} with “{words}” in the subject, once fetched (every 10 minutes).", { who, words: c.subject.trim() })
+        : t("Runs when new mail arrives {who}, once fetched (every 10 minutes).", { who });
+    }
+    case "on_event":
+      return c.title.trim()
+        ? t("Runs {n} minutes before each calendar event with “{words}” in its title.", { n: c.minutes, words: c.title.trim() })
+        : t("Runs {n} minutes before each calendar event.", { n: c.minutes });
+    case "on_file":
+      if (!c.folder.trim()) return t("Pick the folder to watch.");
+      return t("Runs when a new file appears in this folder (not its subfolders), once it's finished being written.");
+    case "on_start":
+      return t("Runs each time SulcusAI starts and is unlocked.");
     default:
       return "";
   }
