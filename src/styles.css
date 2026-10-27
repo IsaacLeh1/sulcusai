@@ -2344,3 +2344,10 @@ html.working-window, html.working-window body { background: transparent; overflo
 .mode-switch { flex-wrap: nowrap; }
 .mode-switch > .mode { padding: 4px 12px; font-size: 12.5px; white-space: nowrap; }
 .globe, .chip, .conn-pill, .perf-pill { white-space: nowrap; }
+.slash-menu { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 30; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; max-height: 260px; overflow-y: auto; }
+.slash-menu button { display: flex; align-items: baseline; gap: 10px; text-align: left; border: 0; background: none; padding: 6px 10px; border-radius: 7px; cursor: pointer; color: var(--text); min-width: 0; }
+.slash-menu button.active { background: var(--accent-soft); }
+.slash-menu button .ellipsis { flex: 1; min-width: 0; }
+.saved-prompts { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.saved-prompts li { display: flex; align-items: center; gap: 6px; }
+.saved-prompts li > div { flex: 1; min-width: 0; }

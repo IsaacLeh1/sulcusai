@@ -717,9 +717,25 @@ export interface ApiServerView {
 export interface Advanced {
   enabled: boolean;
   sampling: { temperature: number | null; top_p: number | null; top_k: number | null; min_p: number | null; repeat_penalty: number | null; presence_penalty: number | null; frequency_penalty: number | null; seed: number | null };
-  engine: { ctx: number | null; gpu_layers: number | null; threads: number | null; batch: number | null };
+  engine: { ctx: number | null; gpu_layers: number | null; threads: number | null; batch: number | null; kv_cache?: string | null; flash_attn?: boolean | null };
   guardrails: { instructions: string | null; extra: string; never: string[]; always_ask: boolean; max_steps: number | null };
   processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; new_chat?: boolean; helper_steps: number | null };
+}
+
+/** Text typed in a chat as /name. */
+export interface SavedPrompt {
+  id: string;
+  name: string;
+  text: string;
+}
+
+/** One model's own settings (empty fields: the app's, or Advanced's). */
+export interface ModelPreset {
+  instructions: string;
+  sampling: Advanced["sampling"];
+  ctx: number | null;
+  kv_cache: string | null;
+  flash_attn: boolean | null;
 }
 
 export interface HubFile {
@@ -3111,6 +3127,11 @@ export const api = {
   editMessage: (chatId: string, messageId: string, text: string) => invoke<Message | null>("chat_edit", { chatId, messageId, text }),
   versions: (chatId: string) => invoke<Versions[]>("chat_versions", { chatId }),
   searchChats: (query: string) => invoke<ChatHit[]>("search_chats", { query }),
+  savedPrompts: () => invoke<SavedPrompt[]>("saved_prompts"),
+  savePrompt: (id: string, name: string, text: string) => invoke<SavedPrompt[]>("save_prompt", { id, name, text }),
+  deletePrompt: (id: string) => invoke<SavedPrompt[]>("delete_prompt", { id }),
+  modelPreset: (modelId: string) => invoke<ModelPreset>("model_preset", { modelId }),
+  setModelPreset: (modelId: string, preset: ModelPreset) => invoke<void>("set_model_preset", { modelId, preset }),
   /** Saves a chat as .md (written by the core) or .html (`html`, the page the window made). */
   exportChat: (chatId: string, path: string, html?: string) => invoke<void>("export_chat", { chatId, path, html: html ?? null }),
   switchVersion: (chatId: string, anchor: string, to: number) => invoke<void>("chat_switch_version", { chatId, anchor, to }),

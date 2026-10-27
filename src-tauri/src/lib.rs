@@ -87,6 +87,8 @@ mod practice;
 mod privacy;
 mod phone;
 mod ports;
+mod presets;
+mod prompts;
 mod preview;
 mod projects;
 mod quick;
@@ -1039,7 +1041,14 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     if encoder > 0 {
         catalog::set_aside(&mut budget, &mut limits, encoder + catalog::VISION_OVERHEAD);
     }
-    let e = advanced::get(state).engine;
+    // This model's own settings come before Advanced's.
+    let mut e = advanced::get(state).engine;
+    let own = presets::get(&state.db.lock().unwrap(), &spec.id);
+    if own.ctx.is_some() {
+        e.ctx = own.ctx;
+    }
+    e.kv_cache = own.kv_cache.or(e.kv_cache);
+    e.flash_attn = own.flash_attn.or(e.flash_attn);
     let chosen = chosen_window(state);
     // Several cards: a model that fits the biggest at its usual window runs
     // there alone (faster than with a slower card beside it); a bigger one is
@@ -1090,6 +1099,18 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     if let Some(c) = e.ctx {
         ctx = c.clamp(512, spec.arch.max_ctx.max(512));
     }
+    // A cache type chosen in Advanced or the model's settings. A compressed
+    // cache needs flash attention, so with it off the cache stays whole.
+    let mut kv_q4 = false;
+    match presets::cache_type(e.kv_cache.as_deref()) {
+        Some("f16") => kv_q8 = false,
+        Some("q8_0") => kv_q8 = true,
+        Some("q4_0") => (kv_q8, kv_q4) = (false, true),
+        _ => {}
+    }
+    if e.flash_attn == Some(false) {
+        (kv_q8, kv_q4) = (false, false);
+    }
     if let Some(l) = e.gpu_layers {
         layers = l.min(spec.arch.n_layer + 1);
     }
@@ -1108,7 +1129,7 @@ pub(crate) fn plan_with(state: &AppState, spec: &ModelSpec, quant: &str, encoder
     };
     let est = spec.variant(quant).map_or(0.0, |v| catalog::fit_variant(spec, v, ctx, &budget.with_limits(&limits)).est_tps);
     let think_budget = think_budget(state, spec, est);
-    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, think_budget, spread, embedding: false }, budget: budget.with_limits(&limits) }
+    Plan { ctx, gpu_layers: layers, threads, batch: e.batch.unwrap_or(0), tuning: engine::Tuning { cpu_moe, kv_q8, kv_q4, flash: e.flash_attn, think_budget, spread, embedding: false }, budget: budget.with_limits(&limits) }
 }
 
 /// Seconds a reply may think before it's told to answer. Qwen3.6 27B, a
@@ -2155,8 +2176,8 @@ async fn run_turn_with(
         || db::messages(&state.db.lock().unwrap(), &cipher, &chat_id).iter().any(|m| m.meta.as_ref().is_some_and(|v| v.get("images").is_some()));
     // Its turn for the graphics card (`lineup`), held while it replies.
     let mut _line: Option<lineup::Turn> = None;
-    let (ep, use_tools, vision) = match &asking {
-        Some(a) => (a.ep.clone(), a.tools, a.vision),
+    let (ep, use_tools, vision, answering) = match &asking {
+        Some(a) => (a.ep.clone(), a.tools, a.vision, None),
         None => {
             // Auto: a message the chat's model isn't the best installed one
             // for goes to the one that is, for this message only (`router`).
@@ -2179,13 +2200,18 @@ async fn run_turn_with(
             }
             let (ep, spec, _) = llm_endpoint(state, model_id, pictures, chat_waiting(app, &chat_id)).await?;
             let vision = if ep.cloud.is_some() { spec.vision.is_some() } else { state.engine.lock().await.sees() };
-            (ep, spec.tools, vision)
+            (ep, spec.tools, vision, Some(spec.id))
         }
     };
 
     let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
     let (base, about) = chat::system_prompt(&profile, &today);
     let base = format!("{}\n\n{}", advanced::get(state).base_prompt(base), chat::runs_where(&ep));
+    // The answering model's own instructions (its settings in Models).
+    let base = match &answering {
+        Some(id) => presets::with_instructions(base, &presets::get(&state.db.lock().unwrap(), id)),
+        None => base,
+    };
 
     // Nearly full: compact it (summarize the earlier part and keep going
     // here), or continue in a fresh chat, as set in Advanced.
@@ -2655,6 +2681,7 @@ pub(crate) async fn llm_endpoint(
     watch_work(state, &ep);
     let advanced = advanced::get(state);
     ep.extra = advanced.request_extra();
+    presets::apply_sampling(&mut ep.extra, &presets::get(&state.db.lock().unwrap(), &id));
     // Thinking counts against the reply's allowance: a long think would
     // otherwise use it all and leave an empty reply.
     if thinks(&spec, advanced.processing.thinking) && ep.extra.get("max_tokens").is_none() {
@@ -3405,6 +3432,11 @@ pub fn run() {
             chat_switch_version,
             chatsearch::search_chats,
             chatsearch::export_chat,
+            presets::model_preset,
+            presets::set_model_preset,
+            prompts::saved_prompts,
+            prompts::save_prompt,
+            prompts::delete_prompt,
             engine_status,
             unload_model,
             security::security_status,

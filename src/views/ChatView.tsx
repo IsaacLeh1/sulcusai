@@ -45,7 +45,8 @@ import { insertDictation, words } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
 import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, NewWindowIcon, PaperclipIcon, ReloadIcon, VoiceIcon } from "../components/Icons";
-import { rememberSent, SmartInput } from "../components/SmartInput";
+import { rememberSent, SmartInput, type SlashCommand } from "../components/SmartInput";
+import { expandSlash, SavedPromptsManager, useSavedPrompts } from "../components/SavedPrompts";
 
 interface Props {
   chat: Chat | null;
@@ -515,6 +516,22 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     }
   };
 
+  // Typing "/": saved prompts (they fill the box), /compact, and editing them.
+  const [prompts, setPrompts] = useSavedPrompts();
+  const [managingPrompts, setManagingPrompts] = useState(false);
+  const slashCommands: SlashCommand[] = [
+    ...prompts.map((p) => ({
+      name: p.name,
+      hint: p.text.replace(/\s+/g, " ").slice(0, 80),
+      pick: () => {
+        setInput(p.text.replace("{input}", ""));
+        requestAnimationFrame(() => inputRef.current?.focus());
+      },
+    })),
+    { name: "compact", hint: t("Sum up the chat so far, so it has room to go on"), pick: () => (setInput(""), compactNow()) },
+    { name: "prompts", hint: t("Add or change saved prompts"), pick: () => (setInput(""), setManagingPrompts(true)) },
+  ];
+
   const send = () => {
     const text = input.trim();
     if ((!text && attached.length === 0) || busy) return;
@@ -527,7 +544,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     const images = attached.map((a) => a.id);
     setInput("");
     setAttached([]);
-    sendText(text, images);
+    // "/name more words": the saved prompt, with the words.
+    sendText(expandSlash(text, prompts), images);
   };
 
   // While it writes: Enter adds the message to what it's working on (it
@@ -917,6 +935,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             onSuggestionGone={() => setNextUp(null)}
             onKeyDown={onKey}
             onPaste={onPaste}
+            commands={slashCommands}
             placeholder={
               replying
                 ? t("Add to what it's working on…")
@@ -1105,6 +1124,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       {panel === "links" && <LinkedChats chat={chat} onOpenChat={onOpenChat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "notes" && <ChatNotes chat={chat} onClose={() => setPanel(null)} toast={toast} />}
       {exporting && <ExportChat chat={chat} messages={messages} onClose={() => setExporting(false)} toast={toast} />}
+      {managingPrompts && <SavedPromptsManager prompts={prompts} onChange={setPrompts} onClose={() => setManagingPrompts(false)} toast={toast} />}
       {renaming && (
         <RenameDialog
           title={chat.title}

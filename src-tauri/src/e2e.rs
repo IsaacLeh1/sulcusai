@@ -1921,6 +1921,40 @@ async fn e2e_the_local_api_speaks_claudes_shape() {
     server.abort();
 }
 
+/// A model's own settings reach the engine and its replies: the small q4
+/// cache with flash attention on (llama.cpp takes both), its temperature,
+/// and instructions added for it (Qwen3 4B, answering in French).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_models_own_settings_apply() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf")).unwrap();
+    let id = crate::db::installed_models(&state.db.lock().unwrap())[0].model_id.clone();
+    let preset = crate::presets::ModelPreset {
+        instructions: "Always answer in French.".into(),
+        sampling: crate::advanced::Sampling { temperature: Some(0.0), ..Default::default() },
+        kv_cache: Some("q4_0".into()),
+        flash_attn: Some(true),
+        ..Default::default()
+    };
+    crate::db::set(&state.db.lock().unwrap(), "model_presets", &std::collections::HashMap::from([(id.clone(), preset.clone())])).unwrap();
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(id.clone()), false, |_| {}).await.unwrap();
+    assert_eq!(ep.extra["temperature"], 0.0);
+    // The engine's own report of how it set up the cache.
+    let log = std::fs::read_to_string(state.paths.engine_log()).unwrap_or_default();
+    let said: Vec<&str> = log.lines().filter(|l| l.contains("flash_attn") || l.contains("type_k") || l.contains("K (q4_0)") || l.contains("small cache")).collect();
+    println!("engine: {said:?}");
+    assert!(log.contains("flash_attn            = enabled"), "flash attention on");
+    assert!(log.contains("K (q4_0)") && log.contains("V (q4_0)"), "the engine keeps K and V as q4_0");
+    let system = crate::presets::with_instructions("You are a helpful assistant.".into(), &preset);
+    let reply = chat::complete(&ep, vec![serde_json::json!({ "role": "system", "content": system }), serde_json::json!({ "role": "user", "content": "What colour is the sky on a clear day? One short sentence." })], ep.extra.clone(), 120).await.unwrap();
+    println!("reply: {reply}");
+    let low = reply.to_lowercase();
+    assert!(low.contains("ciel") || low.contains("bleu"), "answered in French");
+    state.engine.lock().await.stop().await;
+}
+
 /// The server for programs made for Ollama, answered by Qwen3 4B: the
 /// model list, a reply in one piece that fits a JSON schema, one streamed
 /// line by line, a tool call, /api/generate, and a web page turned away.
@@ -6688,7 +6722,7 @@ async fn e2e_advanced() {
         let conn = state.db.lock().unwrap();
         crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None , prompt_tps: None}).unwrap();
         let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
-        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: Some(256) };
+        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: Some(256), ..Default::default() };
         a.sampling.temperature = Some(1.0);
         a.sampling.seed = Some(7);
         a.processing.thinking = crate::advanced::Thinking::Off;
@@ -6724,7 +6758,7 @@ async fn e2e_api_server() {
         crate::db::save_installed(&conn, &crate::db::InstalledModel { model_id: spec.id.clone(), quant: v.quant.clone(), path: state.paths.models.join(&spec.id).join(&v.file).display().to_string(), size: v.size, installed_at: 0, tps: None , prompt_tps: None}).unwrap();
         crate::db::update_settings(&conn, |s| s.default_model = Some(spec.id.clone())).unwrap();
         let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
-        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: None };
+        a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: None, ..Default::default() };
         crate::db::set(&conn, "advanced", &a).unwrap();
         crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: true, port, key: "sk-sulcus-test".into(), ..Default::default() }).unwrap();
     }

@@ -332,7 +332,9 @@ pub fn endpoint(state: &Arc<AppState>, id: &str, cipher: &Cipher) -> Result<(End
         chat: Default::default(),
         proxy: proxy_of(p, cipher),
     };
-    let ep = Endpoint { port: 0, key: String::new(), ctx, extra: crate::advanced::get(state).request_extra(), cloud: Some(Arc::new(target)) };
+    let mut extra = crate::advanced::get(state).request_extra();
+    crate::presets::apply_sampling(&mut extra, &crate::presets::get(&state.db.lock().unwrap(), id));
+    let ep = Endpoint { port: 0, key: String::new(), ctx, extra, cloud: Some(Arc::new(target)) };
     let spec = ModelSpec {
         id: id.to_string(),
         name: m.name.clone(),

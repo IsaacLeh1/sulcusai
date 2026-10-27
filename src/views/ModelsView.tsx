@@ -15,6 +15,7 @@ import { TESTING, TestingNote, useTestStart } from "../components/Testing";
 import { CancelInstall } from "../components/CancelInstall";
 import { Downloads } from "../components/Downloads";
 import { LockIcon } from "../components/Icons";
+import { ModelSettings } from "../components/ModelSettings";
 import { AREA_MIN, FILTERS, arrange, speedOf, type Area, type Filter } from "../ranking";
 import { t, tx } from "../i18n";
 
@@ -1228,6 +1229,7 @@ function InstalledCard({
   const [alsoFile, setAlsoFile] = useState(false);
   const ollama = m.local?.app.toLowerCase() === "ollama";
   const [renaming, setRenaming] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
   const [uncensoring, setUncensoring] = useState(false);
   const copying = !!uncensor && UNCENSOR_RUNNING.has(uncensor.status);
   const inst = m.installed!;
@@ -1325,6 +1327,9 @@ function InstalledCard({
         <button className="btn ghost" onClick={() => setRenaming(true)}>
           {t("Rename")}
         </button>
+        <button className="btn ghost" onClick={() => setPresetOpen(true)} title={t("Instructions, how it picks words, its window and cache, for this model only")}>
+          {t("Settings")}
+        </button>
         {advanced.on && !m.id.startsWith("made-") && (
           <button
             className="btn ghost"
@@ -1341,6 +1346,7 @@ function InstalledCard({
         </button>
       </div>
       {renaming && <RenameModel m={m} onClose={() => setRenaming(false)} onRefresh={onRefresh} />}
+      {presetOpen && <ModelSettings modelId={m.id} name={m.name} onClose={() => setPresetOpen(false)} toast={toast} />}
       {uncensoring && <UncensorDialog m={m} advanced={advanced} onClose={() => setUncensoring(false)} toast={toast} />}
       {confirm && (
         <Modal title={m.local && !alsoFile ? t("Stop using {name}?", { name: m.name }) : t("Delete {name} from this PC?", { name: m.name })} onClose={() => setConfirm(false)}>

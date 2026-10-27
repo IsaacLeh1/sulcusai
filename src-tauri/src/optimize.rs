@@ -237,7 +237,7 @@ async fn attempt(r: &Shared<'_>, engine: &mut engine::Engine, s: Setup, ctx: u32
                 lora: None,
                 steer: None,
             },
-            Tuning { cpu_moe, kv_q8: s.kv_q8, think_budget: None, spread: r.spread, embedding: false },
+            Tuning { cpu_moe, kv_q8: s.kv_q8, think_budget: None, spread: r.spread, embedding: false, ..Default::default() },
             r.state.job(),
         )
         .await;

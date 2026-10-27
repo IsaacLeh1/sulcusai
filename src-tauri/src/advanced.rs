@@ -49,6 +49,10 @@ pub struct EngineTuning {
     pub threads: Option<u32>,
     /// Tokens read per batch while reading the prompt.
     pub batch: Option<u32>,
+    /// How the conversation's cache is kept: "f16", "q8_0" or "q4_0".
+    pub kv_cache: Option<String>,
+    /// Flash attention on or off.
+    pub flash_attn: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -141,24 +145,34 @@ pub fn risk_key(r: Risk) -> &'static str {
     }
 }
 
+/// The sampling settings that are set, as request fields (kept in range).
+pub fn sampling_fields(s: &Sampling) -> Map<String, Value> {
+    let mut m = Map::new();
+    let mut put = |k: &str, v: Option<Value>| {
+        if let Some(v) = v {
+            m.insert(k.into(), v);
+        }
+    };
+    put("temperature", s.temperature.map(|v| json!(v.clamp(0.0, 2.0))));
+    put("top_p", s.top_p.map(|v| json!(v.clamp(0.0, 1.0))));
+    put("top_k", s.top_k.map(|v| json!(v)));
+    put("min_p", s.min_p.map(|v| json!(v.clamp(0.0, 1.0))));
+    put("repeat_penalty", s.repeat_penalty.map(|v| json!(v.clamp(0.5, 2.0))));
+    put("presence_penalty", s.presence_penalty.map(|v| json!(v.clamp(-2.0, 2.0))));
+    put("frequency_penalty", s.frequency_penalty.map(|v| json!(v.clamp(-2.0, 2.0))));
+    put("seed", s.seed.map(|v| json!(v)));
+    m
+}
+
 impl Advanced {
     /// Fields merged into each chat request.
     pub fn request_extra(&self) -> Value {
-        let s = &self.sampling;
-        let mut m = Map::new();
+        let mut m = sampling_fields(&self.sampling);
         let mut put = |k: &str, v: Option<Value>| {
             if let Some(v) = v {
                 m.insert(k.into(), v);
             }
         };
-        put("temperature", s.temperature.map(|v| json!(v.clamp(0.0, 2.0))));
-        put("top_p", s.top_p.map(|v| json!(v.clamp(0.0, 1.0))));
-        put("top_k", s.top_k.map(|v| json!(v)));
-        put("min_p", s.min_p.map(|v| json!(v.clamp(0.0, 1.0))));
-        put("repeat_penalty", s.repeat_penalty.map(|v| json!(v.clamp(0.5, 2.0))));
-        put("presence_penalty", s.presence_penalty.map(|v| json!(v.clamp(-2.0, 2.0))));
-        put("frequency_penalty", s.frequency_penalty.map(|v| json!(v.clamp(-2.0, 2.0))));
-        put("seed", s.seed.map(|v| json!(v)));
         match self.processing.thinking {
             Thinking::Auto => {}
             Thinking::On => put("chat_template_kwargs", Some(json!({ "enable_thinking": true }))),

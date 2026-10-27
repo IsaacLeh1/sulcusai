@@ -90,16 +90,31 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "value" | "onChan
   suggestion?: string | null;
   /** The suggestion was typed over, dismissed or used. */
   onSuggestionGone?: () => void;
+  /** What typing "/" at the start offers (saved prompts, commands). */
+  commands?: SlashCommand[];
 };
+
+/** One choice in the "/" menu. */
+export interface SlashCommand {
+  name: string;
+  hint: string;
+  pick: () => void;
+}
 
 /** A text box that helps while typing: the rest of a word or of an earlier
  * request in light grey (Tab takes it, Esc hides it), a suggested next
  * message while it's empty, and misspelled words fixed as they're finished
  * (Backspace right after puts the word back). */
 export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartInput(
-  { value, onValueChange, complete = false, correct = false, suggestion = null, onSuggestionGone, onKeyDown, placeholder, className, ...rest },
+  { value, onValueChange, complete = false, correct = false, suggestion = null, onSuggestionGone, commands, onKeyDown, placeholder, className, ...rest },
   ref,
 ) {
+  // The "/" menu: while the box holds only "/" and the start of a name.
+  const [slashAt, setSlashAt] = useState(0);
+  const [slashOff, setSlashOff] = useState<string | null>(null);
+  const typedName = /^\/[\p{L}\p{N}-]*$/u.test(value) ? value.slice(1).toLowerCase() : null;
+  const slash = typedName !== null && slashOff !== value ? (commands ?? []).filter((c) => c.name.startsWith(typedName)) : [];
+  const slashPick = Math.min(slashAt, Math.max(0, slash.length - 1));
   const box = useRef<HTMLTextAreaElement>(null);
   const ghostEl = useRef<HTMLDivElement>(null);
   useImperativeHandle(ref, () => box.current as HTMLTextAreaElement);
@@ -121,7 +136,7 @@ export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartI
   }, [fix]);
 
   const offer = value === "" ? (suggestion ?? "") : "";
-  const auto = complete && words && atEnd && value !== "" && hidden !== value ? completion(value, words) : { text: "", word: false };
+  const auto = complete && words && atEnd && value !== "" && hidden !== value && !slash.length ? completion(value, words) : { text: "", word: false };
   const ghost = offer || auto.text;
 
   // The grey text sits behind the box, laid out exactly like it.
@@ -189,6 +204,24 @@ export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartI
   };
 
   const key = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slash.length) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashAt((slashPick + (e.key === "ArrowDown" ? 1 : slash.length - 1)) % slash.length);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        setSlashAt(0);
+        slash[slashPick].pick();
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashOff(value);
+        return;
+      }
+    }
     if (ghost && e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
       take();
@@ -218,6 +251,28 @@ export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartI
 
   return (
     <div className="smart-input">
+      {slash.length > 0 && (
+        <div className="slash-menu" role="listbox" aria-label={t("Saved prompts and commands")}>
+          {slash.map((c, i) => (
+            <button
+              key={c.name}
+              type="button"
+              role="option"
+              aria-selected={i === slashPick}
+              className={i === slashPick ? "active" : ""}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setSlashAt(i)}
+              onClick={() => {
+                setSlashAt(0);
+                c.pick();
+              }}
+            >
+              <strong>/{c.name}</strong>
+              <span className="muted small ellipsis">{c.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="smart-ghost" ref={ghostEl} aria-hidden>
         <span className="smart-typed">{value}</span>
         <span className="smart-hint">{ghost}</span>

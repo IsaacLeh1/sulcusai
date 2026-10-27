@@ -6,17 +6,18 @@ import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
 import { TeachModel } from "./TeachModel";
 import { words } from "../format";
+import { CacheChoices } from "./ModelSettings";
 
 const DEFAULTS: Advanced = {
   enabled: false,
   sampling: { temperature: null, top_p: null, top_k: null, min_p: null, repeat_penalty: null, presence_penalty: null, frequency_penalty: null, seed: null },
-  engine: { ctx: null, gpu_layers: null, threads: null, batch: null },
+  engine: { ctx: null, gpu_layers: null, threads: null, batch: null, kv_cache: null, flash_attn: null },
   guardrails: { instructions: null, extra: "", never: [], always_ask: false, max_steps: null },
   processing: { thinking: "auto", handoff_at: null, handoff_off: false, new_chat: false, helper_steps: null },
 };
 
 /** A number field where empty means "the app decides". */
-function Num({ label, value, onChange, placeholder, step, min, max, hint }: { label: string; value: number | null; onChange: (v: number | null) => void; placeholder: string; step?: number; min?: number; max?: number; hint?: string }) {
+export function Num({ label, value, onChange, placeholder, step, min, max, hint }: { label: string; value: number | null; onChange: (v: number | null) => void; placeholder: string; step?: number; min?: number; max?: number; hint?: string }) {
   return (
     <label className="adv-field">
       <span>{label}</span>
@@ -148,8 +149,9 @@ export function AdvancedSettings({ toast }: { toast: PushToast }) {
               <Num label={t("GPU layers")} value={en.gpu_layers} onChange={(v) => set("engine", { ...en, gpu_layers: v })} placeholder={t("automatic")} min={0} hint={t("0 runs on the processor")} />
               <Num label={t("Threads")} value={en.threads} onChange={(v) => set("engine", { ...en, threads: v })} placeholder={t("automatic")} min={1} />
               <Num label={t("Batch size")} value={en.batch} onChange={(v) => set("engine", { ...en, batch: v })} placeholder={t("automatic")} step={64} min={32} />
+              <CacheChoices kv={en.kv_cache} flash={en.flash_attn} onChange={(kv_cache, flash_attn) => set("engine", { ...en, kv_cache, flash_attn })} />
             </div>
-            <p className="muted small">{t("A different context length, layers, threads or batch size restarts the model on its next message. Too much context or too many GPU layers can fail to load.")}</p>
+            <p className="muted small">{t("A different context length, layers, threads, batch size, cache or flash attention restarts the model on its next message. Too much context or too many GPU layers can fail to load. A model's own settings (Models › Settings) come before these.")}</p>
           </div>
 
           <div className="adv-group">
