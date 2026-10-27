@@ -34,7 +34,7 @@ const KEY: &str = "own_voices";
 /// Recordings are made at 48 kHz, so the voice keeps its brightness.
 const REC_RATE: u32 = 48_000;
 /// Qwen3-TTS works at 24 kHz.
-const TTS_RATE: u32 = 24_000;
+pub(crate) const TTS_RATE: u32 = 24_000;
 const TTS_EXE: &str = if cfg!(windows) { "qwen-tts.exe" } else { "qwen-tts" };
 
 // ---------- catalog ----------
@@ -1418,6 +1418,20 @@ pub async fn speak_each(state: &Arc<AppState>, voice_id: &str, passages: &[Strin
     hear_missing_words(state, &c, voice_id, &|_| progress("Hearing the words of your recordings (once)", 0.05)).await;
     let voice = get(&state.db.lock().unwrap(), &c, voice_id).ok_or("That voice is no longer here.")?;
     let (reference, words) = speech_reference(&state.paths, &c, &voice)?;
+    speak_each_like(state, &reference, &words, passages, language, cancel, progress).await
+}
+
+/// Whether voices read in a recorded voice can speak `language` (Qwen3-TTS
+/// knows ten languages).
+pub fn speaks(language: &str) -> bool {
+    tts_language(Some(language)) != "auto"
+}
+
+/// `passages` read as `speak_each` does, in the voice of `reference` (24
+/// kHz, a few seconds of someone speaking) whose words are `words` (empty
+/// when they aren't known): a voice heard in a video, for dubbing.
+#[allow(clippy::too_many_arguments)]
+pub async fn speak_each_like(state: &Arc<AppState>, reference: &[f32], words: &str, passages: &[String], language: Option<&str>, cancel: &AtomicBool, progress: &(dyn Fn(&str, f64) + Sync)) -> Result<(Vec<Vec<f32>>, u32), String> {
     // Every passage's sentences in one list, and which passage each is from.
     let mut lines = Vec::new();
     let mut owner = Vec::new();
@@ -1433,7 +1447,7 @@ pub async fn speak_each(state: &Arc<AppState>, voice_id: &str, passages: &[Strin
     let (exe, files) = speak_parts(state, cancel, progress).await?;
     let free = card_free_now(state);
     let device = (exe.to_string_lossy().contains("vulkan") && free.is_some_and(|f| f < 3_500 << 20)).then_some("CPU");
-    let parts = read_lines(&exe, &files, &reference, &words, &lines, language, device, cancel).await?;
+    let parts = read_lines(&exe, &files, reference, words, &lines, language, device, cancel).await?;
     let gap = vec![0f32; (TTS_RATE as f32 * 0.3) as usize];
     let mut out = vec![Vec::new(); passages.len()];
     for (p, i) in parts.into_iter().zip(owner) {

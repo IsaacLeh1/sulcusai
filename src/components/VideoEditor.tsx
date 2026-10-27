@@ -27,7 +27,7 @@ export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Om
   const [sounds, setSounds] = useState<MediaItem[]>([]);
   const [described, setDescribed] = useState("");
   const [language, setLanguage] = useState("es");
-  const [voice, setVoice] = useState<string | null>(null);
+  const [voice, setVoice] = useState<string | null>("each");
   const [voices, setVoices] = useState<Voice[]>([]);
   const own = (useOwnVoices()?.voices ?? []).filter((v) => v.can_speak);
   useEffect(() => {
@@ -167,6 +167,7 @@ export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Om
       {open === "dub" && (
         <div className="form">
           <p className="small muted">{t("What's said in it is heard, written down, translated and spoken again in the language you pick, in time with the video. The music and other sounds stay.")}</p>
+          {voice === "each" && <p className="small muted">{t("Each person keeps their own voice: the speakers are told apart and a voice is made from each one's longest lines. It works in English, Spanish, French, German, Italian, Portuguese, Russian, Japanese, Korean and Chinese; in other languages a voice that speaks it reads every line. Dub only videos you may change.")}</p>}
           <div className="ve-keep small">
             <span className="ve-bound">
               {t("Into")}
@@ -174,7 +175,7 @@ export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Om
             </span>
             <span className="ve-bound">
               {t("Voice")}
-              <VoiceSelect value={voice} onChange={setVoice} voices={voices} own={own} label={t("Voice")} pickForMe />
+              <VoiceSelect value={voice} onChange={setVoice} voices={voices} own={own} label={t("Voice")} pickForMe each />
             </span>
           </div>
           <div className="row">

@@ -1763,6 +1763,132 @@ fn dub_speed(said: f64, room: f64) -> f64 {
     }
 }
 
+/// The dub's voice choice that gives everyone in the video their own voice.
+const EACH_VOICE: &str = "each";
+
+/// Who says each line (1, 2, …) by the sound of their voice (`voice16`, the
+/// speech at 16 kHz): the speaker model, got the first time (~30 MB);
+/// everyone as one without it. Lines too short to judge go with the nearest
+/// line that isn't, and someone heard for under 3 s with whoever sounds most
+/// like them (too little to make a voice from).
+async fn dub_speakers(ctx: &RunCtx<'_>, voice16: &[f32], lines: &[(f64, f64, String)]) -> Vec<u32> {
+    let state = ctx.state;
+    if lines.len() < 2 {
+        return vec![1; lines.len()];
+    }
+    if !crate::diarize::available(state) {
+        if let Err(e) = crate::diarize::install(state, ctx.cancel, &|_, _, _| (ctx.progress)("Getting the speaker model (once)", 0.55)).await {
+            state.log("media", &format!("Dubbing: the speaker model didn't install ({e}); everyone gets one voice"));
+            return vec![1; lines.len()];
+        }
+    }
+    let rate = crate::audio::RATE as f64;
+    let prints: Vec<Option<Vec<f32>>> = tokio::task::block_in_place(|| {
+        lines
+            .iter()
+            .map(|(s, e, _)| {
+                let (a, b) = (((s * rate) as usize).min(voice16.len()), ((e * rate) as usize).min(voice16.len()));
+                (e - s >= crate::diarize::MIN_SECS).then(|| crate::diarize::embed(state, &voice16[a..b]).ok()).flatten()
+            })
+            .collect()
+    });
+    let known: Vec<usize> = (0..lines.len()).filter(|i| prints[*i].is_some()).collect();
+    if known.is_empty() {
+        return vec![1; lines.len()];
+    }
+    let grouped = crate::diarize::regroup(&known.iter().filter_map(|i| prints[*i].clone()).collect::<Vec<_>>());
+    let mut labels: Vec<u32> = (0..lines.len())
+        .map(|i| {
+            let near = (0..known.len()).min_by(|a, b| (lines[known[*a]].0 - lines[i].0).abs().total_cmp(&(lines[known[*b]].0 - lines[i].0).abs())).unwrap_or(0);
+            grouped[near]
+        })
+        .collect();
+    // Each speaker's voice on average, and how long they speak.
+    let speakers = grouped.iter().copied().max().unwrap_or(1);
+    let mean = |k: u32| -> Vec<f32> {
+        let mut m = vec![0f32; prints[known[0]].as_ref().map_or(0, Vec::len)];
+        for (i, _) in known.iter().zip(&grouped).filter(|(_, g)| **g == k) {
+            for (x, y) in m.iter_mut().zip(prints[*i].iter().flatten()) {
+                *x += y;
+            }
+        }
+        let n = m.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-9);
+        m.into_iter().map(|x| x / n).collect()
+    };
+    let heard = |k: u32, labels: &[u32]| lines.iter().zip(labels).filter(|(_, l)| **l == k).map(|(l, _)| l.1 - l.0).sum::<f64>();
+    let means: Vec<Vec<f32>> = (1..=speakers).map(mean).collect();
+    for k in 1..=speakers {
+        if speakers > 1 && heard(k, &labels) < 3.0 {
+            let like = (1..=speakers).filter(|o| *o != k && heard(*o, &labels) >= 3.0).max_by(|a, b| crate::diarize::cosine(&means[k as usize - 1], &means[*a as usize - 1]).total_cmp(&crate::diarize::cosine(&means[k as usize - 1], &means[*b as usize - 1])));
+            if let Some(o) = like {
+                labels.iter_mut().filter(|l| **l == k).for_each(|l| *l = o);
+            }
+        }
+    }
+    labels
+}
+
+/// The dub's lines read in each speaker's own voice, made from how they
+/// sound in the video: their longest lines (~10 to 15 s together, with the
+/// words heard in them) taken from the speech alone (the video's sound less
+/// its music and other sounds, when the separator took those out).
+async fn each_own_voice(ctx: &RunCtx<'_>, mix: &stems::Stereo, background: Option<&[Vec<f32>; 2]>, lines: &[(f64, f64, String)], words: &[String], to: &str) -> Result<(Vec<Vec<f32>>, u32), String> {
+    let state = ctx.state;
+    let speech: Vec<f32> = match background {
+        Some([l, r]) => mix.ch[0].iter().zip(&mix.ch[1]).zip(l.iter().zip(r)).map(|((a, b), (c, d))| (a + b - c - d) * 0.5).collect(),
+        None => mix.mono(),
+    };
+    let labels = dub_speakers(ctx, &stems::resample(&speech, stems::RATE, crate::audio::RATE), lines).await;
+    if ctx.cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
+    let at24 = stems::resample(&speech, stems::RATE, own_voice::TTS_RATE);
+    let rate = own_voice::TTS_RATE as f64;
+    let speakers = labels.iter().copied().max().unwrap_or(1);
+    let who: Vec<u32> = (1..=speakers).filter(|k| labels.contains(k)).collect();
+    let mut out = vec![Vec::new(); lines.len()];
+    for (n, k) in who.iter().enumerate() {
+        let theirs: Vec<usize> = (0..lines.len()).filter(|i| labels[*i] == *k).collect();
+        // Their longest lines, in the order said.
+        let mut longest = theirs.clone();
+        longest.sort_by(|a, b| (lines[*b].1 - lines[*b].0).total_cmp(&(lines[*a].1 - lines[*a].0)));
+        let mut chosen: Vec<usize> = Vec::new();
+        let mut secs = 0.0;
+        for i in longest {
+            let d = lines[i].1 - lines[i].0;
+            if secs >= 10.0 || (!chosen.is_empty() && secs + d > 15.0) {
+                continue;
+            }
+            chosen.push(i);
+            secs += d;
+        }
+        chosen.sort_unstable();
+        let gap = vec![0f32; (rate * 0.25) as usize];
+        let mut reference = Vec::new();
+        for i in &chosen {
+            let (a, b) = (((lines[*i].0 * rate) as usize).min(at24.len()), ((lines[*i].1 * rate) as usize).min(at24.len()));
+            if !reference.is_empty() {
+                reference.extend_from_slice(&gap);
+            }
+            reference.extend_from_slice(&at24[a..b]);
+        }
+        let level = crate::audio::rms(&reference);
+        if level > 1e-4 {
+            reference.iter_mut().for_each(|x| *x = (*x * 0.08 / level).clamp(-1.0, 1.0));
+        }
+        let said: String = chosen.iter().map(|i| lines[*i].2.as_str()).collect::<Vec<_>>().join(" ");
+        let passages: Vec<String> = theirs.iter().map(|i| words[*i].clone()).collect();
+        let (from, span) = (0.55 + 0.25 * n as f64 / who.len() as f64, 0.25 / who.len() as f64);
+        let label = if who.len() > 1 { format!("Speaking it in voice {} of {}", n + 1, who.len()) } else { "Speaking it in their own voice".to_string() };
+        let (read, _) = own_voice::speak_each_like(state, &reference, &said, &passages, Some(to), ctx.cancel, &|_, f| (ctx.progress)(&label, from + span * f)).await?;
+        for (i, r) in theirs.iter().zip(read) {
+            out[*i] = r;
+        }
+    }
+    state.log("media", &format!("Dubbing in each speaker's own voice: {} speaker(s) heard", who.len()));
+    Ok((out, own_voice::TTS_RATE))
+}
+
 /// A sound file as stereo at the separator's rate, read by FFmpeg.
 async fn ffmpeg_stereo(state: &AppState, ffmpeg_exe: &std::path::Path, file: &std::path::Path, seconds: f64, cancel: &AtomicBool) -> Result<stems::Stereo, String> {
     let raw = file.with_extension("f32");
@@ -1829,11 +1955,25 @@ async fn dub(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>,
 
     let speaking = format!("Speaking it in {into}");
     (ctx.progress)(&speaking, 0.55);
-    let (spoken, voice_rate) = match ctx.req.voice.as_deref().and_then(|v| v.strip_prefix("own:")) {
-        Some(own) => own_voice::speak_each(state, own, &words, Some(&to), ctx.cancel, &|s, f| (ctx.progress)(s, 0.55 + 0.25 * f)).await?,
-        None => tokio::task::block_in_place(|| -> Result<(Vec<Vec<f32>>, u32), String> {
+    let picked = ctx.req.voice.as_deref().filter(|v| *v != EACH_VOICE);
+    let mut cloned = None;
+    if ctx.req.voice.as_deref() == Some(EACH_VOICE) {
+        if !own_voice::speaks(&to) {
+            state.log("media", &format!("Dubbing: voices made from the speakers don't speak {into}; using a voice that does"));
+        } else {
+            match each_own_voice(ctx, &mix, background.as_ref(), &lines, &words, &to).await {
+                Ok(v) => cloned = Some(v),
+                Err(e) if e == download::CANCELLED => return Err(e),
+                Err(e) => state.log("media", &format!("Dubbing in each speaker's own voice didn't work ({e}); using a voice that speaks {into}")),
+            }
+        }
+    }
+    let (spoken, voice_rate) = match (cloned, picked.and_then(|v| v.strip_prefix("own:"))) {
+        (Some(v), _) => v,
+        (None, Some(own)) => own_voice::speak_each(state, own, &words, Some(&to), ctx.cancel, &|s, f| (ctx.progress)(s, 0.55 + 0.25 * f)).await?,
+        (None, None) => tokio::task::block_in_place(|| -> Result<(Vec<Vec<f32>>, u32), String> {
             let voices = crate::tts::voices()?;
-            let voice = crate::tts::pick_voice(&voices, ctx.req.voice.as_deref(), Some(&to)).map(|v| v.id.clone()).ok_or("No voices are installed.")?;
+            let voice = crate::tts::pick_voice(&voices, picked, Some(&to)).map(|v| v.id.clone()).ok_or("No voices are installed.")?;
             let (mut out, mut rate) = (Vec::new(), 16_000);
             for (i, w) in words.iter().enumerate() {
                 if ctx.cancel.load(Ordering::Relaxed) {

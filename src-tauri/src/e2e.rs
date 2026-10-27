@@ -1410,6 +1410,34 @@ async fn e2e_videos_are_edited() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn e2e_a_video_is_dubbed() {
+    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
+    dubbed_for_test(&clip, 60.0, 20.0, None, r"C:\dev\tools\voice\tests\e2e-video-dubbed.mp4").await;
+}
+
+/// Two people talking (the made podcast, as a video) dubbed into Spanish in
+/// each one's own voice: the speaker model tells them apart and Qwen3-TTS
+/// speaks each one's lines in a voice made from theirs. Written to
+/// C:\dev\tools\voice\tests\e2e-video-dubbed-voices.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_video_is_dubbed_in_its_speakers_voices() {
+    let real = Paths::new(app_data_dir()).unwrap();
+    let ffmpeg = walkdir_find(&real.engines, "ffmpeg.exe").expect("FFmpeg was downloaded");
+    let video = std::env::temp_dir().join("e2e-podcast-video.mp4");
+    let ok = std::process::Command::new(&ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=0x334455:s=640x360:r=25", "-i", r"C:\dev\tools\voice\tests\e2e-podcast.mp3", "-t", "30", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac"])
+        .arg(&video)
+        .status()
+        .unwrap();
+    assert!(ok.success());
+    let clip = std::fs::read(&video).unwrap();
+    dubbed_for_test(&clip, 30.0, 30.0, Some("each"), r"C:\dev\tools\voice\tests\e2e-video-dubbed-voices.mp4").await;
+}
+
+/// `clip` (a video `secs` long) cut to its first `keep` s and dubbed into
+/// Spanish with `voice`, as the app would, the chat model that translates
+/// loaded first. Written to `out`; whisper must hear Spanish in it.
+async fn dubbed_for_test(clip: &[u8], secs: f64, keep: f64, voice: Option<&str>, out: &str) {
     use crate::media::{self, store, MediaItem, Request, VideoEdit};
     let state = media_state();
     let c = state.work_cipher().unwrap();
@@ -1426,19 +1454,18 @@ async fn e2e_a_video_is_dubbed() {
     let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
     state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None).await.unwrap();
 
-    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
-    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "an explainer".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
-    let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, 20.0]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
+    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "a clip".into(), seconds: secs, ..Default::default() }, clip, None).unwrap();
+    let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, keep]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
     let started = std::time::Instant::now();
-    let dubbed = media::run(&state, store::new_id(), Request { op: "dub".into(), source: Some(part.id.clone()), language: Some("es".into()), ..Default::default() }).await.unwrap().remove(0);
+    let dubbed = media::run(&state, store::new_id(), Request { op: "dub".into(), source: Some(part.id.clone()), language: Some("es".into()), voice: voice.map(Into::into), ..Default::default() }).await.unwrap().remove(0);
     println!("dubbed in {:.0} s", started.elapsed().as_secs_f64());
     state.engine.lock().await.stop().await;
-    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-video-dubbed.mp4");
+    let out = std::path::PathBuf::from(out);
     std::fs::write(&out, store::read(&state.paths, &c, &dubbed.id).unwrap()).unwrap();
     let ffprobe = walkdir_find(&real.engines, "ffprobe.exe").expect("FFprobe was downloaded");
     let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
     println!("dubbed: {:.2} s, {}x{}, sound: {}", p.seconds, p.width, p.height, p.audio);
-    assert!((p.seconds - 20.0).abs() < 0.6 && p.audio && dubbed.poster);
+    assert!((p.seconds - keep).abs() < 0.6 && p.audio && dubbed.poster);
     let ffmpeg = ffprobe.with_file_name("ffmpeg.exe");
     let wav = std::env::temp_dir().join(format!("dubbed-{}.wav", dubbed.id));
     let ok = std::process::Command::new(&ffmpeg).args(["-y", "-v", "error", "-i"]).arg(&out).args(["-ac", "1", "-ar", "16000"]).arg(&wav).status().unwrap();

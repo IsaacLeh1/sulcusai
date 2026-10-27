@@ -20,7 +20,7 @@ export function useVoices(): Voice[] {
 }
 
 /** A voice to read in: the person's recorded and made voices, then this PC's. */
-export function VoiceSelect({ value, onChange, voices, own, label, pickForMe }: {
+export function VoiceSelect({ value, onChange, voices, own, label, pickForMe, each }: {
   value: string | null;
   onChange: (v: string | null) => void;
   voices: Voice[];
@@ -28,9 +28,12 @@ export function VoiceSelect({ value, onChange, voices, own, label, pickForMe }: 
   label: string;
   /** Offer "Pick one for me" (a different voice for each person). */
   pickForMe?: boolean;
+  /** Offer "Each speaker's own voice" (dubbing: "each"). */
+  each?: boolean;
 }) {
   return (
     <select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} aria-label={label} title={label}>
+      {each && <option value="each">{t("Each speaker's own voice")}</option>}
       {pickForMe && <option value="">{t("Pick one for me")}</option>}
       {own.length > 0 && (
         <optgroup label={t("Your voices")}>
