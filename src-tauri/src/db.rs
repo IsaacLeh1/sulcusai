@@ -650,6 +650,12 @@ pub fn set_chat_title(conn: &Connection, c: &Cipher, id: &str, title: &str) -> R
     Ok(())
 }
 
+/// When a chat began and was last used (a chat brought over from another app keeps its own).
+pub fn set_chat_times(conn: &Connection, id: &str, created_at: i64, updated_at: i64) -> Result<(), String> {
+    conn.execute("UPDATE chats SET created_at = ?2, updated_at = ?3 WHERE id = ?1", params![id, created_at, updated_at.max(created_at)]).map_err(err)?;
+    Ok(())
+}
+
 pub fn set_chat_model(conn: &Connection, id: &str, model_id: &str) -> Result<(), String> {
     conn.execute("UPDATE chats SET model_id = ?2 WHERE id = ?1", params![id, model_id]).map_err(err)?;
     Ok(())

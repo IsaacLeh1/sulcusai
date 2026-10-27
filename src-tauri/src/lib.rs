@@ -104,6 +104,7 @@ mod triage;
 mod tts;
 mod programs;
 mod lens;
+mod import;
 mod typing;
 mod updates;
 mod vad;
@@ -3261,6 +3262,8 @@ pub fn run() {
             tools::programs::programs_banner,
             tools::programs::programs_banner_stop,
             lens::lens_words,
+            import::import_chats,
+            import::import_memories,
             lens::lens_layers,
             lens::lens_edit,
             chat_live,

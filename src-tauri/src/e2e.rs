@@ -1678,6 +1678,43 @@ async fn e2e_the_local_api_speaks_claudes_shape() {
     server.abort();
 }
 
+/// A Claude export (a zip with conversations.json and a memories file)
+/// brought in: its chats with their messages and dates in a "From Claude"
+/// folder, its memories saved; the same export again adds nothing.
+#[test]
+#[ignore]
+fn e2e_an_export_is_imported_once() {
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let dir = std::env::temp_dir().join(format!("sulcusai-import-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let zip_path = dir.join("data-2026-10-26.zip");
+    {
+        let f = std::fs::File::create(&zip_path).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        let opts: zip::write::SimpleFileOptions = Default::default();
+        z.start_file("conversations.json", opts).unwrap();
+        std::io::Write::write_all(&mut z, serde_json::json!([{ "uuid": "1", "name": "Sourdough help", "created_at": "2026-03-02T09:00:00Z", "updated_at": "2026-03-02T09:30:00Z", "chat_messages": [
+            { "sender": "human", "text": "My sourdough is flat", "created_at": "2026-03-02T09:00:01Z" },
+            { "sender": "assistant", "text": "Try a longer bulk ferment.", "created_at": "2026-03-02T09:00:09Z" }
+        ] }]).to_string().as_bytes()).unwrap();
+        z.start_file("memories.json", opts).unwrap();
+        std::io::Write::write_all(&mut z, serde_json::json!([{ "conversations_memory": "- Bakes sourdough on weekends\n- Lives at high altitude" }]).to_string().as_bytes()).unwrap();
+        z.finish().unwrap();
+    }
+    let export = crate::import::read(&zip_path).unwrap();
+    let first = crate::import::save(&state, &export).unwrap();
+    let again = crate::import::save(&state, &export).unwrap();
+    println!("{first:?} then {again:?}");
+    assert_eq!((first.chats, first.messages, first.memories), (1, 2, 2));
+    assert_eq!((again.chats, again.already, again.memories), (0, 1, 0));
+    let conn = state.db.lock().unwrap();
+    let chat = crate::db::list_chats(&conn, &c).into_iter().find(|ch| ch.title == "Sourdough help").unwrap();
+    assert_eq!(chat.created_at, 1_772_442_000_000, "its own start time");
+    assert_eq!(crate::db::messages(&conn, &c, &chat.id).len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

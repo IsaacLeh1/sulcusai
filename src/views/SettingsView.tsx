@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { ImportFromOthers } from "../components/ImportFromOthers";
 import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
@@ -456,6 +457,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />
+      <ImportFromOthers toast={toast} />
 
       <span id="settings-cloud" className="settings-anchor" />
       <CloudSettings toast={toast} cloudOn={connectivity === "cloud"} />

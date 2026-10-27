@@ -127,6 +127,28 @@ pub fn create_folder(state: AppStateRef, name: String, chat_id: Option<String>) 
     })
 }
 
+/// Puts chats into the folder called `name`, made if there isn't one (an
+/// import's chats go together).
+pub(crate) fn put_chats_in(state: &AppState, name: &str, chats: &[String]) -> Result<(), String> {
+    let name = clean_name(name)?;
+    change(state, |all, c| {
+        let i = match all.iter().position(|f| c.decrypt(&f.name).ok().as_deref() == Some(name.as_str())) {
+            Some(i) => i,
+            None => {
+                all.push(Folder { id: uuid::Uuid::new_v4().to_string(), name: c.encrypt(&name), created_at: db::now_ms(), ..Default::default() });
+                all.len() - 1
+            }
+        };
+        for chat in chats {
+            if !all[i].chats.contains(chat) {
+                all[i].chats.push(chat.clone());
+            }
+        }
+        Ok(())
+    })
+    .map(|_| ())
+}
+
 #[tauri::command(async)]
 pub fn rename_folder(state: AppStateRef, id: String, name: String) -> Result<Vec<FolderView>, String> {
     let name = clean_name(&name)?;

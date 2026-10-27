@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, errorText, on, type Chat, type Memory, type Project, type Settings } from "../api";
 import { Modal } from "../components/Modal";
+import { ImportFromOthers } from "../components/ImportFromOthers";
 import type { PushToast } from "../components/Toasts";
 import { t } from "../i18n";
 
@@ -112,6 +113,8 @@ export function MemoryView({ settings, onSettings, toast }: { settings: Settings
             </label>
           </div>
         </section>
+
+        <ImportFromOthers toast={toast} memoriesOnly />
 
         <form
           className="memory-add"

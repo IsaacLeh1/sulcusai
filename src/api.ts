@@ -2949,6 +2949,9 @@ export const api = {
   /** Downloads a damaged model's file again. */
   repairModel: (modelId: string) => invoke<void>("repair_model", { modelId }),
   fasterModel: (modelId: string) => invoke<void>("faster_model", { modelId }),
+  /** A ChatGPT or Claude export brought in (import.rs). */
+  importChats: (path: string) => invoke<{ from: string; chats: number; messages: number; memories: number; already: number }>("import_chats", { path }),
+  importMemories: (text: string) => invoke<number>("import_memories", { text }),
   pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
   resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
   downloadsView: () => invoke<{ paused: PausedDownload[] }>("downloads_view"),
