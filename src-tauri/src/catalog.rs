@@ -48,6 +48,9 @@ pub struct Catalog {
     /// The Lens's control-vector maker (steering).
     #[serde(default)]
     pub lens: Option<crate::steer::LensTools>,
+    /// Heretic, for uncensored copies of chat models (Advanced mode).
+    #[serde(default)]
+    pub heretic: Option<crate::uncensor::HereticCatalog>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

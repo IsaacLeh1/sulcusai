@@ -282,7 +282,7 @@ pub async fn run(state: &Arc<AppState>, model_id: &str, progress: &(dyn Fn(usize
     if !state.generations.lock().unwrap().is_empty() {
         return Err("Wait for the reply to finish, then optimize.".into());
     }
-    if crate::finetune::training() || crate::media::any_job() {
+    if crate::finetune::training() || crate::media::any_job() || crate::uncensor::running() {
         return Err("The graphics card is busy making something. Try again when it's done.".into());
     }
     let installed = db::installed_model(&state.db.lock().unwrap(), model_id).ok_or("That model isn't installed.")?;

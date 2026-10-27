@@ -6365,5 +6365,46 @@
       "size": 16919095,
       "sha256": "d96cc5309306fd410ab473807b84f6f277efefe8a3d6f8ba43b69bc96dd4b536"
     }
+  },
+  "heretic": {
+    "name": "Heretic",
+    "license": "AGPL-3.0",
+    "build": "1.4.0-b11450",
+    "uv": {
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip",
+      "size": 15264056,
+      "sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
+    },
+    "source": {
+      "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/heretic-1.4.0-b11450.zip",
+      "size": 486579,
+      "sha256": "baaa0d3f5cfebf6779cd49bfd3a9ead44d8070ef0ce509e3496b7bb6eb3951b5"
+    },
+    "prompts": [
+      {
+        "file": "harmless-train.parquet",
+        "url": "https://huggingface.co/datasets/mlabonne/harmless_alpaca/resolve/02c6a92cfcf11bb0c387334f8146d149d65b587f/data/train-00000-of-00001.parquet",
+        "size": 971794,
+        "sha256": "b13d6c60adef58f41897e5ae50245cb171fd0145768300ffe5857b382e080c46"
+      },
+      {
+        "file": "harmless-test.parquet",
+        "url": "https://huggingface.co/datasets/mlabonne/harmless_alpaca/resolve/02c6a92cfcf11bb0c387334f8146d149d65b587f/data/test-00000-of-00001.parquet",
+        "size": 243345,
+        "sha256": "8df830a54e63adbf6e8bdf8143cb8f0cd86a9fe8dbddd21737f4cbdf22d5c08e"
+      },
+      {
+        "file": "harmful-train.parquet",
+        "url": "https://huggingface.co/datasets/mlabonne/harmful_behaviors/resolve/01cead01398926d81f7c52bdb790ee8cf77ebba7/data/train-00000-of-00001.parquet",
+        "size": 15020,
+        "sha256": "ad845a73ae983b456961e020a53a08551d46019daa30530c8ccf4a4859140fb9"
+      },
+      {
+        "file": "harmful-test.parquet",
+        "url": "https://huggingface.co/datasets/mlabonne/harmful_behaviors/resolve/01cead01398926d81f7c52bdb790ee8cf77ebba7/data/test-00000-of-00001.parquet",
+        "size": 5461,
+        "sha256": "5b3d4baa7639ef78e043efe56fab40ffdcf3a38d49251db3448b3e92f802ca2a"
+      }
+    ]
   }
 }

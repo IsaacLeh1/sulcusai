@@ -252,6 +252,7 @@ Settings → Advanced → "Enable advanced mode". A warning explains that these 
 - **Model work:**
   - Import custom models.
   - Fine-tune on the user's own data with local LoRA training.
+  - Make an uncensored copy of a local chat model (Heretic, on the graphics card), with a warning first and the PIN when one is set. It changes the model's own refusals, which the guardrails above can't reach; the app's own checks (asking before deleting, sending or sharing, allowed folders, what may leave the PC) apply to the copy as to any model.
   - Benchmarks.
 - **Reset to defaults** for each section and for everything.
 - **Parental controls:** a PIN can lock advanced mode and the guardrail settings.

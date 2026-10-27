@@ -39,6 +39,12 @@ fn remember(conn: &Connection, spec: &ModelSpec) -> Result<(), String> {
     db::set(conn, KEY, &all)
 }
 
+/// A model made on this PC from another (an uncensored copy): listed like
+/// one installed from here, so removing it deletes its folder.
+pub(crate) fn remember_made(conn: &Connection, spec: &ModelSpec) -> Result<(), String> {
+    remember(conn, spec)
+}
+
 /// Removed from the list (the install deleted its files).
 pub fn forget(conn: &Connection, id: &str) -> Result<(), String> {
     let mut all = list(conn);

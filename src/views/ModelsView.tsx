@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ask, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubPurpose, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type VariantFit } from "../api";
-import { bytes, percent, placementLabel, speedLabel, words } from "../format";
+import { api, errorText, mainGpu, on, type Budget, type FolderImport, type FoundModels, type HubFile, type HubModel, type HubPurpose, type HubResults, type CatalogView, type InstallProgress, type ModelCard, type ModelTuning, type OptimizeReport, type Settings, type UncensorJob, type UncensorLook, type VariantFit } from "../api";
+import { bytes, duration, percent, placementLabel, speedLabel, words } from "../format";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
@@ -58,6 +58,12 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
   useEffect(() => {
     api.keepLocks().then((l) => setKeptModels(l.models)).catch(() => {});
   }, []);
+  // Uncensored copies are offered in Advanced mode only.
+  const [advanced, setAdvanced] = useState<AdvancedState>({ on: false, locked: false });
+  useEffect(() => {
+    api.advancedView().then((v) => setAdvanced({ on: v.settings.enabled, locked: v.locked })).catch(() => {});
+  }, []);
+  const uncensorJob = useUncensorJob(onRefresh, toast);
   useEffect(() => {
     if (!showAll) return;
     api.catalog(true).then((v) => setEverything(v.models)).catch(() => {});
@@ -184,7 +190,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <h2>{t("Installed")}</h2>
           <div className={`model-grid ${layout}`}>
             {installed.map((m) => (
-              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} kept={keptModels.includes(m.id)} tuning={tunings[m.id] ?? null} onKept={setKeptModels} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
+              <InstalledCard key={m.id} m={m} rank={cardRank} isDefault={m.id === defaultModel} kept={keptModels.includes(m.id)} tuning={tunings[m.id] ?? null} advanced={advanced} uncensor={uncensorJob} onKept={setKeptModels} onRefresh={onRefresh} onSettings={onSettings} toast={toast} />
             ))}
           </div>
         </>
@@ -993,12 +999,213 @@ function Optimize({ m, tuning, onRefresh, toast }: { m: ModelCard; tuning: Model
   );
 }
 
+/** Advanced mode is on (uncensored copies are offered), and whether its settings have a PIN. */
+interface AdvancedState {
+  on: boolean;
+  locked: boolean;
+}
+
+/** The uncensored copy being made (or last made), kept current; a finished one refreshes the list. */
+function useUncensorJob(onRefresh: () => Promise<void>, toast: PushToast): UncensorJob | null {
+  const [job, setJob] = useState<UncensorJob | null>(null);
+  const status = useRef<string | null>(null);
+  useEffect(() => {
+    api
+      .uncensorJob()
+      .then((j) => {
+        status.current = j?.status ?? null;
+        setJob(j);
+      })
+      .catch(() => {});
+    const sub = on("uncensor:progress", (j) => {
+      if (status.current !== j.status) {
+        if (j.status === "done") {
+          // The copy's name, as the model menu shows it.
+          toast(t("Made {name}. Pick it in a chat's model menu.", { name: `${j.name} (uncensored)` }), "success");
+          onRefresh().catch(() => {});
+        } else if (j.status === "failed" && j.error) {
+          toast(errorText(j.error), "error");
+        }
+      }
+      status.current = j.status;
+      setJob(j);
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [onRefresh, toast]);
+  return job;
+}
+
+const UNCENSOR_RUNNING = new Set(["setting_up", "downloading", "loading", "trying", "saving", "converting"]);
+
+/** How far the uncensored copy is: its stage, the refusals so far, the time left, and Stop. */
+function UncensorProgress({ job }: { job: UncensorJob }) {
+  const label = {
+    setting_up: t("Setting up Heretic (once)"),
+    downloading: t("Downloading the original"),
+    loading: t("Loading it on the graphics card and finding what makes it refuse"),
+    trying: t("Try {n} of {of}", { n: job.trial, of: job.trials }),
+    saving: t("Saving the copy"),
+    converting: t("Turning it into a file the chat engine runs"),
+  }[job.status as string];
+  return (
+    <div className="install-progress uncensor-progress">
+      <div className="progress-label">
+        <span>
+          {t("Making an uncensored copy")}: {label}
+          {job.seconds_left !== null && <span className="muted"> · {t("about {time} left", { time: duration(job.seconds_left * 1000) })}</span>}
+        </span>
+        <button type="button" className="btn small" onClick={() => api.cancelUncensor()} title={t("What it downloaded and the tries so far are kept, so starting again carries on")}>
+          {t("Stop")}
+        </button>
+      </div>
+      <div className="progress">
+        <span style={{ width: `${Math.round(job.fraction * 100)}%` }} />
+      </div>
+      {job.base_refusals !== null && (
+        <p className="small muted">
+          {t("The original refuses {b} of {of} test requests.", { b: job.base_refusals, of: job.of })}
+          {job.refusals !== null && job.kl !== null && ` ${t("Best try so far: {r}, drifting {kl} from the original's answers.", { r: job.refusals, kl: job.kl.toFixed(2) })}`}
+        </p>
+      )}
+      <p className="small muted">{t("The graphics card is busy the whole time: chats on this PC's models wait until it's done. Cloud models still work.")}</p>
+    </div>
+  );
+}
+
+/** "Make an uncensored copy": what it is, the warning, where the original comes from, how long, and Start. */
+function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advanced: AdvancedState; onClose: () => void; toast: PushToast }) {
+  const [look, setLook] = useState<UncensorLook | null>(null);
+  const [original, setOriginal] = useState("");
+  const [looking, setLooking] = useState(true);
+  const [thorough, setThorough] = useState(false);
+  const [pin, setPin] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const check = async (pasted: string | null) => {
+    setLooking(true);
+    setProblem(null);
+    try {
+      const l = await api.uncensorLook(m.id, pasted);
+      setLook(l);
+      if (l.original) setOriginal(l.original);
+    } catch (e) {
+      setProblem(errorText(e));
+    } finally {
+      setLooking(false);
+    }
+  };
+  useEffect(() => {
+    check(null);
+    // Once, for the model the dialog opened on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m.id]);
+  const start = async () => {
+    try {
+      await api.startUncensor(m.id, original, thorough, advanced.locked ? pin : null);
+      onClose();
+    } catch (e) {
+      setProblem(errorText(e));
+    }
+  };
+  const clear = async () => {
+    try {
+      const freed = await api.uncensorClear();
+      toast(t("Deleted what stopped runs left ({size} freed).", { size: bytes(freed) }), "success");
+      await check(original || null);
+    } catch (e) {
+      setProblem(errorText(e));
+    }
+  };
+  // Only the original that was looked up (an edited name is checked first).
+  const checked = !!look && look.original === original.trim();
+  const ready = !!look && checked && !look.problem && !looking && (!advanced.locked || pin.length >= 4);
+  return (
+    <Modal title={t("Make an uncensored copy of {name}", { name: m.name })} onClose={onClose}>
+      <div className="warn-box">
+        <p>
+          {t("The copy answers what this model refuses, including requests that are harmful, dangerous or illegal. Nothing checks what it says: its answers can be wrong or unpredictable, and what you do with them is up to you. Keep it away from anyone who shouldn't have it.")}
+        </p>
+      </div>
+      <p className="small">
+        {t("SulcusAI downloads the original model from Hugging Face and runs Heretic on this PC's graphics card. Heretic finds what makes the model refuse and takes it out of the model itself, trying many ways and keeping the one that refuses least while answering ordinary requests most like the original. This model stays as it is; the copy is added next to it.")}
+      </p>
+      <p className="small muted">{t("Only what the model will say changes. SulcusAI still asks before deleting, sending or sharing anything, uses only the folders you allow, and keeps what may leave this PC to your settings, whichever model answers.")}</p>
+      <label className="adv-field">
+        <span>{t("The original on Hugging Face")}</span>
+        <span className="row">
+          <input
+            className="input"
+            value={original}
+            placeholder="owner/model-name"
+            aria-label={t("The original on Hugging Face")}
+            onChange={(e) => setOriginal(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && original.trim() && check(original)}
+          />
+          <button className="btn" onClick={() => check(original || null)} disabled={looking}>
+            {t("Check")}
+          </button>
+        </span>
+      </label>
+      {looking && <p className="small muted">{t("Looking it up on Hugging Face…")}</p>}
+      {look && !looking && (
+        <>
+          {look.problem ? (
+            <p className="small warn-text">{look.problem}</p>
+          ) : (
+            <>
+              <p className="small">
+                {t("Downloads {size} (the full original), and needs {disk} free on the drive the models are on while it works.", { size: bytes(look.download), disk: bytes(look.disk) })}
+                {look.setup > 0 && ` ${t("The first time, setting up Heretic downloads about {size} more.", { size: bytes(look.setup) })}`}
+                {look.four_bit && ` ${t("It only fits the graphics card squeezed to 4 bits, which is slower and a little less exact.")}`}
+              </p>
+              <div className="mode-switch small-switch" role="radiogroup" aria-label={t("How hard to try")}>
+                <button role="radio" aria-checked={!thorough} className={`mode ${!thorough ? "active" : ""}`} onClick={() => setThorough(false)}>
+                  {t("Quick: about {time}", { time: duration(look.quick * 1000) })}
+                </button>
+                <button role="radio" aria-checked={thorough} className={`mode ${thorough ? "active" : ""}`} onClick={() => setThorough(true)}>
+                  {t("Thorough: about {time}", { time: duration(look.thorough * 1000) })}
+                </button>
+              </div>
+              <p className="small muted">{t("Thorough makes more than three times the tries, so the copy is likelier to refuse less and stay closer to the original.")}</p>
+            </>
+          )}
+          {look.leftover > 0 && (
+            <p className="small muted">
+              {t("Stopped runs left {size} on the disk (starting the same model again carries on from them).", { size: bytes(look.leftover) })}{" "}
+              <button className="link" onClick={clear}>
+                {t("Delete it")}
+              </button>
+            </p>
+          )}
+        </>
+      )}
+      {advanced.locked && (
+        <label className="adv-field">
+          <span>{t("Advanced settings PIN")}</span>
+          <input className="input" type="password" value={pin} onChange={(e) => setPin(e.target.value)} aria-label={t("Advanced settings PIN")} />
+        </label>
+      )}
+      {problem && <p className="small warn-text">{problem}</p>}
+      <div className="modal-actions">
+        <span className="spacer" />
+        <button className="btn" onClick={onClose}>{t("Cancel")}</button>
+        <button className="btn primary" onClick={start} disabled={!ready}>
+          {t("Make the copy")}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function InstalledCard({
   m,
   rank,
   isDefault,
   kept,
   tuning,
+  advanced,
+  uncensor,
   onKept,
   onRefresh,
   onSettings,
@@ -1009,6 +1216,9 @@ function InstalledCard({
   isDefault: boolean;
   kept: boolean;
   tuning: ModelTuning | null;
+  advanced: AdvancedState;
+  /** The uncensored copy being made, if any (of this model or another). */
+  uncensor: UncensorJob | null;
   onKept: (models: string[]) => void;
   onRefresh: () => Promise<void>;
   onSettings: (s: Settings) => void;
@@ -1018,6 +1228,8 @@ function InstalledCard({
   const [alsoFile, setAlsoFile] = useState(false);
   const ollama = m.local?.app.toLowerCase() === "ollama";
   const [renaming, setRenaming] = useState(false);
+  const [uncensoring, setUncensoring] = useState(false);
+  const copying = !!uncensor && UNCENSOR_RUNNING.has(uncensor.status);
   const inst = m.installed!;
   const variant = m.variants.find((v) => v.quant === inst.quant);
   const fit = m.fit.variants.find((v) => v.quant === inst.quant);
@@ -1054,6 +1266,7 @@ function InstalledCard({
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>
       {fit?.placement !== "cpu" && <Optimize m={m} tuning={tuning} onRefresh={onRefresh} toast={toast} />}
+      {uncensor && copying && uncensor.model_id === m.id && <UncensorProgress job={uncensor} />}
       {!!m.faster && (
         <div className="callout small faster-box">
           <p>{t("A faster version of this model is out: it guesses a few words ahead and checks them in one go, so replies come about 1.2 to 1.5 times as fast (more with code). Same answers, same size of model.")}</p>
@@ -1112,12 +1325,23 @@ function InstalledCard({
         <button className="btn ghost" onClick={() => setRenaming(true)}>
           {t("Rename")}
         </button>
+        {advanced.on && !m.id.startsWith("made-") && (
+          <button
+            className="btn ghost"
+            disabled={copying}
+            onClick={() => setUncensoring(true)}
+            title={copying ? t("A copy is already being made.") : t("Makes a copy that answers what this model refuses, with Heretic, on this PC's graphics card")}
+          >
+            {t("Make an uncensored copy")}
+          </button>
+        )}
         <span className="spacer" />
         <button className="btn ghost danger" onClick={() => (setAlsoFile(false), setConfirm(true))}>
           {m.local ? t("Stop using") : t("Delete from this PC")}
         </button>
       </div>
       {renaming && <RenameModel m={m} onClose={() => setRenaming(false)} onRefresh={onRefresh} />}
+      {uncensoring && <UncensorDialog m={m} advanced={advanced} onClose={() => setUncensoring(false)} toast={toast} />}
       {confirm && (
         <Modal title={m.local && !alsoFile ? t("Stop using {name}?", { name: m.name }) : t("Delete {name} from this PC?", { name: m.name })} onClose={() => setConfirm(false)}>
           {m.local ? (

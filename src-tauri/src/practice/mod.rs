@@ -1135,6 +1135,9 @@ pub async fn start_practice(
     if finetune::training() {
         return Err("A model is already being taught. Wait for it or stop it first.".into());
     }
+    if crate::uncensor::running() {
+        return Err(crate::uncensor::BUSY.into());
+    }
     if !state.generations.lock().unwrap().is_empty() {
         return Err("Wait for the reply to finish, then start practice.".into());
     }

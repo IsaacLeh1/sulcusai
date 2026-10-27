@@ -467,6 +467,9 @@ pub async fn start_finetune(app: AppHandle, state: AppStateRef<'_>, name: String
     if training() {
         return Err("A model is already being taught. Wait for it or stop it first.".into());
     }
+    if crate::uncensor::running() {
+        return Err(crate::uncensor::BUSY.into());
+    }
     let installed = db::installed_model(&state.db.lock().unwrap(), &base).ok_or("Pick a model that's installed.")?;
     fits_card(&state, &installed)?;
     let base_name = state.model_spec(&base).map_or(base.clone(), |s| s.name);
@@ -705,7 +708,7 @@ fn model_size(state: &AppState, installed: &db::InstalledModel) -> u64 {
 /// stopped): its size less what Windows, the desktop and other apps hold.
 /// None without a graphics card. Windows' count lags a moment behind a
 /// program that has just quit, so it's read until it stops falling.
-async fn card_free(state: &AppState) -> Option<u64> {
+pub(crate) async fn card_free(state: &AppState) -> Option<u64> {
     let total = state.hardware.read().unwrap().best_gpu().map_or(0, |g| g.vram_bytes);
     if total == 0 {
         return None;

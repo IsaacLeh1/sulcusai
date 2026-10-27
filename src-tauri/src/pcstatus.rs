@@ -86,6 +86,9 @@ pub(crate) async fn status(state: &crate::AppState) -> Result<PcStatus, String> 
     if crate::finetune::training() {
         jobs.push(Job { kind: "training", title: "Teaching a model".into(), detail: "Training".into(), fraction: None });
     }
+    if let Some(j) = crate::uncensor::uncensor_job().filter(|_| crate::uncensor::running()) {
+        jobs.push(Job { kind: "training", title: crate::uncensor::copy_name(&j.name), detail: "Making".into(), fraction: Some(j.fraction) });
+    }
     Ok(PcStatus {
         pc: std::env::var("COMPUTERNAME").unwrap_or_default(),
         cpu: crate::perf::cpu_usage(),
@@ -121,6 +124,10 @@ pub(crate) async fn stop_everything(state: &crate::AppState) -> Result<u32, Stri
     }
     if crate::finetune::training() {
         crate::finetune::cancel_finetune();
+        n += 1;
+    }
+    if crate::uncensor::running() {
+        crate::uncensor::cancel_uncensor();
         n += 1;
     }
     // What was told to stop ends first; then the model leaves the card.

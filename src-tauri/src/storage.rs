@@ -293,7 +293,7 @@ pub async fn move_models(app: AppHandle, state: AppStateRef<'_>, dest: String) -
     if target.starts_with(&current) || current.starts_with(&target) && target != default {
         return Err("Pick a folder outside the current models folder.".into());
     }
-    if !state.installs.lock().unwrap().is_empty() || crate::finetune::training() || !crate::media::list_jobs().is_empty() {
+    if !state.installs.lock().unwrap().is_empty() || crate::finetune::training() || crate::uncensor::running() || !crate::media::list_jobs().is_empty() {
         return Err("Wait for installs, media jobs and teaching to finish first.".into());
     }
     std::fs::create_dir_all(&target).map_err(|e| format!("Couldn't use that folder: {e}"))?;

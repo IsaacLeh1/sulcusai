@@ -105,6 +105,7 @@ mod tts;
 mod programs;
 mod lens;
 mod steer;
+mod uncensor;
 mod screen_agent;
 mod import;
 mod typing;
@@ -854,7 +855,7 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
             // Not while a reply runs or a model is being taught: loading this
             // one would stop the model they use. The speed can be tested later
             // on the Models page.
-            if !state.generations.lock().unwrap().is_empty() || finetune::training() {
+            if !state.generations.lock().unwrap().is_empty() || finetune::training() || uncensor::running() {
                 drop(engine);
                 state.log("model", &format!("Skipped testing {}'s speed: the engine was busy", spec.name));
                 return Ok(());
@@ -1293,6 +1294,9 @@ fn speed_test_allowed(state: &AppState) -> Result<(), String> {
     }
     if finetune::training() {
         return Err("A model is being taught right now and has the graphics card. Try again when it's done.".into());
+    }
+    if uncensor::running() {
+        return Err(uncensor::BUSY.into());
     }
     Ok(())
 }
@@ -2416,6 +2420,9 @@ pub(crate) async fn llm_endpoint(
     if finetune::training() {
         return Err("A model is being taught right now and has the graphics card. Chats on this PC's models work again when it's done (or stop it in Settings → Advanced). Cloud models still work.".into());
     }
+    if uncensor::running() {
+        return Err("An uncensored copy of a model is being made and has the graphics card. Chats on this PC's models work again when it's done (or stop it on the Models page). Cloud models still work.".into());
+    }
     // A taught model: its base model with the adapter on top.
     let taught = match finetune::parse_ref(&id) {
         Some(aid) => Some(finetune::adapter(state, aid).ok_or("That taught model was removed. Pick another one.")?),
@@ -2823,6 +2830,7 @@ pub fn run() {
             // What a crash may have left: picture/video work, teaching data.
             media::clean_work(&state.paths);
             finetune::clean_leftovers(&state.paths);
+            uncensor::clean_leftovers(&state.paths);
             let _ = clear_incognito(&state, None);
             let _ = db::delete_empty_chats(&state.db.lock().unwrap());
             let state = Arc::new(state);
@@ -3208,6 +3216,11 @@ pub fn run() {
             finetune::start_finetune,
             finetune::cancel_finetune,
             finetune::remove_adapter,
+            uncensor::uncensor_look,
+            uncensor::start_uncensor,
+            uncensor::cancel_uncensor,
+            uncensor::uncensor_job,
+            uncensor::uncensor_clear,
             practice::start_practice,
             updates::update_view,
             updates::check_for_update,

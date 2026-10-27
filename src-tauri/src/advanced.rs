@@ -235,7 +235,7 @@ fn lock_hash(conn: &Connection) -> Option<String> {
     db::get(conn, LOCK_KEY)
 }
 
-fn check_lock(conn: &Connection, pin: Option<&str>) -> Result<(), String> {
+pub(crate) fn check_lock(conn: &Connection, pin: Option<&str>) -> Result<(), String> {
     match lock_hash(conn) {
         None => Ok(()),
         Some(h) if pin.is_some_and(|p| pin_ok(&h, p)) => Ok(()),

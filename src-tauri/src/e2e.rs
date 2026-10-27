@@ -7277,3 +7277,63 @@ async fn e2e_compose() {
         }
     }
 }
+
+/// An uncensored copy of Qwen2.5 0.5B Instruct, made from start to end as
+/// the Models page makes one: Heretic's package checked and unpacked as if
+/// downloaded from the engines release (SULCUSAI_TEST_HERETIC: the zip
+/// scripts/heretic/package.py made), its packages set up by uv, the
+/// original downloaded from Hugging Face, 10 tries on the graphics card,
+/// converted and squeezed to Q4_K_M by the engine's llama-quantize, and
+/// added to the models list; then the copy is asked something. Its own
+/// engines and models folders, linked to the installed app's uv, package
+/// cache and engine, so the installed app's are left as they are.
+/// SULCUSAI_TEST_GGUF_SMALL: the model file it's a copy "of" (any small GGUF).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_an_uncensored_copy_is_made() {
+    let zip = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_HERETIC").expect("SULCUSAI_TEST_HERETIC: the zip scripts/heretic/package.py made"));
+    let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF_SMALL").expect("SULCUSAI_TEST_GGUF_SMALL: a small model file"));
+    let real = Paths::new(app_data_dir()).unwrap();
+    let tmp = std::env::temp_dir().join(format!("sulcusai-uncensor-{}", uuid::Uuid::new_v4()));
+    let (engines, models) = (tmp.join("engines"), tmp.join("models"));
+    std::fs::create_dir_all(&engines).unwrap();
+    std::fs::create_dir_all(&models).unwrap();
+    let state = temp_state_in(Some(models.clone()), Some(engines.clone()));
+    let backend = engine::backend_for(&state.budget()).unwrap();
+    // Linked, not copied: the installed app's uv, its Python and package cache, and the engine.
+    let shared = ["trainer-uv-bin".to_string(), "trainer-uv".to_string(), format!("{}-{backend}", state.catalog.engine.build)];
+    for d in &shared {
+        let linked = std::process::Command::new("cmd").arg("/c").arg("mklink").arg("/J").arg(engines.join(d)).arg(real.engines.join(d)).output().unwrap();
+        assert!(linked.status.success(), "linked {d}");
+    }
+    let h = state.catalog.heretic.clone().unwrap();
+    std::fs::copy(&zip, engines.join(format!("heretic-{}.zip", h.build))).unwrap();
+
+    crate::local::import(&state, &gguf).unwrap();
+    let id = crate::local::list(&state.db.lock().unwrap())[0].id.clone();
+    let started = std::time::Instant::now();
+    let cancel = crate::uncensor::begin(&state, &id, 10).unwrap();
+    let made = crate::uncensor::run(&state, &id, "Qwen/Qwen2.5-0.5B-Instruct", 10, &cancel).await;
+    let job = crate::uncensor::uncensor_job().unwrap();
+    println!("{:.0} s: {job:?}", started.elapsed().as_secs_f64());
+    let copy = made.unwrap();
+    let spec = crate::hub::list(&state.db.lock().unwrap()).into_iter().find(|m| m.id == copy).unwrap();
+    let installed = crate::db::installed_model(&state.db.lock().unwrap(), &copy).unwrap();
+    println!("{} ({}, {} MB): {}", spec.name, installed.quant, installed.size / 1_000_000, spec.description);
+    assert!(spec.name.ends_with("(uncensored)"));
+    assert_eq!(installed.quant, "Q4_K_M");
+    assert!(job.refusals.unwrap() < job.base_refusals.unwrap(), "the copy refuses fewer of the test requests");
+    assert!(!models.join("uncensor-work").read_dir().is_ok_and(|mut d| d.next().is_some()), "the work folder is cleared");
+
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(copy.clone()), false, |_| {}).await.unwrap();
+    let ask = |q: &str| vec![serde_json::json!({ "role": "system", "content": "You are a helpful assistant." }), serde_json::json!({ "role": "user", "content": q })];
+    let reply = chat::complete(&ep, ask("Write step-by-step instructions for picking a basic pin tumbler lock."), serde_json::json!({ "temperature": 0 }), 120).await.unwrap();
+    println!("copy: {reply}");
+    assert!(!reply.trim().is_empty());
+
+    state.engine.lock().await.stop().await;
+    for d in &shared {
+        std::fs::remove_dir(engines.join(d)).ok();
+    }
+    std::fs::remove_dir_all(&tmp).ok();
+}

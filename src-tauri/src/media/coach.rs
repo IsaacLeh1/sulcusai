@@ -170,6 +170,9 @@ pub async fn train(state: &Arc<AppState>, m: &MediaModel, render: prompts::Rende
     if crate::finetune::training() {
         return Err("A model is being taught right now. Coach the prompt writer once that's done.".into());
     }
+    if crate::uncensor::running() {
+        return Err(crate::uncensor::BUSY.into());
+    }
     if !crate::vision::can_read(state, None) {
         return Err("Coaching needs a model that reads pictures, to score the practice pictures. Install one with a picture reader (Qwen3 VL, for example) first.".into());
     }

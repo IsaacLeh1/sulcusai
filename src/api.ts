@@ -151,6 +151,52 @@ export interface FinetuneJob {
   low_memory: boolean;
 }
 
+/** An uncensored copy being made (Advanced mode, with Heretic). */
+export interface UncensorJob {
+  /** The model being copied. */
+  model_id: string;
+  name: string;
+  status: "setting_up" | "downloading" | "loading" | "trying" | "saving" | "converting" | "done" | "failed" | "cancelled";
+  fraction: number;
+  trial: number;
+  trials: number;
+  /** The original's refusals of the test requests, and how many there are. */
+  base_refusals: number | null;
+  of: number;
+  /** The best try so far within the drift allowed (at the end, the one kept). */
+  refusals: number | null;
+  kl: number | null;
+  /** Loaded in 4 bits to fit the graphics card. */
+  four_bit: boolean;
+  seconds_left: number | null;
+  error: string | null;
+  /** The copy, once it's in. */
+  copy_id: string | null;
+}
+
+/** What making an uncensored copy of a model would take. */
+export interface UncensorLook {
+  /** The original on Hugging Face ("owner/name"), as found or pasted. */
+  original: string | null;
+  /** Why it can't be made from that original (a whole sentence). */
+  problem: string | null;
+  download: number;
+  /** Disk space the run needs at its fullest, and what's free there. */
+  disk: number;
+  free: number | null;
+  four_bit: boolean;
+  /** What setting Heretic up the first time downloads (0 once set up). */
+  setup: number;
+  /** About how long, in seconds. */
+  quick: number;
+  thorough: number;
+  /** The finished copy's size, about. */
+  size: number;
+  /** What stopped runs left on the disk. */
+  leftover: number;
+  job: UncensorJob | null;
+}
+
 /** Practice's second test, of new tasks, that confirms what's kept: right before and after. */
 export interface SecondTest {
   before: number;
@@ -2826,6 +2872,13 @@ export const api = {
     invoke<void>("start_practice", { name, base, skills, epochs, strength, teacher, folders }),
   cancelFinetune: () => invoke<void>("cancel_finetune"),
   removeAdapter: (id: string) => invoke<void>("remove_adapter", { id }),
+  /** `original`: a pasted Hugging Face link; null looks for the one the model was made from. */
+  uncensorLook: (modelId: string, original: string | null) => invoke<UncensorLook>("uncensor_look", { modelId, original }),
+  startUncensor: (modelId: string, original: string, thorough: boolean, pin: string | null) => invoke<void>("start_uncensor", { modelId, original, thorough, pin }),
+  cancelUncensor: () => invoke<void>("cancel_uncensor"),
+  uncensorJob: () => invoke<UncensorJob | null>("uncensor_job"),
+  /** Deletes what stopped runs left; the bytes freed. */
+  uncensorClear: () => invoke<number>("uncensor_clear"),
   updateView: () => invoke<UpdateView>("update_view"),
   checkForUpdate: () => invoke<UpdateAvailable | null>("check_for_update"),
   setUpdateAuto: (auto: boolean) => invoke<void>("set_update_auto", { auto }),
@@ -3790,6 +3843,7 @@ export interface ChatEvents {
   "engine:download": { received?: number; total?: number; done?: boolean };
   "update:available": UpdateAvailable;
   "finetune:progress": FinetuneJob;
+  "uncensor:progress": UncensorJob;
   "sync:status": null;
   "models:moving": { done?: number; total?: number; finished?: boolean; error?: string };
   /** The speed test's status, plus the model just tested (tps or error), and finished at the end. */

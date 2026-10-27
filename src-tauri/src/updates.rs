@@ -56,6 +56,7 @@ fn idle(state: &AppState) -> bool {
         && crate::meeting::live_meeting().is_none()
         && crate::media::list_jobs().is_empty()
         && !crate::finetune::training()
+        && !crate::uncensor::running()
         && !crate::tools::commands_running()
 }
 

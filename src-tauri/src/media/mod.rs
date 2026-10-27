@@ -2235,6 +2235,9 @@ fn no_model(op: &str) -> bool {
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
     let f = op_feature(&req.op).ok_or("Unknown kind of job.")?;
     crate::features::require(state, f)?;
+    if crate::uncensor::running() {
+        return Err(crate::uncensor::BUSY.into());
+    }
     if let Some(id) = req.music.as_ref().and_then(|m| m.custom.as_deref()).filter(|c| !c.is_empty() && req.op == "music") {
         train::get(&state.db.lock().unwrap(), &state.work_cipher()?, id).ok_or("That custom model is no longer here.")?;
         if !installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == train::BASE_MODEL) {
