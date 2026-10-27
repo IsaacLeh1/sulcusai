@@ -22,7 +22,166 @@ pub fn wikipedia_params() -> Value {
 pub fn research_params() -> Value {
     json!({ "type": "object", "required": ["question"], "properties": {
         "question": { "type": "string", "description": "What to find out, in full." },
-        "searches": { "type": "array", "items": { "type": "string" }, "description": "2 to 4 different web searches that together cover it." } } })
+        "searches": { "type": "array", "items": { "type": "string" }, "description": "2 to 4 different web searches that together cover it." },
+        "depth": { "type": "string", "enum": ["quick", "deep"], "description": "deep: a full report when the user asks for one (or for deep research): several rounds of searching and reading, written up with numbered sources and saved to Notes. Takes a few minutes. quick (the default) for everything else." } } })
+}
+
+/// A page found and read for deep research.
+struct Found {
+    title: String,
+    url: String,
+    text: String,
+}
+
+/// The strings of the first JSON array in a model's reply (it may wrap it in words or a code block).
+fn json_strings(text: &str) -> Vec<String> {
+    let (Some(a), Some(b)) = (text.find('['), text.rfind(']')) else { return Vec::new() };
+    serde_json::from_str::<Vec<Value>>(&text[a..=b.max(a)])
+        .map(|v| v.iter().filter_map(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// One round: the searches side by side, then the best new pages read (up to `most`).
+async fn gather(w: &Web, searches: &[String], about: &str, found: &mut Vec<Found>, most: usize, step: &(dyn Fn(&str) + Sync)) -> usize {
+    step(&format!("Searching: {}", searches.join("; ")));
+    let runs = searches.iter().map(|q| {
+        let (settings, key, client, app, q) = (w.settings.clone(), w.key.clone(), w.client.clone(), w.app.clone(), q.clone());
+        async move { web::search(&settings, key, &client, &q, 6, app.as_ref()).await.ok() }
+    });
+    let results: Vec<Vec<web::Hit>> = futures_util::future::join_all(runs).await.into_iter().map(|r| r.map(|(hits, _)| hits).unwrap_or_default()).collect();
+    let mut hits: Vec<web::Hit> = Vec::new();
+    for i in 0..6 {
+        for r in &results {
+            if let Some(h) = r.get(i) {
+                let host = reqwest::Url::parse(&h.url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default();
+                // Not three pages of one site, this round and before together.
+                let same_site = hits.iter().filter(|x| x.url.contains(&host)).count() + found.iter().filter(|f| f.url.contains(&host)).count();
+                if hits.len() < most && !hits.iter().any(|x| x.url == h.url) && !found.iter().any(|f| f.url == h.url) && same_site < 2 {
+                    hits.push(h.clone());
+                }
+            }
+        }
+    }
+    if hits.is_empty() {
+        return 0;
+    }
+    step(&format!("Reading {} pages", hits.len()));
+    let reads = hits.iter().map(|h| {
+        let (client, url) = (w.client.clone(), h.url.clone());
+        async move { tokio::time::timeout(std::time::Duration::from_secs(12), web::fetch(&client, &url)).await.ok().and_then(Result::ok) }
+    });
+    let pages = futures_util::future::join_all(reads).await;
+    let before = found.len();
+    for (h, page) in hits.iter().zip(pages) {
+        let text = page.map(|p| web::excerpts(&p.text, about, 2000)).filter(|e| !e.is_empty()).unwrap_or_else(|| h.snippet.clone());
+        if !text.trim().is_empty() {
+            found.push(Found { title: h.title.clone(), url: h.url.clone(), text });
+        }
+    }
+    found.len() - before
+}
+
+/// research with depth "deep": the chat's own model plans the searches,
+/// pages are found and read, it says what's still missing for a second
+/// round, then it writes a report from the pages with numbered sources,
+/// which is saved to Notes.
+pub async fn deep(args: &Value, w: &Web, ctx: &MemoryCtx<'_>, ep: &crate::engine::Endpoint, cancel: &std::sync::atomic::AtomicBool, step: &(dyn Fn(&str) + Sync)) -> Outcome {
+    use std::sync::atomic::Ordering;
+    let question = args.get("question").and_then(Value::as_str).map(str::trim).unwrap_or_default().to_string();
+    if question.is_empty() {
+        return Outcome::error("Research", "Say what to find out (question).");
+    }
+    let mut searches = list(args, "searches", 6);
+    if searches.len() < 3 {
+        step("Planning what to look up");
+        let ask = format!("Plan web searches to research this thoroughly:\n\n{question}\n\nReply with only a JSON array of 4 to 6 short, different search queries that together cover it (its parts, the latest facts, numbers, opposing views).");
+        if let Ok(text) = crate::chat::complete(ep, vec![json!({ "role": "user", "content": ask })], json!({}), 400).await {
+            for q in json_strings(&text) {
+                if !searches.iter().any(|s| s.eq_ignore_ascii_case(&q)) {
+                    searches.push(q);
+                }
+            }
+        }
+        searches.truncate(6);
+    }
+    if searches.is_empty() {
+        searches.push(question.clone());
+    }
+    let about = format!("{question} {}", searches.join(" "));
+    let mut found = Vec::new();
+    gather(w, &searches, &about, &mut found, 10, step).await;
+    if found.is_empty() {
+        return Outcome::ok("The searches found nothing. Try other words, or answer from what you know and say you couldn't check it.", format!("Researched “{question}”: nothing found"), "text", None);
+    }
+    let mut rounds = 1;
+    if !cancel.load(Ordering::Relaxed) {
+        step("Looking for what's still missing");
+        let seen: String = found.iter().enumerate().map(|(i, f)| format!("[{}] {}: {}", i + 1, f.title, f.text.chars().take(300).collect::<String>())).collect::<Vec<_>>().join("\n");
+        let ask = format!(
+            "Question: {question}\n\nFound so far:\n{seen}\n\nWhat important part of the question do these not answer yet? Reply with only a JSON array of up to 3 web searches for it (words to search for, not web addresses), or [] if nothing important is missing."
+        );
+        if let Ok(text) = crate::chat::complete(ep, vec![json!({ "role": "user", "content": ask })], json!({}), 300).await {
+            let more: Vec<String> = json_strings(&text).into_iter().filter(|q| !searches.iter().any(|s| s.eq_ignore_ascii_case(q))).take(3).collect();
+            if !more.is_empty() && gather(w, &more, &format!("{about} {}", more.join(" ")), &mut found, 6, step).await > 0 {
+                rounds = 2;
+                searches.extend(more);
+            }
+        }
+    }
+    // What the report is written from, within what a model's window holds.
+    let mut budget = 30_000usize;
+    let numbered: Vec<String> = found
+        .iter()
+        .enumerate()
+        .map(|(i, f)| {
+            let text: String = f.text.chars().take(budget.min(2000)).collect();
+            budget = budget.saturating_sub(text.chars().count());
+            format!("[{}] {}\n{}\n{}", i + 1, f.title, f.url, text)
+        })
+        .collect();
+    crate::db::log_action(&ctx.db.lock().unwrap(), "network", &format!("Did deep research on the web ({} searches in {rounds} rounds, {} pages read)", searches.len(), found.len()));
+    if cancel.load(Ordering::Relaxed) {
+        return Outcome::error("Research stopped", "Stopped before the report was written.");
+    }
+    step("Writing the report");
+    let ask = format!(
+        "{UNTRUSTED}\n\nSources:\n\n{}\n\nWrite a research report in Markdown answering: {question}\n\
+         Use only these sources. Start with a title line (# …), then a short summary of the answer, then sections with headings. \
+         Give exact figures and dates as the sources state them, say where sources disagree and what they leave open. \
+         After each claim put its source number in brackets, like [3]. End with a section \"## Sources\" listing each number with its title and address.",
+        numbered.join("\n\n")
+    );
+    let report = crate::chat::complete(ep, vec![json!({ "role": "user", "content": ask })], json!({}), 4096).await.unwrap_or_default();
+    let shown = found.iter().map(|f| format!("{} — {}", f.title, f.url)).collect::<Vec<_>>().join("\n");
+    let sources: Vec<Value> = found.iter().map(|f| json!({ "title": f.title, "url": f.url, "snippet": f.text.chars().take(200).collect::<String>() })).collect();
+    if report.trim().len() < 200 {
+        // The model couldn't write it here: the pages go back for the chat to answer from.
+        let mut o = Outcome::ok(
+            format!("{UNTRUSTED}\n\n{}\n\nWrite a full report answering “{question}” from these sources only, citing each point as [n] with a Sources list at the end.", numbered.join("\n\n")),
+            format!("Researched “{question}” ({} sources)", found.len()),
+            "text",
+            Some(shown),
+        );
+        o.meta["sources"] = json!(sources);
+        return o;
+    }
+    let title = report.lines().find_map(|l| l.trim().strip_prefix("# ")).map(str::trim).filter(|t| !t.is_empty()).unwrap_or(&question).chars().take(120).collect::<String>();
+    let saved = crate::notes::save_note(
+        &ctx.db.lock().unwrap(),
+        ctx.cipher,
+        None,
+        crate::notes::NoteBody { title: title.clone(), body: report.clone(), folder: "Research".into(), tags: vec!["research".into()] },
+    )
+    .is_ok();
+    let where_ = if saved { format!("It's saved in Notes (folder Research) as “{title}”.") } else { "It couldn't be saved to Notes.".to_string() };
+    let mut o = Outcome::ok(
+        format!("{UNTRUSTED}\n\nThe research report ({} sources read in {rounds} rounds). {where_}\n\n{report}\n\nGive the user the report's summary and main findings with their [n] references, and say where the whole report is.", found.len()),
+        format!("Researched “{question}” in depth ({} sources)", found.len()),
+        "text",
+        Some(shown),
+    );
+    o.meta["sources"] = json!(sources);
+    o
 }
 
 pub fn market_quote_params() -> Value {

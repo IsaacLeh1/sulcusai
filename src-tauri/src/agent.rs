@@ -1823,6 +1823,8 @@ impl Turn {
                 Ok(task) => self.run_helper(&call.id, task, &ctx).await,
                 Err(e) => Outcome::error(tools::failed_title(&call.name, &args), e),
             }
+        } else if call.name == "research" && args.get("depth").and_then(Value::as_str) == Some("deep") {
+            self.deep_research(call, &args).await
         } else if call.name == "use_screen" {
             match tools::arg_str(&args, "task") {
                 Ok(task) => self.use_screen(call, task).await,
@@ -2601,6 +2603,24 @@ impl Turn {
             Ok(text) => Outcome::ok(text, title, "text", None),
             Err(e) => Outcome::error("Couldn't use the screen", e),
         }
+    }
+
+    /// research in depth, with this chat's model planning and writing, and
+    /// each step shown under the tool as it goes.
+    async fn deep_research(&self, call: &ToolCall, args: &Value) -> Outcome {
+        let prepared = {
+            let conn = self.state.db.lock().unwrap();
+            crate::web::prepare(&conn, &self.cipher, &self.chat_id)
+        };
+        let (client, settings, key) = match prepared {
+            Ok(x) => x,
+            Err(e) => return Outcome::error("Web access is off", e),
+        };
+        let w = tools::lookup::Web { client, settings, key, app: self.state.app.get().cloned() };
+        let project = db::chat(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id).and_then(|c| c.project_id);
+        let memory = tools::MemoryCtx { db: &self.state.db, cipher: &self.cipher, chat_id: &self.chat_id, project_id: project.as_deref() };
+        let step = |line: &str| self.emit("agent:helper", json!({ "chat_id": self.chat_id, "call_id": call.id, "step": line }));
+        tools::lookup::deep(args, &w, &memory, &self.ep, &self.cancel, &step).await
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {

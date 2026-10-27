@@ -11,7 +11,7 @@ mod documents;
 mod library;
 pub(crate) mod fs;
 pub(crate) mod guard;
-mod lookup;
+pub(crate) mod lookup;
 pub(crate) mod media;
 mod meetings;
 mod memory;

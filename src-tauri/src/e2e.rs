@@ -1921,6 +1921,34 @@ async fn e2e_the_local_api_speaks_claudes_shape() {
     server.abort();
 }
 
+/// Deep research on the real web with Qwen3 4B: it plans searches, reads
+/// pages, looks again for what's missing, and writes a report with numbered
+/// sources that's saved to Notes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_deep_research_writes_a_report() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf")).unwrap();
+    let id = crate::db::installed_models(&state.db.lock().unwrap())[0].model_id.clone();
+    let cipher = crate::crypto::Cipher::random();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, Some(id.clone())).unwrap();
+    crate::db::set_chat_web(&state.db.lock().unwrap(), &chat.id, true).unwrap();
+    let (client, settings, key) = crate::web::prepare(&state.db.lock().unwrap(), &cipher, &chat.id).unwrap();
+    let w = crate::tools::lookup::Web { client, settings, key, app: None };
+    let (ep, _, _) = crate::llm_endpoint(&state, Some(id), false, |_| {}).await.unwrap();
+    let memory = crate::tools::MemoryCtx { db: &state.db, cipher: &cipher, chat_id: &chat.id, project_id: None };
+    let started = std::time::Instant::now();
+    let step = |s: &str| println!("step ({:.0} s): {s}", started.elapsed().as_secs_f64());
+    let args = serde_json::json!({ "question": "What changed in Python 3.13 compared with Python 3.12?", "depth": "deep" });
+    let out = crate::tools::lookup::deep(&args, &w, &memory, &ep, &std::sync::atomic::AtomicBool::new(false), &step).await;
+    println!("{} in {:.0} s\n{}", out.meta["title"], started.elapsed().as_secs_f64(), out.text.chars().take(3000).collect::<String>());
+    assert!(out.text.contains("## Sources") && out.text.contains("[1]"), "a report with numbered sources");
+    let notes = crate::notes::list_notes(&state.db.lock().unwrap(), &cipher);
+    assert!(notes.iter().any(|n| n.data.folder == "Research"), "saved to Notes");
+    state.engine.lock().await.stop().await;
+}
+
 /// Switching between two models the card holds together: the one used
 /// before stays loaded, and going back to it answers without loading
 /// (Qwen3 4B and Qwen3 VL 4B on the 12 GB card).
