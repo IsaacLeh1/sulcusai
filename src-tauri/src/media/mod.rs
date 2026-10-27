@@ -2906,7 +2906,9 @@ fn lighter_on_card(args: &[std::ffi::OsString], pinned: bool) -> Vec<std::ffi::O
     let budget = flag_value(args, "--max-vram").and_then(|v| v.parse::<f64>().ok()).unwrap_or(-1.0);
     let lighter = if budget > 0.0 { format!("{:.1}", (budget / 2.0).max(1.0)) } else { "-3".to_string() };
     let capped = if streamed_only(args) { args.to_vec() } else { with_flag(args, "--max-vram", Some(&lighter)) };
-    let mut out: Vec<std::ffi::OsString> = capped.into_iter().filter(|a| a != "--diffusion-fa").collect();
+    // LTX keeps fast attention: without it its frames came out white.
+    let ltx = args.iter().any(|a| a == "--audio-vae");
+    let mut out: Vec<std::ffi::OsString> = capped.into_iter().filter(|a| ltx || a != "--diffusion-fa").collect();
     out = with_flag(&out, "--vae-tiling", None);
     if pinned && flag_value(&out, "--backend").is_none() {
         out = with_flag(&out, "--backend", Some("diffusion=Vulkan0,te=cpu,vae=Vulkan0"));
@@ -2983,7 +2985,13 @@ impl RunCtx<'_> {
         let pinned = crate::engine::learn_devices(self.state).await;
         // Planned to stay on the card: headroom it keeps free, and the
         // picture decoded in tiles where the last step's burst could overflow it.
-        let first = card_friendly(&args, vram_gib);
+        let mut first = card_friendly(&args, vram_gib);
+        // LTX-2.3 (22B, with Gemma 3 12B reading the prompt) on a card under
+        // 20 GB starts the lighter way: on a 12 GB card the first way ran out
+        // partway after 5 minutes, and the lighter one made 5 s in 526 s.
+        if vram_gib < 20.0 && args.iter().any(|a| a == "--audio-vae") {
+            first = lighter_on_card(&first, pinned);
+        }
         let mut last = match self.run_sd_once(first.clone(), work, None).await {
             Err(e) if card_trouble(&e) => e,
             other => return other,
@@ -4275,11 +4283,18 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     let longest = (max_frames as f32 - 1.0) / fps as f32;
     // Longer: in parts, each going on from the last frame of the one before
     // (models that start from a picture; the parts are joined on Windows).
-    let can_continue = m.can("image") && cfg!(windows) && req.wallpaper.is_none();
+    // A clip with its own sound is made in one go (parts would cut the sound up).
+    let sound = m.file("audio_vae").is_some();
+    let can_continue = m.can("image") && cfg!(windows) && req.wallpaper.is_none() && !sound;
     let most = if can_continue { longclip::MAX_SECS } else { longest };
     let seconds = req.seconds.unwrap_or(if req.wallpaper.is_some() { longest } else { d.seconds }).clamp(1.0, most.max(1.0));
     let total = (seconds * fps as f32).round() as u32 + 1;
-    let parts = if can_continue { longclip::plan(total, max_frames) } else { vec![sd::frames_for(seconds, fps).min(max_frames)] };
+    let parts = match () {
+        _ if can_continue => longclip::plan(total, max_frames),
+        // LTX: 8n+1 frames.
+        _ if sound => vec![sd::frames_in_steps(seconds, fps, 8).min(max_frames)],
+        _ => vec![sd::frames_for(seconds, fps).min(max_frames)],
+    };
     let frames = parts[0];
     let (mut w, mut h) = (d.width.max(256), d.height.max(256));
     if let Some(spec) = &req.wallpaper {
@@ -4370,13 +4385,14 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         let thumb = imaging::thumbnail(&poster)?;
         return Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, Some(&thumb))?]);
     }
+    let (out, mime) = if sound { with_its_sound(ctx, &out, work).await? } else { (out, "video/webm") };
     let bytes = std::fs::read(&out).map_err(|_| "The video engine didn't produce a clip.".to_string())?;
     let item = MediaItem {
         kind: "video".into(),
         op: "video".into(),
         prompt: req.asked.as_deref().unwrap_or(&req.prompt).trim().to_string(),
         model_id: Some(m.id.clone()),
-        mime: "video/webm".into(),
+        mime: mime.into(),
         width: w,
         height: h,
         seconds: frames as f64 / fps as f64,
@@ -4387,6 +4403,26 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         ..Default::default()
     };
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &c, item, &bytes, still.as_deref())?])
+}
+
+/// A clip that came with its own sound (LTX): the engine puts it in the
+/// WebM as raw PCM, which the window's player can't play, so it's made an
+/// MP4 with AAC. A clip whose sound didn't come out (the engine then writes
+/// a silent one) is kept as it is, and the log says so.
+async fn with_its_sound(ctx: &RunCtx<'_>, webm: &std::path::Path, work: &std::path::Path) -> Result<(PathBuf, &'static str), String> {
+    let state = ctx.state;
+    let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
+    let probe = ffmpeg::probe(&ffprobe, webm).await?;
+    if !probe.audio {
+        state.log("media", "The video model's sound didn't come out; the clip is silent");
+        return Ok((webm.to_path_buf(), "video/webm"));
+    }
+    (ctx.progress)("Putting the sound with it", 0.97);
+    let mp4 = work.join("with-sound.mp4");
+    let mut args: Vec<std::ffi::OsString> = vec!["-i".into(), webm.as_os_str().to_owned()];
+    args.extend(ffmpeg::mp4_out(&mp4));
+    ffmpeg::run(state, &ffmpeg_exe, args, probe.seconds, ctx.cancel, &|f| (ctx.progress)("Putting the sound with it", 0.97 + 0.03 * f)).await?;
+    Ok((mp4, "video/mp4"))
 }
 
 struct LongClip<'a> {

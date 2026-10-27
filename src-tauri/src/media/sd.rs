@@ -27,6 +27,10 @@ pub fn model_args(files: &[(String, PathBuf)]) -> Vec<OsString> {
             "upscale" => "--upscale-model",
             // Wan 2.2 S2V hears its voice through wav2vec2.
             "audio_encoder" => "--audio-encoder",
+            // LTX-2.3: its sound's decoder (with the vocoder in it), and the
+            // projection from its text reader (Gemma 3) to the model.
+            "audio_vae" => "--audio-vae",
+            "embeddings_connectors" => "--embeddings-connectors",
             _ => continue,
         };
         out.push(flag.into());
@@ -148,8 +152,18 @@ pub struct Clip<'a> {
 
 /// Wan models need 4n+1 frames.
 pub fn frames_for(seconds: f32, fps: u32) -> u32 {
-    let n = ((seconds * fps as f32) / 4.0).round().max(1.0) as u32;
-    n * 4 + 1
+    frames_in_steps(seconds, fps, 4)
+}
+
+/// Frames in steps of `step`, plus one (LTX: 8n+1).
+pub fn frames_in_steps(seconds: f32, fps: u32, step: u32) -> u32 {
+    let n = ((seconds * fps as f32) / step as f32).round().max(1.0) as u32;
+    n * step + 1
+}
+
+/// A video model that makes its sound too (LTX-2.3's sound decoder).
+pub fn with_sound(files: &[(String, PathBuf)]) -> bool {
+    files.iter().any(|(role, _)| role == "audio_vae")
 }
 
 pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Limits) -> Vec<OsString> {
@@ -218,8 +232,16 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
     if d.temporal_tiling {
         a.push("--temporal-tiling".into());
     }
+    // Distilled models are tuned to exact noise levels (LTX-2.3: 8 steps).
+    if !d.sigmas.is_empty() {
+        a.extend(["--sigmas".into(), d.sigmas.as_str().into()]);
+    }
     if let Some(i) = c.init {
         a.extend(["-i".into(), i.into()]);
+        // LTX keeps the first frame by this much (its default, 0.75, let the picture drift).
+        if with_sound(files) {
+            a.extend(["--strength".into(), "1.0".into()]);
+        }
     }
     if let Some(v) = c.audio {
         a.extend(["--audio".into(), v.into()]);
@@ -376,6 +398,28 @@ mod tests {
         assert_eq!(frames_for(3.0, 24), 73);
         assert_eq!(frames_for(2.0, 16), 33);
         assert_eq!(frames_for(0.1, 16), 5);
+        assert_eq!(frames_in_steps(5.0, 24, 8), 121, "LTX: 8n+1");
+    }
+
+    /// LTX-2.3: its sound decoder and text projection, its exact noise
+    /// levels, and a picture it starts from kept fully.
+    #[test]
+    fn video_with_sound_passes_its_parts() {
+        let files = vec![
+            ("diffusion".to_string(), PathBuf::from("ltx.gguf")),
+            ("llm".to_string(), PathBuf::from("gemma.gguf")),
+            ("embeddings_connectors".to_string(), PathBuf::from("conn.st")),
+            ("vae".to_string(), PathBuf::from("v.st")),
+            ("audio_vae".to_string(), PathBuf::from("a.st")),
+        ];
+        let d = Defaults { steps: 8, cfg: 1.0, sampler: "euler".into(), sigmas: "1.0,0.5,0.0".into(), temporal_tiling: true, ..Default::default() };
+        let (start, out) = (PathBuf::from("start.png"), PathBuf::from("out.webm"));
+        let c = Clip { prompt: "a crowd cheers", negative: None, width: 768, height: 512, frames: 121, fps: 24, steps: 8, seed: 1, init: Some(&start), audio: None, out: &out };
+        let joined = clip_args(&files, &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert!(with_sound(&files));
+        assert!(joined.contains("--embeddings-connectors conn.st") && joined.contains("--audio-vae a.st") && joined.contains("--llm gemma.gguf"), "{joined}");
+        assert!(joined.contains("--sigmas 1.0,0.5,0.0") && joined.contains("-i start.png --strength 1.0") && joined.contains("--diffusion-fa"), "{joined}");
+        assert!(!joined.contains("--audio "), "LTX makes its sound; it isn't given one");
     }
 
     #[test]

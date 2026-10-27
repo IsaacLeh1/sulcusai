@@ -5013,6 +5013,86 @@
         }
       },
       {
+        "id": "ltx-2.3-distilled",
+        "name": "LTX-2.3",
+        "publisher": "Lightricks",
+        "source": "https://huggingface.co/Lightricks/LTX-2.3",
+        "description": "Video with its sound made together: voices, music and sound effects that match what's on screen, from a description or a picture, 5 seconds at a time.",
+        "license": {
+          "name": "LTX-2 Community License",
+          "url": "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2",
+          "commercial": true,
+          "note": "Free for people and companies under US$10 million a year in revenue; above that, a paid agreement with Lightricks."
+        },
+        "kind": "video",
+        "can": [
+          "text",
+          "image",
+          "sound"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "ltx-2.3-22b-distilled-1.1-Q4_K_M.gguf",
+            "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/96e8ed4925ead3db9ff4d0084f165ef6a74f28d0/distilled-1.1/ltx-2.3-22b-distilled-1.1-Q4_K_M.gguf",
+            "size": 14194441248,
+            "sha256": "5d09efdc0b8ec2054c44a05366cd7c6634ffa333b379b1f8baf018a78974b73d"
+          },
+          {
+            "role": "llm",
+            "file": "gemma-3-12b-it-qat-UD-Q4_K_XL.gguf",
+            "url": "https://huggingface.co/unsloth/gemma-3-12b-it-qat-GGUF/resolve/858acec7ec0541a46c39985c95d3b52d8f3ab183/gemma-3-12b-it-qat-UD-Q4_K_XL.gguf",
+            "size": 7432229248,
+            "sha256": "da98f81c86916ed1c76b3eeda56b25cb7b8352b01093e2edb8028110fe2cb53b"
+          },
+          {
+            "role": "embeddings_connectors",
+            "file": "ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+            "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/96e8ed4925ead3db9ff4d0084f165ef6a74f28d0/text_encoders/ltx-2.3-22b-distilled_embeddings_connectors.safetensors",
+            "size": 2312144712,
+            "sha256": "c61cbb396e2a8175d8b2da51f0fdac885a4ccd22c9f64dafa5aa2c455dc8a507"
+          },
+          {
+            "role": "vae",
+            "file": "ltx-2.3-22b-distilled_video_vae.safetensors",
+            "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/96e8ed4925ead3db9ff4d0084f165ef6a74f28d0/vae/ltx-2.3-22b-distilled_video_vae.safetensors",
+            "size": 1452256522,
+            "sha256": "e68d6d8f8a42942ac9b862cc315beb3bc30805a8876c7ad63ba5bf7a2b8e168a"
+          },
+          {
+            "role": "audio_vae",
+            "file": "ltx-2.3-22b-distilled_audio_vae.safetensors",
+            "url": "https://huggingface.co/unsloth/LTX-2.3-GGUF/resolve/96e8ed4925ead3db9ff4d0084f165ef6a74f28d0/vae/ltx-2.3-22b-distilled_audio_vae.safetensors",
+            "size": 364853140,
+            "sha256": "3cd6a6eb8cb28f5ecc12f1f3126952b2a3d2b0b42ad3270e63cefafafe0d9b57"
+          }
+        ],
+        "min_vram_gb": 12,
+        "cpu": false,
+        "secs": 600,
+        "quality": 8,
+        "strengths": [
+          "Its sound is made with it: voices, music and effects",
+          "Starts from your own picture"
+        ],
+        "weaknesses": [
+          "Big download (about 26 GB)",
+          "5 seconds at a time; the sound takes a few minutes to finish"
+        ],
+        "defaults": {
+          "steps": 8,
+          "cfg": 1.0,
+          "sampler": "euler",
+          "width": 768,
+          "height": 512,
+          "fps": 24,
+          "seconds": 5,
+          "sigmas": "1.0,0.99375,0.9875,0.98125,0.975,0.909375,0.725,0.421875,0.0",
+          "max_frames": 121,
+          "temporal_tiling": true
+        }
+      },
+      {
         "id": "wan2.1-t2v-1.3b",
         "name": "Wan 2.1 1.3B",
         "publisher": "Wan (Alibaba)",
