@@ -1631,6 +1631,53 @@ async fn e2e_mtp_guesses_ahead_and_two_replies_run_at_once() {
     eng.stop().await;
 }
 
+/// The local API in Claude's shape: /v1/messages (with the key as
+/// x-api-key, and a Claude model name meaning the default) and token counts,
+/// answered by Qwen3 4B (installed, imported here where it is).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_the_local_api_speaks_claudes_shape() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf")).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = crate::api_server::router_for_test(state.clone(), "sk-test", port);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = net::local_client();
+    let url = |p: &str| format!("http://127.0.0.1:{port}{p}");
+    let reply: serde_json::Value = client
+        .post(url("/v1/messages"))
+        .header("x-api-key", "sk-test")
+        .header("anthropic-version", "2023-06-01")
+        .json(&serde_json::json!({ "model": "claude-sonnet-5-5", "max_tokens": 60, "messages": [{ "role": "user", "content": "Reply with just the word blue." }] }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    println!("messages: {reply}");
+    assert_eq!(reply["type"], "message");
+    assert!(reply["content"][0]["text"].as_str().unwrap_or_default().to_lowercase().contains("blue"));
+    let count: serde_json::Value = client
+        .post(url("/v1/messages/count_tokens"))
+        .header("x-api-key", "sk-test")
+        .json(&serde_json::json!({ "model": "default", "messages": [{ "role": "user", "content": "How many tokens is this?" }] }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    println!("count: {count}");
+    assert!(count["input_tokens"].as_u64().is_some_and(|n| n > 3));
+    let refused = client.post(url("/v1/messages")).header("x-api-key", "nope").json(&serde_json::json!({ "max_tokens": 5, "messages": [] })).send().await.unwrap();
+    assert_eq!(refused.status().as_u16(), 401);
+    state.engine.lock().await.stop().await;
+    server.abort();
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

@@ -105,10 +105,20 @@ pub fn apply(state: Arc<AppState>) {
     });
 }
 
+/// The server's routes over `state`, for tests that call it over HTTP.
+#[cfg(test)]
+pub(crate) fn router_for_test(state: Arc<AppState>, key: &str, port: u16) -> Router {
+    router(Ctx { state, key: key.to_string(), port })
+}
+
 fn router(ctx: Ctx) -> Router {
     Router::new()
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat))
+        // Claude's API shape (Claude Code and other Anthropic clients).
+        .route("/v1/messages", post(messages))
+        .route("/v1/messages/count_tokens", post(count_tokens))
+        .route("/v1/embeddings", post(embeddings))
         .route("/v1/sulcusai", get(about))
         .with_state(ctx)
 }
@@ -143,7 +153,13 @@ fn check(headers: &HeaderMap, key: &str, port: u16) -> Result<(), Response> {
     if !local.contains(&host) {
         return Err(error(StatusCode::FORBIDDEN, "Only programs on this PC can use this server."));
     }
-    let given = headers.get(header::AUTHORIZATION).and_then(|h| h.to_str().ok()).and_then(|h| h.strip_prefix("Bearer ")).unwrap_or_default();
+    // OpenAI clients send "Authorization: Bearer …"; Anthropic's send "x-api-key".
+    let given = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .or_else(|| headers.get("x-api-key").and_then(|h| h.to_str().ok()))
+        .unwrap_or_default();
     if !same(given.trim(), key) {
         return Err(error(StatusCode::UNAUTHORIZED, "Missing or wrong API key. Copy it from SulcusAI → Settings → Local API server."));
     }
@@ -341,6 +357,90 @@ async fn chat(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<V
     if out.get("model").is_some() {
         out["model"] = json!(id);
     }
+    (status, Json(out)).into_response()
+}
+
+/// A request in Claude's API shape, to a model on this PC: the engine
+/// answers it itself (llama.cpp speaks it), streamed or not.
+async fn messages(State(ctx): State<Ctx>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+    Box::pin(to_engine(&ctx, &headers, body, "/v1/messages")).await
+}
+
+async fn count_tokens(State(ctx): State<Ctx>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+    Box::pin(to_engine(&ctx, &headers, body, "/v1/messages/count_tokens")).await
+}
+
+/// Passes a request to the engine running the model it names (loaded first).
+async fn to_engine(ctx: &Ctx, headers: &HeaderMap, mut body: Value, path: &str) -> Response {
+    if let Err(r) = check(headers, &ctx.key, ctx.port) {
+        return r;
+    }
+    let state = &ctx.state;
+    let asked = body.get("model").and_then(Value::as_str).map(str::to_string);
+    // Claude Code and friends name Claude models: those mean the default here.
+    let asked = asked.filter(|a| assistant_model(Some(a)).is_none() && !a.starts_with("claude-"));
+    let id = match pick_model(state, asked.as_deref()) {
+        Ok(id) => id,
+        Err(e) => return error(StatusCode::NOT_FOUND, &e),
+    };
+    if crate::cloud::is_cloud(&id) {
+        return error(StatusCode::BAD_REQUEST, "Requests in Claude's shape go to models on this PC. For a cloud model, use /v1/chat/completions.");
+    }
+    let loaded = state.engine.lock().await.status().model_id;
+    if loaded.as_deref() != Some(id.as_str()) && !state.generations.lock().unwrap().is_empty() {
+        return error(StatusCode::CONFLICT, "SulcusAI is busy replying with another model. Try again in a moment, or use the model that's loaded.");
+    }
+    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.clone()), false, |_| {}).await {
+        Ok(x) => x,
+        Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, &e),
+    };
+    let streaming = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    body["model"] = json!(id);
+    if path == "/v1/messages" {
+        state.log("api", &format!("A program on this PC asked {} for a reply through the local API (Claude's shape)", spec.name));
+    }
+    let resp = match net::local_client().post(ep.url(path)).bearer_auth(&ep.key).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => return error(StatusCode::BAD_GATEWAY, &format!("Couldn't reach the engine: {e}")),
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    if streaming && status.is_success() {
+        *state.engine_used.lock().unwrap() = std::time::Instant::now();
+        return Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::from_stream(resp.bytes_stream()))
+            .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Couldn't stream the reply."));
+    }
+    let text = resp.text().await.unwrap_or_default();
+    let mut out: Value = serde_json::from_str(&text).unwrap_or_else(|_| json!({ "error": { "message": text } }));
+    if out.get("model").is_some() {
+        out["model"] = json!(id);
+    }
+    (status, Json(out)).into_response()
+}
+
+/// Text turned into numbers by the documents library's model (OpenAI's
+/// `/v1/embeddings` shape), for programs that search by meaning.
+async fn embeddings(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<Value>) -> Response {
+    if let Err(r) = check(&headers, &ctx.key, ctx.port) {
+        return r;
+    }
+    if !crate::doclib::model_ready(&ctx.state) {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "Turn on Documents in SulcusAI and add a folder once: that downloads the model that turns text into numbers.");
+    }
+    let ep = match crate::doclib::embeddings_endpoint(&ctx.state).await {
+        Ok(ep) => ep,
+        Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, &e),
+    };
+    body["model"] = json!("library");
+    let resp = match net::local_client().post(ep.url("/v1/embeddings")).bearer_auth(&ep.key).json(&body).send().await {
+        Ok(r) => r,
+        Err(e) => return error(StatusCode::BAD_GATEWAY, &format!("Couldn't reach the model: {e}")),
+    };
+    let status = StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let out: Value = resp.json().await.unwrap_or_else(|e| json!({ "error": { "message": e.to_string() } }));
     (status, Json(out)).into_response()
 }
 
@@ -625,6 +725,12 @@ mod tests {
         assert_eq!(status(check(&headers("127.0.0.1:7340", Some("Bearer sk-sulcus-abd")), key, 7340)), Some(StatusCode::UNAUTHORIZED));
         // A web page that points its own domain at 127.0.0.1 (DNS rebinding).
         assert_eq!(status(check(&headers("evil.example:7340", Some("Bearer sk-sulcus-abc")), key, 7340)), Some(StatusCode::FORBIDDEN));
+        // Anthropic's clients send the key as x-api-key.
+        let mut h = headers("127.0.0.1:7340", None);
+        h.insert("x-api-key", "sk-sulcus-abc".parse().unwrap());
+        assert!(check(&h, key, 7340).is_ok());
+        h.insert("x-api-key", "wrong".parse().unwrap());
+        assert_eq!(status(check(&h, key, 7340)), Some(StatusCode::UNAUTHORIZED));
     }
 
     #[test]

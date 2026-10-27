@@ -351,6 +351,12 @@ async fn embedder(state: &Arc<AppState>) -> Result<engine::Endpoint, String> {
     Ok(ep)
 }
 
+/// The library's embedding model for other programs (the local API's
+/// `/v1/embeddings`): started when needed, once it's downloaded.
+pub async fn embeddings_endpoint(state: &Arc<AppState>) -> Result<engine::Endpoint, String> {
+    embedder(state).await
+}
+
 /// Stops the model when nothing has used it for ten minutes.
 pub async fn unload_if_idle() {
     let mut slot = EMBEDDER.lock().await;

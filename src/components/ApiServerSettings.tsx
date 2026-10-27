@@ -94,6 +94,10 @@ export function ApiServerSettings({ toast }: { toast: PushToast }) {
           {t("leave it out to use your default model.")} {t("Replies stream when")} <code>"stream": true</code>.
         </p>
         <pre className="api-example">{example}</pre>
+        <p className="muted">
+          {t("Programs made for Claude (like Claude Code) work too: it also answers Claude's API at the same address, with the key as x-api-key. A Claude model name means your default model here.")}{" "}
+          {t("Programs that search by meaning can get text turned into numbers at")} <code>/v1/embeddings</code> {t("(once Documents has its model).")}
+        </p>
       </details>
     </section>
   );
