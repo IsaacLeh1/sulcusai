@@ -2141,7 +2141,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak" | "captions";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2952,6 +2952,7 @@ export const api = {
   /** A ChatGPT or Claude export brought in (import.rs). */
   importChats: (path: string) => invoke<{ from: string; chats: number; messages: number; memories: number; already: number }>("import_chats", { path }),
   importMemories: (text: string) => invoke<number>("import_memories", { text }),
+  mediaSaveCaptions: (id: string, path: string) => invoke<void>("media_save_captions", { id, path }),
   pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
   resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
   downloadsView: () => invoke<{ paused: PausedDownload[] }>("downloads_view"),

@@ -6,14 +6,15 @@ import { clock } from "../format";
 import { t } from "../i18n";
 import { InfoTip } from "./InfoTip";
 import { useOwnVoices } from "./OwnVoice";
-import { LanguageSelect, VoiceSelect } from "./Podcast";
+import { LanguageSelect, TALK_LANGUAGES, VoiceSelect } from "./Podcast";
 
 /** A video's edits, each made as a new video beside it: cut to a stretch,
  * other clips joined after it, a sound track (or its sound off), a sound
  * made for it by the music model, and its speech dubbed into another
  * language. `video` is the player, for the "here" buttons. */
 export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Omit<MediaRequest, "source">) => void; video: () => HTMLVideoElement | null }) {
-  const [open, setOpen] = useState<"edit" | "sound" | "dub" | null>(null);
+  const [open, setOpen] = useState<"edit" | "sound" | "dub" | "captions" | null>(null);
+  const [captionsIn, setCaptionsIn] = useState("same");
   const [start, setStart] = useState(0);
   const [end, setEnd] = useState(item.seconds || 0);
   const [join, setJoin] = useState<string[]>([]);
@@ -53,6 +54,7 @@ export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Om
         <button className={`chip ${open === "edit" ? "active" : ""}`} onClick={() => setOpen(open === "edit" ? null : "edit")}>{t("Cut, join, sound")}</button>
         <button className={`chip ${open === "sound" ? "active" : ""}`} onClick={() => setOpen(open === "sound" ? null : "sound")}>{t("Make sound for it")}</button>
         <button className={`chip ${open === "dub" ? "active" : ""}`} onClick={() => setOpen(open === "dub" ? null : "dub")}>{t("Dub it")}</button>
+        <button className={`chip ${open === "captions" ? "active" : ""}`} onClick={() => setOpen(open === "captions" ? null : "captions")}>{t("Captions")}</button>
       </div>
       {open === "edit" && (
         <div className="form">
@@ -139,6 +141,26 @@ export function VideoEditor({ item, run, video }: { item: MediaItem; run: (r: Om
           <div className="row">
             <input className="input grow" value={described} onChange={(e) => setDescribed(e.target.value)} placeholder={t("What it should sound like (optional), e.g. waves and seagulls")} />
             <button className="btn primary small" onClick={() => (run({ op: "video_sound", prompt: described }), setOpen(null))}>{t("Make it")}</button>
+          </div>
+        </div>
+      )}
+      {open === "captions" && (
+        <div className="form">
+          <p className="small muted">{t("What's said in it is written along the bottom, in time with it, in the language spoken or translated. You get a new copy with the captions, and their text is kept with it.")}</p>
+          <div className="ve-keep small">
+            <span className="ve-bound">
+              {t("In")}
+              <select value={captionsIn} onChange={(e) => setCaptionsIn(e.target.value)} aria-label={t("Captions in")}>
+                <option value="same">{t("The language spoken")}</option>
+                {TALK_LANGUAGES.map(([c, n]) => (
+                  <option key={c} value={c}>{t(n)}</option>
+                ))}
+              </select>
+            </span>
+          </div>
+          <div className="row">
+            <span className="spacer" />
+            <button className="btn primary small" onClick={() => (run({ op: "captions", prompt: "", language: captionsIn }), setOpen(null))}>{t("Add captions")}</button>
           </div>
         </div>
       )}

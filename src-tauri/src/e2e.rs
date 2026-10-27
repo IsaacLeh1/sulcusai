@@ -1715,6 +1715,43 @@ fn e2e_an_export_is_imported_once() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Captions on the explainer's first 20 s, translated into Spanish by Qwen3
+/// 4B (installed): a new video with them drawn on, its sound kept, and the
+/// captions' text with it. A frame goes to
+/// C:\dev\tools\voice\tests\e2e-captions.jpg.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_video_gets_captions() {
+    use crate::media::{self, store, MediaItem, Request, VideoEdit};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+    crate::speech::install_for_test(&state, &turbo, &never).await.unwrap();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let spec = state.catalog.model("qwen3-4b-2507").unwrap().clone();
+    let budget = Budget::from_hardware(&state.hardware.read().unwrap());
+    let exe = engine::installed_server(&real, &state.catalog.engine, engine::backend_for(&budget).unwrap()).unwrap();
+    let file = real.models.join(&spec.id).join(&spec.variant("Q4_K_M").unwrap().file);
+    let (ctx, layers) = catalog::launch_settings(&spec, "Q4_K_M", &budget);
+    state.engine.lock().await.ensure(engine::LaunchSpec { exe: &exe, model_path: &file, model_id: &spec.id, quant: "Q4_K_M", ctx, gpu_layers: layers, threads: 0, low_priority: false, log: &real.engine_log(), mmproj: None, batch: 0, lora: None }, None).await.unwrap();
+    let clip = std::fs::read(r"C:\dev\tools\voice\tests\e2e-explainer.mp4").unwrap();
+    let video = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "video".into(), mime: "video/mp4".into(), op: "import".into(), prompt: "an explainer".into(), seconds: 60.0, ..Default::default() }, &clip, None).unwrap();
+    let part = media::run(&state, store::new_id(), Request { op: "video_edit".into(), source: Some(video.id.clone()), edit: Some(VideoEdit { trim: Some([0.0, 20.0]), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
+    let made = media::run(&state, store::new_id(), Request { op: "captions".into(), source: Some(part.id.clone()), language: Some("es".into()), ..Default::default() }).await.unwrap().remove(0);
+    state.engine.lock().await.stop().await;
+    let text = made.lyrics.clone().unwrap_or_default();
+    println!("{}", text.lines().take(8).collect::<Vec<_>>().join("\n"));
+    assert!(made.op == "captions" && text.contains("-->") && made.poster);
+    let out = std::env::temp_dir().join(format!("{}.mp4", made.id));
+    std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&real.engines, "ffprobe.exe").unwrap();
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    assert!((p.seconds - 20.0).abs() < 0.6 && p.audio);
+    let shot = std::process::Command::new(ffprobe.with_file_name("ffmpeg.exe")).args(["-y", "-v", "error", "-ss", "4", "-i"]).arg(&out).args(["-frames:v", "1"]).arg(r"C:\dev\tools\voice\tests\e2e-captions.jpg").status().unwrap();
+    assert!(shot.success());
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

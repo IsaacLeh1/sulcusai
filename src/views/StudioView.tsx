@@ -2,7 +2,7 @@
 // The studio: make pictures, video, music and narration on this PC, and
 // keep everything in an encrypted gallery.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { open as openFile } from "@tauri-apps/plugin-dialog";
+import { open as openFile, save as saveFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
   errorText,
@@ -2123,7 +2123,31 @@ function Viewer({
               {t("← The original")}
             </button>
           )}
-          {item.lyrics && (
+          {item.lyrics && item.op === "captions" && (
+            <details className="small">
+              <summary>{t("Captions")}</summary>
+              <pre className="lyrics">{item.lyrics}</pre>
+              <div className="row">
+                <button className="btn ghost small" onClick={() => navigator.clipboard.writeText(item.lyrics ?? "").then(() => toast(t("Copied."), "success"))}>{t("Copy")}</button>
+                <button
+                  className="btn ghost small"
+                  onClick={async () => {
+                    const path = await saveFile({ defaultPath: "captions.srt", filters: [{ name: t("Subtitles"), extensions: ["srt"] }] });
+                    if (!path) return;
+                    try {
+                      await api.mediaSaveCaptions(item.id, path);
+                      toast(t("Saved the captions."), "success");
+                    } catch (e) {
+                      toast(errorText(e), "error");
+                    }
+                  }}
+                >
+                  {t("Save as .srt")}
+                </button>
+              </div>
+            </details>
+          )}
+          {item.lyrics && item.op !== "captions" && (
             <details className="small">
               <summary>{t("Lyrics")}</summary>
               <pre className="lyrics">{item.lyrics}</pre>

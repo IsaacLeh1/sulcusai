@@ -269,7 +269,7 @@ fn model_op(req: &Request) -> &str {
 fn op_feature(op: &str) -> Option<Feature> {
     match op {
         "narrate" | "podcast" | "dialogue" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" => Some(Feature::Music),
-        "video_edit" | "video_sound" | "dub" => Some(Feature::Video),
+        "video_edit" | "video_sound" | "dub" | "captions" => Some(Feature::Video),
         // Study material.
         "explainer" => Some(Feature::Documents),
         _ => op_kind(op).map(feature_of),
@@ -1562,7 +1562,7 @@ fn card_need(state: &AppState, req: &Request, model: Option<&MediaModel>) -> u64
 /// pictures, a song's parts, a sung voice, reading aloud. Not video or
 /// music, which would take hours there.
 fn on_the_processor_too(op: &str) -> bool {
-    matches!(op, "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "cover_art" | "map" | "stems" | "dry" | "revoice" | "narrate" | "video_edit" | "dub")
+    matches!(op, "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "cover_art" | "map" | "stems" | "dry" | "revoice" | "narrate" | "video_edit" | "dub" | "captions")
 }
 
 // ---------- video edits ----------
@@ -1950,6 +1950,7 @@ fn op_what(op: &str) -> &'static str {
         "video_edit" => "Editing the video",
         "video_sound" => "Making sound for the video",
         "dub" => "Dubbing the video",
+        "captions" => "Adding captions",
         "trainer" => "Getting the trainer",
         _ => "This job",
     }
@@ -2082,7 +2083,7 @@ fn recorded_voice(req: &Request) -> Option<&str> {
 
 /// Jobs that need no media model: speech, and work on songs already made.
 fn no_model(op: &str) -> bool {
-    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "video_edit" | "video_sound" | "dub")
+    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "video_edit" | "video_sound" | "dub" | "captions")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -2452,11 +2453,12 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
         "video_edit" => "an edited video",
         "video_sound" => "a video with sound",
         "dub" => "a dubbed video",
+        "captions" => "a captioned video",
         _ => "a picture",
     };
     watching.store(false, Ordering::Relaxed);
     let took = started.elapsed().as_secs_f64();
-    let with = model.as_ref().map(|m| m.id.clone()).or_else(|| on_cloud.clone()).unwrap_or_else(|| if req.op == "video_sound" { "the music model".into() } else if matches!(req.op.as_str(), "video_edit" | "dub") { "FFmpeg".into() } else { "the built-in voice".into() });
+    let with = model.as_ref().map(|m| m.id.clone()).or_else(|| on_cloud.clone()).unwrap_or_else(|| if req.op == "video_sound" { "the music model".into() } else if matches!(req.op.as_str(), "video_edit" | "dub" | "captions") { "FFmpeg".into() } else { "the built-in voice".into() });
     // What making it took, kept with each item (and shown under it).
     let result = result.map(|mut items| {
         let r = readings.lock().unwrap();
@@ -3764,6 +3766,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "video_edit" => video_edit(&ctx, &work.0).await,
         "video_sound" => video_sound(&ctx, &work.0).await,
         "dub" => Box::pin(dub(&ctx, &work.0)).await,
+        "captions" => Box::pin(captions(&ctx, &work.0)).await,
         // The trainer and its files only, ahead of training.
         #[cfg(windows)]
         "trainer" => {
@@ -4322,6 +4325,120 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
         ..Default::default()
     };
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &cipher, item, &bytes, Some(&thumb))?])
+}
+
+/// Caption lines from what was heard: a long stretch is split by words,
+/// in proportion to its time, so no line runs past about 7 s or 84 letters.
+pub(crate) fn caption_lines(segments: &[crate::speech::Segment]) -> Vec<(f64, f64, String)> {
+    let mut out = Vec::new();
+    for s in segments {
+        let text = s.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let len = (s.end - s.start).max(0.3);
+        let pieces = ((text.chars().count() as f64 / 84.0).ceil().max((len / 7.0).ceil())).max(1.0) as usize;
+        let per = words.len().div_ceil(pieces).max(1);
+        let total = words.len().max(1) as f64;
+        for (i, chunk) in words.chunks(per).enumerate() {
+            let a = s.start + len * (i * per) as f64 / total;
+            let b = s.start + len * ((i * per + chunk.len()) as f64 / total);
+            out.push((a, b, chunk.join(" ")));
+        }
+    }
+    out
+}
+
+/// "00:01:02,345" for a subtitle file.
+fn srt_time(secs: f64) -> String {
+    let ms = (secs.max(0.0) * 1000.0).round() as u64;
+    format!("{:02}:{:02}:{:02},{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+}
+
+pub(crate) fn srt(lines: &[(f64, f64, String)]) -> String {
+    lines.iter().enumerate().map(|(i, (a, b, t))| format!("{}\n{} --> {}\n{}\n\n", i + 1, srt_time(*a), srt_time(*b), t)).collect()
+}
+
+/// A file's path as FFmpeg's filters read it ("C\:/Users/…": the drive's
+/// colon escaped, forward slashes).
+fn filter_path(p: &std::path::Path) -> String {
+    p.to_string_lossy().replace('\\', "/").replace(':', "\\:").replace('\'', "\\'")
+}
+
+/// A video with what's said in it as captions, in its own language or
+/// translated (`language`): heard by whisper, cut into lines a viewer can
+/// read, and drawn onto a new copy. The captions' text is kept with it.
+async fn captions(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let c = state.work_cipher()?;
+    let id = ctx.req.source.clone().ok_or("Pick a video first.")?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That video is no longer in the gallery.")?;
+    let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
+    let video = written_out(state, &c, &item, &work.join("source"))?;
+    let probe = ffmpeg::probe(&ffprobe, &video).await?;
+    if !probe.audio {
+        return Err("This video has no sound, so there's nothing to caption.".into());
+    }
+    (ctx.progress)("Listening to what's said", 0.05);
+    let mix = ffmpeg_stereo(state, &ffmpeg_exe, &video, probe.seconds, ctx.cancel).await?;
+    let speech = crate::speech::endpoint(state, crate::speech::Use::Accurate).await.map_err(|e| format!("Captions need a speech model to hear what's said. {e}"))?;
+    let options = crate::speech::Options { language: Some("auto".into()), ..Default::default() };
+    let heard = crate::speech::transcribe(&speech, &stems::resample(&mix.mono(), stems::RATE, crate::audio::RATE), &options).await?;
+    // Whole sentences (whisper breaks mid-sentence), translated as wholes,
+    // then cut into lines: cut first, "...the green pigment chlorophyll in
+    // its" and "leaves captures sunlight" were translated apart.
+    let mut sentences: Vec<crate::speech::Segment> =
+        dub_lines(crate::speech::clean(heard).segments).into_iter().map(|(start, end, text)| crate::speech::Segment { start, end, text }).collect();
+    if sentences.is_empty() {
+        return Err("No one speaks in this video, so there's nothing to caption.".into());
+    }
+    let to = ctx.req.language.clone().filter(|l| !l.is_empty() && l != "auto" && l != "same");
+    if let Some(to) = &to {
+        (ctx.progress)("Translating the captions", 0.35);
+        let said: Vec<String> = sentences.iter().map(|s| s.text.clone()).collect();
+        let (ep, _, _hold) = crate::background_endpoint(state).await.map_err(|e| format!("Translating the captions needs a chat model: {e}"))?;
+        let words = crate::translate::translate_lines(&ep, &said, to).await?;
+        for (s, w) in sentences.iter_mut().zip(words) {
+            s.text = w;
+        }
+    }
+    let lines = caption_lines(&sentences);
+    if ctx.cancel.load(Ordering::Relaxed) {
+        return Err(download::CANCELLED.into());
+    }
+    let text = srt(&lines);
+    let file = work.join("captions.srt");
+    std::fs::write(&file, &text).map_err(|e| e.to_string())?;
+    // Big enough to read on a phone, white with a dark edge, near the bottom.
+    let style = "FontName=Arial,FontSize=15,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=1.6,Shadow=0,MarginV=22";
+    let out = work.join("captioned.mp4");
+    let mut args: Vec<std::ffi::OsString> = ["-i".into(), video.as_os_str().to_owned()].into();
+    args.extend(["-vf".into(), format!("subtitles='{}':force_style='{style}'", filter_path(&file)).into(), "-map".into(), "0:v".into(), "-map".into(), "0:a?".into()]);
+    args.extend(ffmpeg::mp4_out(&out));
+    (ctx.progress)("Drawing the captions", 0.5);
+    ffmpeg::run(state, &ffmpeg_exe, args, probe.seconds, ctx.cancel, &|f| (ctx.progress)("Drawing the captions", 0.5 + 0.45 * f)).await?;
+    let still = work.join("still.jpg");
+    let _ = ffmpeg::run(state, &ffmpeg_exe, ["-ss", &format!("{:.2}", (probe.seconds / 3.0).min(2.0)), "-i"].iter().map(Into::into).chain([out.as_os_str().to_owned(), "-frames:v".into(), "1".into(), "-q:v".into(), "3".into(), still.as_os_str().to_owned()]).collect(), 0.0, ctx.cancel, &|_| {}).await;
+    let thumb = std::fs::read(&still).ok().and_then(|b| imaging::decode(&b).ok()).and_then(|img| imaging::thumbnail(&img).ok());
+    let bytes = std::fs::read(&out).map_err(|e| format!("FFmpeg didn't make the video: {e}"))?;
+    let made = MediaItem {
+        kind: "video".into(),
+        op: "captions".into(),
+        prompt: item.prompt.clone(),
+        model_id: item.model_id.clone(),
+        mime: "video/mp4".into(),
+        seconds: probe.seconds,
+        width: probe.width,
+        height: probe.height,
+        parent: Some(item.id.clone()),
+        chat_id: ctx.req.chat_id.clone().or_else(|| item.chat_id.clone()),
+        lyrics: Some(text),
+        poster: thumb.is_some(),
+        ..Default::default()
+    };
+    state.log("media", &format!("Captioned a video on this PC ({} lines{})", lines.len(), to.as_deref().map(|l| format!(", in {}", crate::translate::language_name(l))).unwrap_or_default()));
+    Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, made, &bytes, thumb.as_deref())?])
 }
 
 /// Frames in each part of a talking picture: Wan 2.2 S2V makes about 5 s at
@@ -6543,6 +6660,18 @@ async fn cover_art(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> 
     Ok(vec![set_cover(ctx.state, &c, &song.id, &img)?])
 }
 
+/// A captioned video's captions saved as a subtitle file where the person
+/// chose (players and editors read .srt).
+#[tauri::command(async)]
+pub fn media_save_captions(state: AppStateRef, id: String, path: String) -> Result<(), String> {
+    let c = state.work_cipher()?;
+    let item = store::get(&state.db.lock().unwrap(), &c, &id).ok_or("That video is no longer in the gallery.")?;
+    let text = item.lyrics.filter(|t| t.contains("-->")).ok_or("That video has no captions.")?;
+    let path = std::path::PathBuf::from(path);
+    let path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("srt")) { path } else { path.with_extension("srt") };
+    std::fs::write(&path, text).map_err(|e| format!("Couldn't save the captions: {e}"))
+}
+
 /// A picture of the person's own, chosen in the window, as a song's cover.
 #[tauri::command(async)]
 pub fn media_set_cover(state: AppStateRef, id: String, path: String) -> Result<MediaItem, String> {
@@ -7371,6 +7500,19 @@ mod tests {
         assert!(wants_written_lyrics(&part("add", "vocals")));
         assert!(!wants_written_lyrics(&part("add", "drums")) && !wants_written_lyrics(&part("cover", "")));
         assert!(!wants_written_lyrics(&Request { op: "music".into(), instrumental: Some(true), ..Default::default() }));
+    }
+
+    #[test]
+    fn captions_are_lines_a_viewer_can_read() {
+        use crate::speech::Segment;
+        let long = "word ".repeat(40);
+        let lines = caption_lines(&[Segment { start: 0.0, end: 2.0, text: " Hello there. ".into() }, Segment { start: 2.0, end: 16.0, text: long.clone() }]);
+        assert_eq!(lines[0], (0.0, 2.0, "Hello there.".to_string()));
+        assert!(lines.len() >= 4 && lines[1..].iter().all(|(a, b, t)| b - a <= 7.01 && t.chars().count() <= 84), "{lines:?}");
+        assert!((lines.last().unwrap().1 - 16.0).abs() < 1e-9, "the last ends with the stretch");
+        assert_eq!(srt(&lines[..1]), "1\n00:00:00,000 --> 00:00:02,000\nHello there.\n\n");
+        assert_eq!(srt_time(3725.5), "01:02:05,500");
+        assert_eq!(filter_path(std::path::Path::new(r"C:\work\it's.srt")), r"C\:/work/it\'s.srt");
     }
 
     #[test]

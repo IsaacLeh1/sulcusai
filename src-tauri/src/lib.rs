@@ -2999,6 +2999,7 @@ pub fn run() {
             media::media_delete,
             media::media_set_poster,
             media::media_set_cover,
+            media::media_save_captions,
             media::loras::loras,
             media::loras::lora_add,
             media::loras::lora_save,

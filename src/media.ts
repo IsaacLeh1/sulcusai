@@ -180,6 +180,7 @@ export const OP_LABEL: Record<string, string> = {
   video_sound: tx("Video with sound"),
   dub: tx("Dubbed video"),
   speak: tx("Talking picture"),
+  captions: tx("Captioned video"),
   paste: tx("Pasted"),
   attach: tx("Attached"),
 };
@@ -216,6 +217,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   video_sound: tx("Making sound for a video"),
   dub: tx("Dubbing a video"),
   speak: tx("Making a picture talk"),
+  captions: tx("Adding captions"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */
