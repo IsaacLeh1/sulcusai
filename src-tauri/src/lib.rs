@@ -72,6 +72,7 @@ mod net;
 mod notes;
 mod notify;
 mod offline;
+mod ollama_api;
 mod optimize;
 mod outgoing;
 mod oauth;
@@ -3229,6 +3230,7 @@ pub fn run() {
             api_server::api_server_view,
             api_server::set_api_server,
             api_server::new_api_key,
+            api_server::set_ollama_server,
             cloud::cloud_view,
             cloud::add_cloud_provider,
             cloud::remove_cloud_provider,

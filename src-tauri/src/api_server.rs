@@ -28,11 +28,14 @@ pub struct ApiSettings {
     pub enabled: bool,
     pub port: u16,
     pub key: String,
+    /// The Ollama-shaped listener for programs made for Ollama (`ollama_api`).
+    pub ollama: bool,
+    pub ollama_port: u16,
 }
 
 impl Default for ApiSettings {
     fn default() -> Self {
-        ApiSettings { enabled: false, port: DEFAULT_PORT, key: String::new() }
+        ApiSettings { enabled: false, port: DEFAULT_PORT, key: String::new(), ollama: false, ollama_port: crate::ollama_api::DEFAULT_PORT }
     }
 }
 
@@ -74,6 +77,7 @@ struct Ctx {
 /// Starts, restarts or stops the server to match the settings.
 pub fn apply(state: Arc<AppState>) {
     let s = settings(&state.db.lock().unwrap());
+    crate::ollama_api::apply(state.clone(), s.ollama.then_some(s.ollama_port));
     if let Some(r) = SERVER.lock().unwrap().take() {
         let _ = r.stop.send(());
     }
@@ -447,10 +451,23 @@ async fn embeddings(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): 
 /// A cloud model turned on in SulcusAI: the request goes to its provider
 /// with the key kept here (the program never sees it), counted in the budget.
 async fn cloud_reply(state: &Arc<AppState>, id: &str, body: &Value) -> Response {
-    let (ep, spec, _) = match crate::llm_endpoint(state, Some(id.to_string()), false, |_| {}).await {
+    let (mut ep, spec, _) = match crate::llm_endpoint(state, Some(id.to_string()), false, |_| {}).await {
         Ok(x) => x,
         Err(e) => return error(StatusCode::SERVICE_UNAVAILABLE, &e),
     };
+    // The program's own settings go along: a reply shape (JSON, or JSON to
+    // a schema), sampling, a length limit and stop words.
+    if !ep.extra.is_object() {
+        ep.extra = json!({});
+    }
+    for k in ["response_format", "temperature", "top_p", "seed", "stop", "presence_penalty", "frequency_penalty"] {
+        if let Some(v) = body.get(k).filter(|v| !v.is_null()) {
+            ep.extra[k] = v.clone();
+        }
+    }
+    if let Some(n) = body.get("max_completion_tokens").or_else(|| body.get("max_tokens")).filter(|v| v.is_u64()) {
+        ep.extra["max_tokens"] = n.clone();
+    }
     state.log("api", &format!("A program on this PC asked {} for a reply through the local API", spec.name));
     let messages = body.get("messages").and_then(Value::as_array).cloned().unwrap_or_default();
     let tools = body.get("tools").cloned().filter(|t| t.as_array().is_some_and(|a| !a.is_empty()));
@@ -651,12 +668,57 @@ pub struct ApiServerView {
     url: String,
     running: bool,
     problem: Option<String>,
+    ollama: bool,
+    ollama_port: u16,
+    ollama_url: String,
+    ollama_running: bool,
+    ollama_problem: Option<String>,
 }
 
 fn view(state: &AppState) -> ApiServerView {
     let s = settings(&state.db.lock().unwrap());
     let running = SERVER.lock().unwrap().as_ref().is_some_and(|r| r.port == s.port);
-    ApiServerView { url: format!("http://127.0.0.1:{}/v1", s.port), enabled: s.enabled, port: s.port, key: s.key, running, problem: PROBLEM.lock().unwrap().clone() }
+    let (ollama_running, ollama_problem) = crate::ollama_api::status(s.ollama_port);
+    ApiServerView {
+        url: format!("http://127.0.0.1:{}/v1", s.port),
+        enabled: s.enabled,
+        port: s.port,
+        key: s.key,
+        running,
+        problem: PROBLEM.lock().unwrap().clone(),
+        ollama: s.ollama,
+        ollama_port: s.ollama_port,
+        ollama_url: format!("http://localhost:{}", s.ollama_port),
+        ollama_running: ollama_running && s.ollama,
+        ollama_problem: ollama_problem.filter(|_| s.ollama),
+    }
+}
+
+/// Turns the Ollama-shaped listener on or off (`port`: where).
+#[tauri::command]
+pub async fn set_ollama_server(state: AppStateRef<'_>, enabled: bool, port: u16) -> Result<ApiServerView, String> {
+    if port < 1024 {
+        return Err("Use a port from 1024 to 65535.".into());
+    }
+    {
+        let conn = state.db.lock().unwrap();
+        let mut s = settings(&conn);
+        if enabled && s.enabled && port == s.port {
+            return Err("That port is the local API server's. Pick another.".into());
+        }
+        let was = s.ollama;
+        s.ollama = enabled;
+        s.ollama_port = port;
+        save(&conn, &s)?;
+        drop(conn);
+        if was != enabled {
+            let note = if enabled { format!("Turned on the server for programs made for Ollama (127.0.0.1:{port})") } else { "Turned off the server for programs made for Ollama".into() };
+            state.log("settings", &note);
+        }
+    }
+    apply(state.inner().clone());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    Ok(view(&state))
 }
 
 #[tauri::command(async)]

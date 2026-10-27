@@ -1069,6 +1069,7 @@ img.checker { background: repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50%
 .api-example { background: var(--code-bg); border-radius: 8px; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
 .ok-text { color: var(--ok, #3fb950); }
 .api-server input[type="number"] { max-width: 140px; }
+.ollama-server { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 
 /* ---------- cloud models ---------- */
 .cloud-settings { display: flex; flex-direction: column; gap: 10px; }

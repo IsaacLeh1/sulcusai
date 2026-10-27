@@ -780,8 +780,15 @@ fn empty() -> Finished {
 }
 
 async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, String> {
-    let (system, msgs, tools) = to_anthropic(messages, tools);
+    let (mut system, msgs, tools) = to_anthropic(messages, tools);
     let id = t.model.id.as_str();
+    // A reply shape a program asked for in OpenAI's form: a schema becomes
+    // structured output; plain JSON is asked for in words.
+    let format = extra.get("response_format");
+    let schema = format.filter(|f| f.get("type").and_then(Value::as_str) == Some("json_schema")).and_then(|f| f.pointer("/json_schema/schema")).cloned();
+    if schema.is_none() && format.and_then(|f| f.get("type")).and_then(Value::as_str) == Some("json_object") {
+        system = format!("{system}\n\nReply with one JSON object and nothing else.").trim().to_string();
+    }
     let mut body = json!({
         "model": id,
         "max_tokens": t.model.max_output.clamp(1024, 64_000),
@@ -790,6 +797,17 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
     });
     if !system.is_empty() {
         body["system"] = json!(system);
+    }
+    if let Some(schema) = schema {
+        body["output_config"] = json!({ "format": { "type": "json_schema", "schema": schema } });
+    }
+    if let Some(n) = extra.get("max_tokens").and_then(Value::as_u64) {
+        body["max_tokens"] = json!(n.clamp(1, 128_000));
+    }
+    match extra.get("stop") {
+        Some(Value::String(s)) => body["stop_sequences"] = json!([s]),
+        Some(Value::Array(a)) => body["stop_sequences"] = json!(a),
+        _ => {}
     }
     if !tools.is_empty() {
         body["tools"] = json!(tools);
@@ -801,8 +819,8 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
         // Advanced mode's thinking switch maps to effort (current Claude
         // models always think; temperature and top-p aren't accepted).
         match extra.pointer("/chat_template_kwargs/enable_thinking").and_then(Value::as_bool) {
-            Some(false) => body["output_config"] = json!({ "effort": "low" }),
-            Some(true) => body["output_config"] = json!({ "effort": "high" }),
+            Some(false) => body["output_config"]["effort"] = json!("low"),
+            Some(true) => body["output_config"]["effort"] = json!("high"),
             None => {}
         }
     }
@@ -929,8 +947,9 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
     if let Some(tl) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = tl.clone();
     }
-    // Only the standard sampling settings (local-engine ones are left out).
-    for k in ["temperature", "top_p", "presence_penalty", "frequency_penalty", "seed"] {
+    // Only the standard sampling settings (local-engine ones are left out),
+    // and a reply shape a program asked for through the local API.
+    for k in ["temperature", "top_p", "presence_penalty", "frequency_penalty", "seed", "response_format", "stop", "max_tokens"] {
         if let Some(v) = extra.get(k) {
             body[k] = v.clone();
         }

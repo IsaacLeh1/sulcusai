@@ -1921,6 +1921,60 @@ async fn e2e_the_local_api_speaks_claudes_shape() {
     server.abort();
 }
 
+/// The server for programs made for Ollama, answered by Qwen3 4B: the
+/// model list, a reply in one piece that fits a JSON schema, one streamed
+/// line by line, a tool call, /api/generate, and a web page turned away.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_programs_made_for_ollama_get_replies() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    crate::local::import(&state, &real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf")).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let app = crate::ollama_api::router_for_test(state.clone(), port);
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let client = net::local_client();
+    let url = |p: &str| format!("http://localhost:{port}{p}");
+    let post = |p: &str, body: serde_json::Value| client.post(url(p)).json(&body).send();
+
+    let tags: serde_json::Value = client.get(url("/api/tags")).send().await.unwrap().json().await.unwrap();
+    println!("tags: {tags}");
+    let name = tags["models"][0]["name"].as_str().unwrap().to_string();
+    assert!(name.ends_with(":latest"));
+
+    let schema = serde_json::json!({ "type": "object", "properties": { "city": { "type": "string" }, "country": { "type": "string" } }, "required": ["city", "country"] });
+    let started = std::time::Instant::now();
+    let one: serde_json::Value = post("/api/chat", serde_json::json!({ "model": name, "stream": false, "format": schema, "messages": [{ "role": "user", "content": "What is the capital of France? Answer as JSON." }] })).await.unwrap().json().await.unwrap();
+    println!("one piece ({:.1} s): {one}", started.elapsed().as_secs_f64());
+    let fits: serde_json::Value = serde_json::from_str(one["message"]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(fits["city"], "Paris");
+    assert_eq!(one["done"], true);
+    assert!(one["eval_count"].as_u64().is_some_and(|n| n > 0));
+
+    let lines = post("/api/chat", serde_json::json!({ "model": name, "messages": [{ "role": "user", "content": "Count from one to five in words." }], "options": { "temperature": 0 } })).await.unwrap().text().await.unwrap();
+    let lines: Vec<serde_json::Value> = lines.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    let said: String = lines.iter().filter_map(|l| l["message"]["content"].as_str()).collect();
+    println!("streamed {} lines: {said}", lines.len());
+    assert!(lines.len() > 3 && lines.last().unwrap()["done"] == true);
+    assert!(said.to_lowercase().contains("five"));
+
+    let tools = serde_json::json!([{ "type": "function", "function": { "name": "get_weather", "description": "The weather in a city now", "parameters": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] } } }]);
+    let called: serde_json::Value = post("/api/chat", serde_json::json!({ "model": name, "stream": false, "tools": tools, "messages": [{ "role": "user", "content": "What's the weather in Oslo right now?" }] })).await.unwrap().json().await.unwrap();
+    println!("tool call: {called}");
+    assert_eq!(called["message"]["tool_calls"][0]["function"]["name"], "get_weather");
+    assert_eq!(called["message"]["tool_calls"][0]["function"]["arguments"]["city"], "Oslo");
+
+    let gen: serde_json::Value = post("/api/generate", serde_json::json!({ "model": name, "stream": false, "prompt": "Reply with just the word blue." })).await.unwrap().json().await.unwrap();
+    println!("generate: {gen}");
+    assert!(gen["response"].as_str().unwrap().to_lowercase().contains("blue"));
+
+    let page = client.post(url("/api/chat")).header("origin", "https://example.com").json(&serde_json::json!({ "model": name, "messages": [] })).send().await.unwrap();
+    assert_eq!(page.status().as_u16(), 403);
+    state.engine.lock().await.stop().await;
+    server.abort();
+}
+
 /// A Claude export (a zip with conversations.json and a memories file)
 /// brought in: its chats with their messages and dates in a "From Claude"
 /// folder, its memories saved; the same export again adds nothing.
@@ -6671,7 +6725,7 @@ async fn e2e_api_server() {
         let mut a = crate::advanced::Advanced { enabled: true, ..Default::default() };
         a.engine = crate::advanced::EngineTuning { ctx: Some(2048), gpu_layers: Some(0), threads: Some(4), batch: None };
         crate::db::set(&conn, "advanced", &a).unwrap();
-        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: true, port, key: "sk-sulcus-test".into() }).unwrap();
+        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: true, port, key: "sk-sulcus-test".into(), ..Default::default() }).unwrap();
     }
     crate::api_server::apply(state.clone());
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -6699,7 +6753,7 @@ async fn e2e_api_server() {
     assert_eq!(c.post(format!("{base}/chat/completions")).bearer_auth("sk-sulcus-test").json(&serde_json::json!({ "model": "nope", "messages": [] })).send().await.unwrap().status(), 404);
     {
         let conn = state.db.lock().unwrap();
-        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: false, port, key: "sk-sulcus-test".into() }).unwrap();
+        crate::db::set(&conn, "api_server", &crate::api_server::ApiSettings { enabled: false, port, key: "sk-sulcus-test".into(), ..Default::default() }).unwrap();
     }
     crate::api_server::apply(state.clone());
     state.engine.lock().await.stop().await;

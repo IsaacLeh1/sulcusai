@@ -706,6 +706,12 @@ export interface ApiServerView {
   url: string;
   running: boolean;
   problem: string | null;
+  /** The Ollama-shaped server, for programs made for Ollama. */
+  ollama: boolean;
+  ollama_port: number;
+  ollama_url: string;
+  ollama_running: boolean;
+  ollama_problem: string | null;
 }
 
 export interface Advanced {
@@ -3018,6 +3024,7 @@ export const api = {
   chatCloudSpend: (chatId: string) => invoke<ChatCloudSpend>("chat_cloud_spend", { chatId }),
   setApiServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_api_server", { enabled, port }),
   newApiKey: () => invoke<ApiServerView>("new_api_key"),
+  setOllamaServer: (enabled: boolean, port: number) => invoke<ApiServerView>("set_ollama_server", { enabled, port }),
   importModelFile: (path: string) => invoke<string>("import_model_file", { path }),
   importModelFolder: (path: string) => invoke<FolderImport>("import_model_folder", { path }),
   renameModel: (modelId: string, name: string) => invoke<void>("rename_model", { modelId, name }),
