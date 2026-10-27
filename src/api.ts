@@ -1228,6 +1228,8 @@ export interface ContextInfo {
   last_total: number | null;
   /** Worked out from the saved messages, not counted by the engine. */
   estimated?: boolean;
+  /** The conversation by kind (tokens). */
+  history?: { yours: number; replies: number; tool_results: number; summary: number };
 }
 
 export interface EngineStatus {

@@ -79,6 +79,36 @@ pub struct ContextInfo {
     /// not used since this update).
     #[serde(default)]
     pub estimated: bool,
+    /// What the conversation's share is made of.
+    #[serde(default)]
+    pub history: HistoryParts,
+}
+
+/// The conversation in the window, by kind (tokens).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default)]
+pub struct HistoryParts {
+    /// The person's messages.
+    pub yours: u32,
+    /// The assistant's replies, with the tool calls it wrote.
+    pub replies: u32,
+    /// What tools found (files read, pages, searches).
+    pub tool_results: u32,
+    /// The summary an earlier part was compacted into.
+    pub summary: u32,
+}
+
+impl HistoryParts {
+    /// Adds one message's tokens to its kind.
+    pub fn add(&mut self, m: &Message, tokens: u32) {
+        let slot = match m.role.as_str() {
+            _ if m.meta.as_ref().is_some_and(|v| v.get("compacted").is_some()) => &mut self.summary,
+            "user" => &mut self.yours,
+            "tool" => &mut self.tool_results,
+            _ => &mut self.replies,
+        };
+        *slot += tokens;
+    }
 }
 
 impl ContextInfo {
@@ -326,6 +356,10 @@ pub async fn fit_history(
     }
     kept.reverse();
     let kept: Vec<Message> = kept.into_iter().flatten().collect();
+    let mut parts = HistoryParts::default();
+    for m in &kept {
+        parts.add(m, message_tokens(ep, m).await?);
+    }
     let info = ContextInfo {
         ctx: ep.ctx,
         system_tokens,
@@ -336,6 +370,7 @@ pub async fn fit_history(
         dropped_messages: history.len().saturating_sub(kept.len()),
         last_total: None,
         estimated: false,
+        history: parts,
     };
     Ok((kept, info))
 }

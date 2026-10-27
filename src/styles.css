@@ -270,13 +270,28 @@ select, .input {
 .chat-header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--border); }
 .chat-header h1 { font-size: 16px; flex: 1; }
 .chat-actions { display: flex; gap: 4px; }
-.ctx { display: flex; align-items: center; gap: 8px; cursor: default; }
 .ctx-bar { width: 140px; height: 8px; border-radius: 99px; background: var(--border); display: flex; overflow: hidden; }
 .ctx-seg.sys { background: var(--muted); }
 .ctx-seg.profile { background: var(--teal); }
 .ctx-seg.history { background: var(--accent); }
 .ctx-seg.reserve { background: repeating-linear-gradient(45deg, var(--accent-soft) 0 3px, transparent 3px 6px); }
-.ctx-label { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ctx-seg.tools, .ctx-dot.tools { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.ctx-seg.summary, .ctx-dot.summary { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.ctx-seg.yours, .ctx-dot.yours { background: var(--accent); }
+.ctx-seg.replies, .ctx-dot.replies { background: color-mix(in srgb, var(--accent) 65%, var(--teal)); }
+.ctx-seg.results, .ctx-dot.results { background: var(--warn); }
+.ctx-dot.free { background: var(--border); }
+.ctx-bar.wide { width: 100%; height: 12px; margin: 4px 0 8px; }
+.ctx-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 99px; background: transparent; cursor: pointer; flex: none; }
+.ctx-ring:hover, .ctx-ring:focus-visible { background: var(--accent-soft); }
+.ctx-ring-track { fill: none; stroke: var(--border); stroke-width: 3; }
+.ctx-ring-fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray 0.3s ease; }
+.ctx-ring.high .ctx-ring-fill { stroke: var(--warn); }
+.ctx-ring.full .ctx-ring-fill { stroke: var(--danger, #e5484d); }
+.ctx-ring-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 99px; background: var(--warn); }
+.ctx-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+.ctx-table td { padding: 3px 4px; border-bottom: 1px solid var(--border); }
+.ctx-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .messages { flex: 1; overflow-y: auto; padding: 20px max(20px, calc((100% - 760px) / 2)); display: flex; flex-direction: column; gap: 18px; }
 .hello { text-align: center; margin-top: 8vh; }
@@ -1533,11 +1548,6 @@ button.next-chip:disabled { opacity: 0.7; cursor: progress; }
 .dl-actions { display: flex; gap: 6px; flex: none; }
 .progress.paused span { background: var(--muted); }
 /* Context meter: a button now, warning colors as it fills. */
-button.ctx { border: 0; background: none; padding: 2px 4px; border-radius: 6px; cursor: pointer; color: inherit; font: inherit; }
-button.ctx:hover { background: var(--hover); }
-.ctx.high .ctx-label { color: var(--warn); }
-.ctx.full .ctx-label { color: var(--danger, #e5484d); font-weight: 600; }
-.ctx-legend { list-style: none; padding: 0; margin: 6px 0 10px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .ctx-dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
 .ctx-dot.sys { background: var(--muted); }
 .ctx-dot.profile { background: var(--teal); }

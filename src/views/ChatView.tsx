@@ -662,7 +662,6 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
           ))}
         </div>
         {!cloudId && <GpuLimitMenu toast={toast} />}
-        <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
         <span className="sr-only" role="status" aria-live="polite">{announce}</span>
         <div className="chat-actions">
           {previewTarget && (
@@ -970,6 +969,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                 </button>
               </>
             )}
+            <ContextMeter info={context} fallbackCtx={model?.fit.ctx ?? null} modelId={modelId ?? null} canCompact={canCompact} onCompact={compactNow} />
             {busy ? (
               <button className="btn" onClick={() => api.stop(chat.id)}>
                 {t("Stop")}

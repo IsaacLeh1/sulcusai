@@ -1885,13 +1885,19 @@ fn estimate_context(state: &AppState, chat_id: &str) -> Option<ContextInfo> {
     let ctx = plan_with(state, &spec, &quant, 0, true).ctx;
     let tokens = |s: &str| (s.chars().count() as u32).div_ceil(4);
     let from = messages.iter().rposition(|m| m.meta.as_ref().is_some_and(|v| v.get("compacted").is_some())).unwrap_or(0);
-    let history = messages[from..].iter().map(|m| tokens(&m.content) + m.tool_calls.iter().flatten().map(|c| tokens(&c.arguments) + 4).sum::<u32>() + 4).sum();
+    let mut parts = chat::HistoryParts::default();
+    let mut history = 0;
+    for m in &messages[from..] {
+        let n = tokens(&m.content) + m.tool_calls.iter().flatten().map(|c| tokens(&c.arguments) + 4).sum::<u32>() + 4;
+        parts.add(m, n);
+        history += n;
+    }
     let (base, about) = chat::system_prompt(&profile, "");
     let (system_tokens, profile_tokens, tools_tokens) = match last {
         Some(l) => (l.system_tokens, l.profile_tokens, l.tools_tokens),
         None => (tokens(&base), tokens(&about), 0),
     };
-    Some(ContextInfo { ctx, system_tokens, profile_tokens, tools_tokens, history_tokens: history, reply_reserve: (ctx / 4).clamp(256, 4096), estimated: true, ..Default::default() })
+    Some(ContextInfo { ctx, system_tokens, profile_tokens, tools_tokens, history_tokens: history, reply_reserve: (ctx / 4).clamp(256, 4096), estimated: true, history: parts, ..Default::default() })
 }
 
 #[tauri::command(async)]

@@ -17,8 +17,31 @@ function speedOf(o: WindowOption): string {
   return parts.join(" · ");
 }
 
-/** How much of the model's context window the chat uses. Clicking opens
- * the details: what fills it, Compact now, and the window size. */
+/** What fills the window, in order: the instructions and tools first,
+ * then the conversation by kind (when the counts have it), then the room
+ * kept for the reply. */
+export function contextParts(info: ContextInfo): { key: string; label: string; value: number }[] {
+  const h = info.history;
+  const talk = h && h.yours + h.replies + h.tool_results + h.summary > 0
+    ? [
+        { key: "summary", label: t("Summary of earlier messages"), value: h.summary },
+        { key: "yours", label: t("Your messages"), value: h.yours },
+        { key: "replies", label: t("Replies"), value: h.replies },
+        { key: "results", label: t("What tools found"), value: h.tool_results },
+      ]
+    : [{ key: "history", label: t("Conversation"), value: info.history_tokens }];
+  return [
+    { key: "sys", label: t("Instructions"), value: info.system_tokens },
+    { key: "tools", label: t("Tools it can use"), value: info.tools_tokens },
+    { key: "profile", label: t("Your profile"), value: info.profile_tokens },
+    ...talk,
+    { key: "reserve", label: t("Room for the reply"), value: info.reply_reserve },
+  ].filter((p) => p.value > 0);
+}
+
+/** How much of the model's context window the chat uses: a ring that
+ * fills up, beside Send. Clicking opens the details: what fills it,
+ * Compact now, and the window size. */
 export function ContextMeter({ info, fallbackCtx, modelId, canCompact, onCompact }: {
   info: ContextInfo | null;
   fallbackCtx: number | null;
@@ -29,36 +52,29 @@ export function ContextMeter({ info, fallbackCtx, modelId, canCompact, onCompact
 }) {
   const [open, setOpen] = useState(false);
   // After a reply, the engine's own count (prompt + reply) is the accurate one.
-  const used = info ? info.last_total ?? info.system_tokens + info.profile_tokens + info.history_tokens : 0;
+  const used = info ? info.last_total ?? info.system_tokens + info.tools_tokens + info.profile_tokens + info.history_tokens : 0;
   const ctx = info?.ctx ?? fallbackCtx ?? 0;
-  const share = ctx > 0 ? used / ctx : 0;
+  const share = ctx > 0 ? Math.min(1, used / ctx) : 0;
   const level = share >= 0.9 ? "full" : share >= 0.7 ? "high" : "";
-  const parts = info
-    ? [
-        { key: "sys", label: t("Instructions"), value: info.system_tokens },
-        { key: "profile", label: t("Your profile"), value: info.profile_tokens },
-        { key: "history", label: t("Conversation"), value: info.history_tokens },
-        { key: "reserve", label: t("Room for the reply"), value: info.reply_reserve },
-      ]
-    : [];
+  const parts = info ? contextParts(info) : [];
+  const pct = Math.round(share * 100);
+  // The ring: a circle of radius 8 (its length about 50.3) drawn as far as the share.
+  const around = 2 * Math.PI * 8;
 
   return (
     <>
       <button
-        className={`ctx ${level}`}
+        type="button"
+        className={`ctx-ring ${level}`}
         onClick={() => setOpen(true)}
-        title={info ? t("Context window: {used} of {total} tokens used. Click for details.", { used: tokens(used), total: tokens(ctx) }) : t("Fills in after your first message")}
+        title={info ? t("Context window: {used} of {total} tokens used ({pct}%). Click for details.", { used: tokens(used), total: tokens(ctx), pct }) : t("Fills in after your first message")}
         aria-label={t("Context window: {used} of {total} tokens used", { used: tokens(used), total: tokens(ctx) })}
       >
-        <div className="ctx-bar">
-          {parts.map((p) => (
-            <span key={p.key} className={`ctx-seg ${p.key}`} style={{ width: `${percent(p.value, info!.ctx)}%` }} />
-          ))}
-        </div>
-        <span className={`ctx-label ${info && !info.estimated ? "" : "muted"}`}>
-          {ctx > 0 ? `${info?.estimated ? "~" : ""}${tokens(used)} / ${tokens(ctx)}` : t("Context")}
-          {info && info.dropped_messages > 0 && <span className="warn"> · {t("{n} left out", { n: info.dropped_messages })}</span>}
-        </span>
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+          <circle className="ctx-ring-track" cx="11" cy="11" r="8" />
+          <circle className="ctx-ring-fill" cx="11" cy="11" r="8" strokeDasharray={`${(share * around).toFixed(2)} ${around.toFixed(2)}`} transform="rotate(-90 11 11)" />
+        </svg>
+        {info && info.dropped_messages > 0 && <span className="ctx-ring-dot" aria-hidden="true" />}
       </button>
       {open && <ContextPanel info={info} used={used} ctx={ctx} parts={parts} modelId={modelId} canCompact={canCompact} onCompact={onCompact} onClose={() => setOpen(false)} />}
     </>
@@ -99,14 +115,35 @@ function ContextPanel({ info, used, ctx, parts, modelId, canCompact, onCompact, 
       </p>
       <p className="muted small">{t("This is how much of the conversation the model can keep in mind at once. When it gets full, the chat compacts itself: the model summarizes the earlier part and keeps going from that summary.")}</p>
       {info?.estimated && <p className="muted small">{t("Worked out from the saved messages, so it's close but not exact: the model counts it at your next message.")}</p>}
-      {info && (
-        <ul className="ctx-legend small">
-          {parts.map((p) => (
-            <li key={p.key}>
-              <span className={`ctx-dot ${p.key}`} /> {p.label}: {tokens(p.value)}
-            </li>
-          ))}
-        </ul>
+      {info && ctx > 0 && (
+        <>
+          <div className="ctx-bar wide" aria-hidden="true">
+            {parts.map((p) => (
+              <span key={p.key} className={`ctx-seg ${p.key}`} style={{ width: `${percent(p.value, ctx)}%` }} />
+            ))}
+          </div>
+          <table className="ctx-table small">
+            <tbody>
+              {parts.map((p) => (
+                <tr key={p.key}>
+                  <td>
+                    <span className={`ctx-dot ${p.key}`} /> {p.label}
+                  </td>
+                  <td className="num">{tokens(p.value)}</td>
+                  <td className="num muted">{Math.round((p.value / ctx) * 100)}%</td>
+                </tr>
+              ))}
+              <tr>
+                <td>
+                  <span className="ctx-dot free" /> {t("Free")}
+                </td>
+                <td className="num">{tokens(Math.max(0, ctx - used - info.reply_reserve))}</td>
+                <td className="num muted">{Math.max(0, Math.round(((ctx - used - info.reply_reserve) / ctx) * 100))}%</td>
+              </tr>
+            </tbody>
+          </table>
+          {info.last_total != null && <p className="muted small">{t("The total is the model's own count at the last reply; the parts are counted one by one, so they can differ a little.")}</p>}
+        </>
       )}
       {info && info.dropped_messages > 0 && <p className="warn-text small">{t("{n} older message(s) no longer fit and were left out. Compacting keeps what they said.", { n: info.dropped_messages })}</p>}
       <div className="row wrap">
