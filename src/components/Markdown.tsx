@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { isValidElement, memo, useRef, type ReactNode } from "react";
+import { isValidElement, memo, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { api } from "../api";
 import remarkGfm from "remark-gfm";
@@ -16,24 +16,65 @@ const REMARK: Options["remarkPlugins"] = [remarkGfm, [remarkMath, { singleDollar
 // was often wrong, and slow on a reply that's still coming).
 const REHYPE: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false, strict: "ignore" }], [rehypeHighlight, { detect: false }]];
 
-/** A code block with its language and a button that copies it. */
-function CodeBlock({ children }: { children?: ReactNode }) {
+/** The text inside a parsed element (a code block's code). */
+function textOf(node: unknown): string {
+  const n = node as { type?: string; value?: string; children?: unknown[] } | undefined;
+  if (!n) return "";
+  if (n.type === "text") return n.value ?? "";
+  return (n.children ?? []).map(textOf).join("");
+}
+
+// A preview runs on its own: scripts yes, but nothing from the network and
+// nothing of the app's (no same origin), so a page a model wrote can't send
+// anything anywhere or reach SulcusAI.
+const SANDBOX_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:";
+
+function previewDoc(code: string, lang: string): string {
+  const csp = `<meta http-equiv="Content-Security-Policy" content="${SANDBOX_CSP}">`;
+  if (lang === "svg" || lang === "xml") {
+    return `<!doctype html><html><head>${csp}<style>html,body{margin:0;height:100%;background:#fff}body>svg{display:block;width:100%;height:100%}</style></head><body>${code}</body></html>`;
+  }
+  // The policy goes first, before anything the page itself has.
+  return /<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, (h) => `${h}${csp}`) : `${csp}${code}`;
+}
+
+/** A code block with its language and a button that copies it; HTML and SVG can be seen as they'd show. */
+function CodeBlock({ children, code }: { children?: ReactNode; code: string }) {
   const pre = useRef<HTMLPreElement>(null);
   const cls = isValidElement<{ className?: string }>(children) ? children.props.className ?? "" : "";
-  const lang = /language-([\w+#.-]+)/.exec(cls)?.[1];
+  const lang = /language-([\w+#.-]+)/.exec(cls)?.[1]?.toLowerCase();
+  const previewable = lang === "html" || lang === "svg" || (lang === "xml" && /^\s*<svg[\s>]/i.test(code));
+  const [preview, setPreview] = useState(false);
+  const [tall, setTall] = useState(false);
   return (
     <div className="code-block">
       <div className="code-head">
         <span>{lang ?? ""}</span>
-        <CopyButton get={() => pre.current?.innerText.replace(/\n$/, "") ?? ""} label={t("Copy the code")} />
+        <span className="code-actions">
+          {previewable && (
+            <button className="link small" onClick={() => setPreview((p) => !p)} aria-pressed={preview}>
+              {preview ? t("Code") : t("Preview")}
+            </button>
+          )}
+          {preview && (
+            <button className="link small" onClick={() => setTall((x) => !x)}>
+              {tall ? t("Smaller") : t("Bigger")}
+            </button>
+          )}
+          <CopyButton get={() => code.replace(/\n$/, "")} label={t("Copy the code")} />
+        </span>
       </div>
-      <pre ref={pre}>{children}</pre>
+      {preview && lang ? (
+        <iframe className={`code-preview ${tall ? "tall" : ""}`} sandbox="allow-scripts allow-modals" srcDoc={previewDoc(code, lang)} title={t("Preview of the code")} />
+      ) : (
+        <pre ref={pre}>{children}</pre>
+      )}
     </div>
   );
 }
 
 const COMPONENTS: Components = {
-  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
+  pre: ({ children, node }) => <CodeBlock code={textOf(node)}>{children}</CodeBlock>,
   a: ({ children, href }) =>
     href && /^https?:\/\//i.test(href) ? (
       <a
