@@ -19,6 +19,7 @@ mod pccheck;
 mod addons;
 mod review;
 mod folders;
+mod awake;
 mod backup;
 mod api_server;
 mod audio;

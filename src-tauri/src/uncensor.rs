@@ -348,6 +348,11 @@ pub struct Job {
     pub kl: Option<f64>,
     pub four_bit: bool,
     pub seconds_left: Option<u64>,
+    /// While the original downloads: bytes so far, of how many, and the
+    /// speed in bytes a second.
+    pub received: Option<u64>,
+    pub total: Option<u64>,
+    pub bytes_per_sec: Option<f64>,
     pub error: Option<String>,
     /// The copy, once it's in.
     pub copy_id: Option<String>,
@@ -637,6 +642,9 @@ pub(crate) fn begin(state: &AppState, model_id: &str, trials: u32) -> Result<Arc
         kl: None,
         four_bit: false,
         seconds_left: None,
+        received: None,
+        total: None,
+        bytes_per_sec: None,
         error: None,
         copy_id: None,
     };
@@ -654,6 +662,8 @@ pub(crate) fn begin(state: &AppState, model_id: &str, trials: u32) -> Result<Arc
 pub(crate) async fn run(state: &Arc<AppState>, model_id: &str, repo: &str, trials: u32, cancel: &AtomicBool) -> Result<String, String> {
     // The window shows it at once, before the first step reports.
     update(state, |_| {});
+    // A big model's run takes hours; sleeping would cut it off.
+    let _awake = crate::awake::KeepAwake::new();
     let made = async {
         let h = state.catalog.heretic.clone().ok_or("Uncensored copies aren't available on this system yet.")?;
         let installed = db::installed_model(&state.db.lock().unwrap(), model_id).ok_or("Pick a model that's installed.")?;
@@ -778,18 +788,58 @@ async fn download(state: &AppState, o: &Original, dir: &Path, cancel: &AtomicBoo
     let total: u64 = o.files.iter().map(|f| f.size).sum::<u64>().max(1);
     state.log("network", &format!("Downloading {} ({}) from huggingface.co to make an uncensored copy", o.repo, crate::size_label(total)));
     let mut got = 0u64;
+    let mut speed = Speed::default();
     for f in &o.files {
         let dest = dir.join(&f.path);
         let url = file_url(&o.repo, &o.revision, &f.path);
         let base = got;
-        let progress = |r: u64, _| update(state, |j| j.fraction = 0.03 + 0.12 * (base + r) as f64 / total as f64);
+        // A file already downloaded (or resumed) jumps ahead at once; that isn't speed.
+        speed.since = None;
+        let progress = |r: u64, _| {
+            let rate = speed.add(base + r, Instant::now());
+            update(state, |j| {
+                j.fraction = 0.03 + 0.12 * (base + r) as f64 / total as f64;
+                j.received = Some(base + r);
+                j.total = Some(total);
+                if rate.is_some() {
+                    j.bytes_per_sec = rate;
+                }
+            })
+        };
         match &f.sha256 {
             Some(sha) => crate::download::fetch_verified(&client, &url, &dest, f.size, sha, cancel, progress).await?,
             None => fetch_small(&client, &url, &dest, f.size).await?,
         }
         got += f.size;
     }
+    update(state, |j| {
+        j.received = None;
+        j.total = None;
+        j.bytes_per_sec = None;
+    });
     Ok(())
+}
+
+/// Download speed over the last second or so.
+#[derive(Default)]
+struct Speed {
+    since: Option<(Instant, u64)>,
+}
+
+impl Speed {
+    /// The speed, once a second has gone by since the last one.
+    fn add(&mut self, bytes: u64, now: Instant) -> Option<f64> {
+        let Some((t, b)) = self.since else {
+            self.since = Some((now, bytes));
+            return None;
+        };
+        let secs = now.duration_since(t).as_secs_f64();
+        if secs < 1.0 {
+            return None;
+        }
+        self.since = Some((now, bytes));
+        Some(bytes.saturating_sub(b) as f64 / secs)
+    }
 }
 
 /// A settings or tokenizer file (Hugging Face has no checksum for these;
@@ -1173,5 +1223,16 @@ mod tests {
         assert!(estimate(GB, QUICK, false) < estimate(8 * GB, QUICK, false));
         assert!(estimate(8 * GB, QUICK, false) < estimate(8 * GB, THOROUGH, false));
         assert!(estimate(8 * GB, QUICK, false) < estimate(8 * GB, QUICK, true));
+    }
+
+    #[test]
+    fn download_speed_is_measured_each_second() {
+        use std::time::Duration;
+        let t = Instant::now();
+        let mut s = Speed::default();
+        assert_eq!(s.add(5_000_000, t), None, "the first report only starts the clock");
+        assert_eq!(s.add(20_000_000, t + Duration::from_millis(500)), None, "too soon");
+        assert_eq!(s.add(55_000_000, t + Duration::from_secs(1)), Some(50_000_000.0));
+        assert_eq!(s.add(80_000_000, t + Duration::from_secs(3)), Some(12_500_000.0));
     }
 }

@@ -1596,6 +1596,7 @@
  "{provider}'s terms": "{provider} 的条款",
  "{quality} quality": "{quality} 质量",
  "{received} of {total}": "{received} / {total}",
+ "{speed}/s": "{speed}/s",
  "{size} download": "下载 {size}",
  "{size} free": "可用 {size}",
  "{size} free now": "当前可用 {size}",

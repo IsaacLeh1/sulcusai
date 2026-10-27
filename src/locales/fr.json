@@ -1596,6 +1596,7 @@
  "{provider}'s terms": "Conditions de {provider}",
  "{quality} quality": "Qualité {quality}",
  "{received} of {total}": "{received} sur {total}",
+ "{speed}/s": "{speed}/s",
  "{size} download": "{size} à télécharger",
  "{size} free": "{size} libres",
  "{size} free now": "{size} libres actuellement",

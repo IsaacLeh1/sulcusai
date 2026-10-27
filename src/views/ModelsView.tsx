@@ -1058,6 +1058,13 @@ function UncensorProgress({ job }: { job: UncensorJob }) {
       <div className="progress-label">
         <span>
           {t("Making an uncensored copy")}: {label}
+          {job.status === "downloading" && job.received !== null && job.total !== null && (
+            <span className="muted">
+              {" · "}
+              {t("{received} of {total}", { received: bytes(job.received), total: bytes(job.total) })}
+              {job.bytes_per_sec !== null && ` · ${t("{speed}/s", { speed: bytes(job.bytes_per_sec) })}`}
+            </span>
+          )}
           {job.seconds_left !== null && <span className="muted"> · {t("about {time} left", { time: duration(job.seconds_left * 1000) })}</span>}
         </span>
         <button type="button" className="btn small" onClick={() => api.cancelUncensor()} title={t("What it downloaded and the tries so far are kept, so starting again carries on")}>

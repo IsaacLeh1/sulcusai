@@ -1596,6 +1596,7 @@
  "{provider}'s terms": "{provider} の利用規約",
  "{quality} quality": "品質: {quality}",
  "{received} of {total}": "{total} 中 {received}",
+ "{speed}/s": "{speed}/s",
  "{size} download": "ダウンロード {size}",
  "{size} free": "空き {size}",
  "{size} free now": "現在の空き {size}",
