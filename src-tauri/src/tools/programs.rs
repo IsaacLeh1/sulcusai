@@ -82,6 +82,17 @@ pub async fn assess(chat_id: &str, name: &str, args: &Value) -> Result<Option<Pr
             }
             let text = args.get("text").and_then(Value::as_str).unwrap_or_default();
             let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(false);
+            // A file of theirs open in it (the title names one): asked first,
+            // even to add to it. A small model typed into a README Notepad had
+            // reopened, though it was asked for a new document.
+            if let Some(file) = t.file.as_ref().filter(|_| t.kind == "document") {
+                return Ok(Some(Preview {
+                    title: format!("Type into {file}"),
+                    kind: "text",
+                    detail: Some(text.to_string()),
+                    note: Some(format!("“{file}” is a file of yours open in {}, not a new document. Allow only if you meant to change that file.", t.program)),
+                }));
+            }
             // A document's own text (often a file of theirs) is only replaced when they say so.
             if t.kind == "document" && args.get("replace").and_then(Value::as_bool) == Some(true) {
                 let name = if t.name.is_empty() { t.program.clone() } else { t.name.clone() };

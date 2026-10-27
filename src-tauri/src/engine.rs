@@ -587,6 +587,35 @@ pub struct Tuning {
     pub embedding: bool,
 }
 
+/// Replies a chat model can work on at once (`-np`).
+const PARALLEL: &str = "4";
+
+/// How many layers a model file has for predicting several tokens at once
+/// (multi-token prediction: `{arch}.nextn_predict_layers`, kept in the
+/// "MTP" GGUFs), 0 without.
+pub fn mtp_layers(path: &Path) -> u32 {
+    crate::gguf::read(path)
+        .ok()
+        .and_then(|m| {
+            let arch = m.get("general.architecture")?.str()?.to_string();
+            m.get(&format!("{arch}.nextn_predict_layers"))?.int()
+        })
+        .map_or(0, |n| n.max(0) as u32)
+}
+
+/// Guessing ahead, checked by the model in one pass: from text already in
+/// the conversation (n-gram lookup), and with the model's own MTP layers
+/// when it has them (2 tokens at a time). Measured on an RTX 5070 with
+/// Qwen3.5 9B: 94 to 111-117 tokens/s writing a story, 94 to 136-143
+/// writing code; 3 at a time guessed wrong too often (96-101 on the story).
+fn spec_args(model: &Path, gpu_layers: u32) -> Vec<&'static str> {
+    if gpu_layers > 0 && mtp_layers(model) > 0 {
+        vec!["--spec-type", "draft-mtp,ngram-simple", "--spec-draft-n-max", "2"]
+    } else {
+        vec!["--spec-type", "ngram-simple"]
+    }
+}
+
 /// Said at the end of thinking that ran out of its budget.
 const THINK_BUDGET_MESSAGE: &str = "\n\nI've thought about this enough. Time to answer.\n";
 
@@ -845,8 +874,14 @@ impl Engine {
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--api-key", &key])
             .args(["-c", &spec.ctx.to_string()])
             .args(layers)
-            // One conversation at a time gets the whole context window.
-            .args(["-np", "1", "--jinja", "--no-webui"])
+            // Several replies at once (chats on the same model answering side
+            // by side, continuous batching), sharing one context window: a
+            // reply alone keeps its full speed (Qwen3.5 9B with MTP, 112-136
+            // tokens/s with 1 slot or 2), and two together finish as fast as
+            // one after the other did, both streaming. An embedding model
+            // reads one passage at a time.
+            .args(if tuning.embedding { vec!["-np", "1"] } else { vec!["-np", PARALLEL, "-kvu"] })
+            .args(["--jinja", "--no-webui"])
             // A passage is read in one batch, so it can't be longer than one.
             .args(if tuning.embedding { vec!["--embedding", "--pooling", "last", "-ub", "4096", "-b", "4096"] } else { vec![] })
             // Guessing ahead from text already in the conversation (n-gram
@@ -855,7 +890,7 @@ impl Engine {
             // Measured on a code edit: Qwen3 4B 162 to 203 tokens/s, Qwen3.5 9B
             // 88 to 105, gpt-oss 20B 29 to 47; open writing unchanged. The
             // "cache" kind made both slower, "mod" helped less.
-            .args(if tuning.embedding { vec![] } else { vec!["--spec-type", "ngram-simple"] })
+            .args(if tuning.embedding { vec![] } else { spec_args(spec.model_path, spec.gpu_layers) })
             .args(if spec.threads > 0 { vec!["-t".to_string(), spec.threads.to_string()] } else { vec![] })
             .args(if spec.batch > 0 { vec!["-b".to_string(), spec.batch.to_string()] } else { vec![] })
             .args(if tuning.kv_q8 { vec!["-ctk", "q8_0", "-ctv", "q8_0"] } else { vec![] })

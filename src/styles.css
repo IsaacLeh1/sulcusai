@@ -2248,3 +2248,38 @@ html.working-window, html.working-window body { background: transparent; overflo
 .lens-neuron { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; }
 .lens-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
 .lens-compare h4 { margin: 0 0 4px; }
+
+/* Choices look the same everywhere, like the music tab's: rounded buttons
+   joined edge to edge (the group's ends round, the picked one filled), and
+   single buttons and labels as rounded rectangles instead of ovals. Bars,
+   dots and pictures of people stay round. */
+.mode-switch, .seg, .theme-row, .chips, .cat-filters {
+  display: inline-flex; flex-wrap: wrap; gap: 0; row-gap: 6px; padding: 0; border: 0; background: none; border-radius: 0; box-shadow: none; overflow: visible;
+}
+.model-filters .chips { gap: 0; row-gap: 6px; }
+.mode-switch > .mode, .seg > button, .theme-row > button, .chips > .chip, .cat-filters > button {
+  border: 1px solid var(--border); border-radius: 0; margin: 0 0 0 -1px; padding: 6px 14px; width: auto; height: auto;
+  font-size: 13px; line-height: 1.25; background: var(--panel); color: var(--text); position: relative; box-shadow: none; transition: background 0.12s, color 0.12s;
+}
+.mode-switch > .mode:first-child, .seg > button:first-child, .theme-row > button:first-child, .chips > .chip:first-child, .cat-filters > button:first-child {
+  margin-left: 0; border-top-left-radius: 12px; border-bottom-left-radius: 12px;
+}
+.mode-switch > .mode:last-child, .seg > button:last-child, .theme-row > button:last-child, .chips > .chip:last-child, .cat-filters > button:last-child {
+  border-top-right-radius: 12px; border-bottom-right-radius: 12px;
+}
+.mode-switch > .mode:hover:not(.active), .seg > button:hover:not(.active), .theme-row > button:hover:not(.active), .chips > .chip:hover:not(.active), .cat-filters > button:hover:not(.active) {
+  background: var(--accent-soft); color: var(--text); z-index: 1;
+}
+.mode-switch > .mode.active, .seg > button.active, .theme-row > button.active, .chips > .chip.active, .cat-filters > button.active {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-text, #fff); z-index: 2; box-shadow: none;
+}
+.mode-switch > .mode.bypass.active { background: var(--warn); border-color: var(--warn); color: #fff; }
+.mode-switch > .mode:disabled { opacity: 0.55; }
+.small-switch > .mode, .mode-switch.small > .mode, .seg.small > button { padding: 3px 10px; font-size: 12px; }
+.seg { margin-left: 0; }
+.chip, .globe, .conn-pill, .perf-pill, .update-pill, .rec-pill, .round-btn, .message-actions .btn, .invite-actions .btn, .send-btn,
+.jump-latest, .chip-input, .queue-chip, .song-section, .lend-days .chip, .mail-search, .mic-btn, .voice-btn, .mode { border-radius: 8px; }
+.badge, .tag, .steps li, .next-chip, .missed-chip, .review-count, .review-sev, .media-play, .cat-chip:not(.cat-dot) { border-radius: 6px; }
+.mode-switch { flex-wrap: nowrap; }
+.mode-switch > .mode { padding: 4px 12px; font-size: 12.5px; white-space: nowrap; }
+.globe, .chip, .conn-pill, .perf-pill { white-space: nowrap; }

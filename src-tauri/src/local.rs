@@ -513,6 +513,7 @@ fn spec_for(c: &Candidate) -> Result<ModelSpec, String> {
             size,
             sha256: String::new(),
             parts: Vec::new(),
+            mtp: false,
         }],
         ratings: known_ratings(c.name.as_deref().unwrap_or(&c.path.display().to_string()), params_b),
         vision,

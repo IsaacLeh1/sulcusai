@@ -122,6 +122,10 @@ pub struct Variant {
     /// the first part's, and `size` is all of them together.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<Part>,
+    /// The file keeps the model's multi-token-prediction layers ("MTP"
+    /// GGUF): it writes 1.2-1.5x faster (`engine::spec_args`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mtp: bool,
 }
 
 /// One file of a split model.

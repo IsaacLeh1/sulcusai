@@ -837,6 +837,8 @@ export interface ModelCard {
   best: boolean;
   /** An installed model whose file is damaged or unfinished, and how. */
   damaged?: string | null;
+  /** A faster file of this model (with multi-token-prediction layers) is out: its download size. */
+  faster?: number | null;
   publisher: string;
   source: string;
   description: string;
@@ -2946,6 +2948,7 @@ export const api = {
   install: (modelId: string, quant: string, force = false) => invoke<void>("install_model", { modelId, quant, force }),
   /** Downloads a damaged model's file again. */
   repairModel: (modelId: string) => invoke<void>("repair_model", { modelId }),
+  fasterModel: (modelId: string) => invoke<void>("faster_model", { modelId }),
   pauseInstall: (modelId: string) => invoke<void>("pause_install", { modelId }),
   resumeInstall: (modelId: string) => invoke<void>("resume_install", { modelId }),
   downloadsView: () => invoke<{ paused: PausedDownload[] }>("downloads_view"),

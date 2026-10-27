@@ -1607,6 +1607,30 @@ async fn e2e_notepad_is_typed_into() {
     }
 }
 
+/// A model file with multi-token-prediction layers (SULCUSAI_TEST_GGUF, e.g.
+/// unsloth's Qwen3.5 9B MTP) launched the app's way guesses ahead with them,
+/// and two replies asked for at once both come back (several slots).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_mtp_guesses_ahead_and_two_replies_run_at_once() {
+    let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
+    assert!(engine::mtp_layers(&gguf) > 0, "the test model has MTP layers");
+    let (mut eng, ep, name) = test_model().await;
+    let ask = |text: &str| vec![serde_json::json!({ "role": "user", "content": text })];
+    let started = std::time::Instant::now();
+    let (a, b) = tokio::join!(
+        chat::complete(&ep, ask("Write a Python function that checks whether a number is prime, with a docstring."), serde_json::json!({ "temperature": 0, "chat_template_kwargs": { "enable_thinking": false } }), 300),
+        chat::complete(&ep, ask("Write four sentences about autumn leaves."), serde_json::json!({ "temperature": 0, "chat_template_kwargs": { "enable_thinking": false } }), 300),
+    );
+    let (a, b) = (a.unwrap(), b.unwrap());
+    println!("{name}: both replies in {:.1} s ({} and {} characters)", started.elapsed().as_secs_f64(), a.len(), b.len());
+    assert!(a.contains("def ") && b.len() > 100);
+    let slots: serde_json::Value = net::local_client().get(ep.url("/slots")).bearer_auth(&ep.key).send().await.unwrap().json().await.unwrap();
+    println!("slots: {}", slots.as_array().map_or(0, |s| s.len()));
+    assert!(slots.as_array().is_some_and(|s| s.len() >= 2), "several slots");
+    eng.stop().await;
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

@@ -413,6 +413,9 @@ struct ModelCard {
     /// An installed model whose file is damaged or unfinished, and how
     /// (`model_file_problem`): it needs downloading again.
     damaged: Option<String>,
+    /// Installed from a file without multi-token-prediction layers while the
+    /// catalog now has one with them (faster): its download size.
+    faster: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -462,7 +465,13 @@ fn catalog_view(state: AppStateRef, all: Option<bool>) -> CatalogView {
             let runnable = fit.visible();
             let best = best.as_deref() == Some(spec.id.as_str());
             let damaged = inst.as_ref().and_then(|i| model_file_problem(&model_file(&state.paths, i), i.size));
-            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable, best, damaged })
+            let faster = inst
+                .as_ref()
+                .filter(|_| damaged.is_none())
+                .and_then(|i| spec.variants.iter().find(|v| v.quant == i.quant && v.mtp && v.size != i.size).map(|v| (i, v.size)))
+                .filter(|(i, _)| !has_mtp(&model_file(&state.paths, i)))
+                .map(|(_, size)| size);
+            (inst.is_some() || runnable || show_all).then(|| ModelCard { spec, fit, installed: inst, on_disk, renamed_from, runnable, best, damaged, faster })
         })
         .collect();
 
@@ -490,6 +499,41 @@ fn install_model(app: AppHandle, state: AppStateRef, model_id: String, quant: St
     start_install(app, state.inner().clone(), spec, quant, force.unwrap_or(false))
 }
 
+/// Whether a model file has multi-token-prediction layers, read once per
+/// file (its header is read for each Models page otherwise).
+fn has_mtp(path: &std::path::Path) -> bool {
+    static SEEN: std::sync::OnceLock<Mutex<HashMap<(std::path::PathBuf, u64), bool>>> = std::sync::OnceLock::new();
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let key = (path.to_path_buf(), size);
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(v) = seen.lock().unwrap().get(&key) {
+        return *v;
+    }
+    let v = engine::mtp_layers(path) > 0;
+    seen.lock().unwrap().insert(key, v);
+    v
+}
+
+/// What a model's earlier file is kept as while its faster one downloads.
+const BEFORE_FASTER: &str = "before-faster";
+
+/// The faster (MTP) file for a model installed before the catalog had it.
+/// The old file is kept until the new one is in: a download that fails or
+/// is stopped leaves it to come back with Repair.
+#[tauri::command(async)]
+fn faster_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<(), String> {
+    let installed = db::installed_model(&state.db.lock().unwrap(), &model_id).ok_or("That model isn't installed.")?;
+    let spec = state.catalog.model(&model_id).cloned().ok_or("That model isn't in the catalog.")?;
+    if !spec.variants.iter().any(|v| v.quant == installed.quant && v.mtp) {
+        return Err("There's no faster version of this model yet.".into());
+    }
+    let path = model_file(&state.paths, &installed);
+    let kept = path.with_extension(BEFORE_FASTER);
+    std::fs::rename(&path, &kept).map_err(|e| format!("Couldn't set the old file aside: {e}"))?;
+    state.log("model", &format!("Getting the faster version of {} (it guesses several words ahead); the old file is kept until it's in", spec.name));
+    start_install(app, state.inner().clone(), spec, installed.quant, true)
+}
+
 /// A damaged or unfinished model file (`model_file_problem`) downloaded
 /// again: the bad file goes, and the model installs as new.
 #[tauri::command(async)]
@@ -500,6 +544,16 @@ fn repair_model(app: AppHandle, state: AppStateRef, model_id: String) -> Result<
         return Err("That model's file belongs to another app: repair it there, or remove it here.".into());
     }
     let path = model_file(&state.paths, &installed);
+    // A faster version that didn't finish: the file it replaced comes back.
+    let kept = path.with_extension(BEFORE_FASTER);
+    if kept.is_file() && model_file_problem(&path, installed.size).is_some() {
+        std::fs::remove_file(&path).ok();
+        std::fs::rename(&kept, &path).map_err(|e| format!("Couldn't bring the earlier file back: {e}"))?;
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(installed.size);
+        db::save_installed(&state.db.lock().unwrap(), &InstalledModel { size, ..installed })?;
+        state.log("model", &format!("{}: its earlier file is back (the faster version didn't finish downloading)", spec.name));
+        return Ok(());
+    }
     if model_file_problem(&path, installed.size).is_some() {
         std::fs::remove_file(&path).ok();
     }
@@ -749,6 +803,8 @@ fn start_install(app: AppHandle, state: Arc<AppState>, mut spec: ModelSpec, quan
                 variant = spec.variants[0].clone();
             }
 
+            // A faster version in place: the file it replaced goes.
+            let _ = std::fs::remove_file(dest.with_extension(BEFORE_FASTER));
             let previous = db::installed_model(&state.db.lock().unwrap(), &spec.id);
             {
                 let conn = state.db.lock().unwrap();
@@ -3201,6 +3257,7 @@ pub fn run() {
             get_messages,
             get_context,
             stop_generation,
+            faster_model,
             tools::programs::programs_banner,
             tools::programs::programs_banner_stop,
             lens::lens_words,

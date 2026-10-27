@@ -345,7 +345,7 @@ pub(crate) fn describe(m: &Value, repo: &Repo, budget: &Budget, all: bool) -> Hu
     files.sort_by_key(|f| f.size);
     let variants: Vec<Variant> = files
         .iter()
-        .map(|f| Variant { quant: f.path.clone(), quality: String::new(), file: f.path.clone(), url: String::new(), size: f.size, sha256: String::new(), parts: Vec::new() })
+        .map(|f| Variant { quant: f.path.clone(), quality: String::new(), file: f.path.clone(), url: String::new(), size: f.size, sha256: String::new(), parts: Vec::new(), mtp: false })
         .collect();
     let spec = spec_for(&id, &repo.info, variants, None, String::new());
     let fit = catalog::fit_model(&spec, budget);
@@ -591,7 +591,7 @@ pub async fn prepare(state: &Arc<AppState>, repo_id: &str, file: &str) -> Result
     for p in parts_of(&r, &f.path) {
         parts.push(Part { file: base_name(&p.path).to_string(), url: url(&p.path)?, size: p.size, sha256: p.sha256.clone() });
     }
-    let variant = Variant { quality: quality_of(&quant), quant, file: base_name(&f.path).to_string(), url: url(&f.path)?, size: f.size, sha256: f.sha256.clone(), parts };
+    let variant = Variant { quality: quality_of(&quant), quant, file: base_name(&f.path).to_string(), url: url(&f.path)?, size: f.size, sha256: f.sha256.clone(), parts, mtp: false };
     // The picture reader: the full-precision one if there's a choice, else the smallest.
     let mut projectors: Vec<&RemoteFile> = r.files.iter().filter(|p| is_projector(&p.path) && p.path.to_lowercase().ends_with(".gguf")).collect();
     projectors.sort_by_key(|p| (!p.path.to_lowercase().contains("f16"), p.size));

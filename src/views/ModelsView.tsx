@@ -1054,6 +1054,25 @@ function InstalledCard({
         {fit && <span className="muted"> · {placementLabel(fit.placement)}</span>}
       </p>
       {fit?.placement !== "cpu" && <Optimize m={m} tuning={tuning} onRefresh={onRefresh} toast={toast} />}
+      {!!m.faster && (
+        <div className="callout small faster-box">
+          <p>{t("A faster version of this model is out: it guesses a few words ahead and checks them in one go, so replies come about 1.2 to 1.5 times as fast (more with code). Same answers, same size of model.")}</p>
+          <button
+            className="btn small primary"
+            onClick={async () => {
+              try {
+                await api.fasterModel(m.id);
+                toast(t("Downloading the faster {name}. The one you have stays until it's in.", { name: m.name }), "success");
+                await onRefresh();
+              } catch (e) {
+                toast(errorText(e), "error");
+              }
+            }}
+          >
+            {t("Get it ({size})", { size: bytes(m.faster) })}
+          </button>
+        </div>
+      )}
       {m.damaged && (
         <div className="warn-box small">
           <p>{t("Its model file is damaged ({why}), so it won't load.", { why: m.damaged })}</p>

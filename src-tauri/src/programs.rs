@@ -40,6 +40,17 @@ pub struct Target {
     pub name: String,
     pub password: bool,
     pub program: String,
+    /// The file open in its window, when the title names one ("notes.txt").
+    pub file: Option<String>,
+}
+
+/// The file a window's title names ("*READ ME FIRST.txt - Notepad" gives
+/// "READ ME FIRST.txt"), or None for a new one ("Untitled - Notepad",
+/// "Document1 - Word").
+pub fn file_in_title(title: &str) -> Option<String> {
+    let name = title.split(" - ").next()?.trim().trim_start_matches(['*', '●', ' ']).trim();
+    let (_, ext) = name.rsplit_once('.')?;
+    (!ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric())).then(|| name.to_string())
 }
 
 /// Which window: by its number from the list, by part of its title or
@@ -520,6 +531,9 @@ mod imp {
             visit(&root, 0, &mut st, &walker);
         }
         let mut text = format!("{UNTRUSTED}\n\n{} window “{}” (window {})\n", window.program, window.title, window.id);
+        if let Some(file) = file_in_title(&window.title) {
+            text.push_str(&format!("(The user's file “{file}” is open here. To write something new, start a new document first, e.g. program_key ctrl+n.)\n"));
+        }
         if st.lines.is_empty() {
             text.push_str("(Nothing in it can be read: the program doesn't describe its window. Try keys with program_key.)\n");
         }
@@ -562,7 +576,7 @@ mod imp {
         let chat = chat.to_string();
         on(move |w| {
             let (h, s) = seen(w, &chat, r)?;
-            Ok(Target { kind: s.kind, name: s.name.clone(), password: s.password, program: program_of(pid_of(h)) })
+            Ok(Target { kind: s.kind, name: s.name.clone(), password: s.password, program: program_of(pid_of(h)), file: file_in_title(&title_of(h)) })
         })
         .await
     }
@@ -948,6 +962,16 @@ mod tests {
         assert!(risky_keys("alt+f4") && risky_keys("Delete") && risky_keys("ctrl+enter"));
         assert!(!risky_keys("ctrl+s") && !risky_keys("enter") && !risky_keys("f5"));
         assert!(finding_field("Search mail") && finding_field("Address and search bar") && !finding_field("Message"));
+    }
+
+    #[test]
+    fn a_file_open_in_a_window_is_known() {
+        assert_eq!(file_in_title("READ ME FIRST.txt - Notepad").as_deref(), Some("READ ME FIRST.txt"));
+        assert_eq!(file_in_title("*notes.md - Notepad").as_deref(), Some("notes.md"));
+        assert_eq!(file_in_title("Budget 2026.xlsx - Excel").as_deref(), Some("Budget 2026.xlsx"));
+        assert_eq!(file_in_title("Untitled - Notepad"), None);
+        assert_eq!(file_in_title("Document1 - Word"), None);
+        assert_eq!(file_in_title("Calculator"), None);
     }
 
     #[test]
