@@ -118,6 +118,11 @@ fn original_in(info: &Value) -> Option<String> {
     if let Some(r) = tags.clone().find_map(|t| t.strip_prefix("base_model:quantized:")) {
         return Some(r.to_string());
     }
+    // A finetune, adapter or merge of its base: the base named in its card
+    // isn't what it was made from (the copy would lose what was added).
+    if tags.clone().any(|t| ["base_model:finetune:", "base_model:adapter:", "base_model:merge:"].iter().any(|p| t.starts_with(p))) {
+        return None;
+    }
     match &info["cardData"]["base_model"] {
         Value::String(s) => Some(s.clone()),
         Value::Array(a) if a.len() == 1 => a[0].as_str().map(str::to_string),
@@ -300,7 +305,20 @@ fn estimate(weights: u64, trials: u32, four_bit: bool) -> u64 {
 /// "IQ" kinds need one); else Q4_K_M.
 fn target_quant(installed: &str) -> String {
     const PLAIN: &[&str] = &["Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_0", "Q4_K_M", "Q4_K_S", "Q4_0", "Q3_K_L", "Q3_K_M", "Q3_K_S", "Q2_K", "F16", "BF16"];
-    let q = installed.to_ascii_uppercase();
+    let upper = installed.to_ascii_uppercase();
+    // unsloth's dynamic quantizations ("UD-Q5_K_XL") are built on a plain
+    // kind: the nearest one, not Q4_K_M (a Q6 model came out a Q4 copy).
+    let plain = upper.strip_prefix("UD-").unwrap_or(&upper);
+    let q = match plain {
+        "Q8_K_XL" => "Q8_0",
+        "Q6_K_XL" => "Q6_K",
+        "Q5_K_XL" => "Q5_K_M",
+        "Q4_K_XL" => "Q4_K_M",
+        "Q3_K_XL" => "Q3_K_L",
+        "Q2_K_XL" => "Q2_K",
+        other => other,
+    }
+    .to_string();
     if PLAIN.contains(&q.as_str()) {
         q
     } else {
@@ -473,6 +491,56 @@ fn require(state: &AppState) -> Result<&HereticCatalog, String> {
     Ok(h)
 }
 
+/// What keeps this PC's NVIDIA card from running Heretic: PyTorch for CUDA
+/// 12.8 needs driver 570 or newer and a GeForce RTX 20 card or newer. Found
+/// before anything downloads (it failed only once the model was loading).
+async fn card_problem() -> Option<String> {
+    let mut cmd = tokio::process::Command::new("nvidia-smi");
+    cmd.args(["--query-gpu=driver_version,compute_cap", "--format=csv,noheader"]).kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(5), cmd.output()).await.ok()?.ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    let best = text
+        .lines()
+        .filter_map(|l| {
+            let (d, c) = l.split_once(',')?;
+            Some((d.trim().split('.').next()?.parse::<u32>().ok()?, c.trim().parse::<f64>().ok()?))
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
+    if best.0 < 570 {
+        return Some(format!("Making an uncensored copy needs NVIDIA's driver 570 or newer, and this PC has {}. Update the driver, then try again.", best.0));
+    }
+    if best.1 < 7.5 {
+        return Some("Making an uncensored copy needs a GeForce RTX 20 series card or newer.".into());
+    }
+    None
+}
+
+/// The card memory a run can have now: what's free, with what the desktop
+/// keeps and what SulcusAI's own chat model gives back (it stops for the run).
+async fn card_for_run(state: &AppState, card: u64) -> u64 {
+    let given_back = state.engine.lock().await.loaded().and_then(|(_, id, quant, ctx, layers)| state.model_spec(&id).map(|s| crate::memcheck::need(&s, &quant, ctx, layers, 0, false).vram)).unwrap_or(0);
+    crate::finetune::card_free(state).await.map_or(card, |f| (f + DESKTOP + given_back).min(card))
+}
+
+/// What a run found, kept beside the saved copy, so a run stopped after it
+/// was saved carries on from there with its figures.
+#[derive(Debug, Clone, Default, Serialize, serde::Deserialize, PartialEq)]
+struct Found {
+    base: Option<u32>,
+    of: u32,
+    refusals: Option<u32>,
+    kl: Option<f64>,
+    four_bit: bool,
+}
+
+/// A try that took out too little to be worth keeping: it still refuses
+/// most of what the original refused.
+fn too_little(base: Option<u32>, refusals: Option<u32>) -> bool {
+    matches!((base, refusals), (Some(b), Some(r)) if b >= 10 && r * 10 >= b * 8)
+}
+
 fn leftover(paths: &Paths) -> u64 {
     crate::storage::folder_size(&work_root(paths))
 }
@@ -512,7 +580,12 @@ pub async fn uncensor_look(state: AppStateRef<'_>, model_id: String, original: O
     look.size = installed.size;
     look.disk = disk_need(weights, installed.size);
     look.free = crate::storage::free_on(&state.paths.models);
-    match plan(weights, card, ram) {
+    if let Some(p) = card_problem().await {
+        look.problem = Some(p);
+        return Ok(look);
+    }
+    // As the card is now (a game or another app may be using some of it).
+    match plan(weights, card_for_run(&state, card).await, ram) {
         Ok(four_bit) => look.four_bit = four_bit,
         Err(e) => look.problem = Some(e),
     }
@@ -742,10 +815,19 @@ async fn fetch_small(client: &reqwest::Client, url: &str, dest: &Path, size: u64
 #[allow(clippy::too_many_arguments)]
 async fn make(state: &Arc<AppState>, h: &HereticCatalog, installed: &InstalledModel, spec: &crate::catalog::ModelSpec, repo: &str, trials: u32, cancel: &AtomicBool) -> Result<String, String> {
     let paths = &state.paths;
-    let uv = ensure_heretic(state, h, cancel).await?;
-    let source = source_dir(paths, h);
+    if let Some(p) = card_problem().await {
+        return Err(p);
+    }
     let o = fetch_original(&crate::hub::client(state)?, repo).await?;
     let weights = weights_size(&o.files);
+    let (card, ram) = {
+        let hw = state.hardware.read().unwrap();
+        (hw.best_gpu().map_or(0, |g| g.vram_bytes), hw.ram_total)
+    };
+    // Room on the card, before anything downloads.
+    plan(weights, card_for_run(state, card).await, ram)?;
+    let uv = ensure_heretic(state, h, cancel).await?;
+    let source = source_dir(paths, h);
     let work = work_dir(paths, &o.repo, &o.revision);
     // Only one run's leftovers at a time: another model's go.
     if let Ok(entries) = std::fs::read_dir(work_root(paths)) {
@@ -757,16 +839,29 @@ async fn make(state: &Arc<AppState>, h: &HereticCatalog, installed: &InstalledMo
     if crate::storage::free_on(&paths.models).is_some_and(|free| free < need) {
         return Err(format!("It needs about {} more free space on the drive the models are on.", crate::size_label(need)));
     }
-    update(state, |j| j.status = "downloading".into());
     let original_dir = work.join("original");
+    let saved = work.join("saved");
+    let full = work.join("copy-bf16.gguf");
+    let (saved_ok, full_ok) = (work.join("saved.ok"), work.join("bf16.ok"));
+    // A run stopped after the copy was saved (or converted) carries on from
+    // there: the original isn't downloaded again, nor the tries made again.
+    let have_full = full_ok.is_file() && full.is_file();
+    let carried: Option<Found> = std::fs::read_to_string(&saved_ok).ok().and_then(|t| serde_json::from_str(&t).ok()).filter(|_| have_full || saved.join("config.json").is_file());
+    if let Some(f) = &carried {
+        state.log("model", "Carrying on from the copy a stopped run saved (no download or tries needed)");
+        update(state, |j| {
+            j.base_refusals = f.base;
+            j.of = f.of;
+            j.refusals = f.refusals;
+            j.kl = f.kl;
+            j.four_bit = f.four_bit;
+        });
+    } else {
+    update(state, |j| j.status = "downloading".into());
     download(state, &o, &original_dir, cancel).await?;
 
     // The chat model gives the graphics card back for the run.
     state.engine.lock().await.stop().await;
-    let (card, ram) = {
-        let hw = state.hardware.read().unwrap();
-        (hw.best_gpu().map_or(0, |g| g.vram_bytes), hw.ram_total)
-    };
     let free = crate::finetune::card_free(state).await.map_or(card, |f| f + DESKTOP);
     let four_bit = plan(weights, free.min(card), ram)?;
     update(state, |j| {
@@ -774,19 +869,29 @@ async fn make(state: &Arc<AppState>, h: &HereticCatalog, installed: &InstalledMo
         j.four_bit = four_bit;
         j.fraction = 0.15;
     });
-    let saved = work.join("saved");
     std::fs::remove_dir_all(&saved).ok();
+    std::fs::remove_file(&full_ok).ok();
     let tries = Mutex::new(None::<(u32, Instant)>);
     let tail = (30.0 * weights as f64 / 1e9) as u64;
     let log = paths.logs.join("uncensor.log");
-    let mut said_error = None;
+    // The runner's own reason when it stops; running out of card memory
+    // counts only once Heretic has picked its batch size (it runs out on
+    // purpose while looking for it).
+    let mut runner_error: Option<String> = None;
+    let (mut sized, mut oom) = (false, false);
     let ran = proc::run_env(
         Run { exe: &uv, args: args(&source, &original_dir, &saved, &work.join("heretic"), &prompts_dir(paths, h), trials, four_bit), cwd: &work, log: &log, low_priority: state.limits().low_priority, job: state.job() },
         &env(paths),
         cancel,
         |line| {
-            if line.starts_with("SystemExit") || line.contains("CUDA out of memory") || line.contains("OutOfMemoryError") {
-                said_error = Some(line.to_string());
+            if let Some(why) = line.trim().strip_prefix("SULCUS error ") {
+                runner_error = Some(why.to_string());
+            }
+            if line.contains("Chosen batch size") {
+                sized = true;
+            }
+            if sized && (line.contains("CUDA out of memory") || line.contains("OutOfMemoryError")) {
+                oom = true;
             }
             let Some(s) = said(line) else { return };
             match s {
@@ -840,7 +945,10 @@ async fn make(state: &Arc<AppState>, h: &HereticCatalog, installed: &InstalledMo
         if e == crate::download::CANCELLED {
             return Err(e);
         }
-        if said_error.as_deref().is_some_and(|l| l.contains("out of memory") || l.contains("OutOfMemoryError")) {
+        if let Some(why) = runner_error {
+            return Err(why);
+        }
+        if oom {
             return Err("The graphics card ran out of memory. Close other apps that use it, such as games, browsers and video players, and try again.".into());
         }
         return Err(format!("Heretic stopped with an error ({e}). Its log (uncensor.log) is in the app's logs folder."));
@@ -848,17 +956,32 @@ async fn make(state: &Arc<AppState>, h: &HereticCatalog, installed: &InstalledMo
     if !saved.join("config.json").is_file() {
         return Err("Heretic finished without saving the copy. Its log (uncensor.log) is in the app's logs folder.".into());
     }
+    let found = JOB.lock().unwrap().as_ref().map(|(j, _)| Found { base: j.base_refusals, of: j.of, refusals: j.refusals, kl: j.kl, four_bit }).unwrap_or_default();
+    if too_little(found.base, found.refusals) {
+        std::fs::remove_dir_all(&work).ok();
+        return Err(format!(
+            "Heretic couldn't take enough of this model's refusals out: the best try still refused {} of {} test requests (the original refused {}). A Thorough run tries more ways.",
+            found.refusals.unwrap_or(0),
+            found.of,
+            found.base.unwrap_or(0)
+        ));
+    }
+    let _ = std::fs::write(&saved_ok, serde_json::to_string(&found).unwrap_or_default());
     // The original's download isn't needed any more; its space goes to the conversion.
     std::fs::remove_dir_all(&original_dir).ok();
+    }
 
     update(state, |j| {
         j.status = "converting".into();
         j.fraction = 0.94;
     });
-    let full = work.join("copy-bf16.gguf");
-    proc::run_env(Run { exe: &uv, args: convert_args(&source, &saved, &full, &copy_name(&spec.name)), cwd: &work, log: &log, low_priority: true, job: state.job() }, &env(paths), cancel, |_| {}).await?;
-    if !full.is_file() {
-        return Err("Turning the copy into a GGUF failed. The log (uncensor.log) is in the app's logs folder.".into());
+    let log = paths.logs.join("uncensor.log");
+    if !(full_ok.is_file() && full.is_file()) {
+        proc::run_env(Run { exe: &uv, args: convert_args(&source, &saved, &full, &copy_name(&spec.name)), cwd: &work, log: &log, low_priority: true, job: state.job() }, &env(paths), cancel, |_| {}).await?;
+        if !full.is_file() {
+            return Err("Turning the copy into a GGUF failed. The log (uncensor.log) is in the app's logs folder.".into());
+        }
+        let _ = std::fs::write(&full_ok, "");
     }
     std::fs::remove_dir_all(&saved).ok();
     update(state, |j| j.fraction = 0.97);
@@ -1013,6 +1136,22 @@ mod tests {
         assert_eq!(target_quant("q8_0"), "Q8_0");
         assert_eq!(target_quant("IQ4_XS"), "Q4_K_M");
         assert_eq!(target_quant("Unknown"), "Q4_K_M");
+        // unsloth's dynamic kinds keep their size, not Q4_K_M.
+        assert_eq!(target_quant("UD-Q6_K_XL"), "Q6_K");
+        assert_eq!(target_quant("UD-Q5_K_XL"), "Q5_K_M");
+        assert_eq!(target_quant("Q8_K_XL"), "Q8_0");
+        assert_eq!(target_quant("UD-Q3_K_XL"), "Q3_K_L");
+        assert_eq!(target_quant("UD-Q4_K_M"), "Q4_K_M");
+    }
+
+    /// A copy still refusing most of what the original did isn't kept; one
+    /// that took most out is, and a model that hardly refused isn't judged.
+    #[test]
+    fn copies_that_took_too_little_out_are_turned_away() {
+        assert!(too_little(Some(90), Some(80)));
+        assert!(!too_little(Some(90), Some(12)));
+        assert!(!too_little(Some(8), Some(8)));
+        assert!(!too_little(None, Some(50)));
     }
 
     #[test]

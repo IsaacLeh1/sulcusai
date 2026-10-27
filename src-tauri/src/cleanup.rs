@@ -439,9 +439,13 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
         c.media.trainer.as_ref().map_or_else(|| "acestep-trainer-".to_string(), |t| format!("acestep-trainer-{}", t.build)),
     ];
     let llama = |n: &str| n.starts_with('b') && n[1..].split('-').next().is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
+    // Heretic's setup (its own Python environment, a few GB) of an earlier
+    // build: its name has dots ("heretic-1.4.0-b11450"), so it's named in full.
+    let heretic_now = c.heretic.as_ref().map(|h| crate::uncensor::source_dir(&state.paths, h)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
     children(&state.paths.engines, |n| {
         let known = llama(n) || ["sd-", "acestep-", "whisper-", "onnxruntime-"].iter().any(|p| n.starts_with(p));
-        known && !current.iter().any(|p| n.starts_with(p.as_str())) && !n.contains('.')
+        let old_heretic = n.starts_with("heretic-") && heretic_now.as_deref().is_some_and(|now| now != n);
+        (known && !current.iter().any(|p| n.starts_with(p.as_str())) && !n.contains('.')) || old_heretic
     })
     .into_iter()
     .filter(|p| p.is_dir())

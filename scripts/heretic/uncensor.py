@@ -10,11 +10,15 @@ requests drift from the original's (KL divergence). Heretic asks at the end
 which try to keep and what to do with it; this runner answers instead:
 
 * an interrupted run carries on from the tries it already made;
-* the try kept refuses the fewest test requests among those that drift no
-  more than `--max-kl` (Heretic's own note: above 0.5 the model is usually
-  noticeably damaged), else the one that drifts least;
+* the try kept drifts least among those that refuse at most two more test
+  requests than the fewest, of those drifting no more than `--max-kl`
+  (Heretic's own note: above 0.5 the model is usually noticeably damaged);
+  with none that close, the one that drifts least;
 * it's saved whole (the change merged into the weights) to `--out`, with
-  the original's settings and tokenizer files beside it.
+  the original's settings and tokenizer files beside it, and the runner ends
+  there (Heretic would load the whole model again just to say it's saved);
+* a run started again with other settings (more tries, 4 bits) starts over:
+  Heretic carries on with the settings stored with its tries.
 
 Lines starting with "SULCUS " tell the app how far it is:
   SULCUS stage <prompts|batch|directions|saving>
@@ -23,6 +27,7 @@ Lines starting with "SULCUS " tell the app how far it is:
   SULCUS tried <refusals> <kl>         that try's result
   SULCUS chose <trial> <refusals> <kl> the try kept
   SULCUS saved
+  SULCUS error <text>                  why it stopped
 
     uv run --frozen --no-sync python uncensor.py --model <folder> --out <folder>
         --work <folder> --prompts <folder> [--trials 200] [--quantize] [--max-kl 0.5]
@@ -60,7 +65,9 @@ def write_config(a, files):
     import tomli_w
 
     config = {
-        "model": a.model.replace("\\", "/"),
+        # Relative to the work folder: Heretic names its checkpoint after
+        # this, and a whole path ran past Windows' 260 characters.
+        "model": os.path.relpath(a.model, a.work).replace("\\", "/"),
         "quantization": "bnb_4bit" if a.quantize else "none",
         "n_trials": a.trials,
         # Heretic starts with a third of its tries at random, then aims.
@@ -93,13 +100,37 @@ def keep_original_files(model, out):
             shutil.copyfile(os.path.join(model, n), os.path.join(out, n))
 
 
-def pick(trials, max_kl):
-    """The try to keep, from Heretic's best ones (fewest refusals first,
-    each drifting less than the one before)."""
-    for t in trials:
-        if t.user_attrs["kl_divergence"] <= max_kl:
-            return t
-    return trials[-1]
+def pick(trials, max_kl, close=2):
+    """The try to keep, from Heretic's best ones: of those drifting no more
+    than `max_kl`, the one drifting least among those within `close`
+    refusals of the fewest (one or two refusals in a hundred is noise, and
+    drift is damage); with none under `max_kl`, the one drifting least."""
+    kl = lambda t: t.user_attrs["kl_divergence"]
+    ok = [t for t in trials if kl(t) <= max_kl]
+    if not ok:
+        return min(trials, key=kl)
+    fewest = min(t.user_attrs["refusals"] for t in ok)
+    return min((t for t in ok if t.user_attrs["refusals"] <= fewest + close), key=kl)
+
+
+def fresh_if_changed(a):
+    """Tries made with other settings aren't carried on: Heretic would use
+    those settings (a Quick run stopped and started as Thorough stayed
+    Quick; a full-precision run continued at full precision on a card that
+    now only fits 4 bits)."""
+    import json
+
+    now = {"trials": a.trials, "quantize": bool(a.quantize)}
+    path = os.path.join(a.work, "run.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            before = json.load(f)
+    except (OSError, ValueError):
+        before = None
+    if before is not None and before != now:
+        shutil.rmtree(os.path.join(a.work, "checkpoints"), ignore_errors=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(now, f)
 
 
 def main():
@@ -114,6 +145,7 @@ def main():
     a = p.parse_args()
 
     os.makedirs(a.work, exist_ok=True)
+    fresh_if_changed(a)
     write_config(a, prompt_files(a.prompts, a.work))
     # Heretic reads config.toml from where it runs, and its own command line
     # (none: everything is in the file).
@@ -144,7 +176,11 @@ def main():
                 say("trial", n[0], n[1])
         if text.startswith("Model saved to"):
             saved["done"] = True
+            # Done: Heretic would now load the whole model again for nothing.
+            keep_original_files(a.model, a.out)
             say("saved")
+            sys.stdout.flush()
+            os._exit(0)
 
     hm.print = print_
 
@@ -163,6 +199,9 @@ def main():
     def init(self, settings, model):
         start(self, settings, model)
         say("base", self.base_refusals, len(self.bad_prompts))
+        # Nothing to take out: it already answers nearly everything.
+        if self.base_refusals <= max(3, len(self.bad_prompts) // 20):
+            raise SystemExit(f"This model already answers {len(self.bad_prompts) - self.base_refusals} of the {len(self.bad_prompts)} test requests a model usually refuses, so there's nothing to take out.")
 
     hm.Evaluator.__init__ = init
 
@@ -199,4 +238,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        # The runner's own reasons go to the app as they are.
+        if isinstance(e.code, str):
+            say("error", e.code)
+            sys.exit(1)
+        raise

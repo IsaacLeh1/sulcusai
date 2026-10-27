@@ -72,6 +72,22 @@ pub async fn run_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBool, 
     .await
 }
 
+/// Ends a program and everything it started: uv runs Python as a program
+/// of its own, which kept running (and holding the graphics card) when only
+/// uv was stopped.
+async fn kill_tree(child: &mut tokio::process::Child, pid: u32) {
+    #[cfg(windows)]
+    if pid != 0 {
+        let mut c = Command::new("taskkill");
+        c.args(["/T", "/F", "/PID", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        c.creation_flags(0x0800_0000);
+        let _ = tokio::time::timeout(Duration::from_secs(10), c.status()).await;
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
+    child.start_kill().ok();
+}
+
 async fn run_watched_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBool, mut watch: impl FnMut(Option<&str>, u32) -> Option<String>) -> Result<(), String> {
     let mut cmd = Command::new(r.exe);
     cmd.envs(env.iter().map(|(k, v)| (*k, v)));
@@ -134,7 +150,7 @@ async fn run_watched_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBo
     let mut last: Vec<String> = Vec::new();
     loop {
         if cancel.load(Ordering::Relaxed) {
-            child.start_kill().ok();
+            kill_tree(&mut child, pid).await;
             // Until it has really ended (a dying engine can still hold the
             // card), so the next job doesn't start on a card that isn't free.
             let _ = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
@@ -160,7 +176,7 @@ async fn run_watched_env(r: Run<'_>, env: &[(&str, OsString)], cancel: &AtomicBo
             _ = tokio::time::sleep(Duration::from_millis(250)) => watch(None, pid),
         };
         if let Some(why) = why {
-            child.start_kill().ok();
+            kill_tree(&mut child, pid).await;
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
             return Err(why);
         }

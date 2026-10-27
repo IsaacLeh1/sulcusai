@@ -1070,7 +1070,7 @@ function UncensorProgress({ job }: { job: UncensorJob }) {
       {job.base_refusals !== null && (
         <p className="small muted">
           {t("The original refuses {b} of {of} test requests.", { b: job.base_refusals, of: job.of })}
-          {job.refusals !== null && job.kl !== null && ` ${t("Best try so far: {r}, drifting {kl} from the original's answers.", { r: job.refusals, kl: job.kl.toFixed(2) })}`}
+          {job.refusals !== null && job.kl !== null && ` ${t("Best try so far: {r}, drifting {kl} from the original's answers (under 0.5 is little damage).", { r: job.refusals, kl: job.kl.toFixed(2) })}`}
         </p>
       )}
       <p className="small muted">{t("The graphics card is busy the whole time: chats on this PC's models wait until it's done. Cloud models still work.")}</p>
@@ -1160,9 +1160,11 @@ function UncensorDialog({ m, advanced, onClose, toast }: { m: ModelCard; advance
             <>
               <p className="small">
                 {t("Downloads {size} (the full original), and needs {disk} free on the drive the models are on while it works.", { size: bytes(look.download), disk: bytes(look.disk) })}
+                {look.free !== null && ` ${t("{free} is free there now.", { free: bytes(look.free) })}`}
                 {look.setup > 0 && ` ${t("The first time, setting up Heretic downloads about {size} more.", { size: bytes(look.setup) })}`}
                 {look.four_bit && ` ${t("It only fits the graphics card squeezed to 4 bits, which is slower and a little less exact.")}`}
               </p>
+              <p className="small muted">{t("The times are for the work on the graphics card, after the download. While it runs, chats on this PC's models wait; cloud models still work.")}</p>
               <div className="mode-switch small-switch" role="radiogroup" aria-label={t("How hard to try")}>
                 <button role="radio" aria-checked={!thorough} className={`mode ${!thorough ? "active" : ""}`} onClick={() => setThorough(false)}>
                   {t("Quick: about {time}", { time: duration(look.quick * 1000) })}

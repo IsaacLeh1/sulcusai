@@ -6369,16 +6369,16 @@
   "heretic": {
     "name": "Heretic",
     "license": "AGPL-3.0",
-    "build": "1.4.0-b11450",
+    "build": "1.4.0-b11450-r2",
     "uv": {
       "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip",
       "size": 15264056,
       "sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
     },
     "source": {
-      "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/heretic-1.4.0-b11450.zip",
-      "size": 486579,
-      "sha256": "baaa0d3f5cfebf6779cd49bfd3a9ead44d8070ef0ce509e3496b7bb6eb3951b5"
+      "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/heretic-1.4.0-b11450-r2.zip",
+      "size": 487400,
+      "sha256": "8bba85fba0d1b77ae8a98165ef588d5647275807c5a8dfbe12640893544add45"
     },
     "prompts": [
       {

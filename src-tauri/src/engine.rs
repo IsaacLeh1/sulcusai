@@ -415,6 +415,11 @@ fn device_of(rest: &str) -> Option<(String, String)> {
 
 /// Finds a program by file name anywhere under `dir`.
 pub fn find_exe(dir: &Path, name: &str) -> Option<PathBuf> {
+    // Most are right here: looked for first, before a walk through every
+    // folder (a Python environment beside it has tens of thousands of files).
+    if dir.join(name).is_file() {
+        return Some(dir.join(name));
+    }
     let entries = std::fs::read_dir(dir).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
