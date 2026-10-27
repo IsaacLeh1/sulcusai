@@ -19,6 +19,7 @@ import {
   type RunMode,
   type CloudChoice,
   type LensDirection, type TaughtAdapter,
+  type Versions,
 } from "../api";
 import { APP_NAME } from "../brand";
 import { t, tx } from "../i18n";
@@ -35,13 +36,14 @@ import { PreviewPanel, latestPreview, usePreviewWidth, type PreviewTarget } from
 import { BrowserPanel } from "./WebViewerView";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
+import { CopyButton } from "../components/CopyButton";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation, words } from "../format";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
-import { GlobeIcon, NewWindowIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
+import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, NewWindowIcon, PaperclipIcon, ReloadIcon, VoiceIcon } from "../components/Icons";
 import { rememberSent, SmartInput } from "../components/SmartInput";
 
 interface Props {
@@ -284,6 +286,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     api.messages(chat.id).then(setMessages);
     api.undoableTurns(chat.id).then((turns) => setUndoable(new Set(turns))).catch(() => {});
   }, [chat.id]);
+  // Earlier versions after edited messages and other replies.
+  const [versions, setVersions] = useState<Versions[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    api.versions(chat.id).then(setVersions).catch(() => setVersions([]));
+  }, [chat.id, messages]);
 
   useEffect(() => {
     reload();
@@ -639,10 +647,38 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     }
   };
 
+  // Asking again from a message: another reply, or the message edited.
+  // What was there stays as a version to switch back to.
+  const askAgain = async (run: () => Promise<unknown>) => {
+    if (busy) return;
+    setEditing(null);
+    setNextUp(null);
+    setError(null);
+    setRouted(null);
+    setStatus("loading");
+    try {
+      await run();
+    } catch (e) {
+      setError(errorText(e));
+      setStreaming(null);
+      setStatus("idle");
+      reload();
+    } finally {
+      onChanged();
+    }
+  };
+  const turns: TurnActions = {
+    versions,
+    editing,
+    setEditing,
+    again: (id) => askAgain(() => api.regenerate(chat.id, id)),
+    edit: (id, text) => askAgain(() => api.editMessage(chat.id, id, text)),
+    switchTo: (anchor, to) => api.switchVersion(chat.id, anchor, to).catch((e) => toast(errorText(e), "error")),
+  };
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast),
+    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast, turns),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo],
+    [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo, versions, editing],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -1119,8 +1155,37 @@ function renderItems(
   openPreview?: (p: PreviewTarget) => void,
   /** For saving pictures made in the chat (always on; `toast` above is read-aloud's). */
   saveToast?: PushToast,
+  turns?: TurnActions,
 ): ReactNode[] {
   const results = new Map<string, Message>();
+  // Where versions start (their first message), or, for one with nothing
+  // in it yet, the message before.
+  const startsAt = new Map<string, Versions>();
+  const after = new Map<string, Versions>();
+  for (const v of turns?.versions ?? []) (v.first ? startsAt : after).set(v.first ?? v.anchor, v);
+  const switcher = (v: Versions) => (
+    <VersionSwitch key={`v-${v.anchor}-${v.first}`} v={v} disabled={busy} onSwitch={(to) => turns?.switchTo(v.anchor, to)} />
+  );
+  // The reply that ends each turn gets "another reply".
+  const lastReply = new Map<string, string>();
+  {
+    let from: string | null = null;
+    for (const m of messages) {
+      if (m.role === "user" && !m.meta?.added) from = !m.meta?.from_person && !m.meta?.from_chat && !m.id.startsWith("pending-") ? m.id : null;
+      else if (m.role === "assistant" && from && m.content && !m.meta?.compacted) lastReply.set(from, m.id);
+    }
+  }
+  const againFor = new Map([...lastReply].map(([user, reply]) => [reply, user]));
+  const userTools = (m: Message) => {
+    if (!turns || m.meta?.added || m.meta?.from_person || m.meta?.from_chat || m.id.startsWith("pending-")) return {};
+    return {
+      editing: turns.editing === m.id,
+      onEdit: busy ? undefined : () => turns.setEditing(m.id),
+      onEditDone: (text: string | null) => (text === null ? turns.setEditing(null) : turns.edit(m.id, text)),
+    };
+  };
+  const out: ReactNode[] = [];
+  if (after.has("")) out.push(switcher(after.get("")!));
   // "Sent" or "Read" under the newest message (and ones added mid-reply):
   // read once the model started answering after it.
   const lastUser = messages.map((m) => m.role === "user" && !m.meta?.from_person).lastIndexOf(true);
@@ -1131,7 +1196,6 @@ function renderItems(
   };
   for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
 
-  const out: ReactNode[] = [];
   let turnId: string | null = null;
   const closeTurn = (key: string, isLastTurn: boolean) => {
     if (turnId && undoable.has(turnId) && !(busy && isLastTurn)) {
@@ -1144,19 +1208,21 @@ function renderItems(
     }
   };
   messages.forEach((m, i) => {
+    if (startsAt.has(m.id)) out.push(switcher(startsAt.get(m.id)!));
     if (m.role === "user" && m.meta?.added) {
       // Added mid-reply: still the same turn (and the same Undo).
       out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} />);
     } else if (m.role === "user") {
       closeTurn(m.id, false);
       turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} />);
+      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
     } else if (m.role === "assistant" && m.meta?.compacted) {
       out.push(<CompactedNote key={m.id} m={m} />);
     } else if (m.role === "assistant") {
+      const again = againFor.get(m.id);
       out.push(
         <Fragment key={m.id}>
-          {(m.content || m.thinking) && <MessageView m={m} toast={toast} />}
+          {(m.content || m.thinking) && <MessageView m={m} toast={toast} onAgain={again && turns && !busy ? () => turns.again(again) : undefined} />}
           {m.meta?.handoff_to && (
             <div className="undo-row">
               <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>{t("Open the continued chat →")}</button>
@@ -1177,9 +1243,64 @@ function renderItems(
         </Fragment>,
       );
     }
+    if (after.has(m.id)) out.push(switcher(after.get(m.id)!));
     if (i === messages.length - 1) closeTurn("end", true);
   });
   return out;
+}
+
+/** What a chat's messages can do about asking again (`renderItems`). */
+interface TurnActions {
+  versions: Versions[];
+  editing: string | null;
+  setEditing: (id: string | null) => void;
+  again: (userMessageId: string) => void;
+  edit: (userMessageId: string, text: string) => void;
+  switchTo: (anchor: string, to: number) => void;
+}
+
+/** "‹ 2 of 3 ›": which version of the chat from here on is shown. */
+function VersionSwitch({ v, disabled, onSwitch }: { v: Versions; disabled: boolean; onSwitch: (to: number) => void }) {
+  return (
+    <div className="version-switch" role="group" aria-label={t("Versions from here on")}>
+      <button className="icon-btn" disabled={disabled || v.index === 0} onClick={() => onSwitch(v.index - 1)} title={t("Earlier version")} aria-label={t("Earlier version")}>
+        <BackIcon />
+      </button>
+      <span className="small muted">{t("Version {n} of {count}", { n: v.index + 1, count: v.count })}</span>
+      <button className="icon-btn" disabled={disabled || v.index >= v.count - 1} onClick={() => onSwitch(v.index + 1)} title={t("Later version")} aria-label={t("Later version")}>
+        <ForwardIcon />
+      </button>
+    </div>
+  );
+}
+
+/** A message of the person's being changed, in place. */
+function EditBox({ text, onDone }: { text: string; onDone: (text: string | null) => void }) {
+  const [value, setValue] = useState(text);
+  const send = () => value.trim() && onDone(value.trim());
+  return (
+    <div className="edit-box">
+      <textarea
+        className="input"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        autoFocus
+        rows={Math.min(12, Math.max(2, value.split("\n").length))}
+        aria-label={t("Your message")}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            send();
+          } else if (e.key === "Escape") onDone(null);
+        }}
+      />
+      <div className="edit-box-actions">
+        <span className="small muted">{t("The old message and its reply are kept: switch back with the arrows.")}</span>
+        <button className="btn small" onClick={() => onDone(null)}>{t("Cancel")}</button>
+        <button className="btn primary small" disabled={!value.trim() || value.trim() === text.trim()} onClick={send}>{t("Send")}</button>
+      </div>
+    </div>
+  );
 }
 
 /** Where a chat was compacted: the model works from this summary instead
@@ -1211,7 +1332,31 @@ function CompactedNote({ m }: { m: Message }) {
 // text to a scrolling box) looked like the model deleting what it wrote.
 const thoughtFolded = new Set<string>();
 
-function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }: { m: Message; live?: Status; toast?: PushToast; onPicture?: (i: MediaItem) => void; onOpenChat?: (id: string) => void; receipt?: "sent" | "read"; waiting?: boolean }) {
+function MessageView({
+  m,
+  live,
+  toast,
+  onPicture,
+  onOpenChat,
+  receipt,
+  waiting,
+  editing,
+  onEdit,
+  onEditDone,
+  onAgain,
+}: {
+  m: Message;
+  live?: Status;
+  toast?: PushToast;
+  onPicture?: (i: MediaItem) => void;
+  onOpenChat?: (id: string) => void;
+  receipt?: "sent" | "read";
+  waiting?: boolean;
+  editing?: boolean;
+  onEdit?: () => void;
+  onEditDone?: (text: string | null) => void;
+  onAgain?: () => void;
+}) {
   const thinkingNow = live === "thinking" && !m.content;
   const summary = m.role === "assistant" ? m.meta?.thought_summary : undefined;
   return (
@@ -1236,7 +1381,11 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
         </div>
       )}
       {m.role === "assistant" && m.content && (m.thinking || summary) && <div className="answer-head">{t("Answer")}</div>}
-      {m.role === "user" ? <div className="bubble">{m.content}</div> : m.content ? <Markdown text={m.content} /> : null}
+      {m.role === "user" ? (
+        editing && onEditDone ? <EditBox text={m.content} onDone={onEditDone} /> : <div className="bubble">{m.content}</div>
+      ) : m.content ? (
+        <Markdown text={m.content} />
+      ) : null}
       {waiting && (
         <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>
           {t("Sent while it worked · waiting for the model to read it")}
@@ -1261,9 +1410,20 @@ function MessageView({ m, live, toast, onPicture, onOpenChat, receipt, waiting }
         </span>
       )}
       {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
-      {toast && m.role === "assistant" && m.content && (
+      {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
         <div className="msg-tools">
-          <SpeakButton text={m.content} toast={toast} />
+          <CopyButton text={m.content} />
+          {onEdit && (
+            <button className="icon-btn speak-btn" onClick={onEdit} title={t("Edit and send again")} aria-label={t("Edit and send again")}>
+              <EditIcon />
+            </button>
+          )}
+          {onAgain && (
+            <button className="icon-btn speak-btn" onClick={onAgain} title={t("Write another reply")} aria-label={t("Write another reply")}>
+              <ReloadIcon />
+            </button>
+          )}
+          {toast && m.role === "assistant" && <SpeakButton text={m.content} toast={toast} />}
         </div>
       )}
     </div>

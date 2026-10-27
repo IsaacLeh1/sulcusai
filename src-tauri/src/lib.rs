@@ -110,6 +110,7 @@ mod screen_agent;
 mod import;
 mod typing;
 mod updates;
+mod versions;
 mod vad;
 mod viewer;
 mod vision;
@@ -1994,6 +1995,66 @@ async fn send_message(app: AppHandle, state: AppStateRef<'_>, chat_id: String, t
     Box::pin(run_turn(&app, state.inner(), chat_id, text, images.unwrap_or_default(), None)).await
 }
 
+/// Asking again from a message of the person's; what followed it is kept
+/// as a version (`versions`).
+pub(crate) enum Again {
+    /// Another reply to this message.
+    Reply(String),
+    /// This message, edited: it and what followed are set aside.
+    Edit(String),
+}
+
+/// The person's own message `id` in a chat.
+fn own_message(state: &AppState, chat_id: &str, id: &str) -> Result<Message, String> {
+    let c = state.cipher()?;
+    db::messages(&state.db.lock().unwrap(), &c, chat_id)
+        .into_iter()
+        .find(|m| m.id == id && m.role == "user" && m.meta.as_ref().is_none_or(|v| v.get("from_person").is_none() && v.get("from_chat").is_none()))
+        .ok_or_else(|| "That message isn't in this chat any more.".to_string())
+}
+
+fn images_of(m: &Message) -> Vec<String> {
+    m.meta.as_ref().and_then(|v| v.get("images")).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default()
+}
+
+/// Another reply to the person's message `message_id`; the one it had is
+/// kept as a version.
+#[tauri::command]
+async fn chat_regenerate(app: AppHandle, state: AppStateRef<'_>, chat_id: String, message_id: String) -> Result<Option<Message>, String> {
+    let m = own_message(&state, &chat_id, &message_id)?;
+    let images = images_of(&m);
+    Box::pin(run_turn_with(&app, state.inner(), chat_id, m.content, images, None, None, Some(Again::Reply(message_id)))).await
+}
+
+/// Sends the person's message `message_id` again as `text` (its pictures
+/// stay); it and what followed are kept as a version.
+#[tauri::command]
+async fn chat_edit(app: AppHandle, state: AppStateRef<'_>, chat_id: String, message_id: String, text: String) -> Result<Option<Message>, String> {
+    let m = own_message(&state, &chat_id, &message_id)?;
+    let images = images_of(&m);
+    Box::pin(run_turn_with(&app, state.inner(), chat_id, text, images, None, None, Some(Again::Edit(message_id)))).await
+}
+
+/// The points in a chat that have other versions.
+#[tauri::command(async)]
+fn chat_versions(state: AppStateRef, chat_id: String) -> Result<Vec<versions::Versions>, String> {
+    let c = state.cipher()?;
+    Ok(versions::list(&state.db.lock().unwrap(), &c, &chat_id))
+}
+
+/// Shows version `to` of what follows `anchor` in a chat.
+#[tauri::command(async)]
+fn chat_switch_version(app: AppHandle, state: AppStateRef, chat_id: String, anchor: String, to: usize) -> Result<(), String> {
+    if state.generations.lock().unwrap().contains_key(&chat_id) {
+        return Err("Wait for the reply to finish first.".into());
+    }
+    let c = state.cipher()?;
+    versions::switch(&state.db.lock().unwrap(), &c, &chat_id, &anchor, to)?;
+    state.contexts.lock().unwrap().remove(&chat_id);
+    app.emit("chat:changed", json!({ "chat_id": chat_id })).ok();
+    Ok(())
+}
+
 /// Also receives every event of a turn (voice mode speaks the reply from it).
 pub(crate) type Tee = Arc<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
 
@@ -2006,7 +2067,7 @@ pub(crate) async fn run_turn(
     images: Vec<String>,
     tee: Option<Tee>,
 ) -> Result<Option<Message>, String> {
-    run_turn_with(app, state, chat_id, text, images, tee, None).await
+    run_turn_with(app, state, chat_id, text, images, tee, None, None).await
 }
 
 /// Another chat's assistant asking this chat something: it answers with the
@@ -2020,9 +2081,10 @@ pub(crate) struct Asking {
 }
 
 pub(crate) async fn run_asked(app: &AppHandle, state: &Arc<AppState>, chat_id: String, text: String, asking: Asking) -> Result<Option<Message>, String> {
-    run_turn_with(app, state, chat_id, text, Vec::new(), None, Some(asking)).await
+    run_turn_with(app, state, chat_id, text, Vec::new(), None, Some(asking), None).await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_turn_with(
     app: &AppHandle,
     state: &Arc<AppState>,
@@ -2031,6 +2093,7 @@ async fn run_turn_with(
     images: Vec<String>,
     tee: Option<Tee>,
     asking: Option<Asking>,
+    again: Option<Again>,
 ) -> Result<Option<Message>, String> {
     let mut text = text.trim().to_string();
     if text.is_empty() && images.is_empty() {
@@ -2051,7 +2114,29 @@ async fn run_turn_with(
     let asked_in = chat_id.clone();
     let _asked = asking.as_ref().map(|_| tools::chats::Asked::new(&chat_id));
 
-    let turn_id = uuid::Uuid::new_v4().to_string();
+    let mut turn_id = uuid::Uuid::new_v4().to_string();
+    // Asking again: what followed is kept as a version first. Another reply
+    // answers the message that's there; an edit is sent as a new one.
+    let mut answer_again = false;
+    if let Some(again) = &again {
+        {
+            let conn = state.db.lock().unwrap();
+            let all = db::messages(&conn, &cipher, &chat_id);
+            let (id, edit) = match again {
+                Again::Reply(id) => (id, false),
+                Again::Edit(id) => (id, true),
+            };
+            let at = all.iter().position(|m| m.id == *id).ok_or("That message isn't in this chat any more.")?;
+            let anchor = if !edit { id.clone() } else if at == 0 { String::new() } else { all[at - 1].id.clone() };
+            versions::set_aside(&conn, &cipher, &chat_id, &anchor)?;
+            if !edit {
+                turn_id = id.clone();
+                answer_again = true;
+            }
+        }
+        state.contexts.lock().unwrap().remove(&chat_id);
+        app.emit("chat:changed", json!({ "chat_id": chat_id })).ok();
+    }
     let (chat, profile) = {
         let conn = state.db.lock().unwrap();
         let chat = db::chat(&conn, &cipher, &chat_id).ok_or("That chat no longer exists.")?;
@@ -2135,9 +2220,12 @@ async fn run_turn_with(
         t.for_chat(&chat_id);
     }
     let first_message;
-    {
+    if answer_again {
+        first_message = false;
+    } else {
         let conn = state.db.lock().unwrap();
-        let first = db::message_count(&conn, &chat_id) == 0;
+        // An edited first message keeps the chat's name.
+        let first = db::message_count(&conn, &chat_id) == 0 && again.is_none();
         first_message = first;
         db::add_message(&conn, &cipher, &Message {
             id: turn_id.clone(),
@@ -3308,6 +3396,10 @@ pub fn run() {
             steer::lens_delete_direction,
             chat_live,
             send_message,
+            chat_regenerate,
+            chat_edit,
+            chat_versions,
+            chat_switch_version,
             engine_status,
             unload_model,
             security::security_status,

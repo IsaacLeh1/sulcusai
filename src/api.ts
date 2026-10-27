@@ -1263,6 +1263,16 @@ export interface Message {
   meta?: ToolMeta;
 }
 
+/** Other versions of a chat after one point (an edited message, another reply). */
+export interface Versions {
+  /** The message just before them ("" for the chat's start). */
+  anchor: string;
+  /** The first message of the version shown, if it has one yet. */
+  first: string | null;
+  index: number;
+  count: number;
+}
+
 export interface ContextInfo {
   ctx: number;
   system_tokens: number;
@@ -3079,6 +3089,12 @@ export const api = {
   messages: (chatId: string) => invoke<Message[]>("get_messages", { chatId }),
   context: (chatId: string) => invoke<ContextInfo | null>("get_context", { chatId }),
   send: (chatId: string, text: string, images?: string[]) => invoke<Message | null>("send_message", { chatId, text, images: images ?? null }),
+  /** Another reply to the person's message; the one it had is kept as a version. */
+  regenerate: (chatId: string, messageId: string) => invoke<Message | null>("chat_regenerate", { chatId, messageId }),
+  /** The person's message sent again as `text`; the old one and what followed are kept as a version. */
+  editMessage: (chatId: string, messageId: string, text: string) => invoke<Message | null>("chat_edit", { chatId, messageId, text }),
+  versions: (chatId: string) => invoke<Versions[]>("chat_versions", { chatId }),
+  switchVersion: (chatId: string, anchor: string, to: number) => invoke<void>("chat_switch_version", { chatId, anchor, to }),
   /** While a reply is written: the assistant reads it at its next step ("idle": no reply running, send it). */
   chatAdd: (chatId: string, text: string, images?: string[]) => invoke<"added" | "idle">("chat_add", { chatId, text, images: images ?? null }),
   /** While a reply is written: sends it when the reply is done. */

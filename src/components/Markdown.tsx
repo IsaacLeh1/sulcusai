@@ -1,17 +1,39 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { memo } from "react";
+import { isValidElement, memo, useRef, type ReactNode } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { api } from "../api";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import rehypeHighlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
 import { t, useLanguage } from "../i18n";
 import { mathify } from "../math";
+import { CopyButton } from "./CopyButton";
 
 const REMARK: Options["remarkPlugins"] = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
-const REHYPE: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false, strict: "ignore" }]];
+// Code is coloured only when the reply names its language (guessing it
+// was often wrong, and slow on a reply that's still coming).
+const REHYPE: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false, strict: "ignore" }], [rehypeHighlight, { detect: false }]];
+
+/** A code block with its language and a button that copies it. */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const pre = useRef<HTMLPreElement>(null);
+  const cls = isValidElement<{ className?: string }>(children) ? children.props.className ?? "" : "";
+  const lang = /language-([\w+#.-]+)/.exec(cls)?.[1];
+  return (
+    <div className="code-block">
+      <div className="code-head">
+        <span>{lang ?? ""}</span>
+        <CopyButton get={() => pre.current?.innerText.replace(/\n$/, "") ?? ""} label={t("Copy the code")} />
+      </div>
+      <pre ref={pre}>{children}</pre>
+    </div>
+  );
+}
+
 const COMPONENTS: Components = {
+  pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   a: ({ children, href }) =>
     href && /^https?:\/\//i.test(href) ? (
       <a

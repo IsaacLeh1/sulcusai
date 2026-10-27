@@ -30,6 +30,12 @@
   --warn: #9a5b00;
   --bubble: #eeebfd;
   --code-bg: #f1f0f6;
+  --hl-kw: #6a3fd8;
+  --hl-str: #12704a;
+  --hl-com: #85829a;
+  --hl-num: #a85400;
+  --hl-fn: #1d5fbf;
+  --hl-attr: #a6346a;
   --unread: #17151f;
   --event-bg: #ebe7fd;
   --event-text: #3b2a9a;
@@ -59,6 +65,12 @@
   --warn: #f0b45a;
   --bubble: #29244a;
   --code-bg: #22212c;
+  --hl-kw: #b7a8ff;
+  --hl-str: #7fd8a8;
+  --hl-com: #807d90;
+  --hl-num: #f0b45a;
+  --hl-fn: #8fb8ff;
+  --hl-attr: #f28fb4;
   --unread: #ffffff;
   --event-bg: #2e2758;
   --event-text: #d9d2ff;
@@ -89,6 +101,12 @@
   --warn: #f0b45a;
   --bubble: #15122a;
   --code-bg: #0b0b10;
+  --hl-kw: #b7a8ff;
+  --hl-str: #7fd8a8;
+  --hl-com: #807d90;
+  --hl-num: #f0b45a;
+  --hl-fn: #8fb8ff;
+  --hl-attr: #f28fb4;
   --unread: #ffffff;
   --event-bg: #1d1838;
   --event-text: #d9d2ff;
@@ -312,6 +330,19 @@ select, .input {
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 10px; }
 .md pre { background: var(--code-bg); padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+.md .code-block { margin: 0 0 10px; }
+.md .code-block pre { margin: 0; border-radius: 0 0 8px 8px; padding-top: 8px; }
+.code-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--code-bg); border-radius: 8px 8px 0 0; padding: 4px 8px 0 12px; font-size: 12px; color: var(--muted); }
+.code-head .icon-btn { font-size: 14px; padding: 2px 4px; color: var(--muted); }
+.code-head .icon-btn:hover { color: var(--text); }
+.hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-doctag, .hljs-section, .hljs-name { color: var(--hl-kw); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-template-string, .hljs-symbol, .hljs-bullet { color: var(--hl-str); }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--hl-com); font-style: italic; }
+.hljs-number, .hljs-literal, .hljs-variable.constant_, .hljs-deletion { color: var(--hl-num); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-type { color: var(--hl-fn); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-params, .hljs-selector-class, .hljs-selector-id, .hljs-tag { color: var(--hl-attr); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
 .md code { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.92em; }
 /* Math formulas (KaTeX): kept whole, and a wide formula scrolls instead of spilling out. */
 .md .katex { font-size: 1.08em; overflow-wrap: normal; white-space: nowrap; }
@@ -624,6 +655,13 @@ select, .input {
 .voice-text { display: flex; flex-direction: column; min-width: 0; }
 .msg-tools { display: flex; gap: 4px; opacity: 0; transition: opacity 0.12s; }
 .msg:hover .msg-tools, .msg-tools:focus-within { opacity: 1; }
+.version-switch { display: flex; align-items: center; gap: 2px; align-self: center; margin: 2px 0 -4px; }
+.version-switch .icon-btn { font-size: 14px; padding: 2px 4px; color: var(--muted); }
+.version-switch .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.edit-box { width: min(100%, 640px); display: flex; flex-direction: column; gap: 6px; }
+.edit-box textarea { width: 100%; resize: vertical; font: inherit; }
+.edit-box-actions { display: flex; align-items: center; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.edit-box-actions .muted { margin-right: auto; }
 .speak-btn { font-size: 14px; padding: 2px 4px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .two-col label { display: flex; flex-direction: column; gap: 4px; font-weight: 550; font-size: 13px; }

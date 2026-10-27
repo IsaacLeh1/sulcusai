@@ -41,6 +41,14 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_by_chat ON messages(chat_id, created_at);
+CREATE TABLE IF NOT EXISTS message_versions (
+  id       TEXT PRIMARY KEY,
+  chat_id  TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+  anchor   TEXT NOT NULL,
+  started  INTEGER NOT NULL,
+  messages TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS versions_by_chat ON message_versions(chat_id, anchor);
 CREATE TABLE IF NOT EXISTS action_log (
   id       INTEGER PRIMARY KEY AUTOINCREMENT,
   at       INTEGER NOT NULL,
@@ -686,7 +694,7 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Message {
     pub id: String,
     pub chat_id: String,

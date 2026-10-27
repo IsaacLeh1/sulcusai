@@ -302,6 +302,35 @@ export function HalfCircleIcon(p: IconProps) {
   );
 }
 
+/** Copy: two sheets, one over the other. */
+export function CopyIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V6a2 2 0 0 1 2-2h8" />
+    </Icon>
+  );
+}
+
+/** Done. */
+export function CheckIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
+    </Icon>
+  );
+}
+
+/** Edit: a pencil. */
+export function EditIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" />
+      <path d="M13.5 6.5l4 4" />
+    </Icon>
+  );
+}
+
 /** True black. */
 export function FullCircleIcon(p: IconProps) {
   return (
