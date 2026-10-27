@@ -495,6 +495,12 @@ fn untar(path: &Path, into: &Path) -> Result<(), String> {
     archive.unpack(into).map_err(|e| format!("Couldn't unpack the engine: {e}"))
 }
 
+/// Unpacks a zip where the app would (tests that place a package by hand).
+#[cfg(test)]
+pub(crate) fn unzip_for_test(zip_path: &Path, into: &Path) -> Result<(), String> {
+    unzip(zip_path, into)
+}
+
 fn unzip(zip_path: &Path, into: &Path) -> Result<(), String> {
     if into.exists() {
         std::fs::remove_dir_all(into).map_err(|e| e.to_string())?;

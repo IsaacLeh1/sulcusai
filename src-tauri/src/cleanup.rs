@@ -435,6 +435,8 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
         "whisper-public".to_string(),
         format!("onnxruntime-{}-", c.voices.runtime.build),
         c.voices.cards.as_ref().map_or_else(|| "onnxruntime-cards".to_string(), |r| format!("onnxruntime-{}-", r.build)),
+        // The music trainer's folder starts like a music engine's.
+        c.media.trainer.as_ref().map_or_else(|| "acestep-trainer-".to_string(), |t| format!("acestep-trainer-{}", t.build)),
     ];
     let llama = |n: &str| n.starts_with('b') && n[1..].split('-').next().is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
     children(&state.paths.engines, |n| {

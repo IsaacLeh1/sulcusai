@@ -217,6 +217,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   video_sound: tx("Making sound for a video"),
   dub: tx("Dubbing a video"),
   speak: tx("Making a picture talk"),
+  talk: tx("Making a picture talk"),
   captions: tx("Adding captions"),
 };
 

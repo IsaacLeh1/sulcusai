@@ -3012,6 +3012,7 @@ pub fn run() {
             media::music_playlist_delete,
             media::music_taste,
             media::music_custom_models,
+            media::media_talk_ways,
             media::music_custom_model_delete,
             media::studio_projects,
             media::studio_project_save,

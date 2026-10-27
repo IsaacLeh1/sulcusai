@@ -2141,7 +2141,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak" | "captions";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak" | "talk" | "captions";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2577,6 +2577,17 @@ export interface CustomModel {
   epochs: number;
   minutes: number;
   created_at: number;
+}
+
+/** The ways a picture can be made to talk here (media_talk_ways). */
+export interface TalkWays {
+  /** Quick (Ditto): an NVIDIA card. */
+  quick: boolean;
+  /** Ditto is set up (else its first run downloads `setup_bytes`). */
+  ready: boolean;
+  setup_bytes: number;
+  /** Detailed (Wan 2.2 S2V) is installed. */
+  detailed: boolean;
 }
 
 export interface CustomModelsView {
@@ -3287,6 +3298,7 @@ export const api = {
   /** What the person likes in songs, from their liked, made and "not for me" songs. */
   musicTaste: (ids?: string[]) => invoke<Taste>("music_taste", { ids: ids ?? null }),
   musicCustomModels: () => invoke<CustomModelsView>("music_custom_models"),
+  mediaTalkWays: () => invoke<TalkWays>("media_talk_ways"),
   /** The Studio's projects, the last changed first. */
   studioProjects: () => invoke<StudioProject[]>("studio_projects"),
   studioProjectSave: (project: StudioProject) => invoke<void>("studio_project_save", { project }),

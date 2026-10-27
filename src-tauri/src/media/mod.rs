@@ -32,6 +32,7 @@ pub(crate) mod music;
 pub(crate) mod yue;
 pub(crate) mod heartmula;
 pub(crate) mod train;
+pub(crate) mod ditto;
 pub(crate) mod studio;
 pub mod own_voice;
 pub mod podcast;
@@ -112,6 +113,9 @@ pub struct MediaCatalog {
     /// ACE-Step's trainer, for custom models (`train`).
     #[serde(default)]
     pub trainer: Option<train::TrainerCatalog>,
+    /// Ditto, for quick talking pictures (`talk`).
+    #[serde(default)]
+    pub ditto: Option<ditto::DittoCatalog>,
     /// Narration and songs in the person's own recorded voice (`own_voice`).
     #[serde(default)]
     pub own_voice: Option<own_voice::OwnVoiceCatalog>,
@@ -245,7 +249,7 @@ fn op_kind(op: &str) -> Option<Kind> {
         "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" | "coach" | "cover_art" => Kind::Image,
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
-        "video" | "speak" => Kind::Video,
+        "video" | "speak" | "talk" => Kind::Video,
         "music" | "sound" | "parts" | "remake" => Kind::Music,
         _ => return None,
     })
@@ -1552,6 +1556,8 @@ tokio::task_local! {
 fn card_need(state: &AppState, req: &Request, model: Option<&MediaModel>) -> u64 {
     match req.op.as_str() {
         "map" | "stems" | "dry" | "revoice" | "dub" => state.catalog.voices.cards.as_ref().map_or(0, |r| r.min_free_mib << 20),
+        // Ditto took about 2 GB on an RTX 5070; room to spare.
+        "talk" => 3 * GIB,
         // The music model makes its sound.
         "video_sound" => choose(state, "music", None, false).map_or(0, |m| (m.min_vram_gb * GIB as f64) as u64),
         _ => model.map_or(0, |m| (m.min_vram_gb * GIB as f64) as u64),
@@ -2080,7 +2086,7 @@ fn op_what(op: &str) -> &'static str {
         "generate" | "edit" | "fill" | "extend" | "restyle" | "cover_art" => "Making the picture",
         "upscale" => "Making the picture bigger",
         "video" => "Making the video",
-        "speak" => "Making the picture talk",
+        "speak" | "talk" => "Making the picture talk",
         "music" | "remake" | "studio_part" => "Making the song",
         "sound" => "Making the sound",
         "map" | "stems" | "dry" => "Taking the song apart",
@@ -2223,7 +2229,7 @@ fn recorded_voice(req: &Request) -> Option<&str> {
 
 /// Jobs that need no media model: speech, and work on songs already made.
 fn no_model(op: &str) -> bool {
-    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "video_edit" | "video_sound" | "dub" | "captions")
+    matches!(op, "narrate" | "podcast" | "dialogue" | "explainer" | "listen" | "map" | "revoice" | "stems" | "dry" | "song_video" | "train" | "trainer" | "video_edit" | "video_sound" | "dub" | "captions" | "talk")
 }
 
 pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
@@ -2251,6 +2257,17 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
         }
         if !crate::natural::nvidia_here(state) {
             return Err("Training needs an NVIDIA graphics card (8 GB or more).".into());
+        }
+    }
+    if req.op == "talk" {
+        if state.catalog.media.ditto.is_none() || !cfg!(windows) {
+            return Err("Quick talking pictures aren't available on this system yet.".into());
+        }
+        if !crate::natural::nvidia_here(state) {
+            return Err("The quick way needs an NVIDIA graphics card. The detailed way (Wan 2.2 S2V) works on others.".into());
+        }
+        if req.source.is_none() {
+            return Err("Pick a picture to work on first.".into());
         }
     }
     if let Some(id) = cloud_pick(state, req) {
@@ -2366,6 +2383,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
         (None, Some(_)) if req.op == "video" => 180.0,
         _ if req.op == "train" => train_estimate(state, &req),
         _ if req.op == "trainer" => 900.0,
+        _ if req.op == "talk" => ditto::estimate(req.seconds.unwrap_or(15.0) as f64, state.catalog.media.ditto.as_ref().is_some_and(|d| ditto::ready(&state.paths, d))),
         // Writing, then reading about as fast as it plays.
         _ if req.op == "podcast" => 60.0 + 50.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(5.0) as f64,
         _ if req.op == "dialogue" => 10.0 + req.prompt.len() as f64 / 40.0,
@@ -2441,7 +2459,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
     });
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
-    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "speak" | "tune" | "coach" | "cover_art")
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "speak" | "talk" | "tune" | "coach" | "cover_art")
         || (matches!(req.op.as_str(), "music" | "sound" | "studio_part" | "video_sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // HeartMuLa only runs on a card.
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
@@ -2583,7 +2601,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
     }
     let name = match req.op.as_str() {
         "video" => "a video",
-        "speak" => "a talking picture",
+        "speak" | "talk" => "a talking picture",
         "music" => "a song",
         "sound" => "a sound",
         "narrate" => "a narration",
@@ -3840,6 +3858,8 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
         "speak" => Box::pin(speak(&ctx, model.ok_or("No video model.")?, &work.0)).await,
+        #[cfg(windows)]
+        "talk" => Box::pin(talk(&ctx, &work.0)).await,
         "revoice" => revoice_job(&ctx).await,
         "cover_art" => cover_art(&ctx, model.ok_or("No picture model.")?, &work.0).await,
         "music" | "sound" => {
@@ -4626,48 +4646,7 @@ async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     let (picture, img) = ctx.source()?;
     let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
     let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let mut song = false;
-    let sound = match (&req.sound, &req.sound_file, said) {
-        (Some(id), _, _) => {
-            let a = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That sound is no longer in the gallery.")?;
-            song = matches!(a.op.as_str(), "music" | "remake" | "revoice" | "studio_part");
-            written_out(state, &c, &a, &work.join("sound"))?
-        }
-        (None, Some(f), _) => PathBuf::from(f),
-        (None, None, Some(words)) => {
-            (ctx.progress)("Reading the words aloud", 0.0);
-            let text = crate::tts::speakable(words);
-            let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto");
-            let (floats, rate) = match req.voice.as_deref().and_then(|v| v.strip_prefix("own:")) {
-                Some(own) => own_voice::speak(state, own, &text, language.as_deref(), ctx.cancel, &|s, f| (ctx.progress)(s, 0.03 * f)).await?,
-                None => tokio::task::block_in_place(|| -> Result<(Vec<f32>, u32), String> {
-                    let voices = crate::tts::voices()?;
-                    let voice = crate::tts::pick_voice(&voices, req.voice.as_deref(), language.as_deref()).map(|v| v.id.clone()).ok_or("No voices are installed.")?;
-                    let s = crate::tts::synthesize(&text, Some(&voice), language.as_deref(), 1.0)?;
-                    Ok((s.samples.iter().map(|x| *x as f32 / 32768.0).collect(), s.rate))
-                })?,
-            };
-            let p = work.join("sound.wav");
-            std::fs::write(&p, crate::audio::wav_encode(&floats, rate)).map_err(|e| e.to_string())?;
-            p
-        }
-        _ => return Err("Pick what it should say or sing: a sound or song, a file, or words to read aloud.".into()),
-    };
-    let probe = ffmpeg::probe(&ffprobe, &sound).await?;
-    if !probe.audio {
-        return Err("That file has no sound to talk to.".into());
-    }
-    let secs = probe.seconds.clamp(0.5, SPEAK_SECS);
-    let mix = ffmpeg_stereo(state, &ffmpeg_exe, &sound, secs, ctx.cancel).await?;
-    // A song's lips follow its singing, not the band.
-    let voice = match song {
-        true => {
-            (ctx.progress)("Finding the singing in the song", 0.03);
-            separated(ctx, &mix, &[3], "the lips follow the whole song").await?.map(|[l, r]| l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect())
-        }
-        false => None,
-    }
-    .unwrap_or_else(|| mix.mono());
+    let ToSay { sound, secs, voice, song } = what_it_says(ctx, work, &ffmpeg_exe, &ffprobe, SPEAK_SECS).await?;
 
     // Its picture, at the model's size in its own shape.
     let d = &m.defaults;
@@ -4774,6 +4753,197 @@ async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
         ..Default::default()
     };
     Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &bytes, Some(&still))?])
+}
+
+/// What a picture says or sings: the sound (as given), how long it is (at
+/// most `longest`), and the voice alone at `stems::RATE`.
+struct ToSay {
+    sound: PathBuf,
+    secs: f64,
+    voice: Vec<f32>,
+    song: bool,
+}
+
+/// The voice a picture talks or sings to: a sound or song from the gallery
+/// (a song's lips follow its vocals alone), a file, or words read aloud first.
+async fn what_it_says(ctx: &RunCtx<'_>, work: &std::path::Path, ffmpeg_exe: &std::path::Path, ffprobe: &std::path::Path, longest: f64) -> Result<ToSay, String> {
+    let state = ctx.state;
+    let req = ctx.req;
+    let c = state.work_cipher()?;
+    let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let mut song = false;
+    let sound = match (&req.sound, &req.sound_file, said) {
+        (Some(id), _, _) => {
+            let a = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That sound is no longer in the gallery.")?;
+            song = matches!(a.op.as_str(), "music" | "remake" | "revoice" | "studio_part");
+            written_out(state, &c, &a, &work.join("sound"))?
+        }
+        (None, Some(f), _) => PathBuf::from(f),
+        (None, None, Some(words)) => {
+            (ctx.progress)("Reading the words aloud", 0.0);
+            let text = crate::tts::speakable(words);
+            let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto");
+            let (floats, rate) = match req.voice.as_deref().and_then(|v| v.strip_prefix("own:")) {
+                Some(own) => own_voice::speak(state, own, &text, language.as_deref(), ctx.cancel, &|s, f| (ctx.progress)(s, 0.03 * f)).await?,
+                None => tokio::task::block_in_place(|| -> Result<(Vec<f32>, u32), String> {
+                    let voices = crate::tts::voices()?;
+                    let voice = crate::tts::pick_voice(&voices, req.voice.as_deref(), language.as_deref()).map(|v| v.id.clone()).ok_or("No voices are installed.")?;
+                    let s = crate::tts::synthesize(&text, Some(&voice), language.as_deref(), 1.0)?;
+                    Ok((s.samples.iter().map(|x| *x as f32 / 32768.0).collect(), s.rate))
+                })?,
+            };
+            let p = work.join("sound.wav");
+            std::fs::write(&p, crate::audio::wav_encode(&floats, rate)).map_err(|e| e.to_string())?;
+            p
+        }
+        _ => return Err("Pick what it should say or sing: a sound or song, a file, or words to read aloud.".into()),
+    };
+    let probe = ffmpeg::probe(ffprobe, &sound).await?;
+    if !probe.audio {
+        return Err("That file has no sound to talk to.".into());
+    }
+    let secs = probe.seconds.clamp(0.5, longest);
+    let mix = ffmpeg_stereo(state, ffmpeg_exe, &sound, secs, ctx.cancel).await?;
+    // A song's lips follow its singing, not the band.
+    let voice = match song {
+        true => {
+            (ctx.progress)("Finding the singing in the song", 0.03);
+            separated(ctx, &mix, &[3], "the lips follow the whole song").await?.map(|[l, r]| l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect())
+        }
+        false => None,
+    }
+    .unwrap_or_else(|| mix.mono());
+    Ok(ToSay { sound, secs, voice, song })
+}
+
+/// A picture that talks or sings, the quick way (`talk`, Ditto): its face
+/// and lips move to the voice at 25 frames a second in one go, then FFmpeg
+/// lays the sound under the video. Saved as a talking picture (`speak`).
+#[cfg(windows)]
+async fn talk(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let req = ctx.req;
+    let d = state.catalog.media.ditto.clone().ok_or("Quick talking pictures aren't available on this system yet.")?;
+    let c = state.work_cipher()?;
+    let (picture, img) = ctx.source()?;
+    let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
+    let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let ToSay { sound, secs, voice, .. } = what_it_says(ctx, work, &ffmpeg_exe, &ffprobe, ditto::LONGEST).await?;
+    let uv = ensure_ditto(ctx, &d).await?;
+
+    // The picture as it is (at most 1920 on its longest side), and the voice alone.
+    let (w, h) = ditto::picture_size(img.width(), img.height());
+    let first = if (w, h) == img.dimensions() { img.clone() } else { img.resize_exact(w, h, image::imageops::FilterType::Lanczos3) };
+    let image = work.join("face.png");
+    std::fs::write(&image, imaging::png(&first)?).map_err(|e| e.to_string())?;
+    let still = imaging::thumbnail(&first)?;
+    let wav = work.join("voice.wav");
+    std::fs::write(&wav, crate::audio::wav_encode(&voice, stems::RATE)).map_err(|e| e.to_string())?;
+    let silent = work.join("silent.mp4");
+
+    (ctx.progress)("Loading the face model", 0.1);
+    let mut frames = (secs * 25.0).ceil().max(1.0) as u32;
+    let mut no_face = false;
+    let ran = proc::run_env(
+        proc::Run {
+            exe: &uv,
+            args: ditto::args(&ditto::source_dir(&state.paths, &d), &ditto::models_dir(&state.paths), &image, &wav, &silent, req.steps.unwrap_or(50)),
+            cwd: work,
+            log: &state.paths.logs.join("talking-picture.log"),
+            low_priority: state.limits().low_priority,
+            job: state.job(),
+        },
+        &ditto::env(&state.paths),
+        ctx.cancel,
+        |l| match ditto::said(l) {
+            Some(ditto::Said::Loaded) => (ctx.progress)("Moving the face to the voice", 0.15),
+            Some(ditto::Said::Frames(n)) => frames = n.max(1),
+            Some(ditto::Said::Frame(k)) => (ctx.progress)(&format!("Making the frames: {k} of {frames}"), 0.15 + 0.78 * (k as f64 / frames as f64).min(1.0)),
+            Some(ditto::Said::NoFace) => no_face = true,
+            None => {}
+        },
+    )
+    .await;
+    if no_face {
+        return Err("No face was found in the picture. Pick one where a face is clearly seen from the front.".into());
+    }
+    ran?;
+
+    (ctx.progress)("Putting the sound with it", 0.94);
+    let mp4 = work.join("talking.mp4");
+    let mut args: Vec<std::ffi::OsString> = vec!["-i".into(), silent.into_os_string(), "-i".into(), sound.as_os_str().to_owned()];
+    args.extend(["-map", "0:v", "-map", "1:a", "-t", &format!("{secs:.3}"), "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"].map(Into::into));
+    args.push(mp4.as_os_str().to_owned());
+    ffmpeg::run(state, &ffmpeg_exe, args, secs, ctx.cancel, &|f| (ctx.progress)("Putting the sound with it", 0.94 + 0.06 * f)).await?;
+    let bytes = std::fs::read(&mp4).map_err(|e| format!("FFmpeg didn't make the video: {e}"))?;
+    let item = MediaItem {
+        kind: "video".into(),
+        op: "speak".into(),
+        prompt: said.map(str::to_string).unwrap_or_else(|| req.prompt.trim().to_string()),
+        model_id: Some("ditto".into()),
+        mime: "video/mp4".into(),
+        width: w,
+        height: h,
+        seconds: secs,
+        parent: Some(picture.id),
+        chat_id: req.chat_id.clone(),
+        poster: true,
+        ..Default::default()
+    };
+    state.log("media", &format!("Made a picture talk the quick way on this PC ({secs:.0} s)"));
+    Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &bytes, Some(&still))?])
+}
+
+/// Ditto, set up the first time (`talk`): uv (the music trainer's), its
+/// source with SulcusAI's runner, its locked Python packages, and its model
+/// files. Returns uv.
+#[cfg(windows)]
+async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog) -> Result<PathBuf, String> {
+    let state = ctx.state;
+    let paths = &state.paths;
+    let say = "Getting the quick face model (once)";
+    let uv = engine::ensure_unpacked(paths, "trainer-uv-bin", &d.uv, "uv.exe", ctx.cancel, |r, all| (ctx.progress)(say, 0.01 * r as f64 / all.max(1) as f64)).await?;
+    let source = ditto::source_dir(paths, d);
+    let dir_name = source.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    engine::ensure_unpacked(paths, &dir_name, &d.source, "talk.py", ctx.cancel, |_, _| {}).await?;
+    if !source.join(".venv").join("Scripts").join("python.exe").is_file() {
+        // Its Python and packages (PyTorch for NVIDIA cards and the rest), as locked.
+        state.log("network", "Downloading the quick face model's Python packages from pypi.org and download.pytorch.org");
+        (ctx.progress)("Setting up the quick face model (once, up to 6 GB)", 0.02);
+        let ran = proc::run_env(
+            proc::Run {
+                exe: &uv,
+                args: ["sync", "--frozen", "--python", "3.12"].map(std::ffi::OsString::from).to_vec(),
+                cwd: &source,
+                log: &paths.logs.join("talking-picture-setup.log"),
+                low_priority: state.limits().low_priority,
+                job: state.job(),
+            },
+            &ditto::env(paths),
+            ctx.cancel,
+            |_| {},
+        )
+        .await;
+        if let Err(e) = ran {
+            // A half-made environment would look ready next time.
+            let _ = std::fs::remove_dir_all(source.join(".venv"));
+            return Err(e);
+        }
+    }
+    let dir = ditto::models_dir(paths);
+    let missing: Vec<&train::TrainerFile> = d.files.iter().filter(|f| !dir.join(&f.file).is_file()).collect();
+    if !missing.is_empty() {
+        state.log("network", "Downloading Ditto's model files from huggingface.co");
+        let client = net::external_client(net::Connectivity::Offline, net::Purpose::ModelDownload, false)?;
+        let total: u64 = missing.iter().map(|f| f.size).sum::<u64>().max(1);
+        let mut done = 0u64;
+        for f in missing {
+            let base = done;
+            download::fetch_verified(&client, &f.url, &dir.join(&f.file), f.size, &f.sha256, ctx.cancel, |r, _| (ctx.progress)(say, 0.03 + 0.06 * (base + r) as f64 / total as f64)).await?;
+            done += f.size;
+        }
+    }
+    Ok(uv)
 }
 
 /// The vocal language for the music model: the one asked for; with no
@@ -5819,6 +5989,20 @@ pub fn music_custom_models(state: AppStateRef) -> Result<serde_json::Value, Stri
         "setup_bytes": t.map_or(0, train::setup_bytes),
         "base_installed": installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == train::BASE_MODEL),
     }))
+}
+
+/// The ways a picture can be made to talk here: quick (Ditto, NVIDIA
+/// cards) and detailed (Wan 2.2 S2V, when installed).
+#[tauri::command(async)]
+pub fn media_talk_ways(state: AppStateRef) -> serde_json::Value {
+    let d = state.catalog.media.ditto.as_ref();
+    let detailed = installed(&state.db.lock().unwrap()).iter().any(|i| state.catalog.media.models.iter().any(|m| m.id == i.model_id && m.kind == Kind::Video && m.can("speech")));
+    json!({
+        "quick": d.is_some() && cfg!(windows) && crate::natural::nvidia_here(&state),
+        "ready": d.is_some_and(|d| ditto::ready(&state.paths, d)),
+        "setup_bytes": d.map_or(0, ditto::setup_bytes),
+        "detailed": detailed,
+    })
 }
 
 #[tauri::command(async)]

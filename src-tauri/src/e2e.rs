@@ -1532,6 +1532,51 @@ async fn e2e_a_picture_talks() {
     assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 5.0, "{} s for {} s of voice", p.seconds, made.seconds);
 }
 
+/// A portrait made to talk the quick way (Ditto, set up by the test the
+/// first time: its packages through uv, its model files from Hugging Face):
+/// words read aloud by a natural voice, then a picture with no face, which
+/// says so. Until its package is on the `engines` release,
+/// SULCUSAI_DITTO_ZIP points at the zip `scripts/ditto/package.py` made.
+/// Written to C:\dev\tools\voice\tests\e2e-talking-quick.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_picture_talks_quickly() {
+    use crate::media::{self, store, MediaItem, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    crate::natural::install_for_test(&state).await.unwrap();
+    if let (Some(zip), Some(d)) = (std::env::var_os("SULCUSAI_DITTO_ZIP"), state.catalog.media.ditto.as_ref()) {
+        let dir = media::ditto::source_dir(&state.paths, d);
+        if !dir.join("talk.py").is_file() {
+            crate::engine::unzip_for_test(std::path::Path::new(&zip), &dir).unwrap();
+        }
+    }
+    let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
+    let words = "Hello there! This is a picture that talks the quick way, and my lips move with my words.";
+    let started = std::time::Instant::now();
+    let made = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), ..Default::default() }).await.unwrap().remove(0);
+    println!("talked in {:.0} s", started.elapsed().as_secs_f64());
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-talking-quick.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&Paths::new(app_data_dir()).unwrap().engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("talking: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
+    assert!(p.audio && made.poster && made.op == "speak" && made.model_id.as_deref() == Some("ditto"));
+    assert_eq!((p.width, p.height), (1024, 1024), "the picture keeps its size");
+    assert!((p.fps - 25.0).abs() < 0.5);
+    assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 4.0, "{} s for {} s of voice", p.seconds, made.seconds);
+
+    // A picture with no face in it.
+    let sky = image::DynamicImage::ImageRgb8(image::RgbImage::from_fn(512, 512, |_, y| image::Rgb([90, 140, 200u8.saturating_sub((y / 8) as u8)])));
+    let mut bytes = Vec::new();
+    sky.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png).unwrap();
+    let blank = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "sky".into(), width: 512, height: 512, ..Default::default() }, &bytes, None).unwrap();
+    let e = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(blank.id.clone()), say: Some("Hello.".into()), language: Some("en".into()), ..Default::default() }).await.unwrap_err();
+    println!("no face: {e}");
+    assert!(e.contains("No face"), "{e}");
+}
+
 /// Programs: the open windows are listed, and each is read through UI
 /// Automation as numbered items (until one has some). Reads only: no window
 /// is opened and nothing is pressed or typed; only counts are printed.
