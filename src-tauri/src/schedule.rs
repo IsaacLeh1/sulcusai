@@ -544,11 +544,11 @@ pub async fn run_with_cause(state: &Arc<AppState>, s: &Schedule, cause: Option<&
 }
 
 /// What each file trigger's folder held at the last look, by task and folder.
-type Known = std::collections::HashMap<(String, String), std::collections::HashSet<std::path::PathBuf>>;
+pub(crate) type Known = std::collections::HashMap<(String, String), std::collections::HashSet<std::path::PathBuf>>;
 
 /// The triggers that went off since the last look, each with what set it
 /// off. Tasks that run when SulcusAI starts go off on the first look.
-fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, started: &mut bool) -> Vec<(Schedule, Option<Fired>)> {
+pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, started: &mut bool) -> Vec<(Schedule, Option<Fired>)> {
     let now = now_ms();
     let conn = state.db.lock().unwrap();
     let all: Vec<Schedule> = list(&conn, cipher).into_iter().filter(|s| s.enabled && is_trigger(&s.cadence)).collect();
@@ -565,9 +565,18 @@ fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, started: &mut
             Cadence::OnFile { folder, .. } => {
                 let files = files_in(folder);
                 let key = (s.id.clone(), folder.clone());
-                let f = file_fired(&s, &files, known.get(&key), now);
-                // Files still being written aren't known yet, so they're new once settled.
-                known.insert(key, files.into_iter().filter(|(_, _, changed)| now - changed >= 5_000).map(|(p, ..)| p).collect());
+                let before = known.get(&key);
+                let f = file_fired(&s, &files, before, now);
+                // Files still being written aren't known yet, so they're new
+                // once settled; ones known before, or (at the first look)
+                // older than the task, stay known however recently changed.
+                let since = s.armed.unwrap_or(0).max(s.last_run.unwrap_or(0));
+                let next = files
+                    .into_iter()
+                    .filter(|(p, made, changed)| now - changed >= 5_000 || before.map_or((*made).max(*changed) < since, |k| k.contains(p)))
+                    .map(|(p, ..)| p)
+                    .collect();
+                known.insert(key, next);
                 f
             }
             Cadence::OnStart if first => Some(Fired { what: "SulcusAI started.".into(), ids: Vec::new() }),

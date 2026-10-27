@@ -1723,6 +1723,63 @@ async fn e2e_a_model_is_steered() {
     let _ = std::fs::remove_file(file);
 }
 
+/// A task set off by a file (Qwen3 4B 2507 as the model): a file landing in
+/// a watched folder is seen at the next look, the task runs with what set
+/// it off, and the same file doesn't set it off again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_file_sets_off_a_task() {
+    use crate::schedule::{self, Cadence, Schedule};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let file = real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+    crate::local::import(&state, &file).unwrap();
+    let id = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.local.as_ref().is_some_and(|l| std::path::Path::new(&l.path) == file)).unwrap().id;
+    let folder = std::env::temp_dir().join(format!("sulcusai-watch-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("old.txt"), "there before").unwrap();
+    let mut s = Schedule {
+        id: "w1".into(),
+        name: "New files".into(),
+        prompt: "Say the new file's name and what it's for, in one short sentence.".into(),
+        cadence: Cadence::OnFile { folder: folder.display().to_string(), name: String::new() },
+        model_id: Some(id),
+        project_id: None,
+        allow_changes: false,
+        actions: Vec::new(),
+        enabled: true,
+        last_run: None,
+        next_run: None,
+        last_chat: None,
+        armed: None,
+        handled: Vec::new(),
+    };
+    schedule::arm(&mut s, None);
+    schedule::save(&state.db.lock().unwrap(), &c, &s).unwrap();
+    let (mut known, mut started) = (schedule::Known::new(), true);
+    assert!(schedule::triggered(&state, &c, &mut known, &mut started).is_empty(), "what was there before doesn't count");
+    std::fs::write(folder.join("groceries-for-saturday.txt"), "milk, eggs, bread").unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    let fired = schedule::triggered(&state, &c, &mut known, &mut started);
+    assert_eq!(fired.len(), 1, "the new file sets it off");
+    let (task, what) = (fired[0].0.clone(), fired[0].1.as_ref().unwrap().what.clone());
+    println!("{what}");
+    assert!(what.contains("groceries-for-saturday.txt") && !what.contains("old.txt"), "only the new file: a file written just before the task was set up isn't new");
+    let (chat, result) = schedule::run_with_cause(&state, &task, Some(&what), std::sync::Arc::new(|_: &str, _: serde_json::Value| {})).await.unwrap();
+    result.unwrap();
+    let said = crate::db::messages(&state.db.lock().unwrap(), &c, &chat).into_iter().rev().find(|m| m.role == "assistant").map(|m| m.content).unwrap_or_default();
+    println!("it said: {said}");
+    assert!(said.to_lowercase().contains("groceries"), "{said}");
+    // Remembered as run for: not again.
+    let mut done = task;
+    schedule::remember(&mut done, fired[0].1.as_ref().unwrap().ids.clone());
+    schedule::save(&state.db.lock().unwrap(), &c, &done).unwrap();
+    assert!(schedule::triggered(&state, &c, &mut known, &mut started).is_empty());
+    state.engine.lock().await.stop().await;
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
 /// The screen agent's eyes, on a made-up desktop (C:\dev\tools\screen-test\
 /// save-box.png: Notepad's "Do you want to save changes" box, drawn by
 /// scripts in the scratchpad, buttons Save 690-860, Don't save 880-1050,
