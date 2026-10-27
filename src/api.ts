@@ -1263,6 +1263,15 @@ export interface Message {
   meta?: ToolMeta;
 }
 
+/** A chat with every word searched for. */
+export interface ChatHit {
+  chat_id: string;
+  title: string;
+  /** Where in it the words are (none when only the name has them). */
+  snippet: string | null;
+  updated_at: number;
+}
+
 /** Other versions of a chat after one point (an edited message, another reply). */
 export interface Versions {
   /** The message just before them ("" for the chat's start). */
@@ -3094,6 +3103,9 @@ export const api = {
   /** The person's message sent again as `text`; the old one and what followed are kept as a version. */
   editMessage: (chatId: string, messageId: string, text: string) => invoke<Message | null>("chat_edit", { chatId, messageId, text }),
   versions: (chatId: string) => invoke<Versions[]>("chat_versions", { chatId }),
+  searchChats: (query: string) => invoke<ChatHit[]>("search_chats", { query }),
+  /** Saves a chat as .md (written by the core) or .html (`html`, the page the window made). */
+  exportChat: (chatId: string, path: string, html?: string) => invoke<void>("export_chat", { chatId, path, html: html ?? null }),
   switchVersion: (chatId: string, anchor: string, to: number) => invoke<void>("chat_switch_version", { chatId, anchor, to }),
   /** While a reply is written: the assistant reads it at its next step ("idle": no reply running, send it). */
   chatAdd: (chatId: string, text: string, images?: string[]) => invoke<"added" | "idle">("chat_add", { chatId, text, images: images ?? null }),

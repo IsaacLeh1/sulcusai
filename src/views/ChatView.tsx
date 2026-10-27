@@ -37,6 +37,7 @@ import { BrowserPanel } from "./WebViewerView";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { CopyButton } from "../components/CopyButton";
+import { ExportChat } from "../components/ExportChat";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
@@ -206,6 +207,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [runningCall, setRunningCall] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [panel, setPanel] = useState<"memories" | "links" | "notes" | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
@@ -742,6 +744,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
               <button className="btn ghost small" onClick={() => setPanel("notes")} title={t("This chat's memory and plan")}>{t("Notes")}</button>
             </>
           )}
+          {!chat.incognito && (
+            <button className="btn ghost small" onClick={() => setExporting(true)} title={t("Save this chat as a file, or print it")} disabled={!messages.length}>
+              {t("Save as")}
+            </button>
+          )}
           <button className="btn ghost small" onClick={() => setRenaming(true)}>{t("Rename")}</button>
           <button className="btn ghost small danger" onClick={() => setConfirmDelete(true)}>{t("Delete")}</button>
         </div>
@@ -1097,6 +1104,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       {panel === "memories" && <ChatMemories chat={chat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "links" && <LinkedChats chat={chat} onOpenChat={onOpenChat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "notes" && <ChatNotes chat={chat} onClose={() => setPanel(null)} toast={toast} />}
+      {exporting && <ExportChat chat={chat} messages={messages} onClose={() => setExporting(false)} toast={toast} />}
       {renaming && (
         <RenameDialog
           title={chat.title}

@@ -353,18 +353,10 @@ pub fn export_markdown(state: &AppState, dir: &Path) -> Result<PathBuf, String> 
     std::fs::create_dir_all(&chats_dir).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&notes_dir).map_err(|e| e.to_string())?;
     let conn = state.db.lock().unwrap();
-    let when = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).map(|t| t.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
     let mut used = std::collections::HashSet::new();
     let mut chats = 0;
     for chat in db::list_chats(&conn, &c).into_iter().filter(|c| !c.incognito) {
-        let mut md = format!("# {}\n\n_Started {}_\n\n", chat.title, when(chat.created_at));
-        for m in db::messages(&conn, &c, &chat.id) {
-            match m.role.as_str() {
-                "user" => md.push_str(&format!("## You ({})\n\n{}\n\n", when(m.created_at), m.content.trim())),
-                "assistant" if !m.content.trim().is_empty() => md.push_str(&format!("## Assistant\n\n{}\n\n", m.content.trim())),
-                _ => {}
-            }
-        }
+        let md = crate::chatsearch::chat_markdown(&chat, &db::messages(&conn, &c, &chat.id));
         std::fs::write(chats_dir.join(format!("{}.md", safe_name(&chat.title, &mut used))), md).map_err(|e| e.to_string())?;
         chats += 1;
     }

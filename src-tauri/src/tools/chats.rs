@@ -79,7 +79,7 @@ pub fn find(conn: &rusqlite::Connection, c: &Cipher, this: &str, wanted: &str) -
 }
 
 /// A short excerpt around the first match.
-fn snippet(text: &str, low_query: &str) -> String {
+pub(crate) fn snippet(text: &str, low_query: &str) -> String {
     let low = text.to_lowercase();
     let Some(at) = low.find(low_query) else { return text.chars().take(120).collect() };
     let chars: Vec<char> = text.chars().collect();

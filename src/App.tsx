@@ -30,6 +30,7 @@ import { GpuPicker } from "./components/GpuPicker";
 import { SideMenu } from "./components/SideMenu";
 import { ChatNotes, LinkedChats } from "./components/ChatPanels";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
+import { ChatSearchResults } from "./components/ChatSearch";
 import { ShareChatDialog, ShareChatsDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
@@ -528,6 +529,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
   // Chats hidden from the list (own ones by id, shared ones as "contact:chat"), shown under "Hidden chats".
   const [hidden, setHidden] = useState<string[]>([]);
   const [showHidden, setShowHidden] = useState(false);
+  const [chatQuery, setChatQuery] = useState("");
   useEffect(() => {
     api.hiddenChats().then(setHidden).catch(() => {});
   }, []);
@@ -996,6 +998,28 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </div>
           </div>
         )}
+        {listed.length > 0 && (
+          <div className="chat-search">
+            <input
+              className="input search"
+              type="search"
+              value={chatQuery}
+              onChange={(e) => setChatQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setChatQuery("")}
+              placeholder={t("Search chats")}
+              aria-label={t("Search chats")}
+            />
+          </div>
+        )}
+        {chatQuery.trim() ? (
+          <ChatSearchResults
+            query={chatQuery.trim()}
+            onOpen={(id) => {
+              setActiveChat(id);
+              setView("chat");
+            }}
+          />
+        ) : (<>
         {(folders.length > 0 || visible.length > 0) && (
           <FolderSection folders={folders} chats={visible} renderChat={chatItem} onChanged={(f) => (setFolders(f), refreshChats())} peopleOn={peopleOn} toast={toast} />
         )}
@@ -1027,6 +1051,7 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </div>
           )}
         </div>
+        </>)}
         </>)}
         {/* Connectors and People, when on, sit in the gear menu: the top is about the work. */}
         <SideMenu

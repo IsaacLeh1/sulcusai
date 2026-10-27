@@ -28,6 +28,7 @@ mod calendar;
 mod catalog;
 mod chat;
 mod chatnotes;
+mod chatsearch;
 mod compact;
 mod cloud;
 mod checkpoint;
@@ -3400,6 +3401,8 @@ pub fn run() {
             chat_edit,
             chat_versions,
             chat_switch_version,
+            chatsearch::search_chats,
+            chatsearch::export_chat,
             engine_status,
             unload_model,
             security::security_status,

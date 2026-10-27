@@ -521,7 +521,7 @@ pub fn remove_installed(conn: &Connection, model_id: &str) -> Result<(), String>
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct Chat {
     pub id: String,
     pub title: String,
