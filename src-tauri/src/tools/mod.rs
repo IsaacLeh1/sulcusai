@@ -325,7 +325,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "program_click", risk: Risk::Programs, params: programs::program_click_params,
         description: "Press a button, menu item, tab, checkbox or list item in the program's window, by its number. Anything that sends, buys or deletes asks the user first. Returns the window again (or a box it opened)." },
     ToolDef { name: "program_type", risk: Risk::Programs, params: programs::program_type_params,
-        description: "Type into a field or document in the program's window by its number (replacing what's there). Never for passwords: ask the user to type those." },
+        description: "Type into a field or document in the program's window by its number. A field's text is replaced; a document gets the text added at the end (replace: true to put it in place of everything, which asks the user). It checks the text went in. Never for passwords: ask the user to type those." },
     ToolDef { name: "program_key", risk: Risk::Programs, params: programs::program_key_params,
         description: "Press keys in the program's window used last, e.g. ctrl+s to save, escape to close a menu, alt+f for the File menu, tab, enter." },
     ToolDef { name: "program_scroll", risk: Risk::Programs, params: programs::program_scroll_params,

@@ -35,7 +35,8 @@ pub fn program_click_params() -> Value {
 pub fn program_type_params() -> Value {
     json!({ "type": "object", "required": ["ref", "text"], "properties": {
         "ref": { "type": "integer", "description": "The field's number from the window." },
-        "text": { "type": "string", "description": "What to type (replaces what's there)." },
+        "text": { "type": "string", "description": "What to type." },
+        "replace": { "type": "boolean", "description": "Put it in place of what's there. Fields are replaced unless this is false; documents get the text added at the end unless this is true (replacing a document's text asks the user)." },
         "submit": { "type": "boolean", "description": "Press Enter afterwards." } } })
 }
 
@@ -81,6 +82,16 @@ pub async fn assess(chat_id: &str, name: &str, args: &Value) -> Result<Option<Pr
             }
             let text = args.get("text").and_then(Value::as_str).unwrap_or_default();
             let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(false);
+            // A document's own text (often a file of theirs) is only replaced when they say so.
+            if t.kind == "document" && args.get("replace").and_then(Value::as_bool) == Some(true) {
+                let name = if t.name.is_empty() { t.program.clone() } else { t.name.clone() };
+                return Ok(Some(Preview {
+                    title: format!("Replace all the text in {name}"),
+                    kind: "text",
+                    detail: Some(text.to_string()),
+                    note: Some(format!("Everything in this document in {} would be replaced with the text above.", t.program)),
+                }));
+            }
             Ok((submit && !programs::finding_field(&t.name)).then(|| card(format!("Type and press Enter in {}", t.program), format!("Into {} “{}”:\n{text}", t.kind, t.name))))
         }
         "program_key" => {
@@ -123,7 +134,12 @@ pub async fn run(name: &str, args: &Value, app: Option<&AppHandle>, chat_id: &st
             "program_click" | "program_type" | "program_key" | "program_scroll" => {
                 let action = match name {
                     "program_click" => Action::Click(element(args)?),
-                    "program_type" => Action::Type { r: element(args)?, text: super::arg_str(args, "text")?.to_string(), submit: args.get("submit").and_then(Value::as_bool).unwrap_or(false) },
+                    "program_type" => Action::Type {
+                        r: element(args)?,
+                        text: super::arg_str(args, "text")?.to_string(),
+                        submit: args.get("submit").and_then(Value::as_bool).unwrap_or(false),
+                        replace: args.get("replace").and_then(Value::as_bool),
+                    },
                     "program_key" => Action::Key(super::arg_str(args, "keys")?.to_string()),
                     _ => Action::Scroll {
                         r: args.get("ref").filter(|v| !v.is_null()).map(|_| element(args)).transpose()?,

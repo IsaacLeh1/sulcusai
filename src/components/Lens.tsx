@@ -30,8 +30,9 @@ const shown = (s: string) => s.replace(/\n/g, "⏎\n");
 /** The Lens: a model on this PC seen from inside (lens.rs). Word by word,
  * layer by layer, and an edited copy to compare. Each part works on its
  * own; one that can't run says why. */
-export function Lens({ models, toast }: { models: ModelCard[]; toast: PushToast }) {
-  const [model, setModel] = useState(models[0]?.id ?? "");
+export function Lens({ models, defaultModel, toast }: { models: ModelCard[]; defaultModel: string | null; toast: PushToast }) {
+  // The chat model in use first (the list starts with whatever was found first).
+  const [model, setModel] = useState(models.find((m) => m.id === defaultModel)?.id ?? models[0]?.id ?? "");
   const [prompt, setPrompt] = useState("");
   const [words, setWords] = useState<LensWords | null>(null);
   const [open, setOpen] = useState<number | null>(null);

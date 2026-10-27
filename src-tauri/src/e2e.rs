@@ -1575,6 +1575,38 @@ async fn e2e_the_lens_sees_and_edits() {
     assert!(!e.pieces.is_empty());
 }
 
+/// Programs, live (drives the mouse and keyboard; his go-ahead 2026-10-26):
+/// Notepad opened, a new tab, text added and checked, then the tab closed
+/// without saving. It stops before typing unless the tab is a new one, since
+/// Notepad reopens the files that were open last time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_notepad_is_typed_into() {
+    use crate::programs::{self, Action, Pick};
+    let chat = "notepad-test";
+    let opened = programs::open(chat, "Notepad").await.unwrap();
+    println!("opened: {}", opened.window.label());
+    let (done, fresh) = programs::act(chat, Action::Key("ctrl+n".into())).await.unwrap();
+    println!("{done}: {}", fresh.window.label());
+    assert!(fresh.window.title.starts_with("Untitled"), "a new tab before typing: {}", fresh.window.title);
+    let doc = fresh.text.lines().find(|l| l.contains("document")).and_then(|l| l.strip_prefix('[')).and_then(|l| l.split(']').next()).and_then(|n| n.parse::<u32>().ok()).expect("a document to type into");
+    let (typed, after) = programs::act(chat, Action::Type { r: doc, text: "Hello from SulcusAI".into(), submit: false, replace: None }).await.unwrap();
+    println!("{typed}");
+    assert!(after.text.contains("Hello from SulcusAI"), "{}", after.text);
+    // The tab closed without saving it.
+    let (_, asked) = programs::act(chat, Action::Key("ctrl+w".into())).await.unwrap();
+    println!("closing: {}", asked.window.label());
+    if let Some(n) = asked.text.lines().find(|l| l.contains("Don't save") || l.contains("Don’t save")).and_then(|l| l.strip_prefix('[')).and_then(|l| l.split(']').next()).and_then(|n| n.parse::<u32>().ok()) {
+        let (pressed, _) = programs::act(chat, Action::Click(n)).await.unwrap();
+        println!("{pressed}");
+    }
+    let still = programs::read(chat, Pick::Named("Notepad".into())).await;
+    if let Ok(r) = still {
+        assert!(!r.window.title.starts_with("Untitled"), "the new tab is gone: {}", r.window.title);
+        programs::act(chat, Action::Key("alt+f4".into())).await.ok();
+    }
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

@@ -5530,5 +5530,10 @@
  "· working": "· arbeitet",
  "← All reviews": "← Alle Prüfungen",
  "← All study sets": "← Alle Lernsets",
- "＋ Pose from a picture…": "＋ Pose aus einem Bild…"
+ "＋ Pose from a picture…": "＋ Pose aus einem Bild…",
+ "Dubbed video": "Synchronisiertes Video",
+ "Edited video": "Bearbeitetes Video",
+ "Talking picture": "Sprechendes Bild",
+ "The text didn't go in: the program didn't take typing there. Press the field first (program_click), then type again, or tell the user.": "Der Text kam nicht an: Das Programm hat dort keine Eingabe angenommen. Drück zuerst auf das Feld (program_click) und tippe dann erneut, oder sag es dem Nutzer.",
+ "Video with sound": "Video mit Ton"
 }

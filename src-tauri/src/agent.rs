@@ -658,7 +658,8 @@ impl Turn {
                  one by its Start-menu name, and program_read reads a window as text with numbered buttons, fields, menus and \
                  items. Then program_click, program_type, program_scroll and program_key act by those numbers; each returns the \
                  window again (or a box it opened), so check it before the next step. For websites use the browser instead. \
-                 Never type passwords: ask the user to."
+                 To write something new in an editor (Notepad, Word), start a new document first (program_key ctrl+n): a file \
+                 that's already open is the user's, so change it only when they ask. Never type passwords: ask the user to."
                 .to_string();
             about.push_str(&text);
             notes.push((&["programs_list", "program_open", "program_read", "program_click", "program_type", "program_key", "program_scroll"], text));

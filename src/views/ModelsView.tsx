@@ -143,7 +143,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
       {tab === "create" && <MediaModels progress={progress} toast={toast} />}
-      {tab === "lens" && <Lens models={installed} toast={toast} />}
+      {tab === "lens" && <Lens models={installed} defaultModel={defaultModel} toast={toast} />}
 
       {tab === "chat" && (
         <div className="model-filters">

@@ -5530,5 +5530,10 @@
  "· working": "· 作業中",
  "← All reviews": "← すべてのレビュー",
  "← All study sets": "← すべての勉強セット",
- "＋ Pose from a picture…": "＋ 画像からポーズ…"
+ "＋ Pose from a picture…": "＋ 画像からポーズ…",
+ "Dubbed video": "吹き替え動画",
+ "Edited video": "編集した動画",
+ "Talking picture": "話す画像",
+ "The text didn't go in: the program didn't take typing there. Press the field first (program_click), then type again, or tell the user.": "テキストが入力されませんでした。そのプログラムはそこでの入力を受け付けませんでした。先にその欄を押して（program_click）から入力し直すか、ユーザーに伝えてください。",
+ "Video with sound": "音付きの動画"
 }

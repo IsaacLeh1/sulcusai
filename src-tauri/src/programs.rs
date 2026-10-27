@@ -54,7 +54,9 @@ pub enum Pick {
 #[derive(Debug, Clone)]
 pub enum Action {
     Click(u32),
-    Type { r: u32, text: String, submit: bool },
+    /// `replace`: put the text in place of what's there (None: yes for a
+    /// field, no for a document, which gets it added at the end).
+    Type { r: u32, text: String, submit: bool, replace: Option<bool> },
     Key(String),
     Scroll { r: Option<u32>, down: bool, screens: u32 },
 }
@@ -603,26 +605,18 @@ mod imp {
         send(&v);
     }
 
+    /// Types like a keyboard, one character at a time: in one batch, the new
+    /// Notepad took "Hello " and then repeated the last letter for the rest.
     fn type_text(text: &str) {
-        for chunk in text.encode_utf16().collect::<Vec<u16>>().chunks(64) {
-            let mut v = Vec::with_capacity(chunk.len() * 2);
-            for c in chunk {
-                // A new line is Enter, which fields expect.
-                if *c == '\n' as u16 {
-                    v.push(key_input(0x0D, false));
-                    v.push(key_input(0x0D, true));
-                    continue;
-                }
-                if *c == '\r' as u16 {
-                    continue;
-                }
-                for up in [false, true] {
-                    let flags = if up { KEYEVENTF_UNICODE | KEYEVENTF_KEYUP } else { KEYEVENTF_UNICODE };
-                    v.push(INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: *c, dwFlags: flags, time: 0, dwExtraInfo: 0 } } });
-                }
+        for c in text.encode_utf16() {
+            // A new line is Enter, which fields expect.
+            if c == '\n' as u16 {
+                send(&[key_input(0x0D, false), key_input(0x0D, true)]);
+            } else if c != '\r' as u16 {
+                let key = |flags| INPUT { r#type: INPUT_KEYBOARD, Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0), wScan: c, dwFlags: flags, time: 0, dwExtraInfo: 0 } } };
+                send(&[key(KEYEVENTF_UNICODE), key(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]);
             }
-            send(&v);
-            std::thread::sleep(Duration::from_millis(15));
+            std::thread::sleep(Duration::from_millis(6));
         }
     }
 
@@ -703,26 +697,63 @@ mod imp {
         Ok("Clicked")
     }
 
-    fn type_into(h: HWND, s: &Seen, text: &str, submit: bool) -> Result<(), String> {
+    /// What a field or document holds now: its value, else its text.
+    fn text_now(el: &IUIAutomationElement) -> Option<String> {
+        unsafe {
+            if let Ok(s) = el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId).and_then(|v| v.CurrentValue()) {
+                return Some(s.to_string());
+            }
+            let t = el.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId).ok()?;
+            Some(t.DocumentRange().ok()?.GetText(200_000).ok()?.to_string())
+        }
+    }
+
+    /// Whether `text` went in: it's there now, and something changed. A
+    /// program that doesn't say what it holds is taken at its word.
+    fn took(el: &IUIAutomationElement, before: &Option<String>, text: &str) -> bool {
+        let lines = |s: &str| s.replace("\r\n", "\n").replace('\r', "\n");
+        let Some(now) = text_now(el).map(|t| lines(&t)) else { return true };
+        let want = lines(text);
+        let want = want.trim();
+        now.contains(want) && before.as_ref().is_none_or(|b| lines(b) != now || b.contains(want))
+    }
+
+    /// Types `text` into a field or document: in place of what's there
+    /// (`replace`), or added at the end. Checked afterwards, so a program
+    /// that ignored it isn't reported as typed into (Notepad ignored the
+    /// direct way and kept its text).
+    fn type_into(h: HWND, s: &Seen, text: &str, submit: bool, replace: bool) -> Result<(), String> {
         if s.password {
             return Err("This is a password field. Ask the user to type it in the program.".into());
         }
         if !s.enabled {
             return Err("That's greyed out right now.".into());
         }
+        let before = text_now(&s.el);
         unsafe {
-            let set = s
-                .el
-                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                .ok()
-                .filter(|v| !v.CurrentIsReadOnly().map(|b| b.as_bool()).unwrap_or(true) && !text.contains('\n'))
-                .is_some_and(|v| v.SetValue(&BSTR::from(text)).is_ok());
-            if !set {
-                // Typed like the person would: everything in it chosen, then replaced.
+            // The direct way, for a whole value on one line.
+            let mut done = replace
+                && !text.contains('\n')
+                && s.el
+                    .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                    .ok()
+                    .filter(|v| !v.CurrentIsReadOnly().map(|b| b.as_bool()).unwrap_or(true))
+                    .is_some_and(|v| v.SetValue(&BSTR::from(text)).is_ok());
+            if done {
+                std::thread::sleep(Duration::from_millis(150));
+                done = took(&s.el, &before, text);
+            }
+            if !done {
+                // Typed like the person would: everything in it chosen and
+                // replaced, or the cursor taken to the end first.
                 front(h);
                 let _ = s.el.SetFocus();
-                press_keys(&[0x11, 0x41]);
+                press_keys(if replace { &[0x11, 0x41] } else { &[0x11, 0x23] });
                 type_text(text);
+                std::thread::sleep(Duration::from_millis(300));
+                if !took(&s.el, &before, text) {
+                    return Err("The text didn't go in: the program didn't take typing there. Press the field first (program_click), then type again, or tell the user.".into());
+                }
             }
             if submit {
                 front(h);
@@ -807,10 +838,12 @@ mod imp {
                     let how = press(h, s)?;
                     (h, format!("{how} {}{}", s.kind, if s.name.is_empty() { format!(" [{r}]") } else { format!(" “{}”", clip(&s.name, 60)) }))
                 }
-                Action::Type { r, text, submit } => {
+                Action::Type { r, text, submit, replace } => {
                     let (h, s) = seen(w, &chat, *r)?;
-                    type_into(h, s, text, *submit)?;
-                    (h, format!("Typed “{}”{}", clip(text, 40), if *submit { " and pressed Enter" } else { "" }))
+                    let replace = replace.unwrap_or(s.kind != "document");
+                    type_into(h, s, text, *submit, replace)?;
+                    let how = if replace { "Typed" } else { "Added" };
+                    (h, format!("{how} “{}”{}{}", clip(text, 40), if replace { "" } else { " at the end" }, if *submit { " and pressed Enter" } else { "" }))
                 }
                 Action::Key(keys) => {
                     let vks = parse_keys(keys)?;

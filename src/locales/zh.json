@@ -5530,5 +5530,10 @@
  "· working": "· 运行中",
  "← All reviews": "← 所有审查",
  "← All study sets": "← 所有学习集",
- "＋ Pose from a picture…": "＋ 从图片取姿势…"
+ "＋ Pose from a picture…": "＋ 从图片取姿势…",
+ "Dubbed video": "配音视频",
+ "Edited video": "编辑过的视频",
+ "Talking picture": "会说话的图片",
+ "The text didn't go in: the program didn't take typing there. Press the field first (program_click), then type again, or tell the user.": "文字没有输入进去：该程序在那里不接受输入。请先点按该字段（program_click），然后再输入，或者告诉用户。",
+ "Video with sound": "带声音的视频"
 }

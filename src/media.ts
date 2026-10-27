@@ -176,6 +176,10 @@ export const OP_LABEL: Record<string, string> = {
   stem: tx("A part of a song"),
   dry: tx("Effects removed"),
   song_video: tx("Song video"),
+  video_edit: tx("Edited video"),
+  video_sound: tx("Video with sound"),
+  dub: tx("Dubbed video"),
+  speak: tx("Talking picture"),
   paste: tx("Pasted"),
   attach: tx("Attached"),
 };

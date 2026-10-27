@@ -232,11 +232,14 @@ pub fn standouts(text: &[(String, Vec<f32>)], usual: &[(String, Vec<f32>)], most
             continue;
         }
         let mean = values.iter().sum::<f32>() / values.len() as f32;
-        let floor = base.iter().sum::<f32>() / base.len() as f32 * 0.25 + 1e-9;
+        // Against the unit's own everyday level, but never less than the
+        // layer's typical unit: units nearly silent on everyday text all
+        // came out "over 100 times", which said nothing.
+        let floor = base.iter().sum::<f32>() / base.len() as f32 + 1e-9;
         for (i, (v, b)) in values.iter().zip(base).enumerate() {
             // Strong for this text, and well above what everyday text gives it.
             if *v > mean * 2.0 {
-                out.push(Neuron { layer, index: i as u32, energy: *v, ratio: *v / (b + floor) });
+                out.push(Neuron { layer, index: i as u32, energy: *v, ratio: *v / b.max(floor) });
             }
         }
     }

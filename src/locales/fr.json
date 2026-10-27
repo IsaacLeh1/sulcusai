@@ -5530,5 +5530,10 @@
  "· working": "· en cours",
  "← All reviews": "← Toutes les revues",
  "← All study sets": "← Tous les supports d'étude",
- "＋ Pose from a picture…": "＋ Pose d'après une image…"
+ "＋ Pose from a picture…": "＋ Pose d'après une image…",
+ "Dubbed video": "Vidéo doublée",
+ "Edited video": "Vidéo modifiée",
+ "Talking picture": "Image qui parle",
+ "The text didn't go in: the program didn't take typing there. Press the field first (program_click), then type again, or tell the user.": "Le texte n'est pas entré : le programme n'a pas accepté la saisie à cet endroit. Appuyez d'abord sur le champ (program_click), puis tapez de nouveau, ou dites-le à l'utilisateur.",
+ "Video with sound": "Vidéo avec son"
 }
