@@ -114,6 +114,11 @@ pub fn external_client_via(level: Connectivity, purpose: Purpose, chat_web: bool
     let mut b = reqwest::Client::builder()
         .user_agent(concat!("SulcusAI/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(if proxy.is_some() || route(purpose).and_then(crate::privacy::proxy_for).is_some() { 90 } else { 20 }));
+    // Downloads in pieces need a connection each (HTTP/2 would put them all
+    // on one), and one HTTP/1.1 download isn't held back by HTTP/2's window.
+    if purpose == Purpose::ModelDownload {
+        b = b.http1_only();
+    }
     // Cloud providers and relays get keys: never follow them to another
     // host, or down to plain http (a key header would go along).
     if purpose == Purpose::Cloud {

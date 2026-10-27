@@ -1550,6 +1550,14 @@ I asked for: "each external call a model must make, they tell the user what data
 - **Incognito icon**: `IncognitoIcon.tsx` draws a hat over round glasses, like Chrome's, in `currentColor`. It replaces 🕶 on the new-incognito button, chat list items and the incognito banner. The banner's text key lost its emoji, and its translations moved with it.
 - **Website**: `docs/` was redesigned with no boxes: a sticky header, a hero with an HTML/CSS app mockup, alternating feature sections, a privacy band and a multi-column footer. It uses system fonts, deliberately no Google Font. The legal pages' wording is unchanged. Checked at 1280 and 375 wide with no overflow. **Not deployed yet**: `cd website && npx -y wrangler@4.149.0 deploy` when ready.
 
+## After 0.9.42 (2026-10-27, not built): faster downloads
+
+His ask: "faster downloads". Notes: `C:\dev\tools\notes-0943.md`.
+- **Measured first** (his line, about 56 MB/s at most against Cloudflare): curl got 57.7 MB/s from Hugging Face on one connection and the same with 8 or 16; GitHub's release files 47 MB/s on one, 55 MB/s on 8. SulcusAI's own downloader got only 46.7 MB/s: `reqwest` was free to use HTTP/2, and hyper's 2 MB stream window holds one stream to about 2 MB a round trip.
+- **Fixes** (`download.rs`, `net.rs`): model-download clients (`Purpose::ModelDownload`) are HTTP/1.1 only; files of 64 MB or more come in 16 MB pieces over 8 connections (`Split`, `in_pieces`, `Pieces::get`). The first piece is asked for alone: a 206 with the right Content-Range means pieces, a 200 falls back to one stream (`in_one`, the old loop). Later pieces go straight to the first answer's URL (past Hugging Face's redirect); a failed piece is retried from the original URL (a signed link can run out), 3 tries with 2 s / 4 s waits. Pieces are written and hashed in order, at most 12 waiting in memory (192 MB), so the `.part` file stays a plain prefix: resuming, pausing, the cleanup and the SHA-256 check work as before.
+- **Result** (`real_download_speeds`, SULCUSAI_TEST_DOWNLOAD = a Hugging Face file; Qwen3-4B-Q5_K_M.gguf, 2.89 GB): before 46.7 MB/s (62 s); one HTTP/1.1 connection 55.9 MB/s; 8 connections 56.3 MB/s (51 s). On his line the HTTP/1.1 change is the gain (about 20%); pieces matter where one connection gets less than the line (faster lines, far from the server, GitHub).
+- Tests: `big_files_come_in_pieces` (pieces in order with one failing once, carrying on from a saved prefix, a server that only sends whole files, small files in one request).
+
 ## 0.9.42 (2026-10-27): uncensored copies of chat models (Heretic)
 
 Notes: `C:\dev\tools\notes-0942.md`. `heretic-1.4.0-b11450.zip` is on the `engines` release (uploaded 2026-10-27; an anonymous download matched the sha256).
