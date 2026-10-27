@@ -511,6 +511,10 @@ impl Turn {
         if self.use_tools && (features.contains(&Feature::Browser) || features.contains(&Feature::BrowserControl)) && crate::browser::allowed_for_chat(&self.state.db.lock().unwrap(), &self.chat_id) {
             extra.extend(["browser_open", "browser_read", "browser_click", "browser_type", "browser_back", "browser_scroll", "browser_key"]);
         }
+        let programs_offered = self.use_tools && features.contains(&Feature::Programs) && cfg!(windows);
+        if programs_offered {
+            extra.extend(["programs_list", "program_open", "program_read", "program_click", "program_type", "program_key", "program_scroll"]);
+        }
         // Asking (and working with) the assistants of people linked in People.
         let people_note = if self.use_tools && self.mode != tools::Mode::Plan && features.contains(&Feature::People) {
             crate::sync::people::assistant_note(&self.state)
@@ -648,6 +652,16 @@ impl Turn {
             );
             about.push_str(&text);
             notes.push((&["create_image", "edit_image", "create_video", "create_music"], text));
+        }
+        if programs_offered {
+            let text = "\n\nYou can work the programs on the user's PC: programs_list shows the open windows, program_open starts \
+                 one by its Start-menu name, and program_read reads a window as text with numbered buttons, fields, menus and \
+                 items. Then program_click, program_type, program_scroll and program_key act by those numbers; each returns the \
+                 window again (or a box it opened), so check it before the next step. For websites use the browser instead. \
+                 Never type passwords: ask the user to."
+                .to_string();
+            about.push_str(&text);
+            notes.push((&["programs_list", "program_open", "program_read", "program_click", "program_type", "program_key", "program_scroll"], text));
         }
         if edits_text {
             about.push_str(
@@ -1604,6 +1618,16 @@ impl Turn {
         let mut browser_preview = None;
         if matches!(call.name.as_str(), "browser_click" | "browser_type") {
             match tools::browser::assess(self.state.app.get(), &self.chat_id, &call.name, &args).await {
+                Ok(None) => {}
+                Ok(Some(p)) => {
+                    risk = Risk::Submit;
+                    browser_preview = Some(p);
+                }
+                Err(e) => return Outcome::error(tools::failed_title(&call.name, &args), e),
+            }
+        } else if matches!(call.name.as_str(), "program_click" | "program_type" | "program_key") {
+            // Another program: a press, Enter or keys that send, buy, delete or close ask every time.
+            match tools::programs::assess(&self.chat_id, &call.name, &args).await {
                 Ok(None) => {}
                 Ok(Some(p)) => {
                     risk = Risk::Submit;

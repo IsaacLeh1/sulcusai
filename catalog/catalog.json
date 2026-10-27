@@ -4922,6 +4922,77 @@
         }
       },
       {
+        "id": "wan2.2-s2v-14b",
+        "name": "Wan 2.2 S2V",
+        "publisher": "Wan (Alibaba)",
+        "source": "https://huggingface.co/Wan-AI/Wan2.2-S2V-14B",
+        "description": "Makes a picture talk or sing: the face and lips move to a voice, a song or words read aloud, about 5 seconds at a time.",
+        "license": {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0",
+          "commercial": true
+        },
+        "kind": "video",
+        "can": [
+          "speech"
+        ],
+        "files": [
+          {
+            "role": "diffusion",
+            "file": "Wan2.2-S2V-14B-Q4_K_M.gguf",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-S2V-14B-GGUF/resolve/main/Wan2.2-S2V-14B-Q4_K_M.gguf",
+            "size": 13861697120,
+            "sha256": "6a96e304e6d39c7e1d8d2c973f1e5cdd4aa1785dd9a29fdd8274f4a9cb037324"
+          },
+          {
+            "role": "audio_encoder",
+            "file": "wav2vec2_large_english_fp16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/audio_encoders/wav2vec2_large_english_fp16.safetensors",
+            "size": 630997322,
+            "sha256": "f0017a43ea57ef6b3d4866be607844bbd8cada6d30966f7d70044ed0d63d3f9e"
+          },
+          {
+            "role": "t5xxl",
+            "file": "umt5-xxl-encoder-Q4_K_M.gguf",
+            "url": "https://huggingface.co/city96/umt5-xxl-encoder-gguf/resolve/main/umt5-xxl-encoder-Q4_K_M.gguf",
+            "size": 3655145312,
+            "sha256": "17cf97a5bbbc60a646d6105b832b6f657ce904a8a1ad970e4b59df0c67584a40"
+          },
+          {
+            "role": "vae",
+            "file": "Wan2.1_VAE.safetensors",
+            "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors",
+            "size": 253815318,
+            "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+          }
+        ],
+        "min_vram_gb": 12,
+        "cpu": false,
+        "secs": 1800,
+        "quality": 8,
+        "strengths": [
+          "Lips in time with speech or singing",
+          "Starts from your own picture"
+        ],
+        "weaknesses": [
+          "Slow: about half an hour for every 5 seconds on a 12 GB card",
+          "Big download (about 18 GB)"
+        ],
+        "defaults": {
+          "steps": 10,
+          "cfg": 4.5,
+          "sampler": "euler",
+          "width": 640,
+          "height": 368,
+          "fps": 16,
+          "seconds": 5,
+          "flow_shift": 3.0,
+          "negative": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走, blurry, distorted, static, low quality, watermark, subtitles, extra limbs, deformed",
+          "max_frames": 77,
+          "temporal_tiling": true
+        }
+      },
+      {
         "id": "wan2.1-t2v-1.3b",
         "name": "Wan 2.1 1.3B",
         "publisher": "Wan (Alibaba)",

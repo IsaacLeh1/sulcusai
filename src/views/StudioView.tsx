@@ -44,6 +44,7 @@ import { CustomModelField } from "../components/CustomModels";
 import { Fold, InfoTip } from "../components/InfoTip";
 import { LoraField } from "../components/LoraField";
 import { VideoEditor } from "../components/VideoEditor";
+import { SpeakPanel } from "../components/SpeakPanel";
 import { NewWindowIcon } from "../components/Icons";
 import { SongStudio } from "../components/SongStudio";
 import { projectForSong } from "../studio/open";
@@ -188,6 +189,8 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
   }
 
   const installedOf = (kind: MediaKind) => [...(view?.models ?? []).filter((m) => m.kind === kind && m.installed), ...cloudCards(view?.cloud ?? [], kind)];
+  // Video models for clips: not the one that only moves lips to a voice (Wan 2.2 S2V).
+  const clipModels = installedOf("video").filter((m) => !(m as { can?: string[] }).can?.includes("speech"));
   const kind = TAB_KIND[tab];
   const needsModel = kind && view && installedOf(kind).length === 0;
 
@@ -247,7 +250,7 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
         ) : tab === "video" ? (
           <VideoComposer
             key={view?.defaults?.video ?? "no-default"}
-            models={installedOf("video")}
+            models={clipModels}
             defaultId={view?.defaults?.video ?? null}
             onSetDefault={(id) => api.mediaSetDefault("video", id).then(reloadView)}
             onModels={() => setModels(["video"])}
@@ -258,7 +261,7 @@ export function StudioView({ features, progress, toast, onGoFeatures, onPopOut }
             toast={toast}
           />
         ) : tab === "wallpaper" ? (
-          <WallpaperComposer imageModels={installedOf("image")} videoModels={features.has("video") ? installedOf("video") : []} gallery={items} onStart={start} toast={toast} />
+          <WallpaperComposer imageModels={installedOf("image")} videoModels={features.has("video") ? clipModels : []} gallery={items} onStart={start} toast={toast} />
         ) : tab === "music" ? (
           <MusicComposer
             key={view?.defaults?.music ?? "no-default"}
@@ -2005,6 +2008,7 @@ function Viewer({
 }) {
   const src = useMediaUrl(item);
   const [tool, setTool] = useState<Tool>(null);
+  const [talking, setTalking] = useState(false);
   const [text, setText] = useState("");
   const [brush, setBrush] = useState(40);
   // The song view, open; and a map being made for it.
@@ -2332,6 +2336,7 @@ function Viewer({
                 </button>
                 <button className="btn small" onClick={() => run({ op: "remove_background", prompt: "" })}>{t("Remove background")}</button>
                 {features.has("video") && <button className="btn small" onClick={() => onAnimate(item)} title={t("Turn a picture into a video: it starts on your picture and comes to life")}>{t("Turn into a video")}</button>}
+                {features.has("video") && <button className={`btn small ${talking ? "active" : ""}`} onClick={() => setTalking((v) => !v)} title={t("Its face and lips move to words, a song or a sound")}>{t("Make it talk")}</button>}
                 <SetWallpaperButton item={item} toast={toast} />
                 {item.op === "generate" && item.prompt && (
                   <button className="btn small" onClick={() => onStart({ op: "generate", prompt: item.prompt, model_id: item.model_id, shape: item.width > item.height ? "landscape" : item.width < item.height ? "portrait" : "square" })}>
@@ -2339,6 +2344,7 @@ function Viewer({
                   </button>
                 )}
               </div>
+              {talking && features.has("video") && <SpeakPanel run={(r) => (run(r), setTalking(false))} />}
             </div>
           )}
 

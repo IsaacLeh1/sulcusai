@@ -50,6 +50,10 @@ export const FEATURES: Record<FeatureId, Info> = {
     name: tx("Browser control"),
     detail: tx("Lets the assistant use tabs in your own Chrome or Edge, with your sign-ins, through the SulcusAI extension. It works in one tab you can watch, asks before submitting, buying or sending anything, and never types passwords or card numbers. Needs Local AI + Web (or web on for the chat)."),
   },
+  programs: {
+    name: tx("Work other programs"),
+    detail: tx("Lets the assistant open and use the programs on this PC (Notepad, Excel, Settings and others): it reads a window's buttons, fields and text, and presses, types and picks in it, mostly without moving your mouse. It asks before it first does so in a chat, and every time before anything that sends, buys or deletes; it never types passwords. A strip at the top of the screen shows while it works, with Stop. Windows only for now."),
+  },
   images: {
     name: tx("Pictures"),
     detail: tx("Make pictures from a description and edit them: change things by instruction, paint over a spot to fill it in, extend the edges, restyle, make them bigger and sharper, or cut out the background. The assistant can make pictures in chats too."),
@@ -94,7 +98,7 @@ const GROUPS: { title: string; ids: FeatureId[] }[] = [
   { title: tx("Meetings and language"), ids: ["meetings", "translate"] },
   { title: tx("Notes, tasks, mail and calendar"), ids: ["notes", "tasks", "email", "calendar"] },
   { title: tx("Create"), ids: ["images", "video", "music"] },
-  { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
+  { title: tx("Assistant"), ids: ["quick_ask", "web_search", "browser", "browser_control", "programs", "files", "documents", "memory", "projects", "scheduled", "connectors", "chat_team"] },
   { title: tx("Typing"), ids: ["autocomplete", "autocorrect", "next_prompt"] },
   { title: tx("With other people"), ids: ["people"] },
 ];

@@ -7,6 +7,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { SpeechModels } from "./SpeechModels";
 import { MediaModels } from "../components/MediaModels";
+import { Lens } from "../components/Lens";
 import { HubLinkBox } from "../components/HubLink";
 import { ModelStorage } from "../components/ModelStorage";
 import { SpeedChart } from "../components/SpeedChart";
@@ -29,7 +30,7 @@ interface Props {
 export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSettings, toast }: Props) {
   const [checking, setChecking] = useState(false);
   const tunings = useTunings();
-  const [tab, setTab] = useState<"chat" | "speech" | "create">("chat");
+  const [tab, setTab] = useState<"chat" | "speech" | "create" | "lens">("chat");
   const [filter, setFilter] = useState<Filter>("all");
   const [mostFirst, setMostFirst] = useState(false);
   // "Show models this PC can't run": every model, fetched when switched on
@@ -102,6 +103,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
           <button role="tab" aria-selected={tab === "chat"} className={`mode ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>{t("Chat")}</button>
           <button role="tab" aria-selected={tab === "speech"} className={`mode ${tab === "speech" ? "active" : ""}`} onClick={() => setTab("speech")}>{t("Speech")}</button>
           <button role="tab" aria-selected={tab === "create"} className={`mode ${tab === "create" ? "active" : ""}`} onClick={() => setTab("create")}>{t("Pictures, video, music")}</button>
+          <button role="tab" aria-selected={tab === "lens"} className={`mode ${tab === "lens" ? "active" : ""}`} onClick={() => setTab("lens")}>{t("Look inside")}</button>
         </div>
       </header>
 
@@ -141,6 +143,7 @@ export function ModelsView({ catalog, progress, defaultModel, onRefresh, onSetti
 
       {tab === "speech" && <SpeechModels progress={progress} toast={toast} />}
       {tab === "create" && <MediaModels progress={progress} toast={toast} />}
+      {tab === "lens" && <Lens models={installed} toast={toast} />}
 
       {tab === "chat" && (
         <div className="model-filters">

@@ -210,6 +210,64 @@ fn read_from<R: Read + Seek>(mut r: Reader<R>, partial: bool) -> std::io::Result
     Ok(meta)
 }
 
+/// A tensor in a GGUF file and where its data starts in the file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tensor {
+    pub name: String,
+    pub dims: Vec<u64>,
+    /// ggml's type number.
+    pub kind: u32,
+    pub start: u64,
+}
+
+/// The file's tensors (the list after the keys), each with where its data
+/// starts: the data begins at the next multiple of the file's alignment.
+pub fn tensors(path: &Path) -> std::io::Result<Vec<Tensor>> {
+    let mut r = BufReader::with_capacity(1 << 16, File::open(path)?);
+    let mut magic = [0u8; 4];
+    r.read_exact(&mut magic)?;
+    if &magic != b"GGUF" {
+        return Err(bad("not a GGUF file"));
+    }
+    if !(2..=3).contains(&u32_of(&mut r)?) {
+        return Err(bad("unsupported GGUF version"));
+    }
+    let n = u64_of(&mut r)?;
+    let keys = u64_of(&mut r)?;
+    if keys > MAX_KEYS || n > MAX_TENSORS {
+        return Err(bad("too many keys or tensors"));
+    }
+    let mut align = 32u64;
+    for _ in 0..keys {
+        let key = string(&mut r)?.unwrap_or_default();
+        let t = u32_of(&mut r)?;
+        let v = value(&mut r, t)?;
+        if key == "general.alignment" {
+            align = v.int().filter(|a| *a > 0).unwrap_or(32) as u64;
+        }
+    }
+    let mut out = Vec::with_capacity(n as usize);
+    for _ in 0..n {
+        let name = string(&mut r)?.ok_or_else(|| bad("tensor name too long"))?;
+        let d = u32_of(&mut r)?;
+        if d > 8 {
+            return Err(bad("too many dimensions"));
+        }
+        let mut dims = Vec::with_capacity(d as usize);
+        for _ in 0..d {
+            dims.push(u64_of(&mut r)?);
+        }
+        let kind = u32_of(&mut r)?;
+        let offset = u64_of(&mut r)?;
+        out.push(Tensor { name, dims, kind, start: offset });
+    }
+    let data = r.stream_position()?.div_ceil(align) * align;
+    for t in &mut out {
+        t.start += data;
+    }
+    Ok(out)
+}
+
 /// Where `read` puts the type most of the weights have (ggml's number).
 pub const MAIN_TYPE_KEY: &str = "sulcusai.main_tensor_type";
 const MAX_TENSORS: u64 = 100_000;

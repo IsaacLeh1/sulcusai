@@ -136,6 +136,7 @@ pub fn risk_key(r: Risk) -> &'static str {
         Risk::Execute => "execute",
         Risk::Memory => "memory",
         Risk::Connector => "connector",
+        Risk::Programs => "programs",
         Risk::Submit => "submit",
     }
 }
@@ -213,7 +214,7 @@ impl Advanced {
 
     /// The tool may run without asking? (Read and memory always may.)
     pub fn must_ask(&self, r: Risk) -> bool {
-        self.guardrails.always_ask && matches!(r, Risk::Write | Risk::Execute | Risk::Connector)
+        self.guardrails.always_ask && matches!(r, Risk::Write | Risk::Execute | Risk::Connector | Risk::Programs)
     }
 }
 

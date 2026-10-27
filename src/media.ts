@@ -211,6 +211,7 @@ export const JOB_LABEL: Record<MediaOp | string, string> = {
   video_edit: tx("Editing a video"),
   video_sound: tx("Making sound for a video"),
   dub: tx("Dubbing a video"),
+  speak: tx("Making a picture talk"),
 };
 
 /** 16-bit PCM WAV from an audio buffer's samples, between two times. */

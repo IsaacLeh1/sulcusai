@@ -245,7 +245,7 @@ fn op_kind(op: &str) -> Option<Kind> {
         "generate" | "edit" | "fill" | "extend" | "restyle" | "tune" | "coach" | "cover_art" => Kind::Image,
         "upscale" => Kind::Upscale,
         "remove_background" => Kind::Background,
-        "video" => Kind::Video,
+        "video" | "speak" => Kind::Video,
         "music" | "sound" | "parts" | "remake" => Kind::Music,
         _ => return None,
     })
@@ -514,7 +514,9 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
             && list.iter().any(|i| i.model_id == m.id)
             && (kind != Kind::Image || m.can(if matches!(op, "tune" | "coach") { "generate" } else { op }))
             && (kind != Kind::Music || m.can(op))
-            && (!needs_image_input || kind != Kind::Video || m.can("image"))
+            && (!needs_image_input || kind != Kind::Video || op == "speak" || m.can("image"))
+            // Lips to a voice (Wan 2.2 S2V) is its own job: that model needs a voice.
+            && (kind != Kind::Video || m.can("speech") == (op == "speak"))
     };
     if let Some(id) = wanted.filter(|w| !w.is_empty()) {
         if let Some(m) = all.iter().find(|m| m.id == id).filter(ok) {
@@ -550,6 +552,7 @@ pub fn choose(state: &AppState, op: &str, wanted: Option<&str>, needs_image_inpu
     Err(match (kind, op) {
         (Kind::Image, "edit" | "restyle") => "Edits from instructions need FLUX.2 klein. Install it from the Studio's Models list.".into(),
         (Kind::Image, _) => "Install a picture model first: open the Studio and pick one under Models.".into(),
+        (Kind::Video, "speak") => "Making a picture talk or sing needs Wan 2.2 S2V. Install it from the Studio's Models list.".into(),
         (Kind::Video, _) if needs_image_input => "Bringing a picture to life needs Wan 2.2. Install it from the Studio's Models list.".into(),
         (Kind::Video, _) => "Install a video model first: open the Studio and pick one under Models.".into(),
         (Kind::Music, "parts") => "Adding a part to a song, taking one out or building around one needs ACE-Step 1.5 Base. Install it from the Studio's Models list.".into(),
@@ -1348,6 +1351,11 @@ pub struct Request {
     pub pose: Option<String>,
     /// What to do to a video (`video_edit`).
     pub edit: Option<VideoEdit>,
+    /// What a picture says or sings (`speak`): a song or sound from the
+    /// gallery, a sound file, or else `say` read aloud in `voice`.
+    pub sound: Option<String>,
+    pub sound_file: Option<String>,
+    pub say: Option<String>,
     /// The prompt writer turns the description into the one this model
     /// follows best (None: only for models that need a special form, or
     /// with example pictures).
@@ -1817,30 +1825,7 @@ async fn dub(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>,
 
     // Its music and other sounds without the voice.
     (ctx.progress)("Taking the voice out", 0.35);
-    let background = match state.catalog.media.separator.clone() {
-        Some(sep) => {
-            let card = map_card(ctx).await?;
-            let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
-            let threads = state.limits().threads;
-            let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
-            let apart = tokio::task::block_in_place(|| {
-                crate::cardfirst::asking(ask, || {
-                    let r = stems::separate(&dll, &separator, &mix, threads, &[0, 1, 2], card, ctx.cancel);
-                    stems::unload();
-                    r
-                })
-            });
-            match apart {
-                Ok((parts, _)) => Some([0, 1].map(|ch| (0..mix.len()).map(|s| parts.iter().map(|p| p.ch[ch].get(s).copied().unwrap_or(0.0)).sum::<f32>()).collect::<Vec<f32>>())),
-                Err(e) if e == download::CANCELLED => return Err(e),
-                Err(e) => {
-                    state.log("media", &format!("Dubbing: the part separator couldn't take the voice out ({e}), so the old sound is turned down under the new voice"));
-                    None
-                }
-            }
-        }
-        None => None,
-    };
+    let background = separated(ctx, &mix, &[0, 1, 2], "the old sound is turned down under the new voice instead").await?;
 
     let speaking = format!("Speaking it in {into}");
     (ctx.progress)(&speaking, 0.55);
@@ -1955,6 +1940,7 @@ fn op_what(op: &str) -> &'static str {
         "generate" | "edit" | "fill" | "extend" | "restyle" | "cover_art" => "Making the picture",
         "upscale" => "Making the picture bigger",
         "video" => "Making the video",
+        "speak" => "Making the picture talk",
         "music" | "remake" | "studio_part" => "Making the song",
         "sound" => "Making the sound",
         "map" | "stems" | "dry" => "Taking the song apart",
@@ -2314,7 +2300,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
     });
     // What makes it: the dedicated card for pictures and video (and music,
     // with the card's music engine), else the processor, or a cloud model.
-    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "tune" | "coach" | "cover_art")
+    let card_engine = matches!(req.op.as_str(), "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "video" | "speak" | "tune" | "coach" | "cover_art")
         || (matches!(req.op.as_str(), "music" | "sound" | "studio_part" | "video_sound") && music_engine_dir(state).is_some_and(|d| d.to_string_lossy().contains("vulkan")))
         // HeartMuLa only runs on a card.
         || (req.op == "music" && model.as_ref().is_some_and(|m| m.file("heartmula").is_some()))
@@ -2456,6 +2442,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
     }
     let name = match req.op.as_str() {
         "video" => "a video",
+        "speak" => "a talking picture",
         "music" => "a song",
         "sound" => "a sound",
         "narrate" => "a narration",
@@ -2730,7 +2717,7 @@ fn with_flag(args: &[std::ffi::OsString], flag: &str, value: Option<&str>) -> Ve
 /// spikes and other programs (unless a budget is set already), and the
 /// picture decoded in tiles on cards under 12 GB or for big pictures.
 fn card_friendly(args: &[std::ffi::OsString], vram_gib: f64) -> Vec<std::ffi::OsString> {
-    let mut out = if flag_value(args, "--max-vram").is_some() { args.to_vec() } else { with_flag(args, "--max-vram", Some("-1")) };
+    let mut out = if flag_value(args, "--max-vram").is_some() || streamed_only(args) { args.to_vec() } else { with_flag(args, "--max-vram", Some("-1")) };
     let pixels = flag_value(args, "-W").and_then(|w| w.parse::<f64>().ok()).unwrap_or(0.0) * flag_value(args, "-H").and_then(|h| h.parse::<f64>().ok()).unwrap_or(0.0);
     if vram_gib < 12.0 || pixels > 1.2e6 {
         out = with_flag(&out, "--vae-tiling", None);
@@ -2744,6 +2731,13 @@ fn card_friendly(args: &[std::ffi::OsString], vram_gib: f64) -> Vec<std::ffi::Os
     out
 }
 
+/// Wan 2.2 S2V (a clip moved by a voice): its 14B weights only stream to the
+/// card. The engine's own splitting on top of that kept each part's output
+/// on the card too, and a 12 GB card ran out partway through a 5 s clip.
+fn streamed_only(args: &[std::ffi::OsString]) -> bool {
+    args.iter().any(|a| a == "--audio")
+}
+
 /// After the card failed: more of it left free (or half the budget), the
 /// text reader on the processor, and no fast attention. With the card
 /// `pinned` (the only one the engine sees), the rest is named for it, since
@@ -2751,7 +2745,8 @@ fn card_friendly(args: &[std::ffi::OsString], vram_gib: f64) -> Vec<std::ffi::Os
 fn lighter_on_card(args: &[std::ffi::OsString], pinned: bool) -> Vec<std::ffi::OsString> {
     let budget = flag_value(args, "--max-vram").and_then(|v| v.parse::<f64>().ok()).unwrap_or(-1.0);
     let lighter = if budget > 0.0 { format!("{:.1}", (budget / 2.0).max(1.0)) } else { "-3".to_string() };
-    let mut out: Vec<std::ffi::OsString> = with_flag(args, "--max-vram", Some(&lighter)).into_iter().filter(|a| a != "--diffusion-fa").collect();
+    let capped = if streamed_only(args) { args.to_vec() } else { with_flag(args, "--max-vram", Some(&lighter)) };
+    let mut out: Vec<std::ffi::OsString> = capped.into_iter().filter(|a| a != "--diffusion-fa").collect();
     out = with_flag(&out, "--vae-tiling", None);
     if pinned && flag_value(&out, "--backend").is_none() {
         out = with_flag(&out, "--backend", Some("diffusion=Vulkan0,te=cpu,vae=Vulkan0"));
@@ -3702,6 +3697,7 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "video" => {
             video(&ctx, model.ok_or("No video model.")?, &work.0).await
         }
+        "speak" => Box::pin(speak(&ctx, model.ok_or("No video model.")?, &work.0)).await,
         "revoice" => revoice_job(&ctx).await,
         "cover_art" => cover_art(&ctx, model.ok_or("No picture model.")?, &work.0).await,
         "music" | "sound" => {
@@ -4180,6 +4176,7 @@ async fn video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
             steps: req.steps.unwrap_or(d.steps).clamp(4, 50),
             seed,
             init: init.as_deref(),
+            audio: None,
             out: &out,
         },
         &ctx.limits(),
@@ -4289,6 +4286,7 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
                 steps: req.steps.unwrap_or(m.defaults.steps).clamp(4, 50),
                 seed: c.seed + i as i64,
                 init: start.as_deref(),
+                audio: None,
                 out: &out,
             },
             &part_ctx.limits(),
@@ -4324,6 +4322,198 @@ async fn long_video(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path, c:
         ..Default::default()
     };
     Ok(vec![store::save(&ctx.state.db.lock().unwrap(), &ctx.state.paths, &cipher, item, &bytes, Some(&thumb))?])
+}
+
+/// Frames in each part of a talking picture: Wan 2.2 S2V makes about 5 s at
+/// once (77 frames at its 16 a second).
+const SPEAK_FRAMES: u32 = 77;
+/// The longest voice a picture talks or sings to (each 5 s takes minutes).
+const SPEAK_SECS: f64 = 60.0;
+
+/// The parts of a mix HTDemucs was asked for (`wanted`: 0 drums, 1 bass,
+/// 2 the rest, 3 vocals), added together; None when the separator isn't
+/// there or fails (said in the log), so the caller makes do without.
+async fn separated(ctx: &RunCtx<'_>, mix: &stems::Stereo, wanted: &[usize], why: &str) -> Result<Option<[Vec<f32>; 2]>, String> {
+    let state = ctx.state;
+    let Some(sep) = state.catalog.media.separator.clone() else { return Ok(None) };
+    let card = map_card(ctx).await?;
+    let (dll, separator) = ensure_helper(state, &sep, "Getting the part separator (once)", ctx.cancel, ctx.progress).await?;
+    let threads = state.limits().threads;
+    let ask = crate::cardfirst::hook_for_job(state, JOB_ID.try_with(|j| j.clone()).ok());
+    let apart = tokio::task::block_in_place(|| {
+        crate::cardfirst::asking(ask, || {
+            let r = stems::separate(&dll, &separator, mix, threads, wanted, card, ctx.cancel);
+            stems::unload();
+            r
+        })
+    });
+    match apart {
+        Ok((parts, _)) => Ok(Some([0, 1].map(|ch| (0..mix.len()).map(|s| parts.iter().map(|p| p.ch[ch].get(s).copied().unwrap_or(0.0)).sum::<f32>()).collect::<Vec<f32>>()))),
+        Err(e) if e == download::CANCELLED => Err(e),
+        Err(e) => {
+            state.log("media", &format!("The part separator couldn't take the song apart ({e}); {why}"));
+            Ok(None)
+        }
+    }
+}
+
+/// A picture that talks or sings (Wan 2.2 S2V): its face and lips move to
+/// a voice, 5 s at a time (each part starting from the last frame of the
+/// one before), then FFmpeg joins the frames and lays the sound under
+/// them. The voice is a sound or song from the gallery (a song's lips
+/// follow its vocals alone), a file, or words read aloud first.
+async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Result<Vec<MediaItem>, String> {
+    let state = ctx.state;
+    let req = ctx.req;
+    let c = state.work_cipher()?;
+    let (picture, img) = ctx.source()?;
+    let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
+    let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let mut song = false;
+    let sound = match (&req.sound, &req.sound_file, said) {
+        (Some(id), _, _) => {
+            let a = store::get(&state.db.lock().unwrap(), &c, id).ok_or("That sound is no longer in the gallery.")?;
+            song = matches!(a.op.as_str(), "music" | "remake" | "revoice" | "studio_part");
+            written_out(state, &c, &a, &work.join("sound"))?
+        }
+        (None, Some(f), _) => PathBuf::from(f),
+        (None, None, Some(words)) => {
+            (ctx.progress)("Reading the words aloud", 0.0);
+            let text = crate::tts::speakable(words);
+            let language = req.language.clone().filter(|l| !l.is_empty() && l != "auto");
+            let (floats, rate) = match req.voice.as_deref().and_then(|v| v.strip_prefix("own:")) {
+                Some(own) => own_voice::speak(state, own, &text, language.as_deref(), ctx.cancel, &|s, f| (ctx.progress)(s, 0.03 * f)).await?,
+                None => tokio::task::block_in_place(|| -> Result<(Vec<f32>, u32), String> {
+                    let voices = crate::tts::voices()?;
+                    let voice = crate::tts::pick_voice(&voices, req.voice.as_deref(), language.as_deref()).map(|v| v.id.clone()).ok_or("No voices are installed.")?;
+                    let s = crate::tts::synthesize(&text, Some(&voice), language.as_deref(), 1.0)?;
+                    Ok((s.samples.iter().map(|x| *x as f32 / 32768.0).collect(), s.rate))
+                })?,
+            };
+            let p = work.join("sound.wav");
+            std::fs::write(&p, crate::audio::wav_encode(&floats, rate)).map_err(|e| e.to_string())?;
+            p
+        }
+        _ => return Err("Pick what it should say or sing: a sound or song, a file, or words to read aloud.".into()),
+    };
+    let probe = ffmpeg::probe(&ffprobe, &sound).await?;
+    if !probe.audio {
+        return Err("That file has no sound to talk to.".into());
+    }
+    let secs = probe.seconds.clamp(0.5, SPEAK_SECS);
+    let mix = ffmpeg_stereo(state, &ffmpeg_exe, &sound, secs, ctx.cancel).await?;
+    // A song's lips follow its singing, not the band.
+    let voice = match song {
+        true => {
+            (ctx.progress)("Finding the singing in the song", 0.03);
+            separated(ctx, &mix, &[3], "the lips follow the whole song").await?.map(|[l, r]| l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect())
+        }
+        false => None,
+    }
+    .unwrap_or_else(|| mix.mono());
+
+    // Its picture, at the model's size in its own shape.
+    let d = &m.defaults;
+    let fps = 16;
+    let (iw, ih) = img.dimensions();
+    let k = ((d.width.max(256) * d.height.max(256)) as f64 / (iw as f64 * ih as f64)).sqrt();
+    let (w, h) = (imaging::round16(iw as f64 * k).clamp(256, 1280), imaging::round16(ih as f64 * k).clamp(256, 1280));
+    let first = img.resize_exact(w, h, image::imageops::FilterType::Lanczos3);
+    let first_path = work.join("start.png");
+    std::fs::write(&first_path, imaging::png(&first)?).map_err(|e| e.to_string())?;
+    let still = imaging::thumbnail(&first)?;
+    let prompt = match req.prompt.trim() {
+        "" if song => "A person singing with feeling, lips moving with the words, natural expressions and slight head movement.",
+        "" => "A person talking naturally, lips moving with the words, natural expressions and slight head movement.",
+        p => p,
+    };
+    let seed = req.seed.unwrap_or_else(random_seed);
+    let total = (secs * fps as f64).round() as u32 + 1;
+    let parts = longclip::plan(total, SPEAK_FRAMES);
+    let n = parts.len();
+    let sr = stems::RATE as f64;
+    let mut start = Some(first_path);
+    let mut made: Vec<Vec<PathBuf>> = Vec::new();
+    let mut at = 0u32;
+    for (i, frames) in parts.iter().enumerate() {
+        if ctx.cancel.load(Ordering::Relaxed) {
+            return Err(download::CANCELLED.into());
+        }
+        if i > 0 {
+            crate::perf::cool_down(&state.limits(), |what| (ctx.progress)(&format!("Letting the {what} cool down before part {}", i + 1), 0.05 + 0.9 * i as f64 / n as f64)).await;
+        }
+        // This part's stretch of the voice (the frame it starts on is the
+        // last one of the part before).
+        let from = ((at as f64 / fps as f64) * sr) as usize;
+        let to = (((at + frames) as f64 / fps as f64) * sr) as usize;
+        let piece = voice.get(from.min(voice.len())..to.min(voice.len())).unwrap_or_default();
+        let wav = work.join(format!("voice{i:03}.wav"));
+        std::fs::write(&wav, crate::audio::wav_encode(piece, stems::RATE)).map_err(|e| e.to_string())?;
+        let stage = |s: &str, f: f64| {
+            let within = match s {
+                "Loading the model" => 0.0,
+                "Creating" => f.clamp(0.0, 1.0) * 0.92,
+                _ => 0.92 + f.clamp(0.0, 1.0) * 0.08,
+            };
+            let label = if n > 1 { format!("Part {} of {n}: {s}", i + 1) } else { s.to_string() };
+            (ctx.progress)(&label, 0.05 + 0.9 * (i as f64 + within) / n as f64)
+        };
+        let part_ctx = RunCtx { state, req, cancel: ctx.cancel, progress: &stage, reserved: ctx.reserved };
+        let dir = work.join(format!("part{i:03}"));
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let out = dir.join("f_%04d.png");
+        // Weights streamed to the card, without the engine's own memory cap (`streamed_only`).
+        let args = without_vram(&sd::clip_args(
+            &ctx.files(m),
+            d,
+            &sd::Clip { prompt, negative: req.negative.as_deref(), width: w, height: h, frames: *frames, fps, steps: req.steps.unwrap_or(d.steps).clamp(2, 50), seed: seed + i as i64, init: start.as_deref(), audio: Some(&wav), out: &out },
+            &part_ctx.limits(),
+        ));
+        part_ctx.run_sd(args, &dir).await?;
+        let files = longclip::frames_in(&dir, "f_");
+        start = Some(files.last().cloned().ok_or("The video engine didn't produce any frames.")?);
+        crate::applog::line("media", &format!("Talking picture: part {} of {n} made ({} frames)", i + 1, files.len()));
+        made.push(files);
+        at += frames - 1;
+    }
+
+    // The frames in order (each later part's first is the last one before), then the sound under them.
+    (ctx.progress)("Putting the sound with it", 0.96);
+    let seq = work.join("seq");
+    std::fs::create_dir_all(&seq).map_err(|e| e.to_string())?;
+    let mut k = 0usize;
+    for (i, part) in made.iter().enumerate() {
+        for f in part.iter().skip(usize::from(i > 0)) {
+            if k >= total as usize {
+                break;
+            }
+            let to = seq.join(format!("{k:05}.png"));
+            std::fs::hard_link(f, &to).or_else(|_| std::fs::copy(f, &to).map(|_| ())).map_err(|e| e.to_string())?;
+            k += 1;
+        }
+    }
+    let mp4 = work.join("talking.mp4");
+    let mut args: Vec<std::ffi::OsString> = ["-framerate".into(), fps.to_string().into(), "-i".into(), seq.join("%05d.png").into_os_string(), "-i".into(), sound.as_os_str().to_owned()].into();
+    args.extend(["-map", "0:v", "-map", "1:a", "-t", &format!("{secs:.3}")].map(Into::into));
+    args.extend(ffmpeg::mp4_out(&mp4));
+    ffmpeg::run(state, &ffmpeg_exe, args, secs, ctx.cancel, &|f| (ctx.progress)("Putting the sound with it", 0.96 + 0.04 * f)).await?;
+    let bytes = std::fs::read(&mp4).map_err(|e| format!("FFmpeg didn't make the video: {e}"))?;
+    let item = MediaItem {
+        kind: "video".into(),
+        op: "speak".into(),
+        prompt: said.map(str::to_string).unwrap_or_else(|| req.prompt.trim().to_string()),
+        model_id: Some(m.id.clone()),
+        mime: "video/mp4".into(),
+        width: w,
+        height: h,
+        seconds: secs,
+        parent: Some(picture.id),
+        chat_id: req.chat_id.clone(),
+        seed: Some(seed),
+        poster: true,
+        ..Default::default()
+    };
+    Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &bytes, Some(&still))?])
 }
 
 /// The vocal language for the music model: the one asked for; with no
@@ -7220,6 +7410,11 @@ mod tests {
         assert!(s(&card_friendly(&clip, 11.7)).contains("--offload-to-cpu"));
         assert!(!s(&card_friendly(&clip, 24.0)).contains("--offload-to-cpu"), "a big card keeps them");
         assert!(!s(&first).contains("--offload-to-cpu"), "pictures don't need it");
+        // A clip moved by a voice (S2V) streams its weights, with no cap on top.
+        let talk: Vec<std::ffi::OsString> = ["-M", "vid_gen", "--audio", "v.wav", "-W", "640", "-H", "368", "-o", "x.png"].iter().map(Into::into).collect();
+        let t = card_friendly(&talk, 11.7);
+        assert!(s(&t).contains("--offload-to-cpu") && !s(&t).contains("--max-vram"), "{}", s(&t));
+        assert!(!s(&lighter_on_card(&t, true)).contains("--max-vram"));
         // On the processor, a 1184x880 picture becomes 640x480 (the longer edge 640).
         let big: Vec<std::ffi::OsString> = ["-W", "1184", "-H", "880", "-o", "x.png"].iter().map(Into::into).collect();
         assert_eq!(smaller(&big, 640), ["-W", "640", "-H", "480", "-o", "x.png"].iter().map(std::ffi::OsString::from).collect::<Vec<_>>());

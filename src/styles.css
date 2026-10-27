@@ -2213,4 +2213,38 @@ button.gpu-card:hover:not(:disabled) { background: var(--accent-soft); }
 .video-editor select { max-width: 100%; min-width: 0; }
 .video-editor .ve-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .video-editor .ve-bound { display: inline-flex; align-items: center; gap: 6px; }
+.speak-panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 8px; }
+.speak-panel select { max-width: 100%; min-width: 0; }
+.speak-panel .ve-keep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.speak-panel .ve-bound { display: inline-flex; align-items: center; gap: 6px; }
 .video-editor .input.num { width: 76px; }
+
+/* The strip at the top of the screen while the assistant works another program. */
+html.working-window, html.working-window body { background: transparent; overflow: hidden; }
+.working-banner { display: flex; align-items: center; gap: 10px; height: 100vh; padding: 0 10px 0 14px; background: var(--panel); border: 2px solid var(--accent); border-radius: 10px; box-sizing: border-box; font-size: 13px; }
+.working-banner .working-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.working-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: working-pulse 1.2s ease-in-out infinite; flex: none; }
+@keyframes working-pulse { 50% { opacity: 0.3; } }
+
+/* The Lens: a model seen from inside. */
+.lens { display: grid; gap: 10px; max-width: 980px; }
+.lens .card h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+.lens-text { white-space: pre-wrap; line-height: 1.9; margin: 0; }
+.lens-given { opacity: 0.75; text-decoration: underline dotted; }
+.lens-piece { position: relative; }
+.lens-token { border: 0; padding: 1px 0; margin: 0; font: inherit; color: inherit; border-radius: 3px; cursor: pointer; white-space: pre-wrap; }
+.lens-piece.open .lens-token { outline: 2px solid var(--accent); }
+.lens-alts { position: absolute; left: 0; top: 100%; z-index: 20; display: grid; gap: 4px; min-width: 240px; padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); line-height: 1.4; }
+.lens-alt { position: relative; display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.lens-alt code { position: relative; }
+.lens-bar { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent-soft); border-radius: 3px; z-index: -1; }
+.lens-map { display: grid; gap: 1px; align-items: stretch; }
+.lens-map-head { text-align: center; padding-bottom: 4px; }
+.lens-map-layer { text-align: right; padding-right: 6px; font-size: 11px; line-height: 10px; }
+.lens-map-cell { min-height: 10px; border-radius: 2px; }
+.lens-neurons { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; }
+.lens-neuron select { flex: none; width: 8.5em; }
+.lens-neuron > span:first-child { white-space: nowrap; }
+.lens-neuron { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 4px 8px; border: 1px solid var(--border); border-radius: 8px; }
+.lens-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.lens-compare h4 { margin: 0 0 4px; }

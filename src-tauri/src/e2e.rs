@@ -1477,6 +1477,104 @@ async fn e2e_a_video_gets_sound() {
     assert!(!sounds.is_empty(), "the sound made is in the gallery too");
 }
 
+/// A portrait made to talk (Wan 2.2 S2V, installed by the test, about
+/// 18 GB): words read aloud by a natural voice, about 6 s, so two parts
+/// (4 steps, to keep the test to about a quarter of an hour).
+/// The video is as long as the voice, with its sound. Written to
+/// C:\dev\tools\voice\tests\e2e-talking.mp4.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_picture_talks() {
+    use crate::media::{self, store, MediaItem, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    crate::natural::install_for_test(&state).await.unwrap();
+    media::install_for_test(&state, "wan2.2-s2v-14b").await.unwrap();
+    let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
+    let words = "Hello there! This is a picture that talks, and my lips move with my words.";
+    let started = std::time::Instant::now();
+    let made = media::run(&state, store::new_id(), Request { op: "speak".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), steps: Some(4), ..Default::default() }).await.unwrap().remove(0);
+    println!("talked in {:.0} s", started.elapsed().as_secs_f64());
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-talking.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&Paths::new(app_data_dir()).unwrap().engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("talking: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
+    assert!(p.audio && made.poster && made.op == "speak");
+    assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 5.0, "{} s for {} s of voice", p.seconds, made.seconds);
+}
+
+/// Programs: the open windows are listed, and each is read through UI
+/// Automation as numbered items (until one has some). Reads only: no window
+/// is opened and nothing is pressed or typed; only counts are printed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_program_window_is_read() {
+    let list = crate::programs::list().await.unwrap();
+    println!("{} windows open: {:?}", list.len(), list.iter().map(|w| w.program.as_str()).collect::<Vec<_>>());
+    assert!(!list.is_empty());
+    let mut read_one = false;
+    for w in &list {
+        let started = std::time::Instant::now();
+        let Ok(r) = crate::programs::read("test", crate::programs::Pick::Id(w.id)).await else { continue };
+        let numbered = r.text.lines().filter(|l| l.starts_with('[')).count();
+        println!("{}: {numbered} numbered items, {} lines, {} ms", w.program, r.text.lines().count(), started.elapsed().as_millis());
+        if numbered > 0 {
+            let t = crate::programs::target("test", 1).await.unwrap();
+            assert!(!t.kind.is_empty());
+            read_one = true;
+            break;
+        }
+    }
+    assert!(read_one, "some window has numbered items");
+    assert!(crate::programs::read("test", crate::programs::Pick::Named("no such program at all".into())).await.is_err());
+}
+
+/// The Lens on Qwen3 4B (installed, imported here where it is): a reply
+/// word by word with what else was weighed, carried on from another
+/// choice; the layer map against everyday text; and an edited copy with
+/// the three units that stood out most turned off, asked the same thing.
+/// The copy is removed afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_the_lens_sees_and_edits() {
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let file = real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+    crate::local::import(&state, &file).unwrap();
+    let id = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.local.as_ref().is_some_and(|l| std::path::Path::new(&l.path) == file)).unwrap().id;
+    let prompt = "In one short sentence, what color is the sky on a clear day?";
+    let w = crate::lens::words(&state, Some(&id), prompt, "", 5, 40).await.unwrap();
+    let reply: String = w.pieces.iter().map(|p| p.text.as_str()).collect();
+    println!("{}: {reply:?}", w.model);
+    for p in w.pieces.iter().take(6) {
+        println!("  {:?} {:.0}% (else: {:?})", p.text, p.prob * 100.0, p.alts.iter().skip(1).map(|a| format!("{:?} {:.0}%", a.text, a.prob * 100.0)).collect::<Vec<_>>());
+    }
+    assert!(!w.pieces.is_empty() && w.pieces[0].alts.len() >= 2, "odds for each piece");
+    // Carried on from the first piece's second choice.
+    let other = w.pieces[0].alts.iter().find(|a| a.text != w.pieces[0].text).unwrap().text.clone();
+    let b = crate::lens::words(&state, Some(&id), prompt, &other, 5, 30).await.unwrap();
+    println!("from {other:?}: {:?}", b.pieces.iter().map(|p| p.text.as_str()).collect::<String>());
+    assert_eq!(b.given, other);
+
+    let started = std::time::Instant::now();
+    let map = crate::lens::layers(&state, Some(&id), &format!("{prompt}\n\n{reply}")).await.unwrap();
+    println!("layers: {} ({} ms), editable: {:?}, top units: {:?}", map.layers, started.elapsed().as_millis(), map.editable, map.neurons.iter().take(5).map(|n| format!("L{}#{} {:.1}x", n.layer, n.index, n.ratio)).collect::<Vec<_>>());
+    assert_eq!(map.energy.len(), map.layers as usize);
+    assert!(map.layers >= 30 && !map.neurons.is_empty() && map.editable.is_none());
+
+    let edits: Vec<crate::lens::Edit> = map.neurons.iter().take(3).map(|n| crate::lens::Edit { layer: n.layer, index: n.index, scale: 0.0 }).collect();
+    let copy = crate::lens::edited_copy(&state, Some(&id), edits).await.unwrap();
+    let e = crate::lens::words(&state, Some(&copy), prompt, "", 5, 40).await.unwrap();
+    println!("edited ({}): {:?}", e.model, e.pieces.iter().map(|p| p.text.as_str()).collect::<String>());
+    state.engine.lock().await.stop().await;
+    let copy_path = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.id == copy).and_then(|m| m.local).map(|l| std::path::PathBuf::from(l.path)).unwrap();
+    assert!(copy_path.starts_with(&state.paths.models) || copy_path.exists());
+    let _ = std::fs::remove_file(&copy_path);
+    assert!(!e.pieces.is_empty());
+}
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

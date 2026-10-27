@@ -12,6 +12,7 @@ const App = lazy(() => import("./App"));
 const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m.QuickAsk })));
 const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
 const SideWindow = lazy(() => import("./views/SideWindow"));
+const WorkingBanner = lazy(() => import("./views/WorkingBanner"));
 
 // The same page runs the quick-ask box, in its own small window, People in
 // a window of its own, and chats, the Studio and song studio projects in
@@ -20,12 +21,14 @@ const label = getCurrentWindow().label;
 const quick = label === "quick";
 const people = label === "people";
 const side = /^(chat|studio|songstudio)-/.test(label);
+// The strip shown while the assistant works another program.
+const working = label === "working";
 document.documentElement.classList.toggle("quick-window", quick);
 initTheme();
 
 // For crash reports (kept only if turned on): errors the window didn't catch,
 // and that the window is still responding.
-if (!quick) {
+if (!quick && !working) {
   window.addEventListener("error", (e) => {
     import("./api").then(({ api }) => api.reportWindowError(String(e.message), e.error?.stack ?? null).catch(() => {}));
   });
@@ -53,7 +56,7 @@ if (!quick) {
 // re-render everything below them).
 function Root() {
   useLanguage();
-  return <Suspense fallback={null}>{quick ? <QuickAsk /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : <App />}</Suspense>;
+  return <Suspense fallback={null}>{quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : <App />}</Suspense>;
 }
 
 initLanguage().then(() =>

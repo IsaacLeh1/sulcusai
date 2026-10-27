@@ -102,6 +102,8 @@ mod tools;
 mod translate;
 mod triage;
 mod tts;
+mod programs;
+mod lens;
 mod typing;
 mod updates;
 mod vad;
@@ -3199,6 +3201,11 @@ pub fn run() {
             get_messages,
             get_context,
             stop_generation,
+            tools::programs::programs_banner,
+            tools::programs::programs_banner_stop,
+            lens::lens_words,
+            lens::lens_layers,
+            lens::lens_edit,
             chat_live,
             send_message,
             engine_status,

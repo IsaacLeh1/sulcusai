@@ -25,6 +25,8 @@ pub fn model_args(files: &[(String, PathBuf)]) -> Vec<OsString> {
             "llm_vision" => "--llm_vision",
             "model" => "-m",
             "upscale" => "--upscale-model",
+            // Wan 2.2 S2V hears its voice through wav2vec2.
+            "audio_encoder" => "--audio-encoder",
             _ => continue,
         };
         out.push(flag.into());
@@ -139,6 +141,8 @@ pub struct Clip<'a> {
     pub seed: i64,
     /// Picture to bring to life (image-to-video).
     pub init: Option<&'a Path>,
+    /// The voice it moves its lips to (Wan 2.2 S2V), a WAV file.
+    pub audio: Option<&'a Path>,
     pub out: &'a Path,
 }
 
@@ -151,7 +155,15 @@ pub fn frames_for(seconds: f32, fps: u32) -> u32 {
 pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Limits) -> Vec<OsString> {
     let mut a: Vec<OsString> = vec!["-M".into(), "vid_gen".into()];
     a.extend(model_args(files));
-    a.extend(["-p".into(), c.prompt.into()]);
+    // A LoRA that comes with the model (S2V's 4-step one), by its file's name.
+    let mut prompt = c.prompt.to_string();
+    if let Some((_, lora)) = files.iter().find(|(role, _)| role == "lora") {
+        if let (Some(dir), Some(name)) = (lora.parent(), lora.file_stem()) {
+            a.extend(["--lora-model-dir".into(), dir.into()]);
+            prompt.push_str(&format!(" <lora:{}:1>", name.to_string_lossy()));
+        }
+    }
+    a.extend(["-p".into(), prompt.into()]);
     if let Some(n) = c.negative.filter(|n| !n.trim().is_empty()).or((!d.negative.is_empty()).then_some(d.negative.as_str())) {
         a.extend(["-n".into(), n.into()]);
     }
@@ -208,6 +220,9 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
     }
     if let Some(i) = c.init {
         a.extend(["-i".into(), i.into()]);
+    }
+    if let Some(v) = c.audio {
+        a.extend(["--audio".into(), v.into()]);
     }
     a.extend(limit_args(l));
     a.extend(["-o".into(), c.out.into()]);
@@ -388,7 +403,7 @@ mod tests {
         ];
         let d = Defaults { steps: 10, cfg: 3.5, sampler: "euler".into(), flow_shift: 3.0, ..Default::default() };
         let out = PathBuf::from("out.webm");
-        let c = Clip { prompt: "a fox", negative: None, width: 832, height: 480, frames: 49, fps: 16, steps: 10, seed: 1, init: None, out: &out };
+        let c = Clip { prompt: "a fox", negative: None, width: 832, height: 480, frames: 49, fps: 16, steps: 10, seed: 1, init: None, audio: None, out: &out };
         let joined = clip_args(&files, &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(joined.contains("--diffusion-model low.gguf --high-noise-diffusion-model high.gguf"), "{joined}");
         assert!(joined.contains("--steps 10") && joined.contains("--high-noise-cfg-scale 3.5 --high-noise-sampling-method euler --high-noise-steps 8"), "{joined}");
@@ -400,7 +415,7 @@ mod tests {
     fn clips_decode_in_lightly_overlapping_tiles() {
         let d = Defaults { steps: 25, cfg: 5.0, temporal_tiling: true, ..Default::default() };
         let out = PathBuf::from("out.webm");
-        let c = Clip { prompt: "a fox", negative: None, width: 1280, height: 704, frames: 121, fps: 24, steps: 25, seed: 1, init: None, out: &out };
+        let c = Clip { prompt: "a fox", negative: None, width: 1280, height: 704, frames: 121, fps: 24, steps: 25, seed: 1, init: None, audio: None, out: &out };
         let joined = clip_args(&[], &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(joined.contains("-W 1280 -H 704 --video-frames 121"));
         assert!(joined.contains("--vae-tiling --vae-tile-overlap 0.25 --vae-conv-direct") && joined.contains("--temporal-tiling"));

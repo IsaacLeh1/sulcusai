@@ -39,6 +39,7 @@ const NEVER: { id: string; label: string }[] = [
   { id: "write", label: tx("Change, move or delete files") },
   { id: "execute", label: tx("Run programs and commands") },
   { id: "connector", label: tx("Use connector tools (programs on this PC that add tools)") },
+  { id: "programs", label: tx("Work other programs on this PC") },
 ];
 
 export function AdvancedSettings({ toast }: { toast: PushToast }) {

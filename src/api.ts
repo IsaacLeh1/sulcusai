@@ -1171,7 +1171,7 @@ export interface PendingApproval {
   chat_id: string;
   call_id: string;
   tool: string;
-  risk: "read" | "write" | "execute" | "connector" | "memory" | "submit";
+  risk: "read" | "write" | "execute" | "connector" | "programs" | "memory" | "submit";
   preview: Preview;
   /** Only this one call can be allowed (a delete, a send): no "for this chat". */
   once?: boolean;
@@ -1448,6 +1448,7 @@ export type FeatureId =
   | "documents"
   | "quick_ask"
   | "browser_control"
+  | "programs"
   | "images"
   | "video"
   | "music"
@@ -2138,7 +2139,7 @@ export interface HubMediaResults {
   hidden: number;
 }
 
-export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub";
+export type MediaOp = "generate" | "edit" | "fill" | "extend" | "restyle" | "upscale" | "remove_background" | "video" | "music" | "sound" | "narrate" | "podcast" | "dialogue" | "explainer" | "tune" | "coach" | "listen" | "remake" | "map" | "revoice" | "cover_art" | "stems" | "dry" | "song_video" | "train" | "trainer" | "studio_part" | "video_edit" | "video_sound" | "dub" | "speak";
 
 /** A line of the voice script (the window holds its words). */
 export interface OwnVoiceLine {
@@ -2677,6 +2678,10 @@ export interface MediaRequest {
   pose?: string | null;
   /** What to do to a video (video_edit). */
   edit?: VideoEdit | null;
+  /** What a picture says or sings (speak): a gallery sound, a file, or words read aloud. */
+  sound?: string | null;
+  sound_file?: string | null;
+  say?: string | null;
   /** The prompt writer rewrites the description for this model. */
   write_prompt?: boolean;
   /** The picture reader checks the result and it's made again if things are missing. */
@@ -2999,6 +3004,12 @@ export const api = {
   chatQueueRemove: (chatId: string, id: string) => invoke<QueueItem[]>("chat_queue_remove", { chatId, id }),
   chatQueueSend: (chatId: string) => invoke<void>("chat_queue_send", { chatId }),
   stop: (chatId: string) => invoke<void>("stop_generation", { chatId }),
+  /** The strip shown while the assistant works another program. */
+  programsBanner: () => invoke<{ chat_id: string; what: string } | null>("programs_banner"),
+  programsBannerStop: () => invoke<void>("programs_banner_stop"),
+  lensWords: (modelId: string, prompt: string, given: string) => invoke<LensWords>("lens_words", { modelId, prompt, given, top: 5, most: 300 }),
+  lensLayers: (modelId: string, text: string) => invoke<LensLayers>("lens_layers", { modelId, text }),
+  lensEdit: (modelId: string, edits: LensEdit[]) => invoke<string>("lens_edit", { modelId, edits }),
   // The reply a chat is in the middle of (it keeps going while the user is elsewhere).
   live: (chatId: string) => invoke<LiveReply | null>("chat_live", { chatId }),
   engineStatus: () => invoke<EngineStatus>("engine_status"),
@@ -3546,6 +3557,14 @@ export interface StartNow {
   processor: boolean;
   in_the_way: LineupEntry[];
 }
+
+/** The Lens (lens.rs): a model on this PC seen from inside. */
+export interface LensAlt { text: string; prob: number }
+export interface LensPiece { text: string; prob: number; alts: LensAlt[] }
+export interface LensWords { model: string; given: string; pieces: LensPiece[] }
+export interface LensNeuron { layer: number; index: number; energy: number; ratio: number }
+export interface LensLayers { layers: number; parts: string[]; energy: number[][]; usual: number[][]; neurons: LensNeuron[]; editable: string | null }
+export interface LensEdit { layer: number; index: number; scale: number }
 
 /** A video's edits (media/mod.rs `VideoEdit`). */
 export interface VideoEdit {

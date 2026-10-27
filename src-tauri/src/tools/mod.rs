@@ -3,6 +3,7 @@
 
 mod app;
 pub mod browser;
+pub mod programs;
 pub mod chats;
 pub mod comms;
 mod compute;
@@ -47,6 +48,8 @@ pub enum Risk {
     Memory,
     /// A tool from a connector (MCP server); what it does is up to that program.
     Connector,
+    /// Reads or works another program on this PC (presses, types, keys).
+    Programs,
     /// Submits a form, buys, sends, posts or deletes on a website. Always
     /// asks, in every mode, and is never allowed for a whole chat.
     Submit,
@@ -199,6 +202,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "web_search" | "fetch_page" | "request_web" | "weather" | "request_api_key" | "wikipedia" | "research" | "market_quote" | "find_places" => "web",
         "calculate" | "run_code" => "compute",
         n if n.starts_with("browser_") => "browser",
+        n if n.starts_with("program_") || n == "programs_list" => "programs",
         "create_document" | "read_document" => "documents",
         "search_documents" => "library",
         n if n.starts_with("email_") => "email",
@@ -312,6 +316,20 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Scroll the browser's page down or up (by screens), or to an element by its number, to see more of it. Returns the page again." },
     ToolDef { name: "browser_key", risk: Risk::Read, params: browser::browser_key_params,
         description: "Press a key in the browser's page: Escape to close a pop-up, Tab to move to the next field, arrows in a list or menu, PageDown to read on. Returns the page again." },
+    ToolDef { name: "programs_list", risk: Risk::Programs, params: programs::programs_list_params,
+        description: "List the program windows open on the user's PC, with their numbers." },
+    ToolDef { name: "program_open", risk: Risk::Programs, params: programs::program_open_params,
+        description: "Start a program on the user's PC by its Start-menu name (Notepad, Calculator, Excel...) and read its window." },
+    ToolDef { name: "program_read", risk: Risk::Programs, params: programs::program_read_params,
+        description: "Read a program's window: its text and its numbered buttons, fields, menus, tabs and list items. Use it on a window from programs_list, or to see the one used last again." },
+    ToolDef { name: "program_click", risk: Risk::Programs, params: programs::program_click_params,
+        description: "Press a button, menu item, tab, checkbox or list item in the program's window, by its number. Anything that sends, buys or deletes asks the user first. Returns the window again (or a box it opened)." },
+    ToolDef { name: "program_type", risk: Risk::Programs, params: programs::program_type_params,
+        description: "Type into a field or document in the program's window by its number (replacing what's there). Never for passwords: ask the user to type those." },
+    ToolDef { name: "program_key", risk: Risk::Programs, params: programs::program_key_params,
+        description: "Press keys in the program's window used last, e.g. ctrl+s to save, escape to close a menu, alt+f for the File menu, tab, enter." },
+    ToolDef { name: "program_scroll", risk: Risk::Programs, params: programs::program_scroll_params,
+        description: "Scroll the program's window, or a list or document in it by its number, down or up to see more." },
     ToolDef { name: "create_document", risk: Risk::Write, params: documents::create_document_params,
         description: "Make a Word (.docx), PDF, Markdown, Excel (.xlsx, with working formulas and charts) or PowerPoint (.pptx) file in a shared folder. Give markdown for documents, sheets for spreadsheets, slides for decks." },
     ToolDef { name: "search_documents", risk: Risk::Read, params: library::search_params,
@@ -465,7 +483,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "email" | "calendar" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "programs" | "email" | "calendar" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -560,6 +578,20 @@ pub fn preview(name: &str, args: &Value, sandbox: &Sandbox) -> Result<Preview, S
         "create_document" => documents::preview(args, sandbox),
         "run_command" => shell::preview(args, sandbox),
         "ask_person" | "work_with_person" | "message_person" => Ok(people_preview(name, args)),
+        n if n.starts_with("program_") || n == "programs_list" => Ok(Preview {
+            title: match n {
+                "programs_list" => "See which programs are open".into(),
+                "program_open" => format!("Open {}", args.get("name").and_then(Value::as_str).unwrap_or("a program")),
+                "program_read" => "Read a program's window".into(),
+                "program_type" => format!("Type “{}” in a program", args.get("text").and_then(Value::as_str).unwrap_or_default().chars().take(60).collect::<String>()),
+                "program_key" => format!("Press {} in a program", args.get("keys").and_then(Value::as_str).unwrap_or("keys")),
+                "program_scroll" => "Scroll in a program".into(),
+                _ => "Press something in a program".into(),
+            },
+            kind: "text",
+            detail: None,
+            note: Some("Lets the assistant see and use the programs open on this PC in this chat (Allow for this chat covers the rest). It asks again before anything that sends, buys or deletes, and never types passwords. A strip at the top of the screen shows while it works, with Stop.".into()),
+        }),
         "open_path" => Ok(Preview {
             title: format!("Open {}", args.get("target").and_then(Value::as_str).unwrap_or("something")),
             kind: "text",
@@ -642,6 +674,10 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         n if n.starts_with("browser_") => {
             let db = ctx.memory.db;
             browser::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "network", summary)).await
+        }
+        n if n.starts_with("program_") || n == "programs_list" => {
+            let db = ctx.memory.db;
+            programs::run(name, args, ctx.app, ctx.memory.chat_id, |summary| crate::db::log_action(&db.lock().unwrap(), "programs", summary)).await
         }
         _ => {
             // File work is quick but blocking; keep it off the async threads.
@@ -761,8 +797,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 57);
+        // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 64);
     }
 
     #[test]

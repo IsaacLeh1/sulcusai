@@ -150,6 +150,8 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
       ? { title: t("Don't ask again for commands in this chat"), label: t("Allow commands for this chat") }
       : p.risk === "connector"
         ? { title: t("Don't ask again for connector actions in this chat"), label: t("Allow connector actions for this chat") }
+        : p.risk === "programs"
+          ? { title: t("Don't ask again for using programs in this chat (it still asks before sending, buying or deleting)"), label: t("Allow programs for this chat") }
         : { title: t("Don't ask again for file changes in this chat"), label: t("Allow file changes for this chat") };
   return (
     <div className="approval" role="alert">
