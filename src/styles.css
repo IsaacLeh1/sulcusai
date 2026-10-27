@@ -2361,3 +2361,6 @@ html.working-window, html.working-window body { background: transparent; overflo
 .code-actions { display: inline-flex; align-items: center; gap: 10px; }
 .md .code-preview { display: block; width: 100%; height: 340px; border: 1px solid var(--code-bg); border-top: 0; border-radius: 0 0 8px 8px; background: #fff; }
 .md .code-preview.tall { height: 72vh; }
+.assistant-mark { width: 18px; height: 18px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.assistant-start { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 10px; text-align: center; }
+.assistant-start .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }

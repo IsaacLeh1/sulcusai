@@ -722,6 +722,16 @@ export interface Advanced {
   processing: { thinking: "auto" | "on" | "off"; handoff_at: number | null; handoff_off: boolean; new_chat?: boolean; helper_steps: number | null };
 }
 
+/** An assistant of the person's own, to start chats with. */
+export interface Assistant {
+  id: string;
+  name: string;
+  description: string;
+  instructions: string;
+  model: string | null;
+  starters: string[];
+}
+
 /** Text typed in a chat as /name. */
 export interface SavedPrompt {
   id: string;
@@ -3142,6 +3152,11 @@ export const api = {
   editMessage: (chatId: string, messageId: string, text: string) => invoke<Message | null>("chat_edit", { chatId, messageId, text }),
   versions: (chatId: string) => invoke<Versions[]>("chat_versions", { chatId }),
   searchChats: (query: string) => invoke<ChatHit[]>("search_chats", { query }),
+  assistants: () => invoke<Assistant[]>("assistants"),
+  saveAssistant: (assistant: Assistant) => invoke<Assistant[]>("save_assistant", { assistant }),
+  deleteAssistant: (id: string) => invoke<Assistant[]>("delete_assistant", { id }),
+  chatWithAssistant: (id: string) => invoke<Chat>("chat_with_assistant", { id }),
+  chatAssistant: (chatId: string) => invoke<Assistant | null>("chat_assistant", { chatId }),
   savedPrompts: () => invoke<SavedPrompt[]>("saved_prompts"),
   savePrompt: (id: string, name: string, text: string) => invoke<SavedPrompt[]>("save_prompt", { id, name, text }),
   deletePrompt: (id: string) => invoke<SavedPrompt[]>("delete_prompt", { id }),

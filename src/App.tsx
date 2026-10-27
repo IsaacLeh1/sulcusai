@@ -31,6 +31,7 @@ import { SideMenu } from "./components/SideMenu";
 import { ChatNotes, LinkedChats } from "./components/ChatPanels";
 import { FolderSection, FloatingMenu, NameModal } from "./components/ChatFolders";
 import { ChatSearchResults } from "./components/ChatSearch";
+import { AssistantsSection } from "./components/Assistants";
 import { ShareChatDialog, ShareChatsDialog } from "./components/ShareChat";
 import { ModelPicker } from "./components/ModelPicker";
 import { Modal } from "./components/Modal";
@@ -924,6 +925,14 @@ function Workspace({ security, onSecurityChanged, toast, nav }: { security: Secu
             </button>
           ))}
         </div>}
+        <AssistantsSection
+          onChat={async (id) => {
+            await refreshChats();
+            setActiveChat(id);
+            setView("chat");
+          }}
+          toast={toast}
+        />
         {selected.length > 0 && (
           <div className="select-bar" role="toolbar" aria-label={t("Selected chats")}>
             <div className="row">

@@ -5,6 +5,7 @@
 #![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
 mod advanced;
+mod assistants;
 mod agent;
 mod applog;
 mod cardfirst;
@@ -2213,6 +2214,12 @@ async fn run_turn_with(
         Some(id) => presets::with_instructions(base, &presets::get(&state.db.lock().unwrap(), id)),
         None => base,
     };
+    // A chat started with one of the person's own assistants.
+    let own = assistants::of_chat(&state.db.lock().unwrap(), &cipher, &chat_id);
+    let base = match own {
+        Some(a) => assistants::with_instructions(base, &a),
+        None => base,
+    };
 
     // Nearly full: compact it (summarize the earlier part and keep going
     // here), or continue in a fresh chat, as set in Advanced.
@@ -3446,6 +3453,11 @@ pub fn run() {
             prompts::delete_prompt,
             compare::compare_models,
             compare::compare_stop,
+            assistants::assistants,
+            assistants::save_assistant,
+            assistants::delete_assistant,
+            assistants::chat_with_assistant,
+            assistants::chat_assistant,
             engine_status,
             unload_model,
             security::security_status,

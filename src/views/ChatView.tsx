@@ -38,6 +38,7 @@ import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { CopyButton } from "../components/CopyButton";
 import { ExportChat } from "../components/ExportChat";
+import { AssistantStarters } from "../components/Assistants";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
@@ -797,6 +798,13 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       >
         {messages.length === 0 && !streaming && (
           <div className="hello">
+            <AssistantStarters
+              chatId={chat.id}
+              onPick={(s) => {
+                setInput(s.endsWith(":") ? `${s} ` : s);
+                requestAnimationFrame(() => inputRef.current?.focus());
+              }}
+            />
             <p className="muted">
               {cloud ? (
                 <>
