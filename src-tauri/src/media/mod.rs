@@ -4611,6 +4611,9 @@ async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     }
     let mp4 = work.join("talking.mp4");
     let mut args: Vec<std::ffi::OsString> = ["-framerate".into(), fps.to_string().into(), "-i".into(), seq.join("%05d.png").into_os_string(), "-i".into(), sound.as_os_str().to_owned()].into();
+    // S2V makes 16 frames a second, which looked choppy: frames made in
+    // between from the motion around them double it (a 6 s clip in about 4 s).
+    args.extend(["-vf", "minterpolate=fps=32:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"].map(Into::into));
     args.extend(["-map", "0:v", "-map", "1:a", "-t", &format!("{secs:.3}")].map(Into::into));
     args.extend(ffmpeg::mp4_out(&mp4));
     ffmpeg::run(state, &ffmpeg_exe, args, secs, ctx.cancel, &|f| (ctx.progress)("Putting the sound with it", 0.96 + 0.04 * f)).await?;
