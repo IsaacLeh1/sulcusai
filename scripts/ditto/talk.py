@@ -10,6 +10,8 @@
 #     a C compiler on the PC);
 #   - a picture with no face says so ("SULCUS noface") instead of failing
 #     somewhere later.
+# With --processor it runs on the processor (PCs without an NVIDIA card),
+# from the packages in cpu/.
 # Lines starting with "SULCUS " are read by the app for progress.
 import argparse
 import math
@@ -30,7 +32,21 @@ p.add_argument("--audio", required=True, help="the voice, any rate (read at 16 k
 p.add_argument("--out", required=True, help="the silent .mp4")
 p.add_argument("--steps", type=int, default=50, help="sampling steps of the motion model")
 p.add_argument("--max-size", type=int, default=1920, help="the picture's longest side")
+p.add_argument("--processor", action="store_true", help="run on the processor")
 a = p.parse_args()
+
+# Ditto's settings put every part on "cuda". DirectML on AMD and Intel
+# cards was tried: it has no 3D convolutions (the warp, every frame), and on
+# an Intel UHD 770 the mix was slower than the processor alone.
+device = None
+if a.processor:
+    import contextlib
+
+    import torch
+
+    device = "cpu"
+    # Its half-precision autocast is for CUDA; the processor runs full precision.
+    torch.autocast = lambda *args, **kwargs: contextlib.nullcontext()
 
 here = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, here)
@@ -65,9 +81,18 @@ class NumpyOnly(pickle.Unpickler):
         return make()
 
 
+def on_device(v):
+    if isinstance(v, dict):
+        return {k: device if k == "device" and x == "cuda" else on_device(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [on_device(x) for x in v]
+    return v
+
+
 def load_pkl(path):
     with open(path, "rb") as f:
-        return NumpyOnly(f).load()
+        loaded = NumpyOnly(f).load()
+    return on_device(loaded) if device else loaded
 
 
 import core.atomic_components.cfg as cfg  # noqa: E402
@@ -88,6 +113,18 @@ def crop(self, img, last_lmk=None, **kwargs):
 
 
 Source2Info._crop = crop
+
+if device:
+    from core.models.modules.LMDM import LMDM
+
+    _lmdm_setup = LMDM.setup
+
+    # The motion model keeps "cuda" for its noise whatever card its weights are on.
+    def lmdm_setup(self, *args, **kwargs):
+        self.device = next(self.parameters()).device
+        return _lmdm_setup(self, *args, **kwargs)
+
+    LMDM.setup = lmdm_setup
 
 import librosa  # noqa: E402
 from stream_pipeline_offline import StreamSDK  # noqa: E402

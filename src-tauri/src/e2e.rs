@@ -1525,8 +1525,8 @@ async fn e2e_a_video_comes_with_its_sound() {
 }
 
 /// A portrait made to talk (Wan 2.2 S2V, installed by the test, about
-/// 18 GB): words read aloud by a natural voice, about 6 s, so two parts
-/// (4 steps, to keep the test to about a quarter of an hour).
+/// 19 GB, with its 4-step LoRA on its own engine build): words read aloud
+/// by a natural voice, about 6 s, so two parts, at the model's own settings.
 /// The video is as long as the voice, with its sound. Written to
 /// C:\dev\tools\voice\tests\e2e-talking.mp4.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1541,7 +1541,7 @@ async fn e2e_a_picture_talks() {
     let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
     let words = "Hello there! This is a picture that talks, and my lips move with my words.";
     let started = std::time::Instant::now();
-    let made = media::run(&state, store::new_id(), Request { op: "speak".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), steps: Some(4), ..Default::default() }).await.unwrap().remove(0);
+    let made = media::run(&state, store::new_id(), Request { op: "speak".into(), source: Some(face.id.clone()), say: Some(words.into()), language: Some("en".into()), seconds: Some(6.0), ..Default::default() }).await.unwrap().remove(0);
     println!("talked in {:.0} s", started.elapsed().as_secs_f64());
     let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-talking.mp4");
     std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
@@ -1595,6 +1595,45 @@ async fn e2e_a_picture_talks_quickly() {
     let e = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(blank.id.clone()), say: Some("Hello.".into()), language: Some("en".into()), ..Default::default() }).await.unwrap_err();
     println!("no face: {e}");
     assert!(e.contains("No face"), "{e}");
+}
+
+/// The quick way on a PC without an NVIDIA card (this one's card is made to
+/// look like an Intel one): Ditto runs on the processor from its own
+/// packages, and the picture still talks. SULCUSAI_DITTO_ZIP as above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_picture_talks_on_the_processor() {
+    use crate::media::{self, store, MediaItem, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    for g in state.hardware.write().unwrap().gpus.iter_mut() {
+        g.vendor = "Intel".into();
+    }
+    assert!(!crate::natural::nvidia_here(&state));
+    crate::natural::install_for_test(&state).await.unwrap();
+    let d = state.catalog.media.ditto.clone().unwrap();
+    if let Some(zip) = std::env::var_os("SULCUSAI_DITTO_ZIP") {
+        let dir = media::ditto::source_dir(&state.paths, &d);
+        if !dir.join("talk.py").is_file() {
+            crate::engine::unzip_for_test(std::path::Path::new(&zip), &dir).unwrap();
+        }
+    }
+    let png = std::fs::read(r"C:\dev\tools\lora-test\hero.png").unwrap();
+    let face = store::save(&state.db.lock().unwrap(), &state.paths, &c, MediaItem { kind: "image".into(), mime: "image/png".into(), op: "import".into(), prompt: "a woman in a yellow raincoat".into(), width: 1024, height: 1024, ..Default::default() }, &png, None).unwrap();
+    let started = std::time::Instant::now();
+    let made = media::run(&state, store::new_id(), Request { op: "talk".into(), source: Some(face.id.clone()), say: Some("Hello there, this picture talks on the processor.".into()), language: Some("en".into()), seconds: Some(4.0), ..Default::default() }).await.unwrap().remove(0);
+    println!("talked on the processor in {:.0} s ({:.1} s of voice)", started.elapsed().as_secs_f64(), made.seconds);
+    assert!(media::ditto::ready(&state.paths, &d, true), "the processor's packages are set up");
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\tests\e2e-talking-processor.mp4");
+    std::fs::write(&out, store::read(&state.paths, &c, &made.id).unwrap()).unwrap();
+    let ffprobe = walkdir_find(&Paths::new(app_data_dir()).unwrap().engines, "ffprobe.exe").expect("FFprobe was downloaded");
+    let p = crate::media::ffmpeg_probe_for_test(&ffprobe, &out).await;
+    println!("talking: {:.2} s, {}x{} at {:.0} fps, sound: {}", p.seconds, p.width, p.height, p.fps, p.audio);
+    assert!(p.audio && made.model_id.as_deref() == Some("ditto"));
+    assert_eq!((p.width, p.height), (1024, 1024));
+    assert!((p.seconds - made.seconds).abs() < 0.3 && made.seconds > 2.0);
+    let log = std::fs::read_to_string(state.paths.logs.join("talking-picture.log")).unwrap_or_default();
+    assert!(log.contains("--processor") || log.contains("SULCUS"), "it ran");
 }
 
 /// Programs: the open windows are listed, and each is read through UI
@@ -1773,6 +1812,64 @@ async fn e2e_a_file_sets_off_a_task() {
     assert!(schedule::triggered(&state, &c, &mut known, &mut started).is_empty());
     state.engine.lock().await.stop().await;
     let _ = std::fs::remove_dir_all(&folder);
+}
+
+/// Tasks set off by new mail and by an event about to start (Qwen3 4B 2507
+/// as the model): only the matching mail sets its task off, each task's
+/// reply is about what set it off, and neither goes off twice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_mail_and_events_set_off_tasks() {
+    use crate::schedule::{self, Cadence, Schedule};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let file = real.models.join("qwen3-4b-2507").join("Qwen3-4B-Instruct-2507-Q4_K_M.gguf");
+    crate::local::import(&state, &file).unwrap();
+    let id = crate::local::list(&state.db.lock().unwrap()).into_iter().find(|m| m.local.as_ref().is_some_and(|l| std::path::Path::new(&l.path) == file)).unwrap().id;
+    let task = |sid: &str, name: &str, prompt: &str, cadence: Cadence| {
+        let mut s = Schedule { id: sid.into(), name: name.into(), prompt: prompt.into(), cadence, model_id: Some(id.clone()), project_id: None, allow_changes: false, actions: Vec::new(), enabled: true, last_run: None, next_run: None, last_chat: None, armed: None, handled: Vec::new() };
+        schedule::arm(&mut s, None);
+        schedule::save(&state.db.lock().unwrap(), &c, &s).unwrap();
+    };
+    task("mail", "Invoices", "Say who the new mail is from and what it's about, in one short sentence.", Cadence::OnMail { from: "dana".into(), subject: "invoice".into() });
+    task("event", "Before meetings", "Say which meeting is about to start and where, in one short sentence.", Cadence::OnEvent { minutes: 15, title: String::new() });
+    let (mut known, mut started) = (schedule::Known::new(), true);
+    assert!(schedule::triggered(&state, &c, &mut known, &mut started).is_empty(), "nothing has arrived yet");
+
+    let now = crate::db::now_ms();
+    {
+        let conn = state.db.lock().unwrap();
+        crate::mail::store_account(&conn, &c, "acc", &crate::mail::AccountConfig { name: "Me".into(), email: "me@example.org".into(), ..Default::default() }).unwrap();
+        let mail = |from: &str, name: &str, subject: &str, body: &str| crate::mail::MailData { from: from.into(), from_name: name.into(), to: vec!["me@example.org".into()], subject: subject.into(), snippet: body.into(), body: body.into(), ..Default::default() };
+        crate::mail::save_item(&conn, &c, "acc", "INBOX", 1, now, false, &mail("dana@example.com", "Dana Ruiz", "Invoice for October", "Hi, the October invoice for the garden work is attached: $420, due November 10.")).unwrap();
+        crate::mail::save_item(&conn, &c, "acc", "INBOX", 2, now, false, &mail("sam@example.com", "Sam", "Lunch on Friday?", "Want to get lunch on Friday?")).unwrap();
+    }
+    let event = crate::calendar::NewEvent { title: "Budget review".into(), start: now + 10 * 60_000, end: now + 40 * 60_000, all_day: false, location: "Room 4B".into(), notes: String::new(), attendees: Vec::new(), calendar: None };
+    crate::calendar::create(&state, &c, event).await.unwrap();
+
+    let fired = schedule::triggered(&state, &c, &mut known, &mut started);
+    assert_eq!(fired.len(), 2, "one for the mail, one for the event");
+    for (t, f) in &fired {
+        let f = f.as_ref().unwrap();
+        println!("{}: {}", t.name, f.what);
+        let (chat, result) = schedule::run_with_cause(&state, t, Some(&f.what), std::sync::Arc::new(|_: &str, _: serde_json::Value| {})).await.unwrap();
+        result.unwrap();
+        let said = crate::db::messages(&state.db.lock().unwrap(), &c, &chat).into_iter().rev().find(|m| m.role == "assistant").map(|m| m.content).unwrap_or_default();
+        println!("it said: {said}");
+        let low = said.to_lowercase();
+        if t.id == "mail" {
+            assert!(!f.what.contains("Lunch"), "Sam's mail doesn't match");
+            assert!(low.contains("dana") && low.contains("invoice"), "{said}");
+        } else {
+            assert!(low.contains("budget"), "{said}");
+        }
+        let mut done = t.clone();
+        schedule::remember(&mut done, f.ids.clone());
+        schedule::save(&state.db.lock().unwrap(), &c, &done).unwrap();
+    }
+    assert!(schedule::triggered(&state, &c, &mut known, &mut started).is_empty(), "not again for the same mail or event");
+    state.engine.lock().await.stop().await;
 }
 
 /// The screen agent's eyes, on a made-up desktop (C:\dev\tools\screen-test\

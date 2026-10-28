@@ -212,6 +212,10 @@ pub struct MediaModel {
     /// prompts are written the way that family reads them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub built_on: Option<String>,
+    /// A picture engine build of its own, when the shared one can't run it
+    /// (Wan 2.2 S2V's 4-step LoRA crashed the shared build).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<EngineSpec>,
 }
 
 /// Every media model: the catalog's, then those installed from Hugging Face.
@@ -463,8 +467,43 @@ fn files_here(state: &AppState, m: &MediaModel) -> Result<(), String> {
     Err(format!("{}'s model files are missing from {} (removed, or a download that didn't finish). Install it again from Models in the Studio.", m.name, dir.display()))
 }
 
-fn sd_dir(c: &MediaCatalog, backend: &str) -> String {
-    format!("sd-{}-{backend}", c.engine.build)
+/// Files an update added to a model that's already installed (S2V's 4-step
+/// LoRA) come down when it's next used, instead of it looking broken. Only
+/// small additions: a big file that's gone is left to "Install it again".
+async fn fetch_added(state: &Arc<AppState>, m: &MediaModel, cancel: &AtomicBool) -> Result<(), String> {
+    let gone: u64 = m.files.iter().filter(|f| !file_path(&state.paths, m, f).is_file()).map(|f| f.size).sum();
+    let here = installed(&state.db.lock().unwrap()).iter().any(|i| i.model_id == m.id);
+    if gone == 0 || gone > 1_500_000_000 || !here || !state.paths.models.is_dir() {
+        return Ok(());
+    }
+    crate::applog::line("media", &format!("{}: getting the parts an update added", m.name));
+    install(state, m, cancel, &|_, _, _| {}).await
+}
+
+fn sd_dir(engine: &EngineSpec, backend: &str) -> String {
+    format!("sd-{}-{backend}", engine.build)
+}
+
+/// The picture engine a model runs on: its own build, else the shared one.
+fn engine_of<'a>(c: &'a MediaCatalog, m: &'a MediaModel) -> &'a EngineSpec {
+    m.engine.as_ref().unwrap_or(&c.engine)
+}
+
+/// A model's own picture engine, downloaded the first time: the build for
+/// this PC's card, or the processor's when the job was moved there.
+async fn own_engine(state: &AppState, e: &EngineSpec, cancel: &AtomicBool) -> Result<PathBuf, String> {
+    let (key, asset) = if ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
+        [engine::cpu_key(), "cpu-x64", "linux-cpu-x64"].into_iter().find_map(|k| e.assets.get(k).map(|a| (k, a)))
+    } else {
+        let b = engine::backend_for(&state.budget())?;
+        e.assets.get(b).map(|a| (b, a))
+    }
+    .ok_or("There's no build of this model's picture engine for this PC.")?;
+    let dir = sd_dir(e, key);
+    if engine::find_exe(&state.paths.engines.join(&dir), SD_EXE).is_none() {
+        state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({key}) from {}", crate::host_of(&asset.url)));
+    }
+    engine::ensure_unpacked(&state.paths, &dir, asset, SD_EXE, cancel, |_, _| {}).await
 }
 
 fn music_dir(c: &MediaCatalog, key: &str) -> String {
@@ -503,7 +542,7 @@ pub(crate) fn music_engine_dir(state: &AppState) -> Option<PathBuf> {
 
 fn sd_exe(state: &AppState) -> Result<PathBuf, String> {
     let backend = engine::backend_for(&state.budget())?;
-    engine::find_exe(&state.paths.engines.join(sd_dir(&state.catalog.media, backend)), SD_EXE)
+    engine::find_exe(&state.paths.engines.join(sd_dir(&state.catalog.media.engine, backend)), SD_EXE)
         .ok_or_else(|| "The picture engine isn't installed. Reinstall the model from the Studio's Models list.".to_string())
 }
 
@@ -641,8 +680,9 @@ pub(crate) async fn install(state: &Arc<AppState>, spec: &MediaModel, cancel: &A
         }
         _ => {
             let backend = engine::backend_for(&state.budget())?;
-            let asset = c.engine.assets.get(backend).ok_or("No picture engine for this PC")?;
-            let dir = sd_dir(c, backend);
+            let engine = engine_of(c, spec);
+            let asset = engine.assets.get(backend).ok_or("No picture engine for this PC")?;
+            let dir = sd_dir(engine, backend);
             if engine::find_exe(&state.paths.engines.join(&dir), SD_EXE).is_none() {
                 state.log("network", &format!("Downloading the stable-diffusion.cpp engine ({backend}) from {}", crate::host_of(&asset.url)));
             }
@@ -710,7 +750,7 @@ pub(crate) fn adopt_found(state: &AppState, finder: &mut crate::found::Finder) -
         let engine_ready = match m.kind {
             Kind::Music => music_engine_dir(state).is_some(),
             Kind::Background => crate::natural::runtime_dll(&state.paths, &state.catalog.voices).is_some(),
-            _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(c, be)), SD_EXE).is_some()),
+            _ => engine::backend_for(&b).is_ok_and(|be| engine::find_exe(&state.paths.engines.join(sd_dir(engine_of(c, m), be)), SD_EXE).is_some()),
         };
         if place == Place::Missing || !engine_ready {
             continue;
@@ -1548,6 +1588,8 @@ tokio::task_local! {
     static SECOND_CARD: bool;
     /// Started now on the processor, as the person asked (the card was busy).
     static ON_PROCESSOR: bool;
+    /// The picture engine for this job's model, when it has a build of its own.
+    static SD_ENGINE: PathBuf;
 }
 
 /// The graphics memory a job needs, for its place in line: its model's on
@@ -2266,9 +2308,6 @@ pub fn check(state: &AppState, req: &Request) -> Result<(), String> {
         if state.catalog.media.ditto.is_none() || !cfg!(windows) {
             return Err("Quick talking pictures aren't available on this system yet.".into());
         }
-        if !crate::natural::nvidia_here(state) {
-            return Err("The quick way needs an NVIDIA graphics card. The detailed way (Wan 2.2 S2V) works on others.".into());
-        }
         if req.source.is_none() {
             return Err("Pick a picture to work on first.".into());
         }
@@ -2379,6 +2418,7 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
     let on_cloud = cloud_pick(state, &req);
     let model = if no_model(&req.op) || on_cloud.is_some() { None } else { choose(state, model_op(&req), req.model_id.as_deref(), req.source.is_some()).ok() };
     if let Some(m) = &model {
+        fetch_added(state, m, &cancel).await?;
         files_here(state, m)?;
     }
     let est = match (&model, &on_cloud) {
@@ -2386,7 +2426,10 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
         (None, Some(_)) if req.op == "video" => 180.0,
         _ if req.op == "train" => train_estimate(state, &req),
         _ if req.op == "trainer" => 900.0,
-        _ if req.op == "talk" => ditto::estimate(req.seconds.unwrap_or(15.0) as f64, state.catalog.media.ditto.as_ref().is_some_and(|d| ditto::ready(&state.paths, d))),
+        _ if req.op == "talk" => {
+            let processor = !crate::natural::nvidia_here(state);
+            ditto::estimate(req.seconds.unwrap_or(15.0) as f64, state.catalog.media.ditto.as_ref().is_some_and(|d| ditto::ready(&state.paths, d, processor)), processor)
+        }
         // Writing, then reading about as fast as it plays.
         _ if req.op == "podcast" => 60.0 + 50.0 * req.talk.as_ref().and_then(|t| t.minutes).unwrap_or(5.0) as f64,
         _ if req.op == "dialogue" => 10.0 + req.prompt.len() as f64 / 40.0,
@@ -2476,16 +2519,24 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
         (hw.best_gpu().map(|g| g.name.clone()), hw.cpu_name.clone())
     };
     let has_card = state.budget().vram > 0 && gpu_name.is_some();
+    // The quick way to make a picture talk runs on NVIDIA cards only.
+    let talk_off_card = req.op == "talk" && has_card && !crate::natural::nvidia_here(state);
     // Meant for the card, with none to use: said why, and asked first.
-    if on_cloud.is_none() && card_engine && !has_card && !forced_processor {
-        let why = if gpu_name.is_none() { crate::natural::no_card(state) } else { "SulcusAI's limit for the graphics card is set to none (Settings › This PC)".to_string() };
+    if on_cloud.is_none() && card_engine && (!has_card || talk_off_card) && !forced_processor {
+        let why = if talk_off_card {
+            format!("the quick way runs on NVIDIA graphics cards, and this PC's is {}", gpu_name.clone().unwrap_or_default())
+        } else if gpu_name.is_none() {
+            crate::natural::no_card(state)
+        } else {
+            "SulcusAI's limit for the graphics card is set to none (Settings › This PC)".to_string()
+        };
         let ask_progress = |stage: &str, f: f64| update(state, &id, |i| {
             i.stage = stage.to_string();
             i.fraction = f;
         });
         crate::cardfirst::processor_ok(state, Some(&id), op_what(&req.op), &why, &cancel, &ask_progress).await?;
     }
-    let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card) || forced_processor));
+    let on_processor = Arc::new(AtomicBool::new(!(card_engine && has_card) || forced_processor || talk_off_card));
     let device_now = {
         let (on_processor, gpu_name, cpu_name, cloud) = (on_processor.clone(), gpu_name.clone(), cpu_name.clone(), on_cloud.clone());
         move || -> (String, Option<String>) {
@@ -2977,7 +3028,10 @@ impl RunCtx<'_> {
         let on_card = vram_gib > 0.0;
         // Started now on the processor while the card is busy: its build, smaller.
         if on_card && ON_PROCESSOR.try_with(|p| *p).unwrap_or(false) {
-            let cpu = self.cpu_engine().await?;
+            let cpu = match SD_ENGINE.try_with(Clone::clone) {
+                Ok(own) => own,
+                Err(_) => self.cpu_engine().await?,
+            };
             return self.run_sd_once(smaller(&without_vram(&args), 640), work, Some(cpu)).await;
         }
         if !on_card {
@@ -3044,7 +3098,7 @@ impl RunCtx<'_> {
             .into_iter()
             .find_map(|k| c.engine.assets.get(k).map(|a| (k, a)))
             .ok_or("There's no processor build of the picture engine for this system.")?;
-        let dir = sd_dir(c, key);
+        let dir = sd_dir(&c.engine, key);
         if let Some(exe) = engine::find_exe(&self.state.paths.engines.join(&dir), SD_EXE) {
             return Ok(exe);
         }
@@ -3055,7 +3109,10 @@ impl RunCtx<'_> {
     async fn run_sd_once(&self, args: Vec<std::ffi::OsString>, work: &std::path::Path, exe: Option<PathBuf>) -> Result<(), String> {
         let exe = match exe {
             Some(e) => e,
-            None => sd_exe(self.state)?,
+            None => match SD_ENGINE.try_with(Clone::clone) {
+                Ok(own) => own,
+                Err(_) => sd_exe(self.state)?,
+            },
         };
         let mut t = sd::Tracker::default();
         (self.progress)(t.stage.label(), t.fraction());
@@ -4687,6 +4744,12 @@ async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
     let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let ToSay { sound, secs, voice, song } = what_it_says(ctx, work, &ffmpeg_exe, &ffprobe, SPEAK_SECS).await?;
 
+    // Its own engine build, when it has one (its 4-step LoRA needs it).
+    let own = match &m.engine {
+        Some(e) => Some(own_engine(state, e, ctx.cancel).await?),
+        None => None,
+    };
+
     // Its picture, at the model's size in its own shape.
     let d = &m.defaults;
     let fps = 16;
@@ -4744,7 +4807,10 @@ async fn speak(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Resu
             &sd::Clip { prompt, negative: req.negative.as_deref(), width: w, height: h, frames: *frames, fps, steps: req.steps.unwrap_or(d.steps).clamp(2, 50), seed: seed + i as i64, init: start.as_deref(), audio: Some(&wav), out: &out },
             &part_ctx.limits(),
         ));
-        part_ctx.run_sd(args, &dir).await?;
+        match &own {
+            Some(exe) => SD_ENGINE.scope(exe.clone(), part_ctx.run_sd(args, &dir)).await?,
+            None => part_ctx.run_sd(args, &dir).await?,
+        }
         let files = longclip::frames_in(&dir, "f_");
         start = Some(files.last().cloned().ok_or("The video engine didn't produce any frames.")?);
         crate::applog::line("media", &format!("Talking picture: part {} of {n} made ({} frames)", i + 1, files.len()));
@@ -4868,7 +4934,8 @@ async fn talk(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>
     let (ffmpeg_exe, ffprobe) = ffmpeg::ensure(state, ctx.cancel, ctx.progress).await?;
     let said = req.say.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let ToSay { sound, secs, voice, .. } = what_it_says(ctx, work, &ffmpeg_exe, &ffprobe, ditto::LONGEST).await?;
-    let uv = ensure_ditto(ctx, &d).await?;
+    let processor = !crate::natural::nvidia_here(state) || ON_PROCESSOR.try_with(|p| *p).unwrap_or(false);
+    let uv = ensure_ditto(ctx, &d, processor).await?;
 
     // The picture as it is (at most 1920 on its longest side), and the voice alone.
     let (w, h) = ditto::picture_size(img.width(), img.height());
@@ -4886,7 +4953,7 @@ async fn talk(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>
     let ran = proc::run_env(
         proc::Run {
             exe: &uv,
-            args: ditto::args(&ditto::source_dir(&state.paths, &d), &ditto::models_dir(&state.paths), &image, &wav, &silent, req.steps.unwrap_or(50)),
+            args: ditto::args(&ditto::source_dir(&state.paths, &d), &ditto::models_dir(&state.paths), &image, &wav, &silent, req.steps.unwrap_or(50), processor),
             cwd: work,
             log: &state.paths.logs.join("talking-picture.log"),
             low_priority: state.limits().low_priority,
@@ -4929,15 +4996,16 @@ async fn talk(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<MediaItem>
         poster: true,
         ..Default::default()
     };
-    state.log("media", &format!("Made a picture talk the quick way on this PC ({secs:.0} s)"));
+    let on = if processor { "on the processor" } else { "on the graphics card" };
+    state.log("media", &format!("Made a picture talk the quick way {on} ({secs:.0} s)"));
     Ok(vec![store::save(&state.db.lock().unwrap(), &state.paths, &c, item, &bytes, Some(&still))?])
 }
 
 /// Ditto, set up the first time (`talk`): uv (the music trainer's), its
-/// source with SulcusAI's runner, its locked Python packages, and its model
-/// files. Returns uv.
+/// source with SulcusAI's runner, its locked Python packages (for the card,
+/// or for the `processor`), and its model files. Returns uv.
 #[cfg(windows)]
-async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog) -> Result<PathBuf, String> {
+async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog, processor: bool) -> Result<PathBuf, String> {
     let state = ctx.state;
     let paths = &state.paths;
     let say = "Getting the quick face model (once)";
@@ -4945,15 +5013,20 @@ async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog) -> Result<PathB
     let source = ditto::source_dir(paths, d);
     let dir_name = source.file_name().unwrap_or_default().to_string_lossy().into_owned();
     engine::ensure_unpacked(paths, &dir_name, &d.source, "talk.py", ctx.cancel, |_, _| {}).await?;
-    if !source.join(".venv").join("Scripts").join("python.exe").is_file() {
-        // Its Python and packages (PyTorch for NVIDIA cards and the rest), as locked.
-        state.log("network", "Downloading the quick face model's Python packages from pypi.org and download.pytorch.org");
-        (ctx.progress)("Setting up the quick face model (once, up to 6 GB)", 0.02);
+    let project = ditto::project_dir(&source, processor);
+    if !project.join(".venv").join("Scripts").join("python.exe").is_file() {
+        if processor {
+            state.log("network", "Downloading the quick face model's Python packages from pypi.org");
+            (ctx.progress)("Setting up the quick face model (once, about 1 GB)", 0.02);
+        } else {
+            state.log("network", "Downloading the quick face model's Python packages from pypi.org and download.pytorch.org");
+            (ctx.progress)("Setting up the quick face model (once, up to 6 GB)", 0.02);
+        }
         let ran = proc::run_env(
             proc::Run {
                 exe: &uv,
                 args: ["sync", "--frozen", "--python", "3.12"].map(std::ffi::OsString::from).to_vec(),
-                cwd: &source,
+                cwd: &project,
                 log: &paths.logs.join("talking-picture-setup.log"),
                 low_priority: state.limits().low_priority,
                 job: state.job(),
@@ -4965,7 +5038,7 @@ async fn ensure_ditto(ctx: &RunCtx<'_>, d: &ditto::DittoCatalog) -> Result<PathB
         .await;
         if let Err(e) = ran {
             // A half-made environment would look ready next time.
-            let _ = std::fs::remove_dir_all(source.join(".venv"));
+            let _ = std::fs::remove_dir_all(project.join(".venv"));
             return Err(e);
         }
     }
@@ -6036,10 +6109,12 @@ pub fn music_custom_models(state: AppStateRef) -> Result<serde_json::Value, Stri
 pub fn media_talk_ways(state: AppStateRef) -> serde_json::Value {
     let d = state.catalog.media.ditto.as_ref();
     let detailed = installed(&state.db.lock().unwrap()).iter().any(|i| state.catalog.media.models.iter().any(|m| m.id == i.model_id && m.kind == Kind::Video && m.can("speech")));
+    let processor = !crate::natural::nvidia_here(&state);
     json!({
-        "quick": d.is_some() && cfg!(windows) && crate::natural::nvidia_here(&state),
-        "ready": d.is_some_and(|d| ditto::ready(&state.paths, d)),
-        "setup_bytes": d.map_or(0, ditto::setup_bytes),
+        "quick": d.is_some() && cfg!(windows),
+        "processor": processor,
+        "ready": d.is_some_and(|d| ditto::ready(&state.paths, d, processor)),
+        "setup_bytes": d.map_or(0, |d| ditto::setup_bytes(d, processor)),
         "detailed": detailed,
     })
 }

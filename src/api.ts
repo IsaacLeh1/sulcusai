@@ -2707,8 +2707,10 @@ export interface CustomModel {
 
 /** The ways a picture can be made to talk here (media_talk_ways). */
 export interface TalkWays {
-  /** Quick (Ditto): an NVIDIA card. */
+  /** Quick (Ditto) is available here. */
   quick: boolean;
+  /** No NVIDIA card: Quick runs on the processor, much slower. */
+  processor: boolean;
   /** Ditto is set up (else its first run downloads `setup_bytes`). */
   ready: boolean;
   setup_bytes: number;

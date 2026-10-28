@@ -129,5 +129,8 @@ export function useLanguage(): string {
       return () => listeners.delete(cb);
     },
     () => current,
+    // Saving a chat as a page renders messages with react-dom/server, which
+    // needs this or throws.
+    () => current,
   );
 }

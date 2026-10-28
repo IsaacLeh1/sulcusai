@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { draftOf, setDraft } from "../drafts";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
   errorText,
   on,
+  openInViewer,
   toBase64,
   type Chat,
   type Connectivity,
@@ -37,12 +38,14 @@ import { BrowserPanel } from "./WebViewerView";
 import { useMediaUrl } from "../media";
 import { Markdown } from "../components/Markdown";
 import { CopyButton } from "../components/CopyButton";
-import { ExportChat } from "../components/ExportChat";
+// It brings React's page renderer, which nothing else needs at startup.
+const ExportChat = lazy(() => import("../components/ExportChat").then((m) => ({ default: m.ExportChat })));
 import { AssistantStarters } from "../components/Assistants";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
 import { insertDictation, words } from "../format";
+import { aiModeUrl, GoogleSetup } from "../components/GoogleSetup";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
 import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, NewWindowIcon, PaperclipIcon, ReloadIcon, VoiceIcon } from "../components/Icons";
@@ -232,6 +235,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   useEffect(() => {
     api.cloudChoices().then(setCloudChoices).catch(() => {});
   }, [connectivity]);
+  // "Google" in the model list sets Gemini up the first time.
+  const [googleSetup, setGoogleSetup] = useState(false);
+  const hasGemini = cloudChoices.some((c) => c.id.startsWith("cloud:gemini:"));
   // Matched by model too: a chat synced from another PC names that PC's provider.
   const cloud = findCloud(cloudChoices, modelId);
   // Models on the linked compute PC.
@@ -634,6 +640,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   };
 
   const switchModel = async (id: string) => {
+    if (id === "google:setup") {
+      setGoogleSetup(true);
+      return;
+    }
     try {
       await api.setChatModel(chat.id, id);
       setContext(null);
@@ -974,22 +984,25 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             >
               <GlobeIcon /> {webOn ? t("Web on") : t("Web off")}
             </button>
+            <button
+              className="globe"
+              onClick={() => {
+                const asked = input.trim() || [...messages].reverse().find((m) => m.role === "user")?.content.trim() || "";
+                if (asked) openInViewer(aiModeUrl(asked));
+                else toast(t("Type a question first."), "info");
+              }}
+              title={t("Opens Google's AI Mode with your message in the built-in browser. Its answer stays on Google's page.")}
+            >
+              {t("Ask Google")}
+            </button>
             <select value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
-              {cloudChoices.length > 0 || cloudId || taught.length > 0 || steered.length > 0 || compute.models.length > 0 ? (
-                <optgroup label={t("On this PC")}>
-                  {installed.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ) : (
-                installed.map((m) => (
+              <optgroup label={t("On this PC")}>
+                {installed.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name}
                   </option>
-                ))
-              )}
+                ))}
+              </optgroup>
               {taught.length > 0 && (
                 <optgroup label={t("Taught on this PC")}>
                   {taught.map((a) => (
@@ -1019,17 +1032,16 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
                   ))}
                 </optgroup>
               )}
-              {(cloudChoices.length > 0 || cloudId) && (
-                <optgroup label={connectivity === "cloud" ? t("Cloud") : t("Cloud (needs the Cloud level)")}>
-                  {cloudChoices.map((c) => (
-                    <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
-                      {c.name} · {c.provider}
-                      {priceText(c.price_in, c.price_out) && ` · ${priceText(c.price_in, c.price_out)}`}
-                    </option>
-                  ))}
-                  {cloudId && !cloud && <option value={cloudId} disabled>{t("(removed model)")}</option>}
-                </optgroup>
-              )}
+              <optgroup label={connectivity === "cloud" ? t("Cloud") : t("Cloud (needs the Cloud level)")}>
+                {cloudChoices.map((c) => (
+                  <option key={c.id} value={c.id} disabled={connectivity !== "cloud"}>
+                    {c.name} · {c.provider}
+                    {priceText(c.price_in, c.price_out) && ` · ${priceText(c.price_in, c.price_out)}`}
+                  </option>
+                ))}
+                {!hasGemini && <option value="google:setup">{t("Google (Gemini): set it up…")}</option>}
+                {cloudId && !cloud && <option value={cloudId} disabled>{t("(removed model)")}</option>}
+              </optgroup>
             </select>
             {cloudId && <span className="badge cloud-badge" title={cloud ? t("Runs on {provider}'s servers", { provider: cloud.provider }) : t("A cloud model")}>{t("Cloud")}</span>}
             <CloudCost chatId={chat.id} cloud={cloud} />
@@ -1131,7 +1143,23 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       {panel === "memories" && <ChatMemories chat={chat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "links" && <LinkedChats chat={chat} onOpenChat={onOpenChat} onClose={() => setPanel(null)} toast={toast} />}
       {panel === "notes" && <ChatNotes chat={chat} onClose={() => setPanel(null)} toast={toast} />}
-      {exporting && <ExportChat chat={chat} messages={messages} onClose={() => setExporting(false)} toast={toast} />}
+      {googleSetup && (
+        <GoogleSetup
+          toast={toast}
+          onClose={() => setGoogleSetup(false)}
+          onDone={(ref) => {
+            setGoogleSetup(false);
+            api.cloudChoices().then(setCloudChoices).catch(() => {});
+            if (connectivity === "cloud") switchModel(ref);
+            else toast(t("Gemini is set up. It answers at the Cloud level: change the level in the status bar to use it."), "info");
+          }}
+        />
+      )}
+      {exporting && (
+        <Suspense fallback={null}>
+          <ExportChat chat={chat} messages={messages} onClose={() => setExporting(false)} toast={toast} />
+        </Suspense>
+      )}
       {managingPrompts && <SavedPromptsManager prompts={prompts} onChange={setPrompts} onClose={() => setManagingPrompts(false)} toast={toast} />}
       {renaming && (
         <RenameDialog

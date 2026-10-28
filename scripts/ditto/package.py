@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Packs Ditto for SulcusAI's quick talking pictures (catalog media.ditto).
 
-Ditto's source at one commit (Apache-2.0, from GitHub), with three files
-added at its top: the runner (talk.py), and the Python packages it needs,
-locked (pyproject.toml and uv.lock: PyTorch 2.7.1 for CUDA 12.8, the same
-build the music trainer uses, so uv's cache shares it). The app unpacks the
-zip beside its engines and runs `uv sync --frozen` there once.
+Ditto's source at one commit (Apache-2.0, from GitHub), with SulcusAI's
+files added at its top: the runner (talk.py), and the Python packages it
+needs, locked: pyproject.toml and uv.lock (PyTorch 2.7.1 for CUDA 12.8, the
+same build the music trainer uses, so uv's cache shares it), and the same in
+cpu/ with PyTorch's processor build, for PCs without an NVIDIA card. The app
+unpacks the zip beside its engines and runs `uv sync --frozen` once in the
+folder for this PC.
 
     py -3.12 -I scripts/ditto/package.py <ditto-talkinghead-<commit>.zip> <out.zip>
 
@@ -20,7 +22,7 @@ import zipfile
 
 COMMIT = "c3e47eee2e626500017a0556b470d6d4182f85e8"
 HERE = os.path.dirname(os.path.abspath(__file__))
-ADDED = ["talk.py", "pyproject.toml", "uv.lock"]
+ADDED = ["talk.py", "pyproject.toml", "uv.lock", "cpu/pyproject.toml", "cpu/uv.lock"]
 
 
 def entry(name):

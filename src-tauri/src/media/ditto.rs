@@ -9,9 +9,10 @@
 //! It runs on PyTorch for NVIDIA cards, set up the first time by uv in its
 //! own folder beside the engines, sharing the music trainer's uv and
 //! package cache (the same PyTorch build), with its model files (2.3 GB)
-//! from Hugging Face. `scripts/ditto` packs its source with SulcusAI's
-//! runner (`talk.py`) and locked packages. On an RTX 5070 a 15.8 s voice
-//! took 72 s at 1432x1432 and about 2 GB of the card.
+//! from Hugging Face. Other PCs run it on the processor, from PyTorch's
+//! processor build in `cpu/`: much slower, but it works anywhere.
+//! `scripts/ditto` packs its source with SulcusAI's runner (`talk.py`) and
+//! both sets of locked packages.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -55,23 +56,37 @@ pub fn models_dir(paths: &Paths) -> PathBuf {
     paths.models.join("media").join("ditto")
 }
 
-/// Whether it and its packages and files are set up.
-pub fn ready(paths: &Paths, d: &DittoCatalog) -> bool {
-    source_dir(paths, d).join(".venv").join("Scripts").join("python.exe").is_file() && d.files.iter().all(|f| models_dir(paths).join(&f.file).is_file())
+/// The folder of its Python packages: PyTorch for NVIDIA cards, or the
+/// processor build in `cpu/`.
+pub fn project_dir(source: &Path, processor: bool) -> PathBuf {
+    if processor {
+        source.join("cpu")
+    } else {
+        source.to_path_buf()
+    }
+}
+
+/// Whether it and its packages (for the card or the processor) and files are set up.
+pub fn ready(paths: &Paths, d: &DittoCatalog, processor: bool) -> bool {
+    project_dir(&source_dir(paths, d), processor).join(".venv").join("Scripts").join("python.exe").is_file() && d.files.iter().all(|f| models_dir(paths).join(&f.file).is_file())
 }
 
 /// How many bytes setting it up downloads, roughly (the packages' share is
 /// an estimate, and nothing when the music trainer has them already).
-pub fn setup_bytes(d: &DittoCatalog) -> u64 {
-    d.uv.size + d.source.size + d.files.iter().map(|f| f.size).sum::<u64>() + 3_000_000_000
+pub fn setup_bytes(d: &DittoCatalog, processor: bool) -> u64 {
+    d.uv.size + d.source.size + d.files.iter().map(|f| f.size).sum::<u64>() + if processor { 1_000_000_000 } else { 3_000_000_000 }
 }
 
 /// uv's arguments for one run: the voice and picture in, a silent video out.
-pub fn args(source: &Path, models: &Path, image: &Path, audio: &Path, out: &Path, steps: u32) -> Vec<OsString> {
-    let mut a: Vec<OsString> = vec!["run".into(), "--frozen".into(), "--no-sync".into(), "--project".into(), source.into(), "python".into(), source.join("talk.py").into()];
+pub fn args(source: &Path, models: &Path, image: &Path, audio: &Path, out: &Path, steps: u32, processor: bool) -> Vec<OsString> {
+    let project = project_dir(source, processor);
+    let mut a: Vec<OsString> = vec!["run".into(), "--frozen".into(), "--no-sync".into(), "--project".into(), project.into(), "python".into(), source.join("talk.py").into()];
     a.extend(["--models".into(), models.join(MODELS).into(), "--cfg".into(), models.join(CFG).into()]);
     a.extend(["--image".into(), image.into(), "--audio".into(), audio.into(), "--out".into(), out.into()]);
     a.extend(["--steps".into(), steps.clamp(10, 50).to_string().into()]);
+    if processor {
+        a.push("--processor".into());
+    }
     a
 }
 
@@ -107,9 +122,10 @@ pub fn said(line: &str) -> Option<Said> {
 }
 
 /// About how long a run takes: setting up the first time, loading, then
-/// about four seconds of work for every second of voice on a 12 GB card.
-pub fn estimate(seconds: f64, set_up: bool) -> f64 {
-    (if set_up { 0.0 } else { 600.0 }) + 30.0 + 3.5 * seconds.clamp(0.5, LONGEST)
+/// about four seconds of work for every second of voice on a 12 GB card,
+/// or a minute on the processor (two seconds a frame on a fast desktop one).
+pub fn estimate(seconds: f64, set_up: bool, processor: bool) -> f64 {
+    (if set_up { 0.0 } else { 600.0 }) + 30.0 + if processor { 60.0 } else { 3.5 } * seconds.clamp(0.5, LONGEST)
 }
 
 /// The picture's size for it: as it is, with its longest side at most
@@ -144,17 +160,28 @@ mod tests {
     #[test]
     fn it_runs_from_its_folder_with_its_files() {
         let (e, m, w) = (Path::new("e").join("ditto-c3e47ee"), Path::new("m").join("ditto"), Path::new("w"));
-        let a = args(&e, &m, &w.join("in.png"), &w.join("v.wav"), &w.join("out.mp4"), 80);
+        let a = args(&e, &m, &w.join("in.png"), &w.join("v.wav"), &w.join("out.mp4"), 80, false);
         let a: Vec<String> = a.iter().map(|s| s.to_string_lossy().into_owned()).collect();
-        assert_eq!(&a[..4], ["run", "--frozen", "--no-sync", "--project"]);
+        assert_eq!(&a[..5], ["run", "--frozen", "--no-sync", "--project", &*e.to_string_lossy()]);
         assert!(a.contains(&e.join("talk.py").to_string_lossy().into_owned()));
         assert!(a.iter().any(|s| s.starts_with(&*m.to_string_lossy()) && s.ends_with("v0.4_hubert_cfg_pytorch.pkl")));
         assert_eq!(a.last().map(String::as_str), Some("50"), "steps are kept to 50 at most");
     }
 
     #[test]
+    fn without_an_nvidia_card_it_runs_on_the_processor() {
+        let (e, m, w) = (Path::new("e").join("ditto-c3e47ee-r2"), Path::new("m").join("ditto"), Path::new("w"));
+        let a = args(&e, &m, &w.join("in.png"), &w.join("v.wav"), &w.join("out.mp4"), 50, true);
+        let a: Vec<String> = a.iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert_eq!(a[4], e.join("cpu").to_string_lossy(), "the processor's packages");
+        assert!(a.contains(&e.join("talk.py").to_string_lossy().into_owned()), "the same runner");
+        assert_eq!(a.last().map(String::as_str), Some("--processor"));
+        assert!(estimate(10.0, true, true) > 5.0 * estimate(10.0, true, false));
+    }
+
+    #[test]
     fn estimates_grow_with_the_voice() {
-        assert!(estimate(10.0, true) < estimate(60.0, true));
-        assert_eq!(estimate(10.0, false) - estimate(10.0, true), 600.0);
+        assert!(estimate(10.0, true, false) < estimate(60.0, true, false));
+        assert_eq!(estimate(10.0, false, false) - estimate(10.0, true, false), 600.0);
     }
 }

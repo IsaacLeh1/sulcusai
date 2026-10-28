@@ -59,7 +59,7 @@ export function SpeakPanel({ run }: { run: (r: Omit<MediaRequest, "source">) => 
   return (
     <div className="form speak-panel">
       <div className="filters tight" role="radiogroup" aria-label={t("How")}>
-        <button role="radio" aria-checked={quick} className={`chip ${quick ? "active" : ""}`} disabled={ways !== null && !ways.quick} onClick={() => setWay("quick")} title={ways && !ways.quick ? t("Needs an NVIDIA graphics card") : undefined}>
+        <button role="radio" aria-checked={quick} className={`chip ${quick ? "active" : ""}`} disabled={ways !== null && !ways.quick} onClick={() => setWay("quick")}>
           {t("Quick")}
         </button>
         <button role="radio" aria-checked={!quick} className={`chip ${!quick ? "active" : ""}`} onClick={() => setWay("detailed")}>
@@ -107,9 +107,11 @@ export function SpeakPanel({ run }: { run: (r: Omit<MediaRequest, "source">) => 
       )}
       {!quick && <input className="input" value={described} onChange={(e) => setDescribed(e.target.value)} placeholder={t("How it looks while it talks (optional), e.g. smiling, nodding")} aria-label={t("How it looks while it talks")} />}
       <p className="small muted">
-        {quick
+        {quick && ways?.processor
+          ? t("Its face, lips and head move to the voice, and the picture stays as it is. Without an NVIDIA card it runs on the processor: about a minute for every second of voice. Up to {n} minutes.", { n: LONGEST_QUICK / 60 })
+          : quick
           ? t("Its face, lips and head move to the voice, and the picture stays as it is. It takes about the voice's length plus a minute on an NVIDIA card. Up to {n} minutes.", { n: LONGEST_QUICK / 60 })
-          : t("Its lips and face move to the voice, about 5 seconds at a time. It's slow: each 5 seconds can take half an hour on a 12 GB graphics card (less on bigger ones). Up to {n} seconds.", { n: LONGEST })}
+          : t("Its lips and face move to the voice, about 5 seconds at a time. Each 5 seconds takes about 6 minutes on a 12 GB graphics card (less on bigger ones). Up to {n} seconds.", { n: LONGEST })}
         {quick && ways && !ways.ready && " " + t("The first time it downloads its model files and parts (about {size}).", { size: bytes(ways.setup_bytes) })}
         {!quick && ways && !ways.detailed && " " + t("Install Wan 2.2 S2V from the Studio's Models list first.")}
         {seconds != null && seconds > longest && " " + t("This one is longer, so it stops at {n} seconds.", { n: longest })}

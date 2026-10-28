@@ -1,20 +1,42 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { isValidElement, memo, useRef, useState, type ReactNode } from "react";
+import { isValidElement, memo, useEffect, useRef, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { api } from "../api";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import rehypeKatex from "rehype-katex";
-import rehypeHighlight from "rehype-highlight";
-import "katex/dist/katex.min.css";
 import { t, useLanguage } from "../i18n";
 import { mathify } from "../math";
 import { CopyButton } from "./CopyButton";
 
 const REMARK: Options["remarkPlugins"] = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
+
+// KaTeX and the code colours are most of the window's startup code, and
+// most replies need neither, so they load the first time one does.
+type Plugin = NonNullable<Options["rehypePlugins"]>[number];
+const plugins: { math?: Plugin; code?: Plugin } = {};
+const loading: { math?: Promise<void>; code?: Promise<void> } = {};
+const needsMath = (md: string) => md.includes("$$");
 // Code is coloured only when the reply names its language (guessing it
 // was often wrong, and slow on a reply that's still coming).
-const REHYPE: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false, strict: "ignore" }], [rehypeHighlight, { detect: false }]];
+const needsCode = (md: string) => /```[\w+#.-]/.test(md);
+
+function load(kind: "math" | "code"): Promise<void> {
+  loading[kind] ??=
+    kind === "math"
+      ? Promise.all([import("rehype-katex"), import("katex/dist/katex.min.css")]).then(([m]) => {
+          plugins.math = [m.default, { throwOnError: false, strict: "ignore" }];
+        })
+      : import("rehype-highlight").then((m) => {
+          plugins.code = [m.default, { detect: false }];
+        });
+  return loading[kind];
+}
+
+/** Loads what these texts need to show fully, for rendering them all at once (a saved page). */
+export async function markdownReady(texts: string[]): Promise<void> {
+  const md = texts.map(mathify);
+  await Promise.all([md.some(needsMath) && load("math"), md.some(needsCode) && load("code")]);
+}
 
 /** The text inside a parsed element (a code block's code). */
 function textOf(node: unknown): string {
@@ -115,10 +137,19 @@ const COMPONENTS: Components = {
  *  reply re-renders the chat on every word) or the language does. */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
   useLanguage();
+  const md = mathify(text);
+  const math = needsMath(md);
+  const code = needsCode(md);
+  const [, loaded] = useState(0);
+  useEffect(() => {
+    const waiting = [math && !plugins.math && load("math"), code && !plugins.code && load("code")].filter(Boolean);
+    if (waiting.length) Promise.all(waiting).then(() => loaded((n) => n + 1), () => {});
+  }, [math, code]);
+  const rehype = [math && plugins.math, code && plugins.code].filter((p): p is Plugin => !!p);
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={COMPONENTS}>
-        {mathify(text)}
+      <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={rehype} components={COMPONENTS}>
+        {md}
       </ReactMarkdown>
     </div>
   );

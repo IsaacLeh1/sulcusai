@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, errorText, type Chat, type Message } from "../api";
 import { t } from "../i18n";
-import { Markdown } from "./Markdown";
+import { Markdown, markdownReady } from "./Markdown";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
 
@@ -73,6 +73,7 @@ export function ExportChat({ chat, messages, onClose, toast }: { chat: Chat; mes
     });
     if (!path) return;
     try {
+      if (ext === "html") await markdownReady(messages.map((m) => m.content));
       await api.exportChat(chat.id, path, ext === "html" ? chatPage(chat, messages) : undefined);
       toast(t("Saved the chat."), "success");
       onClose();
@@ -81,7 +82,8 @@ export function ExportChat({ chat, messages, onClose, toast }: { chat: Chat; mes
     }
   };
   // Printing the page by itself, out of sight: the print window can save it as a PDF.
-  const print = () => {
+  const print = async () => {
+    await markdownReady(messages.map((m) => m.content)).catch(() => {});
     const frame = document.createElement("iframe");
     frame.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
     frame.srcdoc = chatPage(chat, messages);

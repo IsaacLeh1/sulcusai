@@ -4984,8 +4984,47 @@
             "url": "https://huggingface.co/QuantStack/Wan2.2-T2V-A14B-GGUF/resolve/main/VAE/Wan2.1_VAE.safetensors",
             "size": 253815318,
             "sha256": "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
+          },
+          {
+            "role": "lora",
+            "file": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+            "size": 738005744,
+            "sha256": "85c4a61c30e0497aa44b91d93a893b624708461a56fe5485183b28fa07e2dfb3"
           }
         ],
+        "engine": {
+          "name": "stable-diffusion.cpp",
+          "license": "MIT",
+          "build": "master-1017-be48649",
+          "assets": {
+            "vulkan-x64": {
+              "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1017-be48649/sd-master-be48649-bin-win-vulkan-x64.zip",
+              "size": 29744133,
+              "sha256": "833414dfe255d9709c6184e699017028ee8d5522058ad53b201d9602805c6b41"
+            },
+            "cpu-x64": {
+              "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1017-be48649/sd-master-be48649-bin-win-cpu-x64.zip",
+              "size": 18080575,
+              "sha256": "f0f76c8176a90cafc431ca7d5049cbe8c5cea61ca7cb92b78e07361d41d8fb21"
+            },
+            "linux-vulkan-x64": {
+              "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1017-be48649/sd-master-be48649-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip",
+              "size": 37646815,
+              "sha256": "794c913d077aaf72025e772b2acfb6a30f49156e92d072461ae15ce958d95c14"
+            },
+            "linux-cpu-x64": {
+              "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1017-be48649/sd-master-be48649-bin-Linux-Ubuntu-24.04-x86_64.zip",
+              "size": 27322693,
+              "sha256": "1016ea927e00b0176ca23aa9f5dc5de68290ea7e115eb3fe6c2399acca41701f"
+            },
+            "macos-arm64": {
+              "url": "https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1017-be48649/sd-master-be48649-bin-Darwin-macOS-26.6.2-arm64.zip",
+              "size": 37580315,
+              "sha256": "6478d12a084b5d7f4158d45606e1fbbd56698e44bea60363e90709c9d6d9aaf1"
+            }
+          }
+        },
         "min_vram_gb": 12,
         "cpu": false,
         "secs": 1800,
@@ -4999,8 +5038,8 @@
           "Big download (about 18 GB)"
         ],
         "defaults": {
-          "steps": 10,
-          "cfg": 4.5,
+          "steps": 4,
+          "cfg": 1.0,
           "sampler": "euler",
           "width": 640,
           "height": 368,
@@ -6271,16 +6310,16 @@
     "ditto": {
       "name": "Ditto",
       "license": "Apache-2.0",
-      "build": "c3e47ee",
+      "build": "c3e47ee-r2",
       "uv": {
         "url": "https://github.com/astral-sh/uv/releases/download/0.13.5/uv-x86_64-pc-windows-msvc.zip",
         "size": 15264056,
         "sha256": "a38b8d1902b7cfbc76b423ba1bb456f623f42064cdc72628b6075b89afd1019a"
       },
       "source": {
-        "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/ditto-talkinghead-c3e47ee.zip",
-        "size": 127538,
-        "sha256": "d7b4b0edcb104d422615aedb201a8c7b41854121bdee0c48eff616ecad46c0db"
+        "url": "https://github.com/IsaacLeh1/sulcusai/releases/download/engines/ditto-talkinghead-c3e47ee-r2.zip",
+        "size": 167264,
+        "sha256": "96fe288fd7977df5519fe3b1e8e508ecc0e0991843d61ef7e0813c92d9d1ee20"
       },
       "files": [
         {

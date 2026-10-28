@@ -427,7 +427,7 @@ fn children(dir: &Path, keep: impl Fn(&str) -> bool) -> Vec<PathBuf> {
 /// isn't the one the app uses now. Unknown folders are left alone.
 fn old_engines(state: &AppState) -> Vec<PathBuf> {
     let c = &state.catalog;
-    let current = [
+    let mut current = vec![
         format!("{}-", c.engine.build),
         format!("sd-{}-", c.media.engine.build),
         format!("acestep-{}-", c.media.music_engine.build),
@@ -438,14 +438,19 @@ fn old_engines(state: &AppState) -> Vec<PathBuf> {
         // The music trainer's folder starts like a music engine's.
         c.media.trainer.as_ref().map_or_else(|| "acestep-trainer-".to_string(), |t| format!("acestep-trainer-{}", t.build)),
     ];
+    // Picture engines that a model has as its own build.
+    current.extend(c.media.models.iter().filter_map(|m| m.engine.as_ref()).map(|e| format!("sd-{}-", e.build)));
     let llama = |n: &str| n.starts_with('b') && n[1..].split('-').next().is_some_and(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()));
     // Heretic's setup (its own Python environment, a few GB) of an earlier
     // build: its name has dots ("heretic-1.4.0-b11450"), so it's named in full.
     let heretic_now = c.heretic.as_ref().map(|h| crate::uncensor::source_dir(&state.paths, h)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    // Ditto's earlier setups (their own Python environment, a few GB).
+    let ditto_now = c.media.ditto.as_ref().map(|d| crate::media::ditto::source_dir(&state.paths, d)).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
     children(&state.paths.engines, |n| {
         let known = llama(n) || ["sd-", "acestep-", "whisper-", "onnxruntime-"].iter().any(|p| n.starts_with(p));
         let old_heretic = n.starts_with("heretic-") && heretic_now.as_deref().is_some_and(|now| now != n);
-        (known && !current.iter().any(|p| n.starts_with(p.as_str())) && !n.contains('.')) || old_heretic
+        let old_ditto = n.starts_with("ditto-") && ditto_now.as_deref().is_some_and(|now| now != n);
+        (known && !current.iter().any(|p| n.starts_with(p.as_str())) && !n.contains('.')) || old_heretic || old_ditto
     })
     .into_iter()
     .filter(|p| p.is_dir())
