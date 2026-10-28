@@ -195,7 +195,7 @@ mod tests {
         for l in listed_drivers() {
             println!("listed: {} · {} · {}", l.name, l.version, l.date);
         }
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         println!("notes: {:#?}", check(&state).await);
     }
 

@@ -1156,15 +1156,17 @@ mod tests {
 
     #[test]
     fn it_runs_from_its_folder_with_its_files() {
-        let a = args(Path::new(r"C:\e\heretic-1.4.0-b11450"), Path::new(r"C:\w\original"), Path::new(r"C:\w\saved"), Path::new(r"C:\w\heretic"), Path::new(r"C:\e\heretic-1.4.0-b11450\prompts"), 1000, true);
+        let (e, w) = (Path::new("e").join("heretic-1.4.0-b11450"), Path::new("w"));
+        let a = args(&e, &w.join("original"), &w.join("saved"), &w.join("heretic"), &e.join("prompts"), 1000, true);
         let a: Vec<String> = a.iter().map(|s| s.to_string_lossy().into_owned()).collect();
         assert_eq!(&a[..4], ["run", "--frozen", "--no-sync", "--project"]);
-        assert!(a.contains(&r"C:\e\heretic-1.4.0-b11450\uncensor.py".to_string()));
+        assert!(a.contains(&e.join("uncensor.py").to_string_lossy().into_owned()));
         assert!(a.windows(2).any(|w| w == ["--trials", "400"]), "tries are kept to 400 at most");
         assert_eq!(a.last().map(String::as_str), Some("--quantize"));
-        let c = convert_args(Path::new(r"C:\e\h"), Path::new(r"C:\w\saved"), Path::new(r"C:\w\copy.gguf"), "Qwen3 4B (uncensored)");
+        let c = convert_args(&Path::new("e").join("h"), &w.join("saved"), &w.join("copy.gguf"), "Qwen3 4B (uncensored)");
         let c: Vec<String> = c.iter().map(|s| s.to_string_lossy().into_owned()).collect();
-        assert!(c.iter().any(|s| s.ends_with(r"llama-convert\convert_hf_to_gguf.py")));
+        let script = Path::new("llama-convert").join("convert_hf_to_gguf.py");
+        assert!(c.iter().any(|s| s.ends_with(&*script.to_string_lossy())));
         assert_eq!(&c[c.len() - 2..], ["--model-name", "Qwen3 4B (uncensored)"], "named, not after its folder");
     }
 

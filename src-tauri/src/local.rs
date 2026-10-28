@@ -702,7 +702,7 @@ mod tests {
     #[ignore]
     fn adds_the_models_in_a_real_folder() {
         let dir = std::env::var("SULCUSAI_TEST_MODEL_DIR").expect("SULCUSAI_TEST_MODEL_DIR");
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let r = import_folder(&state, Path::new(&dir)).unwrap();
         println!("added {:?}, skipped {:?}", r.added, r.skipped);
         assert!(!r.added.is_empty());

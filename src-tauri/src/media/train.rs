@@ -274,7 +274,8 @@ mod tests {
 
     #[test]
     fn the_dataset_marks_songs_with_the_trigger() {
-        let s = [Sample { file: PathBuf::from(r"C:\j\audio\01.mp3"), lyrics: Some("[Verse]\nla la la".into()), seconds: 99.6 }, Sample { file: PathBuf::from(r"C:\j\audio\02.wav"), lyrics: None, seconds: 60.0 }];
+        let audio = PathBuf::from("j").join("audio");
+        let s = [Sample { file: audio.join("01.mp3"), lyrics: Some("[Verse]\nla la la".into()), seconds: 99.6 }, Sample { file: audio.join("02.wav"), lyrics: None, seconds: 60.0 }];
         let v = dataset_json(&s, "warm acoustic country", "ikessongs");
         assert_eq!(v["metadata"]["custom_tag"], "ikessongs");
         assert_eq!(v["samples"][0]["filename"], "01.mp3");

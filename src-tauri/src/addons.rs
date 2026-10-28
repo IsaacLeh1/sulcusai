@@ -272,7 +272,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn e2e_add_ons_start_with_their_tools() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         for id in ["memory", "time"] {
             let started = std::time::Instant::now();
             let tools = tools_for_test(&state, id, &HashMap::new()).await.unwrap();

@@ -7946,7 +7946,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn studio_view_does_not_deadlock() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         for _ in 0..2 {
             let s = state.clone();
             let (tx, rx) = std::sync::mpsc::channel();

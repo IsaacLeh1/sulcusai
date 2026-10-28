@@ -143,11 +143,12 @@ mod tests {
 
     #[test]
     fn it_runs_from_its_folder_with_its_files() {
-        let a = args(Path::new(r"C:\e\ditto-c3e47ee"), Path::new(r"C:\m\ditto"), Path::new(r"C:\w\in.png"), Path::new(r"C:\w\v.wav"), Path::new(r"C:\w\out.mp4"), 80);
+        let (e, m, w) = (Path::new("e").join("ditto-c3e47ee"), Path::new("m").join("ditto"), Path::new("w"));
+        let a = args(&e, &m, &w.join("in.png"), &w.join("v.wav"), &w.join("out.mp4"), 80);
         let a: Vec<String> = a.iter().map(|s| s.to_string_lossy().into_owned()).collect();
         assert_eq!(&a[..4], ["run", "--frozen", "--no-sync", "--project"]);
-        assert!(a.contains(&r"C:\e\ditto-c3e47ee\talk.py".to_string()));
-        assert!(a.iter().any(|s| s.starts_with(r"C:\m\ditto") && s.ends_with("v0.4_hubert_cfg_pytorch.pkl")));
+        assert!(a.contains(&e.join("talk.py").to_string_lossy().into_owned()));
+        assert!(a.iter().any(|s| s.starts_with(&*m.to_string_lossy()) && s.ends_with("v0.4_hubert_cfg_pytorch.pkl")));
         assert_eq!(a.last().map(String::as_str), Some("50"), "steps are kept to 50 at most");
     }
 

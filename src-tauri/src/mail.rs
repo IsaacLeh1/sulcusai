@@ -1998,7 +1998,7 @@ mod live {
             imap_security: Security::Plain,
             ..Default::default()
         };
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let c = state.cipher().unwrap();
         {
             let conn = state.db.lock().unwrap();

@@ -723,7 +723,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn pasted_links_find_the_right_kind_of_model() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let client = hf::client(&state).unwrap();
         for (link, kind) in [
             ("https://huggingface.co/SG161222/RealVisXL_V5.0/blob/main/RealVisXL_V5.0_fp16.safetensors", Some("image")),
@@ -748,7 +748,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn search_hugging_face_for_media_models() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         for (kind, q, sort) in [("image", "", "downloads"), ("image", "juggernaut", "downloads"), ("video", "", "downloads"), ("music", "", "downloads"), ("image", "", "trending")] {
             let r = search(&state, kind, q, sort, false).await.unwrap();
             println!("

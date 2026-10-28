@@ -102,8 +102,8 @@ fn texts(s: &AppState, contact: &str) -> Vec<String> {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn codes_link_people_up_to_their_limit() {
-    let a = crate::e2e::scratch_state();
-    let (b, c, d) = (crate::e2e::scratch_state(), crate::e2e::scratch_state(), crate::e2e::scratch_state());
+    let a = crate::testutil::scratch_state();
+    let (b, c, d) = (crate::testutil::scratch_state(), crate::testutil::scratch_state(), crate::testutil::scratch_state());
     update(&a, |x| x.name = "Ana".into()).unwrap();
     let addr_a = listen(&a).await;
     let none = |_: &str| {};
@@ -153,8 +153,8 @@ async fn codes_link_people_up_to_their_limit() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn messages_cross_on_a_live_link() {
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_a = listen(&a).await;
     let addr_b = listen(&b).await;
@@ -250,8 +250,8 @@ async fn messages_cross_on_a_live_link() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_shared_chat_is_watched_live() {
     use crate::db::Message;
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_a = listen(&a).await;
     let ca = a.cipher().unwrap();
@@ -337,8 +337,8 @@ async fn a_shared_chat_is_watched_live() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn big_files_and_folders_cross_in_parts() {
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_a = listen(&a).await;
     let s = b.clone();
@@ -376,8 +376,8 @@ async fn big_files_and_folders_cross_in_parts() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_lent_model_answers_within_its_limits() {
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_a = listen(&a).await;
     let ca = a.cipher().unwrap();
@@ -435,8 +435,8 @@ async fn a_lent_model_answers_within_its_limits() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn crossed_calls_settle_on_one_link() {
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_a = listen(&a).await;
     let addr_b = listen(&b).await;
@@ -546,8 +546,8 @@ fn waiting_at(s: &AppState, from: &str) -> Option<ask::AskView> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn assistants_ask_each_other_with_permission() {
     let seen = stand_in();
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_b = listen(&b).await;
     // Ben shares a chat with Ana: his assistant may use it.
@@ -620,8 +620,8 @@ async fn assistants_ask_each_other_with_permission() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_assistants_work_something_out() {
     let _seen = stand_in();
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     let addr_b = listen(&b).await;
     // Ben lets Ana's assistant work with his without asking him each time.
@@ -726,8 +726,8 @@ async fn people_through_the_real_relay() {
 #[cfg(windows)]
 async fn through_relay(url: String) {
     let _seen = stand_in();
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     let (id_a, id_b) = linked(&a, &b, ("Ana", "Ben"));
     for s in [&a, &b] {
         crate::db::update_settings(&s.db.lock().unwrap(), |x| x.connectivity = crate::net::Connectivity::Cloud).unwrap();
@@ -784,7 +784,7 @@ async fn through_relay(url: String) {
 #[cfg(windows)]
 #[test]
 fn the_people_page_and_the_listener_never_deadlock() {
-    let s = crate::e2e::scratch_state();
+    let s = crate::testutil::scratch_state();
     codes::code_for_test(&s, 1);
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     let page = {
@@ -835,8 +835,8 @@ async fn until_long(what: &str, f: impl Fn() -> bool) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn people_link_and_talk_through_sulcusais_relay() {
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     for s in [&a, &b] {
         features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
     }
@@ -874,8 +874,8 @@ async fn people_assistant_on_a_real_model() {
     use chrono::{Datelike, Duration as Days, Local, NaiveTime, TimeZone};
     let (_eng, ep, name) = crate::e2e::test_model().await;
     *ask::TEST_ENDPOINT.lock().unwrap() = Some(ep);
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     for s in [&a, &b] {
         features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
         features::set(&s.db.lock().unwrap(), Feature::Calendar, true).unwrap();
@@ -940,8 +940,8 @@ async fn people_assistant_on_a_real_model() {
 async fn a_timed_message_goes_by_itself() {
     let (_eng, ep, name) = crate::e2e::test_model().await;
     *crate::schedule::TEST_ENDPOINT.lock().unwrap() = Some(ep);
-    let a = crate::e2e::scratch_state();
-    let b = crate::e2e::scratch_state();
+    let a = crate::testutil::scratch_state();
+    let b = crate::testutil::scratch_state();
     for s in [&a, &b] {
         features::set(&s.db.lock().unwrap(), Feature::People, true).unwrap();
         features::set(&s.db.lock().unwrap(), Feature::Scheduled, true).unwrap();

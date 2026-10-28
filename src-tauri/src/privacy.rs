@@ -515,7 +515,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn saving_settings_does_not_freeze() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let (tx, rx) = std::sync::mpsc::channel();
         let s = state.clone();
         std::thread::spawn(move || {
@@ -645,7 +645,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn tor_hides_the_address() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         db::set(&state.db.lock().unwrap(), KEY, &PrivacySettings { enabled: true, mail: true, ..Default::default() }).unwrap();
         let started = std::time::Instant::now();
         apply(state.clone(), None, true).await.unwrap();

@@ -760,7 +760,7 @@ mod live {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn search_and_fetch_from_hugging_face() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         println!("budget: {:?}", state.budget());
         for (q, sort) in [("gpt-oss", "downloads"), ("", "trending"), ("qwen3", "downloads")] {
             let r = search(&state, q, sort, false, "").await.unwrap();
