@@ -1061,6 +1061,8 @@ export interface Connector {
   plugin: string | null;
   tools: McpTool[];
   tool_modes: Record<string, ToolMode>;
+  /** Signed in to a connector at an address (who, and where; never the tokens). */
+  auth?: { account: string; issuer: string } | null;
 }
 
 export interface Plugin {
@@ -1072,6 +1074,8 @@ export interface Plugin {
   dir: string;
   skills: { name: string; description: string }[];
   connectors: string[];
+  /** Commands it runs at points of a reply, agreed to when it was installed. */
+  checks: { event: "before_tool" | "after_tool" | "message_sent" | "reply_done"; tools: string[]; command: string; timeout: number }[];
 }
 
 export interface PluginPreview {
@@ -1080,6 +1084,8 @@ export interface PluginPreview {
   description: string;
   skills: string[];
   programs: string[];
+  /** Commands its checks would run on this PC, "when: command". */
+  checks: string[];
 }
 
 export interface Memory {
@@ -1282,6 +1288,12 @@ export interface PendingApproval {
   once?: boolean;
   /** What "Always allow…" would save, for the person to change first. */
   rule?: { tool: string; pattern: string | null; project: string | null } | null;
+}
+
+/** What going back to a message would take away. */
+export interface GoBack {
+  messages: number;
+  changes: number;
 }
 
 /** A saved rule: a tool (or `prefix*`), what it acts on, and whether it's allowed, asked about or refused. */
@@ -3307,9 +3319,14 @@ export const api = {
   deleteConnector: (id: string) => invoke<void>("delete_connector", { id }),
   setConnectorEnabled: (id: string, enabled: boolean) => invoke<void>("set_connector_enabled", { id, enabled }),
   setToolMode: (id: string, tool: string, mode: ToolMode) => invoke<void>("set_tool_mode", { id, tool, mode }),
+  goBackPreview: (chatId: string, messageId: string) => invoke<GoBack>("go_back_preview_cmd", { chatId, messageId }),
+  goBack: (chatId: string, messageId: string, files: boolean) => invoke<{ text: string; notes: string[] }>("go_back_cmd", { chatId, messageId, files }),
+  connectorSignIn: (id: string) => invoke<Connector>("connector_sign_in", { id }),
+  connectorSignOut: (id: string) => invoke<Connector>("connector_sign_out", { id }),
   plugins: () => invoke<Plugin[]>("list_plugins"),
   inspectPlugin: (path: string) => invoke<PluginPreview>("inspect_plugin", { path }),
-  installPlugin: (path: string) => invoke<Plugin>("install_plugin", { path }),
+  installPlugin: (path: string, allowChecks = false) => invoke<Plugin>("install_plugin", { path, allowChecks }),
+  pluginCheckProblems: () => invoke<Record<string, string>>("plugin_check_problems"),
   setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
   removePlugin: (id: string) => invoke<void>("remove_plugin", { id }),
   allowances: () => invoke<Allowance[]>("list_allowances"),

@@ -13,8 +13,20 @@ const MODES: { id: ToolMode; label: string }[] = [
   { id: "off", label: tx("Off") },
 ];
 
-function modeOf(c: Connector, tool: string, readOnly: boolean): ToolMode {
-  return c.tool_modes[tool] ?? (readOnly ? "allow" : "ask");
+/** The host a connector's requests go to, when it isn't on this PC. */
+export function webHost(c: Connector): string | null {
+  if (!c.spec.url) return null;
+  try {
+    const host = new URL(c.spec.url).hostname.toLowerCase();
+    return ["localhost", "127.0.0.1", "[::1]", "::1"].includes(host) ? null : host;
+  } catch {
+    return null;
+  }
+}
+
+/** Mirrors `Connector::mode`: on the web even a read-only tool asks. */
+export function modeOf(c: Connector, tool: string, readOnly: boolean): ToolMode {
+  return c.tool_modes[tool] ?? (readOnly && !webHost(c) ? "allow" : "ask");
 }
 
 export function ConnectorsView({ toast }: { toast: PushToast }) {
@@ -23,10 +35,13 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [editing, setEditing] = useState<Connector | "new" | null>(null);
   const [preview, setPreview] = useState<{ path: string; info: PluginPreview } | null>(null);
+  const [checksOk, setChecksOk] = useState(false);
+  const [checkProblems, setCheckProblems] = useState<Record<string, string>>({});
 
   const load = () => {
     api.connectors().then(setConnectors).catch((e) => toast(errorText(e), "error"));
     api.plugins().then(setPlugins).catch(() => {});
+    api.pluginCheckProblems().then(setCheckProblems).catch(() => {});
   };
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -34,6 +49,7 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
     const path = await open({ directory: true, multiple: false, title: t("Choose a plugin or skill folder (with plugin.json or SKILL.md)") });
     if (typeof path !== "string") return;
     try {
+      setChecksOk(false);
       setPreview({ path, info: await api.inspectPlugin(path) });
     } catch (e) {
       toast(errorText(e), "error");
@@ -91,6 +107,8 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
                   <strong>{p.name}</strong> {p.version && <span className="muted small">v{p.version}</span>}
                   <span className="small muted block">{p.description}</span>
                   {p.skills.length > 0 && <span className="small block">{t("Skills: {names}", { names: p.skills.map((s) => s.name).join(", ") })}</span>}
+                  {p.checks.length > 0 && <span className="small block">{p.checks.length === 1 ? t("Runs 1 check during replies") : t("Runs {n} checks during replies", { n: p.checks.length })}</span>}
+                  {checkProblems[p.name] && <span className="small block warn-text">{checkProblems[p.name]}</span>}
                 </div>
                 <div className="row">
                   <label className="switch" title={p.enabled ? t("On") : t("Off")}>
@@ -156,13 +174,25 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
           ) : (
             <p className="small muted">{t("It doesn't run any programs.")}</p>
           )}
+          {preview.info.checks.length > 0 && (
+            <>
+              <strong className="small">{t("This plugin runs these commands on your PC")}</strong>
+              <p className="small muted">{t("At these points of each reply, with what the assistant is doing. A command can stop a step, have you asked first, or tell the assistant something. They don't run in Plan mode or in incognito chats.")}</p>
+              <pre className="tool-output boxed">{preview.info.checks.join("\n")}</pre>
+              <label className="check small">
+                <input type="checkbox" checked={checksOk} onChange={(e) => setChecksOk(e.target.checked)} />
+                <span>{t("I trust these commands to run on this PC")}</span>
+              </label>
+            </>
+          )}
           <div className="modal-actions">
             <button className="btn" onClick={() => setPreview(null)}>{t("Cancel")}</button>
             <button
               className="btn primary"
+              disabled={preview.info.checks.length > 0 && !checksOk}
               onClick={async () => {
                 try {
-                  await api.installPlugin(preview.path);
+                  await api.installPlugin(preview.path, checksOk);
                   setPreview(null);
                   load();
                   toast(t("Plugin installed."), "success");
@@ -181,6 +211,19 @@ export function ConnectorsView({ toast }: { toast: PushToast }) {
 }
 
 function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: Connector; open: boolean; onToggleOpen: () => void; onEdit?: () => void; onChanged: () => void; toast: PushToast }) {
+  const host = webHost(c);
+  const [signing, setSigning] = useState(false);
+  const sign = async (into: boolean) => {
+    setSigning(true);
+    try {
+      await (into ? api.connectorSignIn(c.id) : api.connectorSignOut(c.id));
+      onChanged();
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setSigning(false);
+    }
+  };
   return (
     <div className="connector">
       <div className="setting-row">
@@ -220,6 +263,23 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
           )}
         </div>
       </div>
+      {c.spec.url && (
+        <div className="row wrap small">
+          {c.auth ? (
+            <>
+              <span className="muted">{c.auth.account ? t("Signed in as {account}", { account: c.auth.account }) : t("Signed in")}</span>
+              <button className="btn ghost small" disabled={signing} onClick={() => sign(false)}>
+                {t("Sign out")}
+              </button>
+            </>
+          ) : (
+            <button className="btn small" disabled={signing} onClick={() => sign(true)} title={t("Opens the connector's sign-in page in your browser")}>
+              {signing ? t("Waiting for the browser…") : t("Sign in to {name}", { name: c.name })}
+            </button>
+          )}
+          {host && <span className="muted">{t("Each call asks first, since what it's given goes to {host}. Allow a tool to stop being asked.", { host })}</span>}
+        </div>
+      )}
       {open && (
         <ul className="tool-modes">
           {c.tools.length === 0 && <li className="muted small">{t("No tools seen yet. Turn it on and start a chat, or edit and save it to connect.")}</li>}
@@ -234,6 +294,7 @@ function ConnectorRow({ c, open, onToggleOpen, onEdit, onChanged, toast }: { c: 
                 {MODES.map((m) => (
                   <button
                     key={m.id}
+                    title={host && m.id === "allow" ? t("Runs without asking: what it's given goes to {host}", { host }) : undefined}
                     className={`mode ${modeOf(c, tool.name, tool.read_only) === m.id ? "active" : ""}`}
                     onClick={async () => {
                       try {

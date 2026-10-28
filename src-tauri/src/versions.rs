@@ -106,6 +106,77 @@ pub fn switch(conn: &Connection, c: &Cipher, chat_id: &str, anchor: &str, to: us
     tx.commit().map_err(err)
 }
 
+/// What going back to a message would take away, for the person to confirm.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct GoBack {
+    /// Messages after the chosen one.
+    pub messages: usize,
+    /// File changes those turns made that can be put back.
+    pub changes: usize,
+}
+
+/// From the chosen message on: its index and the turns started in that
+/// stretch (each user message that started one).
+fn from_message(all: &[Message], message_id: &str) -> Result<(usize, Vec<String>), String> {
+    let at = all.iter().position(|m| m.id == message_id).ok_or("That message isn't in this chat any more.")?;
+    if all[at].role != "user" {
+        return Err("Only a message you wrote can be gone back to.".into());
+    }
+    Ok((at, all[at..].iter().filter(|m| m.role == "user").map(|m| m.id.clone()).collect()))
+}
+
+pub fn go_back_preview(conn: &Connection, c: &Cipher, chat_id: &str, message_id: &str) -> Result<GoBack, String> {
+    let all = db::messages(conn, c, chat_id);
+    let (at, turns) = from_message(&all, message_id)?;
+    let changes = turns.iter().map(|t| db::turn_checkpoints(conn, c, t).len()).sum();
+    Ok(GoBack { messages: all.len() - at - 1, changes })
+}
+
+/// Goes back to a message you wrote: the files the turns from it on
+/// changed are put back (newest first) when `files`, and the message and
+/// everything after it is set aside as a version, so it can be switched
+/// back to. Returns the message's text, to edit and send again, and notes
+/// on anything that couldn't be put back.
+pub fn go_back(conn: &Connection, c: &Cipher, chat_id: &str, message_id: &str, files: bool) -> Result<(String, Vec<String>), String> {
+    let all = db::messages(conn, c, chat_id);
+    let (at, turns) = from_message(&all, message_id)?;
+    let mut notes = Vec::new();
+    if files {
+        for turn in turns.iter().rev() {
+            notes.extend(crate::checkpoint::undo_turn(conn, c, turn));
+        }
+    }
+    let anchor = if at == 0 { String::new() } else { all[at - 1].id.clone() };
+    set_aside(conn, c, chat_id, &anchor)?;
+    Ok((all[at].content.clone(), notes))
+}
+
+#[tauri::command(async)]
+pub fn go_back_preview_cmd(state: crate::AppStateRef, chat_id: String, message_id: String) -> Result<GoBack, String> {
+    let c = state.cipher()?;
+    go_back_preview(&state.db.lock().unwrap(), &c, &chat_id, &message_id)
+}
+
+#[derive(Debug, Serialize)]
+pub struct WentBack {
+    pub text: String,
+    pub notes: Vec<String>,
+}
+
+#[tauri::command(async)]
+pub fn go_back_cmd(app: tauri::AppHandle, state: crate::AppStateRef, chat_id: String, message_id: String, files: bool) -> Result<WentBack, String> {
+    use tauri::Emitter;
+    let c = state.cipher()?;
+    if state.generations.lock().unwrap().contains_key(&chat_id) {
+        return Err("Stop the reply first.".into());
+    }
+    let (text, notes) = go_back(&state.db.lock().unwrap(), &c, &chat_id, &message_id, files)?;
+    state.contexts.lock().unwrap().remove(&chat_id);
+    state.log("chat", &format!("Went back to an earlier message{}", if files { ", putting back file changes" } else { "" }));
+    app.emit("chat:changed", serde_json::json!({ "chat_id": chat_id })).ok();
+    Ok(WentBack { text, notes })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +232,44 @@ mod tests {
         conn.execute("DELETE FROM chats WHERE id = 'c'", []).unwrap();
         let left: i64 = conn.query_row("SELECT COUNT(*) FROM message_versions", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
+    }
+
+    /// Three turns each change a file; going back to the second puts the
+    /// file back as it was before that turn, sets the messages from there
+    /// aside (a version to switch back to) and hands back what was asked.
+    #[test]
+    fn going_back_puts_files_and_messages_back() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::init_for_test(&conn);
+        let c = Cipher::random();
+        conn.execute("INSERT INTO chats (id, title, created_at, updated_at) VALUES ('c', 't', 0, 0)", []).unwrap();
+        let dir = std::env::temp_dir().join(format!("sulcusai-goback-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, "v0").unwrap();
+        let conn = std::sync::Mutex::new(conn);
+        for (i, text) in ["v1", "v2", "v3"].iter().enumerate() {
+            let turn = format!("u{}", i + 1);
+            say(&conn.lock().unwrap(), &c, &turn, "user", &format!("make it {text}"), i as i64 * 10 + 1);
+            let rec = crate::checkpoint::Recorder { db: &conn, cipher: &c, dir: dir.join("backups"), chat_id: "c", turn_id: &turn };
+            rec.before_write(&file).unwrap();
+            std::fs::write(&file, text).unwrap();
+            say(&conn.lock().unwrap(), &c, &format!("a{}", i + 1), "assistant", "done", i as i64 * 10 + 2);
+        }
+        let conn = conn.into_inner().unwrap();
+        assert_eq!(go_back_preview(&conn, &c, "c", "u2").unwrap(), GoBack { messages: 3, changes: 2 });
+        assert!(go_back_preview(&conn, &c, "c", "a2").is_err(), "only your own messages");
+        let (text, notes) = go_back(&conn, &c, "c", "u2", true).unwrap();
+        assert_eq!(text, "make it v2");
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1");
+        assert_eq!(texts(&conn, &c), ["make it v1", "done"]);
+        assert_eq!(list(&conn, &c, "c")[0].anchor, "a1");
+        assert_eq!(go_back_preview(&conn, &c, "c", "u1").unwrap(), GoBack { messages: 1, changes: 1 });
+        // Without the files, only the messages go.
+        go_back(&conn, &c, "c", "u1", false).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1");
+        assert!(texts(&conn, &c).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

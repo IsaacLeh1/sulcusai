@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { draftOf, setDraft } from "../drafts";
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type KeyboardEvent } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
 import {
   api,
@@ -21,36 +21,36 @@ import {
   type CloudChoice,
   type LensDirection, type TaughtAdapter,
   type Versions,
+  type GoBack,
 } from "../api";
 import { APP_NAME } from "../brand";
+import { shortcuts, skillAsk, SUMMARY_ASK, type Action } from "../shortcuts";
+import { drawn, held, onDelta, onStart, onStatus, QUIET, startStreaming, withApproval, withoutApproval, type Live, type Status, type Streaming } from "../chatState";
 import { t, tx } from "../i18n";
-import { ApprovalCard, FolderMenu, ToolCard } from "../components/AgentCards";
+import { ApprovalCard, FolderMenu } from "../components/AgentCards";
 import { ContextMeter } from "../components/ContextMeter";
 import { CloudCost } from "../components/CloudCost";
 import { findCloud, priceText, useComputeModels } from "../components/ModelChoices";
 import { GpuLimitMenu } from "../components/Performance";
 import { ShareChat } from "../components/ShareChat";
-import { JobCard, Lightbox, MediaInline, useMediaJobs } from "../components/MediaBits";
+import { JobCard, Lightbox, useMediaJobs } from "../components/MediaBits";
 import { ChatFilesPanel } from "../components/ChatFiles";
 import { ChatMemories, ChatNotes, LinkedChats } from "../components/ChatPanels";
 import { PreviewPanel, latestPreview, usePreviewWidth, type PreviewTarget } from "../components/PreviewPanel";
 import { BrowserPanel } from "./WebViewerView";
-import { useMediaUrl } from "../media";
-import { Markdown } from "../components/Markdown";
-import { CopyButton } from "../components/CopyButton";
-// It brings React's page renderer, which nothing else needs at startup.
 const ExportChat = lazy(() => import("../components/ExportChat").then((m) => ({ default: m.ExportChat })));
 import { AssistantStarters } from "../components/Assistants";
 import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
-import { MicButton, SpeakButton, VoicePanel } from "../components/Voice";
+import { MicButton, VoicePanel } from "../components/Voice";
 import { insertDictation, words } from "../format";
 import { aiModeUrl, GoogleSetup } from "../components/GoogleSetup";
 import { LookForModels } from "./ModelsView";
 import { IncognitoIcon } from "../components/IncognitoIcon";
-import { BackIcon, EditIcon, ForwardIcon, GlobeIcon, NewWindowIcon, PaperclipIcon, ReloadIcon, VoiceIcon } from "../components/Icons";
+import { GlobeIcon, NewWindowIcon, PaperclipIcon, VoiceIcon } from "../components/Icons";
 import { rememberSent, SmartInput, type SlashCommand } from "../components/SmartInput";
 import { expandSlash, SavedPromptsManager, useSavedPrompts } from "../components/SavedPrompts";
+import { renderItems, MessageView, AttachChip, GoBackDialog, RenameDialog, RetryLine, type TurnActions } from "./ChatMessages";
 
 interface Props {
   chat: Chat | null;
@@ -74,13 +74,6 @@ interface Props {
   toast: PushToast;
 }
 
-interface Streaming {
-  id: string;
-  content: string;
-  thinking: string;
-}
-
-type Status = "idle" | "loading" | "thinking" | "writing" | "working";
 
 const MODES: { id: RunMode; label: string; help: string }[] = [
   { id: "plan", label: tx("Plan"), help: tx("Looks around and proposes a plan. Changes nothing until you approve.") },
@@ -120,7 +113,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, onPopOut, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onNewChat, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, onPopOut, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreamingNow] = useState<Streaming | null>(null);
   // Tokens arrive dozens a second and the live reply is drawn as Markdown
@@ -134,23 +127,24 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     setStreamingNow(v);
   }, []);
   const addDelta = useCallback((id: string, content: string, thinking: string) => {
-    const b = buffered.current;
-    if (b && b.id === id) {
-      b.content += content;
-      b.thinking += thinking;
-    } else {
-      buffered.current = { id, content, thinking };
-    }
+    buffered.current = held(buffered.current, id, content, thinking);
     if (flushTimer.current !== undefined) return;
     flushTimer.current = window.setTimeout(() => {
       flushTimer.current = undefined;
       const p = buffered.current;
       buffered.current = null;
-      if (p) setStreamingNow((s) => (s && s.id === p.id ? { ...s, content: s.content + p.content, thinking: s.thinking + p.thinking } : s));
+      if (p) setStreamingNow((s) => drawn(s, p));
     }, 80);
   }, []);
   useEffect(() => () => window.clearTimeout(flushTimer.current), []);
-  const [status, setStatus] = useState<Status>("idle");
+  // Where the reply is (`chatState`), with a setter for each part.
+  const [live, setLive] = useState<Live>(QUIET);
+  const { status, cooling, retrying, queued, lookingUp, readingPictures, handingOff, compacting } = live;
+  const part =
+    <K extends keyof Live>(k: K) =>
+    (v: Live[K] | ((old: Live[K]) => Live[K])) =>
+      setLive((l) => ({ ...l, [k]: typeof v === "function" ? (v as (old: Live[K]) => Live[K])(l[k]) : v }));
+  const setStatus = part("status");
   // What screen readers hear: when a reply starts and when it's ready (not
   // every streamed word).
   const [announce, setAnnounce] = useState("");
@@ -163,19 +157,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     else if (status === "loading") setAnnounce(t("Loading the model."));
     else if (prev === "idle" || prev === "loading") setAnnounce(t("Replying…"));
   }, [status]);
-  /** What's too hot while the heat guard pauses between steps. */
-  const [cooling, setCooling] = useState<string | null>(null);
-  // A cloud provider was busy: when the next try goes, and which it is.
-  const [retrying, setRetrying] = useState<{ provider: string; at: number; attempt: number; of: number } | null>(null);
-  // Waiting in line for another model: one runs at a time.
-  const [queued, setQueued] = useState<{ place: number; model: string; card?: boolean } | null>(null);
-  // Before a picture of something named: checking (or looking up) its look.
-  const [lookingUp, setLookingUp] = useState<string | null>(null);
-  // The picture reader is describing attached pictures for a model that can't see them.
-  const [readingPictures, setReadingPictures] = useState(false);
+  const [setQueued, setCompacting] = [part("queued"), part("compacting")];
   const [helperSteps, setHelperSteps] = useState<Record<string, string[]>>({});
-  const [handingOff, setHandingOff] = useState(false);
-  const [compacting, setCompacting] = useState(false);
   // Auto handed the last message to another model (cleared when the next is sent).
   const [routed, setRouted] = useState<{ name: string; task: string } | null>(null);
   const [context, setContext] = useState<ContextInfo | null>(null);
@@ -302,6 +285,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // Earlier versions after edited messages and other replies.
   const [versions, setVersions] = useState<Versions[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
+  // Going back to a message: which, and what it would take away.
+  const [goingBack, setGoingBack] = useState<{ id: string; info: GoBack } | null>(null);
   useEffect(() => {
     api.versions(chat.id).then(setVersions).catch(() => setVersions([]));
   }, [chat.id, messages]);
@@ -333,27 +318,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   useEffect(() => {
     const mine = <T extends { chat_id: string }>(fn: (p: T) => void) => (p: T) => p.chat_id === chat.id && fn(p);
     const subs = [
-      on("chat:status", mine((p) => {
-        setQueued(p.status === "queued" ? { place: p.place ?? 1, model: p.detail ?? "" } : p.status === "waiting_card" ? { place: p.place ?? 1, model: "", card: true } : null);
-        if (p.status === "handoff") setHandingOff(true);
-        else if (p.status === "compacting") setCompacting(true);
-        else if (p.status === "retrying") setRetrying({ provider: p.provider ?? "", at: Date.now() + (p.seconds ?? 1) * 1000, attempt: p.attempt ?? 1, of: p.of ?? 1 });
-        else if (p.status === "idle") {
-          setCompacting(false);
-          setRetrying(null);
-          setLookingUp(null);
-          setReadingPictures(false);
-        } else if (p.status === "looking_up") {
-          setLookingUp(p.detail ?? "");
-          setStatus("working");
-        } else if (p.status === "reading_pictures") {
-          setReadingPictures(true);
-          setStatus("working");
-        } else if (p.status === "cooling") {
-          setCooling(p.detail ?? t("the PC"));
-          setStatus("working");
-        } else setStatus("loading");
-      })),
+      on("chat:status", mine((p) => setLive((v) => onStatus(v, p, Date.now(), t("the PC"))))),
       on("agent:helper", mine((p) => setHelperSteps((all) => ({ ...all, [p.call_id]: [...(all[p.call_id] ?? []), p.step] })))),
       on("chat:compacted", mine(() => {
         setCompacting(false);
@@ -377,22 +342,12 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       // Saved by itself after a reply: said once, with where to change it.
       on("memory:auto", mine((p) => toast(t("Remembered: {what}", { what: p.saved.join(" ") }), "success"))),
       on("chat:start", mine((p) => {
-        setCooling(null);
-        setRetrying(null);
-        setQueued(null);
-        setLookingUp(null);
-        setReadingPictures(false);
-        setStatus("thinking");
-        // The same message tried again: what it wrote stays (and what was
-        // still waiting to be drawn).
-        const b = buffered.current?.id === p.message_id ? buffered.current : null;
-        setStreaming((s) =>
-          s && s.id === p.message_id ? { ...s, content: s.content + (b?.content ?? ""), thinking: s.thinking + (b?.thinking ?? "") } : { id: p.message_id, content: "", thinking: "" },
-        );
+        setLive(onStart);
+        const waiting = buffered.current;
+        setStreaming((s) => startStreaming(s, p.message_id, waiting));
       })),
       on("chat:delta", mine((p) => {
-        setRetrying(null);
-        if (p.content) setStatus("writing");
+        setLive((v) => onDelta(v, p));
         addDelta(p.message_id, p.content ?? "", p.thinking ?? "");
       })),
       on("agent:step", mine(() => {
@@ -402,8 +357,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         api.messages(chat.id).then(setMessages);
       })),
       on("agent:tool_start", mine((p) => setRunningCalls((all) => new Set(all).add(p.call_id)))),
-      on("agent:approval", mine((p) => setPending((all) => [...all.filter((a) => a.call_id !== p.call_id), p]))),
-      on("agent:approval_done", mine((p) => setPending((all) => all.filter((a) => a.call_id !== p.call_id)))),
+      on("agent:approval", mine((p) => setPending((all) => withApproval(all, p)))),
+      on("agent:approval_done", mine((p) => setPending((all) => withoutApproval(all, p.call_id)))),
       on("chat:done", mine((p) => {
         setQueued(null);
         if (p.context) setContext(p.context);
@@ -533,18 +488,38 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   // Typing "/": saved prompts (they fill the box), /compact, and editing them.
   const [prompts, setPrompts] = useSavedPrompts();
   const [managingPrompts, setManagingPrompts] = useState(false);
-  const slashCommands: SlashCommand[] = [
-    ...prompts.map((p) => ({
-      name: p.name,
-      hint: p.text.replace(/\s+/g, " ").slice(0, 80),
-      pick: () => {
-        setInput(p.text.replace("{input}", ""));
-        requestAnimationFrame(() => inputRef.current?.focus());
-      },
-    })),
-    { name: "compact", hint: t("Sum up the chat so far, so it has room to go on"), pick: () => (setInput(""), compactNow()) },
-    { name: "prompts", hint: t("Add or change saved prompts"), pick: () => (setInput(""), setManagingPrompts(true)) },
-  ];
+  // The skills of the plugins that are on, offered as "/skill-name".
+  const [skills, setSkills] = useState<{ name: string; description: string }[]>([]);
+  useEffect(() => {
+    if (!features.has("connectors")) return setSkills([]);
+    api.plugins().then((ps) => setSkills(ps.filter((p) => p.enabled).flatMap((p) => p.skills))).catch(() => {});
+  }, [features]);
+  const modelPicker = useRef<HTMLSelectElement>(null);
+  const fill = (text: string) => {
+    setInput(text);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+  const run = (a: Action) => {
+    setInput("");
+    if (a === "summarize") sendText(SUMMARY_ASK);
+    else if (a === "new") onNewChat();
+    else if (a === "model") {
+      modelPicker.current?.focus();
+      modelPicker.current?.showPicker?.();
+    } else if (a === "plan" || a === "auto" || a === "bypass") setMode(a);
+    else if (a === "go-back") {
+      const mine = messages.filter((m) => m.role === "user" && !m.meta?.added && !m.meta?.from_person && !m.meta?.from_chat && !m.id.startsWith("pending-"));
+      const lastMine = mine[mine.length - 1];
+      if (lastMine) turns.goBack(lastMine.id);
+      else toast(t("There's no message of yours to go back to yet."), "info");
+    } else if (a === "compact") compactNow();
+    else if (a === "prompts") setManagingPrompts(true);
+  };
+  const slashCommands: SlashCommand[] = shortcuts(prompts, skills).map((s) => ({
+    name: s.name,
+    hint: s.prompt !== undefined || s.skill ? s.hint : t(s.hint),
+    pick: () => (s.prompt !== undefined ? fill(s.prompt.replace("{input}", "")) : s.skill ? fill(skillAsk(s.skill)) : s.action && run(s.action)),
+  }));
 
   const send = () => {
     const text = input.trim();
@@ -712,6 +687,11 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     again: (id) => askAgain(() => api.regenerate(chat.id, id)),
     edit: (id, text) => askAgain(() => api.editMessage(chat.id, id, text)),
     switchTo: (anchor, to) => api.switchVersion(chat.id, anchor, to).catch((e) => toast(errorText(e), "error")),
+    goBack: (id) =>
+      api
+        .goBackPreview(chat.id, id)
+        .then((info) => setGoingBack({ id, info }))
+        .catch((e) => toast(errorText(e), "error")),
   };
   const items = useMemo(
     () => renderItems(messages, undoable, busy, runningCalls, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast, turns),
@@ -1003,7 +983,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
             >
               {t("Ask Google")}
             </button>
-            <select value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
+            <select ref={modelPicker} value={cloud?.id ?? modelId ?? ""} onChange={(e) => switchModel(e.target.value)} aria-label={t("Model for this chat")} disabled={busy}>
               <optgroup label={t("On this PC")}>
                 {installed.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -1169,6 +1149,25 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         </Suspense>
       )}
       {managingPrompts && <SavedPromptsManager prompts={prompts} onChange={setPrompts} onClose={() => setManagingPrompts(false)} toast={toast} />}
+      {goingBack && (
+        <GoBackDialog
+          info={goingBack.info}
+          onCancel={() => setGoingBack(null)}
+          onConfirm={async (files) => {
+            const id = goingBack.id;
+            setGoingBack(null);
+            try {
+              const r = await api.goBack(chat.id, id, files);
+              setInput(r.text);
+              if (r.notes.length) toast(r.notes.join(" "), "error");
+              reload();
+              requestAnimationFrame(() => inputRef.current?.focus());
+            } catch (e) {
+              toast(errorText(e), "error");
+            }
+          }}
+        />
+      )}
       {renaming && (
         <RenameDialog
           title={chat.title}
@@ -1207,394 +1206,5 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         </Modal>
       )}
     </div>
-  );
-}
-
-/** Messages as the reader sees them: tool results tucked into their calls,
- *  and an Undo button at the end of each turn that changed files. */
-function renderItems(
-  messages: Message[],
-  undoable: Set<string>,
-  busy: boolean,
-  runningCalls: Set<string>,
-  undo: (turnId: string) => void,
-  helperSteps: Record<string, string[]>,
-  openChat: (id: string) => void,
-  toast?: PushToast,
-  onEnableWeb?: (() => void) | null,
-  openPicture?: (i: MediaItem) => void,
-  readUpTo = 0,
-  openPreview?: (p: PreviewTarget) => void,
-  /** For saving pictures made in the chat (always on; `toast` above is read-aloud's). */
-  saveToast?: PushToast,
-  turns?: TurnActions,
-): ReactNode[] {
-  const results = new Map<string, Message>();
-  // Where versions start (their first message), or, for one with nothing
-  // in it yet, the message before.
-  const startsAt = new Map<string, Versions>();
-  const after = new Map<string, Versions>();
-  for (const v of turns?.versions ?? []) (v.first ? startsAt : after).set(v.first ?? v.anchor, v);
-  const switcher = (v: Versions) => (
-    <VersionSwitch key={`v-${v.anchor}-${v.first}`} v={v} disabled={busy} onSwitch={(to) => turns?.switchTo(v.anchor, to)} />
-  );
-  // The reply that ends each turn gets "another reply".
-  const lastReply = new Map<string, string>();
-  {
-    let from: string | null = null;
-    for (const m of messages) {
-      if (m.role === "user" && !m.meta?.added) from = !m.meta?.from_person && !m.meta?.from_chat && !m.id.startsWith("pending-") ? m.id : null;
-      else if (m.role === "assistant" && from && m.content && !m.meta?.compacted) lastReply.set(from, m.id);
-    }
-  }
-  const againFor = new Map([...lastReply].map(([user, reply]) => [reply, user]));
-  const userTools = (m: Message) => {
-    if (!turns || m.meta?.added || m.meta?.from_person || m.meta?.from_chat || m.id.startsWith("pending-")) return {};
-    return {
-      editing: turns.editing === m.id,
-      onEdit: busy ? undefined : () => turns.setEditing(m.id),
-      onEditDone: (text: string | null) => (text === null ? turns.setEditing(null) : turns.edit(m.id, text)),
-    };
-  };
-  const out: ReactNode[] = [];
-  if (after.has("")) out.push(switcher(after.get("")!));
-  // "Sent" or "Read" under the newest message (and ones added mid-reply):
-  // read once the model started answering after it.
-  const lastUser = messages.map((m) => m.role === "user" && !m.meta?.from_person).lastIndexOf(true);
-  const receipt = (m: Message, i: number): "sent" | "read" | undefined => {
-    if (m.meta?.from_person || (i !== lastUser && !m.meta?.added)) return undefined;
-    const answered = messages.slice(i + 1).some((x) => x.role === "assistant" || x.role === "tool");
-    return answered || (readUpTo > 0 && m.created_at <= readUpTo) ? "read" : "sent";
-  };
-  for (const m of messages) if (m.role === "tool" && m.tool_call_id) results.set(m.tool_call_id, m);
-
-  let turnId: string | null = null;
-  const closeTurn = (key: string, isLastTurn: boolean) => {
-    if (turnId && undoable.has(turnId) && !(busy && isLastTurn)) {
-      const id = turnId;
-      out.push(
-        <div key={`undo-${key}`} className="undo-row">
-          <button className="btn ghost small" onClick={() => undo(id)}>{t("↶ Undo file changes from this reply")}</button>
-        </div>,
-      );
-    }
-  };
-  messages.forEach((m, i) => {
-    if (startsAt.has(m.id)) out.push(switcher(startsAt.get(m.id)!));
-    if (m.role === "user" && m.meta?.added) {
-      // Added mid-reply: still the same turn (and the same Undo).
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} />);
-    } else if (m.role === "user") {
-      closeTurn(m.id, false);
-      turnId = m.id;
-      out.push(<MessageView key={m.id} m={m} onPicture={openPicture} onOpenChat={openChat} receipt={receipt(m, i)} {...userTools(m)} />);
-    } else if (m.role === "assistant" && m.meta?.compacted) {
-      out.push(<CompactedNote key={m.id} m={m} />);
-    } else if (m.role === "assistant") {
-      const again = againFor.get(m.id);
-      out.push(
-        <Fragment key={m.id}>
-          {(m.content || m.thinking) && <MessageView m={m} toast={toast} onAgain={again && turns && !busy ? () => turns.again(again) : undefined} />}
-          {m.meta?.handoff_to && (
-            <div className="undo-row">
-              <button className="btn small" onClick={() => openChat(m.meta!.handoff_to!)}>{t("Open the continued chat →")}</button>
-            </div>
-          )}
-          {m.tool_calls?.map((c) => {
-            const r = results.get(c.id);
-            if (c.name === "request_web" && r?.meta?.web_request) {
-              return <WebRequestCard key={c.id} title={r.meta.title} onEnable={onEnableWeb ?? null} />;
-            }
-            return (
-              <Fragment key={c.id}>
-                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCalls.has(c.id)} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} toast={saveToast} />
-                {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={saveToast} />}
-              </Fragment>
-            );
-          })}
-        </Fragment>,
-      );
-    }
-    if (after.has(m.id)) out.push(switcher(after.get(m.id)!));
-    if (i === messages.length - 1) closeTurn("end", true);
-  });
-  return out;
-}
-
-/** What a chat's messages can do about asking again (`renderItems`). */
-interface TurnActions {
-  versions: Versions[];
-  editing: string | null;
-  setEditing: (id: string | null) => void;
-  again: (userMessageId: string) => void;
-  edit: (userMessageId: string, text: string) => void;
-  switchTo: (anchor: string, to: number) => void;
-}
-
-/** "‹ 2 of 3 ›": which version of the chat from here on is shown. */
-function VersionSwitch({ v, disabled, onSwitch }: { v: Versions; disabled: boolean; onSwitch: (to: number) => void }) {
-  return (
-    <div className="version-switch" role="group" aria-label={t("Versions from here on")}>
-      <button className="icon-btn" disabled={disabled || v.index === 0} onClick={() => onSwitch(v.index - 1)} title={t("Earlier version")} aria-label={t("Earlier version")}>
-        <BackIcon />
-      </button>
-      <span className="small muted">{t("Version {n} of {count}", { n: v.index + 1, count: v.count })}</span>
-      <button className="icon-btn" disabled={disabled || v.index >= v.count - 1} onClick={() => onSwitch(v.index + 1)} title={t("Later version")} aria-label={t("Later version")}>
-        <ForwardIcon />
-      </button>
-    </div>
-  );
-}
-
-/** A message of the person's being changed, in place. */
-function EditBox({ text, onDone }: { text: string; onDone: (text: string | null) => void }) {
-  const [value, setValue] = useState(text);
-  const send = () => value.trim() && onDone(value.trim());
-  return (
-    <div className="edit-box">
-      <textarea
-        className="input"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        autoFocus
-        rows={Math.min(12, Math.max(2, value.split("\n").length))}
-        aria-label={t("Your message")}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          } else if (e.key === "Escape") onDone(null);
-        }}
-      />
-      <div className="edit-box-actions">
-        <span className="small muted">{t("The old message and its reply are kept: switch back with the arrows.")}</span>
-        <button className="btn small" onClick={() => onDone(null)}>{t("Cancel")}</button>
-        <button className="btn primary small" disabled={!value.trim() || value.trim() === text.trim()} onClick={send}>{t("Send")}</button>
-      </div>
-    </div>
-  );
-}
-
-/** Where a chat was compacted: the model works from this summary instead
- * of the messages above it (they're still here to read). */
-function CompactedNote({ m }: { m: Message }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="compacted-note">
-      <div className="compacted-line">
-        <span>
-          {m.meta?.auto ? t("This chat was getting full, so it compacted itself.") : t("Compacted.")}{" "}
-          {t("The model now works from a summary of the messages above.")}
-        </span>
-        <button className="link small" onClick={() => setOpen((o) => !o)}>
-          {open ? t("Hide the summary") : t("Show the summary")}
-        </button>
-      </div>
-      {open && (
-        <div className="compacted-summary">
-          <Markdown text={m.content} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Thought processes the person folded. The rest stay open: the live reply
-// is drawn again as the saved one, and folding by itself (or cutting the
-// text to a scrolling box) looked like the model deleting what it wrote.
-const thoughtFolded = new Set<string>();
-
-function MessageView({
-  m,
-  live,
-  toast,
-  onPicture,
-  onOpenChat,
-  receipt,
-  waiting,
-  editing,
-  onEdit,
-  onEditDone,
-  onAgain,
-}: {
-  m: Message;
-  live?: Status;
-  toast?: PushToast;
-  onPicture?: (i: MediaItem) => void;
-  onOpenChat?: (id: string) => void;
-  receipt?: "sent" | "read";
-  waiting?: boolean;
-  editing?: boolean;
-  onEdit?: () => void;
-  onEditDone?: (text: string | null) => void;
-  onAgain?: () => void;
-}) {
-  const thinkingNow = live === "thinking" && !m.content;
-  const summary = m.role === "assistant" ? m.meta?.thought_summary : undefined;
-  return (
-    <div className={`msg ${m.role}${waiting ? " waiting" : ""}`}>
-      {m.role === "user" && m.meta?.images && m.meta.images.length > 0 && (
-        <div className="msg-images">
-          {m.meta.images.map((id) => (
-            <UserImage key={id} id={id} onOpen={onPicture} />
-          ))}
-        </div>
-      )}
-      {m.thinking && (
-        <details className="thinking" open={!thoughtFolded.has(m.id)} onToggle={(e) => (e.currentTarget.open ? thoughtFolded.delete(m.id) : thoughtFolded.add(m.id))}>
-          <summary>{thinkingNow ? t("Thinking…") : t("Thought process")}</summary>
-          <div className="thinking-text">{m.thinking}</div>
-        </details>
-      )}
-      {summary && (
-        <div className="thought-summary">
-          <div className="thought-summary-head">{t("In short")}</div>
-          <Markdown text={summary} />
-        </div>
-      )}
-      {m.role === "assistant" && m.content && (m.thinking || summary) && <div className="answer-head">{t("Answer")}</div>}
-      {m.role === "user" ? (
-        editing && onEditDone ? <EditBox text={m.content} onDone={onEditDone} /> : <div className="bubble">{m.content}</div>
-      ) : m.content ? (
-        <Markdown text={m.content} />
-      ) : null}
-      {waiting && (
-        <span className="added-note" role="status" title={t("It reads this at its next step, or right after the current reply")}>
-          {t("Sent while it worked · waiting for the model to read it")}
-        </span>
-      )}
-      {m.role === "user" && (m.meta?.added || receipt) && (
-        <span className={`added-note ${receipt === "read" ? "read" : ""}`} title={receipt === "read" ? t("The model has read this") : t("The model hasn't read this yet")}>
-          {[m.meta?.added ? t("Added while it worked") : null, receipt === "read" ? "✓✓ " + t("Read") : receipt === "sent" ? "✓ " + t("Sent") : null].filter(Boolean).join(" · ")}
-        </span>
-      )}
-      {m.meta?.from_person && (
-        <span className="added-note">
-          {m.role === "user" ? t("From {name}", { name: m.meta.from_name ?? "" }) : t("{name}'s assistant", { name: m.meta.from_name ?? "" }) + (m.meta.model ? " · " + m.meta.model : "")}
-        </span>
-      )}
-      {m.role === "user" && m.meta?.from_chat && (
-        <span className="added-note">
-          {t("From the assistant in")}{" "}
-          <button className="link" onClick={() => onOpenChat?.(m.meta!.from_chat!)}>
-            “{m.meta.from_title ?? t("another chat")}”
-          </button>
-        </span>
-      )}
-      {live && !m.content && !m.thinking && <span className="typing" aria-label={t("Writing")} />}
-      {m.content && !live && !editing && (m.role === "assistant" || m.role === "user") && (
-        <div className="msg-tools">
-          <CopyButton text={m.content} />
-          {onEdit && (
-            <button className="icon-btn speak-btn" onClick={onEdit} title={t("Edit and send again")} aria-label={t("Edit and send again")}>
-              <EditIcon />
-            </button>
-          )}
-          {onAgain && (
-            <button className="icon-btn speak-btn" onClick={onAgain} title={t("Write another reply")} aria-label={t("Write another reply")}>
-              <ReloadIcon />
-            </button>
-          )}
-          {toast && m.role === "assistant" && <SpeakButton text={m.content} toast={toast} />}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A picture the user attached, shown above their message. */
-function UserImage({ id, onOpen }: { id: string; onOpen?: (i: MediaItem) => void }) {
-  // A song attached to work on: heard here, not shown as a picture.
-  const [song, setSong] = useState<MediaItem | null>(null);
-  useEffect(() => {
-    let live = true;
-    api.mediaGet(id).then((i) => live && i.kind === "audio" && setSong(i)).catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [id]);
-  const src = useMediaUrl(song ? null : { id, mime: "image/jpeg", kind: "image" }, true);
-  if (song) return <UserSong item={song} />;
-  if (!src) return null;
-  // A button, so the keyboard reaches it too.
-  return (
-    <button className="msg-image-btn" onClick={() => api.mediaGet(id).then((i) => onOpen?.(i))} title={t("Open")}>
-      <img src={src} alt={t("Attached picture")} />
-    </button>
-  );
-}
-
-/** A song the user attached, with a player. */
-function UserSong({ item }: { item: MediaItem }) {
-  const src = useMediaUrl(item);
-  return (
-    <div className="user-song">
-      <span className="small">{item.prompt || t("A song")}</span>
-      {src && <audio controls controlsList="nodownload" src={src} />}
-    </div>
-  );
-}
-
-function AttachChip({ item, onRemove }: { item: MediaItem; onRemove: () => void }) {
-  const src = useMediaUrl(item.kind === "image" ? item : null, true);
-  return (
-    <span className={`attach-chip ${item.kind === "audio" ? "song" : ""}`}>
-      {item.kind === "audio" ? <span className="small">{item.prompt || t("A song")}</span> : src ? <img src={src} alt={t("Attached picture")} /> : <span className="media-inline-ph">…</span>}
-      <button onClick={onRemove} aria-label={item.kind === "audio" ? t("Remove song") : t("Remove picture")}>✕</button>
-    </span>
-  );
-}
-
-function WebRequestCard({ title, onEnable }: { title: string; onEnable: (() => void) | null }) {
-  const reason = title.replace(/^Needs web access: /, "");
-  return (
-    <div className="web-request" role="note">
-      <GlobeIcon className="web-request-icon" />
-      <div>
-        <strong>{t("This needs web access")}</strong>
-        <span className="small muted block">{t("To look up: {reason}. Only the search and the pages it opens go online; the AI stays on this PC.", { reason })}</span>
-      </div>
-      {onEnable ? (
-        <button className="btn primary small" onClick={onEnable}>{t("Turn on web for this chat")}</button>
-      ) : (
-        <span className="small muted">{t("Web is on")}</span>
-      )}
-    </div>
-  );
-}
-
-function RenameDialog({ title, onClose, onSave }: { title: string; onClose: () => void; onSave: (t: string) => void }) {
-  const [value, setValue] = useState(title);
-  return (
-    <Modal title={t("Rename chat")} onClose={onClose}>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          onSave(value);
-        }}
-      >
-        <input className="input" value={value} onChange={(e) => setValue(e.target.value)} autoFocus maxLength={80} aria-label={t("Chat name")} />
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="btn primary" disabled={!value.trim()}>{t("Save")}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/** A busy cloud provider's next try, counted down. */
-function RetryLine({ provider, at, attempt, of }: { provider: string; at: number; attempt: number; of: number }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, []);
-  const seconds = Math.max(0, Math.ceil((at - now) / 1000));
-  return (
-    <p className="muted small pad">
-      <span className="spinner small" aria-hidden />
-      {t("{provider} is busy. Trying again in {seconds} s ({attempt} of {of})", { provider, seconds, attempt, of })}
-    </p>
   );
 }

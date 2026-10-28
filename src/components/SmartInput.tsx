@@ -2,6 +2,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent, type TextareaHTMLAttributes } from "react";
 import { api, on, type Vocabulary } from "../api";
 import { language, t } from "../i18n";
+import { matching } from "../shortcuts";
 
 /** Whether Autocomplete and Autocorrect are on, kept current as Features change
  * (for boxes outside the chat, which don't get the feature list). */
@@ -112,8 +113,8 @@ export const SmartInput = forwardRef<HTMLTextAreaElement, Props>(function SmartI
   // The "/" menu: while the box holds only "/" and the start of a name.
   const [slashAt, setSlashAt] = useState(0);
   const [slashOff, setSlashOff] = useState<string | null>(null);
-  const typedName = /^\/[\p{L}\p{N}-]*$/u.test(value) ? value.slice(1).toLowerCase() : null;
-  const slash = typedName !== null && slashOff !== value ? (commands ?? []).filter((c) => c.name.startsWith(typedName)) : [];
+  const typedName = /^\/[\p{L}\p{N}_-]*$/u.test(value) ? value.slice(1).toLowerCase() : null;
+  const slash = typedName !== null && slashOff !== value ? matching(commands ?? [], typedName) : [];
   const slashPick = Math.min(slashAt, Math.max(0, slash.length - 1));
   const box = useRef<HTMLTextAreaElement>(null);
   const ghostEl = useRef<HTMLDivElement>(null);

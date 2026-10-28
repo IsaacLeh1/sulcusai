@@ -47,11 +47,28 @@ impl Turn {
             return Outcome::error(tools::failed_title(&call.name, &args), format!("{e} Fix the arguments and call it again."));
         }
         // A Deny holds in every mode, Bypass too.
-        let rule = allowances::decide(&extras.allowances, project_id, &call.name, &args, sandbox);
+        let mut rule = allowances::decide(&extras.allowances, project_id, &call.name, &args, sandbox);
         if rule == Some(Effect::Deny) {
             let title = tools::failed_title(&call.name, &args);
             self.log(&format!("A saved rule refused: {title}"));
             return Outcome::denied(title).with_text(RULE_REFUSED);
+        }
+        // A plugin's check before the tool: it can stop the call, have the
+        // person asked, or let it run like a saved Allow (never past what
+        // always asks).
+        let mut check_asks = None;
+        if extras.checks_at(plugin_checks::Event::BeforeTool, Some(&call.name)) {
+            let folder = sandbox.roots().iter().find(|r| !sandbox.is_general(r)).or(sandbox.roots().first()).cloned();
+            let moment = plugin_checks::Moment { event: plugin_checks::Event::BeforeTool, chat_id: &self.chat_id, tool: Some(&call.name), arguments: Some(&args), result: None, folder: folder.as_deref(), mode: self.mode };
+            let a = plugin_checks::run(&self.state, &extras.checks, &moment, sandbox).await;
+            if let Some(why) = a.block {
+                self.log(&why);
+                return Outcome::denied(tools::failed_title(&call.name, &args)).with_text(&format!("{why} Tell the user, and don't try another way around it."));
+            }
+            check_asks = a.ask;
+            if a.allow && rule.is_none() {
+                rule = Some(Effect::Allow);
+            }
         }
         // Clicking or typing in the browser: refuse private fields, and ask
         // first when it submits, buys, sends or deletes.
@@ -161,8 +178,9 @@ impl Turn {
         if secret_out && permission == Permission::Run {
             permission = Permission::Ask;
         }
-        // A saved Ask asks in every mode, even when the chat allowed the kind.
-        if rule == Some(Effect::Ask) && permission == Permission::Run {
+        // A saved Ask (or a plugin's check asking) asks in every mode, even
+        // when the chat allowed the kind.
+        if (rule == Some(Effect::Ask) || check_asks.is_some()) && permission == Permission::Run {
             permission = Permission::Ask;
         }
         match permission {
@@ -199,8 +217,12 @@ impl Turn {
                     preview.detail = Some(r.items.iter().map(|i| format!("{}: {}", i.label, i.value)).collect::<Vec<_>>().join("\n"));
                     asked = true;
                 }
-                if rule == Some(Effect::Ask) {
-                    let line = "Asking because of a rule you saved in Settings › Permissions.".to_string();
+                let why = match (&check_asks, rule) {
+                    (Some(c), _) => Some(c.clone()),
+                    (None, Some(Effect::Ask)) => Some("Asking because of a rule you saved in Settings › Permissions.".to_string()),
+                    _ => None,
+                };
+                if let Some(line) = why {
                     preview.note = Some(match preview.note.take() {
                         Some(n) => format!("{n}\n{line}"),
                         None => line,
@@ -208,7 +230,7 @@ impl Turn {
                 }
                 // "Always allow…" only where a saved Allow would skip this question next time.
                 let once = risk == Risk::Submit || tools::destructive_call(&call.name, &args);
-                let offer = (!once && rule.is_none()).then(|| allowances::suggest(&call.name, &args, sandbox, project_id));
+                let offer = (!once && rule.is_none() && check_asks.is_none()).then(|| allowances::suggest(&call.name, &args, sandbox, project_id));
                 let title = preview.title.clone();
                 match self.ask_offering(call, risk, preview, offer).await {
                     Decision::Deny => {
@@ -518,6 +540,12 @@ impl Turn {
         let mut permission = match (self.mode, t.mode) {
             (_, ToolMode::Off) => Permission::Refuse,
             (Mode::Plan, _) if !t.read_only => Permission::Refuse,
+            // What a connector on the web is given leaves the PC: each call
+            // asks, in every mode, unless the person allowed that tool by
+            // name (on the connector's page, or in a saved rule).
+            (_, ToolMode::Allow) if t.web.is_some() => Permission::Run,
+            _ if t.web.is_some() && rule == Some(Effect::Allow) => Permission::Run,
+            _ if t.web.is_some() => Permission::Ask,
             (Mode::Plan, _) | (Mode::Bypass, _) | (Mode::Auto, ToolMode::Allow) => Permission::Run,
             (Mode::Auto, _) if self.state.approvals.allowed(&self.chat_id, Risk::Connector) || rule == Some(Effect::Allow) => Permission::Run,
             (Mode::Auto, ToolMode::Ask) => Permission::Ask,
@@ -532,7 +560,10 @@ impl Turn {
         match permission {
             Permission::Refuse => return Outcome::error(format!("Couldn't use {title}"), "This connector tool isn't allowed in this mode."),
             Permission::Ask => {
-                let note = "Connectors are programs on this PC; what this does is up to the connector.".to_string();
+                let note = match &t.web {
+                    Some(host) => format!("This sends what's shown to {host}. To stop being asked for this tool, allow it on the connector's page."),
+                    None => "Connectors are programs on this PC; what this does is up to the connector.".to_string(),
+                };
                 let preview = Preview {
                     title: format!("Use {} from the {} connector", t.tool, t.connector_name),
                     kind: "text",
@@ -542,7 +573,9 @@ impl Turn {
                         None => note,
                     }),
                 };
-                if self.ask(call, Risk::Connector, preview).await == Decision::Deny {
+                // On the web each call is asked about on its own, never for the whole chat.
+                let risk = if t.web.is_some() { Risk::Submit } else { Risk::Connector };
+                if self.ask(call, risk, preview).await == Decision::Deny {
                     self.log(&format!("Declined: {title}"));
                     return Outcome::denied(format!("Use {title}"));
                 }
@@ -556,7 +589,10 @@ impl Turn {
             }
         }
         self.emit("agent:tool_start", json!({ "chat_id": self.chat_id, "call_id": call.id, "tool": call.name }));
-        self.log(&format!("Used {title}"));
+        match &t.web {
+            Some(host) => self.log(&format!("Sent a request to connector {} ({host}): {}", t.connector_name, t.tool)),
+            None => self.log(&format!("Used {title}")),
+        }
         crate::outgoing::record(&self.state, &self.cipher, &self.chat_id, &call.name, &all, true);
         match connectors::call(&self.state, &t.connector_id, &t.tool, args).await {
             Ok((false, text)) => Outcome::ok(text.clone(), format!("Used {title}"), "text", Some(text)),
@@ -647,7 +683,7 @@ impl Turn {
         if crate::advanced::get(&self.state).must_ask(Risk::Read) {
             return true;
         }
-        if allowances::decide(&extras.allowances, project_id, &call.name, args, sandbox) == Some(Effect::Ask) {
+        if allowances::decide(&extras.allowances, project_id, &call.name, args, sandbox) == Some(Effect::Ask) || extras.checks_at(plugin_checks::Event::BeforeTool, Some(&call.name)) {
             return true;
         }
         call.name == "read_file"

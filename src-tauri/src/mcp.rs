@@ -23,6 +23,12 @@ use crate::engine::JobRef;
 const PROTOCOL: &str = "2025-06-18";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_RESULT_CHARS: usize = 40_000;
+/// In the error a server at an address gives when it wants a sign-in
+/// (401), so the caller can refresh the sign-in or ask for one.
+pub const SIGN_IN: &str = "needs you to sign in";
+/// The tool names a connector's resources are offered under.
+pub const LIST_RESOURCES: &str = "resources/list";
+pub const READ_RESOURCE: &str = "resources/read";
 
 /// How to reach a server: a program to start (`command`), or an address
 /// (`url`, with `headers` such as a key, as other apps write them).
@@ -94,11 +100,29 @@ pub struct Client {
     link: Link,
     next_id: AtomicU64,
     pub server_name: String,
+    /// The server shares resources (files, records) besides its tools.
+    pub resources: bool,
+}
+
+/// Why a message to a server at an address didn't get its answer.
+enum Fault {
+    SignIn,
+    /// The session the server gave has ended (404 with a session id).
+    Gone,
+    Other(String),
 }
 
 /// Whether an address is this PC (reached directly, not through the web rules).
-fn on_this_pc(url: &str) -> bool {
+pub(crate) fn on_this_pc(url: &str) -> bool {
     reqwest::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h == "::1")
+}
+
+fn cut(text: String) -> String {
+    if text.chars().count() > MAX_RESULT_CHARS {
+        text.chars().take(MAX_RESULT_CHARS).collect::<String>() + "\n… (cut short)"
+    } else {
+        text
+    }
 }
 
 /// A JSON-RPC answer's result, or its error.
@@ -123,20 +147,30 @@ impl Client {
         } else {
             Link::Local(Self::spawn(spec, job)?)
         };
-        let mut client = Client { link, next_id: AtomicU64::new(1), server_name: String::new() };
-        let init = client
-            .request(
+        let mut client = Client { link, next_id: AtomicU64::new(1), server_name: String::new(), resources: false };
+        client.handshake().await.map_err(|e| client.explain(&e))?;
+        Ok(client)
+    }
+
+    /// Starts a session: at the start, and again when a server at an
+    /// address has let the last one go.
+    async fn handshake(&mut self) -> Result<(), String> {
+        if let Link::Remote(r) = &mut self.link {
+            r.session = None;
+            r.protocol = None;
+        }
+        let init = self
+            .request_once(
                 "initialize",
                 json!({ "protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": { "name": "SulcusAI", "version": env!("CARGO_PKG_VERSION") } }),
             )
-            .await
-            .map_err(|e| client.explain(&e))?;
-        client.server_name = init.pointer("/serverInfo/name").and_then(Value::as_str).unwrap_or("").to_string();
-        if let Link::Remote(r) = &mut client.link {
+            .await?;
+        self.server_name = init.pointer("/serverInfo/name").and_then(Value::as_str).unwrap_or("").to_string();
+        self.resources = init.pointer("/capabilities/resources").is_some();
+        if let Link::Remote(r) = &mut self.link {
             r.protocol = Some(init.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL).to_string());
         }
-        client.notify("notifications/initialized", json!({})).await?;
-        Ok(client)
+        self.notify("notifications/initialized", json!({})).await
     }
 
     fn spawn(spec: &ServerSpec, job: Option<&JobRef>) -> Result<Local, String> {
@@ -227,35 +261,95 @@ impl Client {
         let msg = json!({ "jsonrpc": "2.0", "method": method, "params": params });
         match &mut self.link {
             Link::Local(l) => Self::send(&mut l.stdin, msg).await,
-            Link::Remote(r) => r.post(&msg, None).await.map(|_| ()),
+            Link::Remote(r) => r.post(&msg, None).await.map(|_| ()).map_err(|f| r.say(f)),
         }
     }
 
     pub async fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        match self.try_request(method, params.clone()).await {
+            // The server let the session go: a new one, and the request once more.
+            Err(Fault::Gone) => {
+                self.handshake().await?;
+                self.try_request(method, params).await.map_err(|f| self.say(f))
+            }
+            other => other.map_err(|f| self.say(f)),
+        }
+    }
+
+    async fn request_once(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.try_request(method, params).await.map_err(|f| self.say(f))
+    }
+
+    fn say(&self, f: Fault) -> String {
+        match &self.link {
+            Link::Remote(r) => r.say(f),
+            Link::Local(_) => match f {
+                Fault::Other(e) => e,
+                Fault::SignIn | Fault::Gone => "The connector stopped.".into(),
+            },
+        }
+    }
+
+    async fn try_request(&mut self, method: &str, params: Value) -> Result<Value, Fault> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
         let l = match &mut self.link {
             Link::Remote(r) => {
                 return match tokio::time::timeout(REQUEST_TIMEOUT, r.post(&msg, Some(id))).await {
-                    Ok(Ok(Some(reply))) => answer(&reply),
-                    Ok(Ok(None)) => Err("The connector didn't answer.".into()),
-                    Ok(Err(e)) => Err(e),
-                    Err(_) => Err("The connector didn't answer in time.".into()),
+                    Ok(Ok(Some(reply))) => answer(&reply).map_err(Fault::Other),
+                    Ok(Ok(None)) => Err(Fault::Other("The connector didn't answer.".into())),
+                    Ok(Err(f)) => Err(f),
+                    Err(_) => Err(Fault::Other("The connector didn't answer in time.".into())),
                 };
             }
             Link::Local(l) => l,
         };
         let (tx, rx) = oneshot::channel();
         l.pending.lock().unwrap().insert(id, tx);
-        Self::send(&mut l.stdin, msg).await?;
+        Self::send(&mut l.stdin, msg).await.map_err(Fault::Other)?;
         match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_)) => Err("The connector stopped.".into()),
+            Ok(Ok(r)) => r.map_err(Fault::Other),
+            Ok(Err(_)) => Err(Fault::Other("The connector stopped.".into())),
             Err(_) => {
                 l.pending.lock().unwrap().remove(&id);
-                Err("The connector didn't answer in time.".into())
+                Err(Fault::Other("The connector didn't answer in time.".into()))
             }
         }
+    }
+
+    /// The resources the server shares, one per line for the model.
+    pub async fn list_resources(&mut self) -> Result<String, String> {
+        let mut lines = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..20 {
+            let params = cursor.as_ref().map_or(json!({}), |c| json!({ "cursor": c }));
+            let r = self.request("resources/list", params).await?;
+            for x in r.get("resources").and_then(Value::as_array).into_iter().flatten() {
+                let s = |k: &str| x.get(k).and_then(Value::as_str).unwrap_or("");
+                let about = [s("name"), s("description"), s("mimeType")].into_iter().filter(|v| !v.is_empty()).collect::<Vec<_>>().join(" | ");
+                lines.push(format!("{} {about}", s("uri")).trim_end().to_string());
+            }
+            cursor = r.get("nextCursor").and_then(Value::as_str).map(str::to_string);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        Ok(if lines.is_empty() { "It shares no resources right now.".into() } else { cut(lines.join("\n")) })
+    }
+
+    /// One resource's text (binary parts are named, not shown).
+    pub async fn read_resource(&mut self, uri: &str) -> Result<String, String> {
+        let r = self.request("resources/read", json!({ "uri": uri })).await?;
+        let mut text = String::new();
+        for part in r.get("contents").and_then(Value::as_array).into_iter().flatten() {
+            match (part.get("text").and_then(Value::as_str), part.get("blob").and_then(Value::as_str)) {
+                (Some(t), _) => text.push_str(t),
+                (None, Some(b)) => text.push_str(&format!("[{} binary content, about {} KB, not shown]", part.get("mimeType").and_then(Value::as_str).unwrap_or("some"), b.len() * 3 / 4 / 1000)),
+                (None, None) => {}
+            }
+            text.push('\n');
+        }
+        Ok(cut(text.trim_end().to_string()))
     }
 
     pub async fn list_tools(&mut self) -> Result<Vec<McpTool>, String> {
@@ -300,10 +394,7 @@ impl Client {
                 text = s.to_string();
             }
         }
-        if text.chars().count() > MAX_RESULT_CHARS {
-            text = text.chars().take(MAX_RESULT_CHARS).collect::<String>() + "\n… (cut short)";
-        }
-        Ok((is_error, text.trim_end().to_string()))
+        Ok((is_error, cut(text.trim_end().to_string())))
     }
 
     pub fn alive(&mut self) -> bool {
@@ -337,8 +428,15 @@ impl Client {
 impl Remote {
     /// Posts one message. For a request (`id`), the answer: the JSON body,
     /// or the event in the stream that answers it.
-    async fn post(&mut self, msg: &Value, id: Option<u64>) -> Result<Option<Value>, String> {
-        crate::offline::check(crate::offline::Keep::Connectors)?;
+    fn say(&self, f: Fault) -> String {
+        match f {
+            Fault::SignIn => format!("The connector at {} {SIGN_IN}, or a key in its headers.", crate::host_of(&self.url)),
+            Fault::Gone => "The connector's session ended. Try again.".into(),
+            Fault::Other(e) => e,
+        }
+    }
+
+    fn message(&self, msg: &Value) -> reqwest::RequestBuilder {
         let mut req = self.http.post(&self.url).header("Accept", "application/json, text/event-stream").json(msg);
         for (k, v) in &self.headers {
             req = req.header(k, v);
@@ -349,21 +447,36 @@ impl Remote {
         if let Some(p) = &self.protocol {
             req = req.header("MCP-Protocol-Version", p);
         }
-        let resp = req.send().await.map_err(|e| format!("Couldn't reach the connector at {}: {e}", crate::host_of(&self.url)))?;
+        req
+    }
+
+    /// Posts one message. For a request (`id`), the answer: the JSON body,
+    /// or the event in the stream that answers it.
+    async fn post(&mut self, msg: &Value, id: Option<u64>) -> Result<Option<Value>, Fault> {
+        crate::offline::check(crate::offline::Keep::Connectors).map_err(Fault::Other)?;
+        let resp = self.message(msg).send().await.map_err(|e| Fault::Other(format!("Couldn't reach the connector at {}: {e}", crate::host_of(&self.url))))?;
         if let Some(s) = resp.headers().get("mcp-session-id").and_then(|v| v.to_str().ok()) {
             self.session = Some(s.to_string());
         }
         let status = resp.status();
-        if status.as_u16() == 401 || status.as_u16() == 403 {
-            return Err(format!("The connector at {} turned SulcusAI away ({status}). It may need a key or token in its headers.", crate::host_of(&self.url)));
+        if status.as_u16() == 401 {
+            return Err(Fault::SignIn);
+        }
+        if status.as_u16() == 403 {
+            return Err(Fault::Other(format!("The connector at {} turned SulcusAI away ({status}). It may need a key or token in its headers, or a sign-in with more access.", crate::host_of(&self.url))));
         }
         if status.as_u16() == 404 && self.session.is_some() && id.is_some() {
-            return Err("The connector's session ended. Try again.".into());
+            self.session = None;
+            return Err(Fault::Gone);
         }
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(format!("The connector answered {status}: {}", text.chars().take(300).collect::<String>()));
+            return Err(Fault::Other(format!("The connector answered {status}: {}", text.chars().take(300).collect::<String>())));
         }
+        self.read(resp, id).await.map_err(Fault::Other)
+    }
+
+    async fn read(&self, resp: reqwest::Response, id: Option<u64>) -> Result<Option<Value>, String> {
         let Some(id) = id else { return Ok(None) };
         let events = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/event-stream"));
         if !events {
@@ -375,8 +488,8 @@ impl Remote {
             };
             return Ok(one);
         }
-        // Events until the one answering this request (others, like
-        // progress notes or the server's own requests, are passed over).
+        // Events until the one answering this request; progress notes are
+        // passed over, and the server's own requests are turned down.
         let mut stream = resp.bytes_stream();
         let (mut buf, mut data) = (String::new(), String::new());
         while let Some(chunk) = stream.next().await {
@@ -388,15 +501,26 @@ impl Remote {
                     data.push_str(d.trim_start());
                 } else if line.is_empty() && !data.is_empty() {
                     let event = std::mem::take(&mut data);
-                    if let Ok(m) = serde_json::from_str::<Value>(&event) {
-                        if m.get("id").and_then(Value::as_u64) == Some(id) && m.get("method").is_none() {
-                            return Ok(Some(m));
-                        }
+                    let Ok(m) = serde_json::from_str::<Value>(&event) else { continue };
+                    match (m.get("id"), m.get("method")) {
+                        (Some(i), None) if i.as_u64() == Some(id) => return Ok(Some(m)),
+                        (Some(i), Some(_)) => self.turn_down(i.clone()),
+                        _ => {}
                     }
                 }
             }
         }
         Ok(None)
+    }
+
+    /// Answers a request the server sent (sampling, asking the person for
+    /// input, listing roots): none of these is offered, so it's told so,
+    /// and the server can go on without waiting.
+    fn turn_down(&self, id: Value) {
+        let req = self.message(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "SulcusAI doesn't take requests from connectors." } }));
+        tokio::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_secs(10), req.send()).await;
+        });
     }
 }
 
@@ -477,35 +601,51 @@ for line in sys.stdin:
     }
 
     /// A server at an address (Streamable HTTP): the session id it gives
-    /// comes back on every message, the key goes in the headers, and
-    /// answers arrive as JSON or as events (after a progress note).
+    /// comes back on every message, the key goes in the headers, answers
+    /// arrive as JSON or as events (after a progress note and a request of
+    /// the server's own, which is turned down), a session the server let go
+    /// is started again, and its resources are listed and read.
     #[tokio::test]
     async fn talks_to_a_server_at_an_address() {
         use axum::http::{HeaderMap, StatusCode};
         use axum::response::IntoResponse;
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = seen.clone();
+        let sessions = Arc::new(AtomicU64::new(0));
         let app = axum::Router::new().route(
             "/mcp",
             axum::routing::post(move |h: HeaderMap, axum::Json(m): axum::Json<Value>| {
-                let log = log.clone();
+                let (log, sessions) = (log.clone(), sessions.clone());
                 async move {
                     if h.get("authorization").and_then(|v| v.to_str().ok()) != Some("Bearer t0ken") {
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
-                    let method = m["method"].as_str().unwrap_or("").to_string();
+                    let method = m["method"].as_str().unwrap_or("answer").to_string();
                     let session = h.get("mcp-session-id").and_then(|v| v.to_str().ok()).unwrap_or("-").to_string();
                     log.lock().unwrap().push(format!("{method} {session}"));
+                    if method == "answer" {
+                        log.lock().unwrap().push(format!("turned down {} with {}", m["id"], m["error"]["code"]));
+                        return StatusCode::ACCEPTED.into_response();
+                    }
                     let reply = |r: Value| json!({ "jsonrpc": "2.0", "id": m["id"], "result": r });
                     match method.as_str() {
-                        "initialize" => ([("mcp-session-id", "s1")], axum::Json(reply(json!({ "protocolVersion": "2025-06-18", "serverInfo": { "name": "web-test" } })))).into_response(),
+                        "initialize" => {
+                            let s = format!("s{}", sessions.fetch_add(1, Ordering::Relaxed) + 1);
+                            let init = reply(json!({ "protocolVersion": "2025-06-18", "capabilities": { "resources": {} }, "serverInfo": { "name": "web-test" } }));
+                            ([("mcp-session-id", s)], axum::Json(init)).into_response()
+                        }
                         "notifications/initialized" => StatusCode::ACCEPTED.into_response(),
+                        // The first session is let go after its tools are listed.
+                        _ if session == "s1" && method != "tools/list" => StatusCode::NOT_FOUND.into_response(),
                         "tools/list" => {
                             let note = json!({ "jsonrpc": "2.0", "method": "notifications/progress", "params": {} });
-                            let body = format!("event: message\ndata: {note}\n\ndata: {}\n\n", reply(json!({ "tools": [{ "name": "add", "inputSchema": { "type": "object" } }] })));
+                            let ask = json!({ "jsonrpc": "2.0", "id": "srv-1", "method": "sampling/createMessage", "params": {} });
+                            let body = format!("event: message\ndata: {note}\n\ndata: {ask}\n\ndata: {}\n\n", reply(json!({ "tools": [{ "name": "add", "inputSchema": { "type": "object" } }] })));
                             ([("content-type", "text/event-stream")], body).into_response()
                         }
                         "tools/call" => axum::Json(reply(json!({ "content": [{ "type": "text", "text": format!("{}", m["params"]["arguments"]["a"].as_i64().unwrap_or(0) + 2) }] }))).into_response(),
+                        "resources/list" => axum::Json(reply(json!({ "resources": [{ "uri": "file:///notes.md", "name": "notes", "mimeType": "text/markdown" }] }))).into_response(),
+                        "resources/read" => axum::Json(reply(json!({ "contents": [{ "uri": m["params"]["uri"], "text": "# Notes" }] }))).into_response(),
                         _ => StatusCode::NOT_FOUND.into_response(),
                     }
                 }
@@ -515,14 +655,23 @@ for line in sys.stdin:
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, app).await.ok() });
         let mut spec = ServerSpec { url: format!("http://127.0.0.1:{port}/mcp"), ..Default::default() };
-        assert!(Client::start(&spec, None, crate::net::Connectivity::Offline).await.err().unwrap().contains("key or token"));
+        assert!(Client::start(&spec, None, crate::net::Connectivity::Offline).await.err().unwrap().contains(SIGN_IN));
         spec.headers.insert("Authorization".into(), "Bearer t0ken".into());
         let mut c = Client::start(&spec, None, crate::net::Connectivity::Offline).await.unwrap();
         assert_eq!(c.server_name, "web-test");
+        assert!(c.resources);
         let tools = c.list_tools().await.unwrap();
         assert_eq!(tools[0].name, "add");
         assert_eq!(c.call("add", json!({ "a": 40 })).await.unwrap(), (false, "42".to_string()));
-        assert_eq!(*seen.lock().unwrap(), ["initialize -", "notifications/initialized s1", "tools/list s1", "tools/call s1"]);
+        assert_eq!(c.list_resources().await.unwrap(), "file:///notes.md notes | text/markdown");
+        assert_eq!(c.read_resource("file:///notes.md").await.unwrap(), "# Notes");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(
+            seen.iter().filter(|s| !s.starts_with("answer") && !s.starts_with("turned")).cloned().collect::<Vec<_>>(),
+            ["initialize -", "notifications/initialized s1", "tools/list s1", "tools/call s1", "initialize -", "notifications/initialized s2", "tools/call s2", "resources/list s2", "resources/read s2"]
+        );
+        assert!(seen.contains(&"turned down \"srv-1\" with -32601".to_string()), "{seen:?}");
         // Plain http only for this PC.
         let far = ServerSpec { url: "http://example.com/mcp".into(), ..Default::default() };
         assert!(Client::start(&far, None, crate::net::Connectivity::Cloud).await.err().unwrap().contains("https://"));

@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use crate::crypto::Cipher;
 use crate::db;
 use crate::mcp::{self, McpTool, ServerSpec};
+use crate::mcp_auth::{self, Auth};
 use crate::{AppState, AppStateRef};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,11 +41,33 @@ pub struct Connector {
     pub tools: Vec<McpTool>,
     #[serde(default)]
     pub tool_modes: HashMap<String, ToolMode>,
+    /// The sign-in for a connector at an address that asked for one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth: Option<Auth>,
 }
 
 impl Connector {
     pub fn mode(&self, tool: &McpTool) -> ToolMode {
-        self.tool_modes.get(&tool.name).copied().unwrap_or(if tool.read_only { ToolMode::Allow } else { ToolMode::Ask })
+        // What a tool on the web is given leaves the PC, so it asks unless allowed by name.
+        let default = if tool.read_only && self.web().is_none() { ToolMode::Allow } else { ToolMode::Ask };
+        self.tool_modes.get(&tool.name).copied().unwrap_or(default)
+    }
+
+    /// The host a connector's requests go to, when it's off this PC.
+    pub fn web(&self) -> Option<String> {
+        (self.spec.remote() && !mcp::on_this_pc(&self.spec.url)).then(|| crate::host_of(&self.spec.url))
+    }
+
+    /// How to reach it, with the sign-in's token unless a header already
+    /// carries one.
+    fn reach(&self) -> ServerSpec {
+        let mut spec = self.spec.clone();
+        if let Some(a) = self.auth.as_ref().filter(|a| !a.access_token.is_empty()) {
+            if !spec.headers.keys().any(|k| k.eq_ignore_ascii_case("authorization")) {
+                spec.headers.insert("Authorization".into(), format!("Bearer {}", a.access_token));
+            }
+        }
+        spec
     }
 }
 
@@ -96,6 +119,9 @@ pub struct Plugin {
     pub skills: Vec<Skill>,
     #[serde(default)]
     pub connectors: Vec<String>,
+    /// Commands it runs at points of a turn, agreed to when it was installed.
+    #[serde(default)]
+    pub checks: Vec<crate::plugin_checks::Check>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -193,6 +219,8 @@ pub struct OfferedTool {
     pub tool: String,
     pub mode: ToolMode,
     pub read_only: bool,
+    /// The host what it's given goes to, for a connector off this PC.
+    pub web: Option<String>,
 }
 
 /// Starts enabled connectors as needed and returns their tool definitions
@@ -209,7 +237,7 @@ pub async fn offer(state: &AppState, c: &Cipher) -> (Vec<Value>, HashMap<String,
     let mut map = HashMap::new();
     let mut problems = Vec::new();
     for mut conn in list {
-        match ensure_running(state, &conn).await {
+        match ensure_running(state, &mut conn).await {
             Ok(tools) => {
                 if tools != conn.tools {
                     conn.tools = tools;
@@ -232,32 +260,128 @@ pub async fn offer(state: &AppState, c: &Cipher) -> (Vec<Value>, HashMap<String,
                 "description": format!("[{} connector] {}", conn.name, t.description),
                 "parameters": t.input_schema,
             } }));
-            map.insert(name, OfferedTool { connector_id: conn.id.clone(), connector_name: conn.name.clone(), tool: t.name.clone(), mode, read_only: t.read_only });
+            map.insert(name, OfferedTool { connector_id: conn.id.clone(), connector_name: conn.name.clone(), tool: t.name.clone(), mode, read_only: t.read_only, web: conn.web() });
         }
     }
     (defs, map, problems)
 }
 
-/// Makes sure the connector's server is running; returns its tools.
-pub async fn ensure_running(state: &AppState, conn: &Connector) -> Result<Vec<McpTool>, String> {
-    crate::offline::check(crate::offline::Keep::Connectors)?;
-    let mut clients = state.mcp.lock().await;
-    if let Some(client) = clients.get_mut(&conn.id) {
-        if client.alive() {
-            return client.list_tools().await;
-        }
-        clients.remove(&conn.id);
+/// The two tools a connector's resources are read with.
+fn resource_tools() -> [McpTool; 2] {
+    [
+        McpTool {
+            name: mcp::LIST_RESOURCES.into(),
+            description: "List the files and records this connector shares (its resources), with the uri to read each by.".into(),
+            input_schema: json!({ "type": "object", "properties": {} }),
+            read_only: true,
+        },
+        McpTool {
+            name: mcp::READ_RESOURCE.into(),
+            description: "Read one of this connector's resources by its uri.".into(),
+            input_schema: json!({ "type": "object", "required": ["uri"], "properties": { "uri": { "type": "string" } } }),
+            read_only: true,
+        },
+    ]
+}
+
+async fn tools_of(client: &mut mcp::Client) -> Result<Vec<McpTool>, String> {
+    let mut tools = client.list_tools().await?;
+    if client.resources {
+        tools.extend(resource_tools());
     }
-    let mut client = mcp::Client::start(&conn.spec, state.job(), state.settings().connectivity).await?;
-    let tools = client.list_tools().await?;
-    clients.insert(conn.id.clone(), client);
+    Ok(tools)
+}
+
+/// Keeps a renewed sign-in with the connector.
+fn keep_auth(state: &AppState, conn: &mut Connector, auth: Auth) -> Result<(), String> {
+    let c = state.cipher()?;
+    conn.auth = Some(auth.clone());
+    let db_conn = state.db.lock().unwrap();
+    // The stored copy may be newer in other ways; only its sign-in changes.
+    let mut stored = connectors(&db_conn, &c).into_iter().find(|x| x.id == conn.id).unwrap_or_else(|| conn.clone());
+    stored.auth = Some(auth);
+    store(&db_conn, &c, "connectors", &conn.id, &stored)
+}
+
+/// The sign-in renewed with its refresh token, kept; false when there's
+/// none to renew (the person has to sign in again).
+async fn renew(state: &AppState, conn: &mut Connector) -> Result<bool, String> {
+    let Some(a) = conn.auth.clone().filter(|a| !a.refresh_token.is_empty()) else { return Ok(false) };
+    let http = crate::net::service_client(state.settings().connectivity)?;
+    match mcp_auth::refresh(&http, &conn.spec.url, &a).await {
+        Ok(fresh) => {
+            keep_auth(state, conn, fresh)?;
+            Ok(true)
+        }
+        Err(_) => Ok(false),
+    }
+}
+
+fn sign_in_again(conn: &Connector) -> String {
+    format!("The {} connector {}. Sign in on its page in Connectors.", conn.name, mcp::SIGN_IN)
+}
+
+/// Makes sure the connector's server is running; returns its tools.
+pub async fn ensure_running(state: &AppState, conn: &mut Connector) -> Result<Vec<McpTool>, String> {
+    crate::offline::check(crate::offline::Keep::Connectors)?;
+    {
+        let mut clients = state.mcp.lock().await;
+        if let Some(client) = clients.get_mut(&conn.id) {
+            if client.alive() {
+                return tools_of(client).await;
+            }
+            clients.remove(&conn.id);
+        }
+    }
+    if let Some(fresh) = match &conn.auth {
+        Some(a) => mcp_auth::renewed_if_due(state, &conn.spec.url, a).await.ok().flatten(),
+        None => None,
+    } {
+        keep_auth(state, conn, fresh)?;
+    }
+    let level = state.settings().connectivity;
+    let mut client = match mcp::Client::start(&conn.reach(), state.job(), level).await {
+        Err(e) if e.contains(mcp::SIGN_IN) => {
+            if !renew(state, conn).await? {
+                return Err(if conn.auth.is_some() { sign_in_again(conn) } else { e });
+            }
+            mcp::Client::start(&conn.reach(), state.job(), level).await?
+        }
+        other => other?,
+    };
+    let tools = tools_of(&mut client).await?;
+    state.mcp.lock().await.insert(conn.id.clone(), client);
     Ok(tools)
 }
 
 pub async fn call(state: &AppState, connector_id: &str, tool: &str, args: Value) -> Result<(bool, String), String> {
+    let result = call_once(state, connector_id, tool, args.clone()).await;
+    let Err(e) = &result else { return result };
+    if !e.contains(mcp::SIGN_IN) {
+        return result;
+    }
+    // The sign-in ran out while it was running: renewed, and tried once more.
+    let c = state.cipher()?;
+    let Some(mut conn) = connectors(&state.db.lock().unwrap(), &c).into_iter().find(|x| x.id == connector_id) else { return result };
+    stop(state, connector_id).await;
+    if !renew(state, &mut conn).await? {
+        return Err(sign_in_again(&conn));
+    }
+    ensure_running(state, &mut conn).await?;
+    call_once(state, connector_id, tool, args).await
+}
+
+async fn call_once(state: &AppState, connector_id: &str, tool: &str, args: Value) -> Result<(bool, String), String> {
     let mut clients = state.mcp.lock().await;
     let client = clients.get_mut(connector_id).ok_or("The connector isn't running.")?;
-    client.call(tool, args).await
+    match tool {
+        mcp::LIST_RESOURCES => client.list_resources().await.map(|t| (false, t)),
+        mcp::READ_RESOURCE => {
+            let uri = args.get("uri").and_then(Value::as_str).filter(|u| !u.trim().is_empty()).ok_or("Give the resource's uri.")?;
+            client.read_resource(uri.trim()).await.map(|t| (false, t))
+        }
+        _ => client.call(tool, args).await,
+    }
 }
 
 /// Stops every connector's program (fully offline).
@@ -287,6 +411,8 @@ struct Manifest {
     skills: Vec<String>,
     #[serde(default, rename = "mcpServers")]
     mcp_servers: HashMap<String, ServerSpec>,
+    #[serde(default)]
+    checks: Vec<crate::plugin_checks::Check>,
 }
 
 #[derive(Debug, Serialize)]
@@ -297,6 +423,8 @@ pub struct PluginPreview {
     pub skills: Vec<String>,
     /// Programs it would run: "name: command args".
     pub programs: Vec<String>,
+    /// Commands its checks run on this PC: "when: command".
+    pub checks: Vec<String>,
 }
 
 fn parse_skill(text: &str, fallback: &str) -> Skill {
@@ -372,6 +500,24 @@ fn skill_extras(dir: &Path) -> Vec<String> {
 /// A folder's plugin: plugin.json; or a Claude Code plugin
 /// (.claude-plugin/plugin.json, skills in skills/, servers in .mcp.json);
 /// or just skill folders (Anthropic's SKILL.md format).
+/// A plugin's checks as the person agrees to them: when, and the command.
+fn check_lines(checks: &[crate::plugin_checks::Check]) -> Vec<String> {
+    use crate::plugin_checks::Event;
+    checks
+        .iter()
+        .map(|k| {
+            let when = match k.event {
+                Event::BeforeTool => "Before a tool runs",
+                Event::AfterTool => "After a tool runs",
+                Event::MessageSent => "When you send a message",
+                Event::ReplyDone => "When a reply is done",
+            };
+            let tools = if k.tools.is_empty() { String::new() } else { format!(" ({})", k.tools.join(", ")) };
+            format!("{when}{tools}: {}", k.command)
+        })
+        .collect()
+}
+
 fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     if let Ok(text) = std::fs::read_to_string(dir.join("plugin.json")) {
         let m: Manifest = serde_json::from_str(&text).map_err(|e| format!("plugin.json isn't valid: {e}"))?;
@@ -393,7 +539,7 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
         if name.trim().is_empty() {
             return Err(".claude-plugin/plugin.json needs a name.".into());
         }
-        return Ok(Manifest { name, version: field("version"), description: field("description"), skills, mcp_servers });
+        return Ok(Manifest { name, version: field("version"), description: field("description"), skills, mcp_servers, checks: Vec::new() });
     }
     if skills.is_empty() {
         return Err("That folder has no plugin.json, and no SKILL.md in it or in its folders.".into());
@@ -402,7 +548,7 @@ fn read_manifest(dir: &Path) -> Result<Manifest, String> {
     let first = parse_skill(&std::fs::read_to_string(dir.join(&skills[0])).unwrap_or_default(), "");
     let folder = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let (name, description) = if skills.len() == 1 && !first.name.is_empty() { (first.name, first.description) } else { (folder, String::new()) };
-    Ok(Manifest { name, version: String::new(), description, skills, mcp_servers: HashMap::new() })
+    Ok(Manifest { name, version: String::new(), description, skills, mcp_servers: HashMap::new(), checks: Vec::new() })
 }
 
 /// The skills in an installed plugin's folder; a SKILL.md brings its folder's
@@ -501,10 +647,45 @@ pub struct ConnectorInput {
     pub headers: HashMap<String, String>,
 }
 
+/// A connector as the window sees it: who's signed in, not the tokens.
+fn shown(mut conn: Connector) -> Connector {
+    conn.auth = conn.auth.map(|a| a.shown());
+    conn
+}
+
 #[tauri::command(async)]
 pub fn list_connectors(state: AppStateRef) -> Result<Vec<Connector>, String> {
     let c = state.cipher()?;
-    Ok(connectors(&state.db.lock().unwrap(), &c))
+    Ok(connectors(&state.db.lock().unwrap(), &c).into_iter().map(shown).collect())
+}
+
+/// Signs in to a connector at an address, in the browser (only from the
+/// person's own button), and connects with it.
+#[tauri::command]
+pub async fn connector_sign_in(state: AppStateRef<'_>, id: String) -> Result<Connector, String> {
+    let c = state.cipher()?;
+    let mut conn = connectors(&state.db.lock().unwrap(), &c).into_iter().find(|x| x.id == id).ok_or("That connector is gone.")?;
+    if !conn.spec.remote() {
+        return Err("Only a connector at an address signs in.".into());
+    }
+    let auth = mcp_auth::sign_in(&state, &conn.spec.url, &conn.spec.headers).await?;
+    keep_auth(&state, &mut conn, auth)?;
+    stop(&state, &conn.id).await;
+    conn.tools = ensure_running(&state, &mut conn).await?;
+    store(&state.db.lock().unwrap(), &c, "connectors", &conn.id, &conn)?;
+    Ok(shown(conn))
+}
+
+#[tauri::command]
+pub async fn connector_sign_out(state: AppStateRef<'_>, id: String) -> Result<Connector, String> {
+    let c = state.cipher()?;
+    let mut conn = connectors(&state.db.lock().unwrap(), &c).into_iter().find(|x| x.id == id).ok_or("That connector is gone.")?;
+    stop(&state, &conn.id).await;
+    conn.auth = None;
+    let db_conn = state.db.lock().unwrap();
+    store(&db_conn, &c, "connectors", &conn.id, &conn)?;
+    db::log_action(&db_conn, "privacy", &format!("Signed out of the connector at {}", crate::host_of(&conn.spec.url)));
+    Ok(shown(conn))
 }
 
 #[tauri::command]
@@ -533,12 +714,22 @@ pub(crate) async fn save(state: &AppState, id: &str, name: &str, spec: ServerSpe
         plugin: None,
         tools: Vec::new(),
         tool_modes: HashMap::new(),
+        auth: None,
     });
     conn.name = name.to_string();
+    // A sign-in belongs to the address it was made for.
+    if conn.spec.url.trim() != spec.url.trim() {
+        conn.auth = None;
+    }
     conn.spec = ServerSpec { cwd: spec.cwd.clone().or_else(|| conn.spec.cwd.clone()), ..spec };
     stop(state, &conn.id).await;
-    // Connect once now so the user sees its tools (or what went wrong).
-    conn.tools = ensure_running(state, &conn).await?;
+    // Connect once now so the user sees its tools (or what went wrong). One
+    // that wants a sign-in is kept, for the Sign in button.
+    match ensure_running(state, &mut conn).await {
+        Ok(tools) => conn.tools = tools,
+        Err(e) if e.contains(mcp::SIGN_IN) && conn.spec.remote() => conn.tools.clear(),
+        Err(e) => return Err(e),
+    }
     let db_conn = state.db.lock().unwrap();
     store(&db_conn, &c, "connectors", &conn.id, &conn)?;
     let what = if conn.spec.remote() {
@@ -547,7 +738,7 @@ pub(crate) async fn save(state: &AppState, id: &str, name: &str, spec: ServerSpe
         "Added or changed a local connector (it runs a program on this PC)".to_string()
     };
     db::log_action(&db_conn, "privacy", &what);
-    Ok(conn)
+    Ok(shown(conn))
 }
 
 #[tauri::command]
@@ -605,14 +796,21 @@ pub fn inspect_plugin(state: AppStateRef, path: String) -> Result<PluginPreview,
         })
         .collect();
     programs.sort();
-    Ok(PluginPreview { name: m.name, version: m.version, description: m.description, skills: m.skills, programs })
+    let checks = check_lines(&m.checks);
+    Ok(PluginPreview { name: m.name, version: m.version, description: m.description, skills: m.skills, programs, checks })
 }
 
 #[tauri::command]
-pub async fn install_plugin(state: AppStateRef<'_>, path: String) -> Result<Plugin, String> {
+pub async fn install_plugin(state: AppStateRef<'_>, path: String, allow_checks: bool) -> Result<Plugin, String> {
     let c = state.cipher()?;
     let src = PathBuf::from(&path);
     let m = read_manifest(&src)?;
+    if !m.checks.is_empty() && !allow_checks {
+        return Err("This plugin runs commands on your PC at points of each reply. Tick the box to agree to them, or don't install it.".into());
+    }
+    if let Some(bad) = m.checks.iter().find(|k| k.command.trim().is_empty()) {
+        return Err(format!("One of the plugin's {:?} checks has no command.", bad.event));
+    }
     let id = plugin_id(&m.name);
     if id.is_empty() {
         return Err("The plugin's name needs letters or numbers.".into());
@@ -635,6 +833,7 @@ pub async fn install_plugin(state: AppStateRef<'_>, path: String) -> Result<Plug
             plugin: Some(id.clone()),
             tools: Vec::new(),
             tool_modes: HashMap::new(),
+            auth: None,
         };
         store(&state.db.lock().unwrap(), &c, "connectors", &conn.id, &conn)?;
         connector_ids.push(conn.id);
@@ -648,6 +847,7 @@ pub async fn install_plugin(state: AppStateRef<'_>, path: String) -> Result<Plug
         dir: dest.display().to_string(),
         skills,
         connectors: connector_ids,
+        checks: m.checks,
     };
     let conn = state.db.lock().unwrap();
     store(&conn, &c, "plugins", &id, &plugin)?;
@@ -717,6 +917,25 @@ mod tests {
         assert!(p.contains("Do X.") && p.contains("load_skill") && !p.contains(&"y".repeat(50)));
     }
 
+    /// A plugin's checks come from its plugin.json and are put to the
+    /// person as when they run and what they run.
+    #[test]
+    fn plugin_checks_are_read_and_spelled_out() {
+        let d = std::env::temp_dir().join(format!("sulcusai-checks-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        let manifest = json!({ "name": "linter", "checks": [
+            { "event": "before_tool", "tools": ["write_file", "edit_file"], "command": "node checks/lint.js", "timeout": 30 },
+            { "event": "reply_done", "command": "pwsh -File checks/tests.ps1" }
+        ] });
+        std::fs::write(d.join("plugin.json"), manifest.to_string()).unwrap();
+        let m = read_manifest(&d).unwrap();
+        assert_eq!(m.checks.len(), 2);
+        assert_eq!(m.checks[1].timeout, 30);
+        assert_eq!(check_lines(&m.checks), ["Before a tool runs (write_file, edit_file): node checks/lint.js", "When a reply is done: pwsh -File checks/tests.ps1"]);
+        std::fs::write(d.join("plugin.json"), json!({ "name": "x", "checks": [{ "event": "sometime", "command": "y" }] }).to_string()).unwrap();
+        assert!(read_manifest(&d).is_err());
+    }
+
     /// Anthropic's skill folders install as they are: one SKILL.md, a folder
     /// of skill folders, or a Claude Code plugin (its skills/ and .mcp.json).
     /// A skill's own files can be read, and nothing outside its folder.
@@ -765,13 +984,34 @@ mod tests {
 
     #[test]
     fn read_only_tools_default_to_allow_and_others_to_ask() {
-        let mut c = Connector { id: "c".into(), name: "n".into(), spec: ServerSpec::default(), enabled: true, plugin: None, tools: vec![], tool_modes: HashMap::new() };
+        let mut c = Connector { id: "c".into(), name: "n".into(), spec: ServerSpec::default(), enabled: true, plugin: None, tools: vec![], tool_modes: HashMap::new(), auth: None };
         let ro = McpTool { name: "look".into(), description: String::new(), input_schema: json!({}), read_only: true };
         let rw = McpTool { name: "send".into(), description: String::new(), input_schema: json!({}), read_only: false };
         assert_eq!(c.mode(&ro), ToolMode::Allow);
         assert_eq!(c.mode(&rw), ToolMode::Ask);
         c.tool_modes.insert("send".into(), ToolMode::Off);
         assert_eq!(c.mode(&rw), ToolMode::Off);
+        // On the web even a look sends what it's given off the PC, so it asks.
+        c.spec.url = "https://mcp.example.com/mcp".into();
+        assert_eq!(c.web().as_deref(), Some("mcp.example.com"));
+        assert_eq!(c.mode(&ro), ToolMode::Ask);
+        c.tool_modes.insert("look".into(), ToolMode::Allow);
+        assert_eq!(c.mode(&ro), ToolMode::Allow);
+        c.spec.url = "http://127.0.0.1:8080/mcp".into();
+        assert_eq!(c.web(), None);
+    }
+
+    /// The sign-in's token goes with each request (unless a header already
+    /// carries one), and the window sees who signed in, never the tokens.
+    #[test]
+    fn a_sign_in_is_used_but_never_shown() {
+        let auth = Auth { access_token: "a1".into(), refresh_token: "r1".into(), account: "me@x.com".into(), ..Default::default() };
+        let mut c = Connector { id: "c".into(), name: "n".into(), spec: ServerSpec { url: "https://x.com/mcp".into(), ..Default::default() }, enabled: true, plugin: None, tools: vec![], tool_modes: HashMap::new(), auth: Some(auth) };
+        assert_eq!(c.reach().headers.get("Authorization").map(String::as_str), Some("Bearer a1"));
+        let seen = shown(c.clone()).auth.unwrap();
+        assert_eq!((seen.access_token.as_str(), seen.refresh_token.as_str(), seen.account.as_str()), ("", "", "me@x.com"));
+        c.spec.headers.insert("authorization".into(), "Bearer own".into());
+        assert_eq!(c.reach().headers.len(), 1);
     }
 
     #[test]
@@ -780,7 +1020,7 @@ mod tests {
         std::fs::create_dir_all(d.join("p/skills")).unwrap();
         std::fs::write(d.join("p/skills/a.md"), "x").unwrap();
         std::fs::write(d.join("outside.md"), "x").unwrap();
-        let m = Manifest { name: "p".into(), version: String::new(), description: String::new(), skills: vec!["skills/a.md".into()], mcp_servers: HashMap::new() };
+        let m = Manifest { name: "p".into(), version: String::new(), description: String::new(), skills: vec!["skills/a.md".into()], mcp_servers: HashMap::new(), checks: Vec::new() };
         assert!(skill_files(&d.join("p"), &m).is_ok());
         let bad = Manifest { skills: vec!["../outside.md".into()], ..m };
         assert!(skill_files(&d.join("p"), &bad).is_err());

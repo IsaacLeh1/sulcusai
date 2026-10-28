@@ -701,6 +701,75 @@ async fn e2e_helper_and_handoff() {
     state.engine.lock().await.stop().await;
 }
 
+/// A public connector on the web that needs no sign-in (SULCUSAI_TEST_MCP_URL,
+/// DeepWiki's unless set): it connects over Streamable HTTP, lists its tools
+/// and answers one call.
+#[tokio::test]
+#[ignore]
+async fn e2e_a_connector_on_the_web() {
+    let url = std::env::var("SULCUSAI_TEST_MCP_URL").unwrap_or_else(|_| "https://mcp.deepwiki.com/mcp".into());
+    let spec = crate::mcp::ServerSpec { url, ..Default::default() };
+    let mut c = crate::mcp::Client::start(&spec, None, crate::net::Connectivity::Cloud).await.unwrap();
+    let tools = c.list_tools().await.unwrap();
+    println!("{}: {:?}", c.server_name, tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>());
+    assert!(!tools.is_empty());
+    if tools.iter().any(|t| t.name == "read_wiki_structure") {
+        let (failed, text) = c.call("read_wiki_structure", serde_json::json!({ "repoName": "tauri-apps/tauri" })).await.unwrap();
+        println!("{}", text.chars().take(400).collect::<String>());
+        assert!(!failed && !text.trim().is_empty());
+    }
+    c.stop().await;
+}
+
+/// A plugin's checks with the real model: after read_file, its check hands
+/// the model a note it can only have from there (and reads what it was
+/// given on stdin); before write_file, another stops the write. See
+/// `test_model`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_plugin_checks_reach_the_model() {
+    use crate::plugin_checks::{Check, Event};
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let folder = std::env::temp_dir().join(format!("sulcusai-e2e-checks-{id}"));
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("plan.txt"), "Ship on Friday.\n").unwrap();
+    let folder = dunce::canonicalize(&folder).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &folder.display().to_string()).unwrap();
+    let note = r#"$i = [Console]::In.ReadToEnd() | ConvertFrom-Json; '{"note":"The checker says the code word for ' + $i.tool + ' is PLUM-7."}'"#;
+    let plugin = crate::connectors::Plugin {
+        id: "checker".into(),
+        name: "Checker".into(),
+        version: "1".into(),
+        description: String::new(),
+        enabled: true,
+        dir: folder.display().to_string(),
+        skills: vec![],
+        connectors: vec![],
+        checks: vec![
+            Check { event: Event::AfterTool, tools: vec!["read_file".into()], command: note.into(), timeout: 30 },
+            Check { event: Event::BeforeTool, tools: vec!["write_file".into()], command: "Write-Error 'No new files in this folder today.'; exit 2".into(), timeout: 30 },
+        ],
+    };
+    crate::connectors::store(&state.db.lock().unwrap(), &cipher, "plugins", "checker", &plugin).unwrap();
+    crate::features::set(&state.db.lock().unwrap(), crate::features::Feature::Connectors, true).ok();
+    let started = std::time::Instant::now();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let reply = say(&state, &ep, &cipher, &chat.id, &format!("Read plan.txt in {}, then tell me when we ship and the code word the checker gave you.", folder.display())).await;
+    let (text, _) = transcript(&state, &cipher, &chat.id, &format!("{name}: a note from a check ({:.0}s)", started.elapsed().as_secs_f64()));
+    let chat2 = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    say(&state, &ep, &cipher, &chat2.id, &format!("Create a file named todo.txt in {} with the line: buy milk. Use write_file.", folder.display())).await;
+    let (text2, tools2) = transcript(&state, &cipher, &chat2.id, &format!("{name}: a check stops a write ({:.0}s)", started.elapsed().as_secs_f64()));
+    let wrote = folder.join("todo.txt").exists();
+    let _ = std::fs::remove_dir_all(&folder);
+    assert!(text.contains("[Note from the plugin Checker: The checker says the code word for read_file is PLUM-7.]"), "the note was added to the result: {text}");
+    assert!(reply.contains("PLUM-7"), "the model used it: {reply}");
+    assert!(tools2.iter().any(|t| t == "write_file"), "{tools2:?}");
+    assert!(text2.contains("A check from the plugin Checker stopped this: No new files in this folder today."), "{text2}");
+    assert!(!wrote, "the write was stopped");
+}
+
 /// A local connector and a plugin skill, used by the real model.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
@@ -714,6 +783,7 @@ async fn e2e_connector_and_skill() {
         plugin: None,
         tools: vec![],
         tool_modes: Default::default(),
+        auth: None,
     };
     crate::connectors::store(&state.db.lock().unwrap(), &cipher, "connectors", "echo", &conn).unwrap();
     let skill = crate::connectors::Plugin {
@@ -730,6 +800,7 @@ async fn e2e_connector_and_skill() {
             ..Default::default()
         }],
         connectors: vec![],
+        checks: vec![],
     };
     crate::connectors::store(&state.db.lock().unwrap(), &cipher, "plugins", "haiku", &skill).unwrap();
 

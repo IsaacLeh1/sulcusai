@@ -65,6 +65,7 @@ mod location;
 mod lock_lint;
 mod mail;
 mod mcp;
+mod mcp_auth;
 mod media;
 mod meeting;
 mod memcheck;
@@ -84,6 +85,7 @@ mod people_window;
 mod side_windows;
 mod perf;
 mod placement;
+mod plugin_checks;
 mod places;
 mod practice;
 mod privacy;
@@ -3445,6 +3447,8 @@ pub fn run() {
             chat_regenerate,
             chat_edit,
             chat_versions,
+            versions::go_back_preview_cmd,
+            versions::go_back_cmd,
             chat_switch_version,
             chatsearch::search_chats,
             chatsearch::export_chat,
@@ -3532,6 +3536,9 @@ pub fn run() {
             connectors::delete_connector,
             connectors::set_connector_enabled,
             connectors::set_tool_mode,
+            connectors::connector_sign_in,
+            connectors::connector_sign_out,
+            plugin_checks::plugin_check_problems,
             connectors::list_plugins,
             connectors::inspect_plugin,
             connectors::install_plugin,

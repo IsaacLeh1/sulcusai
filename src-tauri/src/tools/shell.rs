@@ -194,6 +194,18 @@ impl Kept {
     }
 }
 
+/// PowerShell started with -EncodedCommand writes its errors as CLIXML,
+/// whatever it's told; the words in them, for the model and for checks.
+pub(crate) fn plain_errors(err: &str) -> String {
+    static PART: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"(?s)<S S="Error">(.*?)</S>"#).unwrap());
+    static ESCAPED: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"_x([0-9A-Fa-f]{4})_").unwrap());
+    let Some(xml) = err.trim_start().strip_prefix("#< CLIXML") else { return err.to_string() };
+    let text: String = PART.captures_iter(xml).map(|c| c[1].to_string()).collect();
+    let text = ESCAPED.replace_all(&text, |c: &regex::Captures| u32::from_str_radix(&c[1], 16).ok().and_then(char::from_u32).map(String::from).unwrap_or_default());
+    let text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&");
+    text.replace("\r\n", "\n").trim_end().to_string()
+}
+
 /// Reads a stream into `out` as it comes; the task ends with the stream.
 fn collect(mut r: impl tokio::io::AsyncRead + Unpin + Send + 'static, out: Arc<Mutex<Kept>>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -443,13 +455,67 @@ pub async fn run(args: &Value, ctx: &Ctx<'_>) -> Outcome {
 
 /// Starts the shell running `command` in `dir`, in its own limited job.
 fn spawn_shell(command: &str, dir: &std::path::Path, fallback_job: Option<&crate::engine::JobRef>) -> Result<tokio::process::Child, String> {
-    let script = format!(
+    spawn_with(command, dir, fallback_job, None)
+}
+
+/// What a plugin's check left: its exit code (None when it ran out of
+/// time and was ended), what it printed and its errors.
+pub(crate) struct CheckRun {
+    pub code: Option<i32>,
+    pub out: String,
+    pub err: String,
+}
+
+/// A plugin's check (`plugin_checks`), run the way the assistant's commands
+/// are (hidden, in the same limited job, ended with all it started when
+/// time runs out), with `input` on its stdin and `env` set.
+pub(crate) async fn run_check(command: &str, dir: &std::path::Path, env: &[(&str, &str)], input: &str, timeout: Duration) -> Result<CheckRun, String> {
+    let mut child = spawn_with(command, dir, None, Some(env))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use tokio::io::AsyncWriteExt;
+        let _ = stdin.write_all(input.as_bytes()).await;
+    }
+    let (out, err) = (Arc::new(Mutex::new(Kept::default())), Arc::new(Mutex::new(Kept::default())));
+    let read_out = collect(child.stdout.take().unwrap(), out.clone());
+    let read_err = collect(child.stderr.take().unwrap(), err.clone());
+    let code = tokio::select! {
+        s = child.wait() => s.ok().and_then(|s| s.code()),
+        _ = tokio::time::sleep(timeout) => {
+            kill_tree(child.id());
+            let _ = child.kill().await;
+            None
+        }
+    };
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {
+        let _ = read_out.await;
+        let _ = read_err.await;
+    })
+    .await;
+    let (out, err) = (out.lock().unwrap().text(), plain_errors(&err.lock().unwrap().text()));
+    Ok(CheckRun { code, out, err })
+}
+
+/// `env`: for a plugin's check, which also gets a stdin to read from.
+fn spawn_with(command: &str, dir: &std::path::Path, fallback_job: Option<&crate::engine::JobRef>, env: Option<&[(&str, &str)]>) -> Result<tokio::process::Child, String> {
+    let mut script = format!(
         "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; $OutputEncoding=[Text.Encoding]::UTF8\n{command}"
     );
+    // A check's exit code is its answer (2 stops the step), but PowerShell
+    // ends with 1 whenever a program it ran failed; the program's own code
+    // is passed on instead.
+    if env.is_some() {
+        script.push_str("\n$sulcusOk = $?; if ($LASTEXITCODE) { exit $LASTEXITCODE }; if (-not $sulcusOk) { exit 1 }");
+    }
 
     let mut cmd = if cfg!(windows) {
         let mut c = tokio::process::Command::new("powershell.exe");
-        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encode(&script)]);
+        c.args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"]);
+        // With a pipe on its stdin, PowerShell takes the other end for
+        // PowerShell and writes its errors as CLIXML; a check's are words.
+        if env.is_some() {
+            c.args(["-InputFormat", "Text", "-OutputFormat", "Text"]);
+        }
+        c.args(["-EncodedCommand", &encode(&script)]);
         c
     } else {
         let _ = &script;
@@ -460,10 +526,13 @@ fn spawn_shell(command: &str, dir: &std::path::Path, fallback_job: Option<&crate
     cmd.current_dir(dir)
         // Python holds back what it prints into a pipe; servers' addresses should show at once.
         .env("PYTHONUNBUFFERED", "1")
-        .stdin(Stdio::null())
+        .stdin(if env.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    for (k, v) in env.unwrap_or_default() {
+        cmd.env(k, v);
+    }
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -523,7 +592,7 @@ async fn run_to_end(mut child: tokio::process::Child, command: &str, dir: &std::
     })
     .await;
     let out = out.lock().unwrap().text();
-    let err = err.lock().unwrap().text();
+    let err = plain_errors(&err.lock().unwrap().text());
     let mut combined = out.trim_end().to_string();
     if !err.trim().is_empty() {
         if !combined.is_empty() {
@@ -576,6 +645,13 @@ fn kill_tree(pid: Option<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn powershell_errors_come_back_as_words() {
+        let clixml = "#< CLIXML\r\n<Objs Version=\"1.1.0.1\" xmlns=\"http://schemas.microsoft.com/powershell/2004/04\"><S S=\"Error\">Get-Item : Cannot find path 'C:\\nope' &amp; more_x000D__x000A_</S><S S=\"Error\">At line:2 char:1_x000D__x000A_</S></Objs>";
+        assert_eq!(plain_errors(clixml), "Get-Item : Cannot find path 'C:\\nope' & more\nAt line:2 char:1");
+        assert_eq!(plain_errors("plain text from node"), "plain text from node");
+    }
 
     /// A command that prints without end keeps a bounded amount in memory.
     #[test]

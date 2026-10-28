@@ -171,13 +171,13 @@ pub struct Tokens {
 }
 
 /// A PKCE verifier and its S256 challenge.
-fn pkce() -> (String, String) {
+pub(crate) fn pkce() -> (String, String) {
     let verifier = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)
 }
 
-fn query(pairs: &[(&str, &str)]) -> String {
+pub(crate) fn query(pairs: &[(&str, &str)]) -> String {
     let mut u = reqwest::Url::parse("http://x/").unwrap();
     {
         let mut q = u.query_pairs_mut();
@@ -232,7 +232,7 @@ const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>SulcusAI</tit
 const FAILED_PAGE: &str = "<!doctype html><meta charset=utf-8><title>SulcusAI</title><body style=\"font:16px system-ui;margin:3em;color:#222\"><h2>Sign-in didn't finish.</h2><p>Go back to SulcusAI and try again.</p>";
 
 /// Waits for the browser to come back with the code.
-async fn wait_for_code(listener: tokio::net::TcpListener, state: &str, timeout: Duration) -> Result<String, String> {
+pub(crate) async fn wait_for_code(listener: tokio::net::TcpListener, state: &str, timeout: Duration) -> Result<String, String> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let (mut sock, _) = tokio::time::timeout_at(deadline, listener.accept())
@@ -266,7 +266,7 @@ fn token_error(v: &Value, status: reqwest::StatusCode) -> String {
     format!("The sign-in server answered {status}: {e} {}", d.lines().next().unwrap_or("")).trim().to_string()
 }
 
-async fn token_request(client: &reqwest::Client, url: &str, form: &[(&str, &str)]) -> Result<Value, String> {
+pub(crate) async fn token_request(client: &reqwest::Client, url: &str, form: &[(&str, &str)]) -> Result<Value, String> {
     let resp = client.post(url).form(form).send().await.map_err(|e| format!("Couldn't reach the sign-in server: {e}"))?;
     let status = resp.status();
     let v: Value = resp.json().await.map_err(|e| format!("The sign-in server sent an unreadable answer: {e}"))?;
@@ -290,7 +290,7 @@ fn tokens_from(v: &Value, p: Provider, f: For, old_refresh: &str) -> Tokens {
 
 /// Opens the sign-in page in the user's own browser (sign-in pages refuse
 /// embedded browsers), using their main browser if they chose one.
-fn open_in_browser(conn: &Connection, url: &str) -> Result<(), String> {
+pub(crate) fn open_in_browser(conn: &Connection, url: &str) -> Result<(), String> {
     use crate::browsers::{choice, installed, MainBrowser};
     if let MainBrowser::App { name } = choice(conn) {
         if let Some(b) = installed().into_iter().find(|b| b.name == name) {

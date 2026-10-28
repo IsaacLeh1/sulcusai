@@ -62,9 +62,11 @@ def titles(root):
     base = os.path.join(root, 'src-tauri', 'src')
     for d, _, files in os.walk(base):
         for f in files:
-            if not f.endswith('.rs') or f == 'e2e.rs':
+            # Tests in files of their own, and the end-to-end tests' folder.
+            if not f.endswith('.rs') or f in ('e2e.rs', 'tests.rs') or os.path.basename(d) == 'e2e':
                 continue
-            s = open(os.path.join(d, f), encoding='utf-8').read().split('#[cfg(test)]\nmod tests')[0]
+            # Up to an inline test module (`mod tests;` only names one in its own file).
+            s = open(os.path.join(d, f), encoding='utf-8').read().replace('\r\n', '\n').split('#[cfg(test)]\nmod tests {')[0]
             for m in re.finditer(r'Outcome::(ok|error|denied)\(', s):
                 parts = call_args(s, m.end())
                 idx = 1 if m.group(1) == 'ok' else 0

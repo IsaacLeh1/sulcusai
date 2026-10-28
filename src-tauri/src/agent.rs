@@ -23,6 +23,7 @@ use crate::tools::allowances::{self, Effect};
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
 use crate::connectors::{self, OfferedTool, Skill, ToolMode};
 use crate::compact;
+use crate::plugin_checks;
 use crate::{memory, projects, AppState};
 
 mod approvals;
@@ -30,11 +31,13 @@ mod execute;
 mod instructions;
 mod prepare;
 mod requests;
+mod steps;
 #[cfg(test)]
 mod tests;
 
 pub use approvals::{Approvals, Decision, PendingApproval};
 use instructions::tool_instructions;
+use steps::{args_of, call_key, fit_result, is_network_tool, now, run_end};
 
 /// Sends an event to the window (or to a test).
 pub type Emit = Arc<dyn Fn(&str, Value) + Send + Sync>;
@@ -67,53 +70,6 @@ pub struct TurnResult {
     pub context: ContextInfo,
     pub tps: Option<f64>,
     pub cancelled: bool,
-}
-
-fn now() -> i64 {
-    db::now_ms()
-}
-
-/// A tool result cut to about a third of the model's memory, so one long
-/// email, page or file can't crowd out the conversation (small models have
-/// 8K tokens or less; about 3 characters a token, to be safe), and to the
-/// tool's own limit. A command keeps its end as well as its start: that's
-/// where errors are.
-fn fit_result(mut outcome: Outcome, name: &str, ctx: u32) -> Outcome {
-    let share = (ctx as usize / 3) * 3;
-    let max = if share == 0 { tools::result_limit(name) } else { share.min(tools::result_limit(name)) };
-    let total = outcome.text.chars().count();
-    if total <= max {
-        return outcome;
-    }
-    let left = total - max;
-    outcome.text = if matches!(name, "run_command" | "command_output") && max > 4_000 {
-        let head: String = outcome.text.chars().take(2_000).collect();
-        let tail: String = outcome.text.chars().skip(total - (max - 2_000)).collect();
-        format!("{head}\n\n[Cut here: {left} more characters of output weren't shown, to fit your memory. The end follows.]\n\n{tail}")
-    } else {
-        let kept: String = outcome.text.chars().take(max).collect();
-        let next = if name == "read_file" { "Read on with start_line if you need the rest." } else { "Answer from what's above." };
-        format!("{kept}\n\n[Cut here: {left} more characters weren't shown, to fit your memory. {next}]")
-    };
-    outcome
-}
-
-/// Tools that reach the internet: a failure is often the network, worth one retry.
-fn is_network_tool(name: &str) -> bool {
-    matches!(name, "web_search" | "fetch_page" | "wikipedia" | "research" | "market_quote" | "find_places" | "weather" | "news")
-}
-
-/// The end of the run of calls that can go together starting at `from`
-/// (exclusive): consecutive calls that are each `ok`. A run of one isn't
-/// worth it, so the caller only acts when the run is 2 or longer.
-fn run_end(ok: &[bool], from: usize) -> usize {
-    ok[from..].iter().position(|b| !b).map_or(ok.len(), |n| from + n)
-}
-
-/// A tool call's name and arguments, with the arguments' formatting evened out.
-fn call_key(call: &ToolCall) -> String {
-    let args = serde_json::from_str::<Value>(&call.arguments).map(|v| v.to_string()).unwrap_or_else(|_| call.arguments.clone());
-    format!("{}{}", call.name, args)
 }
 
 impl Turn {
@@ -180,6 +136,15 @@ impl Turn {
                 if let Some(d) = tools::find("load_skill") {
                     defs.push(json!({ "type": "function", "function": { "name": d.name, "description": d.description, "parameters": (d.params)() } }));
                 }
+            }
+            // Plugins' checks run where things change: not in Plan mode or an
+            // incognito chat, and on a timed task only when it may change things.
+            let may_change = match &self.pre_approved {
+                Some(approved) => approved.iter().any(|n| tools::find(n).is_some_and(|d| matches!(d.risk, Risk::Write | Risk::Execute))),
+                None => !self.unattended,
+            };
+            if self.mode != Mode::Plan && !incognito && may_change {
+                extras.checks = plugin_checks::armed(&self.state.db.lock().unwrap(), &self.cipher);
             }
         }
         // Knowing the app itself: what's connected, and connecting accounts.
@@ -585,6 +550,19 @@ impl Turn {
         let mut did_something = false;
         // What came before this request was compacted partway through it.
         let mut compacted_mid = false;
+        // Made room once after the model said the request was too long.
+        let mut squeezed = false;
+        // Plugins' checks: run in the chat's own folder.
+        let check_folder = sandbox.roots().iter().find(|r| !sandbox.is_general(r)).or(sandbox.roots().first()).cloned();
+        // What they said about the message, for the model with it each step.
+        let mut sent_notes = Vec::new();
+        if extras.checks_at(plugin_checks::Event::MessageSent, None) {
+            let a = plugin_checks::run(&self.state, &extras.checks, &plugin_checks::Moment { result: Some(request.as_str()), ..plugin_checks::Moment::at(plugin_checks::Event::MessageSent, &self.chat_id, check_folder.as_deref(), self.mode) }, &sandbox).await;
+            sent_notes.extend(a.block.into_iter().chain(a.ask).chain(a.notes));
+        }
+        // A reply-done check that turned the reply back, for the next step (3 at most).
+        let mut check_note: Option<String> = None;
+        let mut checks_back = 0;
         for step in 0..most_steps {
             if step >= limit {
                 break;
@@ -612,6 +590,8 @@ impl Turn {
                 compacted_mid = true;
                 if let Some((old, summary)) = self.compact_before_turn().await {
                     about = compact::with_summary(&about, old.as_deref(), &summary);
+                    // The summary stands in for what it covers, so the model needs it.
+                    system = system_of(&about);
                 }
             }
             let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
@@ -646,6 +626,12 @@ impl Turn {
             }
             self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
             self.emit("chat:context", json!({ "chat_id": self.chat_id, "context": info }));
+            // The checks' notes go with the message they were about, for the model only.
+            if !sent_notes.is_empty() {
+                if let Some(m) = kept.iter_mut().find(|m| m.id == self.turn_id) {
+                    m.content = format!("{}\n\n{}", m.content, sent_notes.join("\n"));
+                }
+            }
 
             // One message for the step, whatever is tried again in it: what it
             // wrote stays on screen (a new id cleared it, answer and thinking).
@@ -663,12 +649,13 @@ impl Turn {
             }
             // Set when its reply only explained what to do: the same step again, told to do it.
             let mut carry_on: Option<&str> = go_on.take();
+            let checked_back = check_note.take();
             // That reply's words and thinking: they stay, ahead of what it writes next.
             let mut aside = (String::new(), String::new());
             let finished = loop {
                 self.emit("chat:start", json!({ "chat_id": self.chat_id, "message_id": message_id }));
                 let mut messages = chat::api_messages(&system, &memory::with_recall(&kept, &self.turn_id, &recall_note));
-                if let Some(n) = carry_on {
+                for n in carry_on.iter().copied().chain(checked_back.as_deref()) {
                     messages.push(json!({ "role": "user", "content": n }));
                 }
                 let see = |id: &str| crate::media::image_data_url(&self.state, &self.cipher, id).ok();
@@ -803,6 +790,29 @@ impl Turn {
                     Err(e) if e.contains("Failed to parse tool call arguments") && tools.is_some() && midway < 4 && step < limit - 1 && !self.cancel.load(Ordering::Relaxed) => {
                         midway += 1;
                         carry_on = Some(chat::RESEND_CALL);
+                        aside = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
+                        continue;
+                    }
+                    // The model said it no longer fits (its counting and ours
+                    // can differ): once a turn, what came before is compacted,
+                    // or else this turn's older results are let go, and the
+                    // step is tried again instead of ending in an error.
+                    Err(e) if chat::too_long(&e) && !squeezed && !self.cancel.load(Ordering::Relaxed) => {
+                        squeezed = true;
+                        let compacted = if incognito { None } else { self.compact_before_turn().await };
+                        if let Some((old, summary)) = &compacted {
+                            about = compact::with_summary(&about, old.as_deref(), summary);
+                            system = system_of(&about);
+                        }
+                        let (history, _) = compact::after_last(db::messages(&self.state.db.lock().unwrap(), &self.cipher, &self.chat_id));
+                        (kept, info) = chat::fit_history(&self.ep, &self.base, &about, tools.as_ref(), &history).await?;
+                        if compacted.is_none() {
+                            chat::trim_turn(&mut kept, &self.turn_id, 2);
+                        }
+                        if let Some(m) = kept.iter_mut().find(|m| m.id == self.turn_id).filter(|_| !sent_notes.is_empty()) {
+                            m.content = format!("{}\n\n{}", m.content, sent_notes.join("\n"));
+                        }
+                        self.state.contexts.lock().unwrap().insert(self.chat_id.clone(), info.clone());
                         aside = (chat::joined(&aside.0, &shown.0), chat::joined(&aside.1, &shown.1));
                         continue;
                     }
@@ -1052,6 +1062,19 @@ impl Turn {
                     self.emit("agent:step", json!({ "chat_id": self.chat_id }));
                     continue;
                 }
+                // A plugin's check can turn the reply back (its tests fail),
+                // three times a turn at most so a check that always fails can't
+                // keep it going.
+                if checks_back < 3 && step < limit - 1 && !result.cancelled && extras.checks_at(plugin_checks::Event::ReplyDone, None) {
+                    let said = result.last.as_ref().map(|m| m.content.as_str());
+                    let a = plugin_checks::run(&self.state, &extras.checks, &plugin_checks::Moment { result: said, ..plugin_checks::Moment::at(plugin_checks::Event::ReplyDone, &self.chat_id, check_folder.as_deref(), self.mode) }, &sandbox).await;
+                    if let Some(why) = a.block {
+                        checks_back += 1;
+                        check_note = Some(format!("{why}\nDeal with this, then finish your reply."));
+                        self.emit("agent:step", json!({ "chat_id": self.chat_id }));
+                        continue;
+                    }
+                }
                 break;
             }
             self.emit("agent:step", json!({ "chat_id": self.chat_id }));
@@ -1295,7 +1318,19 @@ impl Turn {
                         system = system_of(&about);
                     }
                 }
-                let outcome = fit_result(outcome, &call.name, self.ep.ctx);
+                // What a plugin's check says about the result goes with it to
+                // the model, after the result is cut to size so it's never cut.
+                let mut notes = Vec::new();
+                if outcome.meta["status"] != "denied" && extras.checks_at(plugin_checks::Event::AfterTool, Some(&call.name)) {
+                    let args = args_of(call);
+                    let result: String = outcome.text.chars().take(20_000).collect();
+                    let a = plugin_checks::run(&self.state, &extras.checks, &plugin_checks::Moment { tool: Some(&call.name), arguments: Some(&args), result: Some(&result), ..plugin_checks::Moment::at(plugin_checks::Event::AfterTool, &self.chat_id, check_folder.as_deref(), self.mode) }, &sandbox).await;
+                    notes.extend(a.block.into_iter().chain(a.notes));
+                }
+                let mut outcome = fit_result(outcome, &call.name, self.ep.ctx);
+                for note in notes {
+                    outcome.text = format!("{}\n\n{note}", outcome.text);
+                }
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
             }
@@ -1391,11 +1426,6 @@ impl Turn {
     }
 }
 
-/// A call's arguments as JSON (empty when they don't parse).
-fn args_of(call: &ToolCall) -> Value {
-    serde_json::from_str(&call.arguments).unwrap_or_default()
-}
-
 /// Tools that come from outside the built-in set, for one turn.
 #[derive(Default)]
 struct Extras {
@@ -1403,6 +1433,13 @@ struct Extras {
     skills: Vec<Skill>,
     problems: Vec<String>,
     allowances: Vec<allowances::Allowance>,
+    checks: Vec<plugin_checks::Armed>,
+}
+
+impl Extras {
+    fn checks_at(&self, event: plugin_checks::Event, tool: Option<&str>) -> bool {
+        self.checks.iter().any(|a| a.check.event == event && a.check.covers(tool))
+    }
 }
 
 impl Outcome {

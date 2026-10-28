@@ -36,7 +36,7 @@ rpat = re.compile(r'(?:Err\(|Some\(|ok_or\(|ok_or_else\(\|\|\s*|map_err\(\|_\|\s
 rinto = re.compile(r'"((?:[^"\\]|\\.)*)"\.(?:into|to_string)\(\)')
 for d, _, files in os.walk(os.path.join(root, 'src-tauri', 'src')):
     for f in files:
-        if not f.endswith('.rs') or f in ('e2e.rs', 'tests.rs'):
+        if not f.endswith('.rs') or f in ('e2e.rs', 'tests.rs') or os.path.basename(d) == 'e2e':
             continue
         text = open(os.path.join(d, f), encoding='utf-8').read().replace('\r\n', '\n')
         # Up to an inline test module (`mod tests;` only names one in its own file).
