@@ -165,6 +165,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   }, [status]);
   /** What's too hot while the heat guard pauses between steps. */
   const [cooling, setCooling] = useState<string | null>(null);
+  // A cloud provider was busy: when the next try goes, and which it is.
+  const [retrying, setRetrying] = useState<{ provider: string; at: number; attempt: number; of: number } | null>(null);
   // Waiting in line for another model: one runs at a time.
   const [queued, setQueued] = useState<{ place: number; model: string; card?: boolean } | null>(null);
   // Before a picture of something named: checking (or looking up) its look.
@@ -209,7 +211,8 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [waiting, setWaiting] = useState<QueueItem[]>([]);
   /** The model has read the messages sent up to then (it started answering). */
   const [readUpTo, setReadUpTo] = useState(0);
-  const [runningCall, setRunningCall] = useState<string | null>(null);
+  // Tools running now (lookups can run several at once).
+  const [runningCalls, setRunningCalls] = useState<Set<string>>(() => new Set());
   const [undoable, setUndoable] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -334,8 +337,10 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         setQueued(p.status === "queued" ? { place: p.place ?? 1, model: p.detail ?? "" } : p.status === "waiting_card" ? { place: p.place ?? 1, model: "", card: true } : null);
         if (p.status === "handoff") setHandingOff(true);
         else if (p.status === "compacting") setCompacting(true);
+        else if (p.status === "retrying") setRetrying({ provider: p.provider ?? "", at: Date.now() + (p.seconds ?? 1) * 1000, attempt: p.attempt ?? 1, of: p.of ?? 1 });
         else if (p.status === "idle") {
           setCompacting(false);
+          setRetrying(null);
           setLookingUp(null);
           setReadingPictures(false);
         } else if (p.status === "looking_up") {
@@ -373,6 +378,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
       on("memory:auto", mine((p) => toast(t("Remembered: {what}", { what: p.saved.join(" ") }), "success"))),
       on("chat:start", mine((p) => {
         setCooling(null);
+        setRetrying(null);
         setQueued(null);
         setLookingUp(null);
         setReadingPictures(false);
@@ -385,16 +391,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         );
       })),
       on("chat:delta", mine((p) => {
+        setRetrying(null);
         if (p.content) setStatus("writing");
         addDelta(p.message_id, p.content ?? "", p.thinking ?? "");
       })),
       on("agent:step", mine(() => {
         setStreaming(null);
         setStatus("working");
-        setRunningCall(null);
+        setRunningCalls(new Set());
         api.messages(chat.id).then(setMessages);
       })),
-      on("agent:tool_start", mine((p) => setRunningCall(p.call_id))),
+      on("agent:tool_start", mine((p) => setRunningCalls((all) => new Set(all).add(p.call_id)))),
       on("agent:approval", mine((p) => setPending((all) => [...all.filter((a) => a.call_id !== p.call_id), p]))),
       on("agent:approval_done", mine((p) => setPending((all) => all.filter((a) => a.call_id !== p.call_id)))),
       on("chat:done", mine((p) => {
@@ -404,7 +411,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         if (p.error) setError(errorText(p.error));
         setStreaming(null);
         setStatus("idle");
-        setRunningCall(null);
+        setRunningCalls(new Set());
         setPending([]);
         reload();
       })),
@@ -707,9 +714,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     switchTo: (anchor, to) => api.switchVersion(chat.id, anchor, to).catch((e) => toast(errorText(e), "error")),
   };
   const items = useMemo(
-    () => renderItems(messages, undoable, busy, runningCall, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast, turns),
+    () => renderItems(messages, undoable, busy, runningCalls, undo, helperSteps, onOpenChat, features.has("read_aloud") ? toast : undefined, searchOn ? null : enableWeb, setLightbox, readUpTo, openPreview, toast, turns),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages, undoable, busy, runningCall, helperSteps, features, searchOn, readUpTo, versions, editing],
+    [messages, undoable, busy, runningCalls, helperSteps, features, searchOn, readUpTo, versions, editing],
   );
   const last = messages[messages.length - 1];
   const showRunPlan = chat.mode === "plan" && !busy && last?.role === "assistant" && !!last.content && !last.tool_calls?.length;
@@ -878,6 +885,7 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
         )}
         {handingOff && <p className="muted small pad"><span className="spinner small" aria-hidden />{t("This chat is nearly full. Summarizing it to continue in a new chat…")}</p>}
         {compacting && <p className="muted small pad"><span className="spinner small" aria-hidden />{t("Compacting: the model is summarizing the earlier part of this chat so it can keep going here…")}</p>}
+        {retrying && <RetryLine {...retrying} />}
         {status === "loading" && !streaming && queued && (
           <p className="muted small pad queued">
             <span className="spinner small" aria-hidden />
@@ -1208,7 +1216,7 @@ function renderItems(
   messages: Message[],
   undoable: Set<string>,
   busy: boolean,
-  runningCall: string | null,
+  runningCalls: Set<string>,
   undo: (turnId: string) => void,
   helperSteps: Record<string, string[]>,
   openChat: (id: string) => void,
@@ -1299,7 +1307,7 @@ function renderItems(
             }
             return (
               <Fragment key={c.id}>
-                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCall === c.id} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} toast={saveToast} />
+                <ToolCard call={c} meta={r?.meta} output={r?.content} running={runningCalls.has(c.id)} liveSteps={helperSteps[c.id]} onOpenChat={openChat} onPreview={openPreview} toast={saveToast} />
                 {r?.meta?.media && r.meta.media.length > 0 && <MediaInline items={r.meta.media} onOpen={openPicture} toast={saveToast} />}
               </Fragment>
             );
@@ -1572,5 +1580,21 @@ function RenameDialog({ title, onClose, onSave }: { title: string; onClose: () =
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** A busy cloud provider's next try, counted down. */
+function RetryLine({ provider, at, attempt, of }: { provider: string; at: number; attempt: number; of: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.ceil((at - now) / 1000));
+  return (
+    <p className="muted small pad">
+      <span className="spinner small" aria-hidden />
+      {t("{provider} is busy. Trying again in {seconds} s ({attempt} of {of})", { provider, seconds, attempt, of })}
+    </p>
   );
 }

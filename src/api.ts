@@ -658,6 +658,8 @@ export interface CloudSpend {
   month: string;
   usd: number;
   input_tokens: number;
+  /** Of the input, how much came from the provider's prompt cache. */
+  cached_tokens?: number;
   output_tokens: number;
   requests: number;
 }
@@ -3852,7 +3854,17 @@ export interface InstallFinished {
 
 export interface ChatEvents {
   /** "queued": waiting in line for another model (`place`: 1 is next; `detail`: the model running now). */
-  "chat:status": { chat_id: string; status: "loading" | "queued" | "waiting_card" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "idle"; detail?: string; place?: number };
+  "chat:status": {
+    chat_id: string;
+    status: "loading" | "queued" | "waiting_card" | "handoff" | "cooling" | "compacting" | "looking_up" | "reading_pictures" | "retrying" | "idle";
+    detail?: string;
+    place?: number;
+    /** Trying a busy cloud provider again: which, in how long, and which try of how many. */
+    provider?: string;
+    seconds?: number;
+    attempt?: number;
+    of?: number;
+  };
   /** Auto handed this message to another installed model, better at its task. */
   "chat:routed": { chat_id: string; model_id: string; name: string; task: "code" | "writing" | "languages" | "this" };
   "chat:compacted": { chat_id: string; auto: boolean };

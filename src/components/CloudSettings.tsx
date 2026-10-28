@@ -353,6 +353,7 @@ export function CloudSettings({ toast, cloudOn }: { toast: PushToast; cloudOn: b
           <span className="small">
             {t("This month:")} <strong>{money(v.spend.usd)}</strong>
             {v.budget ? ` ${t("of {budget}", { budget: money(v.budget) })}` : ""} · {v.spend.requests === 1 ? t("1 request") : t("{n} requests", { n: v.spend.requests })} · {t("{n} tokens", { n: (v.spend.input_tokens + v.spend.output_tokens).toLocaleString() })}
+            {(v.spend.cached_tokens ?? 0) > 0 && ` (${t("{n} from the cache", { n: (v.spend.cached_tokens ?? 0).toLocaleString() })})`}
           </span>
         </div>
         {v.budget ? <div className={`progress ${used >= 0.9 ? "warn" : ""}`}><span style={{ width: `${used * 100}%` }} /></div> : null}

@@ -36,6 +36,7 @@ export function CloudCost({ chatId, cloud }: { chatId: string; cloud: CloudChoic
       inTokens: s.chat.input_tokens.toLocaleString(),
       outTokens: s.chat.output_tokens.toLocaleString(),
     }),
+    (s.chat.cached_tokens ?? 0) > 0 ? t("{n} from the cache", { n: (s.chat.cached_tokens ?? 0).toLocaleString() }) : "",
     s.budget != null
       ? t("This month on cloud models: {spent} of your {budget} budget ({left} left)", { spent: money(s.month.usd), budget: money(s.budget), left: money(Math.max(0, s.budget - s.month.usd)) })
       : t("This month on cloud models: {spent} (no budget set; set one in Settings → Cloud models)", { spent: money(s.month.usd) }),

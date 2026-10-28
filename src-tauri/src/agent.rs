@@ -310,6 +310,13 @@ fn is_network_tool(name: &str) -> bool {
     matches!(name, "web_search" | "fetch_page" | "wikipedia" | "research" | "market_quote" | "find_places" | "weather" | "news")
 }
 
+/// The end of the run of calls that can go together starting at `from`
+/// (exclusive): consecutive calls that are each `ok`. A run of one isn't
+/// worth it, so the caller only acts when the run is 2 or longer.
+fn run_end(ok: &[bool], from: usize) -> usize {
+    ok[from..].iter().position(|b| !b).map_or(ok.len(), |n| from + n)
+}
+
 fn call_key(call: &ToolCall) -> String {
     let args = serde_json::from_str::<Value>(&call.arguments).map(|v| v.to_string()).unwrap_or_else(|_| call.arguments.clone());
     format!("{}{}", call.name, args)
@@ -911,7 +918,7 @@ impl Turn {
                 ep.extra["response_format"] = f.response_format.clone();
                 ep.extra["max_tokens"] = json!((self.ep.ctx / 2).clamp(1024, 8192));
                 forced = Some((ep, f));
-                first = Some(chat::Finished { content: String::new(), thinking: String::new(), tool_calls: Vec::new(), prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None });
+                first = Some(chat::Finished::default());
             }
             // Set when its reply only explained what to do: the same step again, told to do it.
             let mut carry_on: Option<&str> = go_on.take();
@@ -1311,7 +1318,44 @@ impl Turn {
                 chat_id: &self.chat_id,
                 turn_id: &self.turn_id,
             };
-            for call in &calls {
+            // Lookups run ahead together, by index (see below).
+            let mut ready: HashMap<usize, Outcome> = HashMap::new();
+            for (i, call) in calls.iter().enumerate() {
+                // A run of lookups starting here: run them together now; the
+                // body below takes each result in turn, as if it had run it.
+                if !ready.contains_key(&i) && !self.cancel.load(Ordering::Relaxed) {
+                    let mut seen: Vec<String> = Vec::new();
+                    let ok: Vec<bool> = calls
+                        .iter()
+                        .enumerate()
+                        .map(|(j, c)| {
+                            let key = call_key(c);
+                            let fine = j >= i
+                                && tools::parallel_safe(&c.name)
+                                && !extras.mcp.contains_key(&c.name)
+                                && !done_calls.contains(&key)
+                                && !failed_calls.iter().any(|(k, _)| *k == key)
+                                && !seen.contains(&key)
+                                && !self.might_ask(c, &args_of(c), &sandbox);
+                            if fine {
+                                seen.push(key);
+                            }
+                            fine
+                        })
+                        .collect();
+                    let end = if ok[i] { run_end(&ok, i) } else { i };
+                    if end - i >= 2 {
+                        let started = std::time::Instant::now();
+                        // Four at a time; `join_all` keeps the order they came in.
+                        let mut outcomes: Vec<Outcome> = Vec::with_capacity(end - i);
+                        for group in calls[i..end].chunks(4) {
+                            let running: Vec<_> = group.iter().map(|c| self.execute(c, &sandbox, &recorder, project_id.as_deref(), &extras)).collect();
+                            outcomes.extend(futures_util::future::join_all(running).await);
+                        }
+                        crate::applog::line("agent", &format!("Ran {} lookups together in {} ms", end - i, started.elapsed().as_millis()));
+                        ready.extend((i..end).zip(outcomes));
+                    }
+                }
                 let key = call_key(call);
                 // What a page or a running command shows changes between
                 // identical calls: those are never repeats.
@@ -1377,7 +1421,10 @@ impl Turn {
                     )
                 } else {
                     done_calls.push(key.clone());
-                    let o = self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await;
+                    let o = match ready.remove(&i) {
+                        Some(o) => o,
+                        None => self.execute(call, &sandbox, &recorder, project_id.as_deref(), &extras).await,
+                    };
                     if call.name == "write_file" && o.meta["status"] != "error" {
                         if let Some(f) = o.meta["file"].as_str() {
                             written.push(std::path::PathBuf::from(f));
@@ -2653,6 +2700,25 @@ impl Turn {
     /// one) while chats don't work together: allowed when the person's own
     /// message asks to pick up where another chat left off, else only from a
     /// card they answer (in every mode, Bypass too).
+    /// Whether running this lookup could stop to ask the person: a page or
+    /// search going off the PC is reviewed (and asks in privacy mode),
+    /// another chat's handoff note asks, and Settings › Advanced can ask
+    /// before every read. Those run on their own, never in a group.
+    fn might_ask(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox) -> bool {
+        if crate::outgoing::is_external(&call.name, args) || tools::egress_call(&call.name, args, sandbox).is_some() {
+            return true;
+        }
+        if crate::advanced::get(&self.state).must_ask(Risk::Read) {
+            return true;
+        }
+        call.name == "read_file"
+            && args
+                .get("path")
+                .and_then(Value::as_str)
+                .and_then(|p| sandbox.resolve(p).ok())
+                .is_some_and(|p| crate::handoff_guard::guarded(&self.state, &self.cipher, &self.chat_id, &p).is_some())
+    }
+
     async fn handoff_gate(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox) -> Option<Outcome> {
         let (path, from) = match call.name.as_str() {
             "read_file" => {
@@ -2739,6 +2805,33 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn runs_of_lookups_end_at_the_first_that_cannot_join() {
+        let (t, f) = (true, false);
+        assert_eq!(run_end(&[t, t, f, t], 0), 2);
+        assert_eq!(run_end(&[t, t, f, t], 3), 4);
+        assert_eq!(run_end(&[f], 0), 0);
+        assert_eq!(run_end(&[t, t, t], 0), 3);
+    }
+
+    /// `join_all` keeps the order the calls came in, whatever finishes first
+    /// (a stream left unordered wouldn't, and the results would be mixed up).
+    #[tokio::test]
+    async fn lookups_run_together_come_back_in_order() {
+        let delays = [30u64, 10, 20];
+        let running: Vec<_> = delays
+            .iter()
+            .map(|&ms| async move {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                ms
+            })
+            .collect();
+        let started = std::time::Instant::now();
+        let got = futures_util::future::join_all(running).await;
+        assert_eq!(got, delays);
+        assert!(started.elapsed() < std::time::Duration::from_millis(55), "they ran at the same time");
+    }
 
     #[test]
     fn instructions_explain_folders_and_mode() {

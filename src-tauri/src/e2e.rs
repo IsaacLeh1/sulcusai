@@ -559,6 +559,33 @@ fn watch_approvals(state: &std::sync::Arc<crate::AppState>) -> (tokio::task::Joi
     (task, asked)
 }
 
+/// Four files in a shared folder, read and compared: when the model asks for
+/// several reads in one step they run together ("Ran N lookups together" in
+/// the log), and every result comes back in its place. SULCUSAI_TEST_GGUF
+/// (Qwen3 4B 2507 was used), see `test_model`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_lookups_run_together() {
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let folder = std::env::temp_dir().join(format!("sulcusai-e2e-four-{id}"));
+    std::fs::create_dir_all(&folder).unwrap();
+    for (file, text) in [("apples.txt", "Apples: 12 crates, picked Monday."), ("pears.txt", "Pears: 7 crates, picked Tuesday."), ("plums.txt", "Plums: 20 crates, picked Wednesday."), ("figs.txt", "Figs: 3 crates, picked Thursday.")] {
+        std::fs::write(folder.join(file), text).unwrap();
+    }
+    crate::db::add_folder(&state.db.lock().unwrap(), &dunce::canonicalize(&folder).unwrap().display().to_string()).unwrap();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let started = std::time::Instant::now();
+    let reply = say(&state, &ep, &cipher, &chat.id, &format!("In {}, read apples.txt, pears.txt, plums.txt and figs.txt (all four at once), then tell me which fruit has the most crates.", folder.display())).await;
+    let (_, tools) = transcript(&state, &cipher, &chat.id, &format!("{name}: four reads ({:.0}s)", started.elapsed().as_secs_f64()));
+    let _ = std::fs::remove_dir_all(&folder);
+    let reads = tools.iter().filter(|t| *t == "read_file").count();
+    println!("read_file calls: {reads}; reply: {reply}");
+    assert!(reads >= 4, "{tools:?}");
+    assert!(reply.to_lowercase().contains("plum"), "{reply}");
+}
+
 /// The agent finds a file by name, runs it and reports what it printed,
 /// without asking anything (Auto mode). The file is in the home folder, not
 /// the shared one, so the search has to go on to the home folder.

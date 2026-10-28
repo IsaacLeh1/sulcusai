@@ -132,6 +132,8 @@ pub struct Spend {
     pub month: String,
     pub usd: f64,
     pub input_tokens: u64,
+    /// Of the input, how much was read from the provider's prompt cache.
+    pub cached_tokens: u64,
     pub output_tokens: u64,
     pub requests: u64,
 }
@@ -274,6 +276,14 @@ pub struct Target {
 impl Target {
     pub fn for_chat(&self, chat_id: &str) {
         *self.chat.lock().unwrap() = Some(chat_id.to_string());
+    }
+
+    /// A status line for the chat this reply is for (trying again, and so on).
+    fn tell(&self, mut payload: Value) {
+        use tauri::Emitter;
+        let (Some(app), Some(chat)) = (self.state.app.get(), self.chat.lock().unwrap().clone()) else { return };
+        payload["chat_id"] = json!(chat);
+        app.emit("chat:status", payload).ok();
     }
 }
 
@@ -671,15 +681,37 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
     }
     let client = via(&t.state, &t.proxy)?;
     let started = std::time::Instant::now();
-    let mut restore = |d: Delta| {
-        on_delta(match d {
-            Delta::Content(s) => Delta::Content(redactor.restore(&s)),
-            Delta::Thinking(s) => Delta::Thinking(redactor.restore(&s)),
-        })
-    };
-    let mut out = match t.kind {
-        Kind::Anthropic => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await?,
-        Kind::Openai => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await?,
+    let mut out = {
+        // Set once anything is shown: a new try after that would show it twice.
+        let began = AtomicBool::new(false);
+        let mut restore = |d: Delta| {
+            began.store(true, Ordering::Relaxed);
+            on_delta(match d {
+                Delta::Content(s) => Delta::Content(redactor.restore(&s)),
+                Delta::Thinking(s) => Delta::Thinking(redactor.restore(&s)),
+            })
+        };
+        let mut tries = 0;
+        loop {
+            let attempt = match t.kind {
+                Kind::Anthropic => anthropic_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+                Kind::Openai => openai_stream(&client, t, extra, &messages, tools, cancel, &mut restore).await,
+            };
+            let f = match attempt {
+                Ok(out) => break out,
+                Err(f) => f,
+            };
+            let Some(wait) = next_wait(&f, tries, began.load(Ordering::Relaxed)) else { return Err(f.message) };
+            tries += 1;
+            let secs = wait.as_secs().max(1);
+            t.state.log("network", &format!("{} didn't answer this time ({}); trying again in {secs} s ({tries} of {RETRIES})", t.provider, f.message));
+            t.tell(json!({ "status": "retrying", "provider": t.provider, "seconds": secs, "attempt": tries, "of": RETRIES }));
+            if !pause(wait, cancel).await {
+                let mut stopped = empty();
+                stopped.cancelled = true;
+                break stopped;
+            }
+        }
     };
     crate::chat::rescue_tool_calls(&mut out, tools);
     out.content = redactor.restore(&out.content);
@@ -694,7 +726,7 @@ pub async fn stream(t: &Target, extra: &Value, mut messages: Vec<Value>, tools: 
     if let (Some(n), true) = (out.completion_tokens, started.elapsed().as_secs_f64() > 0.5) {
         out.tps = Some((n as f64 / started.elapsed().as_secs_f64() * 10.0).round() / 10.0);
     }
-    record(t, out.prompt_tokens.unwrap_or(0), out.completion_tokens.unwrap_or(0), redactor.used());
+    record(t, &out, redactor.used());
     Ok(out)
 }
 
@@ -709,13 +741,31 @@ pub fn chat_spend_key(chat_id: &str) -> String {
     format!("cloud_chat:{chat_id}")
 }
 
-fn record(t: &Target, input: u32, output: u32, redacted: usize) {
-    let cost = input as f64 * t.model.price_in.unwrap_or(0.0) / 1e6 + output as f64 * t.model.price_out.unwrap_or(0.0) / 1e6;
+/// What a reply cost. Cached input is cheaper: a tenth of the price for
+/// Anthropic; OpenAI-style services discount it by half to nine tenths
+/// depending on the model, so half is used (an estimate that never
+/// undercounts the budget). Writing to Anthropic's cache costs a quarter more.
+fn cost(kind: Kind, model: &CloudModel, input: u32, read: u32, write: u32, output: u32) -> f64 {
+    let (read, write) = (read.min(input), write.min(input.saturating_sub(read.min(input))));
+    let fresh = input - read - write;
+    let (read_rate, write_rate) = match kind {
+        Kind::Anthropic => (0.1, 1.25),
+        Kind::Openai => (0.5, 1.0),
+    };
+    let pin = model.price_in.unwrap_or(0.0);
+    (fresh as f64 + read as f64 * read_rate + write as f64 * write_rate) * pin / 1e6 + output as f64 * model.price_out.unwrap_or(0.0) / 1e6
+}
+
+fn record(t: &Target, out: &Finished, redacted: usize) {
+    let (input, output) = (out.prompt_tokens.unwrap_or(0), out.completion_tokens.unwrap_or(0));
+    let read = out.cache_read.unwrap_or(0).min(input);
+    let cost = cost(t.kind, &t.model, input, read, out.cache_write.unwrap_or(0), output);
     {
         let conn = t.state.db.lock().unwrap();
         let mut s = spend(&conn);
         s.usd += cost;
         s.input_tokens += input as u64;
+        s.cached_tokens += read as u64;
         s.output_tokens += output as u64;
         s.requests += 1;
         let _ = db::set(&conn, SPEND_KEY, &s);
@@ -725,6 +775,7 @@ fn record(t: &Target, input: u32, output: u32, redacted: usize) {
             let mut c: Spend = db::get(&conn, &key).unwrap_or_default();
             c.usd += cost;
             c.input_tokens += input as u64;
+            c.cached_tokens += read as u64;
             c.output_tokens += output as u64;
             c.requests += 1;
             let _ = db::set(&conn, &key, &c);
@@ -736,17 +787,156 @@ fn record(t: &Target, input: u32, output: u32, redacted: usize) {
     }
     let priced = if t.model.price_in.is_some() { format!(", about ${cost:.4}") } else { String::new() };
     let hidden = if redacted > 0 { format!("; {redacted} personal detail(s) replaced with placeholders") } else { String::new() };
-    t.state.log("network", &format!("Sent a chat to {} ({}): {input} tokens in, {output} out{priced}{hidden}", t.provider, t.model.name));
+    let cached = if read > 0 { format!("; {read} of them from the cache") } else { String::new() };
+    t.state.log("network", &format!("Sent a chat to {} ({}): {input} tokens in, {output} out{priced}{cached}{hidden}", t.provider, t.model.name));
 }
 
-async fn error_text(resp: reqwest::Response, who: &str) -> String {
+/// Marks where Anthropic may cache the request: the end of the tools, the
+/// end of the instructions, and the last two messages (the newest, and the
+/// one before it so the previous step's cache is found again). Four marks,
+/// the most the API takes. Thinking blocks and empty text can't carry a mark,
+/// so the last block that can is used. Requests under the model's minimum
+/// (about 1,000 to 4,000 tokens) simply aren't cached; nothing fails.
+fn mark_cache(system: &str, msgs: &mut [Value], tools: &mut [Value]) -> Value {
+    let mark = json!({ "type": "ephemeral" });
+    if let Some(last) = tools.last_mut() {
+        last["cache_control"] = mark.clone();
+    }
+    let n = msgs.len();
+    for m in msgs.iter_mut().skip(n.saturating_sub(2)) {
+        let markable = m["content"].as_array_mut().and_then(|blocks| {
+            blocks.iter_mut().rev().find(|b| match b["type"].as_str() {
+                Some("text") => b["text"].as_str().is_some_and(|t| !t.is_empty()),
+                Some("image" | "tool_use" | "tool_result" | "document") => true,
+                _ => false,
+            })
+        });
+        if let Some(b) = markable {
+            b["cache_control"] = mark.clone();
+        }
+    }
+    if system.is_empty() {
+        Value::Null
+    } else {
+        json!([{ "type": "text", "text": system, "cache_control": mark }])
+    }
+}
+
+// ---------- trying again ----------
+
+/// How many more tries a busy or briefly unreachable provider gets.
+const RETRIES: u32 = 4;
+/// The longest wait between tries. A provider asking for longer (a limit
+/// that resets in minutes) gets its error shown instead.
+const LONGEST_WAIT: Duration = Duration::from_secs(60);
+
+/// A request that didn't work: what to tell the person, and whether another
+/// try may (a busy or briefly broken service), with how long the provider
+/// asked us to wait if it said.
+struct Failed {
+    message: String,
+    retry: Option<Option<Duration>>,
+}
+
+impl Failed {
+    fn fatal(message: impl Into<String>) -> Self {
+        Failed { message: message.into(), retry: None }
+    }
+    fn again(message: impl Into<String>, after: Option<Duration>) -> Self {
+        Failed { message: message.into(), retry: Some(after) }
+    }
+}
+
+impl From<String> for Failed {
+    fn from(message: String) -> Self {
+        Failed::fatal(message)
+    }
+}
+
+/// An error status worth another try: busy, rate-limited or briefly broken.
+/// Not a 429 that means the account is out of credit: waiting won't fix that.
+fn worth_retrying(code: u16, detail: &str) -> bool {
+    let d = detail.to_lowercase();
+    let out_of_credit = ["insufficient_quota", "billing", "credit balance", "spending limit", "exceeded your current quota", "payment"].iter().any(|w| d.contains(w));
+    matches!(code, 408 | 425 | 429 | 500 | 502 | 503 | 504 | 529) && !out_of_credit
+}
+
+/// How long the provider asked us to wait, from `retry-after-ms` or
+/// `Retry-After` (seconds or an HTTP date).
+fn retry_after(h: &reqwest::header::HeaderMap) -> Option<Duration> {
+    if let Some(ms) = h.get("retry-after-ms").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<f64>().ok()) {
+        return Some(Duration::from_millis(ms.max(0.0) as u64));
+    }
+    let s = h.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(secs) = s.parse::<f64>() {
+        return Some(Duration::from_millis((secs.max(0.0) * 1000.0) as u64));
+    }
+    let when = chrono::DateTime::parse_from_rfc2822(s).ok()?;
+    (when.with_timezone(&chrono::Utc) - chrono::Utc::now()).to_std().ok()
+}
+
+/// The wait before try number `tries + 1`: what the provider asked for, or
+/// 1, 2, 4, 8, 16 s give or take a quarter (so many chats don't all come
+/// back at once), never over 30 s.
+fn backoff(tries: u32, asked: Option<Duration>) -> Duration {
+    if let Some(a) = asked {
+        return a;
+    }
+    let base = 1000u64 << tries.min(4);
+    let spread = base / 4;
+    let jitter = (uuid::Uuid::new_v4().as_u128() % (2 * spread as u128 + 1)) as u64;
+    Duration::from_millis(base - spread + jitter).min(Duration::from_secs(30))
+}
+
+/// After a failed try: how long to wait before the next, or None to give up
+/// (not worth it, out of tries, the provider wants too long, or the person
+/// has already seen part of the reply, which a new try would repeat).
+fn next_wait(f: &Failed, tries: u32, began: bool) -> Option<Duration> {
+    let asked = f.retry?;
+    if began || tries >= RETRIES {
+        return None;
+    }
+    Some(backoff(tries, asked)).filter(|w| *w <= LONGEST_WAIT)
+}
+
+/// Waits, checking Stop four times a second. False when stopped.
+async fn pause(wait: Duration, cancel: &AtomicBool) -> bool {
+    let end = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < end {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        tokio::time::sleep((end - std::time::Instant::now()).min(Duration::from_millis(250))).await;
+    }
+    !cancel.load(Ordering::Relaxed)
+}
+
+async fn failure(resp: reqwest::Response, who: &str) -> Failed {
     let status = resp.status();
+    let after = retry_after(resp.headers());
     let text = resp.text().await.unwrap_or_default();
     let detail = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.pointer("/error/message").and_then(Value::as_str).map(str::to_string)).unwrap_or(text);
-    match status.as_u16() {
+    let message = match status.as_u16() {
         401 | 403 => format!("{who} didn't accept the API key ({status}). Check it in Settings → Cloud models; for a server you sign in to (like Open WebUI), press Sign in… there instead."),
         429 => format!("{who} says you've hit a rate or spending limit: {detail}"),
+        529 => format!("{who} is overloaded right now. Try again in a minute, or use a model on this PC."),
         _ => format!("{who} returned {status}: {detail}"),
+    };
+    if worth_retrying(status.as_u16(), &detail) {
+        Failed::again(message, after)
+    } else {
+        Failed::fatal(message)
+    }
+}
+
+/// A failed send: one that never connected, or whose request didn't go
+/// out, is worth another try; a timeout isn't (900 s means it's stuck).
+fn send_failed(e: reqwest::Error, who: &str) -> Failed {
+    let m = format!("Couldn't reach {who}: {e}");
+    if e.is_connect() || (e.is_request() && !e.is_timeout()) {
+        Failed::again(m, None)
+    } else {
+        Failed::fatal(m)
     }
 }
 
@@ -778,11 +968,11 @@ async fn sse(resp: reqwest::Response, cancel: &AtomicBool, mut on: impl FnMut(&V
 }
 
 fn empty() -> Finished {
-    Finished { content: String::new(), thinking: String::new(), tool_calls: Vec::new(), prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None }
+    Finished::default()
 }
 
-async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, String> {
-    let (mut system, msgs, tools) = to_anthropic(messages, tools);
+async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, Failed> {
+    let (mut system, mut msgs, mut tools) = to_anthropic(messages, tools);
     let id = t.model.id.as_str();
     // A reply shape a program asked for in OpenAI's form: a schema becomes
     // structured output; plain JSON is asked for in words.
@@ -791,14 +981,15 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
     if schema.is_none() && format.and_then(|f| f.get("type")).and_then(Value::as_str) == Some("json_object") {
         system = format!("{system}\n\nReply with one JSON object and nothing else.").trim().to_string();
     }
+    let system = mark_cache(&system, &mut msgs, &mut tools);
     let mut body = json!({
         "model": id,
         "max_tokens": t.model.max_output.clamp(1024, 64_000),
         "messages": msgs,
         "stream": true,
     });
-    if !system.is_empty() {
-        body["system"] = json!(system);
+    if !system.is_null() {
+        body["system"] = system;
     }
     if let Some(schema) = schema {
         body["output_config"] = json!({ "format": { "type": "json_schema", "schema": schema } });
@@ -830,9 +1021,9 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
         body["fallbacks"] = json!("default");
         req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
     }
-    let resp = req.json(&body).timeout(Duration::from_secs(900)).send().await.map_err(|e| format!("Couldn't reach {}: {e}", t.provider))?;
+    let resp = req.json(&body).timeout(Duration::from_secs(900)).send().await.map_err(|e| send_failed(e, &t.provider))?;
     if !resp.status().is_success() {
-        return Err(error_text(resp, &t.provider).await);
+        return Err(failure(resp, &t.provider).await);
     }
     let mut out = empty();
     // Blocks by index, to save for replay (thinking keeps its signature).
@@ -840,12 +1031,15 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
     let mut json_parts: HashMap<usize, String> = HashMap::new();
     let mut stop = String::new();
     let mut refusal = None;
+    let mut stream_error: Option<(String, String)> = None;
     out.cancelled = sse(resp, cancel, |v| {
         match v["type"].as_str() {
             Some("message_start") => {
                 let u = &v["message"]["usage"];
                 let input = u["input_tokens"].as_u64().unwrap_or(0) + u["cache_creation_input_tokens"].as_u64().unwrap_or(0) + u["cache_read_input_tokens"].as_u64().unwrap_or(0);
                 out.prompt_tokens = Some(input as u32);
+                out.cache_read = u["cache_read_input_tokens"].as_u64().map(|n| n as u32);
+                out.cache_write = u["cache_creation_input_tokens"].as_u64().map(|n| n as u32);
             }
             Some("content_block_start") => {
                 let i = v["index"].as_u64().unwrap_or(0) as usize;
@@ -901,14 +1095,17 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
                 }
             }
             Some("error") => {
-                refusal = v.pointer("/error/message").and_then(Value::as_str).map(|m| format!("error: {m}"));
+                let kind = v.pointer("/error/type").and_then(Value::as_str).unwrap_or("").to_string();
+                stream_error = Some((kind, v.pointer("/error/message").and_then(Value::as_str).unwrap_or("").to_string()));
                 return false;
             }
             _ => {}
         }
         true
     })
-    .await?;
+    .await
+    // A reply that broke off may be tried again (`next_wait` won't if any was shown).
+    .map_err(|m| Failed::again(m, None))?;
     for (i, raw) in json_parts {
         if let Some(b) = blocks.get_mut(i) {
             b["input"] = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
@@ -923,18 +1120,19 @@ async fn anthropic_stream(client: &reqwest::Client, t: &Target, extra: &Value, m
             _ => {}
         }
     }
-    if let Some(m) = refusal.as_ref().and_then(|r| r.strip_prefix("error: ")) {
-        return Err(format!("{} stopped with an error: {m}", t.provider));
+    if let Some((kind, m)) = stream_error {
+        let msg = format!("{} stopped with an error: {m}", t.provider);
+        return Err(if matches!(kind.as_str(), "overloaded_error" | "api_error" | "rate_limit_error") { Failed::again(msg, None) } else { Failed::fatal(msg) });
     }
     if stop == "refusal" && out.content.trim().is_empty() && out.tool_calls.is_empty() {
         let why = refusal.map(|c| format!(" ({c})")).unwrap_or_default();
-        return Err(format!("{} declined to answer this{why}. Try rephrasing, or use a model on this PC.", t.provider));
+        return Err(Failed::fatal(format!("{} declined to answer this{why}. Try rephrasing, or use a model on this PC.", t.provider)));
     }
     out.raw = Some(Value::Array(blocks));
     Ok(out)
 }
 
-async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, String> {
+async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, messages: &[Value], tools: Option<&Value>, cancel: &AtomicBool, on_delta: &mut impl FnMut(Delta)) -> Result<Finished, Failed> {
     let msgs: Vec<Value> = messages
         .iter()
         .map(|m| {
@@ -956,6 +1154,13 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
             body[k] = v.clone();
         }
     }
+    // OpenAI's own service caches by itself; a key per chat keeps its steps on
+    // one cache. Other services may refuse a field they don't know.
+    if t.base_url.contains("api.openai.com") {
+        if let Some(chat) = t.chat.lock().unwrap().clone() {
+            body["prompt_cache_key"] = json!(chat);
+        }
+    }
     let mut req = client.post(format!("{}/chat/completions", t.base_url)).bearer_auth(&t.key);
     if !t.cookies.is_empty() {
         req = req.header("cookie", &t.cookies);
@@ -967,9 +1172,9 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
         .timeout(Duration::from_secs(900))
         .send()
         .await
-        .map_err(|e| format!("Couldn't reach {}: {e}", t.provider))?;
+        .map_err(|e| send_failed(e, &t.provider))?;
     if !resp.status().is_success() {
-        return Err(error_text(resp, &t.provider).await);
+        return Err(failure(resp, &t.provider).await);
     }
     let mut out = empty();
     out.cancelled = sse(resp, cancel, |v| {
@@ -991,10 +1196,12 @@ async fn openai_stream(client: &reqwest::Client, t: &Target, extra: &Value, mess
         if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
             out.prompt_tokens = u["prompt_tokens"].as_u64().map(|n| n as u32);
             out.completion_tokens = u["completion_tokens"].as_u64().map(|n| n as u32);
+            out.cache_read = u.pointer("/prompt_tokens_details/cached_tokens").and_then(Value::as_u64).map(|n| n as u32);
         }
         true
     })
-    .await?;
+    .await
+    .map_err(|m| Failed::again(m, None))?;
     Ok(out)
 }
 
@@ -1007,7 +1214,7 @@ async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::C
         Kind::Anthropic => {
             let resp = client.get(format!("{base}/v1/models?limit=100")).header("x-api-key", key).header("anthropic-version", ANTHROPIC_VERSION).send().await.map_err(|e| e.to_string())?;
             if !resp.status().is_success() {
-                return Err(error_text(resp, &p.name).await);
+                return Err(failure(resp, &p.name).await.message);
             }
             let v: Value = resp.json().await.map_err(|e| e.to_string())?;
             for m in v["data"].as_array().into_iter().flatten() {
@@ -1035,7 +1242,7 @@ async fn list_models(p: &Provider, key: &str, cookies: &str, client: &reqwest::C
                 return Err(not_an_api(&p.name, true));
             }
             if !resp.status().is_success() {
-                return Err(error_text(resp, &p.name).await);
+                return Err(failure(resp, &p.name).await.message);
             }
             let body = resp.text().await.map_err(|e| e.to_string())?;
             let v: Value = serde_json::from_str(&body).map_err(|_| not_an_api(&p.name, body.trim_start().starts_with('<')))?;
@@ -1582,6 +1789,135 @@ pub(crate) async fn check_provider(p: &Provider, c: &Cipher) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_marks_go_where_anthropic_can_reuse_them() {
+        assert_eq!(mark_cache("", &mut [], &mut []), Value::Null);
+        let mut tools = vec![json!({ "name": "a" }), json!({ "name": "b" })];
+        let mut msgs = vec![
+            json!({ "role": "user", "content": [{ "type": "text", "text": "first" }] }),
+            json!({ "role": "assistant", "content": [{ "type": "text", "text": "said" }, { "type": "thinking", "thinking": "hmm", "signature": "s" }] }),
+            json!({ "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t1", "content": "ok" }, { "type": "text", "text": "" }] }),
+        ];
+        let system = mark_cache("Be brief.", &mut msgs, &mut tools);
+        assert!(tools[0].get("cache_control").is_none() && tools[1].get("cache_control").is_some(), "the last tool only");
+        assert!(msgs[0]["content"][0].get("cache_control").is_none(), "not the older messages");
+        assert!(msgs[1]["content"][0].get("cache_control").is_some(), "the text before the thinking");
+        assert!(msgs[2]["content"][0].get("cache_control").is_some() && msgs[2]["content"][1].get("cache_control").is_none(), "the tool result, not the empty text");
+        assert_eq!(system.as_array().map(Vec::len), Some(1));
+        let all = format!("{system}{}{}", json!(msgs), json!(tools));
+        assert!(all.matches("cache_control").count() <= 4);
+    }
+
+    #[test]
+    fn cached_input_costs_less() {
+        let m = CloudModel { price_in: Some(10.0), price_out: Some(50.0), ..Default::default() };
+        // A million in (half read from the cache) and none out.
+        let a = cost(Kind::Anthropic, &m, 1_000_000, 500_000, 0, 0);
+        assert!((a - (5.0 + 0.5)).abs() < 1e-9, "{a}");
+        let o = cost(Kind::Openai, &m, 1_000_000, 500_000, 0, 0);
+        assert!((o - (5.0 + 2.5)).abs() < 1e-9, "{o}");
+        // Writing to Anthropic's cache costs a quarter more; output as before.
+        let w = cost(Kind::Anthropic, &m, 1_000_000, 0, 1_000_000, 1_000_000);
+        assert!((w - (12.5 + 50.0)).abs() < 1e-9, "{w}");
+        // More cached than sent is held to what was sent.
+        assert!((cost(Kind::Anthropic, &m, 100, 500, 0, 0) - 100.0 * 0.1 * 10.0 / 1e6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn busy_or_broken_providers_are_tried_again_but_not_empty_accounts() {
+        assert!(worth_retrying(429, "rate_limit_error: too many requests"));
+        assert!(!worth_retrying(429, "You exceeded your current quota (insufficient_quota)"));
+        for code in [529, 503, 500] {
+            assert!(worth_retrying(code, ""), "{code}");
+        }
+        for code in [400, 401, 403, 404] {
+            assert!(!worth_retrying(code, ""), "{code}");
+        }
+    }
+
+    #[test]
+    fn the_wait_a_provider_asks_for_is_read() {
+        use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+        let with = |name: &'static str, v: &str| {
+            let mut h = HeaderMap::new();
+            h.insert(name, HeaderValue::from_str(v).unwrap());
+            h
+        };
+        assert_eq!(retry_after(&with("retry-after", "7")), Some(Duration::from_secs(7)));
+        assert_eq!(retry_after(&with("retry-after", "1.5")), Some(Duration::from_millis(1500)));
+        assert_eq!(retry_after(&with("retry-after-ms", "250")), Some(Duration::from_millis(250)));
+        let soon = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc2822();
+        let d = retry_after(&with("retry-after", &soon)).unwrap();
+        assert!(d >= Duration::from_secs(8) && d <= Duration::from_secs(10), "{d:?}");
+        assert_eq!(retry_after(&with("retry-after", "soon-ish")), None);
+        assert_eq!(retry_after(&HeaderMap::new()), None);
+        let _ = RETRY_AFTER;
+    }
+
+    #[test]
+    fn waits_grow_and_spread() {
+        for n in 0..=6u32 {
+            let base = 1000u64 << n.min(4);
+            let w = backoff(n, None).as_millis() as u64;
+            assert!(w >= base * 3 / 4 && w <= (base * 5 / 4).min(30_000), "try {n}: {w} ms");
+        }
+        assert_eq!(backoff(0, Some(Duration::from_secs(3))), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn some_failures_are_final() {
+        let again = Failed::again("busy", None);
+        assert!(next_wait(&again, 0, false).is_some());
+        assert!(next_wait(&again, 0, true).is_none(), "part of the reply was shown");
+        assert!(next_wait(&again, RETRIES, false).is_none(), "out of tries");
+        assert!(next_wait(&Failed::fatal("bad key"), 0, false).is_none());
+        assert!(next_wait(&Failed::again("later", Some(Duration::from_secs(120))), 0, false).is_none(), "asked to wait too long");
+    }
+
+    /// A provider that's busy twice (503, asking for 50 ms) and then answers:
+    /// the reply comes on the third try.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_busy_provider_is_tried_again_until_it_answers() {
+        use std::sync::atomic::AtomicUsize;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let asked = Arc::new(AtomicUsize::new(0));
+        let count = asked.clone();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                let mut buf = vec![0u8; 65_536];
+                let _ = sock.read(&mut buf).await;
+                let reply = if n < 2 {
+                    let body = r#"{"error":{"message":"busy, try again"}}"#;
+                    format!("HTTP/1.1 503 Service Unavailable\r\nretry-after-ms: 50\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
+                } else {
+                    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: [DONE]\n\n";
+                    format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len())
+                };
+                let _ = sock.write_all(reply.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            }
+        });
+        let state = crate::testutil::temp_state(None);
+        db::update_settings(&state.db.lock().unwrap(), |s| s.connectivity = Connectivity::Cloud).unwrap();
+        let model = CloudModel { id: "m".into(), name: "M".into(), ..Default::default() };
+        let t = Target { kind: Kind::Openai, provider: "Test".into(), base_url: format!("http://127.0.0.1:{port}"), key: "k".into(), cookies: String::new(), model, redact: false, state, chat: std::sync::Mutex::new(None), proxy: String::new() };
+        let out = stream(&t, &json!({}), vec![json!({ "role": "user", "content": "hi" })], None, &AtomicBool::new(false), |_| {}).await.unwrap();
+        assert_eq!(out.content, "Hello");
+        assert_eq!(asked.load(Ordering::SeqCst), 3, "two busy answers, then the reply");
+    }
+
+    #[tokio::test]
+    async fn stop_ends_a_wait_at_once() {
+        let stopped = AtomicBool::new(true);
+        let t = std::time::Instant::now();
+        assert!(!pause(Duration::from_secs(5), &stopped).await);
+        assert!(t.elapsed() < Duration::from_millis(100));
+        assert!(pause(Duration::from_millis(300), &AtomicBool::new(false)).await);
+    }
 
     #[test]
     fn numbers_from_other_countries_are_phone_numbers() {

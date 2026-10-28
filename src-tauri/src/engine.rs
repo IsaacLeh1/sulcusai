@@ -943,6 +943,9 @@ impl Engine {
             // reads one passage at a time.
             .args(if tuning.embedding { vec!["-np", "1"] } else { vec!["-np", PARALLEL, "-kvu"] })
             .args(["--jinja", "--no-webui"])
+            // After old messages are dropped to fit, the parts that didn't
+            // change are reused from the cache, not read again.
+            .args(if tuning.embedding { vec![] } else { vec!["--cache-reuse", "256"] })
             // A passage is read in one batch, so it can't be longer than one.
             .args(if tuning.embedding { vec!["--embedding", "--pooling", "last", "-ub", "4096", "-b", "4096"] } else { vec![] })
             // Guessing ahead from text already in the conversation (n-gram

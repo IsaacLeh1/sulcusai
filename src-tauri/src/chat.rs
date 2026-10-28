@@ -538,6 +538,7 @@ pub enum Delta {
     Thinking(String),
 }
 
+#[derive(Default)]
 pub struct Finished {
     pub content: String,
     pub thinking: String,
@@ -549,6 +550,10 @@ pub struct Finished {
     /// The reply's content blocks as a cloud provider sent them, kept so its
     /// reasoning can be passed back during a run of tool calls.
     pub raw: Option<Value>,
+    /// Input tokens read from the provider's prompt cache (cheaper), and
+    /// written to it (a little dearer), when it says.
+    pub cache_read: Option<u32>,
+    pub cache_write: Option<u32>,
 }
 
 /// Streams one model reply. `on_delta` gets text as it arrives.
@@ -780,6 +785,9 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         // One step's reply: small models that start rambling would otherwise
         // write until the context is full (minutes). Advanced settings can override.
         "max_tokens": (ep.ctx / 2).clamp(512, 4096),
+        // The unchanged start of the request (instructions, tools, earlier
+        // steps) is read from the engine's cache instead of again.
+        "cache_prompt": true,
     });
     if let Some(t) = tools.filter(|t| t.as_array().is_some_and(|a| !a.is_empty())) {
         body["tools"] = t.clone();
@@ -810,16 +818,7 @@ async fn stream_local<F: FnMut(Delta)>(ep: &Endpoint, messages: Vec<Value>, tool
         return Err(format!("The engine returned {status}: {detail}"));
     }
 
-    let mut out = Finished {
-        content: String::new(),
-        thinking: String::new(),
-        tool_calls: Vec::new(),
-        prompt_tokens: None,
-        completion_tokens: None,
-        tps: None,
-        cancelled: false,
-        raw: None,
-    };
+    let mut out = Finished::default();
     // Bytes until a whole line is in: a character split between two chunks
     // would otherwise come out garbled.
     let mut buf: Vec<u8> = Vec::new();
@@ -2430,7 +2429,7 @@ Found it.
 ```json
 {\"a\": 1}
 ```
-<tools>{\"name\": \"calendar_events\", \"arguments\": {}}</tools>".into(), thinking: String::new(), tool_calls: vec![], prompt_tokens: None, completion_tokens: None, tps: None, cancelled: false, raw: None };
+<tools>{\"name\": \"calendar_events\", \"arguments\": {}}</tools>".into(), thinking: String::new(), ..Default::default() };
         let tools = json!([{ "type": "function", "function": { "name": "calendar_events" } }]);
         rescue_tool_calls(&mut out, Some(&tools));
         assert_eq!(out.tool_calls.len(), 1);

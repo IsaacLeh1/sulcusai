@@ -145,6 +145,18 @@ pub fn for_building(name: &str) -> bool {
     (matches!(group(name), "files" | "web") && !matches!(name, "wikipedia" | "research" | "market_quote" | "find_places")) || matches!(name, "request_folder" | "open_path")
 }
 
+/// Lookups on this PC that change nothing, ask nothing, send nothing off
+/// it and don't use the graphics card: several in one step run at the same
+/// time (`Turn::run`). Web lookups aren't here: they're reviewed before they
+/// go, and in privacy mode that asks. Nor is searching documents (its
+/// embedding model may be on the card).
+pub fn parallel_safe(name: &str) -> bool {
+    matches!(
+        name,
+        "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate"
+    )
+}
+
 /// Tools for making pictures, video and music (and looking up what things
 /// look like): what a small memory is offered for a picture request, so the
 /// conversation (what the person wanted from the start) still fits.
@@ -752,6 +764,18 @@ pub fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_tools_are_real_read_only_tools() {
+        for name in ["list_dir", "read_file", "find_files", "search_files", "search_memory", "search_notes", "read_note", "search_meetings", "read_meeting", "read_document", "search_chats", "read_chat", "read_chat_notes", "calculate"] {
+            let t = find(name).unwrap_or_else(|| panic!("{name} is not a tool"));
+            assert!(t.risk == Risk::Read, "{name} must be Risk::Read");
+            assert!(parallel_safe(name));
+        }
+        for name in ["web_search", "fetch_page", "write_file", "run_command", "search_documents"] {
+            assert!(!parallel_safe(name), "{name}");
+        }
+    }
 
     #[test]
     fn run_modes_follow_the_design() {
