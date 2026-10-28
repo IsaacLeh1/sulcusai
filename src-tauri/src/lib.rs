@@ -3053,6 +3053,7 @@ pub fn run() {
             bridge::bridge_status,
             bridge::show_extension_folder,
             browsers::set_main_browser,
+            browsers::set_browser_search,
             browsers::open_web,
             browsers::open_outside,
             viewer::viewer_show,

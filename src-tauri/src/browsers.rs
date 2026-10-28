@@ -108,6 +108,56 @@ fn exe_of(cmd: &str) -> String {
     }
 }
 
+const SEARCH_KEY: &str = "browser_search";
+
+/// What SulcusAI's own browser (the web viewer, and the assistant's
+/// browser) starts on and searches what's typed with. DuckDuckGo unless
+/// another was picked: it turns some people's searches away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Search {
+    #[default]
+    Duckduckgo,
+    Google,
+    Bing,
+    Brave,
+}
+
+impl Search {
+    pub fn home(self) -> &'static str {
+        match self {
+            Search::Duckduckgo => "https://duckduckgo.com/",
+            Search::Google => "https://www.google.com/",
+            Search::Bing => "https://www.bing.com/",
+            Search::Brave => "https://search.brave.com/",
+        }
+    }
+
+    /// A search for `q`.
+    pub fn of(self, q: &str) -> String {
+        let at = match self {
+            Search::Duckduckgo => "https://duckduckgo.com/",
+            Search::Google => "https://www.google.com/search",
+            Search::Bing => "https://www.bing.com/search",
+            Search::Brave => "https://search.brave.com/search",
+        };
+        reqwest::Url::parse_with_params(at, &[("q", q)]).map(|u| u.to_string()).unwrap_or_else(|_| self.home().into())
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Search::Duckduckgo => "DuckDuckGo",
+            Search::Google => "Google",
+            Search::Bing => "Bing",
+            Search::Brave => "Brave Search",
+        }
+    }
+}
+
+pub fn search(conn: &rusqlite::Connection) -> Search {
+    db::get(conn, SEARCH_KEY).unwrap_or_default()
+}
+
 pub fn choice(conn: &rusqlite::Connection) -> MainBrowser {
     match db::get::<MainBrowser>(conn, KEY) {
         Some(MainBrowser::Builtin) if !db::get::<bool>(conn, PICKED_VIEWER).unwrap_or(false) => unpicked(&installed()),
@@ -130,11 +180,21 @@ fn web_url(url: &str) -> Result<String, String> {
 pub struct BrowsersView {
     current: MainBrowser,
     installed: Vec<Installed>,
+    search: Search,
 }
 
 #[tauri::command(async)]
 pub fn browsers_view(state: AppStateRef) -> BrowsersView {
-    BrowsersView { current: choice(&state.db.lock().unwrap()), installed: installed() }
+    let conn = state.db.lock().unwrap();
+    BrowsersView { current: choice(&conn), installed: installed(), search: search(&conn) }
+}
+
+#[tauri::command(async)]
+pub fn set_browser_search(state: AppStateRef, search: Search) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set(&conn, SEARCH_KEY, &search)?;
+    db::log_action(&conn, "settings", &format!("SulcusAI's browser searches with {}", search.name()));
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -164,7 +224,7 @@ pub async fn open_web(app: tauri::AppHandle, state: AppStateRef<'_>, url: Option
     let current = choice(&state.db.lock().unwrap());
     match current {
         MainBrowser::Builtin => app.emit("viewer:open", serde_json::json!({ "url": url })).map_err(|e| e.to_string()),
-        outside => open_in(outside, url),
+        outside => open_in(outside, url, search(&state.db.lock().unwrap())),
     }
 }
 
@@ -176,10 +236,10 @@ pub fn open_outside(state: AppStateRef<'_>, url: String) -> Result<(), String> {
     let url = web_url(&url)?;
     let current = choice(&state.db.lock().unwrap());
     let outside = if current == MainBrowser::Builtin { unpicked(&installed()) } else { current };
-    open_in(outside, Some(url))
+    open_in(outside, Some(url), Search::default())
 }
 
-fn open_in(browser: MainBrowser, url: Option<String>) -> Result<(), String> {
+fn open_in(browser: MainBrowser, url: Option<String>, home: Search) -> Result<(), String> {
     match browser {
         MainBrowser::App { name } => {
             let b = installed().into_iter().find(|b| b.name == name).ok_or_else(|| format!("{name} isn't installed anymore. Pick another main browser in Settings."))?;
@@ -191,7 +251,7 @@ fn open_in(browser: MainBrowser, url: Option<String>) -> Result<(), String> {
             Ok(())
         }
         _ => {
-            let target = url.unwrap_or_else(|| "https://duckduckgo.com/".into());
+            let target = url.unwrap_or_else(|| home.home().into());
             crate::open_with_system(std::ffi::OsStr::new(&target))
         }
     }

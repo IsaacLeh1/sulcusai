@@ -629,3 +629,176 @@ async fn e2e_meeting_tells_speakers_apart() {
     assert_eq!(a1, Some(1), "numbered by who spoke first");
     crate::speech::stop(&state).await;
 }
+
+/// How much a voice's pitch moves: the spread (standard deviation, in
+/// semitones) of its pitch over voiced 40 ms frames, by autocorrelation
+/// between 70 and 500 Hz. Flat reading is about 1.5 or less.
+#[cfg(windows)]
+fn liveliness(file: &std::path::Path) -> String {
+    let (samples, rate, channels) = crate::media::audio_in::decode(file).unwrap();
+    let ch = channels.max(1) as usize;
+    let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+    let x = crate::media::stems::resample(&mono, rate, 16_000);
+    let (frame, hop, lo, hi) = (640usize, 320usize, 16_000 / 500, 16_000 / 70);
+    let loudest = x.iter().map(|v| v.abs()).fold(0f32, f32::max).max(1e-6);
+    let mut semis = Vec::new();
+    let mut at = 0;
+    while at + frame + hi < x.len() {
+        let w = &x[at..at + frame + hi];
+        let r0: f32 = w[..frame].iter().map(|v| v * v).sum();
+        if (r0 / frame as f32).sqrt() > loudest * 0.05 {
+            let (lag, r) = (lo..hi).map(|lag| (lag, (0..frame).map(|i| w[i] * w[i + lag]).sum::<f32>())).fold((0, 0f32), |b, x| if x.1 > b.1 { x } else { b });
+            if lag > 0 && r > 0.5 * r0 {
+                semis.push(12.0 * (16_000.0 / lag as f32 / 100.0).log2());
+            }
+        }
+        at += hop;
+    }
+    if semis.len() < 10 {
+        return "too little voiced sound to measure".into();
+    }
+    let mean = semis.iter().sum::<f32>() / semis.len() as f32;
+    let sd = (semis.iter().map(|s| (s - mean).powi(2)).sum::<f32>() / semis.len() as f32).sqrt();
+    format!("pitch moves {sd:.1} semitones around {:.0} Hz", 100.0 * 2f32.powf(mean / 12.0))
+}
+
+/// How close a recording sounds to a person: the cosine of their CAMPPlus
+/// voice prints (1 is the same voice; different people are usually under
+/// 0.5). A song's voice is taken out of the band first.
+#[cfg(windows)]
+struct Likeness {
+    conv: crate::media::svc::Converter,
+    dll: std::path::PathBuf,
+    separator: std::path::PathBuf,
+    card: Option<crate::natural::Card>,
+    person: Vec<f32>,
+}
+
+#[cfg(windows)]
+impl Likeness {
+    fn new(state: &crate::AppState, person_44k: &[f32]) -> Likeness {
+        let real = Paths::new(app_data_dir()).unwrap();
+        let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
+        let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+        let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
+        let separator = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
+        let conv = crate::media::svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
+        let mut l = Likeness { conv, dll, separator, card, person: Vec::new() };
+        l.person = l.print(person_44k);
+        l
+    }
+
+    fn print(&mut self, x44: &[f32]) -> Vec<f32> {
+        let w16 = crate::media::stems::resample(x44, crate::media::svc::RATE, 16_000);
+        let (n, fb) = crate::diarize::fbank_with(&w16, true);
+        let e = self.conv.run("campplus.onnx", vec![("fbank", vec![1, n as i64, 80], fb)]).unwrap();
+        let norm = e.iter().map(|v| v * v).sum::<f32>().sqrt();
+        e.into_iter().map(|v| v / norm).collect()
+    }
+
+    fn of(&mut self, file: &std::path::Path, song: bool) -> f32 {
+        use crate::media::stems;
+        let (samples, rate, channels) = crate::media::audio_in::decode(file).unwrap();
+        let ch = channels.max(1) as usize;
+        let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+        let voice = if song {
+            let mix = stems::Stereo { rate, ch: [mono.clone(), mono] }.resampled(stems::RATE);
+            let (parts, _) = stems::separate(&self.dll, &self.separator, &mix, 8, &[3], self.card, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+            stems::unload();
+            stems::resample(&parts[0].mono(), stems::RATE, crate::media::svc::RATE)
+        } else {
+            stems::resample(&mono, rate, crate::media::svc::RATE)
+        };
+        let p = self.print(&voice);
+        p.iter().zip(&self.person).map(|(a, b)| a * b).sum()
+    }
+}
+
+/// The installed app's recorded voice (read only, copied into a test
+/// state) through the app's own jobs: narration of lines said different
+/// ways, a song sung again in the voice, and a custom model trained on the
+/// voice's singing with a song made on it. Beside each, how much its pitch
+/// moves, next to the person's own recordings. The files go to
+/// C:\dev\tools\voice\for-you.
+///     cargo test e2e_your_voice_end_to_end -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_your_voice_end_to_end() {
+    use crate::media::{self, own_voice, store, train, MusicSpec, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let rc = vault.work_cipher().expect("the app's data key is locked with a password");
+    let voice = own_voice::list(&conn, &rc).into_iter().next().expect("a recorded voice");
+    drop(conn);
+    let vid = own_voice::copy_for_test(&real, &rc, &voice, &state);
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\for-you");
+    std::fs::create_dir_all(&out).unwrap();
+    let save = |name: &str, id: &str| {
+        let file = out.join(name);
+        std::fs::write(&file, store::read(&state.paths, &c, id).unwrap()).unwrap();
+        file
+    };
+    let only = std::env::var("SULCUSAI_ONLY").unwrap_or_default();
+    let wanted = |part: &str| only.is_empty() || only.split(',').any(|p| p == part);
+    let mut rows = vec![format!("{}: {} takes, {:.0} s sung", voice.name, voice.takes.len(), own_voice::sung_takes(&state.paths, &c, &own_voice::get(&state.db.lock().unwrap(), &c, &vid).unwrap()).unwrap().iter().map(|t| t.len()).sum::<usize>() as f64 / 48_000.0)];
+    let (reading, _) = own_voice::speech_reference(&state.paths, &c, &own_voice::get(&state.db.lock().unwrap(), &c, &vid).unwrap()).unwrap();
+    let mine = out.join("your-reading.wav");
+    std::fs::write(&mine, crate::audio::wav_encode(&reading, 24_000)).unwrap();
+    rows.push(format!("your own reading: {}", liveliness(&mine)));
+
+    let (singing, _) = own_voice::singing_reference(&state.paths, &c, &own_voice::get(&state.db.lock().unwrap(), &c, &vid).unwrap()).unwrap();
+    let mut like = Likeness::new(&state, &singing);
+    rows.push(format!("your reading against your singing: likeness {:.2}", like.of(&mine, false)));
+    if wanted("narrate") {
+        let script = "I can't believe it actually worked! This is the best news I've had all week.\nHmm. I'm not so sure about that. Let me think it over before we decide.\nOkay, listen closely: the meeting starts at nine, not ten, so please don't be late.\nWait, are you really coming with us tonight? That's amazing!";
+        let t = std::time::Instant::now();
+        let read = media::run(&state, store::new_id(), Request { op: "narrate".into(), prompt: script.into(), voice: Some(format!("own:{vid}")), language: Some("en".into()), ..Default::default() }).await.unwrap().remove(0);
+        let file = save("narration.wav", &read.id);
+        rows.push(format!("narration: {:.0} s; {}; likeness {:.2}", t.elapsed().as_secs_f64(), liveliness(&file), like.of(&file, false)));
+    }
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let music = std::env::var("SULCUSAI_MUSIC_MODEL").unwrap_or_else(|_| "ace-step-1.5-xl".into());
+    if wanted("song") {
+        media::install_for_test(&state, &music).await.unwrap();
+        let t = std::time::Instant::now();
+        let song = media::run(&state, store::new_id(), Request { op: "music".into(), model_id: Some(music.clone()), prompt: "A warm pop song about a fresh start, acoustic guitar, light drums, catchy chorus".into(), lyrics: Some(lyrics.into()), seconds: Some(60.0), seed: Some(5), language: Some("en".into()), music: Some(MusicSpec::default()), ..Default::default() }).await.unwrap().remove(0);
+        let made = save("song-as-made.mp3", &song.id);
+        let sung = media::run(&state, store::new_id(), Request { op: "revoice".into(), source: Some(song.id.clone()), voice: Some(vid.clone()), ..Default::default() }).await.unwrap().remove(0);
+        let file = save("song-in-your-voice.wav", &sung.id);
+        rows.push(format!("song: {:.0} s for both; likeness as made {:.2}, sung again in your voice {:.2}", t.elapsed().as_secs_f64(), like.of(&made, true), like.of(&file, true)));
+    }
+    if wanted("own") {
+        // A new song in your voice the app's way: your singing as the music
+        // model's reference, then sung again in your voice.
+        media::install_for_test(&state, &music).await.unwrap();
+        let t = std::time::Instant::now();
+        let spec = MusicSpec { own_voice: Some(vid.clone()), ..Default::default() };
+        let song = media::run(&state, store::new_id(), Request { op: "music".into(), model_id: Some(music.clone()), prompt: "A warm pop song about a fresh start, acoustic guitar, light drums, catchy chorus".into(), lyrics: Some(lyrics.into()), seconds: Some(60.0), seed: Some(5), language: Some("en".into()), music: Some(spec), ..Default::default() }).await.unwrap().remove(0);
+        let file = save("song-in-your-voice-from-the-start.wav", &song.id);
+        rows.push(format!("new song in your voice: {:.0} s; likeness {:.2}", t.elapsed().as_secs_f64(), like.of(&file, true)));
+    }
+    if wanted("train") {
+        let tc = state.catalog.media.trainer.clone().unwrap();
+        let source = train::source_dir(&state.paths, &tc);
+        if !source.join("train.py").is_file() {
+            let zip = std::path::PathBuf::from(r"C:\dev\sulcusai-dist\music").join(format!("ace-step-1.5-trainer-{}.zip", tc.build));
+            zip::ZipArchive::new(std::fs::File::open(&zip).unwrap()).unwrap().extract(&source).unwrap();
+        }
+        let turbo = state.catalog.speech.models.iter().find(|m| m.id == "whisper-large-v3-turbo").unwrap().clone();
+        crate::speech::install_for_test(&state, &turbo, &std::sync::atomic::AtomicBool::new(false)).await.unwrap();
+        media::install_for_test(&state, train::BASE_MODEL).await.unwrap();
+        let t = std::time::Instant::now();
+        let spec = train::TrainSpec { name: "Your voice".into(), description: "solo singer, warm clear lead vocal".into(), files: Vec::new(), songs: Vec::new(), voice: Some(vid.clone()) };
+        media::run(&state, store::new_id(), Request { op: "train".into(), prompt: "Your voice".into(), train: Some(spec), ..Default::default() }).await.unwrap();
+        let cm = train::list(&state.db.lock().unwrap(), &c).into_iter().next().expect("a custom model");
+        let song = media::run(&state, store::new_id(), Request { op: "music".into(), prompt: "A warm pop song about a fresh start".into(), lyrics: Some(lyrics.into()), seconds: Some(60.0), seed: Some(5), language: Some("en".into()), music: Some(MusicSpec { custom: Some(cm.id.clone()), ..Default::default() }), ..Default::default() }).await.unwrap().remove(0);
+        let file = save("song-custom-model.mp3", &song.id);
+        rows.push(format!("custom model of your singing: {:.0} s to train and sing ({} songs, {} passes); likeness {:.2}", t.elapsed().as_secs_f64(), cm.songs, cm.epochs, like.of(&file, true)));
+        train::remove(&state.db.lock().unwrap(), &c, &state.paths, &cm.id).unwrap();
+    }
+    println!("\n{}", rows.join("\n"));
+}

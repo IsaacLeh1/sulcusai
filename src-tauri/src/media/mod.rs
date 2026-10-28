@@ -2666,6 +2666,12 @@ async fn run_job_now(state: &Arc<AppState>, id: String, req: Request) -> Result<
         "video_sound" => "a video with sound",
         "dub" => "a dubbed video",
         "captions" => "a captioned video",
+        // A failed training was logged as "Making a picture failed".
+        "train" | "trainer" => "a custom model",
+        "revoice" => "a song in another voice",
+        "song_video" => "a song video",
+        "stems" | "dry" | "studio_part" => "a song part",
+        "map" | "listen" => "a song's notes",
         _ => "a picture",
     };
     watching.store(false, Ordering::Relaxed);
@@ -5979,16 +5985,18 @@ async fn train_job(ctx: &RunCtx<'_>, work: &std::path::Path) -> Result<Vec<Media
         std::fs::copy(&from, &to).map_err(|e| format!("Couldn't read {}: {e}", from.display()))?;
         copies.push(to);
     }
-    // A recorded voice's singing, take by take (short ones teach little).
+    // A recorded voice's singing (short takes teach little), joined into
+    // clips as long as the trainer wants.
     if let Some(vid) = spec.voice.as_deref().filter(|v| !v.is_empty()) {
         let voice = own_voice::get(&state.db.lock().unwrap(), &c, vid).ok_or("That recorded voice is no longer here.")?;
         let takes: Vec<Vec<f32>> = own_voice::sung_takes(&state.paths, &c, &voice)?.into_iter().filter(|t| t.len() >= 48_000 * 4).collect();
-        if takes.is_empty() {
-            return Err(format!("“{}” has no singing recorded yet (4 seconds or more): sing the singing lines in Your voice, or add songs where you sing.", voice.name));
+        let seconds = takes.iter().map(|t| t.len()).sum::<usize>() as f64 / 48_000.0;
+        if seconds < 10.0 {
+            return Err(format!("“{}” has {seconds:.0} seconds of singing recorded: training needs 10 or more (half a minute or more teaches it much better). Sing more of the singing lines in Your voice, or add songs where you sing.", voice.name));
         }
-        for take in takes {
+        for clip in train::singing_clips(takes, 48_000) {
             let to = audio.join(format!("{:02}.wav", copies.len() + 1));
-            std::fs::write(&to, crate::audio::wav_encode(&take, 48_000)).map_err(|e| e.to_string())?;
+            std::fs::write(&to, crate::audio::wav_encode(&clip, 48_000)).map_err(|e| e.to_string())?;
             copies.push(to);
         }
     }

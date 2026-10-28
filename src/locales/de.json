@@ -5934,5 +5934,7 @@
  "This plugin runs these commands on your PC": "Dieses Plugin führt diese Befehle auf deinem PC aus",
  "This removes the message after this one.": "Dadurch wird die Nachricht danach entfernt.",
  "This removes the {n} messages after this one.": "Dadurch werden die {n} Nachrichten danach entfernt.",
- "Waiting for the browser…": "Warte auf den Browser…"
+ "Waiting for the browser…": "Warte auf den Browser…",
+ "SulcusAI's own browser searches with": "Der eigene Browser von SulcusAI sucht mit",
+ "The web viewer and the browser the assistant uses start on it, and what you type there that isn't an address is searched with it. To have the assistant work in your own Chrome instead, turn on Browser control in Features.": "Die Webansicht und der Browser, den der Assistent nutzt, starten dort, und was du dort eingibst und keine Adresse ist, wird damit gesucht. Damit der Assistent stattdessen in deinem eigenen Chrome arbeitet, schalte unter Funktionen die Browsersteuerung ein."
 }

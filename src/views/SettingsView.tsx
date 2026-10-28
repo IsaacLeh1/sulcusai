@@ -3,7 +3,7 @@ import { ImportFromOthers } from "../components/ImportFromOthers";
 import { keepDrafts } from "../drafts";
 import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
-import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type MainBrowser, type SavedSiteKey } from "../api";
+import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type BrowserSearch, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
 import { chosenLanguage, LANGUAGES, setLanguage, t, tx } from "../i18n";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
@@ -190,6 +190,28 @@ function BrowserChoice({ toast }: { toast: PushToast }) {
         </select>
       </label>
       <p className="muted small">{t("Unless you pick one, it's Chrome (or Windows' default browser without Chrome). The web viewer has its own button next to the globe either way, and the assistant browses in a browser of its own. For DuckDuckGo or another browser not listed, make it your Windows default and pick “Windows' default browser”.")}</p>
+      <label>
+        {t("SulcusAI's own browser searches with")}
+        <select
+          value={v.search}
+          onChange={async (e) => {
+            const search = e.target.value as BrowserSearch;
+            try {
+              await api.setBrowserSearch(search);
+              setV({ ...v, search });
+              toast(t("Saved."), "success");
+            } catch (err) {
+              toast(errorText(err), "error");
+            }
+          }}
+        >
+          <option value="duckduckgo">DuckDuckGo</option>
+          <option value="google">Google</option>
+          <option value="bing">Bing</option>
+          <option value="brave">Brave Search</option>
+        </select>
+      </label>
+      <p className="muted small">{t("The web viewer and the browser the assistant uses start on it, and what you type there that isn't an address is searched with it. To have the assistant work in your own Chrome instead, turn on Browser control in Features.")}</p>
     </div>
   );
 }

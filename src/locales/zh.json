@@ -5934,5 +5934,7 @@
  "This plugin runs these commands on your PC": "此插件会在你的电脑上运行这些命令",
  "This removes the message after this one.": "这会移除这条之后的那条消息。",
  "This removes the {n} messages after this one.": "这会移除这条之后的 {n} 条消息。",
- "Waiting for the browser…": "正在等待浏览器…"
+ "Waiting for the browser…": "正在等待浏览器…",
+ "SulcusAI's own browser searches with": "SulcusAI 自带浏览器使用的搜索",
+ "The web viewer and the browser the assistant uses start on it, and what you type there that isn't an address is searched with it. To have the assistant work in your own Chrome instead, turn on Browser control in Features.": "网页查看器和助手使用的浏览器会从这里打开，在其中输入的非网址内容会用它来搜索。若要让助手改用你自己的 Chrome，请在功能中打开浏览器控制。"
 }

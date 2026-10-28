@@ -25,7 +25,6 @@ use tauri::{AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindo
 
 pub const LABEL: &str = "browser";
 const TITLE: &str = "SulcusAI browser";
-const HOME: &str = "https://duckduckgo.com/";
 
 /// Page text sent to the model, in characters.
 pub const MAX_TEXT: usize = 10_000;
@@ -580,7 +579,8 @@ pub async fn open_browser(app: AppHandle, state: crate::AppStateRef<'_>) -> Resu
     let fresh = window(&app).is_none();
     let w = open(&app, true)?;
     if fresh {
-        w.navigate(HOME.parse().unwrap()).map_err(|e| e.to_string())?;
+        let home = crate::browsers::search(&state.db.lock().unwrap()).home();
+        w.navigate(home.parse().unwrap()).map_err(|e| e.to_string())?;
     }
     let _ = w.set_focus();
     state.log("network", "Opened the browser");

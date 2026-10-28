@@ -149,6 +149,37 @@ pub fn epochs_for(songs: usize) -> u32 {
     }
 }
 
+/// A recorded voice's singing as clips the trainer takes. It wants each
+/// song 10 s or more, and sung lines are a few seconds each (handed over one
+/// by one, every voice failed), so they're joined end to end with a short
+/// pause between, about half a minute to a clip; a last short piece goes
+/// onto the clip before it.
+pub fn singing_clips(takes: Vec<Vec<f32>>, rate: u32) -> Vec<Vec<f32>> {
+    let pause = vec![0.0f32; rate as usize / 2];
+    let (whole, least) = (30 * rate as usize, 10 * rate as usize);
+    let mut clips: Vec<Vec<f32>> = Vec::new();
+    let mut now: Vec<f32> = Vec::new();
+    for take in takes {
+        if !now.is_empty() {
+            now.extend_from_slice(&pause);
+        }
+        now.extend(take);
+        if now.len() >= whole {
+            clips.push(std::mem::take(&mut now));
+        }
+    }
+    if !now.is_empty() {
+        match clips.last_mut() {
+            Some(last) if now.len() < least => {
+                last.extend_from_slice(&pause);
+                last.extend(now);
+            }
+            _ => clips.push(now),
+        }
+    }
+    clips
+}
+
 /// Words speech recognition heard, as lyrics: a line each, four to a
 /// section. Fewer than eight words is an instrumental.
 pub fn lyrics_from(lines: &[String]) -> Option<String> {
@@ -251,6 +282,20 @@ pub fn setup_bytes(t: &TrainerCatalog) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sung_lines_are_joined_into_clips_the_trainer_takes() {
+        // At 10 samples a second: eight 8 s lines become two clips of 30 s or more.
+        let take = |s: usize| vec![0.1f32; s * 10];
+        let clips = singing_clips((0..8).map(|_| take(8)).collect(), 10);
+        assert_eq!(clips.len(), 2);
+        assert!(clips.iter().all(|c| c.len() >= 300));
+        // A short last piece goes onto the clip before, after a pause.
+        let clips = singing_clips(vec![take(31), take(5)], 10);
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].len(), 310 + 5 + 50);
+        assert!(singing_clips(Vec::new(), 10).is_empty());
+    }
 
     #[test]
     fn names_become_trigger_words() {

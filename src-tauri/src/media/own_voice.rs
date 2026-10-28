@@ -636,6 +636,28 @@ pub fn add_for_test(state: &AppState, name: &str, takes: &[(&str, Vec<f32>, &str
     id
 }
 
+/// A recorded voice copied, takes and all, from another copy of the app's
+/// data (the installed app's, read only) into `state`: for tests on a real
+/// person's voice that change nothing of theirs.
+#[cfg(test)]
+pub fn copy_for_test(from: &Paths, from_cipher: &Cipher, voice: &OwnVoice, state: &AppState) -> String {
+    let c = state.work_cipher().unwrap();
+    let id = super::store::new_id();
+    let mut copy = OwnVoice { id: id.clone(), takes: Vec::new(), ..voice.clone() };
+    for t in &voice.takes {
+        let Ok(samples) = read_take(from, from_cipher, &voice.id, &t.line) else { continue };
+        let path = take_path(&state.paths, &id, &t.line).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, c.seal_bytes(&crate::audio::wav_encode(&samples, REC_RATE))).unwrap();
+        copy.takes.push(t.clone());
+    }
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn, &c);
+    all.push(copy);
+    store(&conn, &c, &all).unwrap();
+    id
+}
+
 /// Stops recording and throws it away.
 #[tauri::command]
 pub fn own_voice_cancel() {

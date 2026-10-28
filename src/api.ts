@@ -1674,9 +1674,13 @@ export interface ViewerArea {
   height: number;
 }
 
+/** What SulcusAI's own browser starts on and searches with. */
+export type BrowserSearch = "duckduckgo" | "google" | "bing" | "brave";
+
 export interface BrowsersView {
   current: MainBrowser;
   installed: { name: string }[];
+  search: BrowserSearch;
 }
 
 export type MailSecurity = "tls" | "starttls" | "plain";
@@ -3396,6 +3400,7 @@ export const api = {
   bridgeStatus: () => invoke<BridgeStatus>("bridge_status"),
   showExtensionFolder: () => invoke<void>("show_extension_folder"),
   setMainBrowser: (choice: MainBrowser) => invoke<void>("set_main_browser", { choice }),
+  setBrowserSearch: (search: BrowserSearch) => invoke<void>("set_browser_search", { search }),
   /** Opens a web address (or just the browser) in the user's main browser. */
   openWeb: (url: string | null) => invoke<void>("open_web", { url }),
   /** Opens a web address in a browser outside SulcusAI (Chrome unless another was picked). */

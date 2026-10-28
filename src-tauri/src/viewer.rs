@@ -34,7 +34,6 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Webview, 
 use crate::{AppState, AppStateRef};
 
 const PREFIX: &str = "viewer-";
-const HOME: &str = "https://duckduckgo.com/";
 /// Viewers kept loaded.
 const MOST: usize = 4;
 
@@ -145,7 +144,8 @@ pub fn ensure(app: &AppHandle, state: &AppState, key: &str, url: Option<&str>, a
     }
     let profile = state.paths.data.join("viewer");
     std::fs::create_dir_all(&profile).map_err(|e| e.to_string())?;
-    let start = url.map(str::to_string).or_else(|| LAST.lock().unwrap().remove(key)).unwrap_or_else(|| HOME.into());
+    let home = crate::browsers::search(&state.db.lock().unwrap()).home();
+    let start = url.map(str::to_string).or_else(|| LAST.lock().unwrap().remove(key)).unwrap_or_else(|| home.into());
     let start: tauri::Url = start.parse().map_err(|_| "That isn't a web address.".to_string())?;
     let (k1, k2, k3, k4, k5) = (key.to_string(), key.to_string(), key.to_string(), key.to_string(), key.to_string());
     let (opener, loads, titles) = (app.clone(), app.clone(), app.clone());
@@ -202,11 +202,12 @@ pub fn close_all(app: &AppHandle) {
 }
 
 /// What was typed in the address bar: a web address as it is, a name like
-/// "example.com" with https in front, anything else a search.
-pub fn address(typed: &str) -> String {
+/// "example.com" with https in front, anything else a search (with the
+/// search picked in Settings).
+pub fn address(typed: &str, search: crate::browsers::Search) -> String {
     let t = typed.trim();
     if t.is_empty() {
-        return HOME.into();
+        return search.home().into();
     }
     if let Ok(u) = reqwest::Url::parse(t) {
         if matches!(u.scheme(), "http" | "https") {
@@ -222,7 +223,7 @@ pub fn address(typed: &str) -> String {
             return u.to_string();
         }
     }
-    reqwest::Url::parse_with_params(HOME, &[("q", t)]).map(|u| u.to_string()).unwrap_or_else(|_| HOME.into())
+    search.of(t)
 }
 
 // ---------- commands (`key`: a chat's id, or none for the Web page) ----------
@@ -236,7 +237,8 @@ pub fn viewer_show(app: AppHandle, window: Window, state: AppStateRef<'_>, key: 
         return Err("The web viewer needs Local AI + Web. Switch to it from the status bar.".into());
     }
     let key = key_of(key.as_deref());
-    let target = url.map(|u| address(&u));
+    let search = crate::browsers::search(&state.db.lock().unwrap());
+    let target = url.map(|u| address(&u, search));
     if let Some(u) = &target {
         typed(&key, u);
     }
@@ -282,7 +284,7 @@ pub fn viewer_hide(app: AppHandle, window: Window, key: Option<String>) -> Resul
 
 /// Back, forward, reload, or an address typed in the bar.
 #[tauri::command(async)]
-pub fn viewer_go(app: AppHandle, key: Option<String>, to: String) -> Result<(), String> {
+pub fn viewer_go(app: AppHandle, state: AppStateRef<'_>, key: Option<String>, to: String) -> Result<(), String> {
     let key = key_of(key.as_deref());
     let w = webview(&app, &key).ok_or("The web viewer isn't open.")?;
     match to.as_str() {
@@ -290,7 +292,7 @@ pub fn viewer_go(app: AppHandle, key: Option<String>, to: String) -> Result<(), 
         "forward" => w.eval("history.forward()"),
         "reload" => w.reload(),
         typed_in => {
-            let u = address(typed_in);
+            let u = address(typed_in, crate::browsers::search(&state.db.lock().unwrap()));
             typed(&key, &u);
             w.navigate(u.parse().map_err(|_| "That isn't a web address.".to_string())?)
         }
@@ -332,12 +334,18 @@ mod tests {
 
     #[test]
     fn what_is_typed_becomes_an_address_or_a_search() {
-        assert_eq!(address("https://example.com/a?b=1"), "https://example.com/a?b=1");
-        assert_eq!(address("example.com"), "https://example.com/");
-        assert_eq!(address("news.ycombinator.com/item?id=1"), "https://news.ycombinator.com/item?id=1");
-        assert_eq!(address("localhost:5173"), "http://localhost:5173/");
-        assert_eq!(address("nvda earnings date"), "https://duckduckgo.com/?q=nvda+earnings+date");
-        assert_eq!(address("file:///C:/secret.txt"), "https://duckduckgo.com/?q=file%3A%2F%2F%2FC%3A%2Fsecret.txt");
-        assert_eq!(address("  "), HOME);
+        use crate::browsers::Search;
+        let ddg = Search::Duckduckgo;
+        assert_eq!(address("https://example.com/a?b=1", ddg), "https://example.com/a?b=1");
+        assert_eq!(address("example.com", ddg), "https://example.com/");
+        assert_eq!(address("news.ycombinator.com/item?id=1", ddg), "https://news.ycombinator.com/item?id=1");
+        assert_eq!(address("localhost:5173", ddg), "http://localhost:5173/");
+        assert_eq!(address("nvda earnings date", ddg), "https://duckduckgo.com/?q=nvda+earnings+date");
+        assert_eq!(address("file:///C:/secret.txt", ddg), "https://duckduckgo.com/?q=file%3A%2F%2F%2FC%3A%2Fsecret.txt");
+        assert_eq!(address("  ", ddg), "https://duckduckgo.com/");
+        // Searched with the one picked in Settings.
+        assert_eq!(address("nvda earnings date", Search::Google), "https://www.google.com/search?q=nvda+earnings+date");
+        assert_eq!(address("weather", Search::Bing), "https://www.bing.com/search?q=weather");
+        assert_eq!(address("", Search::Brave), "https://search.brave.com/");
     }
 }
