@@ -819,11 +819,9 @@ pub fn notes_markdown(m: &Meeting, segs: Option<&[Segment]>) -> String {
             out.push_str("## Action items\n\n");
             for a in &n.action_items {
                 let mut line = format!("- [{}] {}", if a.done { "x" } else { " " }, a.task);
-                if !a.owner.is_empty() {
-                    line.push_str(&format!(" — {}", a.owner));
-                }
-                if !a.due.is_empty() {
-                    line.push_str(&format!(" (due {})", a.due));
+                let who = [a.owner.clone(), if a.due.is_empty() { String::new() } else { format!("due {}", a.due) }].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>();
+                if !who.is_empty() {
+                    line.push_str(&format!(" ({})", who.join(", ")));
                 }
                 out.push_str(&line);
                 out.push('\n');
@@ -1354,7 +1352,7 @@ mod tests {
         let segs = vec![Segment { id: 1, speaker: Speaker::Others, voice: None, start: 65.0, end: 70.0, text: "Thursday works.".into(), translation: None }];
         let md = notes_markdown(&m, Some(&segs));
         assert!(md.starts_with("# Launch"));
-        assert!(md.contains("- [x] Send budget — Jordan (due Friday)"));
+        assert!(md.contains("- [x] Send budget (Jordan, due Friday)"));
         assert!(md.contains("**[01:05] Others:** Thursday works."));
     }
 }

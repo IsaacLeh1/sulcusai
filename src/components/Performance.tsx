@@ -17,7 +17,7 @@ export const MODE_LABEL: Record<PerfMode, string> = { cool: tx("Cool & quiet"), 
 const MODE_UNLOAD: Record<PerfMode, number> = { cool: 5, balanced: 10, turbo: 0 };
 
 const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-const deg = (temp: number | null | undefined) => (temp == null ? "—" : `${Math.round(temp)}°C`);
+const deg = (temp: number | null | undefined) => (temp == null ? "-" : `${Math.round(temp)}°C`);
 
 export function PerformanceSection({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<PerfView | null>(null);

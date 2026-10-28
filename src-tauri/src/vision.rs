@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The picture reader: pictures in words, for models that can't see them —
-//! a chat model without an image encoder, and picture models, which take
-//! only words. It reads with the chat model when that one can see pictures;
+//! The picture reader: pictures in words, for models that can't see them
+//! (a chat model without an image encoder, and picture models, which take
+//! only words). It reads with the chat model when that one can see pictures;
 //! otherwise with a vision model of its own, started on an engine of its own
 //! for the moment (the chat model is paused for it and comes back on its
 //! next use): an installed chat model that sees pictures, or the vision

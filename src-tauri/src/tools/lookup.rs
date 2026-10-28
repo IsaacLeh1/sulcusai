@@ -152,7 +152,7 @@ pub async fn deep(args: &Value, w: &Web, ctx: &MemoryCtx<'_>, ep: &crate::engine
         numbered.join("\n\n")
     );
     let report = crate::chat::complete(ep, vec![json!({ "role": "user", "content": ask })], json!({}), 4096).await.unwrap_or_default();
-    let shown = found.iter().map(|f| format!("{} — {}", f.title, f.url)).collect::<Vec<_>>().join("\n");
+    let shown = found.iter().map(|f| format!("{} ({})", f.title, f.url)).collect::<Vec<_>>().join("\n");
     let sources: Vec<Value> = found.iter().map(|f| json!({ "title": f.title, "url": f.url, "snippet": f.text.chars().take(200).collect::<String>() })).collect();
     if report.trim().len() < 200 {
         // The model couldn't write it here: the pages go back for the chat to answer from.
@@ -441,7 +441,7 @@ async fn research(args: &Value, w: &Web, ctx: &MemoryCtx<'_>) -> Outcome {
         searches.join("; "),
         sources.join("\n\n")
     );
-    let shown = hits.iter().map(|h| format!("{} — {}", h.title, h.url)).collect::<Vec<_>>().join("\n");
+    let shown = hits.iter().map(|h| format!("{} ({})", h.title, h.url)).collect::<Vec<_>>().join("\n");
     let mut o = Outcome::ok(text, format!("Researched “{question}” ({} sources, {read} read)", hits.len()), "text", Some(shown));
     o.meta["sources"] = json!(hits);
     o

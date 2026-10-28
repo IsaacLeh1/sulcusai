@@ -378,7 +378,7 @@ const KNOWN: &[&str] = &[
     "payment", "solve", "integrate", "derivative",
 ];
 
-/// "5x" as 5*x, "2(3+4)" as 2*(3+4), ")(" as ")*(" — but not inside names
+/// "5x" as 5*x, "2(3+4)" as 2*(3+4), ")(" as ")*(", but not inside names
 /// ("log10(") or numbers ("1e5"), or in quotes.
 fn implied_times(s: &str) -> String {
     let c: Vec<char> = s.chars().collect();

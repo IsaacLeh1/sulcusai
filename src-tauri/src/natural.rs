@@ -198,7 +198,7 @@ pub fn prepare(text: &str, lang: &str) -> String {
     let mut t: String = text.nfkd().collect();
     t.retain(|c| !is_emoji(c));
     for (from, to) in [
-        ("–", "-"), ("‑", "-"), ("—", "-"), ("_", " "), ("\u{201c}", "\""), ("\u{201d}", "\""),
+        ("–", "-"), ("‑", "-"), ("\u{2014}", "-"), ("_", " "), ("\u{201c}", "\""), ("\u{201d}", "\""),
         ("\u{2018}", "'"), ("\u{2019}", "'"), ("´", "'"), ("`", "'"), ("[", " "), ("]", " "),
         ("|", " "), ("/", " "), ("#", " "), ("→", " "), ("←", " "), ("@", " at "),
         ("e.g.,", "for example, "), ("i.e.,", "that is, "),
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn text_is_prepared_like_the_training_data() {
-        assert_eq!(prepare("Hello — world", "en"), "<en>Hello - world.</en>");
+        assert_eq!(prepare("Hello \u{2014} world", "en"), "<en>Hello - world.</en>");
         assert_eq!(prepare("Café “ok” 😀", "fr"), "<fr>Cafe\u{301} \"ok\"</fr>", "a closing quote ends it too");
         assert_eq!(prepare("Is it done ?", "en"), "<en>Is it done?</en>");
         assert_eq!(prepare("mail me @ home", "en"), "<en>mail me at home.</en>");

@@ -258,8 +258,8 @@ pub fn refuse(command: &str, dir: &Path, sandbox: &Sandbox) -> Option<String> {
 }
 
 /// What a command would send off the PC, and where, so the person can say
-/// yes or no first (his rule: models on this PC may read anything, but
-/// nothing leaves it without his word, and a secret leaving gets a warning).
+/// yes or no first. Models on this PC may read anything, but nothing leaves
+/// it without a yes, and a secret leaving gets a warning.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Egress {
     /// Where it goes: a host, user@host, a git remote, or "a server".

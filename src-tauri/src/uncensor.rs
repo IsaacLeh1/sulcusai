@@ -1121,7 +1121,7 @@ mod tests {
 
     #[test]
     fn big_models_are_squeezed_to_fit_the_card() {
-        // His RTX 5070 (12 GB) and 32 GB of memory.
+        // An RTX 5070 (12 GB) and 32 GB of memory.
         let (card, ram) = (12 * GB, 32 * GB);
         assert_eq!(plan(GB, card, ram), Ok(false), "a 0.5B fits as it is");
         assert_eq!(plan(8 * GB, card, ram), Ok(false), "a 4B (8 GB) fits as it is");

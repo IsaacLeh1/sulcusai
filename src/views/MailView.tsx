@@ -646,7 +646,7 @@ export function MailView({ toast }: { toast: PushToast }) {
                     <span className="mail-from ellipsis">{who}</span>
                     <span className="mail-line ellipsis">
                       <span className="mail-subject">{m.subject || t("(no subject)")}</span>
-                      {m.snippet && <span className="mail-snippet"> — {m.snippet}</span>}
+                      {m.snippet && <span className="mail-snippet"> - {m.snippet}</span>}
                     </span>
                     {m.attachments.length > 0 ? <span className="mail-clip" title={m.attachments.join(", ")}><MailIcon name="clip" size={15} title={t("Has attachments")} /></span> : <span className="mail-clip" />}
                     <span className="mail-date">{when(m.date)}</span>

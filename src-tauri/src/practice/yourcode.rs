@@ -1073,7 +1073,7 @@ pub struct Look {
 /// their names and parameters (search_files says it takes a regex). With
 /// Qwen3 4B 2507's template, a request with the chat descriptions takes
 /// 430 of a training example's 512 tokens; with a few words each and the
-/// required lists, 350; like this, about 300. Right tries on his repo took
+/// required lists, 350; like this, about 300. Right tries on a real repo took
 /// 170 to 240 tokens after the request. Shorter still cost answers: with
 /// every description gone and the wording cut too, it got 1 of 12 test tasks
 /// right instead of 5.

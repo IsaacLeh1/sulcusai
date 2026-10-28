@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(s.len(), DIMS);
         assert!((s.iter().map(|x| x * x).sum::<f32>() - 1.0).abs() < 1e-4);
         assert_eq!(bytes_vec(&vec_bytes(&s)), s);
-        assert_eq!(words_of("The rent: 1,200 dollars — 東京"), vec!["rent", "200", "dollar", "東", "京"]);
+        assert_eq!(words_of("The rent: 1,200 dollars \u{2014} 東京"), vec!["rent", "200", "dollar", "東", "京"]);
         assert_eq!(words_of("When does it end? It ends, ended"), vec!["end", "end", "end"]);
     }
 

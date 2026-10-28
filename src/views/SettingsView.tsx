@@ -491,7 +491,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <ul className="licenses small">
           {THIRD_PARTY.map((c) => (
             <li key={c.name}>
-              <strong>{t(c.name)}</strong> <span className="muted">— {t(c.license)}</span>
+              <strong>{t(c.name)}</strong> <span className="muted">({t(c.license)})</span>
             </li>
           ))}
         </ul>

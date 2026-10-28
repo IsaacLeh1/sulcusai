@@ -596,7 +596,7 @@ mod tests {
         .unwrap()
     }
 
-    /// FLUX.1 fine-tunes (his brother pasted some): a dev fine-tune opens
+    /// FLUX.1 fine-tunes: a dev fine-tune opens
     /// FLUX.1 dev, keeps its text readers and decoder, and Fill/Kontext
     /// files and the catalog's own file aren't offered.
     #[test]

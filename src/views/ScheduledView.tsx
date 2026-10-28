@@ -9,7 +9,7 @@ import { t, tx } from "../i18n";
 const DAYS = [tx("Monday"), tx("Tuesday"), tx("Wednesday"), tx("Thursday"), tx("Friday"), tx("Saturday"), tx("Sunday")];
 
 function when(ms: number | null) {
-  return ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—";
+  return ms ? new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "-";
 }
 
 /** Runs when something happens, not at set times. */
