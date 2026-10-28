@@ -1131,8 +1131,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn e2e_sync_two_pcs() {
-        let a = crate::e2e::scratch_state();
-        let b = crate::e2e::scratch_state();
+        let a = crate::testutil::scratch_state();
+        let b = crate::testutil::scratch_state();
         update(&a, |c| c.name = "PC-A".into()).unwrap();
         update(&b, |c| c.name = "PC-B".into()).unwrap();
         let (ca, cb) = (a.cipher().unwrap(), b.cipher().unwrap());
@@ -1214,7 +1214,7 @@ mod tests {
         assert!(models::receive_for_test(&mut r, &mut inn, &b.paths.data.join("stolen"), &mut |_| {}).await.is_err());
 
         // A PC that was never paired gets nowhere.
-        let c = crate::e2e::scratch_state();
+        let c = crate::testutil::scratch_state();
         let fake = Peer { id: a_id.clone(), name: "PC-A".into(), key: c.cipher().unwrap().encrypt(&hex::encode([7u8; 32])), ..Default::default() };
         update(&c, |cfg| cfg.peers.push(fake)).unwrap();
         let e = call(&c, &a_id, addr).await.unwrap_err();
@@ -1243,8 +1243,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
-        let a = crate::e2e::scratch_state();
-        let b = crate::e2e::scratch_state();
+        let a = crate::testutil::scratch_state();
+        let b = crate::testutil::scratch_state();
         let (ca, cb) = (a.cipher().unwrap(), b.cipher().unwrap());
         let (a_id, b_id) = (device_id(&a.paths.data), device_id(&b.paths.data));
         let key = wire::random::<32>();

@@ -234,7 +234,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn a_report_reaches_the_inbox() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let log = "2026-10-17 12:00:00 [media] Test line from the 0.9.6 release checks\n2026-10-17 12:00:01 [settings] Added Mom's iPhone (must not be sent)\n";
         std::fs::write(state.paths.logs.join(crate::applog::APP_LOG), log).unwrap();
         report(&state, "Test from the 0.9.6 release checks").await.unwrap();

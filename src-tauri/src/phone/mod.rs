@@ -817,7 +817,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn e2e_phone_page() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let c = state.cipher().unwrap();
         let key: [u8; 32] = crate::sync::random_bytes();
         {
@@ -955,7 +955,7 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn demo_phone_page() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let c = state.cipher().unwrap();
         let key: [u8; 32] = crate::sync::random_bytes();
         {
@@ -1020,7 +1020,7 @@ Day 3: Trastevere
     #[ignore]
     async fn e2e_phone_through_relay() {
         let relay = std::env::var("SULCUSAI_RELAY_TEST").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let c = state.cipher().unwrap();
         let key: [u8; 32] = crate::sync::random_bytes();
         {

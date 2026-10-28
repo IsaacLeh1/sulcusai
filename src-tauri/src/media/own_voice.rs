@@ -1973,7 +1973,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     #[ignore]
     async fn songs_and_speech_are_added_to_a_voice() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         let c = state.work_cipher().unwrap();
         let id = add_for_test(&state, "Added", &[]);
         let quiet = |_: &str| {};

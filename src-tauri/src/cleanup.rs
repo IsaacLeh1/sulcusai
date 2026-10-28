@@ -631,7 +631,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[ignore]
     async fn the_cleanup_keeps_locked_chats_and_removes_old_ones() {
-        let state = crate::e2e::scratch_state();
+        let state = crate::testutil::scratch_state();
         let c = state.cipher().unwrap();
         let old = db::now_ms() - 100 * DAY_MS;
         let (fresh, stale, locked, foldered) = {

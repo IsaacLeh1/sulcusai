@@ -123,6 +123,8 @@ mod vision;
 mod voice;
 mod web;
 mod workspace;
+#[cfg(test)]
+mod testutil;
 #[cfg(windows)]
 mod winjob;
 
@@ -3653,7 +3655,7 @@ mod incognito_tests {
     /// pasted or made there, file backups, and what it sent; other chats keep theirs.
     #[test]
     fn leaving_an_incognito_chat_leaves_nothing_behind() {
-        let state = crate::e2e::temp_state(Some(std::env::temp_dir().join(format!("sulcusai-inc-models-{}", uuid::Uuid::new_v4().simple()))));
+        let state = crate::testutil::temp_state(Some(std::env::temp_dir().join(format!("sulcusai-inc-models-{}", uuid::Uuid::new_v4().simple()))));
         let c = state.cipher().unwrap();
         let (secret, kept) = {
             let conn = state.db.lock().unwrap();

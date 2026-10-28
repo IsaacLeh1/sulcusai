@@ -1276,7 +1276,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn a_site_is_served_on_this_pc_only_and_follows_the_chats_web() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         let serve = |chat: &'static str, dir: PathBuf, web: bool| {
             let state = state.clone();
             async move { super::serve(&state, chat, &dir, "index.html", web).await }

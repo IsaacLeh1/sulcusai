@@ -577,8 +577,8 @@ mod tests {
     #[ignore]
     async fn e2e_compute_pc() {
         use std::net::Ipv4Addr;
-        let a = crate::e2e::temp_state(None);
-        let b = crate::e2e::scratch_state();
+        let a = crate::testutil::temp_state(None);
+        let b = crate::testutil::scratch_state();
         super::super::update(&a, |c| c.name = "SERVER".into()).unwrap();
         let model = std::env::var("SULCUSAI_TEST_MODEL_ID").unwrap_or_else(|_| "qwen3-4b-2507".into());
         let gguf = std::path::PathBuf::from(std::env::var("SULCUSAI_TEST_GGUF").expect("SULCUSAI_TEST_GGUF"));
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn only_jobs_that_need_nothing_from_here_go() {
-        let state = crate::e2e::temp_state(None);
+        let state = crate::testutil::temp_state(None);
         let req = crate::media::Request { op: "generate".into(), prompt: "a cat".into(), ..Default::default() };
         assert!(!media_here(&state, &req), "off by default");
         db::set(&state.db.lock().unwrap(), KEY, &Settings { peer: Some("p".into()), media: true }).unwrap();

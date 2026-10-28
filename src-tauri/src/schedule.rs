@@ -840,11 +840,12 @@ mod tests {
         assert_eq!(describe(&Cadence::OnMail { from: String::new(), subject: String::new() }), "When new mail arrives");
         assert_eq!(describe(&Cadence::OnEvent { minutes: 15, title: String::new() }), "15 min before each calendar event");
         assert_eq!(describe(&Cadence::OnEvent { minutes: 60, title: "standup".into() }), "1 h before each calendar event with “standup” in its title");
-        assert_eq!(describe(&Cadence::OnFile { folder: r"C:\Users\me\Downloads".into(), name: ".pdf".into() }), "When a file with “.pdf” in its name appears in Downloads");
+        let downloads = std::path::Path::new("Users").join("me").join("Downloads").to_string_lossy().into_owned();
+        assert_eq!(describe(&Cadence::OnFile { folder: downloads, name: ".pdf".into() }), "When a file with “.pdf” in its name appears in Downloads");
         assert_eq!(describe(&Cadence::OnStart), "When SulcusAI starts");
         assert_eq!(next_run(&Cadence::OnStart, local(2026, 10, 26, 8, 0)).unwrap(), None);
         assert!(is_trigger(&Cadence::OnStart) && !is_trigger(&Cadence::Hourly { minute: 0 }));
-        assert!(check_trigger(&Cadence::OnFile { folder: r"C:\no\such\folder".into(), name: String::new() }).is_err());
+        assert!(check_trigger(&Cadence::OnFile { folder: std::path::Path::new("no").join("such").join("folder").to_string_lossy().into_owned(), name: String::new() }).is_err());
         assert!(check_trigger(&Cadence::OnEvent { minutes: 2000, title: String::new() }).is_err());
         let v = serde_json::to_value(Cadence::OnStart).unwrap();
         assert_eq!(v, json!({ "kind": "on_start" }));
