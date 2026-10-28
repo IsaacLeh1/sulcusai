@@ -1,7 +1,7 @@
 {
   "name": "sulcusai",
   "private": true,
-  "version": "0.9.46",
+  "version": "0.9.47",
   "license": "AGPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@12.4.1",
