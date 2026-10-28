@@ -296,8 +296,8 @@ const THREAD_SCALE: [f64; 4] = [1.0, 0.75, 0.5, 0.35];
 /// The limits stepped down for heat: fewer processor threads when the
 /// processor is hot. A hot card keeps its layers, and the pauses between
 /// steps cool it (`step_pause`). Moving layers to the processor filled the
-/// memory and left the card idle (his laptop: RAM at 100%, the card at
-/// 13%), and in a laptop it only heats the shared cooler from the other side.
+/// memory and left the card idle, and in a laptop it only heats the shared
+/// cooler from the other side.
 pub fn scaled(mut l: Limits, h: &HeatState) -> Limits {
     l.threads = ((l.threads as f64 * THREAD_SCALE[h.cpu_level.min(3) as usize]).round() as usize).max(1);
     l.heat_level = h.level();

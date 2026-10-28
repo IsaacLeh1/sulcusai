@@ -2469,7 +2469,7 @@ Found it.
 
     #[test]
     fn a_loop_on_one_line_is_noticed_and_said_once_for_the_answer() {
-        // His brother's chat: the thinking ran "IEX Cloud, IEX," to the end of its allowance.
+        // From a real chat: the thinking ran "IEX Cloud, IEX," to the end of its allowance.
         let start = "The user wants open-source real-time stock charts. Libraries: yfinance, alpha_vantage, ";
         let stuck = format!("{start}{}IEX Cl", "IEX Cloud, IEX, ".repeat(40));
         let (at, unit) = loop_at_end(&stuck).expect("the loop is noticed");
@@ -2509,7 +2509,7 @@ Found it.
         assert!(!builds_in_chat(&["Make me a website"], code, &["read_file".to_string()]));
         assert!(!builds_in_chat(&["What's a closure in Rust?"], "```rust\nlet f = |x| x + 1;\nprintln!(\"{}\", f(1));\nlet g = f;\n```", &files));
         assert!(!builds_in_chat(&["How do I write a for loop in Python?"], "Like this: `for x in xs:`", &files));
-        // What his qwen2.5-coder said after "try again to do it for me" (the build ask came earlier).
+        // What qwen2.5-coder said after "try again to do it for me" (the build ask came earlier).
         let refusal = "I'm sorry for the confusion. As an AI, I can't directly execute commands on your computer to build a website. However, I can guide you through the process step-by-step.";
         assert!(builds_in_chat(&["try again to do it for me", "Do all this for me", "Build the website and run it"], refusal, &files));
         assert!(!builds_in_chat(&["try again to do it for me", "What's the weather like?"], refusal, &files), "nothing was asked to be made");
@@ -2525,7 +2525,7 @@ Found it.
         let f = forced_write(&tools, "index.html", &dir.join("styles.css")).unwrap();
         assert!(f.nudge.contains("styles.css") && f.response_format.to_string().contains("const"));
         std::fs::remove_dir_all(&dir).ok();
-        // What his qwen2.5-coder 1.5B said to "Build me a live stock exchange website".
+        // What qwen2.5-coder 1.5B said to "Build me a live stock exchange website".
         assert!(builds_in_chat(&["Build me a live stock exchange website"], "Sure, I can help you build a live stock exchange website. What kind of features do you need?", &files));
         assert!(!builds_in_chat(&["What's a good name for a bakery?"], "How about Sweet Crumbs? Would you like more ideas?", &files));
         // Documents go to create_document; sites and code don't.

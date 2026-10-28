@@ -329,8 +329,7 @@ SD_ENGINE = {
 # acestep.cpp (MIT) runs ACE-Step music models (only ace-synth is used, so the
 # models don't carry the 2 GB planning model; see media/music.rs). Upstream publishes no
 # versioned Windows builds, so this is our build of commit d881ad2 (MSVC
-# 2022, static runtime, CPU backends): HANDOFF.md says how it's made and
-# where it has to be published.
+# 2022, static runtime, CPU backends), published on the engines release.
 MUSIC_ENGINE = {
     "name": "acestep.cpp",
     "license": "MIT",

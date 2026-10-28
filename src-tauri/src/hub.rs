@@ -629,7 +629,7 @@ pub fn refine(state: &AppState, spec: &mut ModelSpec, file: &Path) {
 mod tests {
     use super::*;
 
-    /// His brother pasted openai/gpt-oss-120b (no GGUF in it): its GGUF
+    /// openai/gpt-oss-120b pasted (no GGUF in it): its GGUF
     /// copies are found, and the most downloaded has a file to load. Live.
     #[tokio::test]
     #[ignore]

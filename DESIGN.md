@@ -1,6 +1,6 @@
-# SulcusAI — Design Document
+# SulcusAI Design Document
 
-*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing. Status: Phases 1–3 complete; Phase 4 next (see HANDOFF.md).*
+*Name: **SulcusAI** (chosen 2026-10-06; the earlier working name "SynapseAI" was dropped because it is a registered Intel/Habana Labs trademark). A preliminary search found no conflicting "SulcusAI" product or mark; a professional clearance search is still needed before filing.*
 
 ## 1. Vision
 
@@ -98,9 +98,9 @@ fits   = needed <= VRAM                          (full GPU)
 - Chat with branching, editing and regenerating, search across all chats, folders and pins, and export/import.
 - **Context-window meter:** always visible. It shows tokens used versus the limit, broken down by system prompt, profile, memory, files and chat.
 - **Run modes:** each chat can be switched between these, and the current mode is always shown.
-  - **Plan** — the agent proposes the steps and waits for approval.
-  - **Auto** — safe actions run, and risky ones ask first.
-  - **Bypass** — everything runs except actions that always confirm (sending email, inviting attendees, deleting outside the granted folders, entering payment details).
+  - **Plan**: the agent proposes the steps and waits for approval.
+  - **Auto**: safe actions run, and risky ones ask first.
+  - **Bypass**: everything runs except actions that always confirm (sending email, inviting attendees, deleting outside the granted folders, entering payment details).
 - **Agent management:** the main agent can start subagents for parallel work, and a panel shows the running agents with stop buttons.
 - **Auto-handoff:** when context nears its limit, the app summarizes into a fresh chat and links back to the old one. It can also hand off between models, for example to a coding model for code.
 - **Profile:** details the user types about themselves and their preferences, included in every chat.
@@ -144,7 +144,7 @@ fits   = needed <= VRAM                          (full GPU)
 - **Voice mode:** a two-way spoken conversation.
   - Speech recognition, then the model, then speech output.
   - Voice activity detection lets the user interrupt, and responses stream with low delay.
-- **Meeting mode** — the user clicks **Begin meeting**:
+- **Meeting mode**: the user clicks **Begin meeting**:
   - Records the **microphone and the computer's audio output** (Windows loopback capture) on separate channels. Mic = "You", computer audio = other people, plus speaker labels (diarization) to tell the others apart.
   - Works with Teams, Google Meet, Zoom, or an in-person meeting, with no bot joining the call.
   - Live transcript and optional live translated captions.
@@ -311,7 +311,7 @@ Settings → Advanced → "Enable advanced mode". A warning explains that these 
 - Versions already released stay under their open license **forever**. Anyone can keep using and forking them, and that cannot be taken back. Only new work becomes closed.
 - The real protections against forks are **trademark** (forks can't use the name or logo), being the official source of updates and the model catalog, and continuing development.
 
-**Starting license — DECIDED 2026-10-06: AGPL-3.0-only + a mandatory Contributor License Agreement.**
+**Starting license, decided 2026-10-06: AGPL-3.0-only + a mandatory Contributor License Agreement.**
 
 The options that were considered:
 

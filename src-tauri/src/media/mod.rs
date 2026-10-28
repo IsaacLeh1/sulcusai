@@ -4096,7 +4096,7 @@ async fn picture(ctx: &RunCtx<'_>, m: &MediaModel, work: &std::path::Path) -> Re
             let mut refs = vec![src];
             // An edit of an edit: the first picture goes along too, so faces and
             // details don't drift a little further with every edit in a chain
-            // (his brother's pictures lost what he wanted within a few edits).
+            // (a few edits in, pictures had lost what was asked for).
             // Not when the change is to how people look (older, a new hairdo,
             // a cartoon of them): the original's faces would undo it.
             let changes_looks = req.op == "restyle" || changes_how_people_look(&req.prompt);

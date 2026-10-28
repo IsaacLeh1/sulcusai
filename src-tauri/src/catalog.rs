@@ -834,8 +834,8 @@ mod tests {
         Budget::from_hardware(&hw)
     }
 
-    /// A bigger graphics card gets a more capable suggestion: a 12 GB laptop
-    /// (his) and a 16 GB card (his friend's) differ, and 24 GB gets the most.
+    /// A bigger graphics card gets a more capable suggestion: 12 GB and 16 GB
+    /// differ, and 24 GB gets the most.
     #[test]
     fn the_suggestion_grows_with_the_graphics_card() {
         let c = catalog();
@@ -992,14 +992,12 @@ mod tests {
         let v = m.variant("Q4_K_M").unwrap();
         let all = m.arch.n_layer + 1;
         let card = |bytes: u64| Budget { vram: bytes + RUNTIME_OVERHEAD + 64 * MIB, ..budget(12, 32) };
-        // Room for the model and a compressed 8K cache, not a normal one
-        // (Qwen2.5-Coder 14B on his 12 GB card: 47 of 49 layers).
+        // Room for the model and a compressed 8K cache, not a normal one.
         let tight = card(v.size + kv_cache_bytes_q8(&m.arch, 8192));
         let f = fit_variant(m, v, 8192, &tight);
         assert_eq!(f.placement, Some(Placement::Split));
         assert_eq!(with_q8_cache(m, "Q4_K_M", &tight, 8192, f.gpu_layers, true), Some((8192, all)));
-        // A 16K window he chose: kept, with more of the model on the card
-        // (his 14B: 39 layers with the normal cache).
+        // A chosen 16K window is kept, with more of the model on the card.
         let chosen = fit_variant(m, v, 16_384, &tight);
         let (c, more) = with_q8_cache(m, "Q4_K_M", &tight, 16_384, chosen.gpu_layers, false).expect("more layers");
         assert!(c == 16_384 && more > chosen.gpu_layers, "{} -> {more}", chosen.gpu_layers);
@@ -1010,7 +1008,7 @@ mod tests {
         // Room for a compressed 16K window: 16K.
         let wide = card(v.size + kv_cache_bytes_q8(&m.arch, 16_384));
         assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 8192, all, true), Some((16_384, all)));
-        assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 8192, all, false), None, "a window he chose stays as it is");
+        assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 8192, all, false), None, "a chosen window stays as it is");
         assert_eq!(with_q8_cache(m, "Q4_K_M", &wide, 16_384, all, true), None, "already roomy: the faster normal cache");
         // No card: nothing to gain.
         assert_eq!(with_q8_cache(m, "Q4_K_M", &budget(0, 32), 8192, 0, true), None);
@@ -1146,7 +1144,7 @@ mod tests {
         assert!(kv_cache_bytes_q8(&m.arch, 8192) + RUNTIME_OVERHEAD > tiny.vram);
         let (ctx, layers, _) = on_small_card(m, "Q4_K_M", &tiny, 8192, true).expect("a smaller window");
         assert!(ctx == SMALL_CTX && layers > 0, "{ctx} {layers}");
-        assert_eq!(on_small_card(m, "Q4_K_M", &tiny, 8192, false), None, "a window he chose stays");
+        assert_eq!(on_small_card(m, "Q4_K_M", &tiny, 8192, false), None, "a chosen window stays");
         // Never below the smallest window, and nothing without a card.
         assert_eq!(on_small_card(m, "Q4_K_M", &card(RUNTIME_OVERHEAD), 8192, true), None);
         assert_eq!(on_small_card(m, "Q4_K_M", &budget(0, 16), 8192, true), None);

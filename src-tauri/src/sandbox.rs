@@ -13,7 +13,7 @@ pub struct Sandbox {
     readable: Vec<PathBuf>,
     /// The chat runs on an online model: whatever is read goes to it, so
     /// keys and saved logins in the home folder stay closed. A model on this
-    /// PC may read them (his rule: reading isn't the risk, sending is).
+    /// PC may read them: reading isn't the risk, sending is.
     online: bool,
     /// Roots shared with every chat rather than this chat's own work: the
     /// model is told to leave them be unless asked (a chat about a gun's

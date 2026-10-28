@@ -634,11 +634,10 @@ fn per_weight(target: &str) -> f64 {
 
 /// Card memory left free beyond training's measured peak, since the free
 /// memory is read once, at the start, and the desktop grows with another
-/// window or a video. Going over the card's memory isn't just slow: on his
-/// RTX 5070 the 4B's Q8_0 step 8 took the card to 12,087 of 12,227 MB, the
-/// NVIDIA driver reset (nvlddmkm event 153), the trainer crashed
-/// (0xC0000409, as in two practice runs that "crashed at step 8") and the
-/// NVIDIA overlay was left as a black layer over his main monitor.
+/// window or a video. Going over the card's memory isn't just slow: on a
+/// 12 GB RTX 5070 it reset the NVIDIA driver (nvlddmkm event 153), crashed
+/// the trainer (0xC0000409) and left the NVIDIA overlay as a black layer
+/// over the main monitor.
 const HEADROOM: u64 = 1 << 30;
 /// Card memory the desktop takes at the least, for the check at the start.
 const DESKTOP: u64 = 512 << 20;
@@ -1149,7 +1148,7 @@ mod tests {
     const Q4_0_4B: u64 = 2_369_547_360;
     const Q8_0_4B: u64 = 4_280_405_600;
 
-    /// The estimate covers what the trainer took on his card, without
+    /// The estimate covers what the trainer took on a 12 GB card, without
     /// asking for much more.
     #[test]
     fn training_need_covers_the_measured_peaks() {
@@ -1172,7 +1171,7 @@ mod tests {
             let p = plan(size, quant, free);
             (p.copy, p.fits)
         };
-        // His 12 GB card with the desktop holding 1.4 GB: Q8_0 crashed at step 8.
+        // A 12 GB card with the desktop holding 1.4 GB: Q8_0 crashed at step 8.
         assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", Some(card_12 - 1400 * MB)), (Some("Q4_0"), true));
         // With a game or a browser holding 4 GB more, even Q4_0 is short.
         assert_eq!(plan_on(Q4KM_4B, "Q4_K_M", Some(card_12 - 5400 * MB)), (Some("Q4_0"), false));
@@ -1198,7 +1197,7 @@ mod tests {
     /// even as Q4_0 with nothing else on it is refused.
     #[test]
     fn a_model_too_big_for_the_card_is_refused_at_the_start() {
-        assert!(!too_big(Q4KM_4B, "Q4_K_M", 12227 * MB), "a 4B on his 12 GB card");
+        assert!(!too_big(Q4KM_4B, "Q4_K_M", 12227 * MB), "a 4B on a 12 GB card");
         assert!(too_big(Q4KM_4B, "Q4_K_M", 8 * GB), "a 4B on an 8 GB card");
         assert!(too_big(4_683_074_240, "Q4_K_M", 12227 * MB), "an 8B on a 12 GB card");
         assert!(!too_big(4_683_074_240, "Q4_K_M", 24 * GB), "an 8B on a 24 GB card");

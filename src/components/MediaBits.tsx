@@ -111,7 +111,7 @@ export function UseBar({ label, usage, temp, unit }: { label: string; usage: num
       <div className="gpu-meter" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage ?? 0)}>
         <span style={{ width: `${Math.min(100, Math.max(2, usage ?? 0))}%` }} />
       </div>
-      <span className="small">{usage != null ? (unit === "used" ? t("{n}% in use", { n: Math.round(usage) }) : t("{n}% busy", { n: Math.round(usage) })) : "—"}</span>
+      <span className="small">{usage != null ? (unit === "used" ? t("{n}% in use", { n: Math.round(usage) }) : t("{n}% busy", { n: Math.round(usage) })) : "-"}</span>
       {temp != null && <span className={`small gpu-temp ${heat}`}>{Math.round(temp)} °C</span>}
     </div>
   );

@@ -1,4 +1,4 @@
-# Branding — all rights reserved
+# Branding: all rights reserved
 
 The files in this folder (logos, icons and other brand artwork), and the app's
 name, are **not** covered by the AGPL-3.0 license that applies to the source

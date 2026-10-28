@@ -491,8 +491,8 @@ mod tests {
         assert_eq!(codes(&Facts { gpu_limit: 50, ..big }), ["gpu_limit"]);
     }
 
-    /// His brother's laptop: Intel graphics plus a dedicated card, the
-    /// model on the processor. Each cause gets its own reason and fix.
+    /// A laptop with Intel graphics plus a dedicated card, the model on the
+    /// processor: each cause gets its own reason and fix.
     #[test]
     fn each_cause_is_named_with_its_fix() {
         // The dedicated card has no driver: Windows shows a Basic Display Adapter.

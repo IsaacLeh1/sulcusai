@@ -32,7 +32,7 @@ export function Meter({ label, value, text }: { label: string; value: number | n
 export function Temp({ label, value }: { label: string; value: number | null }) {
   return (
     <div className={`pc-temp ${heat(value)}`}>
-      <span className="pc-temp-value">{value != null ? `${Math.round(value)} °C` : "—"}</span>
+      <span className="pc-temp-value">{value != null ? `${Math.round(value)} °C` : "-"}</span>
       <span className="small muted">{label}</span>
     </div>
   );

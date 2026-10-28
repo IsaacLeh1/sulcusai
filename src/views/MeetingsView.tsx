@@ -543,7 +543,7 @@ function MeetingPage({ id, onBack, onOpenChat, toast }: { id: string; onBack: ()
                       <span className={a.done ? "done" : ""}>
                         {a.task}
                         {(a.owner || a.due) && (
-                          <span className="muted small"> — {[a.owner, a.due && t("due {date}", { date: a.due })].filter(Boolean).join(", ")}</span>
+                          <span className="muted small"> ({[a.owner, a.due && t("due {date}", { date: a.due })].filter(Boolean).join(", ")})</span>
                         )}
                       </span>
                     </label>

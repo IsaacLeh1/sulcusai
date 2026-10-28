@@ -271,28 +271,40 @@ pub(crate) fn clipboard_text() -> Option<String> {
     None
 }
 
-/// Puts text on the clipboard (an answer pasted back, then what was there).
+/// Puts text on the clipboard for a paste (an answer, a phrase dictated,
+/// then what was there). It's marked to stay out of clipboard history and
+/// the cloud clipboard, or every dictated phrase would land there.
 #[cfg(windows)]
 pub(crate) fn set_clipboard_text(text: &str) -> Result<(), String> {
+    use windows::core::w;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
     use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     const CF_UNICODETEXT: u32 = 13;
-    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    // SAFETY: the memory is allocated, filled while locked, then handed to
-    // the clipboard, which owns it from then on.
+    let wide: Vec<u8> = text.encode_utf16().chain(std::iter::once(0)).flat_map(u16::to_le_bytes).collect();
+    // SAFETY: each piece of memory is allocated, filled while locked, then
+    // handed to the clipboard, which owns it from then on.
     unsafe {
-        OpenClipboard(None).map_err(|e| format!("The clipboard is busy: {e}"))?;
-        let done = (|| {
-            EmptyClipboard().map_err(|e| e.to_string())?;
-            let g = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).map_err(|e| e.to_string())?;
-            let p = GlobalLock(g) as *mut u16;
+        let put = |format: u32, bytes: &[u8]| -> Result<(), String> {
+            let g = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).map_err(|e| e.to_string())?;
+            let p = GlobalLock(g) as *mut u8;
             if p.is_null() {
                 return Err("Couldn't use the clipboard.".to_string());
             }
-            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
             let _ = GlobalUnlock(g);
-            SetClipboardData(CF_UNICODETEXT, HANDLE(g.0)).map_err(|e| e.to_string())?;
+            SetClipboardData(format, HANDLE(g.0)).map(|_| ()).map_err(|e| e.to_string())
+        };
+        OpenClipboard(None).map_err(|e| format!("The clipboard is busy: {e}"))?;
+        let done = (|| {
+            EmptyClipboard().map_err(|e| e.to_string())?;
+            put(CF_UNICODETEXT, &wide)?;
+            for name in [w!("ExcludeClipboardContentFromMonitorProcessing"), w!("CanIncludeInClipboardHistory"), w!("CanUploadToCloudClipboard")] {
+                let format = RegisterClipboardFormatW(name);
+                if format != 0 {
+                    let _ = put(format, &0u32.to_le_bytes());
+                }
+            }
             Ok(())
         })();
         let _ = CloseClipboard();
@@ -304,6 +316,48 @@ pub(crate) fn set_clipboard_text(text: &str) -> Result<(), String> {
 pub(crate) fn set_clipboard_text(_text: &str) -> Result<(), String> {
     Err("Not on this system.".into())
 }
+
+/// What's on the clipboard, to put back after a paste: Some(None) when
+/// it's empty, Some(text) for text, None when it holds something else (a
+/// picture, files) that text put back in its place would lose.
+#[cfg(windows)]
+pub(crate) fn clipboard_before() -> Option<Option<String>> {
+    use windows::Win32::System::DataExchange::CountClipboardFormats;
+    if unsafe { CountClipboardFormats() } == 0 {
+        return Some(None);
+    }
+    clipboard_text().map(Some)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clipboard_before() -> Option<Option<String>> {
+    None
+}
+
+/// Puts back what `clipboard_before` found.
+pub(crate) fn put_back(before: Option<String>) {
+    match before {
+        Some(t) => {
+            let _ = set_clipboard_text(&t);
+        }
+        None => clear_clipboard(),
+    }
+}
+
+#[cfg(windows)]
+fn clear_clipboard() {
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard};
+    // SAFETY: opened, emptied and closed here.
+    unsafe {
+        if OpenClipboard(None).is_ok() {
+            let _ = EmptyClipboard();
+            let _ = CloseClipboard();
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_clipboard() {}
 
 /// What was selected in the app in front when the box opened.
 static SELECTED: std::sync::Mutex<Option<crate::programs::Selection>> = std::sync::Mutex::new(None);

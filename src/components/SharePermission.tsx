@@ -193,7 +193,7 @@ export function SharePermission({ chats, onOpenChat, only }: { chats: Chat[]; on
                   aria-label={t(i.label)}
                 />
               ) : (
-                <div className="share-value">{out ? t("Left out") : i.value || "—"}</div>
+                <div className="share-value">{out ? t("Left out") : i.value || "-"}</div>
               )}
             </li>
           );

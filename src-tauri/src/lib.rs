@@ -667,9 +667,9 @@ async fn hub_link(state: AppStateRef<'_>, link: String) -> Result<HubLink, Strin
     Err(hub_why_not(&r.info))
 }
 
-/// The most downloaded GGUF copy of a model that has a file SulcusAI can load
-/// (his brother pasted openai/gpt-oss-120b, which isn't in GGUF, and SulcusAI
-/// said it couldn't use it instead of finding ggml-org/gpt-oss-120b-GGUF).
+/// The most downloaded GGUF copy of a model that has a file SulcusAI can load.
+/// Without it, a pasted openai/gpt-oss-120b (not in GGUF) was turned away
+/// when ggml-org/gpt-oss-120b-GGUF was right there.
 async fn gguf_copy_of(state: &AppState, client: &reqwest::Client, of: &str) -> Option<HubLink> {
     for id in hub::gguf_copies(client, of).await.into_iter().take(6) {
         let Ok(copy) = hub::repo(client, &id).await else { continue };
@@ -685,8 +685,8 @@ async fn gguf_copy_of(state: &AppState, client: &reqwest::Client, of: &str) -> O
     None
 }
 
-/// Why a pasted model can't be used, by what kind of model it is (his
-/// brother read "GGUF" in the old message as a broken file, every time).
+/// Why a pasted model can't be used, by what kind of model it is ("GGUF" in
+/// the old message read as a broken file).
 fn hub_why_not(info: &serde_json::Value) -> String {
     let text = |v: &serde_json::Value| v.as_str().map(str::to_lowercase).unwrap_or_default();
     let id = text(&info["id"]);
@@ -3619,8 +3619,8 @@ mod open_tests {
 
 #[cfg(test)]
 mod think_tests {
-    /// About a minute and a quarter of thinking at the model's speed: his
-    /// brother's Qwen3.6 27B, partly in system memory, thought for minutes.
+    /// About a minute and a quarter of thinking at the model's speed: a 27B
+    /// partly in system memory thought for minutes.
     #[test]
     fn thinking_is_kept_to_about_a_minute() {
         assert_eq!(super::think_tokens(10.0), Some(1024), "a slow model still gets 1K");
@@ -3634,8 +3634,8 @@ mod think_tests {
 mod hub_link_tests {
     use serde_json::json;
 
-    /// What his brother pasted: Stable Diffusion 1.5 and FLUX.1 models, and the
-    /// message read like a broken GGUF file.
+    /// Stable Diffusion 1.5 and FLUX.1 models pasted in: the message used to
+    /// read like a broken GGUF file.
     #[test]
     fn a_model_that_cant_be_used_says_why_in_plain_words() {
         let flux = super::hub_why_not(&json!({ "id": "city96/FLUX.1-schnell-gguf", "pipeline_tag": "text-to-image", "cardData": { "base_model": "black-forest-labs/FLUX.1-schnell" } }));

@@ -1660,8 +1660,8 @@ impl Turn {
         // A command that sends something off the PC (an upload, a post, a
         // push, a copy to another machine, a request to the local network):
         // asked in every mode, Bypass included, never "for the whole chat".
-        // His rule: models here may read anything; nothing leaves without
-        // his word, and a secret leaving gets a warning.
+        // Models here may read anything; nothing leaves without a yes, and a
+        // secret leaving gets a warning.
         let egress = tools::egress_call(&call.name, &args, sandbox);
         if let Some(e) = &egress {
             risk = Risk::Submit;

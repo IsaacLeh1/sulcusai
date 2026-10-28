@@ -134,7 +134,7 @@ const DYNAMIC: &[(&[&str], &str)] = &[
 /// The directions themselves go into the description (`directions_of`).
 fn direction_tag(inner: &str) -> Option<String> {
     let inner = inner.trim();
-    let (head, rest) = match inner.split_once(':').or_else(|| inner.split_once(" - ")).or_else(|| inner.split_once(" — ")) {
+    let (head, rest) = match inner.split_once(':').or_else(|| inner.split_once(" - ")).or_else(|| inner.split_once(" \u{2014} ")) {
         Some((h, r)) => (h.trim(), r.trim()),
         None => (inner, ""),
     };
@@ -297,7 +297,7 @@ pub fn title_of(lyrics: &str) -> Option<String> {
     const SMALL: &[&str] = &["a", "an", "the", "of", "in", "on", "to", "and", "but", "or", "for", "at", "by"];
     // A long line: up to its first comma, else its first five words without
     // a dangling "who", "the", "my"… at the end.
-    let short = match line.split([',', ';', ':', '—', '!', '?']).next().map(str::trim).filter(|s| s.split_whitespace().count() >= 2) {
+    let short = match line.split([',', ';', ':', '\u{2014}', '!', '?']).next().map(str::trim).filter(|s| s.split_whitespace().count() >= 2) {
         Some(s) if s.split_whitespace().count() <= 6 => s.to_string(),
         _ => {
             const DANGLING: &[&str] = &["who", "that", "which", "when", "where", "my", "your", "our", "their", "i", "we", "you", "is", "are", "with", "from", "so", "as", "like"];

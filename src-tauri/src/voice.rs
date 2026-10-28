@@ -170,6 +170,13 @@ pub fn stop_anywhere() {
     signal(ANYWHERE);
 }
 
+/// A phrase heard, put where the cursor is with a space after it.
+pub(crate) fn type_phrase(v: &Value) {
+    if let Some(t) = v.get("text").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()) {
+        crate::programs::put_text(&format!("{t} "));
+    }
+}
+
 /// The hotkey for dictating anywhere: starts listening, or stops. Each
 /// phrase is typed where the cursor is, in whatever app that is.
 pub fn toggle_anywhere(app: &AppHandle) {
@@ -200,11 +207,7 @@ pub fn toggle_anywhere(app: &AppHandle) {
             let level = || capture.level();
             let emit = |kind: &str, v: Value| {
                 match kind {
-                    "text" => {
-                        if let Some(t) = v.get("text").and_then(Value::as_str).map(str::trim).filter(|t| !t.is_empty()) {
-                            crate::programs::type_now(&format!("{t} "), false);
-                        }
-                    }
+                    "text" => type_phrase(&v),
                     "hearing" => strip("Hearing you…"),
                     _ => {}
                 }

@@ -97,7 +97,7 @@ pub async fn run(name: &str, args: &Value, ctx: &MemoryCtx<'_>, app: Option<&tau
                          Give exact numbers only if they appear above; if they don't, say you couldn't find them and suggest reading a page with fetch_page. Never estimate or guess figures. \
                          Cite sources as Markdown links, e.g. [Title](url)."
                     );
-                    let shown = hits.iter().map(|h| format!("{} — {}", h.title, h.url)).collect::<Vec<_>>().join("\n");
+                    let shown = hits.iter().map(|h| format!("{} ({})", h.title, h.url)).collect::<Vec<_>>().join("\n");
                     let mut o = Outcome::ok(text, format!("Searched the web for “{query}” ({provider})"), "text", Some(shown));
                     o.meta["sources"] = json!(hits);
                     o

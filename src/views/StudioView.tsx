@@ -488,9 +488,8 @@ function cloudCards(cloud: CloudMediaChoice[], kind: MediaKind): MediaModelCard[
     });
 }
 
-/** The model a composer uses: always shown as a menu, even with one model,
- * whose last entry opens this kind's models to install another (his
- * brother saw only the first music model's name and no way to add one). */
+/** The model a composer uses: always a menu, even with one model, so there's
+ * a way to add another (its last entry opens this kind's models). */
 function ModelPick({ models, value, onChange, onMore }: { models: MediaModelCard[]; value: string; onChange: (id: string) => void; onMore?: () => void }) {
   // Models on this PC are marked as such; cloud ones carry their provider in their names.
   const label = (m: MediaModelCard) => (m.id.startsWith("cloud:") ? m.name : t("{name} (this PC)", { name: m.name }));

@@ -346,7 +346,7 @@ pub fn media_set_ask_questions(state: AppStateRef, on: bool) -> Result<(), Strin
 mod tests {
     use super::*;
 
-    /// His top hat: the request named the hat and its color, so a style or
+    /// A top hat: the request named the hat and its color, so a style or
     /// color question is dropped; which person is "me" still is asked.
     #[test]
     fn questions_a_sensible_choice_covers_are_dropped() {

@@ -4380,7 +4380,7 @@
  "Numbers and a date": "数字和日期",
  "My appointment is on March twenty-third at four fifteen, at 1280 West Maple Avenue, apartment nine.": "我的预约是三月二十三日四点十五分，地址是西枫树大道1280号，九号公寓。",
  "Sing “ah” and hold one comfortable note for about five seconds": "唱“啊”，用舒服的音高保持大约五秒",
- "Aaah…": "啊——…",
+ "Aaah…": "啊啊啊…",
  "Sing “la” up five notes and back down, like a warm-up": "唱“啦”，往上五个音再往下，像开嗓练习一样",
  "La la la la la, la la la la la": "啦 啦 啦 啦 啦，啦 啦 啦 啦 啦",
  "Sing 20 to 60 seconds of a song you know well, or these lines to any tune": "唱 20 到 60 秒你熟悉的歌，或者用任意曲调唱下面这几句",
@@ -5860,5 +5860,6 @@
  "as OpenAI does (JSON, or JSON that fits a schema). It works with this PC's models and the cloud models turned on.": "，与 OpenAI 的用法相同（JSON，或符合 schema 的 JSON）。适用于这台电脑上的模型和已开启的云端模型。",
  "loaded in {n} s": "加载用时 {n} 秒",
  "{free} is free there now.": "该驱动器目前有 {free} 可用空间。",
- "{n} tokens a second": "每秒 {n} tokens"
+ "{n} tokens a second": "每秒 {n} tokens",
+ "Ask about the selected text…": "就选中的文字提问…"
 }

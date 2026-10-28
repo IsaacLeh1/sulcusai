@@ -1,144 +1,52 @@
 # SulcusAI
 
-A private AI workspace that runs on your own PC. It shows only the AI models
-your computer can actually run, installs them with one click, and keeps
-everything local unless you choose otherwise.
+A private AI workspace that runs on your own PC. It shows the models your
+computer can actually run, installs them in one click, and keeps everything
+on the PC unless you turn on the web or a cloud model.
 
-> **Status: early development. Phases 1 (Foundation), 2 (Agent core) and 3 (Voice and meetings) are complete.** See [DESIGN.md](DESIGN.md)
-> for the full plan and [HANDOFF.md](HANDOFF.md) for where work stands.
+Website and downloads: [sulcusai.sseditor.com](https://sulcusai.sseditor.com/)
+and the [releases page](https://github.com/IsaacLeh1/sulcusai/releases).
 
-## What works today
+## What it does
 
-The app starts bare-bones: chat and models. Everything else below is added
-from **Features**, which installs what a feature needs (for example the
-speech model for dictation) and turns it on. Turning a feature off hides it
-and stops it, and keeps your data.
+- **Local models that fit.** Checks the graphics card, memory and disk, offers
+  models that will run well, and sets them up with llama.cpp.
+- **Chat and agents.** Streamed replies, tools, research with sources, and an
+  agent that works in folders you share, asking before it deletes anything or
+  sends anything off the PC.
+- **Voice.** Dictation (in the app or into any program), voice chats, natural
+  voices, and meeting notes from your microphone and the computer's sound.
+- **Studio.** Pictures, video and songs made on the PC, kept in an encrypted
+  gallery.
+- **Your stuff.** Mail, calendar, notes, documents and memories, encrypted on
+  disk, with an optional app lock.
+- **Other programs.** A local API in OpenAI's, Claude's and Ollama's formats,
+  MCP connectors and skills, and a phone link.
 
-- **Hardware check.** Detects your graphics card and its memory, system memory,
-  processor and free disk space.
-- **Model catalog with a spec filter.** Models your PC can't run are hidden,
-  and the app says what upgrade would unlock them. Each model shows its license
-  and an estimated speed.
-- **One-click install.** Downloads the llama.cpp engine and the model, checks
-  each file against its published SHA-256 hash, and measures real speed on your
-  PC. Downloads resume if interrupted.
-- **Chat** with streamed replies, a "thought process" view for reasoning models,
-  and a model picker for each chat.
-- **Context-window meter** showing instructions, your profile, the
-  conversation, and room left for the reply.
-- **Your profile.** Your name, details about you and how you like answers are
-  included in every chat.
-- **Connectivity levels:** Offline (the default), Local AI + Web, and Cloud. A
-  one-click Web toggle (or Ctrl+Shift+W) turns on web for a single chat.
-- **Encrypted chats.** Chat titles, messages and your profile are encrypted on
-  disk. The key is sealed to your Windows account.
-- **App lock.** An optional PIN or passphrase, with a one-time recovery code,
-  Windows Hello unlock and auto-lock when idle.
-- **Activity log.** A record of everything the app does, including anything
-  that goes over the internet. It never includes what you say in chats.
-- **First-run setup.** A short guided setup: your PC, a suggested first model,
-  your profile and the optional lock.
-- **Agent mode.** The assistant can work in folders you share: read, search,
-  create, edit, move and delete files (deletes go to the Recycle Bin), and run
-  commands to build and test code.
-  - The file tools only reach the folders you share. Commands are different:
-    a command is a program running under your Windows account, so once you
-    approve one (or in Bypass mode) it can reach other files and the network.
-    SulcusAI refuses the riskiest kinds (disks, how Windows starts, backups,
-    Windows security, plainly deleting outside your shared folders) and stops
-    commands that use too much memory or fill the disk. That's a safety net,
-    not a sandbox: read a command before you approve it.
-  - **Plan / Auto / Bypass** run modes. Auto changes files and runs commands on
-    its own, and asks before deleting, before a command that throws work away,
-    and before anything leaves the PC. Bypass asks only before something leaves
-    the PC, and always warns when a key or password would go with it.
-  - **Undo** for the file changes from any reply (not for what a command did).
-- **Memory** across chats. It's encrypted, and you can view, edit and delete it.
-  Incognito chats neither use nor save memories.
-- **Projects** with their own instructions, folders and memories.
-- **Helpers and handoff.** The assistant can send a helper agent to research
-  something in a fresh context. Long chats continue automatically in a new
-  chat from a summary.
-- **Scheduled tasks** that run on their own and save results as chats.
-- **Connectors and plugins.** Local MCP servers with Allow / Ask / Off per
-  tool, and plugins that add skills and connectors.
-- **Speech models** (Models › Speech), filtered to what this PC's processor
-  can keep up with: a quick one for dictation and voice chats, the most
-  accurate one for meetings.
-- **Dictation.** The microphone button (or Ctrl+Shift+Space) types what you say.
-- **Voice chats.** Talk, and hear the answer as it's written; talk over it to
-  interrupt. Replies can also be read aloud.
-- **Natural voices** (optional, 31 languages), with Windows' built-in voices
-  as the fallback.
-- **Meeting mode.** Records your microphone and your computer's sound, so it
-  hears everyone on Teams, Meet, Zoom or in the room with no bot joining.
-  - Live transcript, with speaker echo removed and optional translated
-    captions.
-  - Notes when it ends: summary, most important points, action items,
-    decisions, key points and topics.
-  - Optional speaker labels you can name, and an encrypted recording you can
-    replay line by line.
-  - A searchable library, Markdown export, "Ask about this meeting" chats,
-    and meeting tools any chat can use.
-  - A reminder to tell people you're recording.
-- **Studio** for pictures, video and music made on this PC, kept encrypted in
-  a gallery.
-  - Pictures from a description, edits from an instruction (planned, checked,
-    and made again when something's missing), filling in, extending,
-    restyling, upscaling, cut-outs and desktop wallpapers.
-  - Short videos from a description or a picture.
-  - Songs up to 10 minutes: style, mood, instruments, voice, beat, tempo, key
-    and time signature; lyrics written for you (to read and change first) or
-    your own; and work on a song you have (restyle it, make part of it again,
-    make it longer, add or take out a part such as vocals or drums).
-- **Translation** of text and text documents (subtitles keep their timing),
-  with language detection and read-aloud.
+Most of this is off at first and turned on from **Features**.
 
-## Privacy and security design
+## Privacy
 
-- The engine runs as a hidden local process on `127.0.0.1` only, on a random
-  port, and needs a random key for every request.
-- A Windows job object ends the engine if the app closes or crashes.
-- Model output is shown as Markdown without raw HTML, and remote images are
-  never loaded.
-- Speech recognition runs as a second hidden local process. It has no API key
-  option, so every route sits behind a random path prefix only the app knows.
-- Every request that leaves the PC goes through one connectivity check
-  (`src-tauri/src/net.rs`) and is recorded in the activity log.
-- Encryption uses AES-256-GCM. The data key is sealed by Windows DPAPI, plus an
-  Argon2id key from your PIN when app lock is on. Deleted rows are overwritten
-  (`secure_delete`). Details and limits are in [HANDOFF.md](HANDOFF.md).
+Offline is the default. Every request that leaves the PC goes through one
+check (`src-tauri/src/net.rs`) and shows in the activity log. Chats and other
+personal data are encrypted with AES-256-GCM under a key sealed to your
+Windows account.
 
-## License
+## Building
 
-- **Code:** [GNU AGPL v3.0](LICENSE). Contributors sign the [CLA](CLA.md); see
-  [CONTRIBUTING.md](CONTRIBUTING.md) for why.
-- **Name and logo:** not covered by the AGPL; see [TRADEMARKS.md](TRADEMARKS.md)
-  and [branding/NOTICE.md](branding/NOTICE.md).
-- **Third-party components:** see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-## Development
-
-Windows 10/11 x64 is the main platform. macOS (Apple silicon) and Linux
-(x64) build and run the core; some features are Windows-only for now (see
-HANDOFF.md, "macOS and Linux"). Rust stable, Node 22+, pnpm. On Linux, install
-the WebKitGTK and audio packages listed in `.github/workflows/ci.yml`.
+Windows 10/11 x64 is the main platform. macOS (Apple silicon) and Linux (x64)
+build and run the core, and some features are Windows-only for now. You need
+Rust stable, Node 22+ and pnpm; on Linux, the WebKitGTK and audio packages
+listed in `.github/workflows/ci.yml`.
 
 ```
 pnpm install
 pnpm app
 ```
 
-## Renaming
+## License
 
-The name appears in these places:
-
-1. `src/brand.ts` (`APP_NAME`)
-2. `src-tauri/tauri.conf.json` (`productName`, `identifier`, window `title`)
-3. `index.html` (`<title>`)
-4. `src-tauri/src/lib.rs` (`app_info`) and `src-tauri/src/chat.rs` (the system prompt)
-5. `src-tauri/src/net.rs` (the user agent)
-6. `package.json` and `src-tauri/Cargo.toml` (`name`)
-7. The docs: README, CLA, TRADEMARKS, CONTRIBUTING, THIRD_PARTY_NOTICES
-
-Changing `identifier` moves the data folder (`%LOCALAPPDATA%\<identifier>`).
+The code is [AGPL-3.0](LICENSE). Contributors sign the [CLA](CLA.md) (see
+[CONTRIBUTING.md](CONTRIBUTING.md)). The name and logo aren't covered by the
+AGPL: see [TRADEMARKS.md](TRADEMARKS.md). Third-party components are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

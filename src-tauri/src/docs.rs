@@ -206,7 +206,7 @@ pub fn write_docx(path: &Path, md: &str) -> Result<(), String> {
             Block::Code(text) => text.lines().fold(doc, |d, line| {
                 d.add_paragraph(Paragraph::new().add_run(Run::new().add_text(line).fonts(RunFonts::new().ascii("Consolas").hi_ansi("Consolas")).size(19)))
             }),
-            Block::Rule => doc.add_paragraph(Paragraph::new().add_run(Run::new().add_text("—".repeat(30)))),
+            Block::Rule => doc.add_paragraph(Paragraph::new().add_run(Run::new().add_text("\u{2014}".repeat(30)))),
             Block::Table(rows) => {
                 let rows: Vec<TableRow> = rows
                     .iter()
@@ -730,7 +730,7 @@ fn win1252(s: &str) -> Vec<u8> {
             '”' => 0x94,
             '•' | '◦' | '▪' => 0x95,
             '–' => 0x96,
-            '—' => 0x97,
+            '\u{2014}' => 0x97,
             '™' => 0x99,
             '\t' => b' ',
             _ => b'?',

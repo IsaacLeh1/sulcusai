@@ -240,7 +240,7 @@ pub async fn run(name: &str, args: &Value, state: &AppState, c: &Cipher) -> Outc
                         format!("id {} | {} | {who} | {}{} | {}", m.id, when(m.date), m.data.subject, if m.seen { "" } else { " (unread)" }, mail::visible(&m.data.snippet))
                     })
                     .collect();
-                let shown = found.iter().map(|m| format!("{} — {}", m.data.subject, m.data.from)).collect::<Vec<_>>().join("\n");
+                let shown = found.iter().map(|m| format!("{} ({})", m.data.subject, m.data.from)).collect::<Vec<_>>().join("\n");
                 Ok(Outcome::ok(format!("{heading}\n{}\n\nTell the user what you found (who from, subject, when). If they asked what an email says, read it with email_read first.\n{UNTRUSTED}", lines.join("\n")), format!("Searched email for “{q}” ({} found)", found.len()), "text", Some(shown)))
             }
             "email_read" => {

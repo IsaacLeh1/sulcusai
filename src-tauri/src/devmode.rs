@@ -4,7 +4,7 @@
 //! crashes as they happen, and every 30 minutes the new lines of app.log
 //! about the engine, pictures, downloads and errors (never what's said in
 //! chats, prompts, notes, mail or files), with the user's folder and name
-//! taken out. Each report goes to the developer's own inbox on his relay,
+//! taken out. Each report goes to the developer's own inbox on the relay,
 //! and a copy stays in logs\dev-sent.log, so the person can see exactly
 //! what left the PC. Off by default, and off again with one switch.
 
