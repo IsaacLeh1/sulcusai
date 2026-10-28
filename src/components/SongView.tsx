@@ -14,6 +14,7 @@ import { clock } from "../format";
 import { t } from "../i18n";
 import { useMediaUrl } from "../media";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 type Section = SongMap["sections"][number];
 type ENote = SongNote & { id: number };
@@ -438,8 +439,8 @@ export function SongView({ item, onClose, onStart, onSaved, onMapSaved, toast }:
       toast(errorText(e), "error");
     }
   };
-  const close = () => {
-    if (dirty && !window.confirm(t("Close without keeping your note changes?"))) return;
+  const close = async () => {
+    if (dirty && !await confirmed(t("Close without keeping your note changes?"))) return;
     stop();
     onClose();
   };
@@ -467,7 +468,7 @@ export function SongView({ item, onClose, onStart, onSaved, onMapSaved, toast }:
     }
   };
   const remove = async (s: Section) => {
-    if (!window.confirm(t("Delete the {name} ({from} to {to}) from this song? The song as it is now stays in the gallery.", { name: t(s.name), from: clock(s.start), to: clock(s.end) }))) return;
+    if (!await confirmed(t("Delete the {name} ({from} to {to}) from this song? The song as it is now stays in the gallery.", { name: t(s.name), from: clock(s.start), to: clock(s.end) }))) return;
     setBusy(true);
     stop();
     try {

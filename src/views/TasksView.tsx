@@ -6,6 +6,7 @@ import { Modal } from "../components/Modal";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 import { BellIcon } from "../components/Icons";
+import { confirmed } from "../confirm";
 
 type List = "today" | "upcoming" | "anytime" | "done";
 const PRIORITY = [tx("None"), tx("Low"), tx("Medium"), tx("High")];
@@ -103,7 +104,7 @@ function TimedActions({ done, onOpenChat, toast }: { done: boolean; onOpenChat: 
                   >
                     {t("Do it now")}
                   </button>
-                  <button className="btn ghost small danger" onClick={() => window.confirm(t("Cancel “{name}”? It won't run.", { name: s.name })) && act(() => api.deleteSchedule(s.id))}>
+                  <button className="btn ghost small danger" onClick={async () => (await confirmed(t("Cancel “{name}”? It won't run.", { name: s.name }))) && act(() => api.deleteSchedule(s.id))}>
                     {t("Cancel")}
                   </button>
                 </>

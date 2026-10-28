@@ -4,6 +4,7 @@ import { api, errorText, on, type ComputeSettings, type PeerModels, type SyncOut
 import { bytes } from "../format";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 function when(ms: number | null): string {
   if (!ms) return t("not yet");
@@ -122,8 +123,8 @@ export function SyncSettings({ toast }: { toast: PushToast }) {
               </span>
               <button
                 className="btn ghost small"
-                onClick={() => {
-                  if (window.confirm(t("Stop syncing with {name}? What's already on each PC stays there.", { name: p.name }))) run(() => api.removeDevice(p.id));
+                onClick={async () => {
+                  if (await confirmed(t("Stop syncing with {name}? What's already on each PC stays there.", { name: p.name }))) run(() => api.removeDevice(p.id));
                 }}
               >
                 {t("Unpair")}

@@ -9,6 +9,7 @@ import { bytes } from "../format";
 import { t } from "../i18n";
 import { kindName, Meter, pct, Temp } from "./PcView";
 import type { PushToast } from "../components/Toasts";
+import { confirmed } from "../confirm";
 
 function since(secs: number): string {
   const d = Math.floor(secs / 86400);
@@ -45,7 +46,7 @@ export function ComputeView({ toast }: { toast: PushToast }) {
   }, []);
 
   const control = async (action: string, value?: string, confirm?: string) => {
-    if (confirm && !window.confirm(confirm)) return;
+    if (confirm && !await confirmed(confirm)) return;
     setBusy(action);
     try {
       toast(await api.computeControl(action, value ?? null), "success");

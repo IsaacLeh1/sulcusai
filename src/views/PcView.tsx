@@ -7,6 +7,7 @@ import { bytes } from "../format";
 import { t } from "../i18n";
 import { phoneInfo } from "../phone/env";
 import type { PushToast } from "../components/Toasts";
+import { confirmed } from "../confirm";
 
 /** Under 70 °C is fine, to 83 warm, above that hot (most chips slow down near 85-95). */
 export function heat(temp: number | null): string {
@@ -72,7 +73,7 @@ export function PcView({ toast }: { toast: PushToast }) {
   }, []);
 
   const stopAll = async () => {
-    if (!window.confirm(t("Stop every reply, picture, video, song and teaching job on the PC, and unload the model? Downloads keep going."))) return;
+    if (!await confirmed(t("Stop every reply, picture, video, song and teaching job on the PC, and unload the model? Downloads keep going."))) return;
     setStopping(true);
     try {
       const n = await api.stopAll();

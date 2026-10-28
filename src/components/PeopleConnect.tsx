@@ -9,6 +9,7 @@ import { clock } from "../format";
 import { t, tx } from "../i18n";
 import { Modal } from "./Modal";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 type Attempt = { name: string; result: string; at: number };
 
@@ -181,8 +182,8 @@ function CodeCard({ c, attempt, run }: { c: PersonCode; attempt?: Attempt; run: 
               {u.linked && !u.blocked && (
                 <button
                   className="link small"
-                  onClick={() => {
-                    if (window.confirm(t("Remove {name}? Your messages with them are deleted from this PC, and they can't reach you until you connect again.", { name: u.name })))
+                  onClick={async () => {
+                    if (await confirmed(t("Remove {name}? Your messages with them are deleted from this PC, and they can't reach you until you connect again.", { name: u.name })))
                       run(() => api.peopleRemove(u.id));
                   }}
                 >
@@ -196,8 +197,8 @@ function CodeCard({ c, attempt, run }: { c: PersonCode; attempt?: Attempt; run: 
               ) : (
                 <button
                   className="link small danger"
-                  onClick={() => {
-                    if (window.confirm(t("Block {name}? They're removed, and can't link with any of your codes again until you unblock them.", { name: u.name })))
+                  onClick={async () => {
+                    if (await confirmed(t("Block {name}? They're removed, and can't link with any of your codes again until you unblock them.", { name: u.name })))
                       run(() => api.peopleBlock(u.id, u.name, true));
                   }}
                 >
@@ -224,8 +225,8 @@ function CodeCard({ c, attempt, run }: { c: PersonCode; attempt?: Attempt; run: 
         </button>
         <button
           className="btn ghost small danger"
-          onClick={() => {
-            if (window.confirm(t("Delete this code? People who linked with it stay linked.")))
+          onClick={async () => {
+            if (await confirmed(t("Delete this code? People who linked with it stay linked.")))
               run(() => api.peopleDeleteCode(c.id));
           }}
         >

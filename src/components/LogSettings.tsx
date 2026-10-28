@@ -4,6 +4,7 @@ import { api, errorText, type LogsView } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 /** What each log holds, by file name (engines' logs share a start). */
 const ABOUT: [RegExp, string][] = [
@@ -99,8 +100,8 @@ export function LogSettings({ toast }: { toast: PushToast }) {
       {v.files.length > 0 && (
         <button
           className="btn ghost small danger"
-          onClick={() => {
-            if (window.confirm(t("Delete SulcusAI's logs on this PC? They start again from now."))) act(async () => setV(await api.clearLogs()));
+          onClick={async () => {
+            if (await confirmed(t("Delete SulcusAI's logs on this PC? They start again from now."))) act(async () => setV(await api.clearLogs()));
           }}
         >
           {t("Clear logs")}

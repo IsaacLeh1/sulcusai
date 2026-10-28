@@ -14,6 +14,7 @@ import { t, tx } from "../i18n";
 import { FolderIcon, NewWindowIcon, PaperclipIcon } from "../components/Icons";
 import { onPhone } from "../phone/env";
 import { ModelSelect, useModelChoices } from "../components/ModelChoices";
+import { confirmed } from "../confirm";
 
 function seen(ms: number | null): string {
   if (!ms) return t("not seen yet");
@@ -301,7 +302,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
     }
   };
   const deleteMessage = async (m: PersonMessage) => {
-    if (!window.confirm(t("Delete this message? It's deleted for {name} too, as soon as your app reaches theirs.", { name: c.name }))) return;
+    if (!await confirmed(t("Delete this message? It's deleted for {name} too, as soon as your app reaches theirs.", { name: c.name }))) return;
     try {
       await api.peopleDelete(c.id, m.id);
       load();
@@ -335,7 +336,7 @@ function Conversation({ contact: c, relaySet, cloud, onChanged, toast }: { conta
   };
   const remove = async () => {
     setMenu(false);
-    if (!window.confirm(t("Remove {name}? Your messages with them are deleted from this PC, and they can't reach you until you connect again.", { name: c.name }))) return;
+    if (!await confirmed(t("Remove {name}? Your messages with them are deleted from this PC, and they can't reach you until you connect again.", { name: c.name }))) return;
     try {
       await api.peopleRemove(c.id);
       onChanged();

@@ -9,6 +9,7 @@ import { CancelInstall } from "./CancelInstall";
 import { HubLinkBox } from "./HubLink";
 import { LockIcon } from "./Icons";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 const KINDS: { kind: MediaKind; title: string; per: string }[] = [
   { kind: "image", title: tx("Pictures"), per: tx("a picture") },
@@ -113,9 +114,9 @@ function defaultOf(view: MediaView, kind: MediaKind): string | null {
 }
 
 /** Asks before installing a model whose license limits its use. */
-function licenseOk(m: MediaModelCard): boolean {
+async function licenseOk(m: MediaModelCard): Promise<boolean> {
   if (m.license.commercial) return true;
-  return window.confirm(
+  return await confirmed(
     t("{name}'s license ({license}) allows personal, non-commercial use only. {note}Read it on the model's page before using what it makes. Install it?", {
       name: m.name,
       license: m.license.name,
@@ -162,7 +163,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
     }
   };
   const install = async (m: HubMediaModel, f: HubMediaFile) => {
-    const ok = window.confirm(
+    const ok = await confirmed(
       t("{name} is shared on Hugging Face by {author}{license}. Check what its license allows on the model's page before using what it makes for work. Install it?", {
         name: m.name,
         author: m.author,
@@ -170,7 +171,7 @@ function MediaHubBrowser({ first, installed, progress, toast, onChanged }: { fir
       }),
     );
     if (!ok) return;
-    if (!f.runnable && !window.confirm(t("{name} probably won't run on this PC. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name }))) return;
+    if (!f.runnable && !await confirmed(t("{name} probably won't run on this PC. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name }))) return;
     try {
       await api.mediaHubInstall(m.id, f.file, !f.runnable);
       onChanged();
@@ -436,7 +437,7 @@ function MediaModelRow({
             className="btn ghost danger small"
             disabled={removing}
             onClick={async () => {
-              if (!window.confirm(t("Delete {name} from this PC? Its files ({size}) are deleted, except ones another installed model shares. You can install it again any time.", { name: m.name, size: bytes(size) }))) return;
+              if (!await confirmed(t("Delete {name} from this PC? Its files ({size}) are deleted, except ones another installed model shares. You can install it again any time.", { name: m.name, size: bytes(size) }))) return;
               setRemoving(true);
               try {
                 const freed = await api.removeMedia(m.id);
@@ -462,9 +463,9 @@ function MediaModelRow({
               <button
                 className="btn ghost small"
                 disabled={busy}
-                onClick={() =>
-                  window.confirm(t("{name} probably won't run here. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name })) &&
-                  licenseOk(m) &&
+                onClick={async () =>
+                  (await confirmed(t("{name} probably won't run here. It can still be tried: the memory check and the heat guard stop it before the PC runs short or gets too hot. Install it anyway?", { name: m.name }))) &&
+                  (await licenseOk(m)) &&
                   api.installMedia(m.id, true).catch((e) => toast(errorText(e), "error"))
                 }
               >
@@ -474,7 +475,7 @@ function MediaModelRow({
           </span>
         ) : (
           !progress && (
-            <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={() => licenseOk(m) && api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>
+            <button className="btn primary small" disabled={busy} title={busy ? t("One install at a time") : undefined} onClick={async () => (await licenseOk(m)) && api.installMedia(m.id).catch((e) => toast(errorText(e), "error"))}>
               {t("Install")}
             </button>
           )

@@ -18,6 +18,7 @@ import { encodeWav } from "../media";
 import { ComposePlayer, INSTRUMENTS, KITS, renderDemo, secondsPerBeat } from "../compose/player";
 import { MakeItReal, fitShift, type RealOptions } from "./MakeItReal";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 type ENote = ComposeNote & { id: number };
 type EPart = { name: string; instrument: string; notes: ENote[] };
@@ -640,8 +641,8 @@ export function ComposeEditor({ item, composition, onClose, onSaved, onStarted, 
       toast(errorText(e), "error");
     }
   };
-  const close = () => {
-    if (dirty && !window.confirm(kept ? t("Close without keeping your changes?") : t("Close without keeping this song? It isn't in the gallery yet."))) return;
+  const close = async () => {
+    if (dirty && !await confirmed(kept ? t("Close without keeping your changes?") : t("Close without keeping this song? It isn't in the gallery yet."))) return;
     stop();
     onClose();
   };

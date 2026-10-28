@@ -4,6 +4,7 @@ import { api, errorText, type CacheItem, type CleanItem, type CleanView } from "
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 const DAYS = [7, 14, 30, 60, 90, 180, 365];
 
@@ -123,7 +124,7 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
                   className="btn small danger"
                   disabled={busy}
                   onClick={async () => {
-                    if (!window.confirm(t("Remove the {n} chats and models listed now? This can't be undone.", { n: v.would_remove.length }))) return;
+                    if (!await confirmed(t("Remove the {n} chats and models listed now? This can't be undone.", { n: v.would_remove.length }))) return;
                     setBusy(true);
                     try {
                       const next = await api.cleanNow();
@@ -183,7 +184,7 @@ export function CleanupSettings({ toast }: { toast: PushToast }) {
           disabled={busy || chosen.length === 0}
           onClick={async () => {
             const names = chosen.map((c) => t((CACHE_TEXT[c.id] ?? c).name)).join(", ");
-            if (!window.confirm(t("Delete these now? {names}", { names }))) return;
+            if (!await confirmed(t("Delete these now? {names}", { names }))) return;
             setBusy(true);
             try {
               const r = await api.clearCache(chosen.map((c) => c.id));

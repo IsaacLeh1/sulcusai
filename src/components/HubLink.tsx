@@ -7,6 +7,7 @@ import { t } from "../i18n";
 import { waitLabel } from "../media";
 import { CancelInstall } from "./CancelInstall";
 import type { PushToast } from "./Toasts";
+import { confirmed } from "../confirm";
 
 const baseName = (path: string) => path.split("/").pop() ?? path;
 
@@ -91,10 +92,10 @@ export function HubLinkBox({
     const m = found.model;
     try {
       if (found.kind === "chat") {
-        if (!r.runs && !window.confirm(t("{name} probably won't run on this PC: it needs more memory than it has. Install it anyway?", { name: `${m.name} ${r.quant}` }))) return;
+        if (!r.runs && !await confirmed(t("{name} probably won't run on this PC: it needs more memory than it has. Install it anyway?", { name: `${m.name} ${r.quant}` }))) return;
         await api.hubInstall(m.id, r.file, !r.runs);
       } else {
-        const ok = window.confirm(
+        const ok = await confirmed(
           t("{name} is shared on Hugging Face by {author}{license}. Check what its license allows on the model's page before using what it makes for work. Install it?", {
             name: m.name,
             author: m.author,
@@ -102,7 +103,7 @@ export function HubLinkBox({
           }),
         );
         if (!ok) return;
-        if (!r.runs && !window.confirm(t("{name} probably won't run on this PC: it needs more memory or a bigger graphics card than it has. It can still be tried, and SulcusAI stops it before the PC runs short. Install it anyway?", { name: m.name }))) return;
+        if (!r.runs && !await confirmed(t("{name} probably won't run on this PC: it needs more memory or a bigger graphics card than it has. It can still be tried, and SulcusAI stops it before the PC runs short. Install it anyway?", { name: m.name }))) return;
         await api.mediaHubInstall(m.id, r.file, !r.runs);
       }
       onInstalled();
