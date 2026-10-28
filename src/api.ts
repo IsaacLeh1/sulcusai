@@ -169,6 +169,10 @@ export interface UncensorJob {
   /** Loaded in 4 bits to fit the graphics card. */
   four_bit: boolean;
   seconds_left: number | null;
+  /** While the original downloads: bytes so far, of how many, and the speed. */
+  received: number | null;
+  total: number | null;
+  bytes_per_sec: number | null;
   error: string | null;
   /** The copy, once it's in. */
   copy_id: string | null;
