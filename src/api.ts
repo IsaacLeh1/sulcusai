@@ -1280,6 +1280,19 @@ export interface PendingApproval {
   preview: Preview;
   /** Only this one call can be allowed (a delete, a send): no "for this chat". */
   once?: boolean;
+  /** What "Always allow…" would save, for the person to change first. */
+  rule?: { tool: string; pattern: string | null; project: string | null } | null;
+}
+
+/** A saved rule: a tool (or `prefix*`), what it acts on, and whether it's allowed, asked about or refused. */
+export interface Allowance {
+  id: string;
+  tool: string;
+  pattern: string | null;
+  effect: "allow" | "ask" | "deny";
+  /** Only in this project's chats; null for every chat. */
+  project: string | null;
+  created_at: number;
 }
 
 /** Whether the assistant may use anything on the Desktop. */
@@ -3299,6 +3312,9 @@ export const api = {
   installPlugin: (path: string) => invoke<Plugin>("install_plugin", { path }),
   setPluginEnabled: (id: string, enabled: boolean) => invoke<void>("set_plugin_enabled", { id, enabled }),
   removePlugin: (id: string) => invoke<void>("remove_plugin", { id }),
+  allowances: () => invoke<Allowance[]>("list_allowances"),
+  saveAllowance: (allowance: Omit<Allowance, "id" | "created_at"> & { id?: string }) => invoke<Allowance>("save_allowance", { allowance }),
+  removeAllowance: (id: string) => invoke<void>("remove_allowance", { id }),
   speechView: () => invoke<SpeechView>("speech_view"),
   installSpeech: (modelId: string) => invoke<void>("install_speech_model", { modelId }),
   removeSpeech: (modelId: string) => invoke<void>("remove_speech_model", { modelId }),

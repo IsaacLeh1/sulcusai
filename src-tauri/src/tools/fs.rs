@@ -499,7 +499,17 @@ pub fn preview(name: &str, args: &Value, sb: &Sandbox) -> Result<Preview, String
                 note: Some("It goes to the Recycle Bin, and Undo can restore it.".into()),
             }
         }
-        other => Preview { title: other.to_string(), kind: "text", detail: None, note: None },
+        // Reads ask only when a saved rule or Settings › Advanced says so.
+        "read_file" | "list_dir" => {
+            let path = sb.resolve_read(arg_str(args, "path")?)?;
+            let verb = if name == "read_file" { "Read" } else { "List" };
+            Preview { title: format!("{verb} {}", sb.display(&path)), kind: "text", detail: None, note: None }
+        }
+        "find_files" | "search_files" => {
+            let pattern = arg_str(args, "pattern")?;
+            Preview { title: format!("Search for {pattern}"), kind: "text", detail: args.get("path").and_then(Value::as_str).map(str::to_string), note: None }
+        }
+        other => Preview { title: other.replace('_', " "), kind: "text", detail: Some(serde_json::to_string_pretty(args).unwrap_or_default()), note: None },
     })
 }
 

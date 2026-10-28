@@ -24,6 +24,7 @@ import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
+import { PermissionRules } from "../components/PermissionRules";
 import { LogSettings } from "../components/LogSettings";
 import { DevModeSetting } from "../components/DevMode";
 import { PrivacySettings } from "../components/PrivacySettings";
@@ -398,6 +399,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-handoffs" className="settings-anchor" />
       {features.has("files") && <HandoffSettings toast={toast} />}
+
+      <span id="settings-permissions" className="settings-anchor" />
+      <PermissionRules toast={toast} />
 
       <span id="settings-voice" className="settings-anchor" />
       {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}

@@ -586,6 +586,48 @@ async fn e2e_lookups_run_together() {
     assert!(reply.to_lowercase().contains("plum"), "{reply}");
 }
 
+/// Saved rules with the real model: a Deny on writing `.env` holds in
+/// Bypass, where nothing else would ask, and the model is told why; an Ask
+/// on reading one file brings up a card in Auto, where reads never ask.
+/// See `test_model`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_saved_rules_hold() {
+    use crate::tools::allowances::{save, Allowance, Effect};
+    let (_eng, ep, name) = test_model().await;
+    let (state, ep, cipher) = agent_harness_on(None, Some(ep)).await;
+    let id = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let project = std::env::temp_dir().join(format!("sulcusai-e2e-rules-{id}"));
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("plan.txt"), "Ship on Friday.\n").unwrap();
+    let project = dunce::canonicalize(&project).unwrap();
+    crate::db::add_folder(&state.db.lock().unwrap(), &project.display().to_string()).unwrap();
+    let rule = |tool: &str, pattern: &str, effect| Allowance { id: String::new(), tool: tool.into(), pattern: Some(pattern.into()), effect, project: None, created_at: 0 };
+    save(&state.db.lock().unwrap(), &cipher, rule("write_file", "**/.env", Effect::Deny)).unwrap();
+    save(&state.db.lock().unwrap(), &cipher, rule("read_file", "**/plan.txt", Effect::Ask)).unwrap();
+    let (watch, asked) = watch_approvals(&state);
+    let started = std::time::Instant::now();
+    let chat = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let reply = say_in(crate::tools::Mode::Bypass, &state, &ep, &cipher, &chat.id, &format!("Create a file named .env in {} with the line DEBUG=1, using write_file.", project.display())).await;
+    let (text1, tools1) = transcript(&state, &cipher, &chat.id, &format!("{name}: a denied write ({:.0}s)", started.elapsed().as_secs_f64()));
+    let chat2 = crate::db::create_chat(&state.db.lock().unwrap(), &cipher, None).unwrap();
+    let reply2 = say(&state, &ep, &cipher, &chat2.id, &format!("Read plan.txt in {} and tell me when we ship.", project.display())).await;
+    let (_, tools2) = transcript(&state, &cipher, &chat2.id, &format!("{name}: an asked read ({:.0}s)", started.elapsed().as_secs_f64()));
+    watch.abort();
+    let wrote = project.join(".env").exists();
+    let _ = std::fs::remove_dir_all(&project);
+    let asked = asked.lock().unwrap().clone();
+    println!("reply 1: {reply}\nreply 2: {reply2}\ncards: {asked:?}");
+    assert!(tools1.iter().any(|t| t == "write_file"), "it tried write_file: {tools1:?}");
+    assert!(text1.contains("A rule the user saved"), "the write was refused, and the model told why: {text1}");
+    assert!(!wrote, "no .env was written");
+    let answers = text1.split("[tool]").nth(1).unwrap_or_default().matches("[assistant]").count();
+    assert_eq!(answers, 1, "told why once, not pushed on again: {text1}");
+    assert!(tools2.iter().any(|t| t == "read_file"), "{tools2:?}");
+    assert!(asked.iter().any(|a| a.starts_with("read_file")), "the read asked first: {asked:?}");
+    assert!(reply2.to_lowercase().contains("friday"), "{reply2}");
+}
+
 /// The agent finds a file by name, runs it and reports what it printed,
 /// without asking anything (Auto mode). The file is in the home folder, not
 /// the shared one, so the search has to go on to the home folder.
@@ -2580,6 +2622,10 @@ async fn e2e_harmony_raw() {
 }
 
 async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cipher: &crate::crypto::Cipher, chat_id: &str, text: &str) -> String {
+    say_in(crate::tools::Mode::Auto, state, ep, cipher, chat_id, text).await
+}
+
+async fn say_in(mode: crate::tools::Mode, state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cipher: &crate::crypto::Cipher, chat_id: &str, text: &str) -> String {
     let turn_id = uuid::Uuid::new_v4().to_string();
     crate::db::add_message(&state.db.lock().unwrap(), cipher, &Message {
         id: turn_id.clone(),
@@ -2597,7 +2643,7 @@ async fn say(state: &std::sync::Arc<crate::AppState>, ep: &engine::Endpoint, cip
         turn_id,
         cipher: cipher.clone(),
         ep: ep.clone(),
-        mode: crate::tools::Mode::Auto,
+        mode,
         use_tools: true,
         vision: false,
         unattended: false,

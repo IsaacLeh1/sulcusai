@@ -102,7 +102,7 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-fn load<T: for<'de> Deserialize<'de>>(conn: &Connection, c: &Cipher, table: &str) -> Vec<T> {
+pub(crate) fn load<T: for<'de> Deserialize<'de>>(conn: &Connection, c: &Cipher, table: &str) -> Vec<T> {
     let Ok(mut stmt) = conn.prepare(&format!("SELECT data FROM {table} ORDER BY created_at")) else { return Vec::new() };
     stmt.query_map([], |r| r.get::<_, String>(0))
         .map(|rows| rows.filter_map(Result::ok).filter_map(|d| c.decrypt(&d).ok().and_then(|j| serde_json::from_str(&j).ok())).collect())

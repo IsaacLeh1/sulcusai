@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api, errorText, on, type DesktopAccess, type Folder, type PendingApproval, type ToolCall, type ToolMeta } from "../api";
+import { api, errorText, on, type DesktopAccess, type Folder, type PendingApproval, type Project, type ToolCall, type ToolMeta } from "../api";
+import { RuleForm } from "./PermissionRules";
 import type { PushToast } from "./Toasts";
 import type { PreviewTarget } from "./PreviewPanel";
 import { t, tf } from "../i18n";
@@ -139,6 +140,8 @@ function describe(call: ToolCall): string {
 /** Asks before a change or command runs. */
 export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [writingRule, setWritingRule] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
   const answer = async (d: "allow" | "always" | "deny") => {
     setBusy(true);
     // An error means it's no longer waiting (answered elsewhere, or the reply stopped).
@@ -169,11 +172,33 @@ export function ApprovalCard({ p, onAnswered }: { p: PendingApproval; onAnswered
             {always.label}
           </button>
         )}
+        {p.rule && !writingRule && (
+          <button
+            className="btn ghost"
+            disabled={busy}
+            onClick={() => {
+              setWritingRule(true);
+              api.projects().then(setProjects).catch(() => {});
+            }}
+            title={t("Save a rule so calls like this run without asking, in any run mode")}
+          >
+            {t("Always allow…")}
+          </button>
+        )}
         <span className="spacer" />
         <button className="btn ghost danger" disabled={busy} onClick={() => answer("deny")}>
           {t("Deny")}
         </button>
       </div>
+      {p.rule && writingRule && (
+        <RuleForm
+          fixed
+          initial={{ tool: p.rule.tool, pattern: p.rule.pattern ?? "", effect: "allow", project: p.rule.project }}
+          projects={projects}
+          onSaved={() => answer("allow")}
+          onCancel={() => setWritingRule(false)}
+        />
+      )}
     </div>
   );
 }

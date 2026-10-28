@@ -532,6 +532,7 @@ select, .input {
 .approval .diff, .approval .tool-output { border: 1px solid var(--border); border-radius: 8px; }
 .approval-head { display: flex; gap: 8px; align-items: center; }
 .approval-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rule-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-width: 560px; }
 .undo-row { display: flex; justify-content: flex-start; margin-top: -8px; }
 .plan-actions { display: flex; align-items: center; gap: 12px; }
 .folder-menu { position: relative; }

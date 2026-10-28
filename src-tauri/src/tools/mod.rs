@@ -11,6 +11,7 @@ mod documents;
 mod library;
 pub(crate) mod fs;
 pub(crate) mod guard;
+pub mod allowances;
 pub(crate) mod lookup;
 pub(crate) mod media;
 mod meetings;
@@ -155,6 +156,108 @@ pub fn parallel_safe(name: &str) -> bool {
         name,
         "list_dir" | "read_file" | "find_files" | "search_files" | "search_memory" | "search_notes" | "read_note" | "search_meetings" | "read_meeting" | "read_document" | "search_chats" | "read_chat" | "read_chat_notes" | "calculate"
     )
+}
+
+/// The most of a tool's result the model gets, in characters, before
+/// `fit_result`'s share of its memory (whichever is smaller). Listings and
+/// searches rarely need more; a file or a page can use more, and can be
+/// read on from where it was cut.
+pub fn result_limit(name: &str) -> usize {
+    match name {
+        "read_file" | "read_document" | "read_note" | "read_meeting" | "read_chat" => 60_000,
+        "fetch_page" | "browser_read" | "research" => 24_000,
+        "search_files" | "find_files" | "web_search" | "search_documents" | "search_notes" | "search_chats" | "search_memory" | "email_search" => 12_000,
+        "list_dir" => 8_000,
+        "command_output" | "run_command" => 16_000,
+        _ => 40_000,
+    }
+}
+
+/// Checks a call's arguments against its declared parameters before
+/// anything is asked or run: required fields present, and each given field
+/// the declared JSON type. What's plainly meant is fixed in place (`"10"`
+/// or `"[10]"` for a number, `3.0` for a whole number, `7` for text), since
+/// a tool reading `as_u64` would otherwise skip it without a word. A list
+/// given as text is left for the tool, which splits it. Anything else goes
+/// back to the model to fix.
+pub fn check_args(def: &ToolDef, args: &mut Value) -> Result<(), String> {
+    let params = (def.params)();
+    let Some(given) = args.as_object_mut() else {
+        return Err("The arguments must be a JSON object of named fields.".into());
+    };
+    let missing: Vec<&str> = params["required"]
+        .as_array()
+        .map(|r| r.iter().filter_map(Value::as_str).filter(|k| given.get(*k).is_none_or(Value::is_null)).collect())
+        .unwrap_or_default();
+    if !missing.is_empty() {
+        return Err(format!("{} needs {}.", def.name, missing.join(", ")));
+    }
+    let mut wrong = Vec::new();
+    for (key, value) in given.iter_mut() {
+        let types: Vec<&str> = match &params["properties"][key.as_str()]["type"] {
+            Value::String(t) => vec![t.as_str()],
+            Value::Array(ts) => ts.iter().filter_map(Value::as_str).collect(),
+            _ => continue,
+        };
+        if value.is_null() || types.iter().any(|t| is_type(value, t)) {
+            continue;
+        }
+        if types.contains(&"array") && (value.is_string() || value.is_object()) {
+            if let Some(Ok(list @ Value::Array(_))) = value.as_str().map(serde_json::from_str::<Value>) {
+                *value = list;
+            }
+            continue;
+        }
+        match types.iter().find_map(|t| fixed(value, t)) {
+            Some(v) => *value = v,
+            None => wrong.push(format!("{key} should be {}", types.iter().map(|t| a_type(t)).collect::<Vec<_>>().join(" or "))),
+        }
+    }
+    if wrong.is_empty() { Ok(()) } else { Err(format!("In {}: {}.", def.name, wrong.join("; "))) }
+}
+
+fn is_type(v: &Value, t: &str) -> bool {
+    match t {
+        "string" => v.is_string(),
+        "integer" => v.is_i64() || v.is_u64(),
+        "number" => v.is_number(),
+        "boolean" => v.is_boolean(),
+        "array" => v.is_array(),
+        "object" => v.is_object(),
+        _ => true,
+    }
+}
+
+/// The value as type `t`, when that's plainly what was meant.
+fn fixed(v: &Value, t: &str) -> Option<Value> {
+    let text = v.as_str().map(str::trim);
+    match t {
+        "string" => matches!(v, Value::Number(_) | Value::Bool(_)).then(|| Value::String(v.to_string())),
+        "integer" => match v {
+            Value::Number(n) => n.as_f64().filter(|f| f.fract() == 0.0 && f.abs() < 9e15).map(|f| Value::from(f as i64)),
+            _ => text?.trim_matches(['[', ']', '#']).parse::<i64>().ok().map(Value::from),
+        },
+        "number" => text?.parse::<f64>().ok().and_then(serde_json::Number::from_f64).map(Value::Number),
+        "boolean" => match text?.to_ascii_lowercase().as_str() {
+            "true" => Some(Value::Bool(true)),
+            "false" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        "object" => serde_json::from_str::<Value>(text?).ok().filter(Value::is_object),
+        _ => None,
+    }
+}
+
+fn a_type(t: &str) -> &'static str {
+    match t {
+        "string" => "text",
+        "integer" => "a whole number",
+        "number" => "a number",
+        "boolean" => "true or false",
+        "array" => "a list",
+        "object" => "an object",
+        _ => "another type",
+    }
 }
 
 /// Tools for making pictures, video and music (and looking up what things
@@ -764,6 +867,50 @@ pub fn arg_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arguments_are_checked_against_the_tool() {
+        let read = find("read_file").unwrap();
+        let mut ok = json!({ "path": "a.txt", "start_line": 3, "extra": "fine" });
+        assert!(check_args(read, &mut ok).is_ok());
+        let err = check_args(read, &mut json!({ "start_line": 3 })).unwrap_err();
+        assert!(err.contains("needs path"), "{err}");
+        let err = check_args(read, &mut json!({ "path": ["a.txt", "b.txt"] })).unwrap_err();
+        assert!(err.contains("path should be text"), "{err}");
+        assert!(check_args(read, &mut json!(["a.txt"])).is_err());
+        // What's plainly meant is fixed in place.
+        let mut loose = json!({ "path": "a.txt", "start_line": "10", "end_line": 20.0 });
+        check_args(read, &mut loose).unwrap();
+        assert_eq!((loose["start_line"].as_u64(), loose["end_line"].as_u64()), (Some(10), Some(20)));
+        let err = check_args(read, &mut json!({ "path": "a.txt", "start_line": "ten" })).unwrap_err();
+        assert!(err.contains("start_line should be a whole number"), "{err}");
+        let search = find("search_files").unwrap();
+        let mut flag = json!({ "pattern": "x", "ignore_case": "TRUE" });
+        check_args(search, &mut flag).unwrap();
+        assert_eq!(flag["ignore_case"], json!(true));
+        let mv = find("move_path").unwrap();
+        assert!(check_args(mv, &mut json!({ "from": "a", "to": null })).unwrap_err().contains("needs to"));
+        // The loose forms tools already read: a window's number, an element's "[12]", a list as text.
+        let window = find("program_read").unwrap();
+        let mut by_number = json!({ "window": 3 });
+        check_args(window, &mut by_number).unwrap();
+        assert_eq!(by_number["window"], json!("3"));
+        let click = find("program_click").unwrap();
+        let mut bracketed = json!({ "ref": "[12]" });
+        check_args(click, &mut bracketed).unwrap();
+        assert_eq!(bracketed["ref"], json!(12));
+        let lists = ToolDef { name: "t", description: "", risk: Risk::Read, params: || json!({ "properties": { "days": { "type": "array" } } }) };
+        let mut text = json!({ "days": "monday, friday" });
+        check_args(&lists, &mut text).unwrap();
+        assert_eq!(text["days"], json!("monday, friday"));
+        let mut quoted = json!({ "days": "[\"monday\"]" });
+        check_args(&lists, &mut quoted).unwrap();
+        assert_eq!(quoted["days"], json!(["monday"]));
+        // Every tool's own declared parameters can be read this way.
+        for t in TOOLS {
+            let _ = check_args(t, &mut json!({}));
+        }
+    }
 
     #[test]
     fn parallel_tools_are_real_read_only_tools() {

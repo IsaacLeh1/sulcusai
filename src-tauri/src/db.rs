@@ -260,6 +260,11 @@ CREATE TABLE IF NOT EXISTS study_sets (
   data       TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS standing_permissions (
+  id         TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS doc_passages (
   file_id TEXT NOT NULL,
   ord     INTEGER NOT NULL,

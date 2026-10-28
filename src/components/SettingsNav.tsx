@@ -16,6 +16,7 @@ export function settingsSections(features: Set<FeatureId>): { id: string; label:
     { id: "security", label: tx("Privacy & security") },
     { id: "folders", label: tx("Shared folders"), show: features.has("files") },
     { id: "handoffs", label: tx("Handoffs between chats"), show: features.has("files") },
+    { id: "permissions", label: tx("Permissions") },
     { id: "voice", label: tx("Voice and meetings"), show: VOICE_FEATURES.some((f) => features.has(f)) },
     { id: "performance", label: tx("Performance") },
     { id: "check", label: tx("Check this PC") },

@@ -19,6 +19,7 @@ use crate::db::{self, Message, ToolCall};
 use crate::engine::Endpoint;
 use crate::features::Feature;
 use crate::sandbox::Sandbox;
+use crate::tools::allowances::{self, Effect};
 use crate::tools::{self, Mode, Outcome, Permission, Preview, Risk};
 use crate::connectors::{self, OfferedTool, Skill, ToolMode};
 use crate::compact;
@@ -55,6 +56,8 @@ pub struct PendingApproval {
     /// Only this one call can be allowed, not the kind for the whole chat:
     /// deletes and other commands that ask even in Auto, and sends.
     pub once: bool,
+    /// What "Always allow…" would save; None where a rule couldn't skip the question.
+    pub rule: Option<allowances::Suggestion>,
 }
 
 /// Shared between the loop and the approval command.
@@ -291,20 +294,29 @@ fn now() -> i64 {
 
 /// A tool result cut to about a third of the model's memory, so one long
 /// email, page or file can't crowd out the conversation (small models have
-/// 8K tokens or less; about 3 characters a token, to be safe).
-fn fit_result(mut outcome: Outcome, ctx: u32) -> Outcome {
-    let max = (ctx as usize / 3) * 3;
+/// 8K tokens or less; about 3 characters a token, to be safe), and to the
+/// tool's own limit. A command keeps its end as well as its start: that's
+/// where errors are.
+fn fit_result(mut outcome: Outcome, name: &str, ctx: u32) -> Outcome {
+    let share = (ctx as usize / 3) * 3;
+    let max = if share == 0 { tools::result_limit(name) } else { share.min(tools::result_limit(name)) };
     let total = outcome.text.chars().count();
-    if max > 0 && total > max {
-        let kept: String = outcome.text.chars().take(max).collect();
-        outcome.text = format!("{kept}
-
-[Cut here: {} more characters weren't shown, to fit your memory. Answer from what's above.]", total - max);
+    if total <= max {
+        return outcome;
     }
+    let left = total - max;
+    outcome.text = if matches!(name, "run_command" | "command_output") && max > 4_000 {
+        let head: String = outcome.text.chars().take(2_000).collect();
+        let tail: String = outcome.text.chars().skip(total - (max - 2_000)).collect();
+        format!("{head}\n\n[Cut here: {left} more characters of output weren't shown, to fit your memory. The end follows.]\n\n{tail}")
+    } else {
+        let kept: String = outcome.text.chars().take(max).collect();
+        let next = if name == "read_file" { "Read on with start_line if you need the rest." } else { "Answer from what's above." };
+        format!("{kept}\n\n[Cut here: {left} more characters weren't shown, to fit your memory. {next}]")
+    };
     outcome
 }
 
-/// A tool call's name and arguments, with the arguments' formatting evened out.
 /// Tools that reach the internet: a failure is often the network, worth one retry.
 fn is_network_tool(name: &str) -> bool {
     matches!(name, "web_search" | "fetch_page" | "wikipedia" | "research" | "market_quote" | "find_places" | "weather" | "news")
@@ -317,6 +329,7 @@ fn run_end(ok: &[bool], from: usize) -> usize {
     ok[from..].iter().position(|b| !b).map_or(ok.len(), |n| from + n)
 }
 
+/// A tool call's name and arguments, with the arguments' formatting evened out.
 fn call_key(call: &ToolCall) -> String {
     let args = serde_json::from_str::<Value>(&call.arguments).map(|v| v.to_string()).unwrap_or_else(|_| call.arguments.clone());
     format!("{}{}", call.name, args)
@@ -429,7 +442,7 @@ impl Turn {
         if sandbox.is_empty() {
             defs.retain(|d| d.pointer("/function/name").and_then(Value::as_str).is_none_or(|n| tools::find(n).is_none_or(|t| t.risk != tools::Risk::Write) || tools::group(n) != "files"));
         }
-        let mut extras = Extras::default();
+        let mut extras = Extras { allowances: allowances::list(&self.state.db.lock().unwrap(), &self.cipher), ..Default::default() };
         if self.use_tools && features.contains(&Feature::Connectors) {
             let (mcp_defs, mcp_map, problems) = connectors::offer(&self.state, &self.cipher).await;
             defs.extend(mcp_defs);
@@ -812,6 +825,8 @@ impl Turn {
         let mut follow_ups = 0;
         // A follow-up the engine didn't answer with a call: no more this turn.
         let mut follow_ups_failed = false;
+        // The person (or a rule they saved) said no to a call this turn.
+        let mut declined = false;
         // A site it built: previewed since the last change? What the last
         // preview found wrong, and how many times it was pushed to fix it.
         let mut previewed = false;
@@ -1282,6 +1297,10 @@ impl Turn {
                 let short = if said.trim().is_empty() && step > 0 && !result.cancelled {
                     // Nothing at all after its lookups (an empty reply).
                     Some(chat::ANSWER_NOW)
+                } else if declined {
+                    // Told why it stopped: pushing it on repeated the same
+                    // answer four times after a refused write.
+                    None
                 } else if (failing_run || broken_file) && chat::asks_to_act(&request) {
                     Some(if broken_file { chat::FIX_BROKEN } else { chat::FIX_FAILING })
                 } else if unchanged {
@@ -1336,7 +1355,7 @@ impl Turn {
                                 && !done_calls.contains(&key)
                                 && !failed_calls.iter().any(|(k, _)| *k == key)
                                 && !seen.contains(&key)
-                                && !self.might_ask(c, &args_of(c), &sandbox);
+                                && !self.might_ask(c, &args_of(c), &sandbox, project_id.as_deref(), &extras);
                             if fine {
                                 seen.push(key);
                             }
@@ -1469,6 +1488,7 @@ impl Turn {
                 // file write came back up to 12 times).
                 if outcome.meta["status"] == "denied" {
                     follow_ups_failed = true;
+                    declined = true;
                     follow_up = None;
                 }
                 // A change to the site since it was last previewed; what a preview found.
@@ -1549,7 +1569,7 @@ impl Turn {
                         system = system_of(&about);
                     }
                 }
-                let outcome = fit_result(outcome, self.ep.ctx);
+                let outcome = fit_result(outcome, &call.name, self.ep.ctx);
                 self.save_result(call, outcome)?;
                 self.emit("agent:step", json!({ "chat_id": self.chat_id }));
             }
@@ -1637,7 +1657,8 @@ impl Turn {
 
     async fn execute(&self, call: &ToolCall, sandbox: &Sandbox, recorder: &Recorder<'_>, project_id: Option<&str>, extras: &Extras) -> Outcome {
         if let Some(t) = extras.mcp.get(&call.name) {
-            return self.execute_connector(call, t).await;
+            let rule = allowances::decide(&extras.allowances, project_id, &call.name, &args_of(call), sandbox);
+            return self.execute_connector(call, t, rule).await;
         }
         if call.name == "request_web" {
             return self.request_web(call).await;
@@ -1667,10 +1688,20 @@ impl Turn {
         let Some(def) = tools::find(&call.name) else {
             return Outcome::error(call.name.clone(), format!("There is no tool called {}. Call one of the tools you were given, by its exact name.", call.name));
         };
-        let args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
+        let mut args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
             Ok(v) => v,
             Err(e) => return Outcome::error(format!("Couldn't use {}", call.name), format!("The arguments weren't valid JSON ({e}). Try again.")),
         };
+        if let Err(e) = tools::check_args(def, &mut args) {
+            return Outcome::error(tools::failed_title(&call.name, &args), format!("{e} Fix the arguments and call it again."));
+        }
+        // A Deny holds in every mode, Bypass too.
+        let rule = allowances::decide(&extras.allowances, project_id, &call.name, &args, sandbox);
+        if rule == Some(Effect::Deny) {
+            let title = tools::failed_title(&call.name, &args);
+            self.log(&format!("A saved rule refused: {title}"));
+            return Outcome::denied(title).with_text(RULE_REFUSED);
+        }
         // Clicking or typing in the browser: refuse private fields, and ask
         // first when it submits, buys, sends or deletes.
         let mut risk = def.risk;
@@ -1733,9 +1764,9 @@ impl Turn {
             review = tools::comms::calendar_review(&self.state, &self.cipher, &args, &me);
         }
         let mut asked = false;
-        // "Allow for this chat" never covers a delete or another call that
-        // asks even in Auto: each one asks.
-        let allowed = self.state.approvals.allowed(&self.chat_id, risk) && !tools::destructive_call(&call.name, &args);
+        // "Allow for this chat" (or a saved Allow) never covers a delete or
+        // another call that asks even in Auto: each one asks.
+        let allowed = allowances::allowed(self.state.approvals.allowed(&self.chat_id, risk), rule, tools::destructive_call(&call.name, &args));
         let adv = crate::advanced::get(&self.state);
         if adv.forbids(risk) {
             return Outcome::error(
@@ -1751,7 +1782,8 @@ impl Turn {
         if self.mode == tools::Mode::Auto && permission == Permission::Ask && matches!(risk, tools::Risk::Write | tools::Risk::Execute) && !tools::destructive_call(&call.name, &args) {
             permission = Permission::Run;
         }
-        if permission == Permission::Run && adv.must_ask(risk) {
+        // A saved Allow is the person's exception to "ask before every …".
+        if permission == Permission::Run && adv.must_ask(risk) && rule != Some(Effect::Allow) {
             permission = Permission::Ask;
         }
         // Deleting a chat always asks, in every mode (Bypass too).
@@ -1776,6 +1808,10 @@ impl Turn {
         // always asks, whatever the mode and with privacy mode on or off.
         let secret_out = review.as_ref().is_some_and(|r| r.level >= 5) || egress.as_ref().is_some_and(|e| e.secret.is_some());
         if secret_out && permission == Permission::Run {
+            permission = Permission::Ask;
+        }
+        // A saved Ask asks in every mode, even when the chat allowed the kind.
+        if rule == Some(Effect::Ask) && permission == Permission::Run {
             permission = Permission::Ask;
         }
         match permission {
@@ -1812,8 +1848,18 @@ impl Turn {
                     preview.detail = Some(r.items.iter().map(|i| format!("{}: {}", i.label, i.value)).collect::<Vec<_>>().join("\n"));
                     asked = true;
                 }
+                if rule == Some(Effect::Ask) {
+                    let line = "Asking because of a rule you saved in Settings › Permissions.".to_string();
+                    preview.note = Some(match preview.note.take() {
+                        Some(n) => format!("{n}\n{line}"),
+                        None => line,
+                    });
+                }
+                // "Always allow…" only where a saved Allow would skip this question next time.
+                let once = risk == Risk::Submit || tools::destructive_call(&call.name, &args);
+                let offer = (!once && rule.is_none()).then(|| allowances::suggest(&call.name, &args, sandbox, project_id));
                 let title = preview.title.clone();
-                match self.ask(call, risk, preview).await {
+                match self.ask_offering(call, risk, preview, offer).await {
                     Decision::Deny => {
                         self.log(&format!("Declined: {title}"));
                         return Outcome::denied(title);
@@ -2108,19 +2154,26 @@ impl Turn {
     }
 
     /// A connector tool: the user's per-tool setting plus the run mode decide.
-    async fn execute_connector(&self, call: &ToolCall, t: &OfferedTool) -> Outcome {
+    async fn execute_connector(&self, call: &ToolCall, t: &OfferedTool, rule: Option<Effect>) -> Outcome {
         let title = format!("{} ({})", t.tool, t.connector_name);
         let args: Value = match serde_json::from_str(if call.arguments.trim().is_empty() { "{}" } else { &call.arguments }) {
             Ok(v) => v,
             Err(e) => return Outcome::error(format!("Couldn't use {title}"), format!("The arguments weren't valid JSON ({e}).")),
         };
-        let permission = match (self.mode, t.mode) {
+        if rule == Some(Effect::Deny) {
+            self.log(&format!("A saved rule refused: {title}"));
+            return Outcome::denied(format!("Use {title}")).with_text(RULE_REFUSED);
+        }
+        let mut permission = match (self.mode, t.mode) {
             (_, ToolMode::Off) => Permission::Refuse,
             (Mode::Plan, _) if !t.read_only => Permission::Refuse,
             (Mode::Plan, _) | (Mode::Bypass, _) | (Mode::Auto, ToolMode::Allow) => Permission::Run,
-            (Mode::Auto, _) if self.state.approvals.allowed(&self.chat_id, Risk::Connector) => Permission::Run,
+            (Mode::Auto, _) if self.state.approvals.allowed(&self.chat_id, Risk::Connector) || rule == Some(Effect::Allow) => Permission::Run,
             (Mode::Auto, ToolMode::Ask) => Permission::Ask,
         };
+        if rule == Some(Effect::Ask) && permission == Permission::Run {
+            permission = Permission::Ask;
+        }
         // Privacy mode: a connector may pass what it's given on to an online service.
         let privacy = crate::outgoing::mode(&self.state.db.lock().unwrap());
         let all = crate::outgoing::review_connector(&t.connector_name, &args, &crate::outgoing::context(&self.state, &self.cipher).me);
@@ -2671,6 +2724,10 @@ impl Turn {
     }
 
     async fn ask(&self, call: &ToolCall, risk: Risk, preview: Preview) -> Decision {
+        self.ask_offering(call, risk, preview, None).await
+    }
+
+    async fn ask_offering(&self, call: &ToolCall, risk: Risk, preview: Preview, rule: Option<allowances::Suggestion>) -> Decision {
         if self.unattended {
             self.log(&format!("Declined {} in a scheduled task: nobody was there to approve it", call.name));
             return Decision::Deny;
@@ -2678,7 +2735,7 @@ impl Turn {
         let (tx, mut rx) = oneshot::channel();
         let args: Value = serde_json::from_str(&call.arguments).unwrap_or_default();
         let once = risk == Risk::Submit || tools::destructive_call(&call.name, &args);
-        let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview, once };
+        let pending = PendingApproval { chat_id: self.chat_id.clone(), call_id: call.id.clone(), tool: call.name.clone(), risk, preview, once, rule: rule.filter(|_| !once) };
         self.state.approvals.waiting.lock().unwrap().insert(call.id.clone(), (pending.clone(), tx));
         self.emit("agent:approval", serde_json::to_value(&pending).unwrap_or_default());
         let decision = loop {
@@ -2696,19 +2753,19 @@ impl Turn {
         decision
     }
 
-    /// Reading another chat's handoff note (read_file, or a command naming
-    /// one) while chats don't work together: allowed when the person's own
-    /// message asks to pick up where another chat left off, else only from a
-    /// card they answer (in every mode, Bypass too).
     /// Whether running this lookup could stop to ask the person: a page or
     /// search going off the PC is reviewed (and asks in privacy mode),
-    /// another chat's handoff note asks, and Settings › Advanced can ask
-    /// before every read. Those run on their own, never in a group.
-    fn might_ask(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox) -> bool {
+    /// another chat's handoff note asks, a saved rule can ask, and
+    /// Settings › Advanced can ask before every read. Those run on their
+    /// own, never in a group.
+    fn might_ask(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox, project_id: Option<&str>, extras: &Extras) -> bool {
         if crate::outgoing::is_external(&call.name, args) || tools::egress_call(&call.name, args, sandbox).is_some() {
             return true;
         }
         if crate::advanced::get(&self.state).must_ask(Risk::Read) {
+            return true;
+        }
+        if allowances::decide(&extras.allowances, project_id, &call.name, args, sandbox) == Some(Effect::Ask) {
             return true;
         }
         call.name == "read_file"
@@ -2719,6 +2776,10 @@ impl Turn {
                 .is_some_and(|p| crate::handoff_guard::guarded(&self.state, &self.cipher, &self.chat_id, &p).is_some())
     }
 
+    /// Reading another chat's handoff note (read_file, or a command naming
+    /// one) while chats don't work together: allowed when the person's own
+    /// message asks to pick up where another chat left off, else only from a
+    /// card they answer (in every mode, Bypass too).
     async fn handoff_gate(&self, call: &ToolCall, args: &Value, sandbox: &Sandbox) -> Option<Outcome> {
         let (path, from) = match call.name.as_str() {
             "read_file" => {
@@ -2772,6 +2833,8 @@ impl Turn {
     }
 }
 
+const RULE_REFUSED: &str = "A rule the user saved doesn't allow this, so it didn't run. Tell the user what you were going to do, and that they can change the rule in Settings › Permissions. Don't try another way around it.";
+
 /// A call's arguments as JSON (empty when they don't parse).
 fn args_of(call: &ToolCall) -> Value {
     serde_json::from_str(&call.arguments).unwrap_or_default()
@@ -2783,6 +2846,7 @@ struct Extras {
     mcp: std::collections::HashMap<String, OfferedTool>,
     skills: Vec<Skill>,
     problems: Vec<String>,
+    allowances: Vec<allowances::Allowance>,
 }
 
 impl Outcome {
@@ -2797,11 +2861,29 @@ mod tests {
     #[test]
     fn long_tool_results_are_cut_to_fit() {
         let long = Outcome::ok("x".repeat(60_000), "Read an email", "text", None);
-        let cut = fit_result(long, 8192);
+        let cut = fit_result(long, "email_read", 8192);
         assert!(cut.text.chars().count() < 8_400, "{}", cut.text.len());
         assert!(cut.text.contains("[Cut here: 51810 more characters"));
-        let short = fit_result(Outcome::ok("hello", "t", "text", None), 8192);
+        let short = fit_result(Outcome::ok("hello", "t", "text", None), "email_read", 8192);
         assert_eq!(short.text, "hello");
+    }
+
+    /// A big memory still gets no more than the tool's own limit, and a
+    /// command's output keeps its end, where errors are.
+    #[test]
+    fn each_tool_has_its_own_limit() {
+        let listing = fit_result(Outcome::ok("x".repeat(20_000), "t", "text", None), "list_dir", 200_000);
+        assert!(listing.text.contains("[Cut here: 12000 more characters"));
+        let mut out = "start ".repeat(1_000);
+        out.push_str(&"y".repeat(30_000));
+        out.push_str("error: it broke");
+        let cut = fit_result(Outcome::ok(out, "t", "text", None), "run_command", 200_000);
+        assert!(cut.text.starts_with("start start"));
+        assert!(cut.text.ends_with("error: it broke"));
+        assert!(cut.text.chars().count() < 16_300);
+        // A cloud model with no memory size set still has the limits.
+        let page = fit_result(Outcome::ok("z".repeat(30_000), "t", "text", None), "fetch_page", 0);
+        assert!(page.text.contains("[Cut here: 6000 more characters"));
     }
 
     use super::*;
@@ -2879,6 +2961,7 @@ mod tests {
             risk: Risk::Write,
             preview: Preview { title: "t".into(), kind: "text", detail: None, note: None },
             once: false,
+            rule: None,
         };
         a.waiting.lock().unwrap().insert("k".into(), (p, tx));
         assert_eq!(a.pending("c").len(), 1);
