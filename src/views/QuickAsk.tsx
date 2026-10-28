@@ -95,7 +95,8 @@ export function QuickAsk() {
     }
   };
 
-  const ask = async (prompt: string) => {
+  /** `about`: the selected text, sent after a question typed about it. */
+  const ask = async (prompt: string, about?: string) => {
     if (!prompt.trim() && !shot) return;
     setError(null);
     setAnswer("");
@@ -109,7 +110,8 @@ export function QuickAsk() {
       rememberSent(prompt);
       const images = shot ? [shot.id] : [];
       setShot(null);
-      await api.send(id, prompt.trim() || "What's on my screen? Explain what I'm looking at.", images);
+      const question = prompt.trim() || "What's on my screen? Explain what I'm looking at.";
+      await api.send(id, about ? `${question}\n\n${about}` : question, images);
     } catch (e) {
       setError(errorText(e));
       setPhase("done");
@@ -146,11 +148,14 @@ export function QuickAsk() {
           onValueChange={setText}
           complete={helpers.complete}
           correct={helpers.correct}
-          placeholder={chatId ? t("Ask a follow-up…") : t("Ask anything…")}
+          placeholder={chatId ? t("Ask a follow-up…") : selected ? t("Ask about the selected text…") : t("Ask anything…")}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              ask(text);
+              // The first question with text selected is about that text.
+              const about = selected && !chatRef.current && text.trim() ? selected : null;
+              if (about) setForSelection(about.editable);
+              ask(text, about?.text);
             }
           }}
           aria-label={t("Ask")}

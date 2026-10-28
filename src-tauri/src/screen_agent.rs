@@ -161,7 +161,7 @@ pub fn asks(step: &Step, spot: Option<&Spot>, typed_into: Option<&Spot>) -> Opti
     match &step.act {
         Act::Click { .. } if step.risky || programs::risky(&at) => Some(format!("Press “{}”", clip(if at.is_empty() { &step.why } else { &at }, 60))),
         Act::Key(k) if step.risky || programs::risky_keys(k) => Some(format!("Press {k}")),
-        Act::Type { text, enter } if step.risky || (*enter && !programs::finding_field(&named(typed_into))) => Some(format!("Type “{}” and press Enter", clip(text, 60))),
+        Act::Type { text, enter } if step.risky || (*enter && typed_into.map_or(true, |t| programs::enter_sends(&t.kind, &t.name))) => Some(format!("Type “{}” and press Enter", clip(text, 60))),
         _ => None,
     }
 }
@@ -389,6 +389,9 @@ mod tests {
         let message = Spot { name: "Message".into(), kind: "field".into(), ..send.clone() };
         assert!(asks(&enter, None, Some(&search)).is_none());
         assert!(asks(&enter, None, Some(&message)).is_some());
+        let editor = Spot { name: "Text editor".into(), kind: "document".into(), ..send.clone() };
+        assert!(asks(&enter, None, Some(&editor)).is_none(), "Enter in a document is a new line");
+        assert!(asks(&enter, None, None).is_some(), "nothing clicked first: it might send");
         assert!(asks(&Step { act: Act::Key("alt+f4".into()), risky: false, why: String::new() }, None, None).is_some());
     }
 

@@ -107,7 +107,7 @@ pub async fn assess(chat_id: &str, name: &str, args: &Value) -> Result<Option<Pr
                     note: Some(format!("Everything in this document in {} would be replaced with the text above.", t.program)),
                 }));
             }
-            Ok((submit && !programs::finding_field(&t.name)).then(|| card(format!("Type and press Enter in {}", t.program), format!("Into {} “{}”:\n{text}", t.kind, t.name))))
+            Ok((submit && programs::enter_sends(t.kind, &t.name)).then(|| card(format!("Type and press Enter in {}", t.program), format!("Into {} “{}”:\n{text}", t.kind, t.name))))
         }
         "program_key" => {
             let keys = args.get("keys").and_then(Value::as_str).unwrap_or_default();

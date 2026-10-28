@@ -5860,5 +5860,6 @@
  "as OpenAI does (JSON, or JSON that fits a schema). It works with this PC's models and the cloud models turned on.": "を OpenAI と同じように送信します（JSON、またはスキーマに合う JSON）。このPCのモデルと、オンにしたクラウドモデルで使えます。",
  "loaded in {n} s": "{n} 秒で読み込み",
  "{free} is free there now.": "現在そのドライブには {free} の空きがあります。",
- "{n} tokens a second": "毎秒 {n} トークン"
+ "{n} tokens a second": "毎秒 {n} トークン",
+ "Ask about the selected text…": "選択したテキストについて質問…"
 }

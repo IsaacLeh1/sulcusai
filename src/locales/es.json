@@ -5860,5 +5860,6 @@
  "as OpenAI does (JSON, or JSON that fits a schema). It works with this PC's models and the cloud models turned on.": "como hace OpenAI (JSON, o JSON que cumpla un esquema). Funciona con los modelos de esta PC y con los modelos en la nube activados.",
  "loaded in {n} s": "cargado en {n} s",
  "{free} is free there now.": "Ahora hay {free} libres ahí.",
- "{n} tokens a second": "{n} tokens por segundo"
+ "{n} tokens a second": "{n} tokens por segundo",
+ "Ask about the selected text…": "Pregunta sobre el texto seleccionado…"
 }
