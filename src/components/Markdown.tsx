@@ -60,6 +60,22 @@ function previewDoc(code: string, lang: string): string {
   return /<head[^>]*>/i.test(code) ? code.replace(/<head[^>]*>/i, (h) => `${h}${csp}`) : `${csp}${code}`;
 }
 
+/** Options the assistant offers as a ```choices block, one a line: buttons
+ * that send the one picked as the person's answer (the chat listens for
+ * "sulcus:choose"). */
+function Choices({ code }: { code: string }) {
+  const options = code.split("\n").map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim()).filter(Boolean).slice(0, 8);
+  return (
+    <div className="choices" role="group" aria-label={t("Choices")}>
+      {options.map((o) => (
+        <button key={o} className="btn small" onClick={() => window.dispatchEvent(new CustomEvent("sulcus:choose", { detail: o }))}>
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** A code block with its language and a button that copies it; HTML and SVG can be seen as they'd show. */
 function CodeBlock({ children, code }: { children?: ReactNode; code: string }) {
   const pre = useRef<HTMLPreElement>(null);
@@ -96,7 +112,12 @@ function CodeBlock({ children, code }: { children?: ReactNode; code: string }) {
 }
 
 const COMPONENTS: Components = {
-  pre: ({ children, node }) => <CodeBlock code={textOf(node)}>{children}</CodeBlock>,
+  pre: ({ children, node }) =>
+    isValidElement<{ className?: string }>(children) && /\blanguage-choices\b/.test(children.props.className ?? "") ? (
+      <Choices code={textOf(node)} />
+    ) : (
+      <CodeBlock code={textOf(node)}>{children}</CodeBlock>
+    ),
   a: ({ children, href }) =>
     href && /^https?:\/\//i.test(href) ? (
       <a

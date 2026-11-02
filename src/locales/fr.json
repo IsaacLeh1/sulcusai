@@ -6036,5 +6036,18 @@
  "Write to your assistant from Telegram on your phone, by text, picture or voice note, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, Telegram shows Allow and Don't buttons.": "Écrivez à votre assistant depuis Telegram sur votre téléphone, par texte, image ou message vocal, et recevez ses réponses et les images qu'il crée. Il répond avec les modèles de ce PC : SulcusAI doit donc rester ouvert et déverrouillé ici. Quand quelque chose nécessite votre accord, Telegram affiche les boutons « Allow » et « Don't ».",
  "you": "vous",
  "{n} picked": "Sélection : {n}",
- "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "« {name} » est prêt : activez-le dans Vos LoRA avec RealVisXL."
+ "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "« {name} » est prêt : activez-le dans Vos LoRA avec RealVisXL.",
+ "Allowed, it goes ahead.": "Autorisé, l'action continue.",
+ "Choices": "Choix",
+ "Denied, it won't be done.": "Refusé, ce ne sera pas fait.",
+ "I couldn't answer that.": "Je n'ai pas pu répondre à cela.",
+ "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.": "Lié. Écrivez-moi ici et je vous répondrai depuis SulcusAI sur votre PC. /new commence un nouveau chat, /stop arrête une réponse.",
+ "May I do this?": "Puis-je faire ceci ?",
+ "Something I made is too big to send here; it's in the gallery on the PC.": "Quelque chose que j'ai créé est trop volumineux pour être envoyé ici ; il se trouve dans la galerie sur le PC.",
+ "Stopped before answering.": "Arrêté avant de répondre.",
+ "That was already answered.": "Il y a déjà été répondu.",
+ "This scheduled task didn't run.": "Cette tâche planifiée ne s'est pas exécutée.",
+ "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "Réveiller ce PC de la mise en veille pour les exécuter (il reste alors éveillé jusqu'à la fin de la tâche). Windows doit autoriser les minuteurs de réveil, ce qu'il fait par défaut sur secteur.",
+ "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "Écrivez-moi comme dans SulcusAI : texte, images ou messages vocaux. /new commence un nouveau chat, /stop arrête une réponse.",
+ "Your next message starts a new chat.": "Votre prochain message commencera un nouveau chat."
 }

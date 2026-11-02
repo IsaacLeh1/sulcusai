@@ -35,11 +35,13 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [editing, setEditing] = useState<Schedule | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [wake, setWake] = useState(false);
 
   const load = () => api.schedules().then(setItems).catch((e) => toast(errorText(e), "error"));
   useEffect(() => {
     load();
     api.projects().then(setProjects).catch(() => {});
+    api.wakeForTasks().then(setWake).catch(() => {});
     // A task ran on its own: its last run, next run and result change.
     const sub = on("schedule:ran", () => load());
     return () => {
@@ -82,6 +84,10 @@ export function ScheduledView({ installed, onOpenChat, toast }: Props) {
             <button className="btn primary" onClick={() => setEditing(blank())} disabled={installed.length === 0}>{t("+ New task")}</button>
           </div>
         </header>
+        <label className="check small wake-for-tasks">
+          <input type="checkbox" checked={wake} onChange={(e) => api.setWakeForTasks(e.target.checked).then(setWake).catch((err) => toast(errorText(err), "error"))} />
+          {t("Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.")}
+        </label>
         <details className="card how-it-runs">
           <summary>{t("How tasks run without a model always loaded")}</summary>
           <ul className="small">

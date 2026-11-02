@@ -20,6 +20,35 @@ use crate::agent::Decision;
 use crate::{db, AppState, AppStateRef};
 
 const KEY: &str = "telegram";
+
+/// What the bot says itself. The window's tables translate these like its
+/// own texts, and `scripts/telegram_texts.py` copies them into
+/// `telegram_texts.json`, so the bot speaks the app's language.
+pub mod say {
+    pub const LINKED: &str = "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.";
+    pub const HELP: &str = "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.";
+    pub const NEW_CHAT: &str = "Your next message starts a new chat.";
+    pub const COULD_NOT: &str = "I couldn't answer that.";
+    pub const STOPPED: &str = "Stopped before answering.";
+    pub const TOO_BIG: &str = "Something I made is too big to send here; it's in the gallery on the PC.";
+    pub const MAY_I: &str = "May I do this?";
+    pub const ALLOW: &str = "Allow";
+    pub const DENY: &str = "Deny";
+    pub const ALLOWED: &str = "Allowed, it goes ahead.";
+    pub const DENIED: &str = "Denied, it won't be done.";
+    pub const ANSWERED: &str = "That was already answered.";
+    pub const NOTHING: &str = "Done, with nothing to say.";
+    pub const DIDNT_RUN: &str = "This scheduled task didn't run.";
+}
+
+static TEXTS: std::sync::LazyLock<std::collections::HashMap<String, std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| serde_json::from_str(include_str!("telegram_texts.json")).unwrap_or_default());
+
+/// A text of the bot's in the app's language (English when it has none).
+fn tr(state: &AppState, english: &str) -> String {
+    let lang: String = db::get(&state.db.lock().unwrap(), "ui_language").unwrap_or_default();
+    TEXTS.get(&lang).and_then(|t| t.get(english)).cloned().unwrap_or_else(|| english.to_string())
+}
 const API: &str = "https://api.telegram.org";
 
 /// Where Telegram is reached (a stand-in server in tests).
@@ -116,6 +145,43 @@ async fn send_text(client: &reqwest::Client, token: &str, to: i64, text: &str) {
     }
 }
 
+/// The options the assistant last offered each person, by their place in
+/// the buttons (Telegram's button data is short, so it carries the place).
+static OFFERED: Mutex<Option<(i64, Vec<String>)>> = Mutex::new(None);
+
+/// A reply's ```choices block (the window shows it as buttons), taken out:
+/// the rest of the reply, and the options.
+pub(crate) fn split_choices(reply: &str) -> (String, Vec<String>) {
+    let Some(start) = reply.find("```choices") else { return (reply.to_string(), Vec::new()) };
+    let body = &reply[start + "```choices".len()..];
+    let Some(end) = body.find("```") else { return (reply.to_string(), Vec::new()) };
+    let options: Vec<String> = body[..end]
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['-', '*']).trim().to_string())
+        .filter(|l| !l.is_empty())
+        .take(8)
+        .collect();
+    let rest = format!("{}{}", &reply[..start], &body[end + 3..]).trim().to_string();
+    (rest, options)
+}
+
+/// The reply, with its options as buttons under its last piece.
+async fn send_reply(client: &reqwest::Client, token: &str, to: i64, reply: &str) {
+    let (text, options) = split_choices(reply);
+    if options.is_empty() {
+        return send_text(client, token, to, reply).await;
+    }
+    let mut parts = pieces(&text, MAX_TEXT);
+    let last = parts.pop().unwrap_or_default();
+    for part in parts {
+        let _ = call(client, token, "sendMessage", json!({ "chat_id": to, "text": part })).await;
+    }
+    let rows: Vec<Value> = options.iter().enumerate().map(|(i, o)| json!([{ "text": o, "callback_data": format!("c:{i}") }])).collect();
+    let shown = if last.is_empty() { options.join(" / ") } else { last };
+    let _ = call(client, token, "sendMessage", json!({ "chat_id": to, "text": shown, "reply_markup": { "inline_keyboard": rows } })).await;
+    *OFFERED.lock().unwrap() = Some((to, options));
+}
+
 /// Splits at line breaks (else spaces) so no piece is longer than `max`.
 fn pieces(text: &str, max: usize) -> Vec<String> {
     let mut out = Vec::new();
@@ -204,13 +270,26 @@ fn stop() {
 }
 
 async fn handle(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client, mut link: Link, u: &Value) {
-    if let Some(q) = u.get("callback_query") {
-        if q["from"]["id"].as_i64() == link.person {
-            answer_button(state, client, &link, q).await;
+    let picked;
+    let m = if let Some(q) = u.get("callback_query") {
+        if q["from"]["id"].as_i64() != link.person {
+            return;
         }
-        return;
-    }
-    let Some(m) = u.get("message") else { return };
+        // One of the assistant's options, tapped: sent as the person's answer.
+        let chosen = q["data"].as_str().and_then(|d| d.strip_prefix("c:")).and_then(|i| i.parse::<usize>().ok()).and_then(|i| {
+            OFFERED.lock().unwrap().as_ref().filter(|(to, _)| Some(*to) == link.person).and_then(|(_, o)| o.get(i).cloned())
+        });
+        let Some(chosen) = chosen else {
+            answer_button(state, client, &link, q).await;
+            return;
+        };
+        let _ = call(client, &link.token, "answerCallbackQuery", json!({ "callback_query_id": q["id"] })).await;
+        picked = json!({ "chat": { "id": link.person }, "from": q["from"], "text": chosen });
+        &picked
+    } else {
+        let Some(m) = u.get("message") else { return };
+        m
+    };
     let from = m["chat"]["id"].as_i64().unwrap_or(0);
     let text = m["text"].as_str().or(m["caption"].as_str()).unwrap_or("").trim().to_string();
     let Some(person) = link.person else {
@@ -221,7 +300,7 @@ async fn handle(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client
             link.code = None;
             let _ = save(state, &link);
             state.log("telegram", "A Telegram account was linked to the bot");
-            send_text(client, &link.token, from, "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.").await;
+            send_text(client, &link.token, from, &tr(state, say::LINKED)).await;
         }
         return;
     };
@@ -230,13 +309,13 @@ async fn handle(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client
     }
     match text.as_str() {
         "/start" | "/help" => {
-            send_text(client, &link.token, person, "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.").await;
+            send_text(client, &link.token, person, &tr(state, say::HELP)).await;
             return;
         }
         "/new" => {
             link.chat_id = None;
             let _ = save(state, &link);
-            send_text(client, &link.token, person, "Your next message starts a new chat.").await;
+            send_text(client, &link.token, person, &tr(state, say::NEW_CHAT)).await;
             return;
         }
         "/stop" => {
@@ -252,7 +331,7 @@ async fn handle(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client
     let (runner, state, client, m) = (runner.clone(), state.clone(), client.clone(), m.clone());
     tauri::async_runtime::spawn(async move {
         if let Err(e) = answer(&runner, &state, &client, link.clone(), &m, text).await {
-            send_text(&client, &link.token, person, &format!("I couldn't answer that: {e}")).await;
+            send_text(&client, &link.token, person, &format!("{} {e}", tr(&state, say::COULD_NOT))).await;
         }
     });
 }
@@ -298,7 +377,7 @@ async fn answer(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client
     done.store(true, Ordering::Relaxed);
     let reply = match result {
         Ok(Some(msg)) => msg.content,
-        Ok(None) => "Stopped.".into(),
+        Ok(None) => tr(state, say::STOPPED),
         Err(e) => return Err(e),
     };
     // Pictures, clips and sounds made while answering go along.
@@ -310,17 +389,17 @@ async fn answer(runner: &Runner, state: &Arc<AppState>, client: &reqwest::Client
         .collect();
     for item in made {
         if let Ok(bytes) = crate::media::store::read(&state.paths, &c, &item.id) {
-            send_file(client, &link.token, person, &item, bytes).await;
+            send_file(client, &link.token, person, &item, bytes, &tr(state, say::TOO_BIG)).await;
         }
     }
-    send_text(client, &link.token, person, &reply).await;
+    send_reply(client, &link.token, person, &reply).await;
     state.log("telegram", "Answered a message from Telegram");
     Ok(())
 }
 
-async fn send_file(client: &reqwest::Client, token: &str, to: i64, item: &crate::media::MediaItem, bytes: Vec<u8>) {
+async fn send_file(client: &reqwest::Client, token: &str, to: i64, item: &crate::media::MediaItem, bytes: Vec<u8>, too_big: &str) {
     if bytes.len() > MAX_FILE {
-        send_text(client, token, to, "Something I made is too big to send here; it's in the gallery on the PC.").await;
+        send_text(client, token, to, too_big).await;
         return;
     }
     let (method, field) = if item.kind == "image" && bytes.len() < 10 * 1024 * 1024 { ("sendPhoto", "photo") } else { ("sendDocument", "document") };
@@ -346,10 +425,10 @@ async fn ask_approvals(state: Arc<AppState>, client: reqwest::Client, token: Str
             if !asked.insert(p.call_id.clone()) {
                 continue;
             }
-            let text = format!("May I do this?\n{}", p.preview.title);
+            let text = format!("{}\n{}", tr(&state, say::MAY_I), p.preview.title);
             let buttons = json!({ "inline_keyboard": [[
-                { "text": "Allow", "callback_data": format!("ok:{}", p.call_id) },
-                { "text": "Don't", "callback_data": format!("no:{}", p.call_id) },
+                { "text": tr(&state, say::ALLOW), "callback_data": format!("ok:{}", p.call_id) },
+                { "text": tr(&state, say::DENY), "callback_data": format!("no:{}", p.call_id) },
             ]] });
             let _ = call(&client, &token, "sendMessage", json!({ "chat_id": to, "text": text, "reply_markup": buttons })).await;
         }
@@ -360,12 +439,12 @@ async fn ask_approvals(state: Arc<AppState>, client: reqwest::Client, token: Str
 async fn answer_button(state: &AppState, client: &reqwest::Client, link: &Link, q: &Value) {
     let data = q["data"].as_str().unwrap_or("");
     let (decision, call_id, said) = match data.split_once(':') {
-        Some(("ok", id)) => (Decision::Allow, id, "Allowed."),
-        Some(("no", id)) => (Decision::Deny, id, "Not allowed."),
+        Some(("ok", id)) => (Decision::Allow, id, tr(state, say::ALLOWED)),
+        Some(("no", id)) => (Decision::Deny, id, tr(state, say::DENIED)),
         _ => return,
     };
     let took = state.approvals.answer(call_id, decision);
-    let _ = call(client, &link.token, "answerCallbackQuery", json!({ "callback_query_id": q["id"], "text": if took { said } else { "That was already answered." } })).await;
+    let _ = call(client, &link.token, "answerCallbackQuery", json!({ "callback_query_id": q["id"], "text": if took { said.clone() } else { tr(state, say::ANSWERED) } })).await;
     if let (Some(chat), Some(msg)) = (q["message"]["chat"]["id"].as_i64(), q["message"]["message_id"].as_i64()) {
         let before = q["message"]["text"].as_str().unwrap_or("");
         let after = if took { format!("{before}\n{said}") } else { before.to_string() };
@@ -400,9 +479,9 @@ pub fn task_done(state: &Arc<AppState>, name: &str, outcome: Result<&str, &str>)
     let text = match outcome {
         Ok(chat_id) => {
             let last = db::messages(&state.db.lock().unwrap(), &c, chat_id).into_iter().rev().find(|m| m.role == "assistant" && !m.content.trim().is_empty());
-            format!("{name}\n\n{}", last.map(|m| m.content).unwrap_or_else(|| "Done, with nothing to say.".into()))
+            format!("{name}\n\n{}", last.map(|m| m.content).unwrap_or_else(|| tr(state, say::NOTHING)))
         }
-        Err(e) => format!("{name} didn't run: {e}"),
+        Err(e) => format!("{name}\n{} {e}", tr(state, say::DIDNT_RUN)),
     };
     let person = link.person.unwrap_or_default();
     tauri::async_runtime::spawn(async move { send_text(&client, &link.token, person, &text).await });
@@ -532,7 +611,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn the_owner_links_with_the_code_and_gets_answers_and_buttons() {
+    async fn the_person_links_with_the_code_and_gets_answers_and_buttons() {
         let (fake, base) = fake_telegram().await;
         *TEST_API.lock().unwrap() = Some(base);
         let state = crate::testutil::scratch_state();
@@ -565,20 +644,48 @@ mod tests {
         fake.updates.lock().unwrap().extend([text(1, 7, "000000"), text(2, 7, "424242"), text(3, 9, "424242"), text(4, 9, "hello"), text(5, 7, "hello"), text(6, 7, "please write notes")]);
         run(runner, state.clone());
         // Answers run side by side, so they may come in either order.
-        let asked = "May I do this?\nWrite notes.txt";
-        let to_owner = sent_to(&fake, 7, 3).await;
-        assert!(to_owner[0].starts_with("Linked."), "{to_owner:?}");
-        assert!(to_owner.iter().any(|t| t == "you said: hello"), "{to_owner:?}");
-        assert!(to_owner.iter().any(|t| t == asked), "{to_owner:?}");
+        let asked = format!("{}\nWrite notes.txt", say::MAY_I);
+        let to_person = sent_to(&fake, 7, 3).await;
+        assert!(to_person[0].starts_with("Linked."), "{to_person:?}");
+        assert!(to_person.iter().any(|t| t == "you said: hello"), "{to_person:?}");
+        assert!(to_person.iter().any(|t| *t == asked), "{to_person:?}");
         assert_eq!(load(&state).unwrap().person, Some(7));
         // The person taps Allow.
         fake.updates.lock().unwrap().push(json!({ "update_id": 7, "callback_query": { "id": "q1", "from": { "id": 7 }, "data": "ok:call-1", "message": { "chat": { "id": 7 }, "message_id": 5, "text": asked } } }));
-        let to_owner = sent_to(&fake, 7, 4).await;
-        assert_eq!(to_owner[3], "decided Allow");
-        assert!(fake.sent.lock().unwrap().iter().any(|s| s["method"] == "editMessageText" && s["body"]["text"].as_str().is_some_and(|t| t.ends_with("Allowed."))));
+        let to_person = sent_to(&fake, 7, 4).await;
+        assert_eq!(to_person[3], "decided Allow");
+        assert!(fake.sent.lock().unwrap().iter().any(|s| s["method"] == "editMessageText" && s["body"]["text"].as_str().is_some_and(|t| t.ends_with(say::ALLOWED))));
         assert!(!fake.sent.lock().unwrap().iter().any(|s| s["body"]["chat_id"] == 9), "a stranger gets nothing");
         stop();
         *TEST_API.lock().unwrap() = None;
+    }
+
+    #[test]
+    fn offered_choices_become_buttons() {
+        let (text, options) = split_choices("Which one?\n\n```choices\n- Tea\n- Coffee\n\nWater\n```\n");
+        assert_eq!(text, "Which one?");
+        assert_eq!(options, ["Tea", "Coffee", "Water"]);
+        let (text, options) = split_choices("No options here.");
+        assert_eq!((text.as_str(), options.len()), ("No options here.", 0));
+        let (text, options) = split_choices("Cut off ```choices\nA");
+        assert_eq!((text.as_str(), options.len()), ("Cut off ```choices\nA", 0));
+    }
+
+    /// Fails when a `say` text was added without running
+    /// scripts/telegram_texts.py.
+    #[test]
+    fn the_bot_speaks_every_language_the_window_does() {
+        let all = [
+            say::LINKED, say::HELP, say::NEW_CHAT, say::COULD_NOT, say::STOPPED, say::TOO_BIG, say::MAY_I,
+            say::ALLOW, say::DENY, say::ALLOWED, say::DENIED, say::ANSWERED, say::NOTHING, say::DIDNT_RUN,
+        ];
+        assert!(TEXTS.len() >= 20, "{} languages", TEXTS.len());
+        for (lang, table) in TEXTS.iter() {
+            for text in all {
+                assert!(table.contains_key(text), "{lang} lacks {text:?}");
+            }
+        }
+        assert_eq!(TEXTS["de"][say::NEW_CHAT], "Deine nächste Nachricht beginnt einen neuen Chat.");
     }
 
     #[test]

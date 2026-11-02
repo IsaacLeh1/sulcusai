@@ -23,6 +23,7 @@ export const LANGUAGES: { code: string; name: string }[] = [
   { code: "vi", name: "Tiếng Việt" },
   { code: "th", name: "ไทย" },
   { code: "hi", name: "हिन्दी" },
+  { code: "ar", name: "العربية" },
   { code: "zh", name: "简体中文" },
   { code: "zh-TW", name: "繁體中文" },
   { code: "ja", name: "日本語" },
@@ -31,7 +32,10 @@ export const LANGUAGES: { code: string; name: string }[] = [
 
 /** Languages whose table was made by a model on this PC and not yet
  * read through by a native speaker; the picker says so. */
-export const MACHINE_MADE = new Set(["it", "nl", "sv", "pl", "tr", "ru", "uk", "id", "vi", "th", "hi", "zh-TW", "ko"]);
+export const MACHINE_MADE = new Set(["it", "nl", "sv", "pl", "tr", "ru", "uk", "id", "vi", "th", "hi", "ar", "zh-TW", "ko"]);
+
+/** Languages written right to left: the whole window turns around. */
+const RIGHT_TO_LEFT = new Set(["ar", "he"]);
 
 type Table = Record<string, string>;
 
@@ -51,6 +55,7 @@ const loaders: Record<string, () => Promise<{ default: Table }>> = {
   vi: () => import("./locales/vi.json"),
   th: () => import("./locales/th.json"),
   hi: () => import("./locales/hi.json"),
+  ar: () => import("./locales/ar.json"),
   zh: () => import("./locales/zh.json"),
   "zh-TW": () => import("./locales/zh-TW.json"),
   ja: () => import("./locales/ja.json"),
@@ -91,6 +96,7 @@ export async function setLanguage(choice: string): Promise<void> {
   current = code;
   templates = null;
   document.documentElement.lang = code;
+  document.documentElement.dir = RIGHT_TO_LEFT.has(code) ? "rtl" : "ltr";
   // The core writes some text too (mail sorting reasons, notices).
   invoke("set_ui_language", { code }).catch(() => {});
   listeners.forEach((l) => l());

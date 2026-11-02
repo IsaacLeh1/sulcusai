@@ -35,10 +35,26 @@ LANGS = {
     "th": ("Thai", "Use a neutral polite tone without gendered particles."),
     "zh-TW": ("Traditional Chinese as used in Taiwan", "Use Taiwan's terms (檔案, 資料夾, 設定, 顯示卡, 影片)."),
     "sv": ("Swedish", "Address the user as du."),
+    "ar": ("Modern Standard Arabic", "Address the user directly and politely, as Arabic apps do."),
+    "he": ("Hebrew", "Address the user directly, as Hebrew apps do, in the masculine-neutral form apps use."),
 }
 
 PLACEHOLDER = re.compile(r"\{\w+\}")
 QUOTED = re.compile(r"[“\"]([^”\"]{2,40})[”\"]")
+
+# Hindi came back in Latin letters ("Puchh raha hoon") for some sentences.
+SCRIPT = {
+    "ru": [(0x0400, 0x04FF)],
+    "uk": [(0x0400, 0x04FF)],
+    "hi": [(0x0900, 0x097F)],
+    "th": [(0x0E00, 0x0E7F)],
+    "ar": [(0x0600, 0x06FF)],
+    "he": [(0x0590, 0x05FF)],
+    "zh": [(0x4E00, 0x9FFF)],
+    "zh-TW": [(0x4E00, 0x9FFF)],
+    "ja": [(0x3040, 0x30FF), (0x4E00, 0x9FFF)],
+    "ko": [(0xAC00, 0xD7AF)],
+}
 
 
 def args():
@@ -94,8 +110,10 @@ def batches(items, size=25, chars=2500):
     return out
 
 
-def ok(en, tr):
+def ok(en, tr, lang=""):
     if not isinstance(tr, str) or not tr.strip():
+        return False
+    if lang in SCRIPT and len(en) > 30 and not any(lo <= ord(c) <= hi for c in tr for lo, hi in SCRIPT[lang]):
         return False
     if sorted(PLACEHOLDER.findall(en)) != sorted(PLACEHOLDER.findall(tr)):
         return False
@@ -186,7 +204,7 @@ def ask(server, lang, items, glossary, screen):
         if isinstance(tr, str):
             # Spaces at the ends join texts together; models drop them.
             tr = k[: len(k) - len(k.lstrip(" "))] + tidy(lang, tr).strip(" ") + k[len(k.rstrip(" ")) :]
-        if ok(k, tr):
+        if ok(k, tr, lang):
             out[k] = tr
     return out
 

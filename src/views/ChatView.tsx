@@ -526,6 +526,17 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
     pick: () => (s.prompt !== undefined ? fill(s.prompt.replace("{input}", "")) : s.skill ? fill(skillAsk(s.skill)) : s.action && run(s.action)),
   }));
 
+  // A choice the assistant offered, clicked: sent as the answer.
+  const choose = useRef(sendText);
+  choose.current = sendText;
+  useEffect(() => {
+    const picked = (e: Event) => {
+      if (!busy) choose.current((e as CustomEvent<string>).detail);
+    };
+    window.addEventListener("sulcus:choose", picked);
+    return () => window.removeEventListener("sulcus:choose", picked);
+  }, [busy]);
+
   const send = () => {
     const text = input.trim();
     if ((!text && attached.length === 0) || busy) return;

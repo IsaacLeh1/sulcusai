@@ -6036,5 +6036,18 @@
  "Write to your assistant from Telegram on your phone, by text, picture or voice note, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, Telegram shows Allow and Don't buttons.": "Schreib deinem Assistenten über Telegram auf deinem Handy, per Text, Bild oder Sprachnachricht, und erhalte seine Antworten und die Bilder, die er macht. Er antwortet mit den Modellen auf diesem PC, daher muss SulcusAI hier geöffnet und entsperrt bleiben. Wenn etwas dein OK braucht, zeigt Telegram die Schaltflächen „Allow“ und „Don't“.",
  "you": "dir",
  "{n} picked": "{n} ausgewählt",
- "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "„{name}“ ist fertig: Schalte es unter Deine LoRAs mit RealVisXL ein."
+ "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "„{name}“ ist fertig: Schalte es unter Deine LoRAs mit RealVisXL ein.",
+ "Allowed, it goes ahead.": "Erlaubt, es geht weiter.",
+ "Choices": "Auswahl",
+ "Denied, it won't be done.": "Abgelehnt, es wird nicht gemacht.",
+ "I couldn't answer that.": "Darauf konnte ich nicht antworten.",
+ "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.": "Verbunden. Schreib mir hier, und ich antworte von SulcusAI auf deinem PC. /new beginnt einen neuen Chat, /stop beendet eine Antwort.",
+ "May I do this?": "Darf ich das tun?",
+ "Something I made is too big to send here; it's in the gallery on the PC.": "Etwas, das ich gemacht habe, ist zu groß, um es hier zu senden; es ist in der Galerie auf dem PC.",
+ "Stopped before answering.": "Vor der Antwort gestoppt.",
+ "That was already answered.": "Das wurde schon beantwortet.",
+ "This scheduled task didn't run.": "Diese geplante Aufgabe ist nicht gelaufen.",
+ "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "Diesen PC aus dem Ruhezustand wecken, um sie auszuführen (er bleibt dann wach, bis die Aufgabe erledigt ist). Windows muss Reaktivierungszeitgeber erlauben, was es am Netzteil standardmäßig tut.",
+ "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "Schreib mir wie in SulcusAI: Text, Bilder oder Sprachnachrichten. /new beginnt einen neuen Chat, /stop beendet eine Antwort.",
+ "Your next message starts a new chat.": "Deine nächste Nachricht beginnt einen neuen Chat."
 }

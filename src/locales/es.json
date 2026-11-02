@@ -6036,5 +6036,18 @@
  "Write to your assistant from Telegram on your phone, by text, picture or voice note, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, Telegram shows Allow and Don't buttons.": "Escríbele a tu asistente desde Telegram en tu teléfono, con texto, imagen o nota de voz, y recibe sus respuestas y las imágenes que crea. Responde con los modelos de esta PC, así que SulcusAI debe seguir abierto y desbloqueado aquí. Cuando algo necesita tu visto bueno, Telegram muestra los botones Allow y Don't.",
  "you": "ti",
  "{n} picked": "{n} elegidas",
- "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "“{name}” está listo: actívalo en Tus LoRA con RealVisXL."
+ "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "“{name}” está listo: actívalo en Tus LoRA con RealVisXL.",
+ "Allowed, it goes ahead.": "Permitido, sigue adelante.",
+ "Choices": "Opciones",
+ "Denied, it won't be done.": "Rechazado, no se hará.",
+ "I couldn't answer that.": "No pude responder a eso.",
+ "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.": "Vinculado. Escríbeme aquí y te responderé desde SulcusAI en tu PC. /new empieza un chat nuevo, /stop detiene una respuesta.",
+ "May I do this?": "¿Puedo hacer esto?",
+ "Something I made is too big to send here; it's in the gallery on the PC.": "Algo que hice es demasiado grande para enviarlo aquí; está en la galería del PC.",
+ "Stopped before answering.": "Detenido antes de responder.",
+ "That was already answered.": "Eso ya se respondió.",
+ "This scheduled task didn't run.": "Esta tarea programada no se ejecutó.",
+ "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "Despertar este PC de la suspensión para ejecutarlas (luego sigue despierto hasta que termine la tarea). Windows tiene que permitir los temporizadores de reactivación, cosa que hace por defecto cuando está enchufado.",
+ "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "Escríbeme como lo harías en SulcusAI: texto, imágenes o notas de voz. /new empieza un chat nuevo, /stop detiene una respuesta.",
+ "Your next message starts a new chat.": "Tu próximo mensaje empezará un chat nuevo."
 }

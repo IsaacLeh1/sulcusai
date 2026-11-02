@@ -127,6 +127,7 @@ mod viewer;
 mod vision;
 mod voice;
 mod wake;
+mod wakeup;
 mod web;
 mod workspace;
 #[cfg(test)]
@@ -994,6 +995,8 @@ pub fn run() {
             cloudfiles::cloud_files_connect,
             cloudfiles::cloud_files_remove,
             wake::wake_word,
+            wakeup::wake_for_tasks,
+            wakeup::set_wake_for_tasks,
             media::live_voice::live_voice_start,
             media::live_voice::live_voice_stop,
             wake::set_wake_word,

@@ -6036,5 +6036,18 @@
  "Write to your assistant from Telegram on your phone, by text, picture or voice note, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, Telegram shows Allow and Don't buttons.": "スマートフォンの Telegram から、テキスト、画像、ボイスメッセージでアシスタントに話しかけ、回答や作成された画像を受け取れます。この PC のモデルで回答するため、SulcusAI をこの PC で開いたまま、ロックを解除しておく必要があります。あなたの確認が必要なときは、Telegram に「Allow」と「Don't」のボタンが表示されます。",
  "you": "あなた",
  "{n} picked": "{n} 枚選択",
- "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "「{name}」の準備ができました：RealVisXL を使うときに「あなたの LoRA」でオンにしてください。"
+ "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "「{name}」の準備ができました：RealVisXL を使うときに「あなたの LoRA」でオンにしてください。",
+ "Allowed, it goes ahead.": "許可しました。続けます。",
+ "Choices": "選択肢",
+ "Denied, it won't be done.": "拒否しました。実行しません。",
+ "I couldn't answer that.": "それにはお答えできませんでした。",
+ "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.": "リンクしました。ここに書いていただければ、PC の SulcusAI からお答えします。/new で新しいチャットを始め、/stop で回答を止めます。",
+ "May I do this?": "これを実行してもよいですか？",
+ "Something I made is too big to send here; it's in the gallery on the PC.": "作成したものが大きすぎてここに送れません。PC のギャラリーにあります。",
+ "Stopped before answering.": "回答する前に停止しました。",
+ "That was already answered.": "それはすでに回答済みです。",
+ "This scheduled task didn't run.": "この予定タスクは実行されませんでした。",
+ "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "スリープ中のこの PC を起動して実行します（タスクが終わるまで起動したままになります）。Windows でウェイクタイマーが許可されている必要があります。電源接続時は既定で許可されています。",
+ "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "SulcusAI と同じように、テキスト、画像、ボイスメッセージで書いてください。/new で新しいチャットを始め、/stop で回答を止めます。",
+ "Your next message starts a new chat.": "次のメッセージから新しいチャットになります。"
 }

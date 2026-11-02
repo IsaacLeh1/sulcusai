@@ -28,6 +28,12 @@ const PART: usize = 600_000;
 const PING: Duration = Duration::from_secs(25);
 /// No word from the relay for this long: the connection is gone.
 const SILENT: Duration = Duration::from_secs(70);
+/// The relay keeps one PC per link and closes the older connection with
+/// this code when another connects (another copy of SulcusAI on this data).
+const REPLACED_CODE: u16 = 4000;
+const REPLACED: &str = "Another copy of SulcusAI took over the phone link. This one connects again once it's gone.";
+/// How often a replaced copy looks whether the other one is still there.
+const LOOK_AGAIN: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct Status {
@@ -84,6 +90,22 @@ async fn run(state: Arc<AppState>, relay: String, id: String, token: String, mut
                 s.problem = Some(e.clone());
             }
         }
+        // Connecting again would take the link back, and the two copies took
+        // turns pushing each other off every minute: wait until the other's gone.
+        if result.as_ref().err().map(String::as_str) == Some(REPLACED) {
+            crate::applog::line("phone", "Another copy of SulcusAI took over the phone link; this one waits until it's gone");
+            loop {
+                tokio::select! {
+                    _ = &mut stop => return,
+                    _ = tokio::time::sleep(LOOK_AGAIN) => {}
+                }
+                if !someone_there(&relay, &id).await {
+                    break;
+                }
+            }
+            wait = 1;
+            continue;
+        }
         if let Err(e) = &result {
             crate::applog::line("phone", &format!("The phone link dropped ({e}); trying again in {wait} s"));
         }
@@ -96,6 +118,16 @@ async fn run(state: Arc<AppState>, relay: String, id: String, token: String, mut
             _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
         }
         wait = (wait * 2).min(60);
+    }
+}
+
+/// Whether another PC is serving the link: the relay answers its page with
+/// 503 when nobody is.
+async fn someone_there(relay: &str, id: &str) -> bool {
+    let Ok(client) = reqwest::Client::builder().timeout(Duration::from_secs(20)).build() else { return false };
+    match client.get(page_address(relay, id)).send().await {
+        Ok(r) => r.status() != reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        Err(_) => false,
     }
 }
 
@@ -182,6 +214,7 @@ async fn session(state: &Arc<AppState>, relay: &str, id: &str, token: &str) -> R
                     None => return Err("the relay closed the connection".into()),
                     Some(Err(e)) => return Err(e.to_string()),
                     Some(Ok(Message::Text(t))) => t.to_string(),
+                    Some(Ok(Message::Close(f))) if f.as_ref().is_some_and(|f| u16::from(f.code) == REPLACED_CODE) => return Err(REPLACED.into()),
                     Some(Ok(Message::Close(_))) => return Err("the relay closed the connection".into()),
                     Some(Ok(_)) => continue,
                 };
@@ -280,5 +313,38 @@ mod tests {
         let local = host_url("http://127.0.0.1:8787", "ab").unwrap();
         assert_eq!((local.url.as_str(), local.port, local.tls), ("ws://127.0.0.1:8787/v1/link/ab/host", 8787, false));
         assert_eq!(page_address("https://r.example/", "ab"), "https://r.example/l/ab/");
+    }
+
+    /// The relay replacing this PC's connection (another copy connected)
+    /// is told apart from it just closing, and the other copy is looked for
+    /// by the link's page: 503 when nobody serves it.
+    #[tokio::test]
+    async fn a_replaced_link_steps_aside_until_the_other_copy_is_gone() {
+        use tokio_tungstenite::tungstenite::protocol::frame::{coding::CloseCode, CloseFrame};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            ws.close(Some(CloseFrame { code: CloseCode::from(REPLACED_CODE), reason: "replaced".into() })).await.unwrap();
+        });
+        let state = crate::testutil::scratch_state();
+        assert_eq!(session(&state, &relay, "ab", &"0".repeat(64)).await, Err(REPLACED.to_string()));
+
+        let serving = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let s = serving.clone();
+        let app = axum::Router::new().route(
+            "/l/ab/",
+            axum::routing::get(move || {
+                let s = s.clone();
+                async move { if s.load(std::sync::atomic::Ordering::Relaxed) { axum::http::StatusCode::OK } else { axum::http::StatusCode::SERVICE_UNAVAILABLE } }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let page = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        assert!(someone_there(&page, "ab").await);
+        serving.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert!(!someone_there(&page, "ab").await);
     }
 }

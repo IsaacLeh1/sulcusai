@@ -616,6 +616,7 @@ pub fn start(app: AppHandle) {
             due.extend(triggered(&state, &cipher, &mut known, &mut started));
             for (mut s, fired) in due {
                 busy.store(true, std::sync::atomic::Ordering::Relaxed);
+                let _awake = crate::wakeup::Awake::new("Running a scheduled task");
                 let outcome = run_because(&app, &state, &s, fired.as_ref().map(|f| f.what.as_str())).await;
                 busy.store(false, std::sync::atomic::Ordering::Relaxed);
                 s.last_run = Some(now_ms());
@@ -641,6 +642,10 @@ pub fn start(app: AppHandle) {
                 }
                 let _ = save(&state.db.lock().unwrap(), &cipher, &s);
             }
+            // A minute early, so the PC is awake and SulcusAI ready when it's due.
+            let wanted = crate::wakeup::on(&state.db.lock().unwrap());
+            let wake = if wanted { list(&state.db.lock().unwrap(), &cipher).into_iter().filter(|s| s.enabled).filter_map(|s| s.next_run).min() } else { None };
+            let _ = crate::wakeup::wake_at(wake.map(|t| t - 60_000));
         }
     });
 }

@@ -6036,5 +6036,18 @@
  "Write to your assistant from Telegram on your phone, by text, picture or voice note, and get its answers and the pictures it makes. It answers with the models on this PC, so SulcusAI needs to stay open and unlocked here. When something needs your OK, Telegram shows Allow and Don't buttons.": "在手机上的 Telegram 里用文字、图片或语音消息给你的助手发消息，并收到它的回答和它生成的图片。它使用这台电脑上的模型回答，所以 SulcusAI 需要在这里保持打开且未锁定。需要你确认时，Telegram 会显示“Allow”和“Don't”按钮。",
  "you": "你",
  "{n} picked": "已选 {n} 张",
- "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "“{name}”已就绪：选择 RealVisXL 后，在“你的 LoRA”中开启它。"
+ "“{name}” is ready: turn it on under Your LoRAs with RealVisXL.": "“{name}”已就绪：选择 RealVisXL 后，在“你的 LoRA”中开启它。",
+ "Allowed, it goes ahead.": "已允许，继续进行。",
+ "Choices": "选项",
+ "Denied, it won't be done.": "已拒绝，不会执行。",
+ "I couldn't answer that.": "我无法回答这个问题。",
+ "Linked. Write to me here and I'll answer from SulcusAI on your PC. /new starts a new chat, /stop stops an answer.": "已关联。在这里给我发消息，我会通过你电脑上的 SulcusAI 回答。/new 开始新的聊天，/stop 停止回答。",
+ "May I do this?": "我可以这样做吗？",
+ "Something I made is too big to send here; it's in the gallery on the PC.": "我做的内容太大，无法在这里发送；它在电脑上的图库里。",
+ "Stopped before answering.": "在回答前已停止。",
+ "That was already answered.": "这已经回答过了。",
+ "This scheduled task didn't run.": "这个计划任务没有运行。",
+ "Wake this PC from sleep to run them (it then stays awake until the task is done). Windows has to allow wake timers, which it does by default when plugged in.": "从睡眠中唤醒这台电脑来运行它们（之后会保持唤醒，直到任务完成）。Windows 需要允许唤醒定时器，接通电源时默认允许。",
+ "Write to me like you would in SulcusAI: text, pictures or voice notes. /new starts a new chat, /stop stops an answer.": "像在 SulcusAI 里一样给我发消息：文字、图片或语音消息。/new 开始新的聊天，/stop 停止回答。",
+ "Your next message starts a new chat.": "你的下一条消息将开始新的聊天。"
 }
