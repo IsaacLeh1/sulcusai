@@ -47,6 +47,8 @@ const DENIED: &[(&str, &str)] = &[
     // Locks, passwords and keys.
     ("unlock", "Unlock SulcusAI on the PC."),
     ("unlock_with_hello", "Unlock SulcusAI on the PC."),
+    ("open_protected_chat", "Open protected chats on the PC."),
+    ("open_protected_chat_hello", "Open protected chats on the PC."),
     ("enable_lock", "Change the lock on the PC."),
     ("disable_lock", "Change the lock on the PC."),
     ("change_pin", "Change the PIN on the PC."),

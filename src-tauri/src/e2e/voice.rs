@@ -662,6 +662,14 @@ fn liveliness(file: &std::path::Path) -> String {
     format!("pitch moves {sd:.1} semitones around {:.0} Hz", 100.0 * 2f32.powf(mean / 12.0))
 }
 
+/// The middle of the notes a pitch track holds (half are lower).
+#[cfg(windows)]
+fn median_note(f0: &[f32]) -> String {
+    let mut v: Vec<f32> = f0.iter().copied().filter(|x| *x > 1.0).collect();
+    v.sort_by(|a, b| a.total_cmp(b));
+    crate::media::svc::note_name(v.get(v.len() / 2).copied().unwrap_or(0.0))
+}
+
 /// How close a recording sounds to a person: the cosine of their CAMPPlus
 /// voice prints (1 is the same voice; different people are usually under
 /// 0.5). A song's voice is taken out of the band first.
@@ -752,6 +760,11 @@ async fn e2e_your_voice_end_to_end() {
 
     let (singing, _) = own_voice::singing_reference(&state.paths, &c, &own_voice::get(&state.db.lock().unwrap(), &c, &vid).unwrap()).unwrap();
     let mut like = Likeness::new(&state, &singing);
+    if let Some(s) = own_voice::all_singing(&state.paths, &c, &own_voice::get(&state.db.lock().unwrap(), &c, &vid).unwrap()) {
+        if let Some((lo, hi)) = crate::media::svc::range_of(&like.conv.pitch_track(&s).unwrap()) {
+            rows.push(format!("your singing range as the app reads it: {} to {}", crate::media::svc::note_name(lo), crate::media::svc::note_name(hi)));
+        }
+    }
     rows.push(format!("your reading against your singing: likeness {:.2}", like.of(&mine, false)));
     if wanted("narrate") {
         let script = "I can't believe it actually worked! This is the best news I've had all week.\nHmm. I'm not so sure about that. Let me think it over before we decide.\nOkay, listen closely: the meeting starts at nine, not ten, so please don't be late.\nWait, are you really coming with us tonight? That's amazing!";
@@ -772,8 +785,8 @@ async fn e2e_your_voice_end_to_end() {
         rows.push(format!("song: {:.0} s for both; likeness as made {:.2}, sung again in your voice {:.2}", t.elapsed().as_secs_f64(), like.of(&made, true), like.of(&file, true)));
     }
     if wanted("own") {
-        // A new song in your voice the app's way: your singing as the music
-        // model's reference, then sung again in your voice.
+        // A new song in your voice the app's way: a singer of your sex, then
+        // sung again in your voice and range.
         media::install_for_test(&state, &music).await.unwrap();
         let t = std::time::Instant::now();
         let spec = MusicSpec { own_voice: Some(vid.clone()), ..Default::default() };
@@ -801,4 +814,407 @@ async fn e2e_your_voice_end_to_end() {
         train::remove(&state.db.lock().unwrap(), &c, &state.paths, &cm.id).unwrap();
     }
     println!("\n{}", rows.join("\n"));
+}
+
+/// What can be told of the voice files sent before, and of the installed
+/// app's recorded voice, by measuring rather than listening: each take's
+/// sung range (RMVPE, the lowest and highest 5% left out), and for each song
+/// the range and steadiness of the voice taken out of the band, its
+/// loudness against the band, and the words Whisper hears.
+///     cargo test e2e_your_voice_listen -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_your_voice_listen() {
+    use crate::media::{own_voice, stems, svc};
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let rc = vault.work_cipher().unwrap();
+    let voice = own_voice::list(&conn, &rc).into_iter().next().expect("a recorded voice");
+    let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
+    let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
+    let mut conv = svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
+    let span = |f0: &[f32]| match svc::range_of(f0) {
+        Some((lo, hi)) => format!("{} to {} ({:.0} semitones)", svc::note_name(lo), svc::note_name(hi), 12.0 * (hi / lo).log2()),
+        None => "no singing heard".into(),
+    };
+    // How much the pitch wobbles from one 10 ms to the next within a held
+    // note (cents): a converted voice that shakes or warbles shows here.
+    let wobble = |f0: &[f32]| {
+        let d: Vec<f32> = f0.windows(2).filter(|w| w[0] > 1.0 && w[1] > 1.0).map(|w| 1200.0 * (w[1] / w[0]).log2().abs()).filter(|c| *c < 100.0).collect();
+        if d.is_empty() { 0.0 } else { d.iter().sum::<f32>() / d.len() as f32 }
+    };
+    let mut all_sung = Vec::new();
+    println!("\n{}'s takes:", voice.name);
+    for (line, kind, samples) in own_voice::takes_for_test(&real, &rc, &voice) {
+        let x = stems::resample(&samples, 48_000, svc::RATE);
+        let f0 = conv.pitch_track(&x).unwrap();
+        let voiced = f0.iter().filter(|v| **v > 1.0).count() as f32 / f0.len().max(1) as f32;
+        println!("  {line} ({kind:?}, {:.1} s): {}, voiced {:.0}%, wobble {:.0} cents", samples.len() as f32 / 48_000.0, span(&f0), voiced * 100.0, wobble(&f0));
+        if kind == Some(own_voice::LineKind::Sing) {
+            all_sung.extend(f0);
+        }
+    }
+    println!("  all singing: {}", span(&all_sung));
+    let lyrics = "Morning light on the window Coffee warm in my hands Every road is a new start I can feel it again Sing it loud, let it carry Over rooftops and trees Sing it loud, let it carry All the way back to me";
+    let wanted = sung_words(lyrics);
+    let dir = std::path::PathBuf::from(r"C:\dev\tools\voice\for-you");
+    let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
+    for name in ["song-as-made.mp3", "song-in-your-voice.wav", "song-in-your-voice-from-the-start.wav", "song-custom-model.mp3"] {
+        let file = dir.join(name);
+        let (samples, rate, channels) = crate::media::audio_in::decode(&file).unwrap();
+        let ch = channels.max(1) as usize;
+        let left: Vec<f32> = samples.chunks(ch).map(|f| f[0]).collect();
+        let right: Vec<f32> = samples.chunks(ch).map(|f| f[ch - 1]).collect();
+        let mix = stems::Stereo { rate, ch: [left, right] }.resampled(stems::RATE);
+        let (parts, _) = stems::separate(&dll, &sep, &mix, 8, &[3], card, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        stems::unload();
+        let vocals = stems::resample(&parts[0].mono(), stems::RATE, svc::RATE);
+        let f0 = conv.pitch_track(&vocals).unwrap();
+        let whole = mix.mono();
+        let v44 = parts[0].mono();
+        let band: Vec<f32> = whole.iter().zip(&v44).map(|(m, v)| m - v).collect();
+        let band_db = 20.0 * (crate::audio::rms(&band) / crate::audio::rms(&v44).max(1e-6)).log10();
+        let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+        let got = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+        println!("{name}: voice {}, middle {}, wobble {:.0} cents, band {band_db:+.1} dB against the voice, {got} of {} words heard", span(&f0), median_note(&f0), wobble(&f0), wanted.len());
+        println!("  heard: {}", heard.chars().take(200).collect::<String>());
+    }
+}
+
+/// The other way of choosing what a song's voice is copied from that was
+/// tried: the lines that reach the most notes (soft to loud, the scale)
+/// first, as much as the converter takes.
+#[cfg(windows)]
+fn widest_first(paths: &Paths, c: &crate::crypto::Cipher, voice: &crate::media::own_voice::OwnVoice) -> Vec<f32> {
+    use crate::media::{own_voice, stems, svc};
+    let takes = own_voice::takes_for_test(paths, c, voice);
+    ["soft_loud", "scale"]
+        .iter()
+        .filter_map(|l| takes.iter().find(|t| t.0 == *l))
+        .flat_map(|t| stems::resample(&t.2, 48_000, svc::RATE))
+        .take((svc::MAX_PROMPT_S * svc::RATE as f32) as usize)
+        .collect()
+}
+
+/// One song sung in the recorded voice in several keys, to choose how a
+/// song is fitted to a singer: the voice copied from the song take first or
+/// from the widest-ranging takes first, at the song's own pitch, an octave
+/// down, and in keys between with the band (all but the drums) moved too;
+/// then the converter's steps, guidance and noise seed in one of those keys
+/// (another seed shows how much the measures move by chance alone).
+/// For each: likeness to the person, how closely the new voice keeps the
+/// tune, its range, and the words Whisper hears. Sings
+/// C:\dev\tools\voice\for-you\song-as-made.mp3; the songs go to
+/// C:\dev\tools\voice\keys. SULCUSAI_ONLY picks cases by name.
+///     cargo test e2e_your_voice_keys -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_your_voice_keys() {
+    use crate::media::{own_voice, stems, svc, transpose};
+    use std::sync::atomic::AtomicBool;
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let rc = vault.work_cipher().unwrap();
+    let voice = own_voice::list(&conn, &rc).into_iter().next().expect("a recorded voice");
+    drop(conn);
+    let (song_first, _) = own_voice::singing_reference(&real, &rc, &voice).unwrap();
+    let widest_first = widest_first(&real, &rc, &voice);
+    // Likeness against all of their singing (`e2e_your_voice_judge` measures
+    // against their reading, which neither way copies).
+    let all = own_voice::all_singing(&real, &rc, &voice).unwrap();
+    let mut like = Likeness::new(&state, &all);
+    let span = |f0: &[f32]| svc::range_of(f0).map_or("no singing heard".into(), |(lo, hi)| format!("{} to {}", svc::note_name(lo), svc::note_name(hi)));
+    println!("\ntheir singing: {}", span(&like.conv.pitch_track(&all).unwrap()));
+    for (name, r) in [("the song take first", &song_first), ("the widest first", &widest_first)] {
+        let print = like.print(r);
+        println!("what is copied, {name}: {}, likeness {:.2}", span(&like.conv.pitch_track(r).unwrap()), print.iter().zip(&like.person).map(|(a, b)| a * b).sum::<f32>());
+    }
+    let (samples, rate, channels) = crate::media::audio_in::decode(std::path::Path::new(r"C:\dev\tools\voice\for-you\song-as-made.mp3")).unwrap();
+    let ch = channels.max(1) as usize;
+    let mix = stems::Stereo { rate, ch: [samples.chunks(ch).map(|f| f[0]).collect(), samples.chunks(ch).map(|f| f[ch - 1]).collect()] }.resampled(stems::RATE);
+    let (parts, _) = stems::separate(&like.dll, &like.separator, &mix, 8, &[0, 1, 2, 3], like.card, &AtomicBool::new(false)).unwrap();
+    stems::unload();
+    let add = |a: &stems::Stereo, b: &stems::Stereo| stems::Stereo { rate: a.rate, ch: [0, 1].map(|c| a.ch[c].iter().zip(&b.ch[c]).map(|(x, y)| x + y).collect()) };
+    let drums = parts[0].clone();
+    let tonal = add(&parts[1], &parts[2]);
+    let sung = parts[3].mono();
+    let tune = like.conv.pitch_track(&sung).unwrap();
+    println!("the song's voice: {}", span(&tune));
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\keys");
+    std::fs::create_dir_all(&out).unwrap();
+    let lyrics = "Morning light on the window Coffee warm in my hands Every road is a new start I can feel it again Sing it loud, let it carry Over rooftops and trees Sing it loud, let it carry All the way back to me";
+    let wanted = sung_words(lyrics);
+    let only = std::env::var("SULCUSAI_ONLY").unwrap_or_default();
+    let plain = svc::Settings::default();
+    let cases: [(&str, &[f32], i32, svc::Settings); 13] = [
+        ("song-take-first", &song_first, 0, plain),
+        ("widest-first", &widest_first, 0, plain),
+        ("octave-down", &widest_first, -12, plain),
+        ("down-9", &widest_first, -9, plain),
+        ("down-7", &widest_first, -7, plain),
+        ("down-5", &widest_first, -5, plain),
+        ("down-4", &widest_first, -4, plain),
+        ("down-3", &widest_first, -3, plain),
+        ("song-take-first-down-5", &song_first, -5, plain),
+        ("down-4-steps-50", &widest_first, -4, svc::Settings { steps: 50, ..plain }),
+        ("down-4-cfg-1", &widest_first, -4, svc::Settings { cfg: 1.0, ..plain }),
+        ("down-4-cfg-0.4", &widest_first, -4, svc::Settings { cfg: 0.4, ..plain }),
+        ("down-4-seed-2", &widest_first, -4, svc::Settings { seed: 2, ..plain }),
+    ];
+    let mut rows = Vec::new();
+    for (name, reference, semis, settings) in cases.into_iter().filter(|c| only.is_empty() || only.split(',').any(|o| o == c.0)) {
+        let t = std::time::Instant::now();
+        let band_move = semis - 12 * (semis as f32 / 12.0).round() as i32;
+        // A converter of its own each time, as a job has: one kept across
+        // songs fills the card.
+        let mut conv = svc::Converter::new(&like.dll, &state.paths.models.join("media").join("own-voice-sing"), 8, like.card).unwrap();
+        let v = conv.voice(reference).unwrap();
+        let new_voice = conv.convert(&v, &sung, svc::Settings { semitones: semis, ..settings }, &AtomicBool::new(false), &|_| {}).unwrap();
+        drop(conv);
+        let band = add(&drums, &transpose::shift(&tonal, band_move));
+        let mixed = own_voice::mix(&band, &sung, &new_voice);
+        let file = out.join(format!("{name}.wav"));
+        std::fs::write(&file, own_voice::wav_stereo(&mixed.ch[0], &mixed.ch[1], mixed.rate)).unwrap();
+        let took = t.elapsed().as_secs_f64();
+        let print = like.print(&new_voice);
+        let likeness: f32 = print.iter().zip(&like.person).map(|(a, b)| a * b).sum();
+        let got = like.conv.pitch_track(&new_voice).unwrap();
+        let k = 2f32.powf(semis as f32 / 12.0);
+        let mut cents: Vec<f32> = tune.iter().zip(&got).filter(|(a, b)| **a > 1.0 && **b > 1.0).map(|(a, b)| (1200.0 * (b / (a * k)).log2()).abs()).collect();
+        cents.sort_by(|a, b| a.total_cmp(b));
+        let close = cents.iter().filter(|c| **c < 50.0).count() as f32 / cents.len().max(1) as f32;
+        let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+        let words = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+        rows.push(format!(
+            "{name} (voice {semis:+}, band {band_move:+}): {took:.0} s; voice {}; likeness {likeness:.2}; tune kept {:.0}% within 50 cents (median off {:.0}); {words} of {} words",
+            span(&got),
+            close * 100.0,
+            cents.get(cents.len() / 2).copied().unwrap_or(0.0),
+            wanted.len()
+        ));
+        println!("{}", rows.last().unwrap());
+    }
+    println!("\n{}", rows.join("\n"));
+}
+
+/// The songs in C:\dev\tools\voice\keys judged against recordings neither
+/// way of copying the voice uses (the person's reading, and their held
+/// note), so no version is measured against its own prompt. Also prints the
+/// key `svc::fit_key` picks for the song.
+///     cargo test e2e_your_voice_judge -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_your_voice_judge() {
+    use crate::media::{own_voice, stems, svc};
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let rc = vault.work_cipher().unwrap();
+    let voice = own_voice::list(&conn, &rc).into_iter().next().expect("a recorded voice");
+    drop(conn);
+    let (reading, _) = own_voice::speech_reference(&real, &rc, &voice).unwrap();
+    let reading = stems::resample(&reading, own_voice::TTS_RATE, svc::RATE);
+    let hold = own_voice::takes_for_test(&real, &rc, &voice).into_iter().find(|t| t.0 == "hold").map(|t| stems::resample(&t.2, 48_000, svc::RATE)).expect("a held note");
+    let all = own_voice::all_singing(&real, &rc, &voice).unwrap();
+    let mut like = Likeness::new(&state, &reading);
+    let by_reading = like.person.clone();
+    let by_hold = like.print(&hold);
+    let person = svc::range_of(&like.conv.pitch_track(&all).unwrap()).unwrap();
+    for (name, r) in [("the song take first", own_voice::singing_reference(&real, &rc, &voice).unwrap().0), ("the widest first", widest_first(&real, &rc, &voice))] {
+        let p = like.print(&r);
+        let cos = |q: &[f32]| p.iter().zip(q).map(|(a, b)| a * b).sum::<f32>();
+        println!("what is copied, {name}: against their reading {:.2}, against their held note {:.2}", cos(&by_reading), cos(&by_hold));
+    }
+    let (samples, rate, channels) = crate::media::audio_in::decode(std::path::Path::new(r"C:\dev\tools\voice\for-you\song-as-made.mp3")).unwrap();
+    let ch = channels.max(1) as usize;
+    let mix = stems::Stereo { rate, ch: [samples.chunks(ch).map(|f| f[0]).collect(), samples.chunks(ch).map(|f| f[ch - 1]).collect()] }.resampled(stems::RATE);
+    let (parts, _) = stems::separate(&like.dll, &like.separator, &mix, 8, &[3], like.card, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+    stems::unload();
+    let tune = like.conv.pitch_track(&parts[0].mono()).unwrap();
+    println!("\nfit_key for this song and singer: {:?}", svc::fit_key(&tune, person));
+    let mut costs = svc::key_costs(&tune, person);
+    costs.sort_by(|a, b| a.1.iter().sum::<f32>().total_cmp(&b.1.iter().sum()));
+    for (f, [outside, moved, off]) in costs.iter().take(8) {
+        println!("  voice {:+}, band {:+}: outside {outside:.2}, moved {moved:.2}, off the middle {off:.2}", f.voice, f.band);
+    }
+    let mut notes: Vec<f32> = tune.iter().copied().filter(|v| *v > 1.0).collect();
+    notes.sort_by(|a, b| a.total_cmp(b));
+    let at = |q: f32| svc::note_name(notes[((notes.len() - 1) as f32 * q) as usize]);
+    println!("  the tune at 1, 5, 50, 95, 99%: {} {} {} {} {}", at(0.01), at(0.05), at(0.5), at(0.95), at(0.99));
+    let mut sung: Vec<f32> = like.conv.pitch_track(&all).unwrap().into_iter().filter(|v| *v > 1.0).collect();
+    sung.sort_by(|a, b| a.total_cmp(b));
+    let at = |q: f32| svc::note_name(sung[((sung.len() - 1) as f32 * q) as usize]);
+    println!("  their singing at 1, 5, 50, 95, 99%: {} {} {} {} {}", at(0.01), at(0.05), at(0.5), at(0.95), at(0.99));
+    if std::env::var("SULCUSAI_ONLY").is_ok_and(|o| o == "fit") {
+        return;
+    }
+    let mut files: Vec<_> = std::fs::read_dir(r"C:\dev\tools\voice\keys").unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect();
+    files.sort();
+    for file in files {
+        let (samples, rate, channels) = crate::media::audio_in::decode(&file).unwrap();
+        let ch = channels.max(1) as usize;
+        let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+        let mix = stems::Stereo { rate, ch: [mono.clone(), mono] }.resampled(stems::RATE);
+        let (parts, _) = stems::separate(&like.dll, &like.separator, &mix, 8, &[3], like.card, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        stems::unload();
+        let p = like.print(&stems::resample(&parts[0].mono(), stems::RATE, svc::RATE));
+        let cos = |q: &[f32]| p.iter().zip(q).map(|(a, b)| a * b).sum::<f32>();
+        println!("{}: against their reading {:.2}, against their held note {:.2}", file.file_stem().unwrap().to_string_lossy(), cos(&by_reading), cos(&by_hold));
+    }
+}
+
+/// Where the music model puts a man's voice, and whether it can be moved:
+/// the same words and seed sung as "male", as a baritone, as a deep
+/// baritone, and as "male" in keys 3 and 5 semitones lower. Prints each
+/// voice's range (taken out of the band) and the words Whisper hears; the
+/// songs go to C:\dev\tools\voice\register.
+///     cargo test e2e_singer_register -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_singer_register() {
+    use crate::media::{self, music, stems, store, svc, MusicSpec, Request};
+    let state = media_state();
+    let c = state.work_cipher().unwrap();
+    let model = std::env::var("SULCUSAI_MUSIC_MODEL").unwrap_or_else(|_| "ace-step-1.5-xl".into());
+    media::install_for_test(&state, &model).await.unwrap();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
+    let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
+    let mut conv = svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
+    let sep = state.paths.models.join("media").join("helpers").join("htdemucs_fp16weights.onnx");
+    let out = std::path::PathBuf::from(r"C:\dev\tools\voice\register");
+    std::fs::create_dir_all(&out).unwrap();
+    let lyrics = "[Verse 1]\nMorning light on the window\nCoffee warm in my hands\nEvery road is a new start\nI can feel it again\n\n[Chorus]\nSing it loud, let it carry\nOver rooftops and trees\nSing it loud, let it carry\nAll the way back to me";
+    let wanted = sung_words(lyrics);
+    let prompt = "A warm pop song about a fresh start, acoustic guitar, light drums, catchy chorus";
+    let seed = 5i64;
+    let (_, base_key, _) = music::settle(prompt, None, None, None, seed);
+    let down = |semis: i32| {
+        const NOTES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        let (root, mode) = base_key.split_once(' ').unwrap();
+        let at = NOTES.iter().position(|n| *n == root).unwrap() as i32;
+        format!("{} {mode}", NOTES[(at - semis).rem_euclid(12) as usize])
+    };
+    let only = std::env::var("SULCUSAI_ONLY").unwrap_or_default();
+    let cases: Vec<(&str, &str, String)> = vec![
+        ("male", "male", base_key.clone()),
+        ("baritone", "baritone male", base_key.clone()),
+        ("deep-baritone", "deep low baritone male", base_key.clone()),
+        ("male-key-3", "male", down(3)),
+        ("male-key-5", "male", down(5)),
+        ("baritone-key-5", "baritone male", down(5)),
+    ];
+    let mut rows = Vec::new();
+    for (name, voice, key) in cases.into_iter().filter(|c| only.is_empty() || only.split(',').any(|o| o == c.0)) {
+        let spec = MusicSpec { voice: Some(voice.into()), key: Some(key.clone()), ..Default::default() };
+        let t = std::time::Instant::now();
+        let song = media::run(&state, store::new_id(), Request { op: "music".into(), model_id: Some(model.clone()), prompt: prompt.into(), lyrics: Some(lyrics.into()), seconds: Some(60.0), seed: Some(seed), language: Some("en".into()), music: Some(spec), ..Default::default() }).await.unwrap().remove(0);
+        let file = out.join(format!("{name}.mp3"));
+        std::fs::write(&file, store::read(&state.paths, &c, &song.id).unwrap()).unwrap();
+        let took = t.elapsed().as_secs_f64();
+        let (samples, rate, channels) = crate::media::audio_in::decode(&file).unwrap();
+        let ch = channels.max(1) as usize;
+        let mono: Vec<f32> = samples.chunks(ch).map(|f| f.iter().sum::<f32>() / ch as f32).collect();
+        let mix = stems::Stereo { rate, ch: [mono.clone(), mono] }.resampled(stems::RATE);
+        let (parts, _) = stems::separate(&dll, &sep, &mix, 8, &[3], card, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        stems::unload();
+        let f0 = conv.pitch_track(&stems::resample(&parts[0].mono(), stems::RATE, svc::RATE)).unwrap();
+        let (heard, _) = heard_words(&whisper_hears(&state, &file, Some("en")));
+        let got = wanted.iter().filter(|w| sung_words(&heard).contains(*w)).count();
+        let range = svc::range_of(&f0).map(|(lo, hi)| format!("{} to {}", svc::note_name(lo), svc::note_name(hi))).unwrap_or_default();
+        let middle = median_note(&f0);
+        rows.push(format!("{name} ({voice}, {key}): {took:.0} s; voice {range}, middle {middle}; {got} of {} words", wanted.len()));
+        println!("{}", rows.last().unwrap());
+    }
+    println!("\n{}", rows.join("\n"));
+}
+
+/// The live voice changer's work, half a second at a time, on the card: a
+/// natural voice reading a sentence is turned into the installed app's
+/// recorded voice (read only). Prints how long each half second took (it
+/// has to be under half a second to keep up) and writes what came out to
+/// C:\dev\tools\voice\live.
+///     cargo test e2e_live_voice_keeps_up -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_live_voice_keeps_up() {
+    use crate::media::{own_voice, stems, svc};
+    let state = media_state();
+    let real = Paths::new(app_data_dir()).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(&real.db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let vault = crate::crypto::Vault::open(&real.data.join("keys.json"), crate::crypto::platform_protector(&real.data)).unwrap();
+    let rc = vault.work_cipher().expect("the app's data key is locked with a password");
+    let voice = own_voice::list(&conn, &rc).into_iter().next().expect("a recorded voice");
+    let (reading, _) = own_voice::speech_reference(&real, &rc, &voice).unwrap();
+    let reference: Vec<f32> = stems::resample(&reading, own_voice::TTS_RATE, svc::RATE).into_iter().take(svc::RATE as usize * 4).collect();
+    crate::natural::install_for_test(&state).await.unwrap();
+    let said = crate::natural::synthesize("Good morning! I'd like a large coffee and two blueberry muffins, please. Thanks so much.", "M1", Some("en"), 1.0).unwrap();
+    let input = stems::resample(&said.samples.iter().map(|s| *s as f32 / 32768.0).collect::<Vec<_>>(), said.rate, svc::RATE);
+    let rt = real.engines.join("onnxruntime-1.30.0-cuda13");
+    let dll = [rt.join("onnxruntime.dll"), real.engines.join("onnxruntime-1.30.0-cpu-x64").join("onnxruntime.dll")].into_iter().find(|p| p.is_file()).unwrap();
+    let card = dll.to_string_lossy().contains("cuda13").then_some(crate::natural::Card { device: 0, dml: false });
+    let mut conv = svc::Converter::new(&dll, &state.paths.models.join("media").join("own-voice-sing"), 8, card).unwrap();
+    let v = conv.voice(&reference).unwrap();
+    let settings = svc::Settings { steps: 6, cfg: 0.7, semitones: 0, seed: 7 };
+    let mut noise = svc::Noise::new(7);
+    use crate::media::live_voice::{BLOCK as block, CONTEXT as context, FADE as fade};
+    conv.convert_live(&v, &vec![0.0; context + block + fade], block + fade, settings, &mut noise).unwrap();
+    let mut heard: Vec<f32> = Vec::new();
+    let (mut tail, mut out, mut took) = (Vec::new(), Vec::new(), Vec::new());
+    for chunk in input.chunks(block) {
+        heard.extend_from_slice(chunk);
+        let keep = context + block + fade;
+        let mut window = vec![0.0; keep.saturating_sub(heard.len())];
+        window.extend_from_slice(&heard[heard.len().saturating_sub(keep)..]);
+        let t = std::time::Instant::now();
+        let piece = conv.convert_live(&v, &window, block + fade, settings, &mut noise).unwrap();
+        took.push(t.elapsed().as_millis() as u64);
+        out.extend(crate::media::live_voice::join(&mut tail, &piece));
+    }
+    let dir = std::path::PathBuf::from(r"C:\dev\tools\voice\live");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("said.wav"), crate::audio::wav_encode(&input, svc::RATE)).unwrap();
+    std::fs::write(dir.join("in-your-voice.wav"), crate::audio::wav_encode(&out, svc::RATE)).unwrap();
+    let mut sorted = took.clone();
+    sorted.sort();
+    let ms = (block * 1000 / svc::RATE as usize) as u64;
+    let (words, _) = heard_words(&whisper_hears(&state, &dir.join("in-your-voice.wav"), Some("en")));
+    println!("each {ms} ms piece took {took:?} ms (middle {} ms, on the card: {}); heard: {words}", sorted[sorted.len() / 2], conv.on_card);
+    assert!(sorted[sorted.len() / 2] < ms * 3 / 4, "it can't keep up with room to spare");
+}
+
+/// The wake word heard the way the app hears it: a natural voice says a few
+/// things, the live speech model writes them down with the phrase as its
+/// hint, and only the ones with the phrase wake it.
+///     cargo test e2e_the_wake_word_is_heard -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_the_wake_word_is_heard() {
+    let state = media_state();
+    crate::natural::install_for_test(&state).await.unwrap();
+    let small = state.catalog.speech.models.iter().find(|m| m.id == "whisper-small").unwrap().clone();
+    crate::speech::install_for_test(&state, &small, &std::sync::atomic::AtomicBool::new(false)).await.unwrap();
+    let ep = crate::speech::endpoint(&state, crate::speech::Use::Live).await.expect("a speech model is installed");
+    let opts = crate::speech::Options { prompt: Some("Hey Sulcus".into()), ..Default::default() };
+    for (words, wakes) in [("Hey Sulcus.", true), ("Hey Sulcus, what's on my calendar today?", true), ("Hey Siri.", false), ("Thanks, that's all for now.", false), ("Hey, so, listen.", false)] {
+        let said = crate::natural::synthesize(words, "M1", Some("en"), 1.0).unwrap();
+        let samples = crate::audio::resample(&said.samples.iter().map(|s| *s as f32 / 32768.0).collect::<Vec<_>>(), said.rate, crate::audio::RATE);
+        let heard = crate::speech::transcribe(&ep, &samples, &opts).await.unwrap().text;
+        let woke = crate::wake::said(&heard, "Hey Sulcus");
+        println!("{words:?} heard as {heard:?}: {}", if woke { "wakes" } else { "doesn't wake" });
+        assert_eq!(woke, wakes, "{words}");
+    }
 }

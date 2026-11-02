@@ -339,3 +339,12 @@ export function FullCircleIcon(p: IconProps) {
     </Icon>
   );
 }
+
+/** A chat protected with the PIN. */
+export function ShieldIcon(p: IconProps) {
+  return (
+    <Icon {...p}>
+      <path d="M12 3l7 3v5c0 4.5-3 8.2-7 10-4-1.8-7-5.5-7-10V6l7-3z" />
+    </Icon>
+  );
+}

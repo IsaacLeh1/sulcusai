@@ -163,7 +163,7 @@ fn list_for(state: &AppState, c: &Cipher, contact: &str, turn: Option<(&str, boo
             .iter()
             .filter(|s| s.with.iter().any(|w| w == contact))
             .filter_map(|s| db::chat(&conn, c, &s.chat_id))
-            .filter(|ch| !ch.incognito)
+            .filter(|ch| !ch.incognito && !ch.protected)
             .collect()
     };
     let mut list: Vec<SharedChat> = chats.iter().map(|ch| summary(state, ch, turn.filter(|t| t.0 == ch.id).map(|t| t.1))).collect();
@@ -206,7 +206,7 @@ pub(super) fn messages_of(state: &AppState, c: &Cipher, chat_id: &str) -> Vec<Sh
 }
 
 fn snapshot_of(state: &AppState, c: &Cipher, chat_id: &str) -> Option<Frame> {
-    let chat = db::chat(&state.db.lock().unwrap(), c, chat_id).filter(|ch| !ch.incognito)?;
+    let chat = db::chat(&state.db.lock().unwrap(), c, chat_id).filter(|ch| !ch.incognito && !ch.protected)?;
     Some(Frame::Snapshot { chat: summary(state, &chat, None), messages: messages_of(state, c, chat_id) })
 }
 

@@ -54,9 +54,9 @@ impl Drop for Asked {
     }
 }
 
-/// The user's other chats: not incognito, not empty, not this one.
+/// The user's other chats: not incognito, not protected, not empty, not this one.
 fn others(conn: &rusqlite::Connection, c: &Cipher, this: &str) -> Vec<Chat> {
-    db::list_chats(conn, c).into_iter().filter(|ch| ch.id != this && !ch.incognito && db::message_count(conn, &ch.id) > 0).collect()
+    db::list_chats(conn, c).into_iter().filter(|ch| ch.id != this && !ch.incognito && !ch.protected && db::message_count(conn, &ch.id) > 0).collect()
 }
 
 /// A chat by id, exact title, or the only title containing it.

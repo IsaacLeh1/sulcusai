@@ -84,8 +84,9 @@ pub struct Converter {
     open: HashMap<&'static str, (Session, bool)>,
     /// Every piece run so far ran on the graphics card.
     pub on_card: bool,
-    /// The last audio's pitch: its length, first sample and the pitch.
-    pitch_of: Option<(usize, f32, Vec<f32>)>,
+    /// The last audio's pitch, by a fingerprint of the whole sound: songs
+    /// of the same length that start in silence are told apart.
+    pitch_of: Option<(u64, Vec<f32>)>,
 }
 
 /// The most each piece may take on the graphics card (past it, that piece
@@ -196,8 +197,9 @@ impl Converter {
     /// took gigabytes of the card. The last song's is kept, as the song's
     /// middle pitch is asked for before it's converted.
     fn pitch(&mut self, w16: &[f32]) -> Result<Vec<f32>, String> {
-        if let Some((len, first, f0)) = &self.pitch_of {
-            if *len == w16.len() && w16.first() == Some(first) {
+        let print = fingerprint(w16);
+        if let Some((known, f0)) = &self.pitch_of {
+            if *known == print {
                 return Ok(f0.clone());
             }
         }
@@ -225,9 +227,7 @@ impl Converter {
             f0.resize(frames, 0.0);
             f0
         };
-        if let Some(&first) = w16.first() {
-            self.pitch_of = Some((w16.len(), first, f0.clone()));
-        }
+        self.pitch_of = Some((print, f0.clone()));
         Ok(f0)
     }
 
@@ -264,6 +264,13 @@ impl Converter {
     pub fn middle_pitch_of(&mut self, sung: &[f32]) -> Result<f32, String> {
         let w16 = stems::resample(sung, RATE, 16_000);
         Ok(middle_pitch(&self.pitch(&w16)?))
+    }
+
+    /// The pitch of sung audio (44.1 kHz) every 10 ms, in Hz (0 where
+    /// there's none).
+    pub fn pitch_track(&mut self, sung: &[f32]) -> Result<Vec<f32>, String> {
+        let w16 = stems::resample(sung, RATE, 16_000);
+        self.pitch(&w16)
     }
 
     /// A sung part (44.1 kHz mono) in the person's voice; `progress` gets
@@ -339,6 +346,33 @@ impl Converter {
         progress(1.0);
         out.resize(sung.len(), 0.0);
         Ok(out)
+    }
+
+    /// The end of a short stretch of live speech (44.1 kHz) in the voice:
+    /// `window` is what was just said with a little before it (so the end
+    /// has its context), and the last `keep` samples come back. Nothing is
+    /// closed between calls, as a song's conversion does.
+    pub fn convert_live(&mut self, voice: &Voice, window: &[f32], keep: usize, s: Settings, noise: &mut Noise) -> Result<Vec<f32>, String> {
+        let w16 = stems::resample(window, RATE, 16_000);
+        let (n, content) = self.content(&w16)?;
+        let mut f0 = self.pitch(&w16)?;
+        if s.semitones != 0 {
+            let k = 2f32.powf(s.semitones as f32 / 12.0);
+            f0.iter_mut().filter(|v| **v > VOICED).for_each(|v| *v *= k);
+        }
+        let frames = self.run("mel44.onnx", vec![("wave", vec![1, window.len() as i64], window.to_vec())])?.len() / MELS;
+        let cond = self.regulate(&content, n, &f0, frames)?;
+        let x: Vec<f32> = (0..MELS * (voice.frames + frames)).map(|_| noise.normal()).collect();
+        let mel = self.sample(voice, &cond, frames, s, x, &AtomicBool::new(false), &|_| {})?;
+        // Only the end is heard: the vocoder gets it with a little before it,
+        // enough for its own context (it took most of the time on a whole window).
+        let tail = (keep.div_ceil(HOP) + OVERLAP).min(frames);
+        let mut end = Vec::with_capacity(MELS * tail);
+        for m in 0..MELS {
+            end.extend_from_slice(&mel[m * frames + frames - tail..(m + 1) * frames]);
+        }
+        let wave = self.run("bigvgan.onnx", vec![("mel", vec![1, MELS as i64, tail as i64], end)])?;
+        Ok(wave[wave.len().saturating_sub(keep)..].to_vec())
     }
 
     /// One window's mel spectrogram (`frames` of the song), the person's
@@ -462,6 +496,11 @@ fn decode_pitch(salience: &[f32], threshold: f32) -> Vec<f32> {
         .collect()
 }
 
+/// FNV-1a over the samples' bits and the length.
+fn fingerprint(w: &[f32]) -> u64 {
+    w.iter().fold(0xcbf2_9ce4_8422_2325 ^ w.len() as u64, |h, s| (h ^ s.to_bits() as u64).wrapping_mul(0x0100_0000_01b3))
+}
+
 fn middle_pitch(f0: &[f32]) -> f32 {
     let mut v: Vec<f32> = f0.iter().copied().filter(|x| *x > VOICED).collect();
     if v.is_empty() {
@@ -471,8 +510,90 @@ fn middle_pitch(f0: &[f32]) -> f32 {
     v[v.len() / 2]
 }
 
+/// The notes a pitch track spans (Hz), low and high, leaving out the
+/// lowest and highest 5% of what's voiced: a crack, a breath or a wrong
+/// reading of the pitch shouldn't stretch a singer's range.
+pub fn range_of(f0: &[f32]) -> Option<(f32, f32)> {
+    let mut v: Vec<f32> = f0.iter().copied().filter(|x| *x > VOICED).collect();
+    if v.len() < 20 {
+        return None;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    Some((v[v.len() / 20], v[v.len() - 1 - v.len() / 20]))
+}
+
+/// A pitch as a note name ("A3", "C#4").
+pub fn note_name(hz: f32) -> String {
+    const NAMES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    if hz <= VOICED {
+        return "-".into();
+    }
+    let midi = (69.0 + 12.0 * (hz / 440.0).log2()).round() as i32;
+    format!("{}{}", NAMES[midi.rem_euclid(12) as usize], midi.div_euclid(12) - 1)
+}
+
+/// Where a song goes for a singer: semitones for its voice, and for the
+/// band (all but the drums) when the song's key has to change too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fit {
+    pub voice: i32,
+    pub band: i32,
+}
+
+/// What moving the band costs, against singing outside the person's range
+/// (squared semitones, over the whole tune): something to move it at all,
+/// so a song that nearly fits isn't put through the phase vocoder for a
+/// semitone; then little a semitone, as a song moved five semitones kept
+/// its words and likeness as well as one left alone, but of two keys as
+/// good, the nearer.
+const BAND_MOVED: f32 = 0.1;
+const BAND_MOVE: f32 = 0.05;
+/// What a tune sitting off the middle of the person's range costs, a
+/// semitone at a time past the first two: of the keys that fit, the one
+/// that uses their range rather than hugging its bottom or top, with no
+/// move made for a semitone or two.
+const OFF_MIDDLE: f32 = 0.15;
+const MIDDLE_EASE: f32 = 2.0;
+
+/// The key a song is sung in by the person: whole octaves for the voice and
+/// up to five semitones up or down for the whole song, chosen so the tune
+/// (its pitch track) stays inside the person's sung range, as a singer
+/// asks for a song in their key. Notes outside the range count by the
+/// square of how far out they are (three semitones over is far worse than
+/// one), over the whole tune, so a chorus's few high notes weigh less than
+/// every line of the verses. Moving by octaves alone left a man's song
+/// four semitones over a baritone's top or three under the bottom, and the
+/// notes the singer never sang came out made up.
+pub fn fit_key(tune: &[f32], person: (f32, f32)) -> Fit {
+    key_costs(tune, person).into_iter().min_by(|a, b| a.1.iter().sum::<f32>().total_cmp(&b.1.iter().sum())).map_or(Fit { voice: 0, band: 0 }, |(f, _)| f)
+}
+
+/// Each key `fit_key` weighs, with what it costs: notes sung outside the
+/// range, the band moved, and the tune off the range's middle.
+pub fn key_costs(tune: &[f32], person: (f32, f32)) -> Vec<(Fit, [f32; 3])> {
+    let notes: Vec<f32> = tune.iter().copied().filter(|x| *x > VOICED).map(|hz| 12.0 * (hz / 440.0).log2()).collect();
+    if notes.is_empty() || person.0 <= VOICED || person.1 <= person.0 {
+        return Vec::new();
+    }
+    let (low, high) = (12.0 * (person.0 / 440.0).log2(), 12.0 * (person.1 / 440.0).log2());
+    let mut sorted = notes.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let tune_middle = sorted[sorted.len() / 2];
+    let person_middle = (low + high) / 2.0;
+    (-2..=2)
+        .flat_map(|k: i32| (-5..=5).map(move |b: i32| (k, b)))
+        .map(|(octaves, band)| {
+            let t = (12 * octaves + band) as f32;
+            let outside = notes.iter().map(|n| ((low - n - t).max(0.0) + (n + t - high).max(0.0)).powi(2)).sum::<f32>() / notes.len() as f32;
+            let moved = if band == 0 { 0.0 } else { BAND_MOVED + BAND_MOVE * band.abs() as f32 };
+            let off = OFF_MIDDLE * ((tune_middle + t - person_middle).abs() - MIDDLE_EASE).max(0.0);
+            (Fit { voice: 12 * octaves + band, band }, [outside, moved, off])
+        })
+        .collect()
+}
+
 /// Semitones (whole octaves) that bring a song's tune nearest the person's
-/// voice: a man singing a woman's song an octave down, and the other way.
+/// voice by its middle, when there's no sung range to fit it to.
 pub fn octave_shift(song: f32, person: f32) -> i32 {
     if song <= VOICED || person <= VOICED {
         return 0;
@@ -494,13 +615,13 @@ fn crossfade(prev: &[f32], next: &mut [f32]) {
 }
 
 /// Gaussian noise for the flow's start (xorshift and Box-Muller).
-struct Noise {
+pub struct Noise {
     state: u64,
     spare: Option<f32>,
 }
 
 impl Noise {
-    fn new(seed: u64) -> Noise {
+    pub fn new(seed: u64) -> Noise {
         Noise { state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1, spare: None }
     }
 
@@ -526,6 +647,47 @@ impl Noise {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn songs_are_fitted_to_the_singers_range() {
+        let hz = |midi: f32| 440.0 * 2f32.powf((midi - 69.0) / 12.0);
+        // A tune: mostly the verse's notes, a few chorus peaks, and rests.
+        let tune = |verse: std::ops::Range<i32>, peak: f32| -> Vec<f32> {
+            let mut t: Vec<f32> = verse.flat_map(|n| std::iter::repeat_n(hz(n as f32), 20)).collect();
+            t.extend(std::iter::repeat_n(hz(peak), 8));
+            t.extend([0.0; 30]);
+            t
+        };
+        let baritone = (hz(45.0), hz(63.0));
+        // A man's song (verses F#3 to D#4, a chorus peak at G#4) for a
+        // baritone (A2 to D#4): the whole song a few semitones down, so its
+        // peak is the baritone's top; an octave down would put every verse
+        // under the lowest notes.
+        let f = fit_key(&tune(54..64, 68.0), baritone);
+        assert_eq!(f.voice, f.band, "{f:?}");
+        assert!((-5..=-3).contains(&f.band), "{f:?}");
+        assert_eq!(octave_shift(hz(56.0), hz(50.0)), -12, "the middles alone went down");
+        // A woman (A3 to F5) singing that man's song: an octave up.
+        let f = fit_key(&tune(54..64, 66.0), (hz(57.0), hz(77.0)));
+        assert_eq!(f.voice - f.band, 12, "{f:?}");
+        // A woman's song (A3 to D5) for that baritone: an octave down.
+        let f = fit_key(&tune(57..72, 74.0), baritone);
+        assert_eq!(f.voice - f.band, -12, "{f:?}");
+        // A song already in the middle of the range stays as it is.
+        assert_eq!(fit_key(&tune(48..58, 60.0), baritone), Fit { voice: 0, band: 0 });
+        assert_eq!(fit_key(&[0.0; 10], baritone), Fit { voice: 0, band: 0 });
+    }
+
+    #[test]
+    fn a_range_leaves_out_the_odd_note() {
+        // Mostly between 100 and 200 Hz, with a crack at 600 and silence.
+        let mut f0: Vec<f32> = (0..100).map(|i| 100.0 + i as f32).collect();
+        f0.extend([600.0, 0.0, 0.0]);
+        let (lo, hi) = range_of(&f0).unwrap();
+        assert!((104.0..=106.0).contains(&lo) && (194.0..=196.0).contains(&hi), "{lo} {hi}");
+        assert_eq!(range_of(&[0.0; 50]), None);
+        assert_eq!((note_name(440.0).as_str(), note_name(130.81).as_str(), note_name(277.18).as_str()), ("A4", "C3", "C#4"));
+    }
 
     #[test]
     fn nearest_frames_follow_torch() {

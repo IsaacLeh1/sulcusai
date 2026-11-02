@@ -12,9 +12,26 @@ export const LANGUAGES: { code: string; name: string }[] = [
   { code: "fr", name: "Français" },
   { code: "de", name: "Deutsch" },
   { code: "pt", name: "Português" },
-  { code: "zh", name: "中文" },
+  { code: "it", name: "Italiano" },
+  { code: "nl", name: "Nederlands" },
+  { code: "sv", name: "Svenska" },
+  { code: "pl", name: "Polski" },
+  { code: "tr", name: "Türkçe" },
+  { code: "ru", name: "Русский" },
+  { code: "uk", name: "Українська" },
+  { code: "id", name: "Bahasa Indonesia" },
+  { code: "vi", name: "Tiếng Việt" },
+  { code: "th", name: "ไทย" },
+  { code: "hi", name: "हिन्दी" },
+  { code: "zh", name: "简体中文" },
+  { code: "zh-TW", name: "繁體中文" },
   { code: "ja", name: "日本語" },
+  { code: "ko", name: "한국어" },
 ];
+
+/** Languages whose table was made by a model on this PC and not yet
+ * read through by a native speaker; the picker says so. */
+export const MACHINE_MADE = new Set(["it", "nl", "sv", "pl", "tr", "ru", "uk", "id", "vi", "th", "hi", "zh-TW", "ko"]);
 
 type Table = Record<string, string>;
 
@@ -23,8 +40,21 @@ const loaders: Record<string, () => Promise<{ default: Table }>> = {
   fr: () => import("./locales/fr.json"),
   de: () => import("./locales/de.json"),
   pt: () => import("./locales/pt.json"),
+  it: () => import("./locales/it.json"),
+  nl: () => import("./locales/nl.json"),
+  sv: () => import("./locales/sv.json"),
+  pl: () => import("./locales/pl.json"),
+  tr: () => import("./locales/tr.json"),
+  ru: () => import("./locales/ru.json"),
+  uk: () => import("./locales/uk.json"),
+  id: () => import("./locales/id.json"),
+  vi: () => import("./locales/vi.json"),
+  th: () => import("./locales/th.json"),
+  hi: () => import("./locales/hi.json"),
   zh: () => import("./locales/zh.json"),
+  "zh-TW": () => import("./locales/zh-TW.json"),
   ja: () => import("./locales/ja.json"),
+  ko: () => import("./locales/ko.json"),
 };
 
 const STORE = "sulcus.language";
@@ -33,7 +63,10 @@ let table: Table = {};
 const listeners = new Set<() => void>();
 
 function systemLanguage(): string {
-  const code = (navigator.language || "en").slice(0, 2).toLowerCase();
+  const full = (navigator.language || "en").toLowerCase();
+  // Taiwan, Hong Kong and Macau write Chinese in traditional characters.
+  if (/^zh-(tw|hk|mo|hant)/.test(full)) return "zh-TW";
+  const code = full.slice(0, 2);
   return LANGUAGES.some((l) => l.code === code) ? code : "en";
 }
 

@@ -119,6 +119,20 @@ pub fn settle(caption: &str, bpm: Option<u32>, key: Option<&str>, time_signature
     (bpm, key, time)
 }
 
+/// A key moved by semitones ("A minor" up 3 is "C minor"); one it can't
+/// read stays as it was.
+pub fn moved_key(key: &str, semitones: i32) -> String {
+    const SHARPS: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    const FLATS: [&str; 12] = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+    let key = key.trim();
+    let (root, rest) = key.split_at(key.find(char::is_whitespace).unwrap_or(key.len()));
+    let at = SHARPS.iter().position(|n| n.eq_ignore_ascii_case(root)).or_else(|| FLATS.iter().position(|n| n.eq_ignore_ascii_case(root)));
+    match at {
+        Some(i) if semitones != 0 => format!("{}{rest}", SHARPS[(i as i32 + semitones).rem_euclid(12) as usize]),
+        _ => key.to_string(),
+    }
+}
+
 /// The parts the music engine knows by name, for adding, taking out or
 /// completing ("vocals", "drums"…).
 pub const PARTS: &[&str] = &["vocals", "backing_vocals", "drums", "bass", "guitar", "keyboard", "percussion", "strings", "synth", "fx", "brass", "woodwinds"];
@@ -415,6 +429,16 @@ pub(crate) fn decoded_secs(line: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_move_by_semitones() {
+        assert_eq!(moved_key("A minor", 3), "C minor");
+        assert_eq!(moved_key("C major", -4), "G# major");
+        assert_eq!(moved_key("Bb major", 2), "C major");
+        assert_eq!(moved_key("G", -5), "D");
+        assert_eq!(moved_key("whatever key", 2), "whatever key");
+        assert_eq!(moved_key("E minor", 0), "E minor");
+    }
 
     #[test]
     fn follows_both_runs() {

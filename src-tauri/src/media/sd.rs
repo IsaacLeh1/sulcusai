@@ -147,6 +147,8 @@ pub struct Clip<'a> {
     pub init: Option<&'a Path>,
     /// The voice it moves its lips to (Wan 2.2 S2V), a WAV file.
     pub audio: Option<&'a Path>,
+    /// The picture the clip ends on (with `init`, the one it starts on).
+    pub end: Option<&'a Path>,
     pub out: &'a Path,
 }
 
@@ -242,6 +244,9 @@ pub fn clip_args(files: &[(String, PathBuf)], d: &Defaults, c: &Clip<'_>, l: &Li
         if with_sound(files) {
             a.extend(["--strength".into(), "1.0".into()]);
         }
+    }
+    if let Some(e) = c.end {
+        a.extend(["--end-img".into(), e.into()]);
     }
     if let Some(v) = c.audio {
         a.extend(["--audio".into(), v.into()]);
@@ -414,7 +419,7 @@ mod tests {
         ];
         let d = Defaults { steps: 8, cfg: 1.0, sampler: "euler".into(), sigmas: "1.0,0.5,0.0".into(), temporal_tiling: true, ..Default::default() };
         let (start, out) = (PathBuf::from("start.png"), PathBuf::from("out.webm"));
-        let c = Clip { prompt: "a crowd cheers", negative: None, width: 768, height: 512, frames: 121, fps: 24, steps: 8, seed: 1, init: Some(&start), audio: None, out: &out };
+        let c = Clip { prompt: "a crowd cheers", negative: None, width: 768, height: 512, frames: 121, fps: 24, steps: 8, seed: 1, init: Some(&start), audio: None, end: None, out: &out };
         let joined = clip_args(&files, &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(with_sound(&files));
         assert!(joined.contains("--embeddings-connectors conn.st") && joined.contains("--audio-vae a.st") && joined.contains("--llm gemma.gguf"), "{joined}");
@@ -447,19 +452,24 @@ mod tests {
         ];
         let d = Defaults { steps: 10, cfg: 3.5, sampler: "euler".into(), flow_shift: 3.0, ..Default::default() };
         let out = PathBuf::from("out.webm");
-        let c = Clip { prompt: "a fox", negative: None, width: 832, height: 480, frames: 49, fps: 16, steps: 10, seed: 1, init: None, audio: None, out: &out };
+        let c = Clip { prompt: "a fox", negative: None, width: 832, height: 480, frames: 49, fps: 16, steps: 10, seed: 1, init: None, audio: None, end: None, out: &out };
         let joined = clip_args(&files, &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(joined.contains("--diffusion-model low.gguf --high-noise-diffusion-model high.gguf"), "{joined}");
         assert!(joined.contains("--steps 10") && joined.contains("--high-noise-cfg-scale 3.5 --high-noise-sampling-method euler --high-noise-steps 8"), "{joined}");
         let one = clip_args(&files[..1], &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(!one.contains("high-noise"), "one stage: no high-noise settings");
+        assert!(!joined.contains("--end-img"));
+        let (start, end) = (PathBuf::from("start.png"), PathBuf::from("end.png"));
+        let both = Clip { init: Some(&start), end: Some(&end), ..c };
+        let joined = clip_args(&files, &d, &both, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert!(joined.contains("-i start.png") && joined.contains("--end-img end.png"), "{joined}");
     }
 
     #[test]
     fn clips_decode_in_lightly_overlapping_tiles() {
         let d = Defaults { steps: 25, cfg: 5.0, temporal_tiling: true, ..Default::default() };
         let out = PathBuf::from("out.webm");
-        let c = Clip { prompt: "a fox", negative: None, width: 1280, height: 704, frames: 121, fps: 24, steps: 25, seed: 1, init: None, audio: None, out: &out };
+        let c = Clip { prompt: "a fox", negative: None, width: 1280, height: 704, frames: 121, fps: 24, steps: 25, seed: 1, init: None, audio: None, end: None, out: &out };
         let joined = clip_args(&[], &d, &c, &Limits::default()).iter().map(|s| s.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         assert!(joined.contains("-W 1280 -H 704 --video-frames 121"));
         assert!(joined.contains("--vae-tiling --vae-tile-overlap 0.25 --vae-conv-direct") && joined.contains("--temporal-tiling"));

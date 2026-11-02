@@ -451,7 +451,7 @@ pub(super) fn shared_text(state: &AppState, c: &Cipher, contact: &str) -> String
     let ids: Vec<String> = book(&state.db.lock().unwrap()).shares.iter().filter(|s| s.with.iter().any(|w| w == contact)).map(|s| s.chat_id.clone()).collect();
     let mut out = String::new();
     for id in ids {
-        let Some(chat) = db::chat(&state.db.lock().unwrap(), c, &id).filter(|ch| !ch.incognito) else { continue };
+        let Some(chat) = db::chat(&state.db.lock().unwrap(), c, &id).filter(|ch| !ch.incognito && !ch.protected) else { continue };
         let msgs = db::messages(&state.db.lock().unwrap(), c, &id);
         let mut part = format!("\n### Shared chat: {}\n", chat.title);
         let me = my_name(state);

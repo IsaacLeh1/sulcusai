@@ -5,11 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { ThemePicker } from "../components/ThemePicker";
 import { api, errorText, type AppInfo, type Connectivity, type FeatureId, type Profile, type SearchProvider, type SecurityStatus, type WebSettings, type BrowsersView, type BrowserSearch, type MainBrowser, type SavedSiteKey } from "../api";
 import { APP_NAME } from "../brand";
-import { chosenLanguage, LANGUAGES, setLanguage, t, tx } from "../i18n";
+import { chosenLanguage, language as currentLanguage, LANGUAGES, MACHINE_MADE, setLanguage, t, tx } from "../i18n";
 import { CloudConfirm, LEVELS } from "../components/ConnectivityMenu";
 import { SecuritySection } from "../components/Security";
 import { FoldersSection } from "../components/AgentCards";
 import { SignInApps } from "../components/SignIn";
+import { CloudFiles } from "../components/CloudFiles";
+import { WakeWord } from "../components/WakeWord";
 import { VoiceSection } from "../components/VoiceSettings";
 import { PerformanceSection } from "../components/Performance";
 import { PcCheck } from "../components/PcCheck";
@@ -22,6 +24,7 @@ import { CloudSettings } from "../components/CloudSettings";
 import { BackupSettings } from "../components/BackupSettings";
 import { SyncSettings } from "../components/SyncSettings";
 import { PhoneSettings } from "../components/PhoneSettings";
+import { TelegramSettings } from "../components/TelegramSettings";
 import { PortsSettings } from "../components/PortsSettings";
 import { HandoffSettings } from "../components/HandoffSettings";
 import { PermissionRules } from "../components/PermissionRules";
@@ -231,6 +234,7 @@ interface Props {
 
 export function SettingsView({ connectivity, onConnectivity, security, onSecurityChanged, features, toast, jump, onSection }: Props) {
   const [locating, setLocating] = useState(false);
+  const [language, setLanguageChoice] = useState(chosenLanguage());
   const [profile, setProfile] = useState<Profile | null>(null);
   const [saved, setSaved] = useState<Profile | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -338,7 +342,14 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
         <h2>{t("Language")}</h2>
         <label className="form small">
           {t("The app's language")}
-          <select className="input" defaultValue={chosenLanguage()} onChange={(e) => setLanguage(e.target.value)}>
+          <select
+            className="input"
+            value={language}
+            onChange={(e) => {
+              setLanguageChoice(e.target.value);
+              setLanguage(e.target.value);
+            }}
+          >
             <option value="system">{t("Same as Windows")}</option>
             {LANGUAGES.map((l) => (
               <option key={l.code} value={l.code}>
@@ -347,6 +358,9 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
             ))}
           </select>
         </label>
+        {MACHINE_MADE.has(language === "system" ? currentLanguage() : language) && (
+          <p className="muted small">{t("This language was translated by a language model and hasn't been checked by a native speaker yet, so some wording may be off.")}</p>
+        )}
         <p className="muted small">{t("The assistant answers in the language you write in, whatever this is set to.")}</p>
       </section>
 
@@ -427,6 +441,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-voice" className="settings-anchor" />
       {VOICE_FEATURES.some((f) => features.has(f)) && <VoiceSection toast={toast} />}
+      {features.has("voice_chat") && <WakeWord toast={toast} />}
 
       <span id="settings-performance" className="settings-anchor" />
       <PerformanceSection toast={toast} />
@@ -444,6 +459,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-sign-in" className="settings-anchor" />
       {(features.has("email") || features.has("calendar")) && <SignInApps toast={toast} />}
+      <CloudFiles toast={toast} />
 
       <span id="settings-connectivity" className="settings-anchor" />
       <section className="card">
@@ -480,6 +496,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
 
       <span id="settings-phone" className="settings-anchor" />
       <PhoneSettings toast={toast} />
+      <TelegramSettings toast={toast} />
 
       <span id="settings-backup" className="settings-anchor" />
       <BackupSettings toast={toast} />

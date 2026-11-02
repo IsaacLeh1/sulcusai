@@ -70,6 +70,7 @@ pub(crate) async fn status(state: &crate::AppState) -> Result<PcStatus, String> 
         for id in running {
             let title = match chats.iter().find(|ch| ch.id == id) {
                 Some(ch) if ch.incognito => "An incognito chat".to_string(),
+                Some(ch) if ch.protected => "A protected chat".to_string(),
                 Some(ch) => short(&ch.title),
                 None => "A chat".to_string(),
             };

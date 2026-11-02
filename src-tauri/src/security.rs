@@ -22,7 +22,7 @@ pub struct SecurityStatus {
 }
 
 /// Runs vault work (Argon2 takes a moment) off the async threads.
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     state: &Arc<AppState>,
     f: impl FnOnce(&AppState) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
@@ -30,7 +30,7 @@ async fn blocking<T: Send + 'static>(
     tauri::async_runtime::spawn_blocking(move || f(&state)).await.map_err(|e| e.to_string())?
 }
 
-fn hwnd_of(window: &WebviewWindow) -> Result<isize, String> {
+pub(crate) fn hwnd_of(window: &WebviewWindow) -> Result<isize, String> {
     #[cfg(windows)]
     {
         Ok(window.hwnd().map_err(|e| e.to_string())?.0 as isize)
@@ -167,6 +167,7 @@ pub fn lock_now(app: AppHandle, state: AppStateRef) -> Result<(), String> {
         }
     }
     state.contexts.lock().unwrap().clear();
+    crate::protected::shut_all();
     state.log("security", if keep_working { "Locked (work in progress keeps going)" } else { "Locked" });
     app.emit("security:locked", ()).ok();
     Ok(())

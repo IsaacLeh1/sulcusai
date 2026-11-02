@@ -6,6 +6,7 @@ import { CrashScreen } from "./components/CrashScreen";
 import { initLanguage, useLanguage } from "./i18n";
 import { initTheme } from "./theme";
 import "./styles.css";
+import "./styles-more.css";
 
 // The quick-ask window loads only what it needs.
 const App = lazy(() => import("./App"));

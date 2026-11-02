@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useState } from "react";
 import { open as openFile } from "@tauri-apps/plugin-dialog";
-import { api, errorText, type Lora } from "../api";
+import { api, errorText, on, type Lora } from "../api";
 import { t } from "../i18n";
 import { InfoTip } from "./InfoTip";
+import { TrainLora } from "./TrainLora";
 import type { PushToast } from "./Toasts";
 
 /** A picture model's family: which LoRAs fit it (media/loras.rs `family_of`). */
@@ -25,10 +26,19 @@ export function LoraField({ modelId, value, onChange, toast }: { modelId: string
   const [all, setAll] = useState<Lora[]>([]);
   const [families, setFamilies] = useState<[string, string][]>([]);
   const [editing, setEditing] = useState<Lora | null>(null);
+  const [training, setTraining] = useState(false);
   const load = useCallback(() => api.loras().then((v) => (setAll(v.loras ?? []), setFamilies(v.families ?? []))).catch(() => {}), []);
   useEffect(() => {
     load();
-  }, [load]);
+    // One trained on the person's photos joins the list when it's done.
+    const sub = on("media:lora_trained", (l) => {
+      load();
+      toast(t("“{name}” is ready: turn it on under Your LoRAs with RealVisXL.", { name: l.name }), "success");
+    });
+    return () => {
+      sub.then((un) => un());
+    };
+  }, [load, toast]);
   const family = loraFamily(modelId);
   const fits = all.filter((l) => l.family === family);
   const others = all.length - fits.length;
@@ -80,6 +90,7 @@ export function LoraField({ modelId, value, onChange, toast }: { modelId: string
           );
         })}
         <button className="btn small ghost" onClick={add}>{t("Add a LoRA…")}</button>
+        <button className="btn small ghost" onClick={() => setTraining(true)}>{t("Train one on your photos…")}</button>
       </div>
       {fits.length === 0 && (
         <span className="small muted">
@@ -87,6 +98,7 @@ export function LoraField({ modelId, value, onChange, toast }: { modelId: string
           {others > 0 ? ` ${t("{n} more are for other models.", { n: others })}` : ""}
         </span>
       )}
+      {training && <TrainLora onClose={() => setTraining(false)} onStarted={() => setTraining(false)} toast={toast} />}
       {editing && (
         <div className="lora-edit form">
           <label className="small">

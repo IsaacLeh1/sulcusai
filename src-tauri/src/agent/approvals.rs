@@ -83,6 +83,12 @@ impl Approvals {
         }
     }
 
+    /// A card waiting, as a turn would leave it (for tests that stand in for the turn).
+    #[cfg(test)]
+    pub fn add_for_test(&self, p: PendingApproval, tx: oneshot::Sender<Decision>) {
+        self.waiting.lock().unwrap().insert(p.call_id.clone(), (p, tx));
+    }
+
     pub fn pending(&self, chat_id: &str) -> Vec<PendingApproval> {
         self.waiting.lock().unwrap().values().filter(|(p, _)| p.chat_id == chat_id).map(|(p, _)| p.clone()).collect()
     }

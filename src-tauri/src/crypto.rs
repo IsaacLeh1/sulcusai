@@ -369,6 +369,18 @@ impl Vault {
         Ok(())
     }
 
+    /// Checks the PIN without changing whether the app is locked (a locked
+    /// chat asks for it). Mistakes count toward the same wait as unlocking.
+    pub fn check_pin(&mut self, pin: &str) -> Result<(), String> {
+        if self.unwrap_pin(pin).is_some() {
+            self.failed = 0;
+            Ok(())
+        } else {
+            self.failed += 1;
+            Err("That PIN isn't right.".into())
+        }
+    }
+
     /// Waiting time before the next attempt, growing after repeated mistakes.
     pub fn penalty(&self) -> Duration {
         match self.failed {

@@ -487,11 +487,13 @@ async fn handle(state: &Arc<AppState>, c: &Cipher, phone: &Phone, op: &str, args
                 .into_iter()
                 .filter(|ch| !ch.incognito)
                 .take(60)
-                .map(|ch| json!({ "id": ch.id, "title": ch.title, "updated_at": ch.updated_at, "running": running.contains(&ch.id) }))
+                .map(crate::protected::masked)
+                .map(|ch| json!({ "id": ch.id, "title": ch.title, "protected": ch.protected, "updated_at": ch.updated_at, "running": running.contains(&ch.id) }))
                 .collect::<Vec<_>>()))
         }
         "messages" => {
             let chat_id = arg(args, "chat_id")?;
+            crate::protected::check(state, chat_id)?;
             let all = db::messages(&state.db.lock().unwrap(), c, chat_id);
             let kept: Vec<_> = all.iter().filter(|m| (m.role == "user" || m.role == "assistant") && !m.content.trim().is_empty()).collect();
             let shown: Vec<Value> = kept[kept.len().saturating_sub(60)..]
@@ -937,6 +939,7 @@ const call = (op, args = {}) => raw(op, args, (last = Math.max(Date.now(), last 
         };
         state.vault.lock().unwrap().enable_lock("2468").unwrap();
         state.vault.lock().unwrap().lock_screen();
+        crate::protected::shut_all();
         assert_eq!(hello().await["status"], 503, "locked: nothing can be read");
         {
             let conn = state.db.lock().unwrap();

@@ -48,9 +48,15 @@ pub struct Input {
     pub help: &'static str,
     /// Given to the server as this environment variable (else as an argument).
     pub env: Option<&'static str>,
-    /// The argument's flag ("--db-path"); none: the value alone.
+    /// The argument's flag ("--db-path"); none: the value alone. "oauth:"
+    /// flags are the app registration's client id or secret, for services
+    /// that don't let apps register themselves ("?" at the end: optional).
     pub flag: Option<&'static str>,
 }
+
+/// Where mcp-remote listens for a sign-in to come back, for registrations
+/// made by hand (they name the exact address).
+const OAUTH_PORT: &str = "3334";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Addon {
@@ -85,6 +91,14 @@ pub const ADDONS: &[Addon] = &[
     Addon { id: "linear", name: "Linear", by: "Linear", category: "Online services", about: "Find, create and update Linear issues and projects. You sign in to Linear in your browser.", run: Run::Remote { url: "https://mcp.linear.app/mcp" }, args: &[], inputs: &[], link: "https://linear.app/docs/mcp" },
     Addon { id: "atlassian", name: "Jira and Confluence", by: "Atlassian", category: "Online services", about: "Search and update Jira issues and Confluence pages. You sign in to Atlassian in your browser.", run: Run::Remote { url: "https://mcp.atlassian.com/v2/mcp" }, args: &[], inputs: &[], link: "https://github.com/atlassian/atlassian-mcp-server" },
     Addon { id: "sentry", name: "Sentry", by: "Sentry", category: "Online services", about: "Look into errors and performance problems your apps report to Sentry. You sign in in your browser.", run: Run::Remote { url: "https://mcp.sentry.dev/mcp" }, args: &[], inputs: &[], link: "https://docs.sentry.io/product/sentry-mcp/" },
+    Addon { id: "dropbox", name: "Dropbox", by: "Dropbox", category: "Online services", about: "Search, read and organize your Dropbox files. Dropbox needs an app of your own: at dropbox.com/developers/apps make one with the permissions you want, add http://localhost:3334/oauth/callback as its redirect URI, and paste its app key. You sign in to Dropbox in your browser.", run: Run::Remote { url: "https://mcp.dropbox.com/mcp" }, args: &[], inputs: &[
+        Input { id: "client_id", label: "App key", kind: "text", help: "From your Dropbox app's Settings page.", env: None, flag: Some("oauth:client_id") },
+        Input { id: "client_secret", label: "App secret (if your app has one)", kind: "secret", help: "Leave empty for an app without one.", env: None, flag: Some("oauth:client_secret?") },
+    ], link: "https://help.dropbox.com/integrations/connect-dropbox-mcp-server" },
+    Addon { id: "slack", name: "Slack", by: "Slack", category: "Online services", about: "Search and read your Slack messages and channels, and post when you ask. Slack needs an app in your workspace: at api.slack.com/apps make one, add http://localhost:3334/oauth/callback as a redirect URL and the user token scopes you want (search:read, channels:history…), and paste its client ID and secret. You sign in to Slack in your browser.", run: Run::Remote { url: "https://mcp.slack.com/mcp" }, args: &[], inputs: &[
+        Input { id: "client_id", label: "Client ID", kind: "text", help: "From your Slack app's Basic Information page.", env: None, flag: Some("oauth:client_id") },
+        Input { id: "client_secret", label: "Client secret", kind: "secret", help: "From the same page.", env: None, flag: Some("oauth:client_secret") },
+    ], link: "https://docs.slack.dev/ai/slack-mcp-server" },
     Addon { id: "huggingface", name: "Hugging Face", by: "Hugging Face", category: "Online services", about: "Search models, datasets, papers and Spaces on Hugging Face.", run: Run::Remote { url: "https://huggingface.co/mcp" }, args: &[], inputs: &[], link: "https://huggingface.co/settings/mcp" },
 ];
 
@@ -152,9 +166,26 @@ pub fn spec_for(addon: &Addon, values: &HashMap<String, String>, node: Option<&s
         Run::Uv { package } => (uvx.ok_or("uv isn't here.")?.display().to_string(), vec![package.to_string()]),
     };
     args.extend(lead);
+    // A registration made by hand names one address to come back to.
+    if addon.inputs.iter().any(|i| i.flag.is_some_and(|f| f.starts_with("oauth:"))) {
+        args.push(OAUTH_PORT.to_string());
+    }
     args.extend(addon.args.iter().map(|a| a.to_string()));
+    let mut client = serde_json::Map::new();
     for input in addon.inputs {
-        let value = values.get(input.id).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).ok_or_else(|| format!("Fill in “{}”.", input.label))?;
+        let given = values.get(input.id).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        if let Some(key) = input.flag.and_then(|f| f.strip_prefix("oauth:")) {
+            let (key, optional) = key.strip_suffix('?').map_or((key, false), |k| (k, true));
+            match given {
+                Some(v) => {
+                    client.insert(key.to_string(), serde_json::Value::String(v));
+                }
+                None if optional => {}
+                None => return Err(format!("Fill in “{}”.", input.label)),
+            }
+            continue;
+        }
+        let value = given.ok_or_else(|| format!("Fill in “{}”.", input.label))?;
         if matches!(input.kind, "folder" | "file") && !std::path::Path::new(&value).exists() {
             return Err(format!("{value} isn't there."));
         }
@@ -173,6 +204,9 @@ pub fn spec_for(addon: &Addon, values: &HashMap<String, String>, node: Option<&s
                 args.push(value);
             }
         }
+    }
+    if !client.is_empty() {
+        args.extend(["--static-oauth-client-info".to_string(), serde_json::Value::Object(client).to_string()]);
     }
     Ok(ServerSpec { command, args, env, cwd: None, ..Default::default() })
 }
@@ -236,7 +270,7 @@ pub async fn addon_add(state: AppStateRef<'_>, id: String, values: HashMap<Strin
     say(&state, &format!("Downloading {} (the first time)", addon.name), -1.0);
     warm(addon, &spec).await?;
     say(&state, &format!("Starting {}", addon.name), -1.0);
-    if matches!(addon.run, Run::Remote { .. }) && addon.inputs.is_empty() {
+    if matches!(addon.run, Run::Remote { .. }) && addon.inputs.iter().all(|i| i.env.is_none()) {
         say(&state, &format!("Sign in to {} in the browser window that opens", addon.by), -1.0);
     }
     let saved = crate::connectors::save(&state, &connector_id(addon.id), addon.name, spec).await;
@@ -299,6 +333,16 @@ mod tests {
         let uv = std::path::Path::new(r"C:\x\uvx.exe");
         let git = spec_for(find("git").unwrap(), &HashMap::from([("repo".to_string(), dir.display().to_string())]), None, Some(uv), HashMap::new()).unwrap();
         assert_eq!(git.args, vec!["mcp-server-git".to_string(), "--repository".into(), dir.display().to_string()]);
+        // Services without self-registration: the person's own app, and the fixed address it names.
+        let slack = spec_for(find("slack").unwrap(), &HashMap::from([("client_id".to_string(), "123.456".to_string()), ("client_secret".to_string(), "s3".to_string())]), Some(node), None, HashMap::new()).unwrap();
+        let url_at = slack.args.iter().position(|a| a == "https://mcp.slack.com/mcp").unwrap();
+        assert_eq!(slack.args[url_at + 1], OAUTH_PORT);
+        let info = slack.args.iter().position(|a| a == "--static-oauth-client-info").unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&slack.args[info + 1]).unwrap(), serde_json::json!({ "client_id": "123.456", "client_secret": "s3" }));
+        assert!(spec_for(find("slack").unwrap(), &HashMap::from([("client_id".to_string(), "123.456".to_string())]), Some(node), None, HashMap::new()).is_err(), "Slack's secret is needed");
+        let dropbox = spec_for(find("dropbox").unwrap(), &HashMap::from([("client_id".to_string(), "abc".to_string())]), Some(node), None, HashMap::new()).unwrap();
+        let info = dropbox.args.iter().position(|a| a == "--static-oauth-client-info").unwrap();
+        assert_eq!(dropbox.args[info + 1], r#"{"client_id":"abc"}"#, "Dropbox's secret is optional");
         let ids: std::collections::HashSet<&str> = ADDONS.iter().map(|a| a.id).collect();
         assert_eq!(ids.len(), ADDONS.len(), "ids are unique");
     }

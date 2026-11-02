@@ -283,6 +283,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("chats", "project_id", "TEXT"),
     ("chats", "incognito", "INTEGER NOT NULL DEFAULT 0"),
     ("chats", "parent_id", "TEXT"),
+    ("chats", "protected", "INTEGER NOT NULL DEFAULT 0"),
     ("meeting_segments", "voice", "INTEGER"),
     ("installed_models", "prompt_tps", "REAL"),
     // This user's messages the other person has read (their read receipt).
@@ -545,9 +546,16 @@ pub struct Chat {
     /// first message is sent.
     #[serde(default)]
     pub empty: bool,
+    /// Opens only with the app lock's PIN or Windows Hello; until then its
+    /// title and messages stay in the core.
+    #[serde(default)]
+    pub protected: bool,
+    /// Protected and not opened this session (`protected::masked`).
+    #[serde(default)]
+    pub shut: bool,
 }
 
-const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito, parent_id";
+const CHAT_COLS: &str = "id, title, model_id, web, created_at, updated_at, mode, project_id, incognito, parent_id, protected";
 
 fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat> + '_ {
     move |r| {
@@ -563,6 +571,8 @@ fn chat_from_row(c: &Cipher) -> impl Fn(&rusqlite::Row) -> rusqlite::Result<Chat
             incognito: r.get::<_, i64>(8)? != 0,
             parent_id: r.get(9)?,
             empty: false,
+            protected: r.get::<_, i64>(10)? != 0,
+            shut: false,
         })
     }
 }
@@ -648,6 +658,8 @@ pub fn create_chat_in(conn: &Connection, c: &Cipher, model_id: Option<String>, p
         incognito,
         parent_id: None,
         empty: true,
+        protected: false,
+        shut: false,
     };
     conn.execute(
         "INSERT INTO chats (id, title, model_id, web, created_at, updated_at, project_id, incognito) VALUES (?1, ?2, ?3, 0, ?4, ?4, ?5, ?6)",
@@ -655,6 +667,11 @@ pub fn create_chat_in(conn: &Connection, c: &Cipher, model_id: Option<String>, p
     )
     .map_err(err)?;
     Ok(chat)
+}
+
+pub fn set_chat_protected(conn: &Connection, id: &str, on: bool) -> Result<(), String> {
+    conn.execute("UPDATE chats SET protected = ?2, updated_at = ?3 WHERE id = ?1", params![id, on as i64, now_ms()]).map_err(err)?;
+    Ok(())
 }
 
 pub fn set_chat_title(conn: &Connection, c: &Cipher, id: &str, title: &str) -> Result<(), String> {

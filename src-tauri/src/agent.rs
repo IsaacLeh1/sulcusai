@@ -206,6 +206,9 @@ impl Turn {
                 extra.push("calendar_create_event");
             }
         }
+        if self.use_tools && crate::cloudfiles::connected(&self.state, &self.cipher) {
+            extra.extend(["cloud_files_search", "cloud_file_read"]);
+        }
         // Making pictures, video and music, once a model for them is installed.
         let mut media_note = Vec::new();
         if self.use_tools && features.contains(&Feature::Images) && crate::media::can_make(&self.state, crate::media::Kind::Image) {

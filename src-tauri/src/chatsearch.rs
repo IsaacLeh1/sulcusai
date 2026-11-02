@@ -32,7 +32,8 @@ pub fn search(state: &AppState, c: &Cipher, query: &str) -> Vec<ChatHit> {
     }
     let chats = db::list_chats(&state.db.lock().unwrap(), c);
     let (mut named, mut said) = (Vec::new(), Vec::new());
-    for chat in chats.into_iter().filter(|ch| !ch.empty) {
+    // Protected chats stay out of searches even while open.
+    for chat in chats.into_iter().filter(|ch| !ch.empty && !ch.protected) {
         if named.len() + said.len() >= MOST {
             break;
         }
@@ -106,6 +107,9 @@ pub fn export_chat(state: AppStateRef, chat_id: String, path: String, html: Opti
         ("md" | "markdown" | "txt", _) => {
             let conn = state.db.lock().unwrap();
             let chat = db::chat(&conn, &c, &chat_id).ok_or("That chat no longer exists.")?;
+            if !crate::protected::readable(&chat) {
+                return Err(crate::protected::SHUT.into());
+            }
             chat_markdown(&chat, &db::messages(&conn, &c, &chat_id))
         }
         ("html" | "htm", Some(html)) => html,

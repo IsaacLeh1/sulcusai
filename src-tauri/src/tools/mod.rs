@@ -322,6 +322,7 @@ pub(crate) fn group(name: &str) -> &'static str {
         "search_documents" => "library",
         n if n.starts_with("email_") => "email",
         n if n.starts_with("calendar_") => "calendar",
+        n if n.starts_with("cloud_file") => "cloud_files",
         "create_image" | "edit_image" | "create_video" | "create_music" => "media",
         "app_status" | "connect_account" | "open_page" | "request_folder" | "open_path" | "schedule_task" => "app",
         "ask_person" | "work_with_person" | "message_person" => "people",
@@ -465,6 +466,10 @@ pub const TOOLS: &[ToolDef] = &[
         description: "Find free time between 9 and 5 on a day or range." },
     ToolDef { name: "calendar_create_event", risk: Risk::Write, params: comms::calendar_create_event_params,
         description: "Add an event to the user's calendar. Inviting people always asks the user first." },
+    ToolDef { name: "cloud_files_search", risk: Risk::Read, params: crate::cloudfiles::search_params,
+        description: "Search the user's Google Drive and OneDrive files by name or words in them. Returns ids, names, where each is and when it changed; empty query lists the most recent." },
+    ToolDef { name: "cloud_file_read", risk: Risk::Read, params: crate::cloudfiles::read_params,
+        description: "Read the text of one Google Drive or OneDrive file by its id from cloud_files_search (documents, spreadsheets, slides, PDFs and text)." },
     ToolDef { name: "create_image", risk: Risk::Memory, params: media::create_image_params,
         description: "Make a picture on this PC from a description. The picture appears in the chat." },
     ToolDef { name: "edit_image", risk: Risk::Memory, params: media::edit_image_params,
@@ -602,7 +607,7 @@ pub fn definitions(mode: Mode, files: bool, memory: bool) -> Value {
         .filter(|t| match group(t.name) {
             "memory" => memory,
             // Added by the agent when a plugin provides skills, or when there are meetings.
-            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "programs" | "email" | "calendar" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
+            "skills" | "meetings" | "notes" | "tasks" | "web" | "browser" | "programs" | "email" | "calendar" | "cloud_files" | "documents" | "library" | "media" | "app" | "people" | "chats" | "chatnotes" | "compute" => false,
             _ => files,
         })
         .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": (t.params)() } }))
@@ -794,6 +799,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             tokio::task::block_in_place(|| documents::run(&name, &args, ctx))
         }
         n if n.starts_with("email_") || n.starts_with("calendar_") => comms::run(name, args, ctx.state, ctx.memory.cipher).await,
+        n if n.starts_with("cloud_file") => crate::cloudfiles::run_tool(name, args, ctx.state, ctx.memory.cipher).await,
         "app_status" | "connect_account" | "open_page" => app::run(name, args, ctx.state, ctx.memory.cipher).await,
         "create_image" | "edit_image" | "create_video" | "create_music" => media::run(name, args, ctx).await,
         n if n.starts_with("browser_") => {
@@ -978,8 +984,8 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(!names.contains(&"write_file") && !names.contains(&"run_command"));
         assert!(names.contains(&"remember"), "saving a memory is allowed while planning");
-        // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, document, media, app, People and chat tools, which the agent adds when they apply.
-        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 65);
+        // Everything except load_skill and the meeting, note, task, web, browser, programs, email, calendar, Drive and OneDrive, document, media, app, People and chat tools, which the agent adds when they apply.
+        assert_eq!(definitions(Mode::Auto, true, true).as_array().unwrap().len(), TOOLS.len() - 67);
     }
 
     #[test]

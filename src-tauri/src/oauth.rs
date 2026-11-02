@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Sign in with Microsoft or Google, for mail and calendars.
+//! Sign in with Microsoft or Google, for mail, calendars and files.
 //!
 //! OAuth 2.0 for desktop apps: the sign-in page opens in the user's own
 //! browser (never inside the app), and comes back to a one-time listener on
@@ -37,6 +37,8 @@ pub enum Provider {
 pub enum For {
     Mail,
     Calendar,
+    /// Reading Google Drive or OneDrive files (cloudfiles.rs).
+    Files,
 }
 
 impl Provider {
@@ -67,6 +69,8 @@ impl Provider {
             (Provider::Microsoft, For::Calendar) => "openid email offline_access https://graph.microsoft.com/Calendars.ReadWrite",
             (Provider::Google, For::Mail) => "openid email https://mail.google.com/",
             (Provider::Google, For::Calendar) => "openid email https://www.googleapis.com/auth/calendar",
+            (Provider::Microsoft, For::Files) => "openid email offline_access https://graph.microsoft.com/Files.Read",
+            (Provider::Google, For::Files) => "openid email https://www.googleapis.com/auth/drive.readonly",
         }
     }
 

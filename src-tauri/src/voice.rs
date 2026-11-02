@@ -45,6 +45,11 @@ fn signal(key: &str) {
     }
 }
 
+/// Whether dictation or a voice chat is listening now (the wake word waits).
+pub fn listening_now() -> bool {
+    !sessions().lock().unwrap().is_empty()
+}
+
 pub fn mic(state: &AppState) -> Source {
     let s = speech::voice_settings(&state.db.lock().unwrap());
     Source::Mic { device: s.mic, voice: s.voice_processing }

@@ -71,6 +71,8 @@ interface Props {
   onBrowser?: (open: boolean) => void;
   /** Opens this chat in a window of its own (none when it's in one). */
   onPopOut?: () => void;
+  /** Start voice mode as it opens (the wake word was heard). */
+  startVoice?: boolean;
   toast: PushToast;
 }
 
@@ -113,7 +115,7 @@ export function ChatView(props: Props) {
   return <Conversation key={chat.id} {...props} chat={chat} />;
 }
 
-function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onNewChat, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, onPopOut, toast }: Props & { chat: Chat }) {
+function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, connectivity, onNewChat, onChanged, onDeleted, onToggleWeb, features, onGoFeatures, onGoModels, browser, onBrowser, onPopOut, startVoice, toast }: Props & { chat: Chat }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreamingNow] = useState<Streaming | null>(null);
   // Tokens arrive dozens a second and the live reply is drawn as Markdown
@@ -203,6 +205,9 @@ function Conversation({ chat, projectName, onOpenChat, installed, defaultModel, 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmBypass, setConfirmBypass] = useState(false);
   const [voice, setVoice] = useState(false);
+  useEffect(() => {
+    if (startVoice) setVoice(true);
+  }, [startVoice]);
   /** Pictures attached to the next message. */
   const [attached, setAttached] = useState<MediaItem[]>([]);
   const [lightbox, setLightbox] = useState<MediaItem | null>(null);

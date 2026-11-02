@@ -35,7 +35,8 @@ pub fn create_video_params() -> Value {
     json!({ "type": "object", "required": ["prompt"], "properties": {
         "prompt": { "type": "string", "description": "What happens in the clip: subject, motion, camera, style. Write it in English." },
         "seconds": { "type": "number", "description": "Length in seconds (default 3). Longer than about 5 seconds is made in parts, each going on from the last; a few minutes per part." },
-        "image": { "type": "string", "description": "A picture's id to turn into a video (the user's attached picture is used on its own); leave out to make the clip from the description." } } })
+        "image": { "type": "string", "description": "A picture's id to turn into a video (the user's attached picture is used on its own); leave out to make the clip from the description." },
+        "camera": { "type": "string", "enum": ["static", "pan_left", "pan_right", "tilt_up", "tilt_down", "zoom_in", "zoom_out", "dolly_in", "dolly_out", "orbit", "tracking", "crane_up", "handheld", "drone"], "description": "How the camera moves, when the user says." } } })
 }
 
 pub fn create_music_params() -> Value {
@@ -274,6 +275,7 @@ pub async fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
                 op: "video".into(),
                 prompt: s("prompt").unwrap_or_default(),
                 seconds: args.get("seconds").and_then(Value::as_f64).map(|v| v as f32),
+                camera: s("camera").filter(|c| media::camera_words(c).is_some()),
                 source,
                 chat_id,
                 ..Default::default()

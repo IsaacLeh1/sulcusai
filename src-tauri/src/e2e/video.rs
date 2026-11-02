@@ -379,6 +379,46 @@ async fn e2e_a_video_gets_captions() {
     assert!(shot.success());
 }
 
+/// A clip that starts on one picture and ends on another, on a model that
+/// can (SULCUSAI_VIDEO_MODEL; Wan 2.2 TI2V 5B, the default, ignores the end
+/// picture), the camera told to stay still: its last frame is compared with
+/// both pictures, small and grey. Pictures and clips in
+/// C:\dev\tools\video\end-test.
+///     cargo test e2e_a_clip_ends_on_a_picture -- --ignored --nocapture
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_clip_ends_on_a_picture() {
+    use crate::media::{self, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\video\end-test");
+    std::fs::create_dir_all(&out).unwrap();
+    let model = std::env::var("SULCUSAI_VIDEO_MODEL").unwrap_or_else(|_| "wan2.2-ti2v-5b".into());
+    media::install_for_test(&state, "z-image-turbo").await.unwrap();
+    media::install_for_test(&state, &model).await.unwrap();
+    let picture = |prompt: &str| Request { op: "generate".into(), model_id: Some("z-image-turbo".into()), prompt: prompt.into(), shape: Some("landscape".into()), seed: Some(4), write_prompt: Some(false), check: Some(false), ..Default::default() };
+    let start = media::run(&state, store::new_id(), picture("photo of a bright red ball on the far left of an empty white table, plain grey wall behind")).await.unwrap().remove(0);
+    let end = media::run(&state, store::new_id(), picture("photo of a bright red ball on the far right of an empty white table, plain grey wall behind")).await.unwrap().remove(0);
+    for (name, item) in [("start.png", &start), ("end.png", &end)] {
+        std::fs::write(out.join(name), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+    }
+    let t = std::time::Instant::now();
+    let req = Request { op: "video".into(), model_id: Some(model.clone()), prompt: "the red ball rolls slowly across the table from left to right".into(), seconds: Some(3.0), source: Some(start.id.clone()), end: Some(end.id.clone()), camera: Some("static".into()), seed: Some(5), write_prompt: Some(false), ..Default::default() };
+    let clip = media::run(&state, store::new_id(), req).await.unwrap().remove(0);
+    let file = out.join(format!("{model}.{}", if clip.mime.contains("mp4") { "mp4" } else { "webm" }));
+    std::fs::write(&file, store::read(&state.paths, &c, &clip.id).unwrap()).unwrap();
+    let ffmpeg = walkdir_find(&std::path::PathBuf::from(&state.paths.engines), "ffmpeg.exe").expect("FFmpeg was downloaded");
+    let last = out.join(format!("{model}-last.png"));
+    let ok = std::process::Command::new(&ffmpeg).args(["-y", "-v", "error", "-sseof", "-0.2", "-i"]).arg(&file).args(["-frames:v", "1", "-update", "1"]).arg(&last).status().unwrap();
+    assert!(ok.success());
+    let small = |p: &std::path::Path| image::open(p).unwrap().resize_exact(48, 27, image::imageops::FilterType::Triangle).to_luma8().into_raw();
+    let (l, a, b) = (small(&last), small(&out.join("start.png")), small(&out.join("end.png")));
+    let mse = |x: &[u8], y: &[u8]| x.iter().zip(y).map(|(p, q)| (*p as f64 - *q as f64).powi(2)).sum::<f64>() / x.len() as f64;
+    println!("{model}: {:.0} s; last frame vs end {:.0}, vs start {:.0}", t.elapsed().as_secs_f64(), mse(&l, &b), mse(&l, &a));
+    assert!(mse(&l, &b) < mse(&l, &a), "the clip should end nearer the end picture");
+}
+
+
 fn walkdir_find(root: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
     for e in std::fs::read_dir(root).ok()?.flatten() {
         let p = e.path();

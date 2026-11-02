@@ -1272,3 +1272,44 @@ async fn e2e_cloud_media() {
     r.model_id = Some("cloud:openai:gpt-image-1".into());
     assert!(crate::media::run(&state, "j5".into(), r).await.is_err());
 }
+
+/// A picture LoRA trained on eight pictures of one made-up teapot (made
+/// here with Z-Image first), SULCUSAI_TRAIN_STEPS steps (default 600); then
+/// RealVisXL asked for it on a beach, with the LoRA and without. The
+/// pictures go to C:\dev\tools\pictures\lora-train for a look; the LoRA is
+/// removed from the LoRA folder afterwards.
+///     cargo test e2e_a_picture_lora_is_trained -- --ignored --nocapture
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
+async fn e2e_a_picture_lora_is_trained() {
+    use crate::media::{self, loras, store, Request};
+    let state = media_state();
+    let c = state.cipher().unwrap();
+    let out = std::path::PathBuf::from(r"C:\dev\tools\pictures\lora-train");
+    std::fs::create_dir_all(&out).unwrap();
+    media::install_for_test(&state, "z-image-turbo").await.unwrap();
+    media::install_for_test(&state, "realvisxl-v5-lightning").await.unwrap();
+    let places = ["on a wooden kitchen table", "on a white shelf", "on green grass in a garden", "on a stone windowsill in sunlight", "on a blue tablecloth", "on a dark slate counter", "on a picnic blanket", "on a glass coffee table"];
+    let mut ids = Vec::new();
+    for (i, place) in places.iter().enumerate() {
+        let prompt = format!("photo of a small round red ceramic teapot covered in white polka dots, with a curly golden handle, {place}");
+        let item = media::run(&state, store::new_id(), Request { op: "generate".into(), model_id: Some("z-image-turbo".into()), prompt, seed: Some(100 + i as i64), write_prompt: Some(false), check: Some(false), ..Default::default() }).await.unwrap().remove(0);
+        std::fs::write(out.join(format!("photo-{i}.png")), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+        ids.push(item.id);
+    }
+    if std::env::var("SULCUSAI_TRAIN_STEPS").is_err() {
+        std::env::set_var("SULCUSAI_TRAIN_STEPS", "600");
+    }
+    let t = std::time::Instant::now();
+    let spec = crate::media::picture_train::PictureTrainSpec { name: "Dot teapot".into(), kind: "thing".into(), pictures: ids };
+    media::run(&state, store::new_id(), Request { op: "train_picture".into(), prompt: "Dot teapot".into(), picture_train: Some(spec), ..Default::default() }).await.unwrap();
+    let lora = loras::list(&state.db.lock().unwrap()).into_iter().last().expect("a LoRA");
+    println!("trained in {:.0} s: {} ({}, {})", t.elapsed().as_secs_f64(), lora.name, lora.trigger, lora.family);
+    for (name, picked, words) in [("without", Vec::new(), "a red teapot with white polka dots"), ("with", vec![(lora.id.clone(), 1.0f32)], lora.trigger.as_str()), ("with-0.7", vec![(lora.id.clone(), 0.7f32)], lora.trigger.as_str())] {
+        let prompt = format!("photo of {words} on a sandy beach at sunset");
+        let item = media::run(&state, store::new_id(), Request { op: "generate".into(), model_id: Some("realvisxl-v5-lightning".into()), prompt, seed: Some(9), loras: picked, write_prompt: Some(false), check: Some(false), ..Default::default() }).await.unwrap().remove(0);
+        std::fs::write(out.join(format!("beach-{name}.png")), store::read(&state.paths, &c, &item.id).unwrap()).unwrap();
+    }
+    let _ = std::fs::remove_file(loras::dir(&state.paths).join(format!("{}.safetensors", lora.id)));
+}

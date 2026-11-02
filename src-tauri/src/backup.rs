@@ -355,7 +355,8 @@ pub fn export_markdown(state: &AppState, dir: &Path) -> Result<PathBuf, String> 
     let conn = state.db.lock().unwrap();
     let mut used = std::collections::HashSet::new();
     let mut chats = 0;
-    for chat in db::list_chats(&conn, &c).into_iter().filter(|c| !c.incognito) {
+    // Protected chats stay out of a plain-text export; the backup file keeps them encrypted.
+    for chat in db::list_chats(&conn, &c).into_iter().filter(|c| !c.incognito && !c.protected) {
         let md = crate::chatsearch::chat_markdown(&chat, &db::messages(&conn, &c, &chat.id));
         std::fs::write(chats_dir.join(format!("{}.md", safe_name(&chat.title, &mut used))), md).map_err(|e| e.to_string())?;
         chats += 1;

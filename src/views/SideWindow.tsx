@@ -5,12 +5,13 @@
 // sessions sit side by side; what happens in one (a reply, a new picture,
 // a project saved) shows in every window. While SulcusAI is locked it shows
 // only that; unlocking happens in the main window.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText, on, type CatalogView, type Chat, type FeatureId, type InstallProgress, type MediaItem, type Project, type SecurityStatus, type Settings } from "../api";
 import { APP_NAME } from "../brand";
 import { FolderPermission } from "../components/FolderPermission";
 import { KeyPermission } from "../components/KeyPermission";
+import { ProtectedGate } from "../components/ProtectedChat";
 import { SharePermission } from "../components/SharePermission";
 import { SongStudio } from "../components/SongStudio";
 import { Toasts, useToasts, type PushToast } from "../components/Toasts";
@@ -49,7 +50,7 @@ function useInstallProgress() {
   return progress;
 }
 
-function ChatWindow({ first, toast }: { first: string; toast: PushToast }) {
+function ChatWindow({ first, security, toast }: { first: string; security: SecurityStatus; toast: PushToast }) {
   // The chat shown (it can move on: a chat continued in a new one, or another opened from this one).
   const [chatId, setChatId] = useState(first);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -93,8 +94,23 @@ function ChatWindow({ first, toast }: { first: string; toast: PushToast }) {
   const installed = useMemo(() => (catalog?.models ?? []).filter((m) => m.installed), [catalog]);
   const chat = chats.find((c) => c.id === chatId) ?? null;
   useEffect(() => {
-    title(chat?.title || t("New chat"));
-  }, [chat?.title]);
+    title(chat?.shut ? t("Protected chat") : chat?.title || t("New chat"));
+  }, [chat?.title, chat?.shut]);
+  // A protected chat shuts again when this window moves on from it or closes.
+  const openProtected = useRef<string | null>(null);
+  useEffect(() => {
+    const here = chat?.protected && !chat.shut ? chat.id : null;
+    const was = openProtected.current;
+    openProtected.current = here;
+    if (was && was !== here) api.shutProtectedChat(was).then(refreshChats).catch(() => {});
+  }, [chat?.id, chat?.protected, chat?.shut, refreshChats]);
+  useEffect(() => {
+    const shut = () => {
+      if (openProtected.current) api.shutProtectedChat(openProtected.current).catch(() => {});
+    };
+    window.addEventListener("beforeunload", shut);
+    return () => window.removeEventListener("beforeunload", shut);
+  }, []);
   // The connectivity level changes in the main window's status bar: looked at again when this one is used.
   useEffect(() => {
     const again = () => api.settings().then(setSettings).catch(() => {});
@@ -103,6 +119,13 @@ function ChatWindow({ first, toast }: { first: string; toast: PushToast }) {
   }, []);
   if (!settings || !catalog) return null;
   const goMain = (page: string) => api.showMainPage(page).catch((e) => toast(errorText(e), "error"));
+  if (chat?.shut) {
+    return (
+      <div className="side-window chat-window">
+        <ProtectedGate key={chat.id} chatId={chat.id} security={security} onOpened={refreshChats} />
+      </div>
+    );
+  }
   return (
     <div className="side-window chat-window">
       <ChatView
@@ -226,7 +249,7 @@ export default function SideWindow({ label }: { label: string }) {
       </div>
     );
   } else if (security) {
-    if (label.startsWith("chat-")) body = <ChatWindow first={label.slice(5)} toast={toasts.push} />;
+    if (label.startsWith("chat-")) body = <ChatWindow first={label.slice(5)} security={security} toast={toasts.push} />;
     else if (label.startsWith("songstudio-")) body = <SongStudioWindow projectId={label.slice(11)} toast={toasts.push} />;
     else body = <StudioWindow toast={toasts.push} />;
   }

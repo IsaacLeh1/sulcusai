@@ -165,6 +165,22 @@ pub fn add(state: &crate::AppState, from: &Path) -> Result<Lora, String> {
     Ok(lora)
 }
 
+/// A LoRA trained here (`picture_train`): copied in under its name, with
+/// the words it was trained to answer to.
+pub fn add_trained(state: &crate::AppState, from: &Path, name: &str, family: &str, trigger: &str) -> Result<Lora, String> {
+    let size = from.metadata().map_err(|e| e.to_string())?.len();
+    let id = new_id(name);
+    let into = dir(&state.paths);
+    std::fs::create_dir_all(&into).map_err(|e| e.to_string())?;
+    std::fs::copy(from, into.join(format!("{id}.safetensors"))).map_err(|e| format!("Couldn't keep the LoRA: {e}"))?;
+    let lora = Lora { id, name: name.to_string(), family: family.to_string(), trigger: trigger.to_string(), weight: 1.0, size };
+    let conn = state.db.lock().unwrap();
+    let mut all = list(&conn);
+    all.push(lora.clone());
+    store(&conn, &all)?;
+    Ok(lora)
+}
+
 /// Saves a LoRA's name, family, trigger words and weight.
 #[tauri::command(async)]
 pub fn lora_save(state: AppStateRef, lora: Lora) -> Result<Vec<Lora>, String> {

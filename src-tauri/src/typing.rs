@@ -66,7 +66,7 @@ pub fn typing_vocabulary(state: AppStateRef) -> Result<Vocabulary, String> {
     }
     let hidden = crate::hidden::list(&conn);
     let mut all: Vec<(String, String)> = Vec::new();
-    for chat in db::list_chats(&conn, &c).into_iter().filter(|ch| !hidden.contains(&ch.id)).take(60) {
+    for chat in db::list_chats(&conn, &c).into_iter().filter(|ch| !hidden.contains(&ch.id) && !ch.protected).take(60) {
         let msgs = db::messages(&conn, &c, &chat.id);
         // Newest first, so the newest requests come first.
         all.extend(msgs.into_iter().rev().take(200).filter(|m| m.role == "user" || m.role == "assistant").map(|m| (m.role, m.content)));
