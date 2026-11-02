@@ -1,11 +1,41 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+
+// Chunks that import each other can run one before the other has set up what
+// it needs: 0.9.48's window stayed blank that way. Such a build fails here.
+function noChunkLoops(): Plugin {
+  return {
+    name: "no-chunk-loops",
+    generateBundle(_, bundle) {
+      const imports = new Map<string, string[]>();
+      for (const out of Object.values(bundle)) if (out.type === "chunk") imports.set(out.fileName, out.imports);
+      const done = new Set<string>();
+      const path: string[] = [];
+      const visit = (name: string): string[] | null => {
+        if (path.includes(name)) return [...path.slice(path.indexOf(name)), name];
+        if (done.has(name)) return null;
+        path.push(name);
+        for (const next of imports.get(name) ?? []) {
+          const loop = visit(next);
+          if (loop) return loop;
+        }
+        path.pop();
+        done.add(name);
+        return null;
+      };
+      for (const name of imports.keys()) {
+        const loop = visit(name);
+        if (loop) this.error(`These chunks import each other in a loop: ${loop.join(" -> ")}`);
+      }
+    },
+  };
+}
 
 // Tauri expects a fixed dev port and must not clear its console output.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), noChunkLoops()],
   clearScreen: false,
   // Files are found relative to the page, so the phone's copy works under
   // the relay's /l/<link>/ as well as at the PC's own root.

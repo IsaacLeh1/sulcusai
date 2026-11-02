@@ -40,12 +40,6 @@ export interface BrokenCard {
   code: number;
 }
 
-/** The card models use: the one picked, else the dedicated card with the most memory (hardware.rs `main_of`). */
-export function mainGpu(hw: Hardware): Gpu | undefined {
-  const dedicated = hw.gpus.filter((g) => !g.integrated);
-  return dedicated.find((g) => g.name === hw.main) ?? [...dedicated].sort((a, b) => b.vram_bytes - a.vram_bytes)[0];
-}
-
 export interface Budget {
   vram: number;
   ram: number;
