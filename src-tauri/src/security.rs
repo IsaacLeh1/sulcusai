@@ -170,6 +170,7 @@ pub fn lock_now(app: AppHandle, state: AppStateRef) -> Result<(), String> {
     }
     state.contexts.lock().unwrap().clear();
     crate::protected::shut_all();
+    crate::vault_cmds::lock_now();
     state.log("security", if keep_working { "Locked (work in progress keeps going)" } else { "Locked" });
     app.emit("security:locked", ()).ok();
     Ok(())

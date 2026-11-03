@@ -38,6 +38,7 @@ import { CrashReportsSetting } from "../components/Feedback";
 import { VOICE_FEATURES } from "../components/SettingsNav";
 import { SettingsSearch } from "../components/SettingsSearch";
 import { SecurityPage } from "../components/SecurityPage";
+import { VaultPage } from "../components/VaultPage";
 import { foldAll, unfold, useCardFolds } from "../components/CardFolds";
 
 const THIRD_PARTY = [
@@ -432,6 +433,7 @@ export function SettingsView({ connectivity, onConnectivity, security, onSecurit
       <span id="settings-security" className="settings-anchor" />
       <SecuritySection status={security} onChanged={onSecurityChanged} toast={toast} />
       <SecurityPage toast={toast} />
+      <VaultPage toast={toast} />
 
       <span id="settings-folders" className="settings-anchor" />
       {features.has("files") && <FoldersSection toast={toast} />}

@@ -6,6 +6,7 @@ import { api, errorText, on, type CalAccount, type CalEvent, type Task } from ".
 import { Modal } from "../components/Modal";
 import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
+import { FeatureModelPicker } from "../components/FeatureModelPicker";
 import { t, tx } from "../i18n";
 
 const DAY = 86_400_000;
@@ -234,6 +235,7 @@ export function CalendarView({ toast }: { toast: PushToast }) {
           <button className="icon-btn round" onClick={() => step(1)} aria-label={t("Later")} title={t("Later")}>›</button>
           <h1 className="cal-title">{title(view, at)}</h1>
           <span className="spacer" />
+          <FeatureModelPicker feature="calendar" />
           {accounts.length > 0 && (
             <button className={`icon-btn round ${syncing ? "spin" : ""}`} onClick={sync} disabled={syncing} title={syncing ? t("Syncing…") : t("↻ Sync")} aria-label={t("↻ Sync")}>↻</button>
           )}

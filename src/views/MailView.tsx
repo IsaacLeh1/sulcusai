@@ -28,6 +28,7 @@ import { SignInButtons } from "../components/SignIn";
 import type { PushToast } from "../components/Toasts";
 import { t, tx } from "../i18n";
 import { calendarName, NewEventDialog } from "./CalendarView";
+import { FeatureModelPicker } from "../components/FeatureModelPicker";
 
 /** Today: the time. This year: "Oct 12". Older: the full date. */
 const when = (ms: number) => {
@@ -444,7 +445,7 @@ export function MailView({ toast }: { toast: PushToast }) {
     return (
       <div className="page">
         <div className="narrow">
-          <header className="page-head"><h1>{t("Mail")}</h1></header>
+          <header className="page-head"><h1>{t("Mail")}</h1><FeatureModelPicker feature="mail" /></header>
           <AddAccount
             toast={toast}
             onCancel={accounts.length > 0 ? () => setAdding(false) : undefined}

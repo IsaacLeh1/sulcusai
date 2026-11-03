@@ -74,6 +74,7 @@ mod media;
 mod meeting;
 mod memcheck;
 mod memory;
+mod model_fit;
 mod natural;
 mod net;
 mod notes;
@@ -138,11 +139,13 @@ mod updates;
 mod versions;
 mod vad;
 mod vault;
+mod vault_cmds;
 mod viewer;
 mod vision;
 mod voice;
 mod wake;
 mod wakeup;
+mod webpush;
 mod web;
 mod workspace;
 #[cfg(test)]
@@ -1071,6 +1074,27 @@ pub fn run() {
             consent::erase_status,
             consent::cancel_erase_everything,
             consent::consent_decline,
+            model_fit::model_fit_view,
+            model_fit::set_feature_model,
+            model_fit::model_fit_test,
+            vault_cmds::vault_status,
+            vault_cmds::vault_set_enabled,
+            vault_cmds::vault_setup,
+            vault_cmds::vault_unlock,
+            vault_cmds::vault_recover,
+            vault_cmds::vault_lock,
+            vault_cmds::vault_change_master,
+            vault_cmds::vault_new_recovery_key,
+            vault_cmds::vault_list,
+            vault_cmds::vault_add,
+            vault_cmds::vault_edit,
+            vault_cmds::vault_delete,
+            vault_cmds::vault_reveal,
+            vault_cmds::vault_generate,
+            vault_cmds::vault_import,
+            vault_cmds::vault_export,
+            vault_cmds::vault_check,
+            vault_cmds::vault_hide_from_capture,
             security_page::security_overview,
             security_page::security_apply_fix,
             security::enable_lock,

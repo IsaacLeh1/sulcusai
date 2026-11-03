@@ -1343,3 +1343,14 @@ html.working-window, html.working-window body { background: transparent; overflo
 .zero-table th, .zero-table td { text-align: right; padding: 3px 8px; border-bottom: 1px solid var(--border); }
 .zero-table th:first-child, .zero-table td:first-child { text-align: left; }
 .zero-table tr.total td { font-weight: 600; border-bottom: none; }
+
+/* The model picker for Mail, Calendar and the Assistant (FeatureModelPicker). */
+.feature-model { display: flex; flex-direction: column; gap: 10px; max-height: 60vh; overflow-y: auto; }
+.feature-model-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.feature-model-why { margin: 4px 0 0; }
+.feature-model-test.ok { color: var(--ok, var(--muted)); }
+.feature-model-test.warn { color: var(--warn); }
+.feature-model-results { margin: 6px 0 0; padding-left: 18px; }
+.feature-model-advice { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.feature-model .error, .modal .error { color: var(--danger); margin: 0; font-size: 13px; }

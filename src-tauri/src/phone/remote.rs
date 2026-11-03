@@ -102,6 +102,14 @@ pub fn denied(cmd: &str) -> Option<&'static str> {
     if cmd.starts_with("plugin:") {
         return Some("That works on the PC only.");
     }
+    // Passwords never leave the PC through the phone page.
+    if cmd.starts_with("vault_") {
+        return Some("The password vault opens on the PC only.");
+    }
+    // Wiping the PC, quitting it or writing all its data out is done at the PC.
+    if matches!(cmd, "erase_everything" | "cancel_erase_everything" | "consent_decline" | "export_everything_cmd") {
+        return Some("That works on the PC only.");
+    }
     DENIED.iter().find(|(c, _)| *c == cmd).map(|(_, why)| *why)
 }
 
@@ -303,6 +311,14 @@ pub async fn events(phone: &str, after: u64, wait: Duration) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passwords_and_wiping_stay_on_the_pc() {
+        for cmd in ["vault_reveal", "vault_list", "vault_unlock", "vault_export", "erase_everything", "cancel_erase_everything", "consent_decline", "export_everything_cmd"] {
+            assert!(denied(cmd).is_some(), "{cmd} must not run from a phone");
+        }
+        assert!(denied("consent_status").is_none() && denied("security_overview").is_none());
+    }
 
     #[test]
     fn keys_phones_and_the_pcs_own_screen_stay_on_the_pc() {
