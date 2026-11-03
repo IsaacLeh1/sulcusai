@@ -358,7 +358,7 @@ pub fn file_fired(s: &Schedule, files: &[(std::path::PathBuf, i64, i64)], known:
     let since = s.armed.unwrap_or(0).max(s.last_run.unwrap_or(0));
     let lines: Vec<(String, String)> = files
         .iter()
-        .filter(|(p, made, changed)| known.map_or((*made).max(*changed) >= since, |k| !k.contains(p)))
+        .filter(|(p, made, changed)| known.map_or((*made).max(*changed) > since, |k| !k.contains(p)))
         .filter(|(p, _, changed)| {
             let n = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
             now - *changed >= 5_000 && !n.starts_with("~$") && !n.starts_with('.') && ![".part", ".crdownload", ".tmp", ".download", ".partial"].iter().any(|e| n.ends_with(e)) && has_words(&n, name)
@@ -570,10 +570,12 @@ pub(crate) fn triggered(state: &AppState, cipher: &Cipher, known: &mut Known, st
                 // Files still being written aren't known yet, so they're new
                 // once settled; ones known before, or (at the first look)
                 // older than the task, stay known however recently changed.
+                // A file from the same millisecond the task was set up was
+                // there first.
                 let since = s.armed.unwrap_or(0).max(s.last_run.unwrap_or(0));
                 let next = files
                     .into_iter()
-                    .filter(|(p, made, changed)| now - changed >= 5_000 || before.map_or((*made).max(*changed) < since, |k| k.contains(p)))
+                    .filter(|(p, made, changed)| now - changed >= 5_000 || before.map_or((*made).max(*changed) <= since, |k| k.contains(p)))
                     .map(|(p, ..)| p)
                     .collect();
                 known.insert(key, next);
@@ -904,6 +906,14 @@ mod tests {
         // Later: what wasn't there at the last look, even with old times (moved in).
         let known: std::collections::HashSet<_> = [p("new.pdf"), p("new.docx")].into_iter().collect();
         assert_eq!(file_fired(&s, &files, Some(&known), now).unwrap().ids, vec![p("old.pdf").display().to_string()]);
+    }
+
+    #[test]
+    fn a_file_from_the_moment_it_was_set_up_was_there_first() {
+        let s = task(Cadence::OnFile { folder: r"C:\in".into(), name: String::new() });
+        let armed = s.armed.unwrap();
+        let files = vec![(std::path::Path::new(r"C:\in").join("there.txt"), armed, armed)];
+        assert!(file_fired(&s, &files, None, armed + 60_000).is_none());
     }
 
     #[test]

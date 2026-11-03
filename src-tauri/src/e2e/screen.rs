@@ -184,6 +184,9 @@ async fn e2e_dictation_types_into_notepad() {
 
     let chat = "dictation-test";
     let (file, _) = notepad_on(chat, "dictation-test", "").await;
+    // Dictation types into whatever is in front, and opening Notepad from a
+    // test doesn't always put it there; a key sent to it does.
+    crate::programs::act(chat, crate::programs::Action::Key("ctrl+end".into())).await.unwrap();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let feeder = tokio::spawn(async move {
         for chunk in stream.chunks(320) {

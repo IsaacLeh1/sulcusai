@@ -119,6 +119,11 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
         match name {
             "create_document" => {
                 let what = kind(raw)?;
+                // Windows says only "Access is denied", which sends a small
+                // model off asking for another folder.
+                if path.is_dir() {
+                    return Err(format!("{label} is a folder, not a file. Pick a file name inside it, such as {label}/{}.", path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+                }
                 let existed = path.exists();
                 ctx.recorder.before_write(&path)?;
                 if let Some(dir) = path.parent() {

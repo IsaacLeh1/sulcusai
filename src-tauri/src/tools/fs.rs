@@ -616,6 +616,11 @@ pub fn run(name: &str, args: &Value, ctx: &Ctx<'_>) -> Outcome {
             "make_folder" => {
                 let path = sb.resolve(arg_str(args, "path")?)?;
                 let label = sb.display(&path);
+                // Small models make the folder a document will go in, named
+                // after the document, and then can't save it there.
+                if named_like_a_document(&label) && !path.exists() {
+                    return Err(format!("{label} is a document's name, not a folder's. create_document makes the file and any folders it needs."));
+                }
                 if path.exists() {
                     return Ok(Outcome::ok(format!("{label} already exists."), format!("Folder {label} exists"), "text", None));
                 }
@@ -821,9 +826,20 @@ fn search_files(sb: &Sandbox, args: &Value, ctx: &Ctx<'_>) -> Result<Outcome, St
     Ok(Outcome::ok(out, format!("Searched for “{pattern}” ({hits} match{})", if hits == 1 { "" } else { "es" }), "text", None))
 }
 
+fn named_like_a_document(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".docx", ".xlsx", ".pptx", ".pdf"].iter().any(|e| lower.ends_with(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_isnt_named_like_a_document() {
+        assert!(named_like_a_document("docs/budget.xlsx") && named_like_a_document("Report.PDF"));
+        assert!(!named_like_a_document("docs/budget") && !named_like_a_document("v1.2"));
+    }
 
     #[test]
     fn a_block_sent_whole_from_its_first_line_replaces_the_block() {

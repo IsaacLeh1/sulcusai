@@ -104,7 +104,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
     println!("notes.txt = {:?}", std::fs::read_to_string(&notes).unwrap());
     assert!(!events.lock().unwrap().iter().any(|e| e == "agent:approval"), "Bypass never asks");
 
-    // Turn 2: Auto mode must ask; an auto-approver says yes.
+    // Turn 2: Auto mode edits without asking; the approver is there in case it does.
     let approver_state = state.clone();
     let chat_id = chat.id.clone();
     let approver = tokio::spawn(async move {
@@ -120,7 +120,7 @@ async fn e2e_agent_edits_files_and_undo_restores() {
     let r = turn.run().await.unwrap();
     approver.abort();
     println!("turn 2 reply: {:?}", r.last.map(|m| m.content));
-    assert!(events.lock().unwrap().iter().any(|e| e == "agent:approval"), "Auto mode asks before changing a file");
+    assert!(!events.lock().unwrap().iter().any(|e| e == "agent:approval"), "Auto mode asks only before destructive work, not an edit");
     let greeting = std::fs::read_to_string(work.join("greeting.txt")).unwrap();
     println!("greeting.txt = {greeting:?}");
     assert!(greeting.to_lowercase().contains("goodbye"));

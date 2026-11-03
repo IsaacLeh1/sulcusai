@@ -602,7 +602,7 @@ fn e2e_an_export_is_imported_once() {
 
 /// Performance limits reach the engine: Cool & quiet launches it with fewer
 /// threads at low priority, and adaptive cooling's top level relaunches it
-/// with fewer layers on the graphics card. Both still answer.
+/// with fewer threads still. Both still answer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore]
 async fn e2e_perf_limits_reach_the_engine() {
@@ -638,7 +638,8 @@ async fn e2e_perf_limits_reach_the_engine() {
     let hot = perf::scaled(cool, &HeatState { gpu_level: 3, cpu_level: 3, ..Default::default() });
     let (hctx, hlayers) = catalog::launch_within(&spec, "Q4_K_M", &full, &hot);
     println!("hot: {} threads, {hlayers} layers (was {layers})", hot.threads);
-    assert!(hot.threads < cool.threads && hlayers < layers);
+    // Heat is eased with fewer threads and pauses; the model stays on the card.
+    assert!(hot.threads < cool.threads && hlayers == layers);
     let spec_hot = launch(hctx, hlayers, &hot);
     assert!(!eng.matches(&spec_hot), "new limits mean a relaunch");
     let ep = eng.ensure(spec_hot, None).await.unwrap();
@@ -680,7 +681,10 @@ fn e2e_found_models() {
     let put = |from: &str, to: &str| {
         let to = home.join(to);
         std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-        std::fs::hard_link(real.models.join(from), &to).unwrap();
+        // A model kept on another drive can't be hard linked.
+        if std::fs::hard_link(real.models.join(from), &to).is_err() {
+            std::fs::copy(real.models.join(from), &to).unwrap();
+        }
     };
     put("qwen3-1.7b/Qwen3-1.7B-Q4_K_M.gguf", ".lmstudio/models/lmstudio-community/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf");
     put("whisper-small/ggml-small-q5_1.bin", "Downloads/ggml-small-q5_1.bin");
@@ -811,7 +815,8 @@ async fn e2e_api_server() {
 
     let list: serde_json::Value = c.get(format!("{base}/models")).bearer_auth("sk-sulcus-test").send().await.unwrap().json().await.unwrap();
     println!("models: {list}");
-    assert_eq!(list["data"][0]["id"], "qwen3-1.7b");
+    assert_eq!(list["data"][0]["id"], "sulcusai");
+    assert_eq!(list["data"][1]["id"], "qwen3-1.7b");
     assert_eq!(c.get(format!("{base}/models")).send().await.unwrap().status(), 401);
     assert_eq!(c.get(format!("{base}/models")).bearer_auth("sk-sulcus-test").header("Host", "evil.example").send().await.unwrap().status(), 403);
 
