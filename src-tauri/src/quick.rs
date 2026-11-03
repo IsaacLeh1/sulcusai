@@ -146,7 +146,9 @@ fn menu(app: &AppHandle, paused: bool) -> tauri::Result<Menu<tauri::Wry>> {
 fn grey(icon: &tauri::image::Image<'_>) -> tauri::image::Image<'static> {
     let rgba: Vec<u8> = icon
         .rgba()
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .flat_map(|p| {
             let l = ((p[0] as u32 * 30 + p[1] as u32 * 59 + p[2] as u32 * 11) / 100) as u8;
             [l, l, l, p[3] / 2 + p[3] / 4]
