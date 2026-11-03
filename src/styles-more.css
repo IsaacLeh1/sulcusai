@@ -1344,6 +1344,15 @@ html.working-window, html.working-window body { background: transparent; overflo
 .zero-table th:first-child, .zero-table td:first-child { text-align: left; }
 .zero-table tr.total td { font-weight: 600; border-bottom: none; }
 
+/* Access keys inside the local API server's settings. */
+.access-keys { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.access-keys h3 { margin: 0 0 4px; font-size: 15px; }
+.access-key-new { padding: 10px 12px; margin: 8px 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }
+.access-key-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.access-key-list li { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); }
+.access-key-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.access-key-form .btn { align-self: flex-start; }
+
 /* The model picker for Mail, Calendar and the Assistant (FeatureModelPicker). */
 .feature-model { display: flex; flex-direction: column; gap: 10px; max-height: 60vh; overflow-y: auto; }
 .feature-model-row { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel-2); }

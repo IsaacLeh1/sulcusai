@@ -156,24 +156,69 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Only this PC, only with the key.
-fn check(headers: &HeaderMap, key: &str, port: u16) -> Result<(), Response> {
+fn local_host(headers: &HeaderMap, port: u16) -> Result<(), Response> {
     let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or_default().to_ascii_lowercase();
     let local = [format!("127.0.0.1:{port}"), format!("localhost:{port}"), "127.0.0.1".into(), "localhost".into()];
     if !local.contains(&host) {
         return Err(error(StatusCode::FORBIDDEN, "Only programs on this PC can use this server."));
     }
-    // OpenAI clients send "Authorization: Bearer …"; Anthropic's send "x-api-key".
-    let given = headers
+    Ok(())
+}
+
+/// The key a request carries: OpenAI clients send "Authorization: Bearer …",
+/// Anthropic's send "x-api-key".
+fn presented(headers: &HeaderMap) -> &str {
+    headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .or_else(|| headers.get("x-api-key").and_then(|h| h.to_str().ok()))
-        .unwrap_or_default();
-    if !same(given.trim(), key) {
+        .unwrap_or_default()
+        .trim()
+}
+
+/// Only this PC, only with the key.
+#[cfg(test)]
+fn check(headers: &HeaderMap, key: &str, port: u16) -> Result<(), Response> {
+    local_host(headers, port)?;
+    if !same(presented(headers), key) {
         return Err(error(StatusCode::UNAUTHORIZED, "Missing or wrong API key. Copy it from SulcusAI → Settings → Local API server."));
     }
     Ok(())
+}
+
+/// The access keys (per app, with scopes) the server takes besides the
+/// local API key, loaded once. Saved at once when they change; their last use
+/// and the log at most once a minute, so a busy program doesn't write the
+/// disk on every request.
+static KEYS: Mutex<Option<(crate::access_keys::AccessKeys, i64)>> = Mutex::new(None);
+const KEYS_SETTING: &str = "access_keys";
+
+pub(crate) fn with_keys<R>(state: &AppState, changed: bool, f: impl FnOnce(&mut crate::access_keys::AccessKeys) -> R) -> R {
+    let mut slot = KEYS.lock().unwrap();
+    let (keys, saved) = slot.get_or_insert_with(|| (db::get(&state.db.lock().unwrap(), KEYS_SETTING).unwrap_or_default(), db::now_ms()));
+    let out = f(keys);
+    let now = db::now_ms();
+    if changed || now - *saved > 60_000 {
+        if db::set(&state.db.lock().unwrap(), KEYS_SETTING, &*keys).is_ok() {
+            *saved = now;
+        }
+    }
+    out
+}
+
+/// Only this PC, and either the local API key (everything, as before access
+/// keys) or an access key allowed `scope`.
+fn allow(ctx: &Ctx, headers: &HeaderMap, scope: crate::access_keys::Scope) -> Result<(), Response> {
+    local_host(headers, ctx.port)?;
+    let given = presented(headers);
+    if same(given, &ctx.key) {
+        return Ok(());
+    }
+    match with_keys(&ctx.state, false, |k| k.authorize(given, scope, db::now_ms())) {
+        crate::access_keys::Decision::Allowed { .. } => Ok(()),
+        crate::access_keys::Decision::Denied(d) => Err(error(StatusCode::from_u16(d.http_status()).unwrap_or(StatusCode::UNAUTHORIZED), d.message())),
+    }
 }
 
 /// Every model a program can use: the SulcusAI assistant, this PC's models
@@ -211,7 +256,7 @@ fn model_list(state: &AppState) -> Vec<Value> {
 }
 
 async fn models(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
-    if let Err(r) = check(&headers, &ctx.key, ctx.port) {
+    if let Err(r) = allow(&ctx, &headers, crate::access_keys::Scope::UseModels) {
         return r;
     }
     Json(json!({ "object": "list", "data": model_list(&ctx.state) })).into_response()
@@ -221,7 +266,7 @@ async fn models(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
 /// it fully: the app, what's connected, the features on, the assistant's
 /// tools, the models, and how to ask.
 async fn about(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
-    if let Err(r) = check(&headers, &ctx.key, ctx.port) {
+    if let Err(r) = allow(&ctx, &headers, crate::access_keys::Scope::UseModels) {
         return r;
     }
     let state = &ctx.state;
@@ -326,20 +371,31 @@ fn chunk(id: &str, model: &str, delta: Value, finish: Option<&str>) -> Value {
 }
 
 async fn chat(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<Value>) -> Response {
-    if let Err(r) = check(&headers, &ctx.key, ctx.port) {
-        return r;
-    }
+    use crate::access_keys::Scope;
     let state = &ctx.state;
     let asked = body.get("model").and_then(Value::as_str).map(str::to_string);
     if let Some(on) = assistant_model(asked.as_deref()) {
+        // The assistant reaches whatever it can: its own permission.
+        if let Err(r) = allow(&ctx, &headers, Scope::UseAssistant) {
+            return r;
+        }
         let on = on.map(str::to_string);
         return Box::pin(assistant(&ctx, &headers, &body, on)).await;
+    }
+    // Checked before the model is looked up, so a program without a key
+    // can't learn which models are here.
+    if let Err(r) = allow(&ctx, &headers, Scope::UseModels) {
+        return r;
     }
     let id = match pick_model(state, asked.as_deref()) {
         Ok(id) => id,
         Err(e) => return error(StatusCode::NOT_FOUND, &e),
     };
     if crate::cloud::is_cloud(&id) {
+        // Cloud models cost money: their own permission too.
+        if let Err(r) = allow(&ctx, &headers, Scope::UseCloudModels) {
+            return r;
+        }
         return cloud_reply(state, &id, &body).await;
     }
     // Don't swap the model out from under a chat that's replying in the app.
@@ -388,7 +444,7 @@ async fn count_tokens(State(ctx): State<Ctx>, headers: HeaderMap, Json(body): Js
 
 /// Passes a request to the engine running the model it names (loaded first).
 async fn to_engine(ctx: &Ctx, headers: &HeaderMap, mut body: Value, path: &str) -> Response {
-    if let Err(r) = check(headers, &ctx.key, ctx.port) {
+    if let Err(r) = allow(ctx, headers, crate::access_keys::Scope::UseModels) {
         return r;
     }
     let state = &ctx.state;
@@ -440,7 +496,7 @@ async fn to_engine(ctx: &Ctx, headers: &HeaderMap, mut body: Value, path: &str) 
 /// Text turned into numbers by the documents library's model (OpenAI's
 /// `/v1/embeddings` shape), for programs that search by meaning.
 async fn embeddings(State(ctx): State<Ctx>, headers: HeaderMap, Json(mut body): Json<Value>) -> Response {
-    if let Err(r) = check(&headers, &ctx.key, ctx.port) {
+    if let Err(r) = allow(&ctx, &headers, crate::access_keys::Scope::UseModels) {
         return r;
     }
     if !crate::doclib::model_ready(&ctx.state) {
@@ -776,6 +832,46 @@ pub fn new_api_key(state: AppStateRef) -> Result<ApiServerView, String> {
     Ok(view(&state))
 }
 
+// ---------- access keys (Settings) ----------
+
+#[derive(Serialize)]
+pub struct AccessKeysView {
+    keys: Vec<crate::access_keys::KeyView>,
+    scopes: Vec<crate::access_keys::ScopeInfo>,
+    /// Newest first, refusals included, so a misbehaving app shows up.
+    log: Vec<crate::access_keys::AuditEntry>,
+}
+
+fn access_view(state: &AppState) -> AccessKeysView {
+    with_keys(state, false, |k| AccessKeysView { keys: k.list(db::now_ms()), scopes: crate::access_keys::catalog(), log: k.audit.recent(50) })
+}
+
+#[tauri::command]
+pub fn access_keys_view(state: AppStateRef) -> AccessKeysView {
+    access_view(&state)
+}
+
+/// Makes a key; its secret is in the answer this once and never again.
+#[tauri::command]
+pub fn access_key_create(state: AppStateRef, new: crate::access_keys::NewKey) -> Result<(String, AccessKeysView), String> {
+    let made = with_keys(&state, true, |k| k.create(new, db::now_ms()))?;
+    state.log("settings", "Made an access key for a program");
+    Ok((made.secret.to_string(), access_view(&state)))
+}
+
+#[tauri::command]
+pub fn access_key_set(state: AppStateRef, id: String, scopes: Vec<crate::access_keys::Scope>, folders: Vec<String>) -> Result<AccessKeysView, String> {
+    with_keys(&state, true, |k| k.set_scopes(&id, &scopes, &folders, db::now_ms()))?;
+    Ok(access_view(&state))
+}
+
+#[tauri::command]
+pub fn access_key_revoke(state: AppStateRef, id: String) -> Result<AccessKeysView, String> {
+    with_keys(&state, true, |k| k.revoke(&id, db::now_ms()))?;
+    state.log("settings", "Turned off an access key");
+    Ok(access_view(&state))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -818,6 +914,26 @@ mod tests {
         // A message's text, plain or in parts.
         assert_eq!(content_text(&json!("hi")), "hi");
         assert_eq!(content_text(&json!([{ "type": "text", "text": "a" }, { "type": "image_url" }, { "type": "text", "text": "b" }])), "a\nb");
+    }
+
+    #[test]
+    fn access_keys_reach_only_what_they_were_given() {
+        use crate::access_keys::{NewKey, Scope};
+        let state = crate::testutil::temp_state(None);
+        let ctx = Ctx { state: state.clone(), key: "sk-sulcus-old".into(), port: 7340 };
+        let secret = with_keys(&state, true, |k| k.create(NewKey { name: "Editor".into(), scopes: vec![Scope::UseModels], ..Default::default() }, db::now_ms())).unwrap().secret.to_string();
+        let code = |key: &str, scope| allow(&ctx, &headers("127.0.0.1:7340", Some(&format!("Bearer {key}"))), scope).err().map(|r| r.status());
+        assert_eq!(code(&secret, Scope::UseModels), None);
+        assert_eq!(code(&secret, Scope::UseCloudModels), Some(StatusCode::FORBIDDEN), "not given");
+        assert_eq!(code(&secret, Scope::UseAssistant), Some(StatusCode::FORBIDDEN));
+        assert_eq!(code("sk-sulcus-akwrong", Scope::UseModels), Some(StatusCode::UNAUTHORIZED));
+        assert_eq!(code("sk-sulcus-old", Scope::UseCloudModels), None, "the local API key works as before");
+        assert_eq!(allow(&ctx, &headers("evil.example:7340", Some(&format!("Bearer {secret}"))), Scope::UseModels).err().map(|r| r.status()), Some(StatusCode::FORBIDDEN));
+        let id = with_keys(&state, false, |k| k.list(db::now_ms())[0].id.clone());
+        with_keys(&state, true, |k| k.revoke(&id, db::now_ms())).unwrap();
+        assert_eq!(code(&secret, Scope::UseModels), Some(StatusCode::UNAUTHORIZED), "turned off at once");
+        *KEYS.lock().unwrap() = None;
+        std::fs::remove_dir_all(&state.paths.data).ok();
     }
 
     #[test]

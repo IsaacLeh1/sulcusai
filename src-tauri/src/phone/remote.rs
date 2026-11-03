@@ -107,7 +107,7 @@ pub fn denied(cmd: &str) -> Option<&'static str> {
         return Some("The password vault opens on the PC only.");
     }
     // Wiping the PC, quitting it or writing all its data out is done at the PC.
-    if matches!(cmd, "erase_everything" | "cancel_erase_everything" | "consent_decline" | "export_everything_cmd") {
+    if matches!(cmd, "erase_everything" | "cancel_erase_everything" | "consent_decline" | "export_everything_cmd" | "access_key_create" | "access_key_set") {
         return Some("That works on the PC only.");
     }
     DENIED.iter().find(|(c, _)| *c == cmd).map(|(_, why)| *why)
@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn passwords_and_wiping_stay_on_the_pc() {
-        for cmd in ["vault_reveal", "vault_list", "vault_unlock", "vault_export", "erase_everything", "cancel_erase_everything", "consent_decline", "export_everything_cmd"] {
+        for cmd in ["vault_reveal", "vault_list", "vault_unlock", "vault_export", "erase_everything", "cancel_erase_everything", "consent_decline", "export_everything_cmd", "access_key_create", "access_key_set"] {
             assert!(denied(cmd).is_some(), "{cmd} must not run from a phone");
         }
         assert!(denied("consent_status").is_none() && denied("security_overview").is_none());

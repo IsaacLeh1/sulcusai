@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { api, errorText, type ApiServerView } from "../api";
 import { t } from "../i18n";
 import type { PushToast } from "./Toasts";
+import { AccessKeys } from "./AccessKeys";
 
 export function ApiServerSettings({ toast }: { toast: PushToast }) {
   const [v, setV] = useState<ApiServerView | null>(null);
@@ -102,6 +103,7 @@ export function ApiServerSettings({ toast }: { toast: PushToast }) {
           {t("A reply in a set shape: send")} <code>response_format</code> {t("as OpenAI does (JSON, or JSON that fits a schema). It works with this PC's models and the cloud models turned on.")}
         </p>
       </details>
+      <AccessKeys toast={toast} />
       <OllamaServer v={v} setV={setV} toast={toast} />
     </section>
   );
