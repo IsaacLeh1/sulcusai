@@ -466,7 +466,7 @@ fn unzip_kept(archive: &Path, into: &Path, keep: &[String]) -> Result<(), String
     let mut z = zip::ZipArchive::new(f).map_err(|e| format!("Couldn't unpack {}: {e}", archive.display()))?;
     for i in 0..z.len() {
         let mut e = z.by_index(i).map_err(|e| e.to_string())?;
-        let path = e.name().replace('\\', "/");
+        let path = e.name().map_err(|err| err.to_string())?.replace('\\', "/");
         let Some(file) = path.rsplit('/').next().filter(|f| f.to_lowercase().ends_with(".dll")).map(str::to_string) else { continue };
         if e.is_dir() || !keep.iter().any(|k| path.contains(k.as_str())) {
             continue;

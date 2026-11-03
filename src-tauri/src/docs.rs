@@ -623,7 +623,7 @@ pub fn write_pptx(path: &Path, slides: &[Slide]) -> Result<(), String> {
     let ids: Vec<String> = (0..slides.len()).map(|i| format!("rIdS{}", i + 1)).collect();
     for i in 0..tpl.len() {
         let mut f = tpl.by_index(i).map_err(|e| e.to_string())?;
-        let name = f.name().to_string();
+        let name = f.name().map_err(|e| e.to_string())?.into_owned();
         let mut data = Vec::new();
         f.read_to_end(&mut data).map_err(|e| e.to_string())?;
         let text = || String::from_utf8_lossy(&data).to_string();
@@ -1144,6 +1144,7 @@ pub fn read_all(path: &Path) -> Result<String, String> {
             let z = zip::ZipArchive::new(f).map_err(|_| "This file isn't a valid PowerPoint file.".to_string())?;
             let mut names: Vec<(u32, String)> = z
                 .file_names()
+                .filter_map(Result::ok)
                 .filter_map(|n| n.strip_prefix("ppt/slides/slide").and_then(|r| r.strip_suffix(".xml")).and_then(|k| k.parse().ok()).map(|k| (k, n.to_string())))
                 .collect();
             names.sort();
@@ -1242,7 +1243,7 @@ mod tests {
         assert!(text.contains("B4 = SUM(B2:B3)"), "{text}");
         assert!(text.contains("| Total | 215.5 |"), "the total is filled in: {text}");
         let z = zip::ZipArchive::new(std::fs::File::open(&p).unwrap()).unwrap();
-        assert!(z.file_names().any(|n| n.starts_with("xl/charts/chart")), "has a chart");
+        assert!(z.file_names().filter_map(Result::ok).any(|n| n.starts_with("xl/charts/chart")), "has a chart");
         assert_eq!(cell_ref("B12"), Some((11, 1)));
         assert_eq!(cell_ref("AA1"), Some((0, 26)));
         assert_eq!(absolute("My Sheet", "B2:B6").unwrap(), "'My Sheet'!$B$2:$B$6");

@@ -1,0 +1,49 @@
+# Heavy tests that heavy_tests.ps1 runs only when named in -Include: they
+# drive the screen and keyboard, use the microphone or speakers, open a
+# browser, sign in to real accounts, spend money on cloud models, or go
+# through a relay or someone else's server. A bare test name, or a module
+# path ending in "::" for all of its tests.
+
+# The screen, keyboard and mouse.
+e2e::screen::
+
+# The microphone and speakers.
+e2e_dictation_streams_phrases
+e2e_live_voice_keeps_up
+e2e_the_wake_word_is_heard
+e2e_meeting_records_transcribes_and_writes_notes
+
+# A browser opened on this PC.
+a_long_address_opens_in_the_browser
+e2e_browser_extension
+e2e_builds_a_live_site_and_serves_it
+e2e_phone_page
+demo_phone_page
+prepare_phone_profile
+
+# Real mail, calendar and cloud accounts, and paid cloud models.
+mail_round_trip
+mail_changes_reach_the_server_and_back
+caldav_round_trip
+e2e_email_and_calendar
+e2e_mail_and_events_set_off_tasks
+e2e_agent_asks_before_sending
+real_cloud_providers_answer
+real_privacy_warnings
+real_latest_chat
+e2e_cloud_anthropic
+e2e_cloud_openai
+e2e_cloud_media
+
+# A relay, or a report sent off this PC.
+e2e_phone_through_relay
+e2e_sync_through_relay
+two_apps_meet_through_the_real_relay
+people_through_the_real_relay
+people_link_and_talk_through_sulcusais_relay
+a_timed_message_goes_by_itself
+a_report_reaches_the_inbox
+
+# Windows Firewall settings, and many gigabytes of downloads.
+checks_this_pcs_firewall
+real_download_speeds

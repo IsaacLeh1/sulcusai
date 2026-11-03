@@ -157,7 +157,7 @@ pub fn read(path: &Path) -> Result<Export, String> {
     let (convs_json, memories_json) = if bytes.starts_with(b"PK") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).map_err(|e| format!("Couldn't open that zip: {e}"))?;
         let mut read_entry = |want: &dyn Fn(&str) -> bool| -> Option<String> {
-            let name = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string())).find(|n| want(&n.to_lowercase()))?;
+            let name = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.into_owned()))).find(|n| want(&n.to_lowercase()))?;
             let mut s = String::new();
             zip.by_name(&name).ok()?.read_to_string(&mut s).ok()?;
             Some(s)

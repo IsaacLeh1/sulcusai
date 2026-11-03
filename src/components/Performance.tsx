@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, errorText, on, type GpuLimit, type GpuNow, type HeatState, type PerfMode, type PerfSettings, type PerfView, type ProcessorFallback } from "../api";
 import { bytes } from "../format";
 import { t, tx } from "../i18n";
+import { openSettings } from "./ConnectivityMenu";
 import type { PushToast } from "./Toasts";
 
 const MODES: { id: PerfMode; label: string; detail: string }[] = [
@@ -256,17 +257,21 @@ function Slider(props: { label: string; value: number; min: number; max: number;
   );
 }
 
-/** Status-bar pill: the mode, and a warning while adaptive cooling has stepped down. */
-export function PerfPill({ onOpen }: { onOpen: () => void }) {
-  const [mode, setMode] = useState<PerfMode | null>(null);
+/** Status-bar pill: the mode, and a warning while adaptive cooling has
+ * stepped down. Clicking it picks the mode in place; the sliders and
+ * switches stay in Settings. */
+export function PerfPill({ toast }: { toast: PushToast }) {
+  const [v, setV] = useState<PerfView | null>(null);
   const [level, setLevel] = useState(0);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const load = () =>
       api
         .perfView()
-        .then((v) => {
-          setMode(v.limits.mode);
-          setLevel(v.limits.heat_level);
+        .then((x) => {
+          setV(x);
+          setLevel(x.limits.heat_level);
         })
         .catch(() => {});
     load();
@@ -284,12 +289,76 @@ export function PerfPill({ onOpen }: { onOpen: () => void }) {
       sub.then((u) => u());
     };
   }, []);
-  if (!mode) return null;
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  if (!v) return null;
+  const s = v.settings;
+  const c = v.ceiling;
+
+  const pick = async (mode: PerfMode) => {
+    setOpen(false);
+    if (mode === s.mode) return;
+    const turbo = mode === "turbo" ? s.turbo ?? { threads: c.threads, gpu_percent: c.gpu_percent, ram_gb: c.ram_gb } : s.turbo;
+    setV({ ...v, settings: { ...s, mode, turbo } });
+    try {
+      await api.setPerf({ ...s, mode, turbo });
+      window.dispatchEvent(new Event("perf-changed"));
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
+  };
+
   return (
-    <button className={`status-item perf-pill ${level > 0 ? "hot" : ""}`} onClick={onOpen} title={level > 0 ? t("Running cooler to keep the PC's temperature down (level {n} of 3)", { n: level }) : t("Performance mode")}>
-      {t(MODE_LABEL[mode])}
-      {level > 0 && ` · ${t("cooling {n}/3", { n: level })}`}
-    </button>
+    <div className="gpu-picker perf-picker" ref={ref}>
+      <button
+        className={`status-item perf-pill ${level > 0 ? "hot" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={level > 0 ? t("Running cooler to keep the PC's temperature down (level {n} of 3)", { n: level }) : t("Performance mode")}
+      >
+        {t(MODE_LABEL[v.limits.mode])}
+        {v.limits.on_battery && v.limits.mode !== s.mode ? " " + t("(on battery)") : ""}
+        {level > 0 && ` · ${t("cooling {n}/3", { n: level })}`}
+      </button>
+      {open && (
+        <div className="gpu-menu" role="menu" aria-label={t("Performance mode")}>
+          {MODES.map((m) => (
+            <button key={m.id} role="menuitemradio" aria-checked={s.mode === m.id} className={`gpu-card ${s.mode === m.id ? "active" : ""}`} onClick={() => pick(m.id)}>
+              <strong>{t(m.label)}</strong>
+              <span className="small muted block">{t(m.detail)}</span>
+            </button>
+          ))}
+          {s.adaptive && level > 0 && (
+            <p className="small gpu-menu-note">
+              <HeatLine heat={v.heat} />
+            </p>
+          )}
+          <div className="gpu-menu-foot">
+            <button
+              className="btn ghost small"
+              onClick={() => {
+                setOpen(false);
+                openSettings("performance");
+              }}
+            >
+              {t("Open Performance settings")}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

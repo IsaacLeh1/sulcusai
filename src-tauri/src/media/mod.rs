@@ -1210,7 +1210,6 @@ async fn run_kind(state: &Arc<AppState>, id: &str, req: &Request, model: Option<
         "studio_part" => studio_part(&ctx, model.ok_or("Making a part needs ACE-Step 1.5 Base (Models).")?, &work.0).await,
         #[cfg(windows)]
         "train" => train_job(&ctx, &work.0).await,
-        #[cfg(windows)]
         "train_picture" => picture_train::picture_train_job(&ctx, &work.0).await,
         "video_edit" => video_edit(&ctx, &work.0).await,
         "video_sound" => video_sound(&ctx, &work.0).await,

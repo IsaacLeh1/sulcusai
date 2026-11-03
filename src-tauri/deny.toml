@@ -50,6 +50,9 @@ ignore = [
   { id = "RUSTSEC-2026-0367", reason = "extract() not used" },
   { id = "RUSTSEC-2026-0368", reason = "extract() not used" },
   { id = "RUSTSEC-2026-0369", reason = "extract() not used" },
+  # Fixed in zip 9, which SulcusAI uses; the zip 8 left is under docx-rs (no
+  # release on zip 9 yet), and SulcusAI only writes Word files with it.
+  { id = "RUSTSEC-2026-0429", reason = "zip 8 under docx-rs, write only; extract() not used" },
   # zvariant, zbus_names, zvariant_derive: unmaintained D-Bus crates under tauri on Linux.
   { id = "RUSTSEC-2026-0370", reason = "Linux D-Bus under tauri" },
   { id = "RUSTSEC-2026-0371", reason = "Linux D-Bus under tauri" },

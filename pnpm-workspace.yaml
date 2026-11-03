@@ -1,2 +1,12 @@
 minimumReleaseAgeExclude:
   - vite@8.3.3
+overrides:
+  # KaTeX before 0.18.2 has GHSA-238p-pmpm-9mq7, and rehype-katex and
+  # micromark-extension-math still ask for 0.16.
+  katex: ^0.19.1
+  # spessasynth_lib takes any 4.x core; a second copy beside the one the app
+  # pins makes their MIDI types clash.
+  spessasynth_core: 4.3.22
+  # Under spessasynth_core; kept where the lock had it rather than taking
+  # whatever came out last when the lock is rebuilt.
+  stb-vorbis: 0.0.6

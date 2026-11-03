@@ -70,6 +70,11 @@ pub(super) async fn ensure_trainer(ctx: &RunCtx<'_>, t: &train::TrainerCatalog) 
     Ok(uv)
 }
 
+#[cfg(not(windows))]
+pub(super) async fn ensure_trainer(_ctx: &RunCtx<'_>, _t: &train::TrainerCatalog) -> Result<PathBuf, String> {
+    Err("Training isn't available on this system yet.".into())
+}
+
 /// A custom model trained on the person's songs (`train`): each song's
 /// words heard, the songs turned into the trainer's tensors, then trained;
 /// the adapter is kept with the music models and the model listed.

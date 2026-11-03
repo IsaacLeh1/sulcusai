@@ -1445,7 +1445,7 @@ export function Workspace({ security, onSecurityChanged, toast, nav }: { securit
             <span className="rec-dot on" /> {t("Recording meeting")}
           </button>
         )}
-        <PerfPill onOpen={() => setView("settings")} />
+        <PerfPill toast={toast} />
         <GpuPill onOpen={() => setView("settings")} />
         <WorkBar onOpen={(page) => setView(page)} />
         <LineupBar toast={toast} />

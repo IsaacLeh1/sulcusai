@@ -30,7 +30,7 @@ sha2 = "0.10"
 hex = "0.4"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 # Engine downloads for Linux and macOS come as .tar.gz.
 flate2 = "1"
 tar = "0.4"
@@ -56,8 +56,9 @@ rquickjs = "0.14"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-global-shortcut = "2"
-# Signed updates from the project's GitHub Releases.
-tauri-plugin-updater = "2"
+# Signed updates from the project's GitHub Releases. Windows updates are the
+# signed setup .exe, so its zip unpacking (and its own zip copy) is left out.
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls", "system-proxy"] }
 # Neural voices, speaker labels and a song's parts: ONNX Runtime, loaded at
 # run time from a downloaded, hash-checked copy (nothing is bundled or fetched
 # at build time); "cuda" lets a song's parts be taken apart on NVIDIA cards.
@@ -77,8 +78,8 @@ quick-xml = "0.41"
 chrono-tz = "0.10"
 # Documents: Word (write), Excel (write with formulas and charts; read), PDF (read).
 docx-rs = "0.4"
-rust_xlsxwriter = { version = "0.99", default-features = false }
-calamine = "0.36"
+rust_xlsxwriter = { version = "0.101", default-features = false }
+calamine = "0.37"
 pdf-extract = "0.12"
 # The opt-in local API server (OpenAI-compatible, 127.0.0.1 only).
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }

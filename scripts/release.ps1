@@ -78,6 +78,7 @@ if (-not $SkipBuild) {
     }
 }
 if (-not (Test-Path $sig)) { throw "No signature next to $exeName; was it built with the signing key?" }
+& (Join-Path $PSScriptRoot "check_window.ps1")
 # Publishing an earlier build: only one made after the last commit.
 if ($SkipBuild -and $Publish) {
     $committed = [DateTimeOffset]::FromUnixTimeSeconds([long](git -C $root log -1 --format=%ct)).LocalDateTime

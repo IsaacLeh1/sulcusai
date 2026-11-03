@@ -103,6 +103,7 @@ mod router;
 mod sandbox;
 mod schedule;
 mod security;
+mod selftest;
 mod sitekeys;
 mod speech;
 mod storage;
@@ -423,6 +424,13 @@ pub fn run() {
             side_windows::on_main_event(w, e);
         })
         .setup(|app| {
+            // The window is made hidden (tauri.conf.json) so the release
+            // check can run a built copy without it ever showing.
+            if !selftest::begin(app.handle())? {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
+            }
             sync::compute::started();
             // Local, not roaming: models are gigabytes and must never sync.
             // SULCUSAI_DATA_DIR overrides it (testing, portable installs).
@@ -1127,6 +1135,7 @@ pub fn run() {
             notes::tasks_from_meeting,
             web::get_web_settings,
             web::set_web_settings,
+            selftest::selftest_seen,
         ])
         .build(tauri::generate_context!())
         .expect("error while building SulcusAI");
