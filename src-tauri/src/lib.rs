@@ -123,6 +123,7 @@ mod typing;
 mod updates;
 mod versions;
 mod vad;
+mod vault;
 mod viewer;
 mod vision;
 mod voice;
