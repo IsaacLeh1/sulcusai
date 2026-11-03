@@ -41,6 +41,7 @@ export const consentApi = {
   eraseEverything: (keepModels: boolean, confirm: string) => invoke<void>("erase_everything", { keepModels, confirm }),
   eraseStatus: () => invoke<EraseRequest | null>("erase_status"),
   cancelErase: () => invoke<void>("cancel_erase_everything"),
+  decline: () => invoke<void>("consent_decline"),
 };
 
 export const DOCUMENT_TITLES: Record<string, string> = {

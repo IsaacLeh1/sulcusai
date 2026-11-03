@@ -10,6 +10,8 @@ import "./styles-more.css";
 
 // The quick-ask window loads only what it needs.
 const App = lazy(() => import("./App"));
+// The terms are asked for in the main window only; the other windows open from it.
+const ConsentGate = lazy(() => import("./components/ConsentScreen").then((m) => ({ default: m.ConsentGate })));
 const QuickAsk = lazy(() => import("./views/QuickAsk").then((m) => ({ default: m.QuickAsk })));
 const PeopleWindow = lazy(() => import("./views/PeopleWindow"));
 const SideWindow = lazy(() => import("./views/SideWindow"));
@@ -57,7 +59,12 @@ if (!quick && !working) {
 // re-render everything below them).
 function Root() {
   useLanguage();
-  return <Suspense fallback={null}>{quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : <App />}</Suspense>;
+  const main = (
+    <ConsentGate onDecline={() => import("./components/ConsentApi").then(({ consentApi }) => consentApi.decline())}>
+      <App />
+    </ConsentGate>
+  );
+  return <Suspense fallback={null}>{quick ? <QuickAsk /> : working ? <WorkingBanner /> : people ? <PeopleWindow /> : side ? <SideWindow label={label} /> : main}</Suspense>;
 }
 
 initLanguage().then(() =>

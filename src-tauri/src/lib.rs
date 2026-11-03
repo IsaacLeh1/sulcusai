@@ -447,9 +447,17 @@ pub fn run() {
                 None => app.path().app_local_data_dir()?,
             };
             let paths = Paths::new(data)?;
+            // "Delete everything" happens before anything opens its files. A
+            // refused one mustn't stop the app starting.
+            let erased = consent::apply_pending_erase(&paths);
             // A restore unpacked last time is swapped in before anything opens.
             // The app's log first, so everything startup does is in it.
             applog::init(&paths.logs);
+            match &erased {
+                Ok(Some(e)) => applog::line("consent", &format!("Deleted everything as asked: {} entries removed, {} left (in use)", e.removed, e.left.len())),
+                Err(e) => applog::line("consent", &format!("Didn't delete everything: {e}")),
+                Ok(None) => {}
+            }
             backup::apply_pending(&paths.data)?;
             let conn = db::open(&paths.db)?;
             let vault = open_vault(&paths)?;
@@ -994,6 +1002,15 @@ pub fn run() {
             engine_status,
             unload_model,
             security::security_status,
+            consent::consent_status,
+            consent::consent_accept,
+            consent::export_everything_cmd,
+            consent::erase_everything,
+            consent::erase_status,
+            consent::cancel_erase_everything,
+            consent::consent_decline,
+            security_page::security_overview,
+            security_page::security_apply_fix,
             security::enable_lock,
             security::change_pin,
             security::reset_pin,

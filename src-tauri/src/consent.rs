@@ -225,6 +225,12 @@ pub fn apply_pending_erase(paths: &Paths) -> Result<Option<Erased>, String> {
         cancel_erase(data)?;
         return Err("The data folder is a whole drive, so nothing was deleted.".into());
     }
+    // A folder named with SULCUSAI_DATA_DIR (portable or test installs) may
+    // hold other things than SulcusAI's own.
+    if std::env::var_os("SULCUSAI_DATA_DIR").is_some() {
+        cancel_erase(data)?;
+        return Err("The data folder was chosen with SULCUSAI_DATA_DIR and may hold other files, so nothing was deleted. Delete SulcusAI's files there yourself.".into());
+    }
     // The marker goes first, so a crash part way can't wipe again at every start.
     cancel_erase(data)?;
     let models_inside = paths.models.starts_with(data);
@@ -322,6 +328,13 @@ pub fn cancel_erase_everything(state: AppStateRef<'_>) -> Result<(), String> {
     cancel_erase(&state.paths.data)?;
     state.log("consent", "Deleting everything was called off");
     Ok(())
+}
+
+/// Not agreeing to the terms closes SulcusAI (not only the window, which
+/// would leave it in the tray).
+#[tauri::command]
+pub fn consent_decline(app: tauri::AppHandle) {
+    app.exit(0);
 }
 
 #[cfg(test)]
@@ -441,5 +454,29 @@ mod tests {
         assert!(!p.models.join("m.gguf").exists());
         assert!(p.models.exists() && p.logs.exists(), "the app's folders are back for the fresh start");
         std::fs::remove_dir_all(&p.data).ok();
+    }
+
+    /// Only the Delete everything button, after its typed confirmation,
+    /// writes the request: no start, update or damaged file can erase.
+    #[test]
+    fn nothing_is_erased_without_the_request_from_delete_everything() {
+        let first_start = temp_paths();
+        assert!(apply_pending_erase(&first_start).unwrap().is_none());
+        assert!(first_start.models.exists() && first_start.logs.exists());
+
+        // An existing install, with its data and no request (a start after an update).
+        let p = temp_paths();
+        std::fs::write(&p.db, b"db").unwrap();
+        std::fs::write(p.models.join("m.gguf"), b"m").unwrap();
+        assert!(apply_pending_erase(&p).unwrap().is_none());
+        // A damaged or foreign request file doesn't count as one.
+        std::fs::write(p.data.join(ERASE_MARKER), b"not a request").unwrap();
+        assert!(apply_pending_erase(&p).unwrap().is_none());
+        std::fs::write(p.data.join(ERASE_MARKER), b"").unwrap();
+        assert!(apply_pending_erase(&p).unwrap().is_none());
+        assert!(p.db.exists() && p.models.join("m.gguf").exists(), "everything is still there");
+        for p in [first_start, p] {
+            std::fs::remove_dir_all(&p.data).ok();
+        }
     }
 }
