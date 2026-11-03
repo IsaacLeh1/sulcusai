@@ -476,6 +476,12 @@ pub async fn ensure_unpacked(
     tokio::task::spawn_blocking(move || if tarball { untar(&zip_c, &staging_c) } else { unzip(&zip_c, &staging_c) })
         .await
         .map_err(|e| e.to_string())??;
+    // Recorded before anything runs from it, so every start can tell a file
+    // changed later. A failure only leaves the folder unchecked.
+    let (p, d, a, s) = (paths.clone(), dir_name.to_string(), asset.clone(), staging.clone());
+    if let Ok(Err(e)) = tokio::task::spawn_blocking(move || crate::integrity::record_unpacked(&p, &d, &a, &s)).await {
+        crate::applog::line("security", &e);
+    }
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
     }

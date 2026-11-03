@@ -38,8 +38,10 @@ fn append(name: &str, text: &str) {
         let _ = std::fs::rename(&path, &old);
     }
     let _ = std::fs::create_dir_all(dir);
+    // One place for app.log and crashes.log: a key in an error message never
+    // reaches the disk.
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = f.write_all(text.as_bytes());
+        let _ = f.write_all(crate::secret_scrub::scrub(text).as_bytes());
     }
 }
 
@@ -203,7 +205,8 @@ pub fn read_log(state: AppStateRef, name: String, lines: Option<usize>) -> Resul
     let text = String::from_utf8_lossy(&tail);
     let all: Vec<&str> = text.lines().collect();
     let keep = lines.unwrap_or(400).clamp(10, 5000);
-    Ok(all[all.len().saturating_sub(keep)..].join("\n"))
+    // The engines write their own logs, not through append.
+    Ok(crate::secret_scrub::scrub(&all[all.len().saturating_sub(keep)..].join("\n")))
 }
 
 /// A log line that reports a known problem, and what it means.
