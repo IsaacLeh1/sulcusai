@@ -103,6 +103,7 @@ mod router;
 mod sandbox;
 mod schedule;
 mod security;
+mod security_notice;
 mod selftest;
 mod sitekeys;
 mod speech;
