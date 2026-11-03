@@ -103,6 +103,7 @@ mod router;
 mod sandbox;
 mod schedule;
 mod security;
+mod shield;
 mod sitekeys;
 mod speech;
 mod storage;
