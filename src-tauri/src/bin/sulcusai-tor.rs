@@ -94,7 +94,7 @@ async fn main() {
         }
     };
     let tor = match TorClient::builder().config(config).create_unbootstrapped() {
-        Ok(t) => Arc::new(t),
+        Ok(t) => t,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(1);
