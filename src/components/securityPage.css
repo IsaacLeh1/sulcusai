@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+.security-page h3 { margin: 18px 0 6px; }
+.sec-group + .sec-group { margin-top: 4px; }
+.sec-findings { gap: 8px; }
+.sec-finding { padding: 8px 10px; border: 1px solid var(--border); border-left-width: 4px; border-radius: 8px; background: var(--panel-2); }
+.sec-finding.critical { border-left-color: var(--danger); background: var(--danger-soft); }
+.sec-finding.warning { border-left-color: var(--warn); }
+.sec-finding.notice { border-left-color: var(--accent); }
+.sec-finding.info { border-left-color: var(--border); }
+.sec-table { border-collapse: collapse; width: 100%; }
+.sec-table th { text-align: left; font-weight: 500; padding: 3px 12px 3px 0; width: 40%; }
+.sec-table td { padding: 3px 0; }
