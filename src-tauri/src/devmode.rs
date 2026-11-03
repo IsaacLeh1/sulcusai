@@ -131,6 +131,8 @@ async fn report(state: &Arc<AppState>, why: &str) -> Result<(), String> {
 }
 
 async fn send(state: &AppState, text: &str) -> Result<(), String> {
+    // So sent.log keeps the same scrubbed copy that left the PC.
+    let text = &crate::secret_scrub::scrub(text);
     crate::feedback::send("dev", text, None, true).await?;
     LAST.store(db::now_ms(), Ordering::Relaxed);
     // What left the PC, for the person to read (Settings → Logs).

@@ -13,7 +13,10 @@ const INBOX: &str = "https://sulcusai-relay.isaacleh1.workers.dev/feedback";
 
 /// Sends one message to the inbox. `kind`: "bug", "idea" or "crash".
 pub async fn send(kind: &str, text: &str, contact: Option<&str>, version: bool) -> Result<(), String> {
-    let text = text.trim();
+    // The last stop before something leaves this PC: a key pasted into a
+    // message by mistake isn't sent.
+    let text = crate::secret_scrub::scrub(text.trim());
+    let text = text.as_str();
     if text.is_empty() {
         return Err("Write something first.".into());
     }

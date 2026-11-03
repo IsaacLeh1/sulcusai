@@ -34,6 +34,18 @@ pub struct Overview {
     pub listeners: Vec<Listener>,
     pub addons: Vec<AddonInfo>,
     pub keys: Vec<KeyInfo>,
+    pub programs: Programs,
+}
+
+/// The engines' and helpers' files against what was installed (the last
+/// check at start; `integrity.rs`).
+#[derive(Debug, Clone, Serialize, Default, PartialEq)]
+pub struct Programs {
+    pub checked_at: Option<i64>,
+    pub ok: usize,
+    pub unchecked: usize,
+    /// Changed or gone since they were installed: (what, path, changed).
+    pub problems: Vec<(String, String, bool)>,
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
@@ -257,6 +269,12 @@ pub fn build(state: &AppState, api: &Value, phone: &Value) -> Result<Overview, S
         listeners,
         addons,
         keys,
+        programs: crate::integrity::last_report(&state.paths).map_or_else(Programs::default, |r| Programs {
+            checked_at: Some(r.at),
+            ok: r.ok,
+            unchecked: r.unchecked,
+            problems: r.problems().map(|i| (i.what.clone(), i.path.clone(), matches!(i.status, crate::integrity::Status::Mismatch))).collect(),
+        }),
     })
 }
 
@@ -381,6 +399,20 @@ pub fn checks(o: &Overview) -> Vec<Finding> {
         out.push(
             Finding::new("phone_while_locked", Severity::Warning, "Phones keep working while SulcusAI is locked", "Locking the screen does not cut off a paired phone, so someone with the phone can still use your chats.")
                 .fix("Stop phones while locked", "Stop paired phones from working while SulcusAI is locked?", FixCall::SetPhoneWhileLocked { on: false }),
+        );
+    }
+    for (what, path, changed) in &o.programs.problems {
+        let (title, detail) = if *changed {
+            ("A program file changed after it was installed: {what}", "{path} isn't the file SulcusAI installed. An update, an antivirus repair or another program may have replaced it. Reinstall it from the Models page if you didn't expect this.")
+        } else {
+            ("A program file is gone: {what}", "{path} was installed and isn't there now. Reinstall it from the Models page.")
+        };
+        out.push(Finding::new(format!("integrity_changed:{path}"), Severity::Warning, title, detail).arg("what", what).arg("path", path));
+    }
+    if o.programs.unchecked > 0 {
+        out.push(
+            Finding::new("integrity_unchecked", Severity::Info, "{count} program files can't be checked yet", "They were installed before SulcusAI kept a record of each file, or aren't SulcusAI's own. Reinstalling an engine adds its record.")
+                .arg("count", o.programs.unchecked),
         );
     }
     for d in &o.phones.devices {
@@ -638,6 +670,18 @@ mod tests {
         assert_eq!(f.fix.unwrap().call, FixCall::SetPhoneLink { anywhere: false });
         o.phones.anywhere = false;
         assert!(!ids(&o).contains(&"phone_anywhere".to_string()));
+    }
+
+    #[test]
+    fn changed_program_files_are_warned_about_and_unchecked_ones_noted() {
+        let mut o = Overview::default();
+        assert!(!ids(&o).iter().any(|i| i.starts_with("integrity_")));
+        o.programs.problems.push(("llama.cpp b11450 llama-server.exe".into(), r"C:\e\llama-server.exe".into(), true));
+        o.programs.unchecked = 3;
+        let f = finding(&o, r"integrity_changed:C:\e\llama-server.exe");
+        assert_eq!(f.severity, Severity::Warning);
+        assert!(f.title.contains("changed") && f.fix.is_none(), "reported, never changed for the person");
+        assert_eq!(finding(&o, "integrity_unchecked").args["count"], "3");
     }
 
     #[test]

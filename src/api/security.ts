@@ -82,6 +82,7 @@ export interface SecurityOverview {
   listeners: SecurityListener[];
   addons: SecurityAddon[];
   keys: SecurityKey[];
+  programs?: { checked_at: number | null; ok: number; unchecked: number; problems: [string, string, boolean][] };
 }
 
 export interface SecurityReport {

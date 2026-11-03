@@ -541,6 +541,23 @@ pub fn run() {
             }
             // Crash reports: the failure hook and how the last run ended (always logged here; sent only if turned on).
             crash::start(&state);
+            // Off the window's thread: the first run hashes every engine once,
+            // later ones only what changed.
+            std::thread::spawn({
+                let state = state.clone();
+                move || {
+                    let r = integrity::check_all(&state.paths, &state.catalog);
+                    applog::line("security", &r.summary());
+                    for p in r.problems() {
+                        applog::line("security", &format!("{}: {} ({})", p.what, p.note, p.path));
+                    }
+                    if r.has_problems() {
+                        if let Some(app) = state.app.get() {
+                            let _ = app.emit("security:integrity", &r);
+                        }
+                    }
+                }
+            });
             devmode::start(&state);
             cleanup::start(&state);
             backup::finish_restore(&state);

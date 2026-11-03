@@ -98,9 +98,9 @@ pub struct Report {
     text: String,
 }
 
-/// The user's folder (and name) out of a text.
+/// The user's folder, name and any keys or passwords out of a text.
 pub(crate) fn tidy(s: &str) -> String {
-    let mut out = s.to_string();
+    let mut out = crate::secret_scrub::scrub(s);
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         let home = home.to_string_lossy().to_string();
         if home.len() > 3 {
